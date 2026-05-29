@@ -727,6 +727,50 @@ class DreamZeroLeRobotDataset(Dataset):
         )
         return temporal.video, temporal.state, temporal.action
 
+    def _decode_video_frames(
+        self,
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> Any:
+        """Decode video frames, dispatching by ``self._video_backend``.
+
+        decord is handled inline (returns numpy uint8 THWC) so we do not
+        modify the vendored lerobot.  All other backends delegate to lerobot.
+        """
+        if self._video_backend == "decord":
+            return self._decode_video_frames_decord(video_path, timestamps, tolerance_s)
+
+        from lerobot.datasets.video_utils import decode_video_frames as decode_video_frames_lerobot
+
+        return decode_video_frames_lerobot(
+            video_path, timestamps, tolerance_s, backend=self._video_backend,
+        )
+
+    @staticmethod
+    def _decode_video_frames_decord(
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> np.ndarray:
+        """Decode frames via decord; return numpy uint8 (T, H, W, C).
+
+        No float conversion or /255 is performed here — the caller
+        (:meth:`_build_modality_dict`) already normalises via
+        :meth:`_video_to_thwc_uint8`.
+        """
+
+        import decord
+
+        vr = decord.VideoReader(str(video_path), num_threads=1)
+        total_frames = len(vr)
+        average_fps = vr.get_avg_fps()
+        frame_indices = [min(round(ts * average_fps), total_frames - 1) for ts in timestamps]
+
+        frames = vr.get_batch(frame_indices)
+        arr = frames.asnumpy()  # (T, H, W, C) uint8
+        return arr
+
     def _materialize_parquet_sample(
         self,
         frame_in_ep: int,
@@ -748,16 +792,13 @@ class DreamZeroLeRobotDataset(Dataset):
             "frame_index": frame_in_ep,
         }
         if decode_video:
-            from lerobot.datasets.video_utils import decode_video_frames
-
             for transform_key, source_key in self._source_video_key.items():
                 video_path = self._get_video_path(episode_index, source_key)
                 fps = self._decode_fps_for_video_file(video_path)
-                sample[transform_key] = decode_video_frames(
+                sample[transform_key] = self._decode_video_frames(
                     video_path,
                     [float(int(i)) / fps for i in video_idx.tolist()],
                     tolerance_s=self._video_tolerance_s,
-                    backend=self._video_backend,
                 )
 
         for key in ("task", "task_index"):
@@ -1036,7 +1077,9 @@ def build_single_dreamzero_lerobot_dataset(
     sub_model_cfg = OmegaConf.merge(model_cfg, model_overrides)
 
     metadata = load_dreamzero_dataset_metadata(sub_model_cfg)
-    data_transform = build_dreamzero_composed_transform(sub_model_cfg, tokenizer_path)
+    transform_on_gpu = bool(data_cfg.get("transform_on_gpu", False))
+    data_transform = build_dreamzero_composed_transform(sub_model_cfg, tokenizer_path, transform_on_gpu=transform_on_gpu)
+
     assert isinstance(data_transform, ComposedModalityTransform), f"{data_transform=}"
     data_transform.set_metadata(metadata)
     if eval_dataset:
