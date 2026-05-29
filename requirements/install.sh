@@ -109,6 +109,8 @@ Common options:
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
+    --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14.
+                           Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
@@ -135,6 +137,14 @@ parse_args() {
                     exit 1
                 fi
                 VENV_DIR="${2:-}"
+                shift 2
+                ;;
+            --python)
+                if [ -z "${2:-}" ]; then
+                    echo "--python requires a version argument (e.g. 3.11.14)." >&2
+                    exit 1
+                fi
+                PYTHON_VERSION="${2:-}"
                 shift 2
                 ;;
             --torch)
@@ -213,6 +223,22 @@ parse_args() {
 
     if [ -z "$TARGET" ]; then
         TARGET="embodied"
+    fi
+}
+
+validate_python_version() {
+    # Reject malformed versions (must be X.Y or X.Y.Z with numeric components).
+    if [[ ! "$PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "--python must be of form X.Y or X.Y.Z (got '$PYTHON_VERSION')." >&2
+        exit 1
+    fi
+
+    # Soft-check against pyproject.toml's requires-python = ">=3.10".
+    local py_major py_minor _py_patch
+    IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+    local mm="${py_major}.${py_minor}"
+    if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
+        echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
     fi
 }
 
@@ -545,6 +571,21 @@ apply_torch_override() {
     # UV_TORCH_BACKEND), PLATFORM_RELAX_TORCHCODEC is set (rewrite the
     # torchcodec pin for non-x86_64 / non-CUDA torch combos), or
     # PLATFORM_EXTRA_OVERRIDES has entries (insert extra override pins).
+
+    # torchcodec==0.2 only has wheels for torch<=2.6. Relax the pin whenever
+    # the effective torch version exceeds 2.6, regardless of platform.
+    local _eff_torch="${TORCH_VERSION}"
+    if [ -z "$_eff_torch" ] && [ -f "$PYPROJECT_FILE" ]; then
+        _eff_torch=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+    fi
+    if [ -n "$_eff_torch" ]; then
+        local _tmaj _tmin _tpatch
+        IFS='.' read -r _tmaj _tmin _tpatch <<< "$_eff_torch"
+        if [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -gt 6 ]; }; then
+            PLATFORM_RELAX_TORCHCODEC=1
+        fi
+    fi
+
     local needs_torch_rewrite=0
     if [ -n "$TORCH_VERSION" ] || [ -n "$PLATFORM_TORCH_STR" ] || [ -n "$PLATFORM_TORCH_INDEX" ]; then
         needs_torch_rewrite=1
@@ -1774,6 +1815,7 @@ install_roboverse_env() {
     pyroki_dir=$(clone_or_reuse_repo PYROKI_PATH "$roboverse_dir/pyroki" https://github.com/chungmin99/pyroki.git)
     uv pip install -e "$pyroki_dir"
     uv pip install "numpy==1.26.4" --force-reinstall
+    uv pip install "mujoco==3.3.7" "dm-control==1.0.34" --force-reinstall
 }
 
 #=======================AGENTIC INSTALLER=======================
@@ -1811,6 +1853,7 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    validate_python_version
     configure_platform
     setup_mirror
     apply_torch_override
