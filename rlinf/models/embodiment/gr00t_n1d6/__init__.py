@@ -125,10 +125,14 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         emb_tag = EmbodimentTag.GR1
     elif cfg.embodiment_tag == "behavior_r1_pro":
         emb_tag = EmbodimentTag.BEHAVIOR_R1_PRO
+    elif cfg.embodiment_tag in ("new_embodiment", "so101", "so100"):
+        emb_tag = EmbodimentTag.NEW_EMBODIMENT
     else:
         raise ValueError(
             f"Invalid or unsupported embodiment tag: {cfg.embodiment_tag}. "
-            f"Supported tags are: ['behavior_r1_pro', 'gr1', 'robocasa_panda_omron', 'libero_panda']."
+            "Supported tags are: ['behavior_r1_pro', 'gr1', 'robocasa_panda_omron', "
+            "'libero_panda', 'libero_franka', 'isaaclab_franka', 'maniskill_widowx', "
+            "'new_embodiment', 'so101', 'so100']."
         )
 
     model_path = Path(cfg.model_path)

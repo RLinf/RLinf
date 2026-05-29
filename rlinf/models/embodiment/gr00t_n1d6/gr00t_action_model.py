@@ -44,12 +44,13 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 class SimulationContent:
     """Lightweight container for a single timestep's worth of GR00T processor inputs."""
 
-    def __init__(self, embodiment, states, actions, images, text):
+    def __init__(self, embodiment, states, actions, images, text, masks=None):
         self.embodiment = embodiment
         self.states = states
         self.actions = actions
         self.images = images
         self.text = text
+        self.masks = masks
 
 
 class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
@@ -596,6 +597,36 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
             logging.info("Processor loaded safely. No model weights were touched.")
 
+            # GR00T16_RLINF_COMPAT: ``Eagle3_VLImageProcessorFast`` (shipped
+            # inside the SFT checkpoint as a ``trust_remote_code`` module) was
+            # written against transformers <4.55 where ``BaseImageProcessorFast``
+            # exposed ``_prepare_input_images``. From 4.55+ the helper is
+            # renamed to ``_prepare_image_like_inputs``. Alias the new method
+            # under the old name on the processor's class so the workshop
+            # SO-101 SFT checkpoint loads on transformers 4.57.x.
+            try:
+                _eagle_image_proc = getattr(
+                    getattr(modality_transform, "processor", None),
+                    "image_processor",
+                    None,
+                )
+                if _eagle_image_proc is not None:
+                    _cls = type(_eagle_image_proc)
+                    if not hasattr(_cls, "_prepare_input_images") and hasattr(
+                        _cls, "_prepare_image_like_inputs"
+                    ):
+                        _cls._prepare_input_images = _cls._prepare_image_like_inputs
+                        logging.info(
+                            "[GR00T16_RLINF_COMPAT] aliased "
+                            f"{_cls.__name__}._prepare_input_images -> "
+                            "_prepare_image_like_inputs (transformers >=4.55)"
+                        )
+            except Exception as _e:  # pragma: no cover
+                logging.info(
+                    "[GR00T16_RLINF_COMPAT] could not alias "
+                    f"_prepare_input_images on Eagle3 image processor: {_e}"
+                )
+
         self._modality_config = modality_config
         self._modality_transform = modality_transform
 
@@ -818,6 +849,21 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             if not isinstance(v, np.ndarray):
                 obs_copy[k] = np.array(v)
 
+        # GR00T16_RLINF_COMPAT: GR00T N1.6 SO-101 action configs use
+        # ActionRepresentation.RELATIVE. Decoding relative model actions back
+        # into absolute IsaacLab joint targets requires the current raw state as
+        # the reference frame. The rollout obs converter publishes state keys as
+        # ``state.<joint_group>`` while StateActionProcessor expects bare group
+        # names such as ``single_arm``.
+        decode_state = {}
+        for k, v in obs_copy.items():
+            if k.startswith("state."):
+                decode_state[k.split(".", 1)[1]] = np.asarray(v, dtype=np.float32)
+        if not decode_state and "state" in obs_copy:
+            decode_state["single_arm"] = np.asarray(obs_copy["state"], dtype=np.float32)
+        if not decode_state:
+            decode_state = None
+
         normalized_input = self.apply_transforms(obs_copy)
 
         if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
@@ -875,7 +921,9 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             ]
 
         normalized_action, result = self._get_rl_action(normalized_input, mode=mode)
-        unnormalized_action = self._get_unnormalized_action(normalized_action)
+        unnormalized_action = self._get_unnormalized_action(
+            normalized_action, state=decode_state
+        )
 
         if not is_batch:
             unnormalized_action = squeeze_dict_values(unnormalized_action)
@@ -974,7 +1022,12 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             k_lower = k.lower()
             if "task" in k_lower or "lang" in k_lower or "instruction" in k_lower:
                 text_key = k
-            elif "image" in k_lower or "rgb" in k_lower or "cam" in k_lower:
+            elif (
+                "image" in k_lower
+                or "rgb" in k_lower
+                or "cam" in k_lower
+                or k_lower.startswith("video.")
+            ):
                 image_keys.append(k)
             else:
                 state_keys.append(k)
@@ -1017,19 +1070,21 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             v = obs[k][i]
             if isinstance(v, torch.Tensor):
                 v = v.cpu().float().numpy()
-            states_dict[k] = np.array(v)
+            bare_key = k.split(".", 1)[1] if k.startswith("state.") else k
+            states_dict[bare_key] = np.array(v)
 
         ref_T = next(iter(states_dict.values())).shape[0] if states_dict else 1
-        robocasa_requirements = {
-            "end_effector_position_relative": 3,
-            "end_effector_rotation_relative": 4,
-            "gripper_qpos": 2,
-            "base_position": 3,
-            "base_rotation": 4,
-        }
-        for req_k, req_dim in robocasa_requirements.items():
-            if req_k not in states_dict:
-                states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
+        if tag_val == "robocasa_panda_omron":
+            robocasa_requirements = {
+                "end_effector_position_relative": 3,
+                "end_effector_rotation_relative": 4,
+                "gripper_qpos": 2,
+                "base_position": 3,
+                "base_rotation": 4,
+            }
+            for req_k, req_dim in robocasa_requirements.items():
+                if req_k not in states_dict:
+                    states_dict[req_k] = np.zeros((ref_T, req_dim), dtype=np.float32)
         return states_dict
 
     def _process_obs_images(self, obs: dict, image_keys, tag_val: str, i: int) -> dict:
@@ -1146,14 +1201,16 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
 
         return self._collate_and_rename(processed_outputs)
 
-    def unapply_transforms(self, action: dict[str, Any]) -> dict[str, Any]:
+    def unapply_transforms(
+        self, action: dict[str, Any], state: dict[str, np.ndarray] | None = None
+    ) -> dict[str, Any]:
         raw_action_tensor = action["action"]
 
         if isinstance(raw_action_tensor, torch.Tensor):
             raw_action_tensor = raw_action_tensor.detach().cpu().numpy()
 
         decoded = self._modality_transform.decode_action(
-            action=raw_action_tensor, embodiment_tag=self.embodiment_tag, state=None
+            action=raw_action_tensor, embodiment_tag=self.embodiment_tag, state=state
         )
         return decoded
 
@@ -1278,9 +1335,11 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         return normalized_action
 
     def _get_unnormalized_action(
-        self, normalized_action: torch.Tensor
+        self,
+        normalized_action: torch.Tensor,
+        state: dict[str, np.ndarray] | None = None,
     ) -> dict[str, Any]:
-        return self.unapply_transforms({"action": normalized_action.cpu()})
+        return self.unapply_transforms({"action": normalized_action.cpu()}, state=state)
 
     def _load_metadata(self, exp_cfg_dir: Path):
         metadata_path = exp_cfg_dir / "metadata.json"
