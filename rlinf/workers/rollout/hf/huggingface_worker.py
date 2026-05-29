@@ -23,9 +23,9 @@ from tqdm import tqdm
 
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
+    RolloutResult,
     RTCActionResponse,
     RTCRequest,
-    RolloutResult,
 )
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model

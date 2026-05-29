@@ -26,9 +26,9 @@ from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
     EnvOutput,
+    RolloutResult,
     RTCActionResponse,
     RTCRequest,
-    RolloutResult,
     Trajectory,
 )
 from rlinf.envs import get_env_cls
@@ -613,9 +613,11 @@ class EnvWorker(Worker):
         self, env_action: torch.Tensor | np.ndarray, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
         """Execute exactly one real-world action during RTC evaluation."""
-        extracted_obs, step_reward, terminations, truncations, infos = self.eval_env_list[
-            stage_id
-        ].step(env_action, auto_reset=self.cfg.env.eval.auto_reset)
+        extracted_obs, step_reward, terminations, truncations, infos = (
+            self.eval_env_list[stage_id].step(
+                env_action, auto_reset=self.cfg.env.eval.auto_reset
+            )
+        )
 
         env_info = {}
         dones = torch.logical_or(terminations, truncations)
@@ -1530,8 +1532,8 @@ class EnvWorker(Worker):
                 episode_step += 1
                 current_chunk_index += 1
 
-                episode_done = (
-                    env_output.dones is not None and bool(env_output.dones.any())
+                episode_done = env_output.dones is not None and bool(
+                    env_output.dones.any()
                 )
                 if episode_done:
                     break

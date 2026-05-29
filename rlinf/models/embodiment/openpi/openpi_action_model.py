@@ -32,6 +32,8 @@ from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.models.embodiment.openpi.rtc_guidance import (
     RTCGuidanceContext,
+)
+from rlinf.models.embodiment.openpi.rtc_guidance import (
     sample_actions_with_rtc_guidance as _sample_actions_with_rtc_guidance,
 )
 from rlinf.utils.logging import get_logger
@@ -589,11 +591,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
         else:
             # Non-DSRL or eval mode
-            if (
-                rtc_context is not None
-                and mode == "eval"
-                and self.config.rtc_enabled
-            ):
+            if rtc_context is not None and mode == "eval" and self.config.rtc_enabled:
                 # RTC is only used during evaluation: the rollout worker passes
                 # the previous model-space action chunk so the sampler can guide
                 # the overlapping horizon without changing normal training.
