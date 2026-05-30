@@ -1050,7 +1050,7 @@ def build_gr00t_dataloader(worker_instance, eval_dataset: bool = False):
                     obs[key] = torch.tensor([item[key] for item in batch])
                 except (TypeError, ValueError):
                     obs[key] = [item[key] for item in batch]
-        return obs, actions
+        return {"observation": obs, "actions": actions}
 
     dataloader = DataLoader(
         dataset,
