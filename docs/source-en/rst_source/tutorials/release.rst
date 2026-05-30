@@ -41,13 +41,13 @@ Embodied Intelligence
 
 1. Training Infrastructure Enhancements
 
-- Added a new wrapper in the data layer to support replay buffer collection of real-robot and simulator data as a standard module. Refer to :doc:`Data collection <components/data_collection>`.
+- Added a new wrapper in the data layer to support replay buffer collection of real-robot and simulator data as a standard module. Refer to :doc:`Data collection <embodied/data_collection>`.
 
 - Async Training Support introduces asynchronous training as a first‑class capability for embodied models, providing asynchronous PPO workflows and usability improvements to boost training efficiency in high‑throughput scenarios. Refer to :doc:`Async PPO <rlalg/async_ppo>`.
 
 - Data and Replay Pipeline Upgrade enhances data collection and replay pipelines, strengthens buffer preloading, updating, and checkpoint handling, and improves overall dataflow robustness. Refer to :doc:`Replay buffer API <../apis/replay_buffer>`.
 
-- Runtime Performance Optimizations add runtime features such as CUDA Graph, torch.compile, environment offloading, and FSDP path optimizations to improve execution efficiency for embodied training. Refer to :doc:`YAML configuration <user/yaml>`.
+- Runtime Performance Optimizations add runtime features such as CUDA Graph, torch.compile, environment offloading, and FSDP path optimizations to improve execution efficiency for embodied training. Refer to :doc:`YAML configuration <configuration/basic_config>`.
 
 1. Stability Improvements and Usability
 

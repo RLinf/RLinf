@@ -44,7 +44,7 @@ Any YAML file can be used for evaluation with the ``eval_embodiment.sh`` script,
 
 .. Note::
   
-   If you need to convert checkpoint files from ``.distcp`` format to ``.pt`` format, please refer to the :doc:`Checkpoint Convertor <../tutorials/advance/convertor>` documentation for detailed instructions.
+   If you need to convert checkpoint files from ``.distcp`` format to ``.pt`` format, please refer to the :doc:`Checkpoint Convertor <../tutorials/usage/convertor>` documentation for detailed instructions.
 
 2. **Control environment random seed**: You can adjust ``env.seed`` to change the environment's random function for result reproducibility, etc.
 
