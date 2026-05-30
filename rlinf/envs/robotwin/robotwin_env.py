@@ -377,10 +377,10 @@ class RoboTwinEnv(gym.Env):
                 past_dones, obs_list[-1], infos_list[-1]
             )
 
-        chunk_terminations = torch.zeros((num_envs, chunk_step))
+        chunk_terminations = torch.zeros((num_envs, chunk_step), dtype=bool)
         chunk_terminations[:, -1] = terminations
 
-        chunk_truncations = torch.zeros((num_envs, chunk_step))
+        chunk_truncations = torch.zeros((num_envs, chunk_step), dtype=bool)
         chunk_truncations[:, -1] = truncations
 
         return (

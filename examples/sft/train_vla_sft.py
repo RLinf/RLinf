@@ -14,7 +14,6 @@
 
 import json
 import logging
-import os
 
 import hydra
 import torch.multiprocessing as mp
@@ -33,8 +32,6 @@ mp.set_start_method("spawn", force=True)
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
-    os.environ["HF_LEROBOT_HOME"] = cfg.data.train_data_paths
-
     cfg = validate_cfg(cfg)
     logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 
@@ -43,9 +40,14 @@ def main(cfg) -> None:
 
     # Create actor worker group
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPVlaSftWorker.create_group(cfg).launch(
-        cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
-    )
+
+    if cfg.actor.training_backend == "fsdp" or cfg.actor.training_backend == "fsdp2":
+        actor_group = FSDPVlaSftWorker.create_group(cfg).launch(
+            cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
+        )
+
+    else:
+        raise ValueError(f"{cfg.actor.training_backend} backend is not supported yet")
 
     runner = SFTRunner(
         cfg=cfg,

@@ -6,13 +6,13 @@ VLM模型监督微调训练
 本教程重点需要关注两个文件：
 
 - 启动脚本：``examples/sft/run_vlm_sft.sh``
-- 训练配置：``examples/sft/config/qwen2_5_sft_vlm.yaml``
+- 训练配置：``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``
 
 ----------------------
 
 启动脚本：``examples/sft/run_vlm_sft.sh``
 
-- 当前脚本默认使用配置yaml文件 ``examples/sft/config/qwen2_5_sft_vlm.yaml``
+- 当前脚本默认使用配置yaml文件 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``
 - 重定向文件的输出在：``<repo>/logs/<timestamp>/``
 - 实际执行命令：
 
@@ -23,7 +23,7 @@ VLM模型监督微调训练
      --config-name <你的配置名> \
      runner.logger.log_path=<自动生成的日志目录>
 
-配置模板：``examples/sft/config/qwen2_5_sft_vlm.yaml``
+配置模板：``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``
 
 如果需要训练 **qwen3_vl** 或 **qwen3_vl_moe** 等模型，请确保当前环境中的 `transformers` 版本 **高于或等于 4.57.1**。
 
@@ -35,7 +35,7 @@ VLM模型监督微调训练
 1. 准备好环境，下载 RLinf 官方镜像 ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``
 2. 准备好模型权重目录，下载网址 ``https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct``
 3. 准备好 Robo2VLM 数据集目录 ``https://huggingface.co/datasets/keplerccc/Robo2VLM-1``
-4. 修改 ``examples/sft/config/qwen2_5_sft_vlm.yaml`` 文件，运行脚本 ``examples/sft/run_vlm_sft.sh``
+4. 修改 ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` 文件，运行脚本 ``examples/sft/run_vlm_sft.sh``
 
 下面是 Qwen2.5-Vl-3B sft 的例子
 --------------------------------
@@ -241,6 +241,24 @@ loss 曲线：
    :align: center
 
 最后一次 Qwen3-VL-4B model 使用测试数据验证的正确率为 ``96.9%`` 。
+
+RLinf 展示当前使用 Qwen3-VL-30B-A3B MoE 模型的实验结果，当前实验在两台 8 x A100 Nvidia GPU 的机器上测试 1000 次迭代，实验结果如下：
+
+grad_norm 曲线：
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_grad_norm.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT grad norm
+   :width: 85%
+   :align: center
+
+loss 曲线：
+
+.. image:: https://github.com/RLinf/misc/raw/main/pic/qwen3_moe_sft_vlm_eval_loss.png
+   :alt: Qwen3-VL-30B-A3B MoE VLM SFT loss
+   :width: 85%
+   :align: center
+
+评估在单台8 x A100 Nvidia GPU 的机器上，训练前使用测试数据验证的正确率为 ``58.4%``, 训练后使用测试数据验证的正确率为 ``91.3%``。
 
 模型 checkpoint 说明
 ----------------------------

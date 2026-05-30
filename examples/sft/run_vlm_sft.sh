@@ -4,6 +4,11 @@ export VLM_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$VLM_PATH"))
 export SRC_FILE="${VLM_PATH}/train_vlm_sft.py"
 
+# Set the Megatron-Mbrdige and Megatron-LM Path
+export PYTHONPATH=/path/to/Megatron-Bridge/src:$PYTHONPATH
+export PYTHONPATH=/path/to/Megatron-LM:$PYTHONPATH
+export CUDA_DEVICE_MAX_CONNECTIONS=1
+
 export PYTHONPATH=${REPO_PATH}:${LIBERO_REPO_PATH}:$PYTHONPATH
 
 if [ -z "$1" ]; then

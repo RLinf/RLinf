@@ -1,66 +1,56 @@
 Advanced Features
 ==============================
 
-This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,  
+This chapter provides a step-by-step deep dive into how RLinf achieves **highly efficient execution**,
 offering practical guidance to help you fully optimize your RL post-training workflows.
 
-- :doc:`5D`  
-   Explains how RLinf supports Megatron-style 5D parallelism, including:  
-   Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),  
-   Sequence Parallelism (SP), and Context Parallelism (CP).  
-   Learn how to configure and combine these dimensions to scale large models efficiently.
-
-- :doc:`lora`  
-   Demonstrates how to integrate Low-Rank Adaptation (LoRA) into RLinf,  
+- :doc:`lora`
+   Demonstrates how to integrate Low-Rank Adaptation (LoRA) into RLinf,
    enabling parameter-efficient fine-tuning for large-scale models with minimal compute overhead.
 
-- :doc:`version`  
-   Describes how to dynamically switch between different SGLang versions  
+- :doc:`5D`
+   Explains how RLinf supports Megatron-style 5D parallelism, including:
+   Tensor Parallelism (TP), Data Parallelism (DP), Pipeline Parallelism (PP),
+   Sequence Parallelism (SP), and Context Parallelism (CP).
+   Learn how to configure and combine these dimensions to scale large models efficiently.
+
+- :doc:`cluster`
+   Describes the globally unique *Cluster* object, responsible for coordinating all roles,
+   processes, and communication across distributed nodes. Covers Ray initialization,
+   node discovery, and worker allocation.
+
+- :doc:`collective`
+   Covers low-level, high-performance Python object exchange between workers,
+   using optimized point-to-point backends such as CUDA IPC and NCCL to reduce communication overhead.
+
+- :doc:`version`
+   Describes how to dynamically switch between different SGLang versions
    to accommodate varying compatibility needs or experimental requirements.
-
-- :doc:`resume`  
-   Covers how to resume training from saved checkpoints,  
-   ensuring fault tolerance and seamless continuation for long-running or interrupted training jobs.
-
-- :doc:`convertor`  
-   Describes how to convert a saved checkpoint file into HuggingFace safetensors format,  
-   which can be used for checkpoint evaluation or uploading to the HuggingFace Hub.
-
-- :doc:`hetero`  
-   Introduces how to configure and utilize heterogeneous software and hardware clusters,  
-   to fully leverage different types of computing resources and hardware devices.
-
-- :doc:`cloud-edge`
-   Shows how to build a cloud-edge training setup with EasyTier, connect cloud and
-   edge nodes into one overlay network, and run RLinf on top of that topology.
-
-- :doc:`logger`  
-   Introduces how to visualize and track key metrics during your training process.  
-   Currently, we support three backends for experiment tracking and visualization: 
-   TensorBoard, Weights & Biases (wandb), and SwanLab.
-
-- :doc:`weight_syncer`
-   Introduces the actor-to-rollout weight synchronization optimization used in
-   embodied training, including the ``patch`` and ``bucket`` modes, their
-   configuration, recommended use cases, and performance considerations.
 
 - :doc:`nsight`
    Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
    selected Ray worker groups with ``nsys profile``, including how to enable,
    disable, and target worker groups for system-level traces.
 
+- :doc:`dynamic_scheduling`
+   Covers online scaling and dynamic scheduling in RLinf: how resources are
+   elastically scaled and migrated across components in real time to maximize
+   throughput and utilization, including prerequisites, configuration, and
+   optional scheduling policies.
+
+- :doc:`auto_placement`
+   Details the concrete implementation of auto-placement in RLinf,
+   including how to configure it properly to enable auto-placement.
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   5D
    lora
+   5D
+   cluster
+   collective
    version
-   resume
-   convertor
-   hetero
-   cloud-edge
-   logger
    nsight
-   weight_syncer
+   dynamic_scheduling
+   auto_placement

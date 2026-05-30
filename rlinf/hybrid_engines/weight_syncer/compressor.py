@@ -20,8 +20,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from rlinf.utils.logging import get_logger
-
-from .base import normalize_device
+from rlinf.utils.utils import normalize_device
 
 if TYPE_CHECKING:
     from .patch_syncer import WeightPatch, WeightPatchTransport

@@ -14,13 +14,16 @@
 
 import argparse
 import os
-import tempfile
 
 import torch
-from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
+from torch.distributed.checkpoint import FileSystemReader
+from torch.distributed.checkpoint.format_utils import _EmptyStateDictLoadPlanner
+from torch.distributed.checkpoint.state_dict_loader import _load_state_dict
 
 """
-python convert_dcp_to_pt.py --dcp_path /path/to/dcp_checkpoint --output_path /path/to/save_path/model.pt
+python rlinf/utils/ckpt_convertor/fsdp_convertor/convert_dcp_to_pt.py\
+    --dcp_path /path/to/dcp_checkpoint/ \
+    --output_path /path/to/save_path/model.pt
 """
 
 
@@ -45,13 +48,26 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    with tempfile.TemporaryDirectory() as temp_dir:
-        dcp_to_torch_save(args.dcp_path, os.path.join(temp_dir, "temp_torch_save.pt"))
-        temp_pt = torch.load(
-            os.path.join(temp_dir, "temp_torch_save.pt"), weights_only=False
-        )
-        model_state_dict = temp_pt["fsdp_checkpoint"]["model"]
-        torch.save(model_state_dict, args.output_path)
+    output_dir = os.path.dirname(os.path.abspath(args.output_path))
+    os.makedirs(output_dir, exist_ok=True)
+
+    checkpoint = {}
+    _load_state_dict(
+        checkpoint,
+        storage_reader=FileSystemReader(args.dcp_path),
+        planner=_EmptyStateDictLoadPlanner(keys={"fsdp_checkpoint.model"}),
+        no_dist=True,
+    )
+
+    try:
+        model_state_dict = checkpoint["fsdp_checkpoint"]["model"]
+    except KeyError as e:
+        raise KeyError(
+            "Could not find 'fsdp_checkpoint.model' in the DCP checkpoint. "
+            f"Loaded top-level keys: {list(checkpoint.keys())}"
+        ) from e
+
+    torch.save(model_state_dict, args.output_path)
 
     print(
         f"Converted DCP checkpoint from {args.dcp_path} to state_dict at {args.output_path}"

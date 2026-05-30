@@ -46,9 +46,6 @@ data:
   lazy_loading: false
   num_workers: 2
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -84,9 +81,3 @@ actor:
       param_dtype: bf16
       reduce_dtype: fp32
       buffer_dtype: bf16
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False
