@@ -1389,7 +1389,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     elif SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
                         SupportedModel.GR00T_N1D6,
-                        SupportedModel.GR00T_N1D6_SFT,
                     ]:
                         kwargs["prev_logprobs"] = prev_logprobs
                         from rlinf.models.embodiment.gr00t_n1d6 import (
@@ -1415,7 +1414,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
                         SupportedModel.GR00T_N1D6,
-                        SupportedModel.GR00T_N1D6_SFT,
                     ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
@@ -1443,7 +1441,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     }
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T_N1D6,
-                        SupportedModel.GR00T_N1D6_SFT,
                     ]:
                         kwargs["clip_ratio_c"] = self.cfg.algorithm.get(
                             "clip_ratio_c", 3.0

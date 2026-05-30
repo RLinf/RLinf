@@ -64,14 +64,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 self.cfg, self._world_size, self._rank, data_paths
             )
         elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.GR00T_N1D6_SFT
-        ]:
-            from rlinf.models.embodiment.gr00t_n1d6.gr00t_n1d6_sft_model import (
-                build_gr00t_dataloader,
-            )
-
-            return build_gr00t_dataloader(self, eval_dataset)
-        elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.DREAMZERO
         ]:
             from rlinf.data.datasets.dreamzero import (

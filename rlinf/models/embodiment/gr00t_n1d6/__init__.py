@@ -103,9 +103,8 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     )
     from rlinf.models.embodiment.gr00t_n1d6.utils import replace_dropout_with_identity
 
-    is_sft_model = cfg.get("model_type") == "gr00t_n1d6_sft"
     use_official_libero_panda = bool(
-        OmegaConf.select(cfg, "use_official_libero_panda", default=is_sft_model)
+        OmegaConf.select(cfg, "use_official_libero_panda", default=False)
     )
 
     if cfg.embodiment_tag == "libero_panda":
@@ -139,12 +138,7 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     if not model_path.exists():
         raise FileNotFoundError(f"Model path does not exist: {model_path}")
 
-    if cfg.get("model_type") == "gr00t_n1d6_sft":
-        from .gr00t_n1d6_sft_model import GR00T_N1D6_SFT_Model
-
-        model_cls = GR00T_N1D6_SFT_Model
-    else:
-        model_cls = GR00T_N1_6_ForRLActionPrediction
+    model_cls = GR00T_N1_6_ForRLActionPrediction
 
     config = Gr00tN1d6Config.from_pretrained(str(model_path))
     _action_dim = cfg.get("action_dim")
