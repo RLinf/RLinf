@@ -34,7 +34,7 @@ runner:
   local_update_steps: 500
 
   val_check_interval: 5000
-  save_interval: 5000
+  save_interval: -1
 
   log_interval: 1000
   eval_episodes: 10

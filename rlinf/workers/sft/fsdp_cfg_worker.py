@@ -24,10 +24,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-import jax
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from torch.utils._pytree import tree_map
 
 from rlinf.data.datasets.recap.cfg_model import (
     AdvantagePreservingDataset,
@@ -43,6 +43,7 @@ from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 # Suppress libdav1d/ffmpeg verbose logging
@@ -137,6 +138,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 
+        from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
         from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
         data_cfg = self.cfg.get("data", {})
@@ -165,12 +167,16 @@ class FSDPCfgWorker(FSDPSftWorker):
         datasets_with_weights = []
         for ds_config in datasets_config:
             data_path = ds_config["dataset_path"]
+            dataset_root = resolve_lerobot_dataset_root(data_path)
             episodes = ds_config.get("episodes")
             weight = ds_config.get("weight", 1.0)
 
-            dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
+            dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(
+                data_path, root=dataset_root
+            )
             base_dataset = lerobot_dataset.LeRobotDataset(
                 data_path,
+                root=dataset_root,
                 episodes=episodes,
                 delta_timestamps={
                     key: [
@@ -374,10 +380,13 @@ class FSDPCfgWorker(FSDPSftWorker):
                     observation, actions, advantage = next(self.data_iter)
                 self._data_iter_offset += 1
 
-                observation = jax.tree.map(
-                    lambda x: torch.as_tensor(x)
-                    .contiguous()
-                    .to(self.device, non_blocking=True),
+                register_pytree_dataclasses(observation)
+                observation = tree_map(
+                    lambda x: (
+                        torch.as_tensor(x)
+                        .contiguous()
+                        .to(self.device, non_blocking=True)
+                    ),
                     observation,
                 )
                 actions = actions.to(torch.float32).to(self.device, non_blocking=True)

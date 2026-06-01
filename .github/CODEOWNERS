@@ -12,7 +12,7 @@
 
 /rlinf/data @guozhen1997 @Lin-xs @andylin-hao
 
-/rlinf/envs @guozhen1997 @XuS1994 @andylin-hao
+/rlinf/envs @guozhen1997 @andylin-hao
 
 /rlinf/hybrid_engines/fsdp @guozhen1997
 /rlinf/hybrid_engines/megatron @guozhen1997
@@ -28,7 +28,7 @@
 /rlinf/utils @guozhen1997 @Lin-xs @andylin-hao
 
 /rlinf/workers/actor @guozhen1997 @andylin-hao
-/rlinf/workers/env @guozhen1997 @XuS1994 @andylin-hao
+/rlinf/workers/env @guozhen1997 @andylin-hao
 /rlinf/workers/inference @andylin-hao
 /rlinf/workers/rollout/hf @guozhen1997 @andylin-hao
 /rlinf/workers/rollout/sglang @Lin-xs @andylin-hao

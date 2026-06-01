@@ -122,7 +122,15 @@ class SFTRunner:
             if eval_model:
                 time_metrics["evaluate"] = eval_handle.consume_duration()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics = {f"train/{k}": v for k, v in actor_metrics[0].items()}
+            merged_actor_metrics = {}
+            # get the merged actor metrics from all ranks
+            for metrics in actor_metrics:
+                for k, v in metrics.items():
+                    if k not in merged_actor_metrics:
+                        merged_actor_metrics[k] = v
+            training_metrics = {
+                f"train/{k}": v for k, v in merged_actor_metrics.items()
+            }
             self.metric_logger.log(time_metrics, _step)
             self.metric_logger.log(training_metrics, _step)
 
@@ -189,11 +197,19 @@ class SFTRunner:
             )
 
     def set_max_steps(self) -> None:
-        self.num_steps_per_epoch = 1
-        self.max_steps = self.num_steps_per_epoch * self.cfg.runner.max_epochs
+        self.num_steps_per_epoch = self.actor.get_max_steps_per_epoch().wait()[0]
+        max_epochs = self.cfg.runner.get("max_epochs", -1)
+        max_steps = self.cfg.runner.get("max_steps", -1)
 
-        if (max_steps := self.cfg.runner.get("max_steps", -1)) >= 0:
-            self.max_steps = min(self.max_steps, max_steps)
+        step_limits = []
+        if max_epochs > 0:
+            step_limits.append(self.num_steps_per_epoch * max_epochs)
+        if max_steps >= 0:
+            step_limits.append(max_steps)
+
+        # If both limits are configured, stop at whichever one is reached first.
+        # If neither is configured, keep the historical default of one epoch.
+        self.max_steps = min(step_limits) if step_limits else self.num_steps_per_epoch
 
     @property
     def epoch(self) -> int:

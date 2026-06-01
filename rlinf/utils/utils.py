@@ -14,6 +14,7 @@
 
 import atexit
 import gc
+import importlib
 import os
 import random
 import sys
@@ -51,6 +52,81 @@ def move_to_device_if_tensor(device, item):
 cuda_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cuda"))
 cpu_dict = partial(apply_func_to_dict, partial(move_to_device_if_tensor, "cpu"))
 _UINT32_MOD = 2**32
+
+
+def materialize_tensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
+    """Materialize a DTensor into a dense tensor, or return tensors as-is."""
+    if isinstance(tensor, DTensor):
+        return tensor.full_tensor()
+    assert isinstance(tensor, torch.Tensor), "Expected a torch.Tensor or DTensor"
+    return tensor
+
+
+def normalize_dtype(dtype: torch.dtype | str) -> torch.dtype:
+    """Normalize string dtype aliases into torch.dtype values."""
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if isinstance(dtype, str):
+        mapping = {
+            "float32": torch.float32,
+            "fp32": torch.float32,
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+        }
+        key = dtype.lower()
+        if key in mapping:
+            return mapping[key]
+    raise TypeError(f"Unsupported dtype: {dtype}")
+
+
+def normalize_device(device: torch.device | str | None) -> torch.device:
+    """Convert a device string into torch.device, defaulting to the worker device."""
+    if device is None:
+        device = Worker.torch_device_type
+    return device if isinstance(device, torch.device) else torch.device(device)
+
+
+def collect_param_names_need_sync(module: torch.nn.Module) -> list[str]:
+    """Collect trainable parameters and persistent buffers for selective sync."""
+    trainable_param_names = [
+        name
+        for name, param in module.named_parameters(remove_duplicate=False)
+        if param.requires_grad
+    ]
+
+    persistent_buffer_names: list[str] = []
+    for module_name, submodule in module.named_modules(remove_duplicate=False):
+        non_persistent_buffers = getattr(
+            submodule, "_non_persistent_buffers_set", set()
+        )
+        for buffer_name, _ in submodule.named_buffers(
+            recurse=False, remove_duplicate=False
+        ):
+            if buffer_name in non_persistent_buffers:
+                continue
+            full_name = (
+                buffer_name if not module_name else f"{module_name}.{buffer_name}"
+            )
+            persistent_buffer_names.append(full_name)
+
+    return trainable_param_names + persistent_buffer_names
+
+
+def synchronize_pending_accel_copies(copy_devices: set[torch.device]) -> None:
+    """Wait for queued accelerator copies before host-side consumption."""
+    if not copy_devices:
+        return
+
+    events: list[torch.Event] = []
+    for device in copy_devices:
+        event = Worker.torch_platform.Event()
+        event.record(Worker.torch_platform.current_stream(device))
+        events.append(event)
+
+    for event in events:
+        event.synchronize()
 
 
 def seed_everything(seed: int) -> int:
@@ -123,6 +199,45 @@ def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
 
     finally:
         swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
+
+
+def _get_nvtx_module():
+    try:
+        return importlib.import_module("nvtx")
+    except ImportError:
+        return None
+
+
+@contextmanager
+def nvtx_range(name: str, color: str | int | None = None):
+    """Annotate a code range for Nsight or other NVTX-aware profilers."""
+    nvtx_module = _get_nvtx_module()
+    if nvtx_module is not None:
+        annotate_kwargs = {"message": name}
+        if color is not None:
+            annotate_kwargs["color"] = color
+        with nvtx_module.annotate(**annotate_kwargs):
+            yield
+        return
+
+    from rlinf.utils.logging import get_logger
+
+    get_logger().warning(
+        "nvtx_range: NVTX module not found, NVTX annotations are disabled. "
+        "Using torch.cuda.nvtx instead",
+    )
+
+    if hasattr(torch.cuda, "nvtx") and torch.cuda.is_available():
+        torch.cuda.nvtx.range_push(name)
+        try:
+            yield
+        finally:
+            torch.cuda.nvtx.range_pop()
+        return
+    get_logger().warning(
+        "nvtx_range: torch.cuda.nvtx is not available, NVTX annotations are disabled."
+    )
+    yield
 
 
 def configure_batch_sizes(rank, mbs, gbs, dp=1):

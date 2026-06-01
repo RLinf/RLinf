@@ -59,7 +59,7 @@ jobs:
           push: false
           build-args: |
            BUILD_TARGET=reason
-           NO_MIRROR=true
+           NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:reason
 
@@ -118,7 +118,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-maniskill_libero
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied
 
@@ -177,7 +177,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-behavior-openvlaoft
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-behavior-openvlaoft
 
@@ -236,7 +236,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-behavior-openpi
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-behavior-openpi
 
@@ -295,7 +295,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-metaworld
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-metaworld
 
@@ -354,7 +354,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-calvin
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-calvin
 
@@ -413,7 +413,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-robocasa
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-robocasa
 
@@ -472,7 +472,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-isaaclab
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-isaaclab
 
@@ -531,7 +531,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-franka
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-franka
 
@@ -590,7 +590,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-opensora
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-opensora
 
@@ -649,7 +649,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-wan
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-wan
 
@@ -708,7 +708,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-frankasim
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-frankasim
 
@@ -767,7 +767,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-embodichain
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-embodichain
 
@@ -815,7 +815,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-liberopro
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-liberopro
 
@@ -863,7 +863,7 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-liberoplus
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-liberoplus
 
@@ -922,6 +922,6 @@ jobs:
           push: false
           build-args: |
             BUILD_TARGET=embodied-roboverse
-            NO_MIRROR=true
+            NO_MIRROR=1
           outputs: type=cacheonly
           tags: rlinf:embodied-roboverse

@@ -47,6 +47,23 @@ from rlinf.envs.realworld.common.wrappers.spacemouse_intervention import (
 )
 
 
+def _load_dexhand_intervention():
+    """Import DexHandIntervention only when dex-hand teleop is requested."""
+    try:
+        from rlinf.envs.realworld.common.wrappers.dexhand_intervention import (
+            DexHandIntervention,
+        )
+    except ModuleNotFoundError as exc:
+        if exc.name and exc.name.split(".")[0] == "rlinf_dexhand":
+            raise ModuleNotFoundError(
+                "DexHandIntervention requires optional dependency "
+                "'rlinf_dexhand'. Install it before enabling "
+                "dexterous-hand teleoperation."
+            ) from exc
+        raise
+    return DexHandIntervention
+
+
 def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
     if use_spacemouse and use_gello:
         raise ValueError(
@@ -67,8 +84,13 @@ def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
 
 def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     """Wrapper stack for single-arm realworld envs (franka single, xsquare)."""
+    end_effector_type = str(
+        getattr(getattr(env, "config", None), "end_effector_type", "franka_gripper")
+    )
+    is_dex_hand = end_effector_type.endswith("hand")
+
     no_gripper = cfg.get("no_gripper", True)
-    if no_gripper:
+    if no_gripper and not is_dex_hand:
         env = GripperCloseEnv(env)
 
     use_spacemouse = cfg.get("use_spacemouse", True)
@@ -78,9 +100,22 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     gripper_enabled = not no_gripper
 
     if not env.config.is_dummy and use_spacemouse:
-        env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
+        if is_dex_hand:
+            glove_cfg = cfg.get("glove_config", {})
+            DexHandIntervention = _load_dexhand_intervention()
+            env = DexHandIntervention(
+                env,
+                left_port=glove_cfg.get("left_port", "/dev/ttyACM0"),
+                right_port=glove_cfg.get("right_port", None),
+                glove_frequency=glove_cfg.get("frequency", 60),
+                glove_config_file=glove_cfg.get("config_file", None),
+            )
+        else:
+            env = SpacemouseIntervention(env, gripper_enabled=gripper_enabled)
 
     if not env.config.is_dummy and use_gello:
+        if is_dex_hand:
+            raise ValueError("use_gello=True is not supported for ruiyan_hand.")
         gello_port = cfg.get("gello_port", None)
         if gello_port is None:
             raise ValueError(

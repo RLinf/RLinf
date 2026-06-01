@@ -15,17 +15,43 @@
 import json
 from pathlib import Path
 
+import torch
 import torch.nn as nn
-from groot.vla.data.schema import DatasetMetadata
 from groot.vla.data.transform import ComposedModalityTransform
-from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 from safetensors.torch import load_file
 
-from rlinf.models.embodiment.dreamzero.dreamzero_policy import (
-    DreamZeroConfig,
-    DreamZeroPolicy,
+from rlinf.data.datasets.dreamzero.data_transforms import (
+    build_dreamzero_composed_transform,
+    load_dreamzero_dataset_metadata,
 )
+from rlinf.models.embodiment.dreamzero.dreamzero_config import DreamZeroConfig
+from rlinf.models.embodiment.dreamzero.dreamzero_policy import DreamZeroPolicy
+from rlinf.utils.logging import get_logger
+
+
+def _configure_torch_dynamo_for_dreamzero_inference() -> None:
+    """Raise Dynamo limits for DreamZero flow scheduler ``torch.compile`` during rollout.
+
+    ``FlowUniPCMultistepScheduler.multistep_uni_p_bh_update`` is compiled with
+    ``fullgraph=True, dynamic=False``. UniPC multistep order / history tensors can change
+    rank across denoising steps (e.g. 3D action vs 5D video), which triggers recompiles.
+    The default ``recompile_limit`` (8) is too low for embodied eval and raises
+    ``FailOnRecompileLimitHit`` — same mitigation as ``dreamzero/eval_utils/serve_dreamzero_wan22.py``.
+    """
+    _dynamo = torch._dynamo.config
+    if hasattr(_dynamo, "cache_size_limit"):
+        _dynamo.cache_size_limit = max(getattr(_dynamo, "cache_size_limit", 8), 1000)
+    if hasattr(_dynamo, "recompile_limit"):
+        _dynamo.recompile_limit = max(getattr(_dynamo, "recompile_limit", 8), 800)
+    if hasattr(_dynamo, "accumulated_cache_size_limit"):
+        _dynamo.accumulated_cache_size_limit = max(
+            getattr(_dynamo, "accumulated_cache_size_limit", 8), 1000
+        )
+    if hasattr(_dynamo, "accumulated_recompile_limit"):
+        _dynamo.accumulated_recompile_limit = max(
+            getattr(_dynamo, "accumulated_recompile_limit", 8), 2000
+        )
 
 
 def _promote_scalar_params_to_1d(model):
@@ -50,72 +76,125 @@ def _promote_scalar_params_to_1d(model):
 def get_model(cfg: DictConfig, torch_dtype=None):
     """Load DreamZero policy from checkpoint."""
 
-    model_path = Path(cfg.get("model_path"))
-    if not model_path.exists():
-        raise FileNotFoundError(f"DreamZero model_path does not exist: {model_path}")
+    from rlinf.utils.patcher import Patcher
+
+    _configure_torch_dynamo_for_dreamzero_inference()
+
+    Patcher.clear()
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE38",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAE38",
+    )
+    Patcher.add_patch(
+        "groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAEStateDictConverter",
+        "rlinf.models.embodiment.dreamzero.patch.wan_video_vae.WanVideoVAEStateDictConverter",
+    )
+    _dit_chunk = "groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk"
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_clean_image_only",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_state_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_image_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_wrapper(
+        f"{_dit_chunk}.CausalWanSelfAttention._process_noisy_action_blocks",
+        torch.compile(mode="reduce-overhead"),
+    )
+    Patcher.add_patch(
+        f"{_dit_chunk}.CausalWanModel._forward_train",
+        "rlinf.models.embodiment.dreamzero.patch.wan_causal_model_forward_train._forward_train",
+    )
+    Patcher.apply()
+
+    model_path = cfg.get("model_path", None)
 
     tokenizer_path = cfg.get("tokenizer_path", "google/umt5-xxl")
-    action_dim = cfg.get("action_dim", 7)
 
-    config_path = model_path / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config not found: {config_path}")
-
-    with open(config_path) as f:
-        config_dict = json.load(f)
+    config_dict = OmegaConf.to_container(cfg, resolve=True)
+    if not isinstance(config_dict, dict):
+        raise ValueError(
+            "DreamZero actor.model must resolve to a mapping after validate_sft_cfg()."
+        )
 
     dreamzero_config = DreamZeroConfig(**config_dict)
+
+    has_full_model_weights = False
+    st = st_index = None
+    if model_path is not None:
+        ckpt = Path(model_path)
+        st = ckpt / "model.safetensors"
+        st_index = ckpt / "model.safetensors.index.json"
+        has_full_model_weights = st.exists() or st_index.exists()
+
     # Disable defer_lora_injection for immediate loading
     if "config" in dreamzero_config.action_head_cfg and isinstance(
         dreamzero_config.action_head_cfg["config"], dict
     ):
         dreamzero_config.action_head_cfg["config"]["defer_lora_injection"] = False
-        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = True
+        # If full DreamZero safetensors are absent, fall back to component loading from
+        # WAN paths in checkpoint config or preset YAML (diffusion / text / image / vae).
+        dreamzero_config.action_head_cfg["config"]["skip_component_loading"] = (
+            has_full_model_weights
+        )
 
-    dreamzero_config.env_action_dim = action_dim
-
-    exp_cfg_dir = model_path / "experiment_cfg"
-    metadata_path = exp_cfg_dir / "metadata.json"
-    with open(metadata_path, "r") as f:
-        metadatas = json.load(f)
-
-    embodiment_tag = cfg.get("embodiment_tag", "libero_sim")
-    metadata = DatasetMetadata.model_validate(metadatas[embodiment_tag])
-
-    train_cfg = OmegaConf.load(exp_cfg_dir / "conf.yaml")
-    train_cfg.transforms[embodiment_tag].transforms[-1].tokenizer_path = tokenizer_path
-    data_transforms = instantiate(train_cfg.transforms[embodiment_tag])
+    metadata = load_dreamzero_dataset_metadata(cfg)
+    data_transforms = build_dreamzero_composed_transform(cfg, tokenizer_path)
     assert isinstance(data_transforms, ComposedModalityTransform), f"{data_transforms=}"
     data_transforms.set_metadata(metadata)
     data_transforms.eval()
 
+    embodiment_tag = str(cfg.embodiment_tag)
+
     dreamzero_config.data_transforms = data_transforms
-    dreamzero_config.relative_action = train_cfg.get("relative_action", False)
-    dreamzero_config.relative_action_per_horizon = train_cfg.get(
-        "relative_action_per_horizon", False
+    dreamzero_config.embodiment_tag = embodiment_tag
+    dreamzero_config.relative_action = bool(cfg.get("relative_action", False))
+    dreamzero_config.relative_action_per_horizon = bool(
+        cfg.get("relative_action_per_horizon", False)
     )
-    dreamzero_config.relative_action_keys = train_cfg.get("relative_action_keys", [])
+    dreamzero_config.relative_action_keys = list(cfg.get("relative_action_keys") or [])
 
     model = DreamZeroPolicy(
         config=dreamzero_config,
     )
-    #  load safetensors (support index shard)
-    state_dict = {}
-    st = model_path / "model.safetensors"
-    st_index = model_path / "model.safetensors.index.json"
-    if st_index.exists():
-        with open(st_index, "r") as f:
-            index = json.load(f)
-        for shard_file in sorted(set(index["weight_map"].values())):
-            state_dict.update(load_file(str(model_path / shard_file)))
-    elif st.exists():
-        state_dict.update(load_file(str(st)))
-    else:
-        raise FileNotFoundError(f"No safetensors weights under {model_path}")
-    if any(".base_layer." in k for k in state_dict):
-        state_dict = {k.replace(".base_layer.", "."): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict, strict=False)
 
+    # Load DreamZero full weights if available; otherwise keep component-initialized model.
+    if has_full_model_weights and model_path is not None:
+        state_dict = {}
+        if st_index is not None and st_index.exists():
+            with open(st_index, "r") as f:
+                index = json.load(f)
+            for shard_file in sorted(set(index["weight_map"].values())):
+                state_dict.update(load_file(str(ckpt / shard_file)))
+        elif st is not None and st.exists():
+            state_dict.update(load_file(str(st)))
+        if any(".base_layer." in k for k in state_dict):
+            state_dict = {
+                k.replace(".base_layer.", "."): v for k, v in state_dict.items()
+            }
+        model.load_state_dict(state_dict, strict=False)
+    else:
+        loc = str(model_path) if model_path is not None else "model_path=null"
+        get_logger().warning(
+            "No model.safetensors under %s; initializing DreamZero from component weights "
+            "in config (set diffusion/text/image/vae paths in checkpoint config or preset).",
+            loc,
+        )
+    if hasattr(model, "action_head"):
+        ah = model.action_head
+        if not hasattr(ah, "trt_engine"):
+            ah.trt_engine = None
+        if not hasattr(ah, "trt_context"):
+            ah.trt_context = None
     _promote_scalar_params_to_1d(model)
     model = model.to(dtype=torch_dtype)
 

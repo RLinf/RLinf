@@ -289,7 +289,6 @@ class EmbodiChainEnv(gym.Env):
         env_cfg.sim_cfg = SimulationManagerCfg(
             headless=bool(_cfg_get(self.cfg, "headless", True)),
             sim_device=self._sim_device,
-            enable_rt=bool(_cfg_get(self.cfg, "enable_rt", False)),
             gpu_id=self._gpu_id,
         )
         return build_env(gym_config["id"], base_env_cfg=env_cfg)

@@ -90,6 +90,7 @@ SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
+SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
@@ -112,6 +113,7 @@ EMBODIED_MODEL = set(
         SupportedModel.MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
+        SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
@@ -295,7 +297,11 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
     hf_config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=True)
 
-    if "Qwen2ForCausalLM" in hf_config.architectures:
+    if (
+        "Qwen2ForCausalLM" in hf_config.architectures
+        or "Qwen2_5ForCausalLM" in hf_config.architectures
+        or "Qwen2_5_VLForConditionalGeneration" in hf_config.architectures
+    ):
         qkv_bias = True
     else:
         qkv_bias = getattr(hf_config, "attention_bias", False)
@@ -303,6 +309,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     if (
         "Qwen3ForCausalLM" in hf_config.architectures
         or "Qwen3MoeForCausalLM" in hf_config.architectures
+        or "Qwen3VLForConditionalGeneration" in hf_config.architectures
+        or "Qwen3VLMoeForConditionalGeneration" in hf_config.architectures
     ):
         qk_layernorm = True
     else:
@@ -319,6 +327,11 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             else:
                 # mrope
                 cfg.model.seq_len_interpolation_factor = None
+        model_type = getattr(cfg.model, "model_type", None)
+        if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
+            # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
+            hf_config = hf_config.text_config
+
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
         cfg.model.rotary_base = hf_config.rope_theta
@@ -512,6 +525,9 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             "enable_gloo_process_groups", True
         )
 
+        #  megatron >= 0.15.0
+        cfg.megatron.skip_train = cfg.megatron.get("skip_train", False)
+
         # ddp config
         cfg.megatron.check_for_nan_in_loss_and_grad = cfg.megatron.get(
             "check_for_nan_in_loss_and_grad", False
@@ -668,7 +684,10 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
             f"grouped_gemm type only avail in [null, te]. get value ({cfg.model.moe_grouped_gemm})"
         )
 
-        if cfg.model.expert_tensor_parallel_size is not None:
+        if (
+            not getattr(cfg.megatron, "mbridge", False)
+            and cfg.model.expert_tensor_parallel_size is not None
+        ):
             assert (
                 cfg.model.expert_tensor_parallel_size
                 <= cfg.model.tensor_model_parallel_size
@@ -795,8 +814,8 @@ def validate_embodied_cfg(cfg):
 
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
-    # Check that actor_critic loss requires value_head
-    if (
+    # Check that actor_critic loss requires value_head (training only; eval does not need critic)
+    if not cfg.runner.get("only_eval", False) and (
         cfg.algorithm.loss_type == "actor_critic"
         or cfg.algorithm.loss_type == "decoupled_actor_critic"
     ):
@@ -812,7 +831,7 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
-    if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
+    if cfg.runner.val_check_interval > 0 or cfg.runner.get("only_eval", False):
         assert cfg.env.eval.total_num_envs > 0, (
             "Total number of parallel environments for evaluation must be greater than 0"
         )
@@ -841,7 +860,7 @@ def validate_embodied_cfg(cfg):
             "env.eval.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
 
-    if not cfg.runner.only_eval:
+    if not cfg.runner.get("only_eval", False):
         assert cfg.env.train.total_num_envs > 0, (
             "Total number of parallel environments for training must be greater than 0"
         )
@@ -875,6 +894,13 @@ def validate_embodied_cfg(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
         cfg.runner.weight_sync_interval = weight_sync_interval
+        # Overlap environment bootstrap (reset) with actor training to hide reset latency.
+        # This is enabled only when offload is disabled to avoid resource contention.
+        # Note: If EnvWorker and Actor share the same accelerator, this may increase GPU memory
+        # pressure during the overlap period.
+        cfg.runner.overlap_env_bootstrap = bool(
+            cfg.runner.get("overlap_env_bootstrap", False)
+        ) and not cfg.env.train.get("enable_offload", False)
         if (
             SupportedEnvType(cfg.env.train.env_type) == SupportedEnvType.MANISKILL
             or SupportedEnvType(cfg.env.eval.env_type) == SupportedEnvType.MANISKILL
@@ -1051,6 +1077,18 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
         else:
             # set the val_check_interval to -1 if there is no eval data or is not set
             cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
+
+        model_type = cfg.actor.model.get("model_type", None)
+        if (
+            model_type is not None
+            and SupportedModel(model_type) == SupportedModel.DREAMZERO
+        ):
+            from rlinf.models.embodiment.dreamzero.dreamzero_config import (
+                validate_dreamzero_sft_model_cfg,
+            )
+
+            cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
+
     return cfg
 
 
@@ -1174,9 +1212,23 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.per_worker_log_path = os.path.join(
                 cfg.runner.logger.log_path, "worker_logs"
             )
+        cfg.runner.nsight_output_path = None
+        nsight_cfg = cfg.cluster.get("nsight", None)
+        if nsight_cfg is not None and bool(nsight_cfg.get("enabled", True)):
+            cfg.runner.nsight_output_path = os.path.abspath(
+                os.path.join(
+                    cfg.runner.logger.log_path,
+                    cfg.runner.logger.experiment_name,
+                    "nsights",
+                )
+            )
 
     # Init cluster
-    Cluster(cluster_cfg=cfg.cluster, distributed_log_dir=cfg.runner.per_worker_log_path)
+    Cluster(
+        cluster_cfg=cfg.cluster,
+        distributed_log_dir=cfg.runner.per_worker_log_path,
+        nsight_output_dir=cfg.runner.nsight_output_path,
+    )
 
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (
         f"task_type must be one of {SUPPORTED_TASK_TYPE}"
@@ -1195,7 +1247,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
     elif cfg.runner.task_type == "offline":
         cfg = validate_offline_cfg(cfg)
 
-    if cfg.runner.task_type != "sft":
+    if cfg.runner.task_type != "sft" and not cfg.runner.get("only_eval", False):
         if cfg.algorithm.adv_type in ("grpo", "grpo_dynamic", "reinpp_baseline"):
             assert cfg.algorithm.group_size > 1
 
@@ -1205,9 +1257,14 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
 
     if cfg.actor.training_backend == "megatron":
         cfg.actor = validate_megatron_cfg(cfg.actor)
-        cfg.actor = validate_model_cfg_by_hf_config(
-            cfg.actor, cfg.rollout.model.model_path
-        )
+        if cfg.runner.task_type == "sft":
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.actor.model.model_path
+            )
+        else:
+            cfg.actor = validate_model_cfg_by_hf_config(
+                cfg.actor, cfg.rollout.model.model_path
+            )
         # TODO. Need actually pad padded_vocab_size.
         assert (
             cfg.actor.model.padded_vocab_size

@@ -54,6 +54,7 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None  # [B]
     truncations: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    env_infos: Optional[dict[str, Any]] = None
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
     intervene_flags: Optional[torch.Tensor] = None  # [B]
@@ -78,6 +79,11 @@ class EnvOutput:
         )
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.env_infos = (
+            put_tensor_device(self.env_infos, "cpu")
+            if self.env_infos is not None
+            else None
         )
         self.intervene_actions = (
             self.intervene_actions.cpu().contiguous()
@@ -251,6 +257,7 @@ class EnvOutput:
         env_output_dict["terminations"] = self.terminations
         env_output_dict["truncations"] = self.truncations
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["env_infos"] = self.env_infos
         env_output_dict["intervene_actions"] = self.intervene_actions
         env_output_dict["intervene_flags"] = self.intervene_flags
 
@@ -622,6 +629,20 @@ class EmbodiedRolloutResult:
         self.curr_obs.append(curr_obs)
         self.next_obs.append(next_obs)
 
+    def clear(self):
+        self.actions.clear()
+        self.intervene_flags.clear()
+        self.rewards.clear()
+        self.terminations.clear()
+        self.truncations.clear()
+        self.dones.clear()
+        self.prev_logprobs.clear()
+        self.prev_values.clear()
+        self.versions.clear()
+        self.forward_inputs.clear()
+        self.curr_obs.clear()
+        self.next_obs.clear()
+
     def to_trajectory(self) -> Trajectory:
         # return [trajectory_length, B, ...]
         trajectory = Trajectory(
@@ -727,6 +748,7 @@ class EmbodiedRolloutResult:
                     f"Unsupported value type: {type(value)} for field_name: {field_name}"
                 )
 
+        del all_trajectory
         return splited_trajectories
 
 

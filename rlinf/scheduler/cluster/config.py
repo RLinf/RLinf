@@ -159,6 +159,134 @@ class NodeGroupConfig:
 
 
 @dataclass
+class NsightConfig:
+    """Configuration for profiling worker processes with Nsight Systems."""
+
+    enabled: bool = True
+    """Whether to enable Nsight wrapping for matching worker groups."""
+
+    worker_groups: Optional[list[str] | str] = None
+    """Worker group names to profile. If omitted, all worker groups are profiled."""
+
+    options: Optional[dict[str, str]] = None
+    """Additional ``nsys profile`` options keyed by flag name."""
+
+    flags: Optional[list[str] | str] = None
+    """Additional bare ``nsys profile`` flags emitted without values."""
+
+    @staticmethod
+    def _stringify_option_value(option_value: object) -> str:
+        if isinstance(option_value, bool):
+            return str(option_value).lower()
+        return str(option_value)
+
+    @staticmethod
+    def _normalize_capture_range_end_alias(option_value: object) -> str:
+        assert option_value is not None, (
+            "Nsight option 'stop-on-range-end' must have an explicit value."
+        )
+        normalized_value = str(option_value).strip().lower()
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return "stop"
+        if normalized_value in {"false", "0", "no", "off"}:
+            return "none"
+        return str(option_value)
+
+    def __post_init__(self):
+        """Normalize Nsight worker groups, options, and flags after parsing YAML."""
+        if self.worker_groups is not None:
+            worker_groups = self.worker_groups
+            if isinstance(worker_groups, str):
+                self.worker_groups = [worker_groups]
+            else:
+                assert isinstance(worker_groups, (list, ListConfig)), (
+                    "worker_groups must be a list of strings or a single string "
+                    "in cluster nsight config. "
+                    f"But got {type(worker_groups)}: {worker_groups}"
+                )
+                self.worker_groups = [str(group_name) for group_name in worker_groups]
+
+        if self.flags is not None:
+            flags = self.flags
+            if isinstance(flags, str):
+                self.flags = [flags]
+            else:
+                assert isinstance(flags, (list, ListConfig)), (
+                    "flags must be a list of strings or a single string "
+                    "in cluster nsight config. "
+                    f"But got {type(flags)}: {flags}"
+                )
+                self.flags = [str(flag_name) for flag_name in flags]
+            assert all(flag_name != "" for flag_name in self.flags), (
+                "Nsight flags must not contain empty names."
+            )
+
+        if self.options is not None:
+            assert hasattr(self.options, "keys"), (
+                "Nsight options must be a dictionary in cluster nsight config. "
+                f"But got {type(self.options)}: {self.options}"
+            )
+            self.options = {
+                str(option_name): self._stringify_option_value(option_value)
+                for option_name, option_value in self.options.items()
+            }
+            if "stop-on-range-end" in self.options:
+                assert "capture-range-end" not in self.options, (
+                    "Nsight options must not specify both 'stop-on-range-end' "
+                    "and 'capture-range-end'."
+                )
+                self.options["capture-range-end"] = (
+                    self._normalize_capture_range_end_alias(
+                        self.options.pop("stop-on-range-end")
+                    )
+                )
+            assert not ("o" in self.options and "output" in self.options), (
+                "Nsight options must not specify both 'o' and 'output'."
+            )
+        if self.flags is not None and self.options is not None:
+            overlapping_names = sorted(set(self.flags).intersection(self.options))
+            assert not overlapping_names, (
+                "Nsight flags and options must not specify the same names. "
+                f"Got duplicates: {overlapping_names}"
+            )
+
+    def profiles_worker_group(self, worker_group_name: str) -> bool:
+        """Return whether this config should profile the given worker group."""
+        if not self.enabled or not self.worker_groups:
+            return False
+        normalized_group_names = {
+            group_name.lower() for group_name in self.worker_groups
+        }
+        return (
+            "all" in normalized_group_names
+            or worker_group_name.lower() in normalized_group_names
+        )
+
+    def to_cli_tokens(self, default_output_prefix: Optional[str] = None) -> list[str]:
+        """Render ``nsys profile`` options into CLI tokens."""
+        flags = list(self.flags or [])
+        options = dict(self.options or {})
+        if default_output_prefix is not None:
+            options.setdefault("o", default_output_prefix)
+
+        option_tokens = []
+        for flag_name in flags:
+            if flag_name == "":
+                raise ValueError("Nsight option names must not be empty.")
+            option_tokens.append(
+                f"--{flag_name}" if len(flag_name) > 1 else f"-{flag_name}"
+            )
+        for option_name, option_value in options.items():
+            if option_name == "":
+                raise ValueError("Nsight option names must not be empty.")
+            if len(option_name) > 1:
+                option_tokens.append(f"--{option_name}={option_value}")
+            else:
+                option_tokens.extend([f"-{option_name}", option_value])
+        return option_tokens
+
+
+@dataclass
 class ClusterConfig:
     """Configuration for the entire cluster.
 
@@ -170,6 +298,14 @@ class ClusterConfig:
 
     cluster:
       num_nodes: 18
+      nsight:
+        enabled: true
+        worker_groups: [ActorGroup, RolloutGroup]
+        options:
+          t: cuda,cudnn,cublas,nvtx
+          sample: none
+          capture-range: nvtx
+          capture-range-end: stop
       component_placement:
         actor:
           node_group: a800
@@ -253,6 +389,15 @@ class ClusterConfig:
         When using `node_group` in the component_placement, the specified hardware ranks are thus (1) `hardware.type` hardware if it is specified in the node group; (2) automatically detected accelerator hardware if it exists; (3) node itself as hardware resource if no accelerator hardware is found.
         When using the reserved `node` node_group in the component_placement, it is a group with all nodes but no hardware. And so it can be used to perform hardware-agnostic placement of processes on specific nodes.
 
+        6. nsight (optional): An `NsightConfig` describing how to wrap matching worker groups with `nsys profile`.
+
+            - `enabled` controls whether RLinf wraps matching workers with `nsys profile`.
+            - `worker_groups` matches worker group names such as `cfg.actor.group_name`. If omitted, all worker groups are profiled.
+            - `options` maps directly to `nsys profile` CLI flags that take explicit values.
+            - `flags` emits bare `nsys profile` flags without values.
+            - Use `capture-range-end: stop` with `capture-range: nvtx` when you want collection to stop after the profiled NVTX range ends.
+            - `o` or `output` overrides the default report filename prefix.
+
         **Multi-node-group placement**: A worker group can be placed across multiple node groups with heterogeneous hardware types by specifying multiple node group labels. For example:
 
         .. code-block:: yaml
@@ -273,6 +418,9 @@ class ClusterConfig:
 
     node_groups: Optional[list[NodeGroupConfig]] = None
     """List of node group configurations in the cluster."""
+
+    nsight: Optional[NsightConfig] = None
+    """Optional Nsight profiling configuration for worker processes."""
 
     @staticmethod
     def from_dict_cfg(cfg_dict: DictConfig) -> "ClusterConfig":
@@ -356,6 +504,18 @@ class ClusterConfig:
 
     def __post_init__(self):
         """Post-initialization to convert nodes dicts to their respective dataclass instances."""
+        if self.nsight is not None:
+            assert hasattr(self.nsight, "keys"), (
+                "cluster.nsight must be a dictionary. "
+                f"But got {type(self.nsight)}: {self.nsight}"
+            )
+            dataclass_arg_check(
+                NsightConfig,
+                self.nsight,
+                error_suffix="in cluster nsight yaml config",
+            )
+            self.nsight = NsightConfig(**self.nsight)
+
         if self.node_groups is not None:
             # Arg check
             for node_group in self.node_groups:

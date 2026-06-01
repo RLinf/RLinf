@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing as mp
 import os
 from concurrent.futures import Future, ProcessPoolExecutor
 from copy import deepcopy
@@ -65,7 +66,6 @@ def hf_to_middle_file(convert_config: ConvertorConfig) -> None:
         convert_config (ConvertorConfig): Configuration for the conversion process.
     """
     iteration = get_megatron_iteration_from_hf(convert_config)
-
     if not os.path.exists(convert_config.save_path):
         os.makedirs(convert_config.save_path)
     if iteration == -1:
@@ -104,6 +104,7 @@ def hf_to_middle_file(convert_config: ConvertorConfig) -> None:
     if convert_config.process_num > 1:
         with ProcessPoolExecutor(
             convert_config.process_num,
+            mp_context=mp.get_context("spawn"),
             initializer=get_device_initializer(convert_config),
         ) as mp_exec:
             handles: list[Future] = []
@@ -201,9 +202,13 @@ def middle_file_to_mg(convert_config: ConvertorConfig) -> None:
     if convert_config.process_num > 1:
         operation_aware_initializer = OperationAwareDeviceInitializer(convert_config)
         with (
-            ProcessPoolExecutor(convert_config.process_num) as saver_exec,
             ProcessPoolExecutor(
-                convert_config.process_num, initializer=operation_aware_initializer
+                convert_config.process_num, mp_context=mp.get_context("spawn")
+            ) as saver_exec,
+            ProcessPoolExecutor(
+                convert_config.process_num,
+                mp_context=mp.get_context("spawn"),
+                initializer=operation_aware_initializer,
             ) as mp_exec,
         ):
             spliter_handles = []

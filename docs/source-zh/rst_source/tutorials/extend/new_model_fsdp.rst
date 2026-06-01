@@ -71,6 +71,11 @@ RLinf 源码。
    # 或使用完整包路径，例如：
    export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
 
+独立运行的检查点转换等工具（例如
+``python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf``）在调用
+``get_model`` 之前也会加载 ``RLINF_EXT_MODULE``，与 Worker 侧行为一致；因此若
+``model_type`` 仅通过扩展模块注册，转换前同样需要设置该环境变量。
+
 2. 模型实现
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

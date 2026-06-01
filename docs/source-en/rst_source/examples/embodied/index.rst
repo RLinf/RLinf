@@ -32,6 +32,28 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_amd.html" style="text-decoration: underline; color: blue;">
+           <b>RL with LIBERO on AMD ROCm</b>
+         </a><br>
+         ROCm dependency setup and OSMesa rendering for LIBERO RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="libero_ascend.html" style="text-decoration: underline; color: blue;">
+           <b>RL with LIBERO on Ascend CANN</b>
+         </a><br>
+         CANN dependency setup and driver mounting for LIBERO RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://raw.githubusercontent.com/RLinf/misc/378920588652fff0a2a0b163b392c94694993345/pic/libero-plus.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -299,18 +321,6 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <!-- TODO(thumbnail): replace placeholder cover image URL for nft_openpi -->
-       <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="nft_openpi.html" style="text-decoration: underline; color: blue;">
-           <b>NFT on π₀: Negative-aware FineTuning</b>
-         </a><br>
-         Critic-free online RL fine-tuning for pre-trained π₀ flow-matching policies
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/dsrl.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -399,6 +409,17 @@ as well as reinforcement learning training examples on real robots.
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/dexhand.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="franka_dexhand.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World RL with Franka and Dexterous Hand</b>
+         </a><br>
+         Franka arm + Ruiyan five-finger dexterous hand real-world RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/hg-dagger.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -409,6 +430,19 @@ as well as reinforcement learning training examples on real robots.
        </p>
      </div>
 
+     <!-- TODO: swap the src below to a GimArm peg-insertion still/video once
+          the asset is uploaded to RLinf/misc (tracked by the zanghz21 review
+          on PR #1016). -->
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/gim_arm.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="gim_arm.html" style="text-decoration: underline; color: blue;">
+           <b>Real-World RL with GimArm</b>
+         </a><br>
+         6-DOF GimArm + peg-insertion task over SocketCAN, with Pinocchio-based FK
+       </p>
+     </div>
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
       <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
@@ -442,6 +476,18 @@ as well as reinforcement learning training examples on real robots.
          Flow-matching + SAC pick task on the Dexmal DOS-W1 dual-arm robot
        </p>
      </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <!-- TODO(thumbnail): replace placeholder cover image URL for dosw1 -->
+      <img src="https://github.com/RLinf/misc/raw/main/pic/gim-arm.png"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="gim_arm.html" style="text-decoration: underline; color: blue;">
+          <b>GimArm</b>
+        </a><br>
+        Integrate data collection for the GimArm robotic arm
+      </p>
+    </div>
    </div>
 
 .. toctree::
@@ -450,6 +496,8 @@ as well as reinforcement learning training examples on real robots.
 
    maniskill
    libero
+   libero_amd
+   libero_ascend
    liberoplus_pro
    behavior
    metaworld
@@ -472,8 +520,8 @@ as well as reinforcement learning training examples on real robots.
    mlp
    sac_flow
    sft_openpi
+   sft_dreamzero
    sft_vlm
-   nft_openpi
    dsrl
    dagger
    recap
@@ -482,7 +530,9 @@ as well as reinforcement learning training examples on real robots.
    franka_reward_model
    franka_zed_robotiq
    franka_gello
-   hg-dagger
+   franka_dexhand
    franka_pi0_sft_deploy
+   hg-dagger
+   gim_arm
    xsquare_turtle2
    dosw1

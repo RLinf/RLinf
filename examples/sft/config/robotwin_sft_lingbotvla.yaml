@@ -23,16 +23,13 @@
       experiment_name: "robotwin_sft_lingbotvla"
       logger_backends: ["tensorboard"]  # wandb, swanlab
 
-    max_epochs: 30000
-    max_steps: -1
+    max_epochs: -1
+    max_steps: 30000
     val_check_interval: -1
     save_interval: 1000
 
   data:
     train_data_paths: "/path/to/robotwin-data"
-
-  algorithm:
-    adv_type: gae
 
   actor:
     group_name: "ActorGroup"
@@ -79,8 +76,3 @@
         param_dtype: ${actor.model.precision}
         reduce_dtype: ${actor.model.precision}
         buffer_dtype: ${actor.model.precision}
-
-  reward:
-    use_reward_model: False
-  critic:
-    use_critic_model: False

@@ -112,7 +112,6 @@ rollout:
   collect_transitions: False
   collect_prev_infos: False
 
-  sync_weight_nccl_max_ctas: 32
 
   model:
     model_path: "/path/to/model"
@@ -142,3 +141,6 @@ actor:
       train_expert_only: False
       detach_critic_input: True
       action_chunk: ${actor.model.num_action_chunks}
+
+weight_syncer:
+  nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.

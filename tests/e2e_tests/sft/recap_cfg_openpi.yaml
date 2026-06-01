@@ -23,8 +23,8 @@ runner:
     experiment_name: "recap_cfg_openpi"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 1
-  max_steps: -1
+  max_epochs: -1
+  max_steps: 1
   val_check_interval: -1
   save_interval: -1
 
@@ -43,9 +43,6 @@ data:
     - dataset_path: "/workspace/dataset/data/sft-ci-data/recap/libero_10_3shot"
       type: "sft"
       weight: 1.0
-
-algorithm:
-  adv_type: gae
 
 actor:
   group_name: "ActorGroup"
@@ -88,9 +85,3 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False
