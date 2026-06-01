@@ -359,7 +359,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
    * - 字段
      - 说明
    * - ``runner.ckpt_path``
-     - 待评测的 SFT 权重（``.pt``）。训练保存路径一般为 ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。若仅有 ``.distcp`` 格式，请先按 :doc:`Checkpoint 转换 <../../tutorials/advance/convertor>` 转为 ``.pt``。
+     - 待评测的 SFT 权重（``.pt``）。训练保存路径一般为 ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。若仅有 ``.distcp`` 格式，请先按 :doc:`Checkpoint 转换 <../../tutorials/usage/convertor>` 转为 ``.pt``。
    * - ``actor.model.*_pretrained_path`` / ``tokenizer_path``
      - 与 SFT 冷启动配置一致（``model_path: null`` 时从各预训练路径构建骨干，再由 ``ckpt_path`` 覆盖可训练权重）。
    * - ``actor.model.metadata_json_path``

@@ -12,7 +12,7 @@ The focus is on training and deploying a ResNet-based reward model from scratch 
 Before getting started, it is strongly recommended to read the following documents:
 
 1. :doc:`franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
-2. :doc:`../../tutorials/extend/reward_model` — to understand the complete reward model workflow in RLinf's simulated environments.
+2. :doc:`../../tutorials/embodied/reward_model` — to understand the complete reward model workflow in RLinf's simulated environments.
 
 Prerequisites
 -----------------------
@@ -47,7 +47,7 @@ Reward Model Dataset Collection
 
 Collecting reward model training and evaluation data supports two approaches.
 For full details, see the **Data Collection** section in
-:doc:`../../tutorials/extend/reward_model_realworld`.
+:doc:`../../tutorials/embodied/reward_model`.
 The core difference lies in the labeling method: Approach 1 uses manual keyboard labeling
 and is task-agnostic; Approach 2 uses pose-based automatic labeling and is designed for
 tasks with a fixed target pose.
@@ -82,7 +82,7 @@ labeling, and dataset generation into one end-to-end run with no separate offlin
 
 Once the target frame counts are reached, the script automatically stops, splits the data,
 and saves ``train.pt`` / ``val.pt``. See **Approach 1** in
-:doc:`../../tutorials/extend/reward_model_realworld` for full configuration details.
+:doc:`../../tutorials/embodied/reward_model` for full configuration details.
 
 Approach 2: Fixed-Pose (Target-Driven)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -124,12 +124,12 @@ It is recommended to set ``fail-success-ratio`` to ``3``:
 
 The resulting ``.pt`` files follow the ``RewardDatasetPayload`` schema, containing
 ``images``, ``labels`` (1 = success, 0 = fail), and ``metadata``.
-See **Approach 2** in :doc:`../../tutorials/extend/reward_model_realworld` for the full example.
+See **Approach 2** in :doc:`../../tutorials/embodied/reward_model` for the full example.
 
 Reward Model Training
 -----------------------
 
-This step is identical to **Section 2 — Reward Model Training** in :doc:`../../tutorials/extend/reward_model`.
+This step is identical to **Section 2 — Reward Model Training** in :doc:`../../tutorials/embodied/reward_model`.
 
 In particular, for real-world scenarios, it is recommended to lower the ``min_delta`` of ``early_stop``, for example:
 
@@ -140,7 +140,7 @@ In particular, for real-world scenarios, it is recommended to lower the ``min_de
       min_delta: 1e-6
 
 For real-world teleoperation with live reward model inference (SpaceMouse + GPU node, no RL loop),
-see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../tutorials/extend/reward_model_realworld`.
+see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../tutorials/embodied/reward_model`.
 
 Cluster Configuration
 -----------------------
@@ -182,7 +182,7 @@ The remaining steps follow the **Running the Experiment** section of :doc:`frank
 Worker Interaction During Rollout
 ----------------------------------------------
 
-Unlike **Section 3.2 — Worker Interaction During Rollout** and **Section 3.3 — Final Reward Computation** in :doc:`../../tutorials/extend/reward_model`:
+Unlike **Section 3.2 — Worker Interaction During Rollout** and **Section 3.3 — Final Reward Computation** in :doc:`../../tutorials/embodied/reward_model`:
 in real-world systems with ``standalone_realworld`` enabled, the reward model does **not** combine env rewards with reward model outputs.
 
 In other words, the reward model does **not** act as an additional reward source inside the env worker when constructing the final reward,
