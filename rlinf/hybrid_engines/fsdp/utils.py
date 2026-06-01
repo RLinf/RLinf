@@ -652,12 +652,12 @@ def get_grad_norm(
         return 0.0
 
     total_norm = 0.0
-
+    device = grads_for_norm[0].device
     # Calculate norm.
     if norm_type == torch.inf:
         total_norm = max(grad.abs().max().item() for grad in grads_for_norm)
         total_norm_cuda = torch.tensor(
-            [float(total_norm)], dtype=torch.float, device="cuda"
+            [float(total_norm)], dtype=torch.float, device=device
         )
         # Take max across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if dp_group is not None:
@@ -677,10 +677,10 @@ def get_grad_norm(
             total_norm = torch.tensor(
                 float(total_norm),
                 dtype=torch.float,
-                device=grads_for_norm[0].device,
+                device=device,
             )
         else:
-            total_norm = total_norm.to(device=grads_for_norm[0].device)
+            total_norm = total_norm.to(device=device)
 
         # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
         if dp_group is not None:
