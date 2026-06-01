@@ -244,9 +244,17 @@ def sft_collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     if multi_modal_list:
         for k in multi_modal_list[0].keys():
             vals = [m[k] for m in multi_modal_list]
-            multi_modal_inputs[k] = (
-                torch.cat(vals, dim=0) if isinstance(vals[0], torch.Tensor) else vals
-            )
+            if k == "pixel_values":
+                # pixel_values is a list of torch.Tensor, for get_iterator_k_split to divide
+                multi_modal_inputs[k] = vals
+            elif k == "image_grid_thw":
+                multi_modal_inputs[k] = (
+                    torch.cat(vals, dim=0)
+                    if isinstance(vals[0], torch.Tensor)
+                    else vals
+                )
+            else:
+                raise ValueError(f"Unsupported multi_modal_input key: {k}")
 
     batch: dict[str, Any] = {
         "prompt": batch_prompt,  # [B, L]

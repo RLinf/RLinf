@@ -1,0 +1,94 @@
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - model/dreamzero_14b@actor.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_dreamzero"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 2000
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 100
+
+data:
+  train_data_paths: "path/to/datasets/libero"
+  lazy_load: True
+  num_workers: 8
+  prefetch_factor: 8
+  video_tolerance_s: 0.1
+  parquet_cache_size: 512
+  video_backend: torchcodec # LeRobot video decoder: pyav | torchcodec
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 16
+  seed: 42
+
+  enable_offload: False
+
+  model:
+    model_type: "dreamzero"
+    precision: fp32
+    model_path: "/path/to/models/DreamZero-DROID"
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    # metadata_json_path: /path/to/metadata.json
+    tokenizer_path: "/path/to/models/umt5-xxl"
+    
+    action_horizon: 16
+    state_horizon: 1
+    is_lora: False
+    embodiment_tag: "libero_sim"
+
+  optim:
+    lr: 1.0e-5
+    value_lr: 1.55e-4
+    adam_beta1: 0.95
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 50000
+
+  fsdp_config:
+    strategy: "fsdp2"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    limit_all_gathers: True
+    reshard_after_forward: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: "bf16"
