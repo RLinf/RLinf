@@ -21,7 +21,7 @@ from typing import Optional, Union
 
 import torch
 
-from rlinf.scheduler import WorkerInfo
+from rlinf.scheduler import Worker, WorkerInfo
 
 
 class BaseWorldEnv(ABC):
@@ -41,7 +41,7 @@ class BaseWorldEnv(ABC):
         record_metrics: bool = True,
     ):
         self.cfg = cfg
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(Worker.torch_device_type or "cpu")
 
         self.seed = cfg.seed + seed_offset
         self.total_num_processes = total_num_processes
@@ -107,6 +107,16 @@ class BaseWorldEnv(ABC):
     @abstractmethod
     def step(self, actions):
         """Perform a single action step and return (obs, reward, done, info)."""
+
+    def _get_runtime_device_str(self) -> str:
+        if Worker.torch_device_type is not None:
+            device_index = 0 if self.device.index is None else self.device.index
+            return f"{Worker.torch_device_type}:{device_index}"
+        return self.device.type
+
+    @staticmethod
+    def _clear_accelerator_cache() -> None:
+        Worker.torch_platform.empty_cache()
 
     def _init_metrics(self):
         """Initialize episode metrics tensors."""
