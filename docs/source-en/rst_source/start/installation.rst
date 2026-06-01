@@ -186,6 +186,120 @@ You can override the default virtual environment directory using ``--venv``. For
   bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
   source openpi-venv/bin/activate
 
+Install Script Options
+~~~~~~~~~~~~~~~~~~~~~~
+
+Selecting a Python Version
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The script defaults to Python **3.11.14**. Use ``--python`` to request a different version
+(e.g. ``3.12.0`` for newer packages, or ``3.10.15`` for stricter compatibility). The version
+must be ``>=3.10``.
+
+.. note::
+
+   The ``behavior`` and ``d4rl`` environments internally require Python 3.10 and will override
+   ``--python`` regardless of what you pass.
+
+.. note::
+
+   Critical dependencies such as PyTorch may only provide wheels for newer Python versions in
+   their latest releases. If you specify a newer Python version (e.g. 3.13), you may also need
+   to pass ``--torch`` with a compatible version, otherwise the install may fail to find a
+   matching wheel.
+
+.. code-block:: shell
+
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero --python 3.12.0
+
+   # Newer Python may require a newer torch
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero --python 3.13.0 --torch 2.7.0
+
+Selecting a PyTorch Version
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The default PyTorch version is pinned in ``pyproject.toml`` (currently **2.6.0**). Use
+``--torch`` to install a different version. ``torchvision`` and ``torchaudio`` are derived
+automatically (``torchvision=0.<minor+15>.<patch>``, ``torchaudio=<torch>``). The
+``pyproject.toml`` is patched in place for the duration of the install and restored afterward.
+
+.. code-block:: shell
+
+   bash requirements/install.sh agentic --torch 2.7.0
+
+.. note::
+
+   On AMD (``--platform amd``), ``--torch`` defaults to the lowest torch version with a matching
+   ROCm wheel on the PyTorch index. It should usually be left unset on that platform.
+
+Selecting a Hardware Platform
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Three platforms are supported via ``--platform``:
+
+- ``nvidia`` (default): uses standard PyPI CUDA wheels; prebuilt flash-attn wheels are available.
+- ``amd``: ROCm-based. ``torch``, ``torchvision``, and ``torchaudio`` are fetched from the
+  PyTorch ROCm wheel index. flash-attn is built from source. Use ``--rocm <version>`` to pin
+  the ROCm version; it is auto-detected from the system if omitted.
+- ``ascend``: Huawei NPU. Uses CPU torch from PyPI plus ``torch-npu``. flash-attn is skipped entirely.
+
+.. code-block:: shell
+
+   # AMD ROCm (auto-detect ROCm version)
+   bash requirements/install.sh agentic --platform amd
+
+   # AMD ROCm (pin ROCm version)
+   bash requirements/install.sh agentic --platform amd --rocm 6.3
+
+   # Ascend NPU
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero --platform ascend
+
+You can also export ``UV_TORCH_BACKEND`` before running the script to bypass automatic backend
+selection (e.g. ``export UV_TORCH_BACKEND=cu124``).
+
+Full Argument Reference
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - Argument
+     - Description
+   * - ``<target>``
+     - Installation target. One of ``embodied`` (default), ``agentic``, or ``docs``.
+   * - ``--model <name>``
+     - Embodied model to install (``target=embodied`` only).
+       Supported: ``openvla``, ``openvla-oft``, ``openpi``, ``gr00t``, ``dexbotic``, ``starvla``,
+       ``lingbotvla``, ``dreamzero``, ``qwen3_vl``.
+       Omit to install an environment without a model.
+   * - ``--env <name>``
+     - Environment to install alongside the model. Required for most embodied models.
+       Supported: ``behavior``, ``maniskill_libero``, ``libero``, ``metaworld``, ``calvin``,
+       ``isaaclab``, ``robocasa``, ``franka``, ``franka-dexhand``, ``frankasim``, ``robotwin``,
+       ``habitat``, ``opensora``, ``wan``, ``xsquare_turtle2``, ``liberopro``, ``liberoplus``,
+       ``roboverse``, ``embodichain``, ``d4rl``, ``dosw1``, ``gim_arm``, ``dummy``.
+   * - ``--venv <dir>``
+     - Virtual environment directory name. Default: ``.venv``.
+   * - ``--python <version>``
+     - Python version for the venv. Default: ``3.11.14``. Must be ``>=3.10``.
+   * - ``--torch <version>``
+     - Override the PyTorch version, e.g. ``2.7.0``.
+   * - ``--platform <name>``
+     - Hardware platform: ``nvidia`` (default), ``amd``, or ``ascend``.
+   * - ``--rocm <version>``
+     - ROCm version for ``--platform amd``, e.g. ``6.3``. Auto-detected when omitted.
+   * - ``--use-mirror``
+     - Route downloads through mirror sites. Recommended for mainland China users.
+   * - ``--no-root``
+     - Skip system-level dependency installation.
+   * - ``--no-flash-attn``
+     - Skip flash-attn installation.
+   * - ``--install-rlinf``
+     - Also install the ``rlinf`` package itself into the venv.
+   * - ``-h``, ``--help``
+     - Print the help message and exit.
+
 .. _install-as-library:
 
 Installation as a Library
