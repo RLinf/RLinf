@@ -527,6 +527,8 @@
    sft_dreamzero
    sft_vlm
    dsrl
+   genesis
+
    dagger
    recap
    co_training
