@@ -194,7 +194,7 @@ During teleoperation, the same run writes:
 - replay-buffer trajectories under ``logs/{timestamp}/demos/``
 - LeRobot data under ``logs/{timestamp}/collected_data/``
 
-For the collection format, see :doc:`../../tutorials/components/data_collection`.
+For the collection format, see :doc:`../../tutorials/embodied/data_collection`.
 
 2. Compute Normalization Statistics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

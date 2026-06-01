@@ -66,9 +66,6 @@ data:
   balance_weights: true
   seed: 42
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

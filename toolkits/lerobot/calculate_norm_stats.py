@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
@@ -23,6 +21,7 @@ import tqdm
 import tyro
 from openpi.training.config import DataConfig
 
+from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
 from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
 
@@ -108,15 +107,17 @@ def main(
     config_name: str,
     repo_id: str,
 ):
-    if not os.environ.get("HF_LEROBOT_HOME"):
-        raise EnvironmentError(
-            "HF_LEROBOT_HOME must be set before running this script. "
-            "Export it manually, for example: "
-            "export HF_LEROBOT_HOME=/path/to/lerobot_root"
+    dataset_root = resolve_lerobot_dataset_root(repo_id)
+    if not (dataset_root / "meta" / "info.json").is_file():
+        raise FileNotFoundError(
+            f"LeRobot dataset not found for repo_id={repo_id!r} at {dataset_root}. "
+            "Pass a local dataset path, a Hugging Face repo id with data under "
+            "HF_LEROBOT_HOME (default: ~/.cache/huggingface/lerobot), or download "
+            "the dataset first."
         )
     config = get_openpi_config(
         config_name,
-        data_kwargs={"repo_id": repo_id},
+        repo_id=repo_id,
     )
     data_config = config.data.create(config.assets_dirs, config.model)
 

@@ -43,7 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -69,7 +69,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
-        self._setup_rollout_weight_dst_ranks()
         if self.cfg.actor.get("compile_model", False):
             self.model = torch.compile(
                 self.model, mode="default"
@@ -91,6 +90,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 target_module.gradient_checkpointing_enable()
         else:
             self.logger.info("[FSDP] Gradient checkpointing is disabled")
+
+        # Record the original trainable parameter names before FSDP wrapping.
+        # Persistent buffer names are also recorded for selective weight syncing.
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
