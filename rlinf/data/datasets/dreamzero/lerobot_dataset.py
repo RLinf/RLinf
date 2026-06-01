@@ -741,6 +741,9 @@ class DreamZeroLeRobotDataset(Dataset):
         if self._video_backend == "decord":
             return self._decode_video_frames_decord(video_path, timestamps, tolerance_s)
 
+        if self._video_backend == "torchcodec":
+            return self._decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+
         from lerobot.datasets.video_utils import decode_video_frames as decode_video_frames_lerobot
 
         return decode_video_frames_lerobot(
@@ -769,6 +772,70 @@ class DreamZeroLeRobotDataset(Dataset):
 
         frames = vr.get_batch(frame_indices)
         arr = frames.asnumpy()  # (T, H, W, C) uint8
+    @staticmethod
+    def _decode_video_frames_torchcodec(
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> np.ndarray:
+        """Decode frames via torchcodec; return numpy uint8 (T, H, W, C).
+
+        Mirrors ``lerobot.datasets.video_utils.decode_video_frames_torchcodec``
+        but skips float32 normalisation (the caller normalises via
+        :meth:`_video_to_thwc_uint8`) and returns uint8 THWC instead of
+        float32 TCHW.
+
+        The tolerance check (query vs loaded pts_seconds via cdist) is
+        preserved verbatim from the LeRobot reference implementation so
+        that approximate-seek mismatches are detected early.
+        """
+
+        from torchcodec.decoders import VideoDecoder
+
+        decoder = VideoDecoder(str(video_path), device="cpu", seek_mode="approximate", dimension_order="NHWC")
+        loaded_frames = []
+        loaded_ts = []
+
+        total_frames = len(decoder)
+
+        # get metadata for frame information
+        metadata = decoder.metadata
+        average_fps = metadata.average_fps
+
+        # convert timestamps to frame indices
+        frame_indices = [round(ts * average_fps) for ts in timestamps]
+
+        # retrieve frames based on indices
+        frames_batch = decoder.get_frames_at(indices=frame_indices)
+
+        for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=False):
+            loaded_frames.append(frame)
+            loaded_ts.append(pts.item())
+
+        query_ts = torch.tensor(timestamps)
+        loaded_ts = torch.tensor(loaded_ts)
+
+        dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
+        min_dists, argmin = dist.min(1)
+
+        is_within_tol = min_dists < float(tolerance_s)
+        if not is_within_tol.all():
+            violators = min_dists[~is_within_tol]
+            raise RuntimeError(
+                f"[dreamzero] torchcodec tolerance violation: {violators.tolist()} > "
+                f"tolerance_s={tolerance_s}. "
+                f"video={video_path} "
+                f"n={len(timestamps)} idx=[{min(frame_indices)}..{max(frame_indices)}]"
+            )
+
+        # Select the closest frame to each query timestamp (handles approximate-seek drift).
+        tensor = torch.stack([loaded_frames[int(idx)] for idx in argmin])
+        # tensor is now (T, H, W, C) uint8 on CPU, contiguous.
+
+        # torchcodec returns FrameBatch with .data as a torch.Tensor.
+        # On CPU with contiguous NHWC layout, .numpy(force=True) is a zero-copy view.
+        arr = tensor.numpy(force=True)
+
         return arr
 
     def _materialize_parquet_sample(
