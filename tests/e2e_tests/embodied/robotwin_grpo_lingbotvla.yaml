@@ -127,6 +127,8 @@ rollout:
     model_path: ${actor.model.model_path}
     tokenizer_path: ${actor.model.tokenizer_path}
     precision: ${actor.model.precision}
+    lingbotvla:
+      config_path: ${actor.model.lingbotvla.config_path}
 
 actor:
   group_name: "ActorGroup"
