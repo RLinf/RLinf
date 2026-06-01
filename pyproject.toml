@@ -76,8 +76,8 @@ swanlab = [
     "swanlab>=0.6.11",
 ]
 loggers = [
-    "wandb<0.25.1",
-    "swanlab>=0.6.11",
+    "rlinf[wandb]",
+    "rlinf[swanlab]",
 ]
 agentic-sglang = [
     "sglang[all]==0.4.6.post5",

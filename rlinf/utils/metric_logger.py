@@ -32,21 +32,14 @@ class _TensorboardLogger:
         self.writer.close()
 
 
-_LOGGER_EXTRA_BY_PACKAGE = {
-    "wandb": "wandb",
-    "swanlab": "swanlab",
-}
-
-
 def _import_optional_logger(package_name: str):
     try:
         return importlib.import_module(package_name)
     except ImportError as exc:
-        extra_name = _LOGGER_EXTRA_BY_PACKAGE[package_name]
         raise ImportError(
             f"Logger backend '{package_name}' is not installed. Install RLinf with "
-            f"the optional dependencies to use it: pip install 'rlinf[{extra_name}]' "
-            f"or uv sync --extra {extra_name}. Use 'rlinf[loggers]' to install all "
+            f"the optional dependencies to use it: pip install 'rlinf[{package_name}]' "
+            f"or uv sync --extra {package_name}. Use 'rlinf[loggers]' to install all "
             f"optional logger backends. Original import error: {exc}"
         ) from exc
 
