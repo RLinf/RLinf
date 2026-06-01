@@ -14,7 +14,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 该基准涵盖多个领域，包括机械臂、移动操作器、人形机器人以及灵巧手，  
 支持抓取、组装、绘图、移动等多种任务。
 
-我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../tutorials/mode/hybrid`）。
+我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../tutorials/usage/execution_modes`）。
 
 启动训练
 --------------------------
@@ -121,7 +121,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    ``cluster.component_placement``。
 
    根据实际资源将该项设置为 **0-3** 或 **0-7** 来使用 4/8 张 GPU。
-   查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
+   查看 :doc:`../tutorials/configuration/basic_config` 以获取有关 Placement 配置的更详细说明。
 
    .. code-block:: yaml
 

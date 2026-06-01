@@ -1,7 +1,7 @@
 Tutorials
 =========
 
-This section offers an in-depth exploration of **RLinf**.  
+This section offers an in-depth exploration of **RLinf**.
 It provides a collection of hands-on tutorials covering all the core components and features of the library.
 Below, we first give an overview of RLinf execution flow to help users understand how RLinf executes an RL training.
 
@@ -29,13 +29,11 @@ This design enables users to build large-scale RL training pipelines with minima
    :hidden:
    :maxdepth: 4
 
-   user/index
-   multi_nodes/index
-   mode/index
-   scheduler/index
-   communication/index
-   components/index
-   advance/index
+   configuration/index
+   usage/index
+   embodied/index
+   agentic/index
    rlalg/index
    extend/index
+   advance/index
    release

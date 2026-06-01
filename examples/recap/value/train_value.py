@@ -20,7 +20,6 @@ Usage:
 """
 
 import json
-import os
 
 import hydra
 import torch.multiprocessing as mp
@@ -39,11 +38,6 @@ mp.set_start_method("spawn", force=True)
 
 @hydra.main(version_base="1.1", config_path="config", config_name="libero_sft_value")
 def main(cfg) -> None:
-    # Set HF_LEROBOT_HOME if data_root is provided
-    data_root = cfg.data.get("data_root", None)
-    if data_root:
-        os.environ["HF_LEROBOT_HOME"] = data_root
-
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 

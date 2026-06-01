@@ -46,9 +46,6 @@ data:
   lazy_loading: false
   num_workers: 2
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"

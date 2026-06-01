@@ -23,7 +23,6 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
-from torch.utils._pytree import tree_map
 
 import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
@@ -33,9 +32,8 @@ from rlinf.algorithms.utils import (
 from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
-    FSDPModelManager,
-)
+from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
     prepare_pack_fsdp,
@@ -75,7 +73,6 @@ from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
 )
-from rlinf.utils.pytree import register_pytree_dataclasses
 from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
@@ -966,7 +963,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     ),
                 )
                 batch["advantages"] = advantages
-
         return batch
 
 
@@ -981,7 +977,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
-
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
@@ -1079,6 +1074,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
@@ -1219,9 +1215,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def _build_sft_data_loader(self):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
-            # NOTE: This must be set before importing openpi.training.data_loader
-            if self.cfg.actor.get("sft_data_path", None):
-                os.environ["HF_LEROBOT_HOME"] = self.cfg.actor.sft_data_path
+            repo_id = resolve_lerobot_repo_id(self.cfg.actor.get("sft_data_path"))
+            if repo_id is None:
+                raise ValueError(
+                    "actor.sft_data_path must be set to a local dataset path or "
+                    "LeRobot repo id when enable_sft_co_train=True."
+                )
 
             import openpi.training.data_loader as _data
 
@@ -1235,6 +1234,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             data_loader_config = get_openpi_config(
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,
+                repo_id=repo_id,
                 data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
             )
             self.data_loader = _data.create_data_loader(
@@ -1265,28 +1265,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.sft_iterator = iter(self.data_loader)
             observation, actions = next(self.sft_iterator)
 
-        register_pytree_dataclasses(observation)
-        observation = tree_map(
-            lambda x: x.to(self.device) if x is not None else x,
-            observation,
-        )
-        actions = actions.to(torch.float32)
-        actions = actions.to(self.device)
-
-        sft_losses = self.model(
-            data={"observation": observation, "actions": actions},
+        sft_loss = self.model(
+            data=(observation, actions),
             forward_type=ForwardType.SFT,
         )
-        # Ensure losses is a tensor and handle different return types
-        if isinstance(sft_losses, list | tuple):
-            sft_losses = torch.stack(sft_losses)
-        elif not isinstance(sft_losses, torch.Tensor):
-            sft_losses = torch.tensor(
-                sft_losses, device=self.device, dtype=torch.float32
-            )
-
-        sft_loss = sft_losses.mean()
-        metrics_data["sft_loss"] = sft_loss.clone().detach().item()
+        metrics_data["sft_loss"] = sft_loss.detach().item()
         total_loss = loss + self.sft_loss_weight * sft_loss
         loss = total_loss
 
@@ -1399,10 +1382,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             self.cfg.algorithm.sampling_params.temperature_train
                         )
                         kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-                    elif (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                    elif SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         kwargs["prev_logprobs"] = prev_logprobs
 
                     compute_values = (
@@ -1419,10 +1402,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                             **kwargs,
                         )
 
-                    if (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 
                     kwargs = {
