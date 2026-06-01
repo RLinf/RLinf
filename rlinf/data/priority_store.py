@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import torch
 from sortedcontainers import SortedList
+
+from rlinf.data.embodied_io_struct import Trajectory
 
 
 class PriorityStore:
@@ -30,7 +33,7 @@ class PriorityStore:
         self._used_seqs: set = set()
         self._discarded_unused: int = 0
 
-    def add(self, priority, data):
+    def add(self, priority: tuple[float, float], data: Trajectory) -> bool:
         if len(self.sl) == self.maxsize:
             if priority < self.sl[0][0]:
                 self._discarded_unused += 1
@@ -49,7 +52,7 @@ class PriorityStore:
 
         return True
 
-    def topn(self, n):
+    def topn(self, n: int) -> list[Trajectory]:
         items = self.sl[-n:]
         for _, seq, _ in items:
             self._used_seqs.add(seq)
