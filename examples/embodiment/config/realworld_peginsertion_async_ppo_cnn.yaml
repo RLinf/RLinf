@@ -114,7 +114,7 @@ env:
       use_dense_reward: True
       reward_scale: 0.02
       max_num_steps: 50
-      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      target_ee_pose: [ 4.90206450e-01, -1.98167609e-03, 7.56991953e-02, 3.13119937e+00, 1.87242712e-02, -6.33608643e-02] # Replace with your target end-effector pose
 
   eval:
     total_num_envs: 1
