@@ -59,8 +59,6 @@ dependencies = [
     "icmplib",
 
     # Logging
-    "wandb<0.25.1",
-    "swanlab>=0.6.11",
     "tensorboard",
 ]
 
@@ -71,6 +69,16 @@ Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.optional-dependencies]
+wandb = [
+    "wandb<0.25.1",
+]
+swanlab = [
+    "swanlab>=0.6.11",
+]
+loggers = [
+    "wandb<0.25.1",
+    "swanlab>=0.6.11",
+]
 agentic-sglang = [
     "sglang[all]==0.4.6.post5",
     "torch-memory-saver",

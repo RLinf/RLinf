@@ -22,6 +22,19 @@ custom metrics to one or more of the following backends:
 Enabling a back-end
 -------------------
 
+TensorBoard is installed with the core RLinf package. W&B and SwanLab are
+optional logger backends; install only the extra dependencies you enable:
+
+.. code-block:: bash
+
+   pip install "rlinf[wandb]"     # W&B only
+   pip install "rlinf[swanlab]"   # SwanLab only
+   pip install "rlinf[loggers]"   # both optional backends
+   # or, from a source checkout:
+   uv sync --extra wandb
+   uv sync --extra swanlab
+   uv sync --extra loggers
+
 Add the desired logger(s) to ``runner.logger.logger_backends`` in your YAML:
 
 .. code-block:: yaml
@@ -95,4 +108,3 @@ metrics. You can check the metrics through your dashboard.
 .. tip::
 
    All three loggers run **in parallel**; feel free to mix and match.
-

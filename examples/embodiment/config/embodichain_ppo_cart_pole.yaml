@@ -23,7 +23,7 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "embodichain_ppo_cart_pole"
-    logger_backends: ["wandb"]
+    logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
   max_steps: -1

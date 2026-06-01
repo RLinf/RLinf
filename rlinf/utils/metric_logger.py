@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import os
 
 from omegaconf import DictConfig, OmegaConf
@@ -29,6 +30,25 @@ class _TensorboardLogger:
 
     def finish(self):
         self.writer.close()
+
+
+_LOGGER_EXTRA_BY_PACKAGE = {
+    "wandb": "wandb",
+    "swanlab": "swanlab",
+}
+
+
+def _import_optional_logger(package_name: str):
+    try:
+        return importlib.import_module(package_name)
+    except ImportError as exc:
+        extra_name = _LOGGER_EXTRA_BY_PACKAGE[package_name]
+        raise ImportError(
+            f"Logger backend '{package_name}' is not installed. Install RLinf with "
+            f"the optional dependencies to use it: pip install 'rlinf[{extra_name}]' "
+            f"or uv sync --extra {extra_name}. Use 'rlinf[loggers]' to install all "
+            f"optional logger backends. Original import error: {exc}"
+        ) from exc
 
 
 class MetricLogger:
@@ -75,7 +95,7 @@ class MetricLogger:
     ) -> dict:
         logger = {}
         if "wandb" in self.logger_backends:
-            import wandb
+            wandb = _import_optional_logger("wandb")
 
             wandb_log_path = os.path.join(log_path, "wandb", log_path_suffix)
             os.makedirs(wandb_log_path, exist_ok=True)
@@ -94,7 +114,7 @@ class MetricLogger:
             logger["wandb"] = wandb
 
         if "swanlab" in self.logger_backends:
-            import swanlab
+            swanlab = _import_optional_logger("swanlab")
 
             swanlab_log_path = os.path.join(log_path, "swanlab", log_path_suffix)
             os.makedirs(swanlab_log_path, exist_ok=True)

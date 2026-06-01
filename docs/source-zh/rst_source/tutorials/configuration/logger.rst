@@ -25,6 +25,19 @@ RLinf 支持实时实验追踪。
 启用后端
 -------------------
 
+TensorBoard 会随 RLinf 核心包安装。W&B 和 SwanLab 是可选日志后端；
+启用前请按需安装额外依赖：
+
+.. code-block:: bash
+
+   pip install "rlinf[wandb]"     # 仅安装 W&B
+   pip install "rlinf[swanlab]"   # 仅安装 SwanLab
+   pip install "rlinf[loggers]"   # 同时安装两个可选后端
+   # 或者在源码 checkout 中：
+   uv sync --extra wandb
+   uv sync --extra swanlab
+   uv sync --extra loggers
+
 在 YAML 中将所需的 logger 添加到 ``runner.logger.logger_backends`` 中：
 
 .. code-block:: yaml
