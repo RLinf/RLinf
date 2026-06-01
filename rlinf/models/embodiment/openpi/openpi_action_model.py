@@ -325,12 +325,37 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         else:
             raise NotImplementedError
 
-    def sft_forward(self, data, **kwargs):
+    def sft_forward(self, data, use_action_chunk_loss: bool = False, **kwargs):
         if hasattr(self, "gradient_checkpointing_disable"):
             self.gradient_checkpointing_disable()
-        observation = data["observation"]
-        actions = data["actions"]
-        return super().forward(observation, actions)
+
+        if isinstance(data, tuple):
+            observation, actions = data
+        else:
+            observation = data["observation"]
+            actions = data["actions"]
+
+        device = next(self.parameters()).device
+        register_pytree_dataclasses(observation)
+        observation = tree_map(
+            lambda x: (
+                torch.as_tensor(x, device=device).contiguous().clone()
+                if x is not None
+                else x
+            ),
+            observation,
+        )
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.as_tensor(actions, device=device)
+        else:
+            actions = actions.to(device=device)
+        actions = actions.to(dtype=torch.float32)
+
+        # PI0Pytorch.forward returns per-element MSE (reduction="none").
+        loss = super().forward(observation, actions)
+        if use_action_chunk_loss:
+            loss = loss[:, : self.config.action_chunk, : self.config.action_env_dim]
+        return loss.mean()
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""

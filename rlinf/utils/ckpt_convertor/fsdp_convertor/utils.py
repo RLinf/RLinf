@@ -16,11 +16,49 @@ import concurrent.futures
 import json
 import os
 import shutil
+from typing import Any
 
 import torch
 from safetensors.torch import save_file
 
-from rlinf.config import SupportedModel
+from rlinf.config import SupportedModel, torch_dtype_from_precision
+
+_TORCH_DTYPE_ALIASES: dict[str, torch.dtype] = {
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+    "float32": torch.float32,
+    "fp32": torch.float32,
+}
+
+
+def resolve_save_torch_dtype(dtype_cfg: Any) -> torch.dtype | None:
+    """Parse ``convertor.torch_dtype``; return None to keep checkpoint dtypes."""
+    if dtype_cfg is None:
+        return None
+    if isinstance(dtype_cfg, str) and dtype_cfg.lower() in ("null", "none", ""):
+        return None
+    if isinstance(dtype_cfg, torch.dtype):
+        return dtype_cfg
+
+    if isinstance(dtype_cfg, str):
+        alias = _TORCH_DTYPE_ALIASES.get(dtype_cfg.lower())
+        if alias is not None:
+            return alias
+
+    return torch_dtype_from_precision(dtype_cfg)
+
+
+def torch_dtype_to_hf_str(dtype: torch.dtype) -> str:
+    mapping = {
+        torch.float32: "float32",
+        torch.float16: "float16",
+        torch.bfloat16: "bfloat16",
+    }
+    if dtype not in mapping:
+        raise ValueError(f"Unsupported torch.dtype for HF config: {dtype}")
+    return mapping[dtype]
 
 
 def get_model_save_helper(model_type: str):
@@ -28,12 +66,61 @@ def get_model_save_helper(model_type: str):
 
     _MODEL_SAVE_HELPER_REGISTRY = {
         SupportedModel.OPENVLA_OFT: openvla_oft_save_helper,
+        SupportedModel.DREAMZERO: dreamzero_save_helper,
     }
 
     if model_type in _MODEL_SAVE_HELPER_REGISTRY:
         return _MODEL_SAVE_HELPER_REGISTRY[model_type]
     else:
         return None
+
+
+def dreamzero_save_helper(model_state_dict, model_config, save_path, **kwargs):
+    """Write DreamZero HF artifacts: config.json and experiment_cfg/metadata.json."""
+    model = kwargs.get("model")
+    if model is None:
+        return
+
+    save_dtype_str = kwargs.get("save_torch_dtype_str")
+
+    model_path = model_config.get("model_path")
+    if model_path and os.path.isdir(os.path.join(model_path, "experiment_cfg")):
+        dst_exp = os.path.join(save_path, "experiment_cfg")
+        shutil.copytree(
+            os.path.join(model_path, "experiment_cfg"),
+            dst_exp,
+            dirs_exist_ok=True,
+        )
+
+    metadata_path = model_config.get("metadata_json_path")
+    if metadata_path and os.path.isfile(metadata_path):
+        exp_cfg_dir = os.path.join(save_path, "experiment_cfg")
+        os.makedirs(exp_cfg_dir, exist_ok=True)
+        shutil.copy2(metadata_path, os.path.join(exp_cfg_dir, "metadata.json"))
+
+    config = model.config
+    stash: dict[str, object] = {}
+    for attr in ("data_transforms",):
+        if hasattr(config, attr):
+            stash[attr] = getattr(config, attr)
+            delattr(config, attr)
+
+    ah_cfg = config.action_head_cfg
+    if isinstance(ah_cfg, dict):
+        inner = ah_cfg.get("config", ah_cfg)
+        if isinstance(inner, dict):
+            inner["skip_component_loading"] = True
+            inner["defer_lora_injection"] = False
+            if save_dtype_str is not None:
+                inner["model_dtype"] = save_dtype_str
+
+    if save_dtype_str is not None:
+        config.torch_dtype = save_dtype_str
+
+    config.save_pretrained(save_path)
+
+    for attr, value in stash.items():
+        setattr(config, attr, value)
 
 
 def openvla_oft_save_helper(model_state_dict, model_config, save_path, **kwargs):
@@ -60,7 +147,9 @@ def openvla_oft_save_helper(model_state_dict, model_config, save_path, **kwargs)
         )
 
 
-def _tensor_nbytes(t: torch.Tensor) -> int:
+def _tensor_nbytes(t: torch.Tensor, dtype: torch.dtype | None = None) -> int:
+    if dtype is not None and t.is_floating_point():
+        return t.numel() * torch.tensor([], dtype=dtype).element_size()
     return t.numel() * t.element_size()
 
 
@@ -69,6 +158,7 @@ def save_state_dict_sharded_safetensors(
     out_dir: str,
     base_name: str = "model",
     max_shard_size: float | int = 4 * 1024**3,
+    dtype: torch.dtype | None = None,
 ) -> tuple[int, int]:
     """
     Save the state dict in sharded safetensors format. It will
@@ -81,6 +171,7 @@ def save_state_dict_sharded_safetensors(
         out_dir(str): where to save the sharded safetensors files.
         base_name(str): The base name for the sharded files.
         max_shard_size(int|float): The maximum size of each shard in bytes. Default is 4GB.
+        dtype(torch.dtype|None): Cast floating-point tensors to this dtype before save.
 
     Returns:
         tuple[int,int]: number of shards created and total size in bytes.
@@ -105,7 +196,7 @@ def save_state_dict_sharded_safetensors(
 
     for name, t in items:
         # Calculate size without moving to CPU
-        nbytes = _tensor_nbytes(t)
+        nbytes = _tensor_nbytes(t, dtype=dtype)
 
         if nbytes > max_shard_size:
             flush_plan()
@@ -139,6 +230,8 @@ def save_state_dict_sharded_safetensors(
                 t = t.detach()
                 if t.device.type != "cpu":
                     t = t.cpu()
+                if dtype is not None and t.is_floating_point():
+                    t = t.to(dtype=dtype)
                 if not t.is_contiguous():
                     t = t.contiguous()
                 shard_dict[k] = t
@@ -170,7 +263,7 @@ def save_state_dict_sharded_safetensors(
 
 
 def copy_model_config_and_code(
-    model_path: str,
+    model_path: str | None,
     save_path: str,
     suffixes: tuple[str, ...] = (
         ".py",
@@ -181,7 +274,7 @@ def copy_model_config_and_code(
     """
     Recursively copies files with specific suffixes from model_path to save_path.
     """
-    if not os.path.exists(model_path):
+    if not model_path or not os.path.exists(model_path):
         return
 
     os.makedirs(save_path, exist_ok=True)
