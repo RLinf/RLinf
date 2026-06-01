@@ -203,7 +203,8 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero
 
 RUN source switch_env openvla && download_assets --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
