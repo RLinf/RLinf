@@ -171,6 +171,31 @@ def prepare_actions_for_robocasa(
     return chunk_actions
 
 
+def prepare_actions_for_mujoco_warp(raw_chunk_actions, model_type):
+    """Prepare actions for the MuJoCo-Warp environment.
+
+    Handles both CartPole (1-D force) and CubePick (7-D EEF delta):
+    - 1-D actions are returned as-is (CartPole).
+    - 7-D actions get the same EEF delta / gripper processing as the CPU
+      MuJoCo backend (CubePick).
+    """
+    if isinstance(raw_chunk_actions, np.ndarray):
+        chunk_actions = raw_chunk_actions.copy()
+    else:
+        chunk_actions = raw_chunk_actions.detach().cpu().numpy().copy()
+    if chunk_actions.shape[-1] >= 7:
+        chunk_actions = chunk_actions[..., :7]
+        if SupportedModel(model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ]:
+            chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
+            chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
+    return chunk_actions
+
+
 def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
     if raw_chunk_actions.shape[-1] >= 7:
         chunk_actions = np.concatenate(
@@ -277,6 +302,11 @@ def prepare_actions(
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.FRANKASIM:
         chunk_actions = prepare_actions_for_mujoco(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.MUJOCO_WARP:
+        chunk_actions = prepare_actions_for_mujoco_warp(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )

@@ -27,6 +27,7 @@ class SupportedEnvType(Enum):
     REALWORLD = "realworld"
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
+    MUJOCO_WARP = "mujoco_warp"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
     EMBODICHAIN = "embodichain"
@@ -108,6 +109,32 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.frankasim.frankasim_env import FrankaSimEnv
 
         return FrankaSimEnv
+    elif env_type == SupportedEnvType.MUJOCO_WARP:
+        task_name = ""
+        if (
+            env_cfg is not None
+            and hasattr(env_cfg, "init_params")
+            and env_cfg.init_params
+        ):
+            task_name = env_cfg.init_params.get("task_name", "cartpole")
+        if (
+            env_cfg is not None
+            and hasattr(env_cfg, "enable_offload")
+            and env_cfg.enable_offload
+        ):
+            from rlinf.envs.mujoco_warp.mujoco_warp_offload_env import (
+                MuJoCoWarpOffloadEnv,
+            )
+
+            return MuJoCoWarpOffloadEnv
+        if task_name == "cube_pick":
+            from rlinf.envs.mujoco_warp.tasks.cubepick import CubePickTask
+
+            return CubePickTask
+        else:
+            from rlinf.envs.mujoco_warp.tasks.cartpole import CartPoleTask
+
+            return CartPoleTask
     elif env_type == SupportedEnvType.OPENSORAWM:
         from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
 
