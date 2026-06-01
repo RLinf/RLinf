@@ -87,16 +87,21 @@ RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
 
 .. code:: bash
 
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   # 本地数据集目录（包含 meta/info.json）：
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id /path/to/realworld_franka_bin_relocation
+
+   # 或使用默认缓存在 ~/.cache/huggingface/lerobot 下的 Hugging Face repo id：
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
 注意事项：
 
-- 运行脚本前必须先设置 ``HF_LEROBOT_HOME``。
+- ``--repo-id`` 可以是本地数据集路径，也可以是 LeRobot 的 Hugging Face repo id。
+- 可选：通过 ``HF_LEROBOT_HOME`` 修改 repo id 的缓存父目录（默认：``~/.cache/huggingface/lerobot``）。
 - ``config_name`` 必须与训练时使用的自定义 OpenPI dataconfig 一致。
-- ``repo_id`` 必须与你的 LeRobot 格式数据集名称一致。
 
 该脚本会将生成的统计信息写入
 ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``。
