@@ -90,9 +90,9 @@ env:
     use_custom_reward: False
     use_rel_reward: True
     center_crop: False
-    max_episode_steps: 25
+    max_episode_steps: 50
     reward_coef: ${algorithm.reward_coef}
-    max_steps_per_rollout_epoch: 25
+    max_steps_per_rollout_epoch: 50
     group_size: ${algorithm.group_size}
     assets_path: "/workspace/dataset/RoboTwin"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
@@ -140,16 +140,16 @@ actor:
 
   # Override the default values in model/lingbotvla
   model:
-    model_path: "/workspace/dataset/RLinf-LingbotVLA-RoboTwin-place_shoe"
+    model_path: "/workspace/dataset/lingbot-vla-4b"
     tokenizer_path: "/workspace/dataset/RLinf-LingbotVLA-Qwen2.5-VL-3B-Instruct"
     model_type: "lingbotvla"
     lingbotvla:
-      config_path: "/workspace/dataset/RLinf-lingbot-vla-4b"
+      config_path: "/workspace/dataset/lingbot-vla-4b"
     value_type: ${algorithm.reward_type} 
     action_dim: 14
     use_proprio: True
     proprio_dim: 14
-    num_action_chunks: 25 
+    num_action_chunks: 50
 
     is_lora: False
     max_prompt_length: 512
