@@ -577,8 +577,7 @@ class MultiChannelProcessGroup:
 
         if group_name is None:
             group_name = _process_group_name(ranks, use_hashed_name=False)
-
-        pg, _ = MultiChannelProcessGroup._new_process_group_helper(
+        result = MultiChannelProcessGroup._new_process_group_helper(
             base_group,
             group_world_size,
             group_rank,
@@ -590,6 +589,18 @@ class MultiChannelProcessGroup:
             timeout=timeout,
             device_id=device_id,
         )
+        if result is None:
+            pg = MultiChannelProcessGroup._create_process_group(
+                backend=backend,
+                world_size=group_world_size,
+                rank=group_rank,
+                store=default_store,
+                group_name=group_name,
+                timeout=timeout,
+                pg_options=pg_options,
+            )
+        else:
+            pg, _ = result
 
         # Create the global rank to group rank mapping
         _world.pg_group_ranks[pg] = {
