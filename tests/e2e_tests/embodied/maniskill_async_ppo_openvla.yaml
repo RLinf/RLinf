@@ -147,3 +147,7 @@ reward:
 
 critic:
   use_critic_model: False
+
+weight_syncer:
+  use_ring_sync: true
+  nccl_max_ctas: 32

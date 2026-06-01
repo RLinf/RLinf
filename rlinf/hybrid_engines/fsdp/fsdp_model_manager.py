@@ -38,7 +38,10 @@ from rlinf.hybrid_engines.fsdp.utils import (
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
-from rlinf.utils.utils import warmup_optimizer_state
+from rlinf.utils.utils import (
+    collect_param_names_need_sync,
+    warmup_optimizer_state,
+)
 
 warnings.filterwarnings(
     "ignore",
@@ -95,6 +98,8 @@ class FSDPModelManager:
 
         # Bucket capacity for weight sync (in bytes), default 128MB
         self.bucket_capacity = cfg.get("sync_bucket_capacity", 128 * 1024 * 1024)
+
+        self.param_names_need_sync: list[str] = None
 
     def _create_amp_context(self) -> ContextManager:
         """
@@ -266,6 +271,10 @@ class FSDPModelManager:
                 )
         else:
             self._logger.info("[FSDP] Gradient checkpointing is disabled")
+
+        # here record the original trainable parameters' names before FSDP wrapping
+        # persist buffers' names are also recorded, which will be used for weight syncing.
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(

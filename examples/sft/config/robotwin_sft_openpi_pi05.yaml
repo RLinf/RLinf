@@ -30,8 +30,6 @@ runner:
 
 data:
   train_data_paths: "/path/to/robotwin-data"
-algorithm:
-  adv_type: gae
 
 actor:
   group_name: "ActorGroup"

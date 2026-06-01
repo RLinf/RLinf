@@ -32,7 +32,9 @@ from rlinf.models.embodiment.lingbotva.native_backend import LingbotVANativeBack
 from rlinf.models.embodiment.lingbotva.observation_adapter import (
     LingbotVAObservationAdapter,
 )
-from rlinf.models.embodiment.lingbotva.sft_core import LingbotVASFTCore
+from rlinf.models.embodiment.lingbotva.training_adapter import (
+    LingbotVATrainingAdapter,
+)
 
 
 class LingbotVAActionModel(nn.Module, BasePolicy):
@@ -43,12 +45,15 @@ class LingbotVAActionModel(nn.Module, BasePolicy):
         self.num_action_chunks = int(getattr(cfg, "num_action_chunks", 32))
         self.action_dim = int(getattr(cfg, "action_dim", 16))
         self.action_per_frame = int(getattr(cfg.lingbotva, "action_per_frame", 16))
+        self._fsdp_anchor = nn.Parameter(torch.zeros(1, dtype=torch_dtype))
 
         self._backend: LingbotVANativeBackend | None = None
         self._episode_states: dict[int, LingbotVAEpisodeState] = {}
-        self._sft_core: LingbotVASFTCore | None = None
+        self._sft_adapter: LingbotVATrainingAdapter | None = None
         if bool(getattr(cfg.lingbotva, "enable_sft", False)):
-            self._sft_core = LingbotVASFTCore(cfg=cfg, torch_dtype=torch_dtype)
+            self._sft_adapter = LingbotVATrainingAdapter(
+                cfg=cfg, torch_dtype=torch_dtype
+            )
 
     @staticmethod
     def _get_extra_obs(env_obs: dict[str, Any]) -> dict[str, Any]:
@@ -106,12 +111,12 @@ class LingbotVAActionModel(nn.Module, BasePolicy):
         return env_obs.get(key)
 
     def gradient_checkpointing_enable(self, **kwargs) -> None:
-        if self._sft_core is not None:
-            self._sft_core.gradient_checkpointing_enable(**kwargs)
+        if self._sft_adapter is not None:
+            self._sft_adapter.gradient_checkpointing_enable(**kwargs)
 
     def gradient_checkpointing_disable(self) -> None:
-        if self._sft_core is not None:
-            self._sft_core.gradient_checkpointing_disable()
+        if self._sft_adapter is not None:
+            self._sft_adapter.gradient_checkpointing_disable()
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.SFT:
@@ -122,11 +127,11 @@ class LingbotVAActionModel(nn.Module, BasePolicy):
 
     def sft_forward(self, data, **kwargs):
         del kwargs
-        if self._sft_core is None:
+        if self._sft_adapter is None:
             raise NotImplementedError(
                 "LingBot-VA SFT support is disabled for the current config."
             )
-        return self._sft_core(data)
+        return self._sft_adapter(data)
 
     def default_forward(
         self,

@@ -19,7 +19,6 @@ supports both SFT data (expert trajectories) and collected data (mixed success/f
 """
 
 import json
-import os
 
 import hydra
 import torch.multiprocessing as mp
@@ -36,18 +35,6 @@ mp.set_start_method("spawn", force=True)
 
 @hydra.main(version_base="1.1", config_path="config", config_name="libero_cfg_openpi")
 def main(cfg) -> None:
-    # Set environment variables for data loading
-    data_cfg = cfg.get("data", {})
-
-    # Support multiple data path options (new datasets format and legacy)
-    datasets = data_cfg.get("train_data_paths")
-    if datasets and len(datasets) > 0:
-        os.environ["HF_LEROBOT_HOME"] = datasets[0].get("dataset_path", "")
-    elif data_cfg.get("sft_data_path"):
-        os.environ["HF_LEROBOT_HOME"] = data_cfg.sft_data_path
-    elif data_cfg.get("data_path"):
-        os.environ["HF_LEROBOT_HOME"] = data_cfg.data_path
-
     cfg = validate_cfg(cfg)
     print(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 

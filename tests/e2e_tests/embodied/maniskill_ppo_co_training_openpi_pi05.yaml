@@ -128,7 +128,7 @@ actor:
   config_name: ${actor.model.openpi.config_name}
   sft_loss_weight: 0.2
   enable_sft_co_train: True
-  sft_data_path: "/workspace/dataset/RLCo-Example-Real-Data"
+  sft_data_path: "/workspace/dataset/RLCo-Example-Real-Data/physical-intelligence/pick_and_place_real/"
 
   # Override the default values in model/pi0_5
   model:

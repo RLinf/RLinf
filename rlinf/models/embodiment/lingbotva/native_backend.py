@@ -20,7 +20,6 @@ import atexit
 import copy
 import json
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -29,32 +28,13 @@ import torch
 import torch.nn.functional as F
 from safetensors.torch import load_file
 
+from rlinf.models.embodiment.lingbotva.utils import (
+    _extend_import_path,
+    _extract_transformer_state_dict,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
-
-_TRANSFORMER_STATE_PREFIXES = (
-    "_sft_core.transformer.",
-    "transformer.",
-)
-
-
-def _extend_import_path(repo_path: Path) -> None:
-    repo_str = str(repo_path)
-    if repo_str not in sys.path:
-        sys.path.insert(0, repo_str)
-
-
-def _extract_transformer_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
-    for prefix in _TRANSFORMER_STATE_PREFIXES:
-        extracted = {
-            key[len(prefix) :]: value
-            for key, value in state_dict.items()
-            if key.startswith(prefix)
-        }
-        if extracted:
-            return extracted
-    return state_dict
 
 
 def _resolve_cuda_local_rank() -> int:
@@ -101,7 +81,6 @@ class LingbotVANativeBackend:
         self.save_root = _resolve_runtime_path(
             getattr(cfg.lingbotva, "save_root", "./runtime/lingbotva")
         )
-        self._get_mesh_id = None
         self._data_seq_to_patch = None
         self._validate_runtime_paths()
         self._validate_attn_mode(self.model_path)
@@ -145,7 +124,7 @@ class LingbotVANativeBackend:
         _extend_import_path(self.repo_path)
 
         from wan_va.configs import VA_CONFIGS
-        from wan_va.utils import data_seq_to_patch, get_mesh_id
+        from wan_va.utils import data_seq_to_patch
         from wan_va.wan_va_server import VA_Server
 
         job_config = copy.deepcopy(VA_CONFIGS[self.config_name])
@@ -164,7 +143,6 @@ class LingbotVANativeBackend:
         job_config.world_size = 1
         server = VA_Server(job_config)
         self._data_seq_to_patch = data_seq_to_patch
-        self._get_mesh_id = get_mesh_id
         if self.transformer_state_dict_path is not None:
             self._load_transformer_state_dict(server.transformer)
         logger.info(
@@ -430,6 +408,29 @@ class LingbotVANativeBackend:
         ]
         return torch.cat(tensors, dim=0)
 
+    def _repeat_official_input_for_batch_cfg(
+        self, input_value: dict[str, torch.Tensor], batch_size: int
+    ) -> dict[str, torch.Tensor]:
+        server = self._server
+        if server.use_cfg:
+            input_value["noisy_latents"] = input_value["noisy_latents"].repeat(
+                2, 1, 1, 1, 1
+            )
+            input_value["text_emb"] = torch.cat(
+                [
+                    server.prompt_embeds.to(server.dtype).clone(),
+                    server.negative_prompt_embeds.to(server.dtype).clone(),
+                ],
+                dim=0,
+            )
+        input_value["grid_id"] = input_value["grid_id"][None].repeat(
+            self._cfg_batch_size(batch_size), 1, 1
+        )
+        input_value["timesteps"] = input_value["timesteps"][None].repeat(
+            self._cfg_batch_size(batch_size), 1
+        )
+        return input_value
+
     def _prepare_batch_input(
         self,
         *,
@@ -447,100 +448,20 @@ class LingbotVANativeBackend:
             if latent_model_input is not None
             else action_model_input.shape[0]
         )
-        input_dict: dict[str, dict[str, torch.Tensor]] = {}
-
-        if latent_model_input is not None:
-            timesteps = (
-                torch.ones(
-                    [latent_model_input.shape[2]],
-                    dtype=torch.float32,
-                    device=server.device,
-                )
-                * latent_t
-            )
-            if self._get_mesh_id is None:
-                raise RuntimeError(
-                    "LingBot-VA batch runtime missing get_mesh_id helper."
-                )
-            grid_id = self._get_mesh_id(
-                latent_model_input.shape[-3] // server.job_config.patch_size[0],
-                latent_model_input.shape[-2] // server.job_config.patch_size[1],
-                latent_model_input.shape[-1] // server.job_config.patch_size[2],
-                0,
-                1,
-                frame_st_id,
-            ).to(server.device)
-            noisy_latents = latent_model_input.clone()
-            if latent_cond is not None:
-                noisy_latents[:, :, 0:1] = latent_cond[:, :, 0:1]
-                timesteps[0:1] *= 0
-            input_dict["latent_res_lst"] = {
-                "noisy_latents": noisy_latents,
-                "timesteps": timesteps,
-                "grid_id": grid_id,
-                "text_emb": server.prompt_embeds.to(server.dtype).clone(),
-            }
-
-        if action_model_input is not None:
-            timesteps = (
-                torch.ones(
-                    [action_model_input.shape[2]],
-                    dtype=torch.float32,
-                    device=server.device,
-                )
-                * action_t
-            )
-            if self._get_mesh_id is None:
-                raise RuntimeError(
-                    "LingBot-VA batch runtime missing get_mesh_id helper."
-                )
-            grid_id = self._get_mesh_id(
-                action_model_input.shape[-3],
-                action_model_input.shape[-2],
-                action_model_input.shape[-1],
-                1,
-                1,
-                frame_st_id,
-                action=True,
-            ).to(server.device)
-            noisy_actions = action_model_input.clone()
-            if action_cond is not None:
-                noisy_actions[:, :, 0:1] = action_cond[:, :, 0:1]
-                timesteps[0:1] *= 0
-            noisy_actions[:, ~server.action_mask] *= 0
-            input_dict["action_res_lst"] = {
-                "noisy_latents": noisy_actions,
-                "timesteps": timesteps,
-                "grid_id": grid_id,
-                "text_emb": server.prompt_embeds.to(server.dtype).clone(),
-            }
-
-        for input_value in input_dict.values():
-            if server.use_cfg:
-                input_value["noisy_latents"] = input_value["noisy_latents"].repeat(
-                    2, 1, 1, 1, 1
-                )
-                input_value["text_emb"] = torch.cat(
-                    [
-                        server.prompt_embeds.to(server.dtype).clone(),
-                        server.negative_prompt_embeds.to(server.dtype).clone(),
-                    ],
-                    dim=0,
-                )
-                input_value["grid_id"] = input_value["grid_id"][None].repeat(
-                    self._cfg_batch_size(batch_size), 1, 1
-                )
-                input_value["timesteps"] = input_value["timesteps"][None].repeat(
-                    self._cfg_batch_size(batch_size), 1
-                )
-            else:
-                input_value["grid_id"] = input_value["grid_id"][None].repeat(
-                    batch_size, 1, 1
-                )
-                input_value["timesteps"] = input_value["timesteps"][None].repeat(
-                    batch_size, 1
-                )
-        return input_dict
+        input_dict = server._prepare_latent_input(
+            latent_model_input,
+            action_model_input,
+            latent_t=latent_t,
+            action_t=action_t,
+            latent_cond=latent_cond,
+            action_cond=action_cond,
+            frame_st_id=frame_st_id,
+            patch_size=server.job_config.patch_size,
+        )
+        return {
+            key: self._repeat_official_input_for_batch_cfg(value, batch_size)
+            for key, value in input_dict.items()
+        }
 
     def _postprocess_action_batch(self, action: torch.Tensor) -> list[np.ndarray]:
         server = self._server

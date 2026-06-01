@@ -93,8 +93,8 @@ Configuration Files
 
 The current RoboTwin evaluation configs are:
 
-* ``examples/embodiment/config/robotwin_click_bell_eval_lingbotva.yaml``
-* ``examples/embodiment/config/robotwin_place_empty_cup_eval_lingbotva.yaml``
+* ``examples/embodiment/config/robotwin_click_bell_lingbotva_eval.yaml``
+* ``examples/embodiment/config/robotwin_place_empty_cup_lingbotva_eval.yaml``
 
 These configs keep the validated setup:
 
@@ -139,7 +139,7 @@ Recommended command:
 
 .. code-block:: bash
 
-   bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_eval_lingbotva
+   bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_lingbotva_eval
 
 If you call ``eval_embodied_agent.py`` directly, set ``REPO_PATH`` first and then run:
 
@@ -147,7 +147,7 @@ If you call ``eval_embodied_agent.py`` directly, set ``REPO_PATH`` first and the
 
    python examples/embodiment/eval_embodied_agent.py \
      --config-path examples/embodiment/config \
-     --config-name robotwin_click_bell_eval_lingbotva
+     --config-name robotwin_click_bell_lingbotva_eval
 
 Evaluation Results and Visualization
 ------------------------------------

@@ -90,8 +90,8 @@ LingBot-VA 当前在 RLinf 中仅支持 **RoboTwin 评测**。
 
 当前 RoboTwin 评测配置包括：
 
-* ``examples/embodiment/config/robotwin_click_bell_eval_lingbotva.yaml``
-* ``examples/embodiment/config/robotwin_place_empty_cup_eval_lingbotva.yaml``
+* ``examples/embodiment/config/robotwin_click_bell_lingbotva_eval.yaml``
+* ``examples/embodiment/config/robotwin_place_empty_cup_lingbotva_eval.yaml``
 
 这些配置保持了已验证的设置：
 
@@ -136,7 +136,7 @@ LingBot-VA 当前在 RLinf 中仅支持 **RoboTwin 评测**。
 
 .. code-block:: bash
 
-   bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_eval_lingbotva
+   bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_lingbotva_eval
 
 如果你直接调用 ``eval_embodied_agent.py``，请先设置 ``REPO_PATH``，然后运行：
 
@@ -144,7 +144,7 @@ LingBot-VA 当前在 RLinf 中仅支持 **RoboTwin 评测**。
 
    python examples/embodiment/eval_embodied_agent.py \
      --config-path examples/embodiment/config \
-     --config-name robotwin_click_bell_eval_lingbotva
+     --config-name robotwin_click_bell_lingbotva_eval
 
 评测结果与可视化
 ----------------

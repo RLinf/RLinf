@@ -74,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=( openvla openvla-oft openpi gr00t dexbotic starvla lingbotvla lingbotva dreamzero qwen3_vl)
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "lingbotva" "dreamzero" "qwen3_vl")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
@@ -109,6 +109,8 @@ Common options:
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
+    --python <version>     Python version for the venv (e.g. 3.11.14). Defaults to 3.11.14.
+                           Must be >=3.10. Some envs (behavior, d4rl) require 3.10 and will override this.
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
@@ -135,6 +137,14 @@ parse_args() {
                     exit 1
                 fi
                 VENV_DIR="${2:-}"
+                shift 2
+                ;;
+            --python)
+                if [ -z "${2:-}" ]; then
+                    echo "--python requires a version argument (e.g. 3.11.14)." >&2
+                    exit 1
+                fi
+                PYTHON_VERSION="${2:-}"
                 shift 2
                 ;;
             --torch)
@@ -213,6 +223,22 @@ parse_args() {
 
     if [ -z "$TARGET" ]; then
         TARGET="embodied"
+    fi
+}
+
+validate_python_version() {
+    # Reject malformed versions (must be X.Y or X.Y.Z with numeric components).
+    if [[ ! "$PYTHON_VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "--python must be of form X.Y or X.Y.Z (got '$PYTHON_VERSION')." >&2
+        exit 1
+    fi
+
+    # Soft-check against pyproject.toml's requires-python = ">=3.10".
+    local py_major py_minor _py_patch
+    IFS='.' read -r py_major py_minor _py_patch <<< "$PYTHON_VERSION"
+    local mm="${py_major}.${py_minor}"
+    if [ "$(printf '%s\n3.10\n' "$mm" | sort -V | head -n1)" != "3.10" ]; then
+        echo "[install.sh] WARNING: Python ${PYTHON_VERSION} is below the pyproject.toml requires-python minimum (>=3.10). The install may fail." >&2
     fi
 }
 
@@ -545,6 +571,21 @@ apply_torch_override() {
     # UV_TORCH_BACKEND), PLATFORM_RELAX_TORCHCODEC is set (rewrite the
     # torchcodec pin for non-x86_64 / non-CUDA torch combos), or
     # PLATFORM_EXTRA_OVERRIDES has entries (insert extra override pins).
+
+    # torchcodec==0.2 only has wheels for torch<=2.6. Relax the pin whenever
+    # the effective torch version exceeds 2.6, regardless of platform.
+    local _eff_torch="${TORCH_VERSION}"
+    if [ -z "$_eff_torch" ] && [ -f "$PYPROJECT_FILE" ]; then
+        _eff_torch=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+    fi
+    if [ -n "$_eff_torch" ]; then
+        local _tmaj _tmin _tpatch
+        IFS='.' read -r _tmaj _tmin _tpatch <<< "$_eff_torch"
+        if [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -gt 6 ]; }; then
+            PLATFORM_RELAX_TORCHCODEC=1
+        fi
+    fi
+
     local needs_torch_rewrite=0
     if [ -n "$TORCH_VERSION" ] || [ -n "$PLATFORM_TORCH_STR" ] || [ -n "$PLATFORM_TORCH_INDEX" ]; then
         needs_torch_rewrite=1
@@ -853,55 +894,6 @@ EOF
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
     uv pip install "flash-attn==${flash_ver}" --no-build-isolation
-}
-
-install_flash_attn_for_lingbotva() {
-    local base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1"
-    local flash_ver="2.7.4.post1"
-
-    local py_major py_minor
-    py_major=$(python - <<'EOF'
-import sys
-print(sys.version_info.major)
-EOF
-)
-    py_minor=$(python - <<'EOF'
-import sys
-print(sys.version_info.minor)
-EOF
-)
-    local py_tag="cp${py_major}${py_minor}"
-    local abi_tag="${py_tag}"
-
-    local torch_mm
-    torch_mm=$(python - <<'EOF'
-import torch
-v = torch.__version__.split("+")[0]
-parts = v.split(".")
-print(f"{parts[0]}.{parts[1]}")
-EOF
-)
-
-    local cuda_major
-    cuda_major=$(python - <<'EOF'
-import torch
-from packaging.version import Version
-v = Version(torch.version.cuda)
-print(v.base_version.split(".")[0])
-EOF
-)
-
-    local cu_tag="cu${cuda_major}"
-    local torch_tag="torch${torch_mm}"
-    local platform_tag="linux_x86_64"
-    local cxx_abi="cxx11abiFALSE"
-    local wheel_name="flash_attn-${flash_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
-
-    python -m pip uninstall -y flash-attn || true
-    python -m pip install --no-deps "${base_url}/${wheel_name}" || (
-        echo "Flash attn installation via wheel failed. Attempting to install from source...";
-        python -m pip install --no-deps flash-attn==${flash_ver} --no-build-isolation
-    )
 }
 
 install_apex() {
@@ -1311,8 +1303,8 @@ install_lingbot_va_model() {
 
     case "$ENV_NAME" in
         robotwin)
-            install_robotwin_env_for_lingbotva
-            install_flash_attn_for_lingbotva
+            install_robotwin_env
+            install_flash_attn
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for LingBot-VA model." >&2
@@ -1707,40 +1699,6 @@ install_robotwin_env() {
     sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
 }
 
-install_robotwin_env_for_lingbotva() {
-    local nvcc_exe
-    if [ -x "$(command -v nvcc)" ]; then
-        nvcc_exe=$(which nvcc)
-    elif [ -x /usr/local/cuda/bin/nvcc ]; then
-        nvcc_exe="/usr/local/cuda/bin/nvcc"
-    else
-        echo "nvcc not found. Cannot build robotwin environment."
-        exit 1
-    fi
-    local cuda_major=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $1}')
-    local cuda_minor=$("$nvcc_exe" --version | grep 'Cuda compilation tools' | awk '{print $5}' | tr -d ',' | awk -F '.' '{print $2}')
-    if [ "$cuda_major" -gt 12 ] || { [ "$cuda_major" -eq 12 ] && [ "$cuda_minor" -ge 8 ]; }; then
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0;10.0"
-    else
-        export TORCH_CUDA_ARCH_LIST="7.0;8.0;9.0"
-    fi
-
-    python -m pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
-    python -m pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9 --no-build-isolation
-    python -m pip install warp-lang==1.11.1
-    local curobo_dir
-    curobo_dir=$(clone_or_reuse_repo CUROBO_PATH "$VENV_DIR/curobo" ${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git -b d64c4b005459db10c5dd867d8b30a87d5bda9bdb --depth 1)
-    python -m pip install "$curobo_dir" --no-build-isolation
-
-    SAPIEN_LOCATION=$(python -m pip show sapien | grep 'Location' | awk '{print $2}')/sapien
-    URDF_LOADER=$SAPIEN_LOCATION/wrapper/urdf_loader.py
-    sed -i -E 's/("r")(\))( as)/\1, encoding="utf-8") as/g' $URDF_LOADER
-
-    MPLIB_LOCATION=$(python -m pip show mplib | grep 'Location' | awk '{print $2}')/mplib
-    PLANNER=$MPLIB_LOCATION/planner.py
-    sed -i -E 's/(if np.linalg.norm\(delta_twist\) < 1e-4 )(or collide )(or not within_joint_limit:)/\1\3/g' $PLANNER
-}
-
 install_frankasim_env() {
     local serldir
     serldir=$(clone_or_reuse_repo SERL_PATH "$VENV_DIR/serl" https://github.com/RLinf/serl.git -b RLinf/franka-sim)
@@ -1848,6 +1806,7 @@ install_roboverse_env() {
     pyroki_dir=$(clone_or_reuse_repo PYROKI_PATH "$roboverse_dir/pyroki" https://github.com/chungmin99/pyroki.git)
     uv pip install -e "$pyroki_dir"
     uv pip install "numpy==1.26.4" --force-reinstall
+    uv pip install "mujoco==3.3.7" "dm-control==1.0.34" --force-reinstall
 }
 
 #=======================AGENTIC INSTALLER=======================
@@ -1885,6 +1844,7 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    validate_python_version
     configure_platform
     setup_mirror
     apply_torch_override

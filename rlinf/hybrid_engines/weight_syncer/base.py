@@ -15,53 +15,32 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch.distributed.tensor import DTensor
 
-from rlinf.scheduler import Worker
+from rlinf.scheduler import CollectiveGroupOptions, Worker
 
 SendFn = Callable[[Any], Awaitable[None]]
 RecvFn = Callable[[], Awaitable[Any]]
-
-
-def materialize_tensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
-    if isinstance(tensor, DTensor):
-        return tensor.full_tensor()
-    assert isinstance(tensor, torch.Tensor), "Expected a torch.Tensor or DTensor"
-    return tensor
-
-
-def normalize_dtype(dtype: torch.dtype | str) -> torch.dtype:
-    if isinstance(dtype, torch.dtype):
-        return dtype
-    if isinstance(dtype, str):
-        mapping = {
-            "float32": torch.float32,
-            "fp32": torch.float32,
-            "float16": torch.float16,
-            "fp16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "bf16": torch.bfloat16,
-        }
-        key = dtype.lower()
-        if key in mapping:
-            return mapping[key]
-    raise TypeError(f"Unsupported dtype: {dtype}")
-
-
-def normalize_device(device: torch.device | str | None) -> torch.device:
-    if device is None:
-        device = Worker.torch_device_type
-    return device if isinstance(device, torch.device) else torch.device(device)
 
 
 class WeightSyncer(ABC):
     def __init__(self):
         self._sender_initialized: bool = False
         self._receiver_initialized: bool = False
+        self._comm_options: Optional[CollectiveGroupOptions] = None
+
+    @property
+    def comm_options(self) -> Optional[CollectiveGroupOptions]:
+        """``CollectiveGroupOptions`` to pass to broadcast/send/recv calls
+        performed during weight sync. Populated by :meth:`create` from the
+        ``use_ring_sync``, ``nccl_max_ctas`` and ``nccl_min_ctas`` keys on
+        the weight syncer config; ``None`` if every option is at its default
+        (matching the legacy behavior where no options were supplied)."""
+        return self._comm_options
 
     @abstractmethod
     async def sync(
@@ -77,10 +56,11 @@ class WeightSyncer(ABC):
     async def init_sender(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
     ) -> None:
-        del state_dict, send, recv
+        del state_dict, send, recv, param_names_need_sync
         self._sender_initialized = True
 
     async def init_receiver(
@@ -103,23 +83,25 @@ class WeightSyncer(ABC):
             assert bucket_config is not None, (
                 "Bucket config must be provided for bucket weight syncer"
             )
-            return BucketWeightSyncer(
+            syncer: "WeightSyncer" = BucketWeightSyncer(
                 bucket_size=OmegaConf.select(bucket_config, "bucket_size"),
                 bucket_dtype=OmegaConf.select(bucket_config, "bucket_dtype"),
-                bucket_device=OmegaConf.select(bucket_config, "bucket_device"),
+                bucket_device=OmegaConf.select(
+                    bucket_config, "bucket_device", default=Worker.torch_device_type
+                ),
                 is_agent=OmegaConf.select(bucket_config, "is_agent", default=False),
                 load_instant=OmegaConf.select(
                     bucket_config, "load_instant", default=True
                 ),
             )
-        if syncer_type == "patch":
+        elif syncer_type == "patch":
             from .patch_syncer import PatchWeightSyncer
 
             patch_config = OmegaConf.select(config, "patch")
             assert patch_config is not None, (
                 "Patch config must be provided for patch weight syncer"
             )
-            return PatchWeightSyncer(
+            syncer = PatchWeightSyncer(
                 snapshot_device=OmegaConf.select(
                     patch_config, "snapshot_device", default="cpu"
                 ),
@@ -152,7 +134,38 @@ class WeightSyncer(ABC):
                     ),
                 ),
             )
-        raise ValueError(f"Unsupported weight syncer type: {syncer_type}")
+        else:
+            raise ValueError(f"Unsupported weight syncer type: {syncer_type}")
+
+        syncer._comm_options = cls._build_comm_options(config)
+        return syncer
+
+    @staticmethod
+    def _build_comm_options(
+        config: DictConfig,
+    ) -> Optional[CollectiveGroupOptions]:
+        """Build ``CollectiveGroupOptions`` from the weight syncer config.
+
+        Reads three top-level keys (all optional, all default to the equivalent
+        of the underlying ``CollectiveGroupOptions`` default):
+
+        - ``use_ring_sync`` (bool): route the broadcast through the ring
+          algorithm (one cross-group hop + parallel fan-out from the first
+          receiver) by setting ``CollectiveGroupOptions.use_ring_broadcast``.
+        - ``nccl_max_ctas`` / ``nccl_min_ctas`` (int): forwarded to
+          ``CollectiveGroupOptions.accel_max_ctas`` / ``accel_min_ctas`` to
+          cap how much GPU SM resource NCCL consumes during weight sync.
+        """
+        use_ring = OmegaConf.select(config, "use_ring_sync", default=False)
+        max_ctas = OmegaConf.select(config, "nccl_max_ctas", default=None)
+        min_ctas = OmegaConf.select(config, "nccl_min_ctas", default=None)
+        if not use_ring and max_ctas is None and min_ctas is None:
+            return None
+        return CollectiveGroupOptions(
+            use_ring_broadcast=bool(use_ring),
+            accel_max_ctas=max_ctas,
+            accel_min_ctas=min_ctas,
+        )
 
     def sender_initialized(self) -> bool:
         return self._sender_initialized

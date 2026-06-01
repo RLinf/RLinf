@@ -10,3 +10,4 @@ lingbotva:
   repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
   enable_offload: false
   action_per_frame: 16
+  transformer_state_dict_path: null

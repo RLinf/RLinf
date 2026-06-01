@@ -17,18 +17,13 @@
 from __future__ import annotations
 
 import copy
-import sys
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
-
-def _extend_import_path(repo_path: Path) -> None:
-    repo_str = str(repo_path)
-    if repo_str not in sys.path:
-        sys.path.insert(0, repo_str)
+from rlinf.models.embodiment.lingbotva.utils import _extend_import_path
 
 
 def _lingbotva_sft_collate(
