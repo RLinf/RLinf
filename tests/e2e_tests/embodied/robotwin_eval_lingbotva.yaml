@@ -1,0 +1,235 @@
+defaults:
+  - env/robotwin_click_bell@env.train
+  - env/robotwin_click_bell@env.eval
+  - model/lingbotva@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout: 0
+    env: 0
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/results/robotwin_eval_lingbotva
+    project_name: rlinf
+    experiment_name: "ci-test"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 2
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+  reward_type: action_level
+  logprob_type: token_level
+  entropy_type: token_level
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.28
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 1.0
+  gae_lambda: 0.95
+  reward_coef: 1.0
+  filter_rewards: false
+  rewards_lower_bound: 0.5
+  rewards_upper_bound: 4.5
+  sampling_params:
+    do_sample: false
+    temperature_train: 1.0
+    temperature_eval: -1
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+  length_params:
+    max_new_token: null
+    max_length: 512
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  train:
+    env_type: robotwin
+    total_num_envs: 1
+    use_custom_reward: false
+    use_rel_reward: true
+    max_episode_steps: 400
+    reward_coef: ${algorithm.reward_coef}
+    max_steps_per_rollout_epoch: 416
+    group_size: 2
+    assets_path: "/workspace/dataset/RoboTwin"
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
+    enable_offload: false
+    task_config:
+      render_freq: 0
+      episode_num: 50
+      use_seed: false
+      save_freq: 15
+      embodiment:
+        - aloha-agilex
+      language_num: 100
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        clean_background_rate: 1
+        random_head_camera_dis: 0
+        random_table_height: 0
+        random_light: false
+        crazy_random_light_rate: 0
+      camera:
+        head_camera_type: D435
+        wrist_camera_type: D435
+        collect_head_camera: true
+        collect_wrist_camera: true
+      planner_backend: curobo
+      action_type: ee
+      data_type:
+        rgb: true
+        third_view: false
+        depth: false
+        pointcloud: false
+        observer: false
+        endpose: true
+        qpos: true
+        mesh_segmentation: false
+        actor_segmentation: false
+      pcd_down_sample_num: 1024
+      pcd_crop: true
+      save_path: ./data
+      clear_cache_freq: 5
+      collect_data: true
+      eval_video_log: true
+  eval:
+    env_type: robotwin
+    total_num_envs: 1
+    auto_reset: true
+    ignore_terminations: false
+    use_custom_reward: false
+    use_rel_reward: true
+    max_episode_steps: 400
+    reward_coef: ${algorithm.reward_coef}
+    max_steps_per_rollout_epoch: 416
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    is_eval: true
+    assets_path: "/workspace/dataset/RoboTwin"
+    seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
+    enable_offload: false
+    task_config:
+      render_freq: 0
+      episode_num: 50
+      use_seed: false
+      save_freq: 15
+      embodiment:
+        - aloha-agilex
+      language_num: 100
+      domain_randomization:
+        random_background: false
+        cluttered_table: false
+        clean_background_rate: 1
+        random_head_camera_dis: 0
+        random_table_height: 0
+        random_light: false
+        crazy_random_light_rate: 0
+      camera:
+        head_camera_type: D435
+        wrist_camera_type: D435
+        collect_head_camera: true
+        collect_wrist_camera: true
+      planner_backend: curobo
+      action_type: ee
+      data_type:
+        rgb: true
+        third_view: false
+        depth: false
+        pointcloud: false
+        observer: false
+        endpose: true
+        qpos: true
+        mesh_segmentation: false
+        actor_segmentation: false
+      pcd_down_sample_num: 1024
+      pcd_crop: true
+      save_path: ./data
+      clear_cache_freq: 5
+      collect_data: true
+      eval_video_log: true
+    video_cfg:
+      save_video: true
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: lingbotva
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 1234
+  enable_offload: false
+  model:
+    model_type: lingbotva
+    model_path: ${oc.env:LINGBOT_VA_MODEL_PATH}
+    precision: bf16
+    num_action_chunks: 32
+    action_dim: 16
+    lingbotva:
+      repo_path: ${oc.env:LINGBOT_VA_REPO_PATH}
+      enable_offload: false
+      save_root: /tmp/rlinf_lingbotva
+      server_startup_timeout_seconds: 300
+      action_per_frame: 16
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-05
+    weight_decay: 0.01
+    clip_grad: 1.0
+  fsdp_config:
+    strategy: "fsdp"
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
