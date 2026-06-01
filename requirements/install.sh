@@ -75,7 +75,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
 
@@ -1128,6 +1128,13 @@ install_openpi_model() {
             install_flash_attn
             install_robocasa_env
             ;;
+        robocasa365)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_robocasa365_env
+            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1545,6 +1552,27 @@ install_robocasa_env() {
     
     uv pip install -e "$robocasa_dir"
     uv pip install protobuf==6.33.0
+    python -m robocasa.scripts.setup_macros
+}
+
+install_robocasa365_env() {
+    local robocasa_dir
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b v1.0)
+
+    uv pip install -e "$robocasa_dir"
+    uv pip install --no-deps "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    uv pip install --no-deps "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@232ce7d4a6ed89c949a9aba024a05c8c32fdd08b"
+    uv pip install --no-deps mujoco==3.3.1
+    uv pip install protobuf==6.33.0
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        if [[ ! -d "$ROBOCASA_ASSETS_PATH" ]]; then
+            echo "ROBOCASA_ASSETS_PATH does not exist or is not a directory: $ROBOCASA_ASSETS_PATH"
+            exit 1
+        fi
+        cp -an "$robocasa_dir/robocasa/models/assets/." "$ROBOCASA_ASSETS_PATH/"
+        rm -rf "$robocasa_dir/robocasa/models/assets"
+        ln -s "$ROBOCASA_ASSETS_PATH" "$robocasa_dir/robocasa/models/assets"
+    fi
     python -m robocasa.scripts.setup_macros
 }
 

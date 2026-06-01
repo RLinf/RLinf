@@ -40,6 +40,8 @@ def make_robocasa_example() -> dict:
 
 def _parse_image(image) -> np.ndarray:
     image = np.asarray(image)
+    if image.ndim == 4:
+        image = image[0]
     if np.issubdtype(image.dtype, np.floating):
         image = (255 * image).astype(np.uint8)
     if image.shape[0] == 3:

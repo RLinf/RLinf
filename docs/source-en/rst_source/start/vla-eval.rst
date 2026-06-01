@@ -20,6 +20,8 @@ List of currently supported evaluation environments:
 
 :doc:`RoboCasa <../examples/embodied/robocasa>`
 
+:doc:`RoboCasa365 <../examples/embodied/robocasa365>`
+
 All startup scripts for evaluation are located in the ``examples/embodiment/`` directory.
 
 Quick Start
