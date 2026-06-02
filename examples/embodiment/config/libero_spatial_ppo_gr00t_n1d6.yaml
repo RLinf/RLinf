@@ -153,14 +153,14 @@ actor:
   
   fsdp_config:
     strategy: "fsdp"
-    transformer_layer_cls_to_wrap:
-      - "Qwen3DecoderLayer"
-      - "Siglip2EncoderLayer"
-      - "FlowMatchingActionHeadForRLActionPrediction"
-      - "TimestepEncoder"
-      - "TimestepEmbedding"
-      - "ValueHead"
-      - "ExploreNoiseNet"
+    wrap_policy:
+      transformer_layer_cls_to_wrap:
+        - "Qwen3DecoderLayer"
+        - "Siglip2EncoderLayer"
+        - "FlowMatchingActionHeadForRLActionPrediction"
+        - "TimestepEncoder"
+        - "TimestepEmbedding"
+        - "ValueHead"
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

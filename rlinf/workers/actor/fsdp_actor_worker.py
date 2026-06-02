@@ -1391,11 +1391,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                         SupportedModel.GR00T_N1D6,
                     ]:
                         kwargs["prev_logprobs"] = prev_logprobs
-                        from rlinf.models.embodiment.gr00t_n1d6 import (
-                            patch_fsdp_rollout_state_dict,
-                        )
-
-                        patch_fsdp_rollout_state_dict()
 
                     compute_values = (
                         True if self.cfg.algorithm.adv_type == "gae" else False

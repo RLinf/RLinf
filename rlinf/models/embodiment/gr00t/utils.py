@@ -104,7 +104,7 @@ def unsqueeze_dict_values(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(v, np.ndarray):
             unsqueezed_data[k] = np.expand_dims(v, axis=0)
         elif isinstance(v, list):
-            unsqueezed_data[k] = np.expand_dims(np.array(v), axis=0)  # Fixed
+            unsqueezed_data[k] = np.expand_dims(np.array(v), axis=0)
         elif isinstance(v, torch.Tensor):
             unsqueezed_data[k] = v.unsqueeze(0)
         else:

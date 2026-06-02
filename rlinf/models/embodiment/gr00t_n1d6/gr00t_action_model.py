@@ -484,43 +484,8 @@ class FlowMatchingActionHeadForRLActionPrediction(nn.Module):
             value_embs = vl_embs_value
         else:
             value_embs = torch.cat((vl_embs_value, state_features_value), dim=1)
-        import os
-
-        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-            self, "_printed_value_debug", False
-        ):
-            self._printed_value_debug = True
-
-            def describe_value_input(name, value):
-                arr = value.detach().float().cpu()
-                finite = torch.isfinite(arr)
-                logging.info(
-                    f"[GR00T_VALUE_DEBUG] {name}: shape={tuple(arr.shape)} "
-                    f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
-                    f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
-                    f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
-                    flush=True,
-                )
-
-            describe_value_input("vl_embs_value", vl_embs_value)
-            describe_value_input("state_features_value", state_features_value)
-            describe_value_input("value_embs", value_embs)
 
         values_vlm = self.value_head(value_embs)[:, 0]
-
-        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-            self, "_printed_value_output_debug", False
-        ):
-            self._printed_value_output_debug = True
-            arr = values_vlm.detach().float().cpu()
-            finite = torch.isfinite(arr)
-            logging.info(
-                f"[GR00T_VALUE_DEBUG] values_vlm: shape={tuple(arr.shape)} "
-                f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
-                f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
-                f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
-                flush=True,
-            )
 
         return values_vlm
 
@@ -533,11 +498,6 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
     _no_split_modules = [
         "Qwen3DecoderLayer",
         "Siglip2EncoderLayer",
-        "FlowMatchingActionHeadForRLActionPrediction",
-        "TimestepEncoder",
-        "TimestepEmbedding",
-        "ValueHead",
-        "ExploreNoiseNet",
     ]
 
     def __init__(
@@ -779,65 +739,12 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
         mode: Literal["train", "eval"] = "train",
         **kwargs,
     ):
+        # Here we have a source causing tiny inference-training inconsistency,
+        # force convert the state to bf16 then back to float32 to reproduce the info loss in training.
         env_obs["states"] = env_obs["states"].to(torch.bfloat16)
         env_obs["states"] = env_obs["states"].cpu().float()
 
         observations = self.obs_convert_fn(env_obs)
-
-        import os
-
-        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-            self, "_printed_obs_debug", False
-        ):
-            self._printed_obs_debug = True
-
-            def describe_obs_value(name, value):
-                if isinstance(value, torch.Tensor):
-                    arr = value.detach().float().cpu()
-                    finite = torch.isfinite(arr)
-                    logging.info(
-                        f"[GR00T_OBS_DEBUG] {name}: tensor shape={tuple(arr.shape)} "
-                        f"dtype={value.dtype} finite={finite.all().item()} "
-                        f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
-                        f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g} "
-                        f"mean={arr[finite].mean().item() if finite.any() else float('nan'):.6g}",
-                        flush=True,
-                    )
-                elif isinstance(value, np.ndarray):
-                    arr = value.astype(np.float32, copy=False)
-                    finite = np.isfinite(arr)
-                    logging.info(
-                        f"[GR00T_OBS_DEBUG] {name}: ndarray shape={arr.shape} "
-                        f"dtype={value.dtype} finite={bool(finite.all())} "
-                        f"min={float(arr[finite].min()) if finite.any() else float('nan'):.6g} "
-                        f"max={float(arr[finite].max()) if finite.any() else float('nan'):.6g} "
-                        f"mean={float(arr[finite].mean()) if finite.any() else float('nan'):.6g}",
-                        flush=True,
-                    )
-                elif isinstance(value, list):
-                    preview = value[:2] if len(value) > 2 else value
-                    logging.info(
-                        f"[GR00T_OBS_DEBUG] {name}: list len={len(value)} preview={preview}",
-                        flush=True,
-                    )
-                else:
-                    logging.info(
-                        f"[GR00T_OBS_DEBUG] {name}: {type(value).__name__}={value}",
-                        flush=True,
-                    )
-
-            logging.info(
-                f"[GR00T_OBS_DEBUG] raw env_obs keys={list(env_obs.keys())}",
-                flush=True,
-            )
-            for key, value in env_obs.items():
-                describe_obs_value(f"env_obs.{key}", value)
-            logging.info(
-                f"[GR00T_OBS_DEBUG] converted obs keys={list(observations.keys())}",
-                flush=True,
-            )
-            for key, value in observations.items():
-                describe_obs_value(f"converted.{key}", value)
 
         obs_copy = observations.copy()
 
@@ -865,32 +772,6 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             decode_state = None
 
         normalized_input = self.apply_transforms(obs_copy)
-
-        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-            self, "_printed_processor_debug", False
-        ):
-            self._printed_processor_debug = True
-            logging.info(
-                f"[GR00T_PROCESSOR_DEBUG] normalized_input keys={list(normalized_input.keys())}",
-                flush=True,
-            )
-            for key, value in normalized_input.items():
-                if isinstance(value, torch.Tensor):
-                    arr = value.detach().float().cpu()
-                    finite = torch.isfinite(arr)
-                    logging.info(
-                        f"[GR00T_PROCESSOR_DEBUG] {key}: shape={tuple(value.shape)} "
-                        f"dtype={value.dtype} finite={finite.all().item()} "
-                        f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
-                        f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g} "
-                        f"mean={arr[finite].mean().item() if finite.any() else float('nan'):.6g}",
-                        flush=True,
-                    )
-                else:
-                    logging.info(
-                        f"[GR00T_PROCESSOR_DEBUG] {key}: {type(value).__name__}",
-                        flush=True,
-                    )
 
         for key in normalized_input:
             if isinstance(normalized_input[key], torch.Tensor):
@@ -941,40 +822,6 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
                 raw_tensor = (raw_tensor + noise).clamp(-1.0, 1.0)
                 raw_action = raw_tensor.numpy() if is_numpy else raw_tensor
 
-        import os
-
-        if os.getenv("RLINF_DEBUG_GR00T_ACTION") == "1" and not getattr(
-            self, "_printed_action_debug", False
-        ):
-            self._printed_action_debug = True
-
-            def describe(name, value):
-                if isinstance(value, torch.Tensor):
-                    arr = value.detach().float().cpu()
-                    finite = torch.isfinite(arr)
-                    logging.info(
-                        f"[GR00T_ACTION_DEBUG] {name}: shape={tuple(arr.shape)} "
-                        f"finite={finite.all().item()} nan={torch.isnan(arr).sum().item()} "
-                        f"min={arr[finite].min().item() if finite.any() else float('nan'):.6g} "
-                        f"max={arr[finite].max().item() if finite.any() else float('nan'):.6g}",
-                        flush=True,
-                    )
-                else:
-                    arr = np.asarray(value, dtype=np.float32)
-                    finite = np.isfinite(arr)
-                    logging.info(
-                        f"[GR00T_ACTION_DEBUG] {name}: shape={arr.shape} "
-                        f"finite={bool(finite.all())} nan={int(np.isnan(arr).sum())} "
-                        f"min={float(arr[finite].min()) if finite.any() else float('nan'):.6g} "
-                        f"max={float(arr[finite].max()) if finite.any() else float('nan'):.6g}",
-                        flush=True,
-                    )
-
-            describe("normalized_action", normalized_action)
-            describe("raw_action", raw_action)
-            describe("prev_values", result.get("prev_values"))
-            describe("prev_logprobs", result.get("prev_logprobs"))
-
         return raw_action, result
 
     # ------------------------------------------------------------------
@@ -1010,7 +857,7 @@ class GR00T_N1_6_ForRLActionPrediction(Gr00tN1d6, BasePolicy):
             "roll": value[3:4][None, :],
             "pitch": value[4:5][None, :],
             "yaw": value[5:6][None, :],
-            "gripper": value[6:8][None, :],
+            "gripper": value[6:7][None, :],
         }
 
     @staticmethod

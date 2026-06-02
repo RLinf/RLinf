@@ -107,7 +107,7 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_path: "/workspace/dataset/GR00T-1.6-SFT-LIBERO-HF"
+    model_path: "/workspace/RLinf-Gr00t-N1.6-RL-Spatial"
     precision: ${actor.model.precision}
 
 actor:
@@ -120,7 +120,7 @@ actor:
 
   # Override the default values in model/gr00t_n1d6
   model:
-    model_path: "/workspace/dataset/GR00T-1.6-SFT-LIBERO-HF"
+    model_path: "/workspace/RLinf-Gr00t-N1.6-RL-Spatial"
     model_type: "gr00t_n1d6"   
     add_value_head: True
     num_action_chunks: 1
@@ -148,16 +148,15 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"
-    use_orig_params: False
     gradient_checkpointing: True
-    transformer_layer_cls_to_wrap:
-      - "Qwen3DecoderLayer"
-      - "Siglip2EncoderLayer"
-      - "FlowMatchingActionHeadForRLActionPrediction"
-      - "TimestepEncoder"
-      - "TimestepEmbedding"
-      - "ValueHead"
-      - "ExploreNoiseNet"
+    wrap_policy:
+      transformer_layer_cls_to_wrap:
+        - "Qwen3DecoderLayer"
+        - "Siglip2EncoderLayer"
+        - "FlowMatchingActionHeadForRLActionPrediction"
+        - "TimestepEncoder"
+        - "TimestepEmbedding"
+        - "ValueHead"
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

@@ -44,45 +44,6 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     logging.info(
         "Successfully registered custom architecture Gr00tN1d6, authentication passed!"
     )
-    import rlinf.hybrid_engines.fsdp.strategy.fsdp as fsdp_strategy
-
-    if not hasattr(fsdp_strategy, "_is_gr00t_patched"):
-        orig_policy = fsdp_strategy.get_fsdp_wrap_policy
-
-        def custom_fsdp_wrap_policy(
-            module, config=None, is_lora=False, model_type=None
-        ):
-            import functools
-
-            from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-
-            target_keywords = [
-                "DecoderLayer",
-                "EncoderLayer",
-                "DiTBlock",
-                "NoiseNet",
-                "ValueHead",
-                "ActionHead",
-                "Timestep",
-            ]
-            found_classes = set()
-            for name, mod in module.named_modules():
-                cname = mod.__class__.__name__
-                if any(key in cname for key in target_keywords):
-                    found_classes.add(mod.__class__)
-
-            if found_classes:
-                logging.info(
-                    "\n  FSDP Slicer: %s\n", [c.__name__ for c in found_classes]
-                )
-                return functools.partial(
-                    transformer_auto_wrap_policy, transformer_layer_cls=found_classes
-                )
-
-            return orig_policy(module, config, is_lora, model_type)
-
-        fsdp_strategy.get_fsdp_wrap_policy = custom_fsdp_wrap_policy
-        fsdp_strategy._is_gr00t_patched = True
     from rlinf.utils.patcher import Patcher
 
     Patcher.clear()
@@ -169,20 +130,3 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         replace_dropout_with_identity(model)
 
     return model
-
-
-def patch_fsdp_rollout_state_dict():
-    """Patch EmbodiedFSDPActor.get_rollout_state_dict to use full_state_dict=True."""
-    try:
-        from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
-
-        def _patched_get_rollout_state_dict(self) -> dict:
-            return self.get_model_state_dict(cpu_offload=False, full_state_dict=True)
-
-        EmbodiedFSDPActor.get_rollout_state_dict = _patched_get_rollout_state_dict
-        logging.info(
-            "[GR00T patch] EmbodiedFSDPActor.get_rollout_state_dict patched: "
-            "full_state_dict=True for multi-GPU FSDP weight sync safety"
-        )
-    except Exception as e:
-        logging.warning("[GR00T patch] Failed to patch get_rollout_state_dict: %s", e)
