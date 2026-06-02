@@ -27,17 +27,27 @@ privileged 模式运行，并挂载宿主机 Ascend 驱动目录：
       --shm-size 20g \
       --network host \
       --name rlinf-ascend-libero \
+      -v /usr/local/dcmi:/usr/local/dcmi \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+      -v /etc/ascend_install.info:/etc/ascend_install.info \
+      -v /var/log/npu:/usr/slog \
+      -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
-      # 为提升国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      swr.cn-north-9.myhuaweicloud.com/rlinf/rlinf_npu:v1.0.1-910b
+      # 上面为910b镜像，如需910c(a3)镜像请使用:
+      # swr.cn-north-9.myhuaweicloud.com/rlinf/rlinf_npu:v1.0.1-a3
 
-进入容器后，切换到 OpenVLA-OFT 环境：
+如果不想使用privileged，则需要额外添加设备，并手动添加NPU：
 
 .. code-block:: bash
 
-   source switch_env openvla-oft
+      # 上述指令中添加下面字段
+      --device=/dev/davinci_manager \
+      --device=/dev/devmm_svm \
+      --device=/dev/hisi_hdc \
+      --device=dev/davinci0 # first npu
+
 
 如果需要自行构建镜像，请显式指定 Ascend 平台和 CANN 镜像版本。
 ``CANN_VER`` 包含基础镜像使用的硬件标签：
@@ -46,7 +56,7 @@ privileged 模式运行，并挂载宿主机 Ascend 驱动目录：
 
    docker build \
       --build-arg PLATFORM=ascend \
-      --build-arg CANN_VER=9.0.0-910b \
+      --build-arg CANN_VER=8.5.0-910b \
       --build-arg UBUNTU_VER=22.04 \
       --build-arg BUILD_TARGET=embodied-libero \
       -t rlinf-libero-cann9 .
@@ -56,22 +66,6 @@ Dockerfile 使用以下 CANN 基础镜像：
 .. code-block:: text
 
    swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
-
-方式 2：本地安装
-~~~~~~~~~~~~~~~~
-
-使用 ``install.sh`` 安装依赖，并传入 ``--platform ascend``：
-
-.. code-block:: bash
-
-   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
-   source .venv/bin/activate
-
-国内用户可以添加 ``--use-mirror`` 加速下载：
-
-.. code-block:: bash
-
-   bash requirements/install.sh --use-mirror --platform ascend embodied --model openvla-oft --env libero
 
 LIBERO CPU 渲染
 ---------------
@@ -97,7 +91,7 @@ Ascend 平台运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以
    MUJOCO_GL=osmesa \
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
-   bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
 
 如果运行 PPO，请使用原 LIBERO 文档中的 PPO 配置：
 
@@ -106,7 +100,7 @@ Ascend 平台运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以
    MUJOCO_GL=osmesa \
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
 
 保持不变的部分
 --------------
