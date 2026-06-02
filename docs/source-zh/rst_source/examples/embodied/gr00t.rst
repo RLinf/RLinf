@@ -215,7 +215,7 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 **3. 流匹配动作生成（Flow-Matching Action Head）**
 
 - 模型通过加噪与去噪的流匹配机制（Flow-SDE / Diffusion），直接在连续空间中生成高频动作块。
-- 关键配置：通过``num_action_chunks``控制预测步长，``denoising_steps``控制去噪深度。
+- 关键配置：通过 ``num_action_chunks`` 控制预测步长， ``denoising_steps`` 控制去噪深度。
 
 **4. 跨具身泛化（Cross-Embodiment）**
 
