@@ -362,7 +362,7 @@ Copy or edit ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml`` a
    * - Field
      - Description
    * - ``runner.ckpt_path``
-     - SFT weights to evaluate (``.pt``). Typical save path: ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``. If you only have ``.distcp`` shards, convert to ``.pt`` first (see :doc:`Checkpoint conversion <../../tutorials/advance/convertor>`).
+     - SFT weights to evaluate (``.pt``). Typical save path: ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``. If you only have ``.distcp`` shards, convert to ``.pt`` first (see :doc:`Checkpoint conversion <../../tutorials/usage/convertor>`).
    * - ``actor.model.*_pretrained_path`` / ``tokenizer_path``
      - Match your SFT cold-start paths when ``model_path: null``; the backbone is built from pretrained paths, then ``ckpt_path`` overlays trainable weights.
    * - ``actor.model.metadata_json_path``
