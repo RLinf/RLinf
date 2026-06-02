@@ -48,7 +48,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         super().__init__(cfg, actor, rollout, env, critic, reward)
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
-        self.recompute_logprobs = bool(self.cfg.rollout.get("recompute_logprobs", True))
+        self.recompute_logprobs = bool(
+            self.cfg.rollout.get("recompute_logprobs", False)
+        )
 
         if self.cfg.runner.val_check_interval > 0:
             self.logger.warning(
@@ -125,16 +127,16 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             metric_channel=self.rollout_metric_channel,
         )
 
+        actor_handle: Handle = self.actor.recv_rollout_trajectories(
+            input_channel=self.actor_channel
+        )
+
         while self.global_step < self.max_steps:
             with self.timer("step"):
-                with self.timer("recv_rollout_trajectories"):
-                    self.actor.recv_rollout_trajectories(
-                        input_channel=self.actor_channel
-                    ).wait()
-
+                with self.timer("construct_rollout_batch"):
+                    rollout_data_metrics = self.actor.construct_rollout_batch().wait()
                 if self.recompute_logprobs:
-                    with self.timer("recompute_logprobs"):
-                        self.actor.compute_proximal_logprobs().wait()
+                    raise NotImplementedError
 
                 with self.timer("cal_adv_and_returns"):
                     rollout_metrics_list = (
@@ -147,9 +149,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
                 self.global_step += 1
                 self.actor.set_global_step(self.global_step).wait()
-                self.rollout.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
                     self.update_rollout_weights()
+                self.rollout.set_global_step(self.global_step).wait()
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
@@ -183,6 +185,14 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             if rollout_time_metrics:
                 self.metric_logger.log(rollout_time_metrics, self.global_step)
             self.metric_logger.log(rollout_metrics, self.global_step)
+            if rollout_data_metrics:
+                data_staleness_metrics = {
+                    f"rollout/{k}": v
+                    for k, v in self._aggregate_numeric_metrics(
+                        rollout_data_metrics
+                    ).items()
+                }
+                self.metric_logger.log(data_staleness_metrics, self.global_step)
             self.metric_logger.log(time_metrics, self.global_step)
             self._log_ranked_metrics(
                 metrics_list=training_metrics,
@@ -258,3 +268,4 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
         env_handle.wait()
         rollout_handle.wait()
+        actor_handle.wait()

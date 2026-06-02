@@ -141,22 +141,14 @@ During training, the actor also tracks its own current version. This means each 
 
 This makes the age of the data explicit rather than implicit.
 
-6.2 Rollout-side staleness throttling
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+6.2 Actor-side staleness control
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The rollout worker uses ``staleness_threshold`` to bound how far rollout is allowed to get ahead of actor.
+The actor filters samples using ``staleness_threshold``, ensuring that the version staleness of the samples used does not exceed that threshold.
 
-If rollout has already produced too many episodes under older policies while actor has not caught up yet, rollout pauses inside ``wait_if_stale()`` until the version gap becomes acceptable again.
+In addition, ``on_policy_min_ratio`` controls the proportion of on-policy samples in the rollout store, ensuring the fraction of on-policy samples in the current training round is no lower than this value (default is 0).
 
-This mechanism serves two purposes:
-
-- it prevents rollout from running arbitrarily far ahead and generating large volumes of stale samples,
-- it exposes a direct tradeoff between system throughput and sample freshness.
-
-In practice:
-
-- smaller ``staleness_threshold`` usually improves stability,
-- larger ``staleness_threshold`` usually improves throughput, but increases stale-sample risk.
+When the number of valid versioned trajectories accumulated by each actor rank reaches ``rollout_store_size_per_rank``, that actor starts training (default is 1).
 
 
 7. Algorithm Mechanics
@@ -281,6 +273,8 @@ The following is a minimal Async PPO configuration skeleton aligned with ``examp
      gae_lambda: 0.95
      entropy_bonus: 0.0
      rollout_epoch: 1
+     rollout_store_size_per_rank: 2
+     on_policy_min_ratio: 0.1
 
    env:
      train:
@@ -303,16 +297,22 @@ The following is a minimal Async PPO configuration skeleton aligned with ``examp
 The most important Async PPO-specific parameters are:
 
 - ``staleness_threshold``
-  Bounds how far rollout is allowed to run ahead of actor.
+  Controls how stale a sample is allowed to be when the actor filters samples. Smaller values improve stability; larger values generally improve throughput.
+
+- ``on_policy_min_ratio``
+  Controls the proportion of on-policy samples in the rollout store, ensuring the fraction of on-policy samples in the current training round is no lower than this value (default is 0).
+
+- ``rollout_store_size_per_rank``
+  Controls the threshold of valid versioned trajectories that each actor rank must accumulate before training begins (default is 1).
 
 - ``behave_weight_threshold``
-  Caps how much stale samples can contribute through behavior weighting.
+  Caps the maximum behavior weight of stale samples. Smaller values are more conservative; larger values tolerate older samples more.
 
 - ``rollout.recompute_logprobs``
-  Controls whether proximal logprobs are recomputed explicitly.
+  Controls whether proximal logprobs are recomputed explicitly. Recommended to keep enabled by default.
 
 - ``actor.micro_batch_size`` and ``actor.global_batch_size``
-  Determine training memory pressure and throughput.
+  Determine training memory pressure and throughput. Prioritize training stability and avoiding OOM before chasing larger batches.
 
 The actor training path also enforces strict batch constraints:
 
@@ -329,15 +329,7 @@ The recommended launch path is:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_async.sh maniskill_async_ppo_openvla LIBERO
-
-The equivalent Python entrypoint is:
-
-.. code-block:: bash
-
-   python examples/embodiment/train_async.py \
-     --config-path examples/embodiment/config \
-     --config-name maniskill_async_ppo_openvla
+   bash examples/embodiment/run_async.sh maniskill_async_ppo_openvla
 
 Before running:
 
@@ -429,8 +421,7 @@ Recommended order of changes:
 
 1. reduce ``actor.micro_batch_size``,
 2. keep or enable ``gradient_checkpointing``,
-3. reduce ``env.train.total_num_envs``,
-4. then consider reducing model or input scale.
+3. reduce ``env.train.total_num_envs``.
 
 
 13. Async PPO vs. Synchronous PPO
@@ -442,5 +433,3 @@ The main difference can be summarized simply:
 - Async PPO prioritizes system throughput while explicitly controlling stale-sample impact.
 
 So the main change is not the high-level PPO objective itself. The main change is the execution model of the training system.
-
-If your bottleneck is system-side, Async PPO is often worth the added complexity. If your main difficulty is algorithmic convergence, synchronous PPO is usually easier to tune first.
