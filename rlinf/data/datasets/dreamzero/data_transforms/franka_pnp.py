@@ -31,6 +31,7 @@ from groot.vla.data.transform.video import (
     VideoToTensor,
 )
 
+from rlinf.data.datasets.dreamzero.data_transforms.base import RolloutObsLayout
 from rlinf.data.datasets.dreamzero.data_transforms.dream_transform import DreamTransform
 from rlinf.data.datasets.dreamzero.data_transforms.libero_sim import (
     _ACTION_KEYS,
@@ -52,6 +53,15 @@ class FrankaPnpDataTransform(LiberoSimDataTransform):
     TAG = "franka_pnp"
     DEFAULT_TAG_MAPPING = {"franka_pnp": 21}
     DEFAULT_ACTION_HORIZON = 24
+    ROLLOUT_OBS_LAYOUT = RolloutObsLayout(
+        video_fields=(
+            ("main_images", "video.image"),
+            ("extra_view_images", "video.wrist_image"),
+            ("wrist_images", "video.wrist_image"),
+        ),
+        state_fields=(("states", "state.state"),),
+        binarize_gripper=True,
+    )
 
     @staticmethod
     def get_modality_config() -> dict[str, ModalityConfig]:

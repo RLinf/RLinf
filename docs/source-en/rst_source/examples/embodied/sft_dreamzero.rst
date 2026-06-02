@@ -1,7 +1,8 @@
-DreamZero Supervised Fine-Tuning
-======================================
+DreamZero Supervised Fine-Tuning and Franka Real-World Deployment
+=================================================================
 
 This guide explains how to run DreamZero supervised fine-tuning (SFT) in RLinf, from **model and data preparation** through **configuration**, **launching training**, **evaluation**, and **troubleshooting**.
+It also explains how to deploy a trained DreamZero model on a real Franka robot and run evaluation.
 
 Currently supported:
 
@@ -131,7 +132,7 @@ Supported datasets:
 
 - LIBERO: `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``; see ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID: `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``; see ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP: custom LeRobot dataset — ``embodiment_tag: franka_pnp``; transforms in ``data_transforms/franka_pnp.py`` (extends ``libero_sim`` dual-view layout)
+- Franka PnP: `RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``; transforms in ``data_transforms/franka_pnp.py`` (extends ``libero_sim`` dual-view layout)
 - Mixture SFT: ``libero_franka_mix_sft_dreamzero_5b.yaml`` uses a **list** for ``data.train_data_paths``; each entry can set ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``
 
 Download example:
@@ -143,6 +144,8 @@ Download example:
    huggingface-cli download physical-intelligence/libero --repo-type dataset --local-dir ./libero
    # DROID
    huggingface-cli download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
+   # Franka PnP real-world data
+   huggingface-cli download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
 
 Generating metadata.json
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -163,6 +166,12 @@ For a new dataset or cold start (no ``experiment_cfg/metadata.json``), generate 
      --dataset-root /path/to/droid \
      --output-metadata /path/to/metadata.json \
      --merge
+
+   # Franka PnP
+   python toolkits/lerobot/generate_dreamzero_metadata.py \
+     --preset franka_pnp \
+     --dataset-root /path/to/franka_pnp \
+     --output-metadata /path/to/franka_pnp_metadata.json
 
 Then set ``actor.model.metadata_json_path`` in config (or place the file at ``model_path/experiment_cfg/metadata.json``).
 
@@ -428,6 +437,97 @@ From the repo root, with the DreamZero venv active and ``DREAMZERO_PATH`` set:
    bash examples/embodiment/eval_embodiment.sh libero_spatial_eval_dreamzero
 
 Logs go to ``logs/<timestamp>-libero_spatial_eval_dreamzero/eval_embodiment.log``; the terminal prints metrics such as ``eval/success_once`` and ``eval/return``. For general eval YAML fields, see :doc:`VLA evaluation guide <../../start/vla-eval>`.
+
+Franka real-world deployment and evaluation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After SFT or checkpoint conversion, use ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` to deploy a full DreamZero checkpoint directory on the real Franka pick-and-place task. This workflow uses ``embodiment_tag: franka_pnp`` and the rollout observation mapping defined in ``data_transforms/franka_pnp.py``.
+
+**Prepare Ray on two machines**
+
+The example below uses two machines: one GPU node and one Franka node. Before starting Ray on each node, activate the environment and export consistent RLinf / DreamZero paths. Use rank 0 for the GPU node and rank 1 for the Franka node:
+
+.. code:: bash
+
+   # GPU / head node
+   source /path/to/RLinf/.venv/bin/activate
+   export RANK=0
+   export DREAMZERO_PATH=/path/to/dreamzero
+   export PYTHONPATH=/path/to/RLinf:${DREAMZERO_PATH}:${PYTHONPATH:-}
+   export HYDRA_FULL_ERROR=1
+   export TOKENIZERS_PARALLELISM=false
+   # Optional for machines with multiple network interfaces:
+   # export RLINF_COMM_NET_DEVICES=<network_interface>
+   ray stop
+   ray start --head --node-ip-address=<head_ip> --port=6379
+
+   # Franka node
+   source /path/to/RLinf/.venv/bin/activate
+   export RANK=1
+   export PYTHONPATH=/path/to/RLinf
+   # Optional for machines with multiple network interfaces:
+   # export RLINF_COMM_NET_DEVICES=<network_interface>
+   ray stop
+   ray start --address=<head_ip>:6379
+
+Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` according to the real robot and checkpoint:
+
+.. code:: yaml
+
+   cluster:
+     node_groups:
+       - label: "4090"
+         node_ranks: 0
+       - label: franka
+         node_ranks: 1
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               camera_serials: ["SERIAL1", "SERIAL2"]
+               node_rank: 1
+
+   actor:
+     model:
+       model_path: /path/to/ckpt_pnp/5b-franka/step_1200
+       tokenizer_path: /path/to/umt5-xxl
+       metadata_json_path: ${actor.model.model_path}/experiment_cfg/metadata.json
+       embodiment_tag: franka_pnp
+       action_horizon: 12
+       num_action_chunks: 12
+
+   env:
+     eval:
+       video_cfg:
+         save_video: True
+         video_base_dir: /path/on/franka_node/video/eval
+       override_cfg:
+         task_description: "pick up the object and place it into the container"
+         is_dummy: False
+         max_num_steps: 100
+         enable_gripper_penalty: False
+
+**Launch evaluation**
+
+After Ray is connected, run on the GPU / head node:
+
+.. code:: bash
+
+   export CUDA_VISIBLE_DEVICES=0
+   export DREAMZERO_PATH=/path/to/dreamzero
+   export DREAMZERO_FRANKA_CKPT=/path/to/ckpt_pnp
+   export DREAMZERO_TOKENIZER_PATH=/path/to/umt5-xxl
+   export RLINF_REALWORLD_VIDEO_DIR=/path/on/franka_node/video/eval
+   export RLINF_CODE_WORKING_DIR=auto
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval_dreamzero
+
+``max_steps_per_rollout_epoch`` must be divisible by ``actor.model.num_action_chunks``.
+
+Recommended runtime checks:
+
+- ``ray status`` should show both the GPU node and the Franka node, with actor / rollout placed on the specified GPU rank.
+- Videos are written to ``env.eval.video_cfg.video_base_dir``; this path is usually on the Franka node.
 
 Optional: convert SFT ``full_weights.pt`` to Hugging Face ``safetensors`` with ``fsdp_dreamzero_convertor`` and ``convert_pt_to_hf`` (``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_dreamzero_convertor.yaml``). For eval in LIBERO and similar simulators, set ``runner.ckpt_path`` to your ``.pt`` checkpoint.
 
