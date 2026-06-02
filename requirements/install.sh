@@ -74,8 +74,8 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 
 #=======================Utility Functions=======================
@@ -1365,6 +1365,48 @@ install_lingbot_vla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_abot_m0_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local abot_path
+    local vggt_path
+    abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/amap-cvlab/ABot-Manipulation.git)
+    vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/facebookresearch/vggt.git)
+
+    uv pip install -e "$vggt_path"
+
+    uv pip install -e "$abot_path" --no-deps
+
+    uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
+
+    install_flash_attn
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            ;;
+        robocasa)
+            install_robocasa_env
+            ;;
+        robotwin)
+            install_robotwin_env
+            ;;
+        liberoplus)
+            install_liberoplus_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for ABot-M0 model." >&2
+            exit 1
+            ;;
+    esac
+
+    # Keep ABot-M0 runtime PEFT on the expected version after all installs.
+    uv pip install peft==0.18.1
+
+    uv pip uninstall pynvml || true
+}
+    
 install_dreamzero_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1443,6 +1485,10 @@ install_env_only() {
         habitat)
             install_common_embodied_deps
             install_habitat_env
+            ;;
+        genesis)
+            install_common_embodied_deps
+            install_genesis_env
             ;;
         embodichain)
             install_common_embodied_deps
@@ -1816,6 +1862,20 @@ install_habitat_env() {
     uv pip install -e $habitat_lab_dir/habitat-baselines
 }
 
+install_genesis_env() {
+    echo "Installing Genesis environment dependencies..."
+    uv pip install "transformers==4.57.6"
+    uv pip install "cuda-python==12.9.6"
+    uv pip install "genesis-world==0.4.5"
+    uv pip install "pyglet==2.1.14"
+    uv pip install "matplotlib==3.10.8"
+
+    uv pip install "torch==2.8.0"
+    uv pip install "torchvision==0.23.0"
+    uv pip install "torchaudio==2.8.0"
+    uv pip install "torchcodec==0.6"
+}
+
 install_opensora_world_model() {
     # Clone opensora repository
     local opensora_dir
@@ -1942,6 +2002,9 @@ main() {
                     ;;
                 lingbotvla)                  
                     install_lingbot_vla_model 
+                    ;;
+                abot_m0)
+                    install_abot_m0_model
                     ;;
                 dreamzero)
                     install_dreamzero_model

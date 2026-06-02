@@ -33,9 +33,7 @@ from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
 from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
 from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
-    FSDPModelManager,
-)
+from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
     prepare_pack_fsdp,
@@ -965,7 +963,6 @@ class FSDPActor(FSDPModelManager, Worker):
                     ),
                 )
                 batch["advantages"] = advantages
-
         return batch
 
 
@@ -980,7 +977,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
-
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
@@ -1050,28 +1046,12 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             ).async_wait()
 
         async def recv_func():
-            if self._is_weight_sender:
-                metadata = await self.recv(
-                    src_group_name=self._rollout_group_name,
-                    src_rank=0,
-                    async_op=True,
-                    options=self._sync_weight_comm_options,
-                ).async_wait()
-            else:
-                metadata = None
-            if self._actor_world_size > 1:
-                metadata = await self.broadcast(
-                    metadata,
-                    groups=[
-                        (
-                            self._group_name,
-                            list(range(self._actor_world_size)),
-                        )
-                    ],
-                    src=(self._group_name, 0),
-                    async_op=True,
-                ).async_wait()
-            return metadata
+            return await self.recv(
+                src_group_name=self._rollout_group_name,
+                src_rank=0,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         if not self.weight_syncer.sender_initialized():
             await self.weight_syncer.init_sender(
@@ -1389,6 +1369,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     elif SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
                         SupportedModel.GR00T_N1D6,
+                        SupportedModel.ABOT_M0,
                     ]:
                         kwargs["prev_logprobs"] = prev_logprobs
 
@@ -1409,6 +1390,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
                         SupportedModel.GR00T_N1D6,
+                        SupportedModel.ABOT_M0,
                     ]:
                         prev_logprobs = output_dict["prev_logprobs"]
 

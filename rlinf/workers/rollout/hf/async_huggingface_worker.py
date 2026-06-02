@@ -69,7 +69,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         while True:
             if self._background_weight_sync_active:
                 await self._poll_background_weight_sync()
-            await self.wait_if_stale()
             for _ in range(self.rollout_epoch):
                 await self.generate_one_epoch(input_channel, output_channel)
             if self.finished_episodes is not None:

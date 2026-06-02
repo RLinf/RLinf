@@ -87,7 +87,6 @@ class MultiStepRolloutWorker(Worker):
         )
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
         self._sync_weight_comm_options = self.weight_syncer.comm_options
-        print(f"self._sync_weight_comm_options: {self._sync_weight_comm_options}")
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -261,6 +260,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
+            SupportedModel.ABOT_M0,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
@@ -362,13 +362,15 @@ class MultiStepRolloutWorker(Worker):
         async def send_func(data: Any) -> None:
             if not self._weight_sync_is_sender:
                 return
-            await self.send(
-                data,
-                dst_group_name=self.actor_group_name,
-                dst_rank=self.actor_weight_src_rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+            actor_world_size = self.placement.get_world_size("actor")
+            for actor_rank in range(actor_world_size):
+                await self.send(
+                    data,
+                    dst_group_name=self.actor_group_name,
+                    dst_rank=actor_rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
         if not self.weight_syncer.receiver_initialized():
             await self.weight_syncer.init_receiver(
