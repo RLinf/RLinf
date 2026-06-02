@@ -42,7 +42,7 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  eval_rollout_epoch: 1
+  eval_rollout_epoch: 50
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
@@ -94,6 +94,9 @@ env:
     group_size: 1
   eval:
     total_num_envs: 18 #Atomic-Seen has 18 tasks，Composite-Seen has 16 tasks, Composite-Unseen has 16 tasks
+    seed: 7
+    seed_strategy: openpi
+    warmup_reset_on_init: True
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
@@ -108,6 +111,9 @@ env:
       save_video: True
       info_on_video: True
       video_base_dir: "../results/video/eval"
+    init_params:
+      camera_heights: 256
+      camera_widths: 256
 
 rollout:
   group_name: "RolloutGroup"
@@ -131,7 +137,7 @@ actor:
 
   model:
     model_path: "/path/to/model/pi0_robocasa365"
-    num_action_chunks: 10
+    num_action_chunks: 5
     action_dim: 12
     num_steps: 5
     add_value_head: False
@@ -142,7 +148,7 @@ actor:
       detach_critic_input: False
     openpi_data:
       state_space: "16d"
-      image_space: "3views"
+      image_space: "2views"
       action_space: "12d"
 
   optim:
