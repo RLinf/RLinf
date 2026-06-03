@@ -14,13 +14,11 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 
 
 def compute_reward_assign_lengths(
-    history_lengths: Optional[dict[str, list[int]]],
+    history_lengths: dict[str, list[int]] | None,
     *,
     num_envs: int,
     current_rollout_length: int,

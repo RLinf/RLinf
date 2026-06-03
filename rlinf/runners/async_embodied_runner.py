@@ -302,5 +302,3 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
-        if self.sglang_reward_server is not None:
-            self.sglang_reward_server.stop()

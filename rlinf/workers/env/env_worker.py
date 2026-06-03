@@ -467,9 +467,11 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
         if not self.cfg.env.train.auto_reset:
             if self.cfg.env.train.ignore_terminations:
@@ -501,10 +503,10 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             rewards=chunk_rewards,
+            env_infos=infos if isinstance(infos, dict) else None,
             dones=chunk_dones,
             terminations=chunk_terminations,
             truncations=chunk_truncations,
-            env_infos=infos if isinstance(infos, dict) else None,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
         )
@@ -538,9 +540,11 @@ class EnvWorker(Worker):
         final_obs = (
             self._build_chunk_final_obs(obs_list, infos_list)
             if self.use_external_reward_model
-            else infos["final_observation"]
-            if isinstance(infos, dict) and "final_observation" in infos
-            else None
+            else (
+                infos["final_observation"]
+                if isinstance(infos, dict) and "final_observation" in infos
+                else None
+            )
         )
 
         current_dones = chunk_dones[:, -1]  # [num_envs] bool
@@ -751,33 +755,6 @@ class EnvWorker(Worker):
         adjusted_rewards[:, -1] += self.cfg.algorithm.gamma * final_values
         return adjusted_rewards
 
-    def _compute_reward_assign_lengths(
-        self,
-        stage_id: int,
-        history_lengths: dict[str, list[int]] | None,
-        batch_size: int,
-    ) -> torch.Tensor:
-        return compute_reward_assign_lengths(
-            history_lengths,
-            num_envs=batch_size,
-            current_rollout_length=len(self.rollout_results[stage_id].rewards),
-        )
-
-    @staticmethod
-    def _stack_aligned_reward_field(
-        field_list: list[torch.Tensor],
-    ) -> torch.Tensor | None:
-        if not field_list:
-            return None
-        return torch.stack(field_list, dim=0).cpu().contiguous()
-
-    @staticmethod
-    def _overwrite_reward_list(
-        rollout_result: EmbodiedRolloutResult,
-        rewards: torch.Tensor,
-    ) -> None:
-        rollout_result.rewards = [step.cpu().contiguous() for step in rewards.unbind(0)]
-
     def _apply_reward_postprocess(
         self,
         rollout_result: EmbodiedRolloutResult,
@@ -785,9 +762,7 @@ class EnvWorker(Worker):
         if not rollout_result.rewards:
             return
 
-        reward_tensor = self._stack_aligned_reward_field(rollout_result.rewards)
-        if reward_tensor is None:
-            return
+        reward_tensor = torch.stack(rollout_result.rewards, dim=0).cpu().contiguous()
 
         if self.normalize_total_reward:
             reward_tensor = normalize_total_reward(
@@ -796,7 +771,9 @@ class EnvWorker(Worker):
                 eps=self.reward_normalization_eps,
             ).to(dtype=reward_tensor.dtype)
 
-        self._overwrite_reward_list(rollout_result, reward_tensor)
+        rollout_result.rewards = [
+            step.cpu().contiguous() for step in reward_tensor.unbind(0)
+        ]
 
     def finish_rollout(self, mode="train"):
         # reset
@@ -1095,10 +1072,12 @@ class EnvWorker(Worker):
         )
         if chunk_step_result.rewards is not None:
             batch_size = chunk_step_result.rewards.shape[0]
-            reward_assign_lengths = self._compute_reward_assign_lengths(
-                pending_step.stage_id,
+            reward_assign_lengths = compute_reward_assign_lengths(
                 pending_step.history_lengths,
-                batch_size,
+                num_envs=batch_size,
+                current_rollout_length=len(
+                    self.rollout_results[pending_step.stage_id].rewards
+                ),
             )
             self.rollout_results[pending_step.stage_id].reward_assign_lengths.append(
                 reward_assign_lengths

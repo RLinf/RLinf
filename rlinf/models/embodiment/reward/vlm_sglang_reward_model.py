@@ -15,6 +15,7 @@
 import base64
 import io
 import time
+from contextlib import contextmanager
 from typing import Any, Optional
 
 import numpy as np
@@ -45,6 +46,15 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+@contextmanager
+def _record_timing_ms(timings: dict[str, float], key: str):
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        timings[key] += (time.perf_counter() - start) * 1000
+
+
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
     """SGLang HTTP-backed embodied history VLM reward model.
 
@@ -60,7 +70,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self.model_path: str = cfg.get("model_path")
         if not self.model_path:
             raise ValueError(
-                "reward.model.model_path must be set for HistoryVLMSGLangRewardModel"
+                f"reward.model.model_path must be set for {self.__class__.__name__}"
             )
 
         self.history_buffer_names = list(cfg.history_buffers.keys())
@@ -122,7 +132,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             history_buffer_names=self.history_buffer_names,
         )
         assert isinstance(self.input_builder, HistoryVLMInputBuilder), (
-            "HistoryVLMSGLangRewardModel only supports HistoryVLMInputBuilder"
+            f"{self.__class__.__name__} only supports HistoryVLMInputBuilder"
         )
 
     def setup_reward_parser(self) -> None:
@@ -182,17 +192,11 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 key: self._slice_batch_value(nested_value, start, end)
                 for key, nested_value in value.items()
             }
-        if isinstance(value, torch.Tensor):
+        if isinstance(value, (torch.Tensor, np.ndarray)):
             return (
                 value[start:end] if value.ndim > 0 and value.shape[0] >= end else value
             )
-        if isinstance(value, np.ndarray):
-            return (
-                value[start:end] if value.ndim > 0 and value.shape[0] >= end else value
-            )
-        if isinstance(value, list):
-            return value[start:end] if len(value) >= end else value
-        if isinstance(value, tuple):
+        if isinstance(value, (list, tuple)):
             return value[start:end] if len(value) >= end else value
         return value
 
@@ -412,23 +416,20 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 reward_chunks.append(reward_chunk)
                 continue
 
-            prepare_start = time.perf_counter()
-            prepared_inputs = self.input_builder.prepare_inputs(
-                micro_observations,
-                micro_history_input,
-                valid_input_ids,
-            )
-            timings["prepare_inputs_ms"] += (time.perf_counter() - prepare_start) * 1000
+            with _record_timing_ms(timings, "prepare_inputs_ms"):
+                prepared_inputs = self.input_builder.prepare_inputs(
+                    micro_observations,
+                    micro_history_input,
+                    valid_input_ids,
+                )
 
-            image_start = time.perf_counter()
-            payloads = self._build_chat_payloads(prepared_inputs)
-            timings["image_encode_ms"] += (time.perf_counter() - image_start) * 1000
+            with _record_timing_ms(timings, "image_encode_ms"):
+                payloads = self._build_chat_payloads(prepared_inputs)
 
-            request_start = time.perf_counter()
-            outputs, token_counts = self._generate(payloads)
+            with _record_timing_ms(timings, "http_request_ms"):
+                outputs, token_counts = self._generate(payloads)
             generated_token_counts.extend(token_counts)
             all_outputs.extend(outputs)
-            timings["http_request_ms"] += (time.perf_counter() - request_start) * 1000
 
             if len(outputs) != len(valid_input_ids):
                 logger.warning(
@@ -436,15 +437,13 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                     len(outputs),
                     len(valid_input_ids),
                 )
-                outputs = (outputs + [""] * len(valid_input_ids))[
-                    : len(valid_input_ids)
-                ]
+                outputs += [""] * (len(valid_input_ids) - len(outputs))
+                outputs = outputs[: len(valid_input_ids)]
 
-            parse_start = time.perf_counter()
-            parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
-                dtype=torch.float32
-            )
-            timings["parse_ms"] += (time.perf_counter() - parse_start) * 1000
+            with _record_timing_ms(timings, "parse_ms"):
+                parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
+                    dtype=torch.float32
+                )
 
             reward_chunk[valid_input_ids] = parsed_rewards
             reward_chunks.append(reward_chunk)

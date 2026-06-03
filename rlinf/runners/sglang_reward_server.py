@@ -53,6 +53,10 @@ class SGLangRewardServer:
         self.process: subprocess.Popen | None = None
 
     @property
+    def server_url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    @property
     def models_url(self) -> str:
         return f"{self.api_base}/models"
 
@@ -81,21 +85,15 @@ class SGLangRewardServer:
             "sampling-backend": "pytorch",
             "grammar-backend": "none",
         }
-        overrides = self.reward_model_cfg.get(
-            "sglang_server_args", self.reward_model_cfg.get("server_args", {})
-        )
+        overrides = self.reward_model_cfg.get("sglang_server_args", {})
         overrides = _to_plain(overrides) or {}
-        extra_args: list[str] = []
-        if isinstance(overrides, dict):
-            for key, value in overrides.items():
-                args[str(key).replace("_", "-")] = value
-        elif isinstance(overrides, list):
-            extra_args = [str(item) for item in overrides]
-        else:
+        if not isinstance(overrides, dict):
             raise TypeError(
-                "reward.model.sglang_server_args must be a dict or list, "
+                "reward.model.sglang_server_args must be a dict, "
                 f"got {type(overrides).__name__}."
             )
+        for key, value in overrides.items():
+            args[str(key).replace("_", "-")] = value
 
         command = [sys.executable, "-m", "sglang.launch_server"]
         for key, value in args.items():
@@ -106,12 +104,11 @@ class SGLangRewardServer:
                 command.append(flag)
             else:
                 command.extend([flag, str(value)])
-        command.extend(extra_args)
         return command
 
     def start(self) -> str:
         if self.process is not None:
-            return self.api_base
+            raise RuntimeError("SGLang reward server has already been started.")
 
         command = self.build_command()
         logger.info("Starting SGLang reward server: %s", " ".join(command))
@@ -124,6 +121,19 @@ class SGLangRewardServer:
         return self.api_base
 
     def wait_until_ready(self) -> None:
+        try:
+            from sglang.utils import wait_for_server
+        except ImportError:
+            pass
+        else:
+            wait_for_server(
+                self.server_url,
+                timeout=int(self.startup_timeout),
+                process=self.process,
+            )
+            logger.info("SGLang reward server is ready at %s", self.api_base)
+            return
+
         deadline = time.monotonic() + self.startup_timeout
         last_error: Exception | None = None
         while time.monotonic() < deadline:
@@ -154,15 +164,24 @@ class SGLangRewardServer:
         if self.process.poll() is None:
             logger.info("Stopping SGLang reward server on %s", self.api_base)
             try:
-                os.killpg(self.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                self.process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.process.pid, signal.SIGKILL)
-                self.process.wait(timeout=10)
+                from sglang.utils import terminate_process
+            except ImportError:
+                self._terminate_process_group()
+            else:
+                terminate_process(self.process)
         self.process = None
+
+    def _terminate_process_group(self) -> None:
+        assert self.process is not None
+        try:
+            os.killpg(self.process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(self.process.pid, signal.SIGKILL)
+            self.process.wait(timeout=10)
 
 
 def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
