@@ -208,6 +208,34 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-mlp-ppo-genesis-cubepick-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install Genesis dependencies
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env genesis
+
+      - name: Run Genesis CubePick PPO MLP e2e test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh genesis_cubepick_ppo_mlp
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvla-maniskill-libero-test:
     runs-on: embodied
     steps:
@@ -599,6 +627,14 @@ jobs:
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05
+
+      - name: Maniskill PPO Pi05 training pipeline test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20

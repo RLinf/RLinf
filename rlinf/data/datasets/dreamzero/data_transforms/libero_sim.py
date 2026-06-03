@@ -41,6 +41,8 @@ _STATE_KEYS = ["state.state"]
 _ACTION_KEYS = ["action.actions"]
 
 _VIDEO_BACKEND = "torchvision"
+_DEFAULT_VIDEO_HEIGHT = 256
+_DEFAULT_VIDEO_WIDTH = 256
 
 _TRAINING_PROMPT_PREFIX = "A multi-view video shows that a robot "
 _MULTIVIEW_LAYOUT = (
@@ -134,6 +136,8 @@ class LiberoSimDataTransform:
                 cfg.get("always_use_default_instruction", False)
             ),
             embodiment_tag_mapping=dict(embodiment_tag_mapping),
+            video_height=int(cfg.get("target_video_height", _DEFAULT_VIDEO_HEIGHT)),
+            video_width=int(cfg.get("target_video_width", _DEFAULT_VIDEO_WIDTH)),
         )
 
     @staticmethod
@@ -148,6 +152,8 @@ class LiberoSimDataTransform:
         language_dropout_prob: float,
         always_use_default_instruction: bool,
         embodiment_tag_mapping: dict[str, int],
+        video_height: int = _DEFAULT_VIDEO_HEIGHT,
+        video_width: int = _DEFAULT_VIDEO_WIDTH,
     ) -> ComposedModalityTransform:
         vk = list(_VIDEO_KEYS)
         state_k = list(_STATE_KEYS)
@@ -159,8 +165,8 @@ class LiberoSimDataTransform:
             VideoResize(
                 apply_to=vk,
                 backend=_VIDEO_BACKEND,
-                height=256,
-                width=256,
+                height=video_height,
+                width=video_width,
                 interpolation="linear",
             ),
             VideoColorJitter(

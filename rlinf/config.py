@@ -814,6 +814,16 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
 
+    if cfg.runner.get("use_training_pipeline", False):
+        assert not cfg.algorithm.get("normalize_advantages", True), (
+            "algorithm.normalize_advantages must be False when "
+            "runner.use_training_pipeline is True."
+        )
+        assert cfg.algorithm.adv_type == "gae", (
+            "algorithm.adv_type only supports 'gae' now"
+            "when runner.use_training_pipeline is True."
+        )
+
     # NOTE: Currently we only support actor_critic as PPO algorithm loss, and only support value_head as critic model.
     # This will be updated in the future to support more algorithms and critic models.
     # Check that actor_critic loss requires value_head (training only; eval does not need critic)
@@ -1241,22 +1251,21 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             cfg.runner.per_worker_log_path = os.path.join(
                 cfg.runner.logger.log_path, "worker_logs"
             )
-        cfg.runner.nsight_output_path = None
-        nsight_cfg = cfg.cluster.get("nsight", None)
-        if nsight_cfg is not None and bool(nsight_cfg.get("enabled", True)):
-            cfg.runner.nsight_output_path = os.path.abspath(
-                os.path.join(
-                    cfg.runner.logger.log_path,
-                    cfg.runner.logger.experiment_name,
-                    "nsights",
+        profiling_cfg = cfg.cluster.get("profiling", None)
+        if profiling_cfg is not None and bool(profiling_cfg.get("enabled", True)):
+            if not profiling_cfg.get("output_dir", None):
+                cfg.cluster.profiling.output_dir = os.path.abspath(
+                    os.path.join(
+                        cfg.runner.logger.log_path,
+                        cfg.runner.logger.experiment_name,
+                        "profiling",
+                    )
                 )
-            )
 
     # Init cluster
     Cluster(
         cluster_cfg=cfg.cluster,
         distributed_log_dir=cfg.runner.per_worker_log_path,
-        nsight_output_dir=cfg.runner.nsight_output_path,
     )
 
     assert cfg.runner.task_type in SUPPORTED_TASK_TYPE, (

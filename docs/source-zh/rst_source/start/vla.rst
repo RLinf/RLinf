@@ -94,6 +94,38 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    source switch_env openvla-oft
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
+训练流水线模式
+--------------------------
+
+对于具身 FSDP 训练，可以通过 ``runner.use_training_pipeline`` 开启环境交互
+与 actor 训练之间的流水线执行路径。设置为 ``True`` 后，环境 worker 会先处理
+rollout 轨迹，将其转换为打包后的 actor micro-batch，并通过 channel 流式发送给
+actor。actor 可以在 rollout 仍在生成时训练这些已经准备好的 micro-batch。
+
+当 rollout 数据中包含嵌套 observation 或较大的 tensor 时，该模式通常更有用。
+发送打包后的 micro-batch 可以让 channel payload 更适合 tensor fast path，同时减少
+actor 侧重新组装和处理 batch 的额外开销。尤其当 env worker 和 actor worker
+部署在不同节点，并且节点之间通过广域网连接时，较小且打包后的 tensor payload
+可以降低跨节点传输开销。
+
+示例配置：
+
+.. code-block:: yaml
+
+   runner:
+     use_training_pipeline: True
+
+   algorithm:
+     normalize_advantages: False
+
+当前限制：
+
+- ``algorithm.normalize_advantages`` 必须为 ``False``，因为 pipeline 路径会在
+  env worker 侧计算 advantages，并以 actor micro-batch 形式流式发送；actor 侧
+  不会再重建完整 rollout batch 来做统一 normalization。
+- 该模式面向具身 FSDP actor 训练中的 PPO/GRPO 类 actor loss；目前不支持
+  ``embodied_sac``、``embodied_dagger`` 或 ``embodied_nft``。
+
 
 查看训练结果
 --------------------------

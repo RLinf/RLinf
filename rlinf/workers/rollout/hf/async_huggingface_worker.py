@@ -16,7 +16,7 @@ import asyncio
 
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.scheduler import Channel
+from rlinf.scheduler import Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -43,6 +43,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self._weight_sync_coalesced_total = 0
         self._weight_sync_request_total = 0
 
+    @Worker.timer("rollout/generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -69,7 +70,6 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         while True:
             if self._background_weight_sync_active:
                 await self._poll_background_weight_sync()
-            await self.wait_if_stale()
             for _ in range(self.rollout_epoch):
                 await self.generate_one_epoch(input_channel, output_channel)
             if self.finished_episodes is not None:
@@ -121,6 +121,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self._weight_sync_requested = False
         self._weight_sync_work = asyncio.create_task(self._recv_and_apply_actor_sync())
 
+    @Worker.timer("rollout/poll_weight_sync")
     async def _poll_background_weight_sync(self):
         self._start_background_weight_sync_if_needed()
         if self._weight_sync_work is None:
@@ -135,6 +136,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
 
         self._start_background_weight_sync_if_needed()
 
+    @Worker.timer("rollout/request_weight_sync")
     async def request_actor_sync_model(self):
         self._weight_sync_request_total += 1
         if self._weight_sync_requested or self._weight_sync_work is not None:

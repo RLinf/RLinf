@@ -12,23 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""DreamZero LeRobot datasets and mixture sampling for SFT."""
+
+from __future__ import annotations
+
 import bisect
 import json
 import random
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
+import yaml
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
-from torchdata.stateful_dataloader import StatefulDataLoader
 
-from rlinf.data.datasets.dreamzero.data_transforms import (
-    format_training_prompt,
-    normalize_instruction_text,
-)
 from rlinf.data.datasets.dreamzero.sampling_strategy import (
+    DEFAULT_VIDEO_IN_CHUNK_OFFSETS,
     EmptyTemporalSampleError,
     MultiAnchorTemporalConfig,
     SamplingMode,
@@ -48,6 +51,7 @@ from rlinf.data.datasets.dreamzero.utils import (
     safe_lang_text,
 )
 from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
+from rlinf.data.utils import safe_hash
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -80,6 +84,8 @@ class DreamZeroLeRobotDataset(Dataset):
         video_backend: str = "pyav",
         sampling_mode: SamplingMode = "multi_anchor",
         multi_anchor_resample_attempts: int = 8,
+        macro_stride: int | None = None,
+        video_in_chunk_offsets: tuple[int, ...] | list[int] | None = None,
     ):
         if isinstance(data_path, (list, tuple)):
             if len(data_path) == 0:
@@ -179,9 +185,19 @@ class DreamZeroLeRobotDataset(Dataset):
             self._multi_anchor_cfg = None
         else:
             self._fixed_window_temporal = None
+            if macro_stride is None:
+                resolved_macro_stride = self.action_horizon
+            else:
+                resolved_macro_stride = int(macro_stride)
+            if video_in_chunk_offsets is None:
+                resolved_video_offsets = DEFAULT_VIDEO_IN_CHUNK_OFFSETS
+            else:
+                resolved_video_offsets = tuple(int(x) for x in video_in_chunk_offsets)
             self._multi_anchor_cfg = MultiAnchorTemporalConfig(
                 max_chunk_size=self.max_chunk_size,
                 action_horizon=self.action_horizon,
+                macro_stride=resolved_macro_stride,
+                video_in_chunk_offsets=resolved_video_offsets,
             )
         if self._use_lazy_video_tree:
             self._init_lazy_map_style(pq_cache_max_episodes, video_tolerance_s)
@@ -947,96 +963,80 @@ class DreamZeroLeRobotDataset(Dataset):
         return out
 
 
-class DreamZeroCollator:
-    """Stack transformed samples and tokenize text (Groot ``DefaultDataCollator``-style)."""
-
-    def __init__(
-        self,
-        tokenizer_path: str,
-        max_seq_len: int,
-        embodiment_tag_mapping: dict[str, int],
-    ):
-        from groot.vla.model.dreamzero.transform.dreamzero_cotrain import (
-            HuggingfaceTokenizer,
+def is_dreamzero_mixture_spec(data_paths: Any) -> bool:
+    """Return True when ``data_paths`` is a list of per-dataset mixture specs."""
+    if data_paths is None:
+        return False
+    if isinstance(data_paths, str):
+        return False
+    # OmegaConf ListConfig is not a list/tuple subclass.
+    if not (isinstance(data_paths, (list, tuple)) or OmegaConf.is_list(data_paths)):
+        return False
+    if len(data_paths) == 0:
+        raise ValueError(
+            "DreamZero mixture spec must contain at least one dataset entry."
         )
+    first = data_paths[0]
+    return isinstance(first, Mapping) or OmegaConf.is_dict(first)
 
-        self.tokenizer = HuggingfaceTokenizer(
-            name=tokenizer_path,
-            seq_len=max_seq_len,
-            clean="whitespace",
+
+def _normalize_mixture_spec(data_paths: Sequence[Any]) -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for index, item in enumerate(data_paths):
+        if isinstance(item, Mapping):
+            spec = dict(item)
+        elif OmegaConf.is_dict(item):
+            spec = OmegaConf.to_container(item, resolve=True)  # type: ignore[arg-type]
+            assert isinstance(spec, dict)
+        else:
+            raise ValueError(
+                f"Invalid DreamZero mixture entry at index {index}: expected a dict-like "
+                f"spec with dataset_path and weight, got {type(item)!r}."
+            )
+        specs.append(spec)
+    return specs
+
+
+def _resolve_dataset_paths(spec: dict[str, Any]) -> list[str]:
+    paths = spec.get("dataset_path", spec.get("data_path"))
+    if paths is None:
+        raise ValueError(
+            "Each DreamZero mixture spec entry must define 'dataset_path' or 'data_path'."
         )
-        self.embodiment_tag_mapping = embodiment_tag_mapping
-
-    @staticmethod
-    def collate_batch(
-        features: list[dict[str, Any]],
-        tokenizer: Any,
-        embodiment_tag_mapping: dict[str, int],
-    ) -> dict[str, Any]:
-        batch: dict[str, Any] = {}
-        for key in features[0]:
-            if key == "text":
-                texts = [
-                    format_training_prompt(
-                        normalize_instruction_text(elem[key]),
-                        int(elem["embodiment_id"]),
-                        embodiment_tag_mapping,
-                    )
-                    for elem in features
-                ]
-                ids, mask = tokenizer(texts, return_mask=True, add_special_tokens=True)
-                batch[key] = ids
-                batch["text_attention_mask"] = mask
-            elif key == "text_negative":
-                values = [elem[key] for elem in features]
-                ids, mask = tokenizer(values, return_mask=True, add_special_tokens=True)
-                batch[key] = ids
-                batch["text_attention_mask_negative"] = mask
-            else:
-                values = [elem[key] for elem in features]
-                try:
-                    batch[key] = torch.from_numpy(np.stack(values))
-                except ValueError as e:
-                    shapes = [np.asarray(v).shape for v in values]
-                    raise ValueError(
-                        f"Shape mismatch in collate for key='{key}': shapes={shapes}"
-                    ) from e
-        return batch
-
-    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.collate_batch(features, self.tokenizer, self.embodiment_tag_mapping)
+    if isinstance(paths, str):
+        return [paths]
+    return [str(path) for path in paths]
 
 
-def build_dreamzero_sft_dataloader(
-    cfg,
-    world_size: int,
-    rank: int,
-    data_paths: str,
+def build_single_dreamzero_lerobot_dataset(
+    *,
+    data_path: str,
+    cfg: DictConfig,
+    embodiment_tag: str | None = None,
+    metadata_json_path: str | None = None,
     eval_dataset: bool = False,
 ):
-    """Build DreamZero SFT dataloader -- callable from FSDPVlaSftWorker.
-
-    Uses DistributedSampler to shard data across GPUs:
-      - Each of the 8 GPUs sees 1/8 of the dataset per epoch
-      - micro_batch_size samples are returned per iteration per GPU
-      - Global effective batch size = micro_batch_size * world_size * grad_accum_steps
-    """
+    """Build one :class:`DreamZeroLeRobotDataset` with an embodiment-specific transform."""
     from groot.vla.data.transform import ComposedModalityTransform
 
     from rlinf.data.datasets.dreamzero.data_transforms import (
         build_dreamzero_composed_transform,
         collect_dreamzero_dataset_keys,
-        embodiment_tag_mapping_for_embodiment,
         load_dreamzero_dataset_metadata,
     )
 
     data_cfg = cfg.data
     model_cfg = cfg.actor.model
     tokenizer_path = model_cfg.get("tokenizer_path", "google/umt5-xxl")
-    embodiment_tag = model_cfg.embodiment_tag
+    tag = embodiment_tag or model_cfg.embodiment_tag
 
-    metadata = load_dreamzero_dataset_metadata(model_cfg)
-    data_transform = build_dreamzero_composed_transform(model_cfg, tokenizer_path)
+    model_overrides: dict[str, Any] = {"embodiment_tag": tag}
+    if metadata_json_path is not None:
+        model_overrides["metadata_json_path"] = metadata_json_path
+    sub_model_cfg = OmegaConf.merge(model_cfg, model_overrides)
+
+    metadata = load_dreamzero_dataset_metadata(sub_model_cfg)
+    data_transform = build_dreamzero_composed_transform(sub_model_cfg, tokenizer_path)
     assert isinstance(data_transform, ComposedModalityTransform), f"{data_transform=}"
     data_transform.set_metadata(metadata)
     if eval_dataset:
@@ -1045,7 +1045,7 @@ def build_dreamzero_sft_dataloader(
         data_transform.train()
 
     video_keys, state_keys, action_keys, language_keys = collect_dreamzero_dataset_keys(
-        data_transform, embodiment_tag
+        data_transform, tag
     )
 
     sampling_mode = data_cfg.get("sampling_mode", "multi_anchor")
@@ -1054,17 +1054,20 @@ def build_dreamzero_sft_dataloader(
             f"Unsupported data.sampling_mode {sampling_mode!r}; "
             "use 'multi_anchor' or 'fixed_window'."
         )
+
     max_chunk_size = model_cfg.action_head_cfg.config.diffusion_model_cfg.max_chunk_size
     num_frames = model_cfg.action_head_cfg.config.num_frames
     state_horizon = model_cfg.get("state_horizon", 1)
     action_horizon = model_cfg.action_horizon
-    max_seq_len = int(model_cfg.get("max_seq_len", 512))
-    embodiment_tag_mapping = embodiment_tag_mapping_for_embodiment(
-        embodiment_tag, model_cfg.get("embodiment_tag_mapping")
-    )
+    macro_stride = data_cfg.get("macro_stride")
+    if macro_stride is not None:
+        macro_stride = int(macro_stride)
+    video_in_chunk_offsets = data_cfg.get("video_in_chunk_offsets")
+    if video_in_chunk_offsets is not None:
+        video_in_chunk_offsets = tuple(int(x) for x in video_in_chunk_offsets)
 
     dataset = DreamZeroLeRobotDataset(
-        data_path=data_paths,
+        data_path=data_path,
         video_keys=video_keys,
         state_keys=state_keys,
         action_keys=action_keys,
@@ -1080,45 +1083,202 @@ def build_dreamzero_sft_dataloader(
         video_tolerance_s=cfg.data.get("video_tolerance_s", 0.1),
         video_backend=data_cfg.get("video_backend", "pyav"),
         max_chunk_size=max_chunk_size,
-        sampling_mode=sampling_mode,
+        sampling_mode=sampling_mode,  # type: ignore[arg-type]
         multi_anchor_resample_attempts=data_cfg.get(
             "multi_anchor_resample_attempts", 8
         ),
+        macro_stride=macro_stride,
+        video_in_chunk_offsets=video_in_chunk_offsets,
     )
+    multi_anchor_cfg = dataset._multi_anchor_cfg
     logger.info(
-        "DreamZero LeRobot dataset: embodiment=%s sampling_mode=%s max_chunk_size=%s "
-        "action_horizon(transform)=%s video_keys=%s state_keys=%s action_keys=%s language_keys=%s",
-        embodiment_tag,
+        "DreamZero LeRobot dataset: path=%s embodiment=%s sampling_mode=%s "
+        "max_chunk_size=%s action_horizon=%s macro_stride=%s video_in_chunk_offsets=%s "
+        "video_keys=%s state_keys=%s action_keys=%s language_keys=%s",
+        data_path,
+        tag,
         dataset.sampling_mode,
         dataset.max_chunk_size,
         dataset.action_horizon,
+        None if multi_anchor_cfg is None else multi_anchor_cfg.macro_stride,
+        None if multi_anchor_cfg is None else multi_anchor_cfg.video_in_chunk_offsets,
         dataset.video_keys,
         dataset.state_keys,
         dataset.action_keys,
         dataset.language_keys,
     )
-    sampler = torch.utils.data.distributed.DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=not eval_dataset,
-        drop_last=not eval_dataset,
+    return dataset
+
+
+class DreamZeroLeRobotMixtureDataset(Dataset):
+    """Weighted mixture of :class:`DreamZeroLeRobotDataset` instances.
+
+    Each sub-dataset keeps its own data transform so raw LeRobot samples are
+    converted into a unified training format before collation. Sampling picks a
+    dataset according to normalized weights, then delegates to that dataset's
+    ``__getitem__``.
+    """
+
+    def __init__(
+        self,
+        data_mixture: Sequence[tuple[Any, float]],
+        training: bool = True,
+        seed: int = 42,
+    ):
+        if not data_mixture:
+            raise ValueError(
+                "DreamZeroLeRobotMixtureDataset requires at least one dataset."
+            )
+
+        datasets: list[Any] = []
+        raw_weights: list[float] = []
+        for dataset, weight in data_mixture:
+            if len(dataset) == 0:
+                logger.warning("Skipping empty DreamZero LeRobot dataset: %s", dataset)
+                continue
+            datasets.append(dataset)
+            raw_weights.append(float(weight))
+
+        if not datasets:
+            raise ValueError(
+                "No valid (non-empty) DreamZero LeRobot datasets provided."
+            )
+
+        self.datasets = datasets
+        self.training = bool(training)
+        self.seed = int(seed)
+
+        self._dataset_lengths = np.array(
+            [len(dataset) for dataset in self.datasets], dtype=np.int64
+        )
+        self._raw_weights = np.array(raw_weights, dtype=np.float64)
+
+        self._dataset_sampling_weights = self._raw_weights.copy()
+        weight_sum = self._dataset_sampling_weights.sum()
+        if weight_sum <= 0 or np.isnan(weight_sum):
+            raise ValueError(
+                f"Invalid DreamZero mixture sampling weights: sum={weight_sum!r}"
+            )
+        self._dataset_sampling_weights /= weight_sum
+
+        self._epoch = 0
+        self._log_initialization()
+
+    def _log_initialization(self) -> None:
+        logger.info("DreamZeroLeRobotMixtureDataset initialized:")
+        logger.info("  Datasets: %s", len(self.datasets))
+        logger.info("  Total samples: %s", int(self._dataset_lengths.sum()))
+        logger.info("  Dataset lengths: %s", self._dataset_lengths.tolist())
+        logger.info("  Raw weights: %s", self._raw_weights.tolist())
+        logger.info("  Sampling weights: %s", self._dataset_sampling_weights.tolist())
+        logger.info("  Training mode: %s", self.training)
+
+    @property
+    def dataset_lengths(self) -> np.ndarray:
+        return self._dataset_lengths
+
+    @property
+    def dataset_sampling_weights(self) -> np.ndarray:
+        return self._dataset_sampling_weights
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = int(epoch)
+
+    def __str__(self) -> str:
+        descriptions = []
+        for dataset, weight in zip(self.datasets, self.dataset_sampling_weights):
+            descriptions.append(
+                {
+                    "Dataset": str(getattr(dataset, "data_path", dataset)),
+                    "Sampling weight": float(weight),
+                }
+            )
+        return yaml.dump({"DreamZero mixture dataset": descriptions})
+
+    def _sample_step(self, index: int) -> tuple[Any, int]:
+        if self.training:
+            seed = safe_hash((self._epoch, index, self.seed))
+            rng = np.random.default_rng(seed)
+            dataset_index = int(
+                rng.choice(len(self.datasets), p=self._dataset_sampling_weights)
+            )
+            dataset = self.datasets[dataset_index]
+            sample_index = int(rng.integers(0, len(dataset)))
+            return dataset, sample_index
+
+        length_cumsum = np.cumsum(self._dataset_lengths)
+        dataset_index = int(np.searchsorted(length_cumsum, index, side="right"))
+        if dataset_index > 0:
+            sample_index = index - int(length_cumsum[dataset_index - 1])
+        else:
+            sample_index = index
+        return self.datasets[dataset_index], sample_index
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        dataset, sample_index = self._sample_step(index)
+        return dataset[sample_index]
+
+    def __len__(self) -> int:
+        if self.training:
+            return int((self._dataset_lengths * self._dataset_sampling_weights).sum())
+        return int(self._dataset_lengths.sum())
+
+
+def build_dreamzero_mixture_dataset_from_spec(
+    cfg: DictConfig,
+    mixture_spec: Sequence[Any],
+    eval_dataset: bool = False,
+) -> tuple[DreamZeroLeRobotMixtureDataset, dict[str, int]]:
+    """Build a mixture dataset and merged embodiment tag mapping from config."""
+    from rlinf.data.datasets.dreamzero.data_transforms import (
+        embodiment_tag_mapping_for_embodiment,
     )
-    num_workers = int(cfg.data.get("num_workers", 4))
-    prefetch_factor = int(cfg.data.get("prefetch_factor", 4))
-    data_loader = StatefulDataLoader(
-        dataset,
-        batch_size=cfg.actor.micro_batch_size,  # samples per GPU per step
-        sampler=sampler,
-        drop_last=not eval_dataset,
-        num_workers=num_workers,
-        pin_memory=True,  # faster CPU->GPU transfer
-        persistent_workers=num_workers > 0,
-        prefetch_factor=prefetch_factor if num_workers > 0 else None,
-        collate_fn=DreamZeroCollator(
-            tokenizer_path=tokenizer_path,
-            max_seq_len=max_seq_len,
-            embodiment_tag_mapping=dict(embodiment_tag_mapping),
-        ),
+
+    specs = _normalize_mixture_spec(mixture_spec)
+    data_mixture: list[tuple[Any, float]] = []
+    merged_tag_mapping: dict[str, int] = {}
+
+    for spec in specs:
+        paths = _resolve_dataset_paths(spec)
+        weight = float(spec.get("weight", spec.get("dataset_weight", 1.0)))
+        distribute_weights = bool(spec.get("distribute_weights", False))
+        embodiment_tag = spec.get("embodiment_tag", cfg.actor.model.embodiment_tag)
+        metadata_json_path = spec.get("metadata_json_path")
+        tag_mapping_override = spec.get("embodiment_tag_mapping")
+
+        datasets_for_spec = [
+            build_single_dreamzero_lerobot_dataset(
+                data_path=path,
+                cfg=cfg,
+                embodiment_tag=str(embodiment_tag),
+                metadata_json_path=metadata_json_path,
+                eval_dataset=eval_dataset,
+            )
+            for path in paths
+        ]
+
+        if distribute_weights and len(datasets_for_spec) > 1:
+            lengths = np.array(
+                [len(dataset) for dataset in datasets_for_spec], dtype=np.float64
+            )
+            relative_lengths = lengths / lengths.sum()
+            for dataset, relative_length in zip(datasets_for_spec, relative_lengths):
+                data_mixture.append((dataset, weight * float(relative_length)))
+        else:
+            per_dataset_weight = weight / len(datasets_for_spec)
+            for dataset in datasets_for_spec:
+                data_mixture.append((dataset, per_dataset_weight))
+
+        merged_tag_mapping.update(
+            embodiment_tag_mapping_for_embodiment(
+                str(embodiment_tag),
+                tag_mapping_override or cfg.actor.model.get("embodiment_tag_mapping"),
+            )
+        )
+
+    mixture = DreamZeroLeRobotMixtureDataset(
+        data_mixture=data_mixture,
+        training=not eval_dataset,
+        seed=int(cfg.actor.get("seed", cfg.data.get("seed", 42))),
     )
-    return data_loader, {"num_samples": len(dataset)}
+    return mixture, merged_tag_mapping

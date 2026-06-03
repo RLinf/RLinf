@@ -87,7 +87,6 @@ class MultiStepRolloutWorker(Worker):
         )
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
         self._sync_weight_comm_options = self.weight_syncer.comm_options
-        print(f"self._sync_weight_comm_options: {self._sync_weight_comm_options}")
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -362,13 +361,15 @@ class MultiStepRolloutWorker(Worker):
         async def send_func(data: Any) -> None:
             if not self._weight_sync_is_sender:
                 return
-            await self.send(
-                data,
-                dst_group_name=self.actor_group_name,
-                dst_rank=self.actor_weight_src_rank,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+            actor_world_size = self.placement.get_world_size("actor")
+            for actor_rank in range(actor_world_size):
+                await self.send(
+                    data,
+                    dst_group_name=self.actor_group_name,
+                    dst_rank=actor_rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
         if not self.weight_syncer.receiver_initialized():
             await self.weight_syncer.init_receiver(
@@ -438,6 +439,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
 
+    @Worker.timer("rollout/generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -487,6 +489,7 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
+    @Worker.timer("rollout/recv_obs")
     async def recv_env_output(
         self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, Any]:
@@ -587,6 +590,7 @@ class MultiStepRolloutWorker(Worker):
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
 
+    @Worker.timer("rollout/send_actions")
     def send_chunk_actions(
         self,
         output_channel: Channel,
@@ -660,6 +664,7 @@ class MultiStepRolloutWorker(Worker):
             for idx in range(len(sizes))
         ]
 
+    @Worker.timer("rollout/send_traj")
     def send_rollout_result(
         self,
         output_channel: Channel,

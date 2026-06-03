@@ -75,7 +75,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
 
 #=======================Utility Functions=======================
 
@@ -1242,7 +1242,7 @@ install_gr00t_model() {
     install_common_embodied_deps
 
     local gr00t_path
-    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/RLinf/Isaac-GR00T.git)
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/RLinf/Isaac-GR00T.git -b n1.5-release)
     uv pip install -e "$gr00t_path" --no-deps
     uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
     case "$ENV_NAME" in
@@ -1431,6 +1431,10 @@ install_env_only() {
         habitat)
             install_common_embodied_deps
             install_habitat_env
+            ;;
+        genesis)
+            install_common_embodied_deps
+            install_genesis_env
             ;;
         embodichain)
             install_common_embodied_deps
@@ -1802,6 +1806,20 @@ install_habitat_env() {
     habitat_lab_dir=$(clone_or_reuse_repo HABITAT_LAB_PATH "$VENV_DIR/habitat-lab" https://github.com/RLinf/habitat-lab.git -b v0.3.3 --recurse-submodules)
     uv pip install -e $habitat_lab_dir/habitat-lab
     uv pip install -e $habitat_lab_dir/habitat-baselines
+}
+
+install_genesis_env() {
+    echo "Installing Genesis environment dependencies..."
+    uv pip install "transformers==4.57.6"
+    uv pip install "cuda-python==12.9.6"
+    uv pip install "genesis-world==0.4.5"
+    uv pip install "pyglet==2.1.14"
+    uv pip install "matplotlib==3.10.8"
+
+    uv pip install "torch==2.8.0"
+    uv pip install "torchvision==0.23.0"
+    uv pip install "torchaudio==2.8.0"
+    uv pip install "torchcodec==0.6"
 }
 
 install_opensora_world_model() {

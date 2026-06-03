@@ -417,9 +417,23 @@ class LiberoEnv(gym.Env):
             )
         return reset_state_ids
 
+    def _build_interleaved_eval_reset_state_ids(self):
+        """Order (task0, trial0), (task1, trial0), ... for even parallel coverage."""
+        interleaved = []
+        num_tasks = len(self.trial_id_bins)
+        max_trials = max(self.trial_id_bins) if self.trial_id_bins else 0
+        for trial in range(max_trials):
+            for task_id in range(num_tasks):
+                if trial < self.trial_id_bins[task_id]:
+                    start = self.cumsum_trial_id_bins[task_id - 1] if task_id > 0 else 0
+                    interleaved.append(start + trial)
+        return np.array(interleaved, dtype=np.int64)
+
     def get_reset_state_ids_all(self):
         if self._valid_reset_state_ids is not None:
             reset_state_ids = self._valid_reset_state_ids.copy()
+        elif self.cfg.is_eval:
+            reset_state_ids = self._build_interleaved_eval_reset_state_ids()
         else:
             reset_state_ids = np.arange(self.total_num_group_envs)
 
@@ -739,11 +753,14 @@ class LiberoEnv(gym.Env):
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
         if self.cfg.is_eval:
+            new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
+            self.reset_state_ids[env_idx] = new_reset_state_ids
+        elif self.use_fixed_reset_state_ids:
             self.update_reset_state_ids()
         obs, infos = self.reset(
             env_idx=env_idx,
             reset_state_ids=self.reset_state_ids[env_idx]
-            if self.use_fixed_reset_state_ids
+            if self.use_fixed_reset_state_ids or self.cfg.is_eval
             else None,
         )
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation

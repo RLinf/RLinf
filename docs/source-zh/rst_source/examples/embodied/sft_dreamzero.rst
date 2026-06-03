@@ -5,7 +5,7 @@ DreamZero 监督微调
 
 当前支持：
 
-- **数据集**：LIBERO（LeRobot）、LeRobot / OXE DROID
+- **数据集**: LIBERO (``libero_sim``)、OXE DROID (``oxe_droid``)、Franka 抓取放置 (``franka_pnp``)；支持多 embodiment **混合训练** (见 ``libero_franka_mix_sft_dreamzero_5b.yaml``)
 - **骨干网络**：WAN2.1（如 DreamZero-DROID 14B）、WAN2.2（如 Wan2.2-TI2V-5B 冷启动）
 
 
@@ -129,6 +129,8 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 - LIBERO： `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``，配置见 ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID： `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``，配置见 ``droid_sft_dreamzero_14b.yaml``
+- Franka PnP：自定义 LeRobot 数据集 — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
+- 混合训练：``libero_franka_mix_sft_dreamzero_5b.yaml`` 中 ``data.train_data_paths`` 为列表，每项可指定不同的 ``dataset_path`` / ``embodiment_tag`` / ``metadata_json_path`` / ``weight``
 
 下载示例：
 
@@ -178,7 +180,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - 字段
      - 含义与作用
    * - ``train_data_paths``
-     - LeRobot 数据集根路径或 HF ``repo_id``。决定读哪些 episode / parquet / 视频文件。
+     - 单数据集：LeRobot 根路径或 HF ``repo_id``。**混合训练**：YAML 列表，每项含 ``dataset_path``（或路径列表）、``weight``、``embodiment_tag``、``metadata_json_path`` 等；由 ``build_dreamzero_mixture_dataset_from_spec`` 按权重采样。可选 ``distribute_weights: true`` 在单条 spec 含多路径时按 episode 长度分配权重。
    * - ``lazy_load``
      - 是否懒加载 mp4 视频。 ``multi_anchor`` 采样模式下必须将 ``lazy_load`` 设为 ``True`` （否则无法按锚点随机取帧）。
    * - ``sampling_mode``
@@ -227,7 +229,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - ``metadata_json_path``
      - 数据集 ``metadata.json``；未设置则回退到 ``model_path/experiment_cfg/metadata.json``。
    * - ``embodiment_tag``
-     - 选择数据变换与 collate 模板：``libero_sim`` 或 ``oxe_droid``。必须与数据集一致。
+     - 选择数据变换与 collate 模板：``libero_sim``、``oxe_droid``、``franka_pnp``（定义于 ``data_transforms/embodiment_tag.py``）。单数据集训练时须与数据一致；混合训练时各子项在 ``train_data_paths`` 里单独指定， ``actor.model.embodiment_tag`` 仍须设置（通常与主数据来源一致，供 ``get_model`` 加载 policy 侧 metadata）。
 
 **时序与动作形状（需与数据、WAN 容量一致）**
 
@@ -288,13 +290,25 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 .. code:: yaml
 
-   # ---------- 数据 ----------
+   # ---------- 数据（单数据集）----------
    data:
      train_data_paths: /path/to/libero
      lazy_load: True
      sampling_mode: multi_anchor
      video_backend: torchcodec
      num_workers: 8
+
+   # ---------- 数据（混合，见 libero_franka_mix_sft_dreamzero_5b.yaml）----------
+   data:
+     train_data_paths:
+       - dataset_path: /path/to/libero
+         weight: 4
+         embodiment_tag: libero_sim
+         metadata_json_path: /path/to/libero_metadata.json
+       - dataset_path: /path/to/franka_pnp
+         weight: 1
+         embodiment_tag: franka_pnp
+         metadata_json_path: /path/to/franka_metadata.json
 
    # ---------- 模型（从 checkpoint 继续）----------
    actor:
@@ -320,6 +334,9 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
    # DROID + WAN2.1（dreamzero_14b 预设，model_path 指向 DreamZero-DROID）
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
+
+   # LIBERO + Franka 混合（WAN2.2，见 libero_franka_mix_sft_dreamzero_5b.yaml）
+   bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
 脚本等价于：
 
@@ -460,6 +477,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 当要在 **新的机器人 或 新 LeRobot 数据集** 上训练 DreamZero SFT 时，需要新增一个 ``embodiment_tag``，并在 RLinf 中注册对应的数据变换与元数据生成逻辑。建议以现有实现为模板对照修改：
 
 - ``rlinf/data/datasets/dreamzero/data_transforms/libero_sim.py`` （双视角、简单 state/action 列）
+- ``rlinf/data/datasets/dreamzero/data_transforms/franka_pnp.py`` （双视角，继承 ``libero_sim``，自定义 ``num_frames`` 等）
 - ``rlinf/data/datasets/dreamzero/data_transforms/oxe_droid.py`` （三视角， ``meta/modality.json`` 切片）
 
 整体数据流：
@@ -502,16 +520,19 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 ``modality_keys`` 命名约定（与 ``DreamZeroLeRobotDataset`` 解析逻辑挂钩）：
 
 - 视频：``video.short_name`` （如 ``video.image``），短名通过 ``meta/modality.json`` 的 ``original_key`` 或 ``info.json`` 的 ``observation.images.*`` / 裸列名解析到真实特征列。
-- 状态/动作：``state.name``、``action.name``；有 ``meta/modality.json`` 时用 ``start``/``end`` 切片；否则回退到 ``observation.state`` / ``action`` 整列或启发式切片（见 ``dreamzero.py`` 中 ``_build_component_sources``）。
+- 状态/动作：``state.name``、``action.name``；有 ``meta/modality.json`` 时用 ``start``/``end`` 切片；否则回退到 ``observation.state`` / ``action`` 整列或启发式切片（见 ``lerobot_dataset.py`` 中 ``_build_component_sources``）。
 - 训练 YAML 里的 ``video.*`` / ``state.*`` / ``action.*`` 必须与 transform 里 ``ConcatTransform`` 的 ``*_concat_order`` 一致。
 
 步骤 2：注册到 RLinf
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-编辑 ``rlinf/data/datasets/dreamzero/data_transforms/__init__.py``：
+1. 在 ``rlinf/data/datasets/dreamzero/data_transforms/embodiment_tag.py`` 的 ``EmbodimentTag`` 枚举中增加成员（值等于 ``TAG`` 字符串）。
+2. 编辑 ``rlinf/data/datasets/dreamzero/data_transforms/__init__.py``：
 
-1. ``from ...your_tag import YourEmbodimentDataTransform``
-2. 在 ``_EMBODIMENT_REGISTRY`` 中加入 ``YourEmbodimentDataTransform.TAG: YourEmbodimentDataTransform``
+   - ``from ...your_tag import YourEmbodimentDataTransform``
+   - 在 ``_EMBODIMENT_REGISTRY`` 中加入 ``YourEmbodimentDataTransform.TAG: YourEmbodimentDataTransform``
+
+无需手写 Groot patch：``get_model()`` 会将 ``groot.vla.data.schema.embodiment_tags.EmbodimentTag`` 替换为上述 RLinf 枚举。
 
 未注册时，``build_dreamzero_composed_transform`` 会报错并列出已有 tag。
 
@@ -567,7 +588,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 
 **易错细节 checklist**
 
-- ``embodiment_tag`` 字符串在三处一致：配置、``metadata.json`` 键、Python 中的 ``TAG``。
+- ``embodiment_tag`` 字符串在四处置一致：``embodiment_tag.py`` 枚举成员值、``TAG``、配置 / ``train_data_paths`` 子项、``metadata.json`` 顶层键。
 - ``multi_anchor`` + mp4 数据：必须将 ``data.lazy_load`` 设为 ``True``。
 - ``action_horizon`` × ``max_chunk_size`` 决定数据集动作长度；勿只改其一。
 - 多视角拼接顺序与 prompt 文案不一致会导致训练信号错乱。
@@ -575,7 +596,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 - 视频 resize：优先在 transform 链或 ``target_video_height/width`` 配置，避免写死尺寸导致 WAN2.1/2.2 不兼容。
 - 推理 / 评测：``examples/embodiment/config/*_dreamzero.yaml`` 中同样需要正确的 ``embodiment_tag``。
 
-若仅推理、不改 RLinf 代码，且 Groot/DreamZero 上游已支持该 tag，有时只需准备 ``metadata.json`` 与评测配置；SFT 新数据则通常必须完成上述 Python 注册与 transform 实现。
+若仅推理、不改 RLinf 代码，且 Groot/DreamZero 上游已支持该 tag，有时只需准备 ``metadata.json`` 与评测配置；**SFT 新数据** 则须完成上述枚举成员、registry 注册与 transform 实现（``get_model`` 会自动 patch Groot ``EmbodimentTag``）。
 
 
 常见问题
@@ -609,6 +630,11 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 6. **multi_anchor 报错要求 lazy_load**
 
    - 设置 ``data.lazy_load: True``
+
+7. ``AttributeError: GR1_UNIFIED_SEGMENTATION`` 或未知 ``EmbodimentTag``
+
+   - 数据 transform 链须使用 ``dream_transform.DreamTransform`` (RLinf 子类)，勿直接实例化 Groot 基类
+   - 新 tag 须在 ``embodiment_tag.py`` 与 ``_EMBODIMENT_REGISTRY`` 注册；训练经 ``get_model()`` 加载模型时会 patch Groot 枚举
 
 
 实践建议

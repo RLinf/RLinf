@@ -27,10 +27,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Describes how to dynamically switch between different SGLang versions
    to accommodate varying compatibility needs or experimental requirements.
 
-- :doc:`nsight`
-   Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
-   selected Ray worker groups with ``nsys profile``, including how to enable,
-   disable, and target worker groups for system-level traces.
+- :doc:`profile`
+   Introduces the ``cluster.profiling`` configuration used to wrap selected
+   Ray worker groups with a backend-specific profiler (``nsys profile`` for
+   NVIDIA, ``rocprof-sys-python`` for AMD), including common fields such as
+   ``enabled``, ``worker_groups``, ``steps``, and ``output_dir``.
 
 - :doc:`dynamic_scheduling`
    Covers online scaling and dynamic scheduling in RLinf: how resources are
@@ -51,6 +52,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    cluster
    collective
    version
-   nsight
+   profile
    dynamic_scheduling
    auto_placement

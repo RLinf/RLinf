@@ -29,6 +29,7 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
     D4RL = "d4rl"
@@ -108,6 +109,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.frankasim.frankasim_env import FrankaSimEnv
 
         return FrankaSimEnv
+    elif env_type == SupportedEnvType.GENESIS:
+        from rlinf.envs.genesis.genesis_env import GenesisEnv
+
+        return GenesisEnv
     elif env_type == SupportedEnvType.OPENSORAWM:
         from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
 

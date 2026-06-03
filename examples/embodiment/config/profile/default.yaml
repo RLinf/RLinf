@@ -1,5 +1,6 @@
+backend: nsight
 enabled: true
-worker_groups: [ActorGroup, RolloutGroup, EnvGroup, Actor, Rollout, Env]
+worker_groups: [ActorGroup, RolloutGroup, EnvGroup]
 options:
   t: cuda,cudnn,cublas,nvtx,osrt
   sample: process-tree
