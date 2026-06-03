@@ -164,6 +164,9 @@ jobs:
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
+              - '.claude/skills/**'
+              - '.codex/skills/**'
+              - '.cursor/skills/**'
             all_changes_filter: &all_changes
               - *install
               - *docker
