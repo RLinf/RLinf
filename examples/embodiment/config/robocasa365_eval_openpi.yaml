@@ -42,7 +42,7 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  eval_rollout_epoch: 50
+  eval_rollout_epoch: 30
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
@@ -148,7 +148,7 @@ actor:
       detach_critic_input: False
     openpi_data:
       state_space: "16d"
-      image_space: "2views"
+      image_space: "3views"
       action_space: "12d"
 
   optim:
