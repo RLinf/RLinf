@@ -12,18 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 import base64
 import io
-import json
-import logging
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Optional
 
 import numpy as np
+import requests
 import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
@@ -37,13 +32,9 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     get_reward_parser,
 )
+from rlinf.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
-
-try:
-    import requests
-except ImportError:  # pragma: no cover - exercised only in minimal environments.
-    requests = None
+logger = get_logger()
 
 
 def _to_plain_dict(value: Any) -> dict[str, Any]:
@@ -310,25 +301,9 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     def _chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.api_base}/chat/completions"
-        if requests is not None:
-            response = requests.post(url, json=payload, timeout=self.request_timeout)
-            response.raise_for_status()
-            return response.json()
-
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.request_timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"SGLang reward request failed with status {exc.code}: {body}"
-            ) from exc
+        response = requests.post(url, json=payload, timeout=self.request_timeout)
+        response.raise_for_status()
+        return response.json()
 
     def _generate(self, payloads: list[dict[str, Any]]) -> tuple[list[str], list[int]]:
         outputs: list[str] = []
