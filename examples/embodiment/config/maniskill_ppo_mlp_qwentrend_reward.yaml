@@ -192,7 +192,8 @@ reward:
     server_port: 30000
     server_startup_timeout: 600
     served_model_name: null
-    sglang_server_args: {}
+    sglang_server_args:
+      max_running_requests: 64
     lora_path: "/path/to/qwen3-vl-lora-checkpoint"
     gt_success_bonus: 20.0
     precision: "bf16"

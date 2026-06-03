@@ -17,6 +17,7 @@
 import os
 import signal
 import sys
+import threading
 from pathlib import Path
 from unittest import mock
 
@@ -523,21 +524,32 @@ def test_history_vlm_sglang_sampling_params_from_config():
     }
 
 
-def test_history_vlm_sglang_generates_with_sync_http_client():
+def test_history_vlm_sglang_generates_http_requests_concurrently_in_order():
     model = object.__new__(HistoryVLMSGLangRewardModel)
-    responses = [
-        {
+    barrier = threading.Barrier(2)
+    responses = {
+        "first": {
             "choices": [{"message": {"content": "1"}}],
             "usage": {"completion_tokens": 3},
         },
-        {
+        "second": {
             "choices": [{"message": {"content": "2"}}],
             "usage": {"completion_tokens": 4},
         },
-    ]
-    model._chat_completion = lambda payload: responses.pop(0)
+    }
 
-    outputs, token_counts = model._generate([{"model": "dummy"}, {"model": "dummy"}])
+    def fake_chat_completion(payload):
+        barrier.wait(timeout=1)
+        return responses[payload["request_id"]]
+
+    model._chat_completion = fake_chat_completion
+
+    outputs, token_counts = model._generate(
+        [
+            {"model": "dummy", "request_id": "first"},
+            {"model": "dummy", "request_id": "second"},
+        ]
+    )
 
     assert outputs == ["1", "2"]
     assert token_counts == [3, 4]
@@ -687,7 +699,11 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
             "served_model_name": "qwentrend-reward",
             "server_host": "127.0.0.1",
             "server_port": 30123,
-            "sglang_server_args": {"dtype": "float16", "tp_size": 2},
+            "sglang_server_args": {
+                "dtype": "float16",
+                "tp_size": 2,
+                "max_running_requests": 16,
+            },
         }
     )
 
@@ -701,6 +717,7 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
     assert "--enable-multimodal" in command
     assert command[command.index("--dtype") + 1] == "float16"
     assert command[command.index("--tp-size") + 1] == "2"
+    assert command[command.index("--max-running-requests") + 1] == "16"
     assert command[command.index("--attention-backend") + 1] == "triton"
     assert command[command.index("--sampling-backend") + 1] == "pytorch"
     assert command[command.index("--grammar-backend") + 1] == "none"

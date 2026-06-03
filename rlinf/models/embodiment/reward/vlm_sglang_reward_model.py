@@ -15,6 +15,7 @@
 import base64
 import io
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Any, Optional
 
@@ -60,8 +61,9 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     The runner starts an external SGLang OpenAI-compatible server for this
     backend unless ``reward.model.api_base`` points to a user-managed server.
-    The reward worker sends one synchronous ``/v1/chat/completions`` request
-    per valid history-window input using multiple ``image_url`` data URLs.
+    The reward worker submits one ``/v1/chat/completions`` request per valid
+    history-window input in parallel and leaves request scheduling/concurrency
+    limits to the SGLang server.
     """
 
     def __init__(self, cfg: DictConfig):
@@ -310,14 +312,20 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         return response.json()
 
     def _generate(self, payloads: list[dict[str, Any]]) -> tuple[list[str], list[int]]:
-        outputs: list[str] = []
-        completion_tokens: list[int] = []
-        for payload in payloads:
+        if not payloads:
+            return [], []
+
+        def _generate_one(payload: dict[str, Any]) -> tuple[str, int]:
             text, token_count = self._extract_text_and_token_count(
                 self._chat_completion(payload)
             )
-            outputs.append(text)
-            completion_tokens.append(token_count)
+            return text, token_count
+
+        with ThreadPoolExecutor(max_workers=len(payloads)) as executor:
+            results = list(executor.map(_generate_one, payloads))
+
+        outputs = [text for text, _ in results]
+        completion_tokens = [token_count for _, token_count in results]
         return outputs, completion_tokens
 
     def _set_timing_attrs(
