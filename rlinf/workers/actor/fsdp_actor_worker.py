@@ -545,8 +545,6 @@ class FSDPActor(FSDPModelManager, Worker):
             logprobs = self.compute_logprobs(logits, responses)
 
         if calculate_entropy:
-            # TODO: Is it proper to compute entropy
-            # from logits that has been divided by temperature?
             entropy = compute_entropy_from_logits(logits)
 
             if self.enable_dynamic_batch_size or self.variable_seq_lengths:
