@@ -390,18 +390,16 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             generated_token_counts: list[int] = []
             rewards = torch.zeros((input_batch_size,), dtype=torch.float32)
 
-            valid_input_ids_list = self.input_builder.get_valid_input_ids(
+            valid_input_ids = self.input_builder.get_valid_input_ids(
                 observations,
                 history_input,
             )
-            valid_input_ids = torch.as_tensor(valid_input_ids_list, dtype=torch.long)
-            num_valid_inputs = valid_input_ids.numel()
-            if num_valid_inputs > 0:
+            if len(valid_input_ids) > 0:
                 with timing_recorder.record("prepare_inputs_ms"):
                     prepared_inputs = self.input_builder.prepare_inputs(
                         observations,
                         history_input,
-                        valid_input_ids_list,
+                        valid_input_ids,
                     )
 
                 with timing_recorder.record("image_encode_ms"):
@@ -412,14 +410,14 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 generated_token_counts.extend(token_counts)
                 all_outputs.extend(outputs)
 
-                if len(outputs) != num_valid_inputs:
+                if len(outputs) != len(valid_input_ids):
                     logger.warning(
                         "SGLang reward output count mismatch: outputs=%d valid_inputs=%d",
                         len(outputs),
-                        num_valid_inputs,
+                        len(valid_input_ids),
                     )
-                    outputs += [""] * (num_valid_inputs - len(outputs))
-                    outputs = outputs[:num_valid_inputs]
+                    outputs += [""] * (len(valid_input_ids) - len(outputs))
+                    outputs = outputs[: len(valid_input_ids)]
 
                 with timing_recorder.record("parse_ms"):
                     parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
