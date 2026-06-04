@@ -631,9 +631,20 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
-        super().__init__(cfg.actor, self._world_size, self._rank)
-
         self.cfg = cfg
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        super().__init__(cfg.actor, self._world_size, self._rank)
 
         # Training step counter for validation interval
         self._training_step = 0
@@ -724,18 +735,6 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def run_training(self) -> dict[str, float]:
         """Run one training iteration with gradient accumulation."""
         self.model.train()
-
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
 
         metrics = {}
 
