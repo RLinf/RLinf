@@ -129,17 +129,17 @@ def compute_rollout_train_kl(
     Compute the masked mean of absolute difference between rollout and training logprobs.
 
     Args:
-        m_batch: Dictionary containing 'rollout_logprobs' and 'prev_logprobs'.
+        m_batch: Dictionary containing 'rollout_logprobs' and 'recomputed_logprobs'.
         loss_mask: Mask tensor for computing weighted mean.
 
     Returns:
-        Masked mean of abs(prev_logprobs - rollout_logprobs), or None if keys are missing.
+        Masked mean of abs(recomputed_logprobs - rollout_logprobs), or None if keys are missing.
     """
-    if "rollout_logprobs" not in m_batch or "prev_logprobs" not in m_batch:
+    if "rollout_logprobs" not in m_batch or "recomputed_logprobs" not in m_batch:
         return None
     rollout_logprobs = m_batch["rollout_logprobs"]
-    prev_logprobs = m_batch["prev_logprobs"]
-    kl = torch.abs(prev_logprobs - rollout_logprobs)
+    recomputed_logprobs = m_batch["recomputed_logprobs"]
+    kl = torch.abs(recomputed_logprobs - rollout_logprobs)
     return masked_mean(kl, loss_mask)
 
 
@@ -581,19 +581,19 @@ class FSDPActor(FSDPModelManager, Worker):
             )
         micro_batches = list(micro_batches_iter)
 
-        prev_logprobs, ref_logprobs = None, None
+        recomputed_logprobs, ref_logprobs = None, None
 
-        # Prev logprobs
-        prev_logprobs = torch.cat(
+        # Recompute logprobs
+        recomputed_logprobs = torch.cat(
             [self.forward_batch(batch) for batch in micro_batches]
         ).cpu()
 
         if self.enable_dynamic_batch_size:
-            assert len(indices) == prev_logprobs.size(0), (
+            assert len(indices) == recomputed_logprobs.size(0), (
                 f"Dynamic batch size indices length {len(indices)} does not equal "
-                f"output length {prev_logprobs.size(0)}"
+                f"output length {recomputed_logprobs.size(0)}"
             )
-            prev_logprobs = prev_logprobs[revert_indices]
+            recomputed_logprobs = recomputed_logprobs[revert_indices]
 
         # Ref logprobs
         if compute_ref_logprobs:
@@ -616,7 +616,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     )
                     ref_logprobs = ref_logprobs[revert_indices]
 
-        return prev_logprobs, ref_logprobs
+        return recomputed_logprobs, ref_logprobs
 
     def run_inference(
         self,
@@ -677,11 +677,11 @@ class FSDPActor(FSDPModelManager, Worker):
 
             with self.worker_timer():
                 with torch.no_grad():
-                    prev_logprobs, ref_logprobs = self.inference_step(
+                    recomputed_logprobs, ref_logprobs = self.inference_step(
                         batch, rollout_result.num_sequence, compute_ref_logprobs
                     )
 
-                rollout_result.prev_logprobs = prev_logprobs
+                rollout_result.recomputed_logprobs = recomputed_logprobs
 
                 # Ref logprobs
                 if compute_ref_logprobs:
@@ -750,7 +750,10 @@ class FSDPActor(FSDPModelManager, Worker):
             logprobs, entropy = self.forward_batch(m_batch, True)
 
             # batch for backward
-            prev_logprobs = m_batch["prev_logprobs"]
+            # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
+            old_logprobs = m_batch.get("recomputed_logprobs")
+            if old_logprobs is None:
+                old_logprobs = m_batch["rollout_logprobs"]
             advantages = m_batch["advantages"]
             ref_logprobs = None
             if "ref_logprobs" in m_batch:
@@ -770,10 +773,14 @@ class FSDPActor(FSDPModelManager, Worker):
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
             if self.cfg.algorithm.get("importance_sampling_fix", False):
-                rollout_prev_logprobs = m_batch["rollout_logprobs"]
-                recompute_prev_logprobs = m_batch["prev_logprobs"]
+                if "rollout_logprobs" not in m_batch or "recomputed_logprobs" not in m_batch:
+                    raise ValueError(
+                        "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
+                    )
+                rollout_logprobs = m_batch["rollout_logprobs"]
+                recomputed_logprobs = m_batch["recomputed_logprobs"]
                 advantages = advantages * torch.clamp(
-                    (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                    (recomputed_logprobs - rollout_logprobs).exp(),
                     max=self.cfg.algorithm.importance_sampling_clip,
                 )
 
@@ -782,7 +789,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 loss_type=self.cfg.algorithm.loss_type,
                 loss_agg_func=self.loss_agg_func,
                 logprobs=logprobs,
-                old_logprobs=prev_logprobs,
+                old_logprobs=old_logprobs,
                 advantages=advantages,
                 clip_ratio_c=clip_ratio_c,
                 clip_ratio_low=clip_ratio_low,
@@ -980,6 +987,11 @@ class FSDPActor(FSDPModelManager, Worker):
         with self.worker_timer():
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"][:, -self.response_len :]
+                logprob = batch.get("recomputed_logprobs")
+                if logprob is None:
+                    logprob = batch.get("rollout_logprobs")
+                if logprob is not None:
+                    logprob = logprob.to(Worker.torch_device_type)
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
@@ -988,9 +1000,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     group_size=self.cfg.algorithm.group_size,
                     kl_beta=self.reinpp_kl_beta,
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].to(Worker.torch_device_type)
-                    if "prev_logprobs" in batch
-                    else None,
+                    logprob=logprob,
                     ref_logprob=batch["ref_logprobs"].to(Worker.torch_device_type)
                     if "ref_logprobs" in batch
                     else None,

@@ -109,7 +109,7 @@ class MegatronActor(MegatronWorker):
         self._setup_rollout_weight_dst_ranks()
 
     def process_inference_output(self, rollout_result, infer_out):
-        rollout_result.prev_logprobs = infer_out
+        rollout_result.recomputed_logprobs = infer_out
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -189,16 +189,23 @@ class MegatronActor(MegatronWorker):
                 ].contiguous()
 
                 advantages = batch["advantages"]
-                prev_logprobs = batch["prev_logprobs"]
+                # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
+                old_logprobs = batch.get("recomputed_logprobs")
+                if old_logprobs is None:
+                    old_logprobs = batch["rollout_logprobs"]
                 ref_logprobs = None
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = batch["rollout_logprobs"]
-                    recompute_prev_logprobs = batch["prev_logprobs"]
+                    if "rollout_logprobs" not in batch or "recomputed_logprobs" not in batch:
+                        raise ValueError(
+                            "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
+                        )
+                    rollout_logprobs = batch["rollout_logprobs"]
+                    recomputed_logprobs = batch["recomputed_logprobs"]
                     advantages = advantages * torch.clamp(
-                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
+                        (recomputed_logprobs - rollout_logprobs).exp(),
                         max=self.cfg.algorithm.importance_sampling_clip,
                     )
 
@@ -209,7 +216,7 @@ class MegatronActor(MegatronWorker):
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
-                    old_logprobs=prev_logprobs,
+                    old_logprobs=old_logprobs,
                     advantages=advantages,
                     clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
