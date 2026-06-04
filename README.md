@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.6](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.6](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for Genesis. Doc: [RL on Genesis](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/genesis.html).
 - [2026/05] 🔥 RLinf supports reinforcement learning fine-tuning for ABot-M0. Doc: [RL on ABot-M0 Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html).
 - [2026/05] 🔥 RLinf supports RL training and SFT with Megatron-Bridge actor beckend. Doc: [Megatron-Bridge](https://rlinf.readthedocs.io/en/latest/rst_source/tutorials/extend/mbridge.html).
