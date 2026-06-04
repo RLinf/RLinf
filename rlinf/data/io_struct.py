@@ -779,7 +779,9 @@ class RolloutResult:
             if self.advantages is not None:
                 batch["advantages"] = torch.zeros(0, dtype=torch.float32).cuda()
             if self.recomputed_logprobs is not None:
-                batch["recomputed_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
+                batch["recomputed_logprobs"] = torch.zeros(
+                    0, dtype=torch.float32
+                ).cuda()
             if self.ref_logprobs is not None:
                 batch["ref_logprobs"] = torch.zeros(0, dtype=torch.float32).cuda()
             if self.rewards is not None:
@@ -875,7 +877,9 @@ class RolloutResult:
             batch["rollout_logprobs"] = logprobs.to(Worker.torch_device_type)
 
         if self.recomputed_logprobs is not None:
-            batch["recomputed_logprobs"] = self.recomputed_logprobs.to(Worker.torch_device_type)
+            batch["recomputed_logprobs"] = self.recomputed_logprobs.to(
+                Worker.torch_device_type
+            )
 
         if self.ref_logprobs is not None:
             batch["ref_logprobs"] = self.ref_logprobs.to(Worker.torch_device_type)
@@ -1604,7 +1608,9 @@ class DynamicRolloutResult:
 
             split_recomputed_logprobs = None
             if rollout_result.recomputed_logprobs is not None:
-                split_recomputed_logprobs = rollout_result.recomputed_logprobs[start_idx:end_idx]
+                split_recomputed_logprobs = rollout_result.recomputed_logprobs[
+                    start_idx:end_idx
+                ]
 
             split_ref_logprobs = None
             if rollout_result.ref_logprobs is not None:

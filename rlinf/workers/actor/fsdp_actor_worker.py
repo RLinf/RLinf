@@ -769,7 +769,10 @@ class FSDPActor(FSDPModelManager, Worker):
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
             if self.cfg.algorithm.get("importance_sampling_fix", False):
-                if "rollout_logprobs" not in m_batch or "recomputed_logprobs" not in m_batch:
+                if (
+                    "rollout_logprobs" not in m_batch
+                    or "recomputed_logprobs" not in m_batch
+                ):
                     raise ValueError(
                         "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                     )

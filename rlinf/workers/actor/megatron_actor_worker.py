@@ -198,7 +198,10 @@ class MegatronActor(MegatronWorker):
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    if "rollout_logprobs" not in batch or "recomputed_logprobs" not in batch:
+                    if (
+                        "rollout_logprobs" not in batch
+                        or "recomputed_logprobs" not in batch
+                    ):
                         raise ValueError(
                             "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
                         )
