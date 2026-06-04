@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import inspect
-import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -23,7 +22,9 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-logger = logging.getLogger(__name__)
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def _to_plain(value: Any) -> Any:

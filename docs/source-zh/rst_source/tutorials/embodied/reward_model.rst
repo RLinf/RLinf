@@ -387,9 +387,10 @@ reward 后端所需的依赖。
 SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history
 buffer 配置。当设置 ``inference_backend: sglang`` 时，embodied runner 会启动一个
 外部 ``python -m sglang.launch_server`` 进程，reward worker 通过兼容 OpenAI
-的 ``/v1/chat/completions`` API 同步调用它。历史帧会作为多个 ``image_url``
-data URL 放在同一个 chat message 中发送，因此该后端不使用进程内
-``sglang.Engine``，也不生成临时 MP4/video 输入。
+的 ``/v1/chat/completions`` API 为每个有效 history-window input 并发提交一个
+请求。每个请求会将历史帧作为多个 ``image_url`` data URL 放在同一个 chat
+message 中发送，因此该后端不使用进程内 ``sglang.Engine``，也不生成临时
+MP4/video 输入。
 
 通过覆盖 backend 字段选择 SGLang：
 

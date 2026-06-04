@@ -621,8 +621,16 @@ class EmbodiedRewardWorker(Worker):
                 )
 
     async def stop(self):
-        if self._interact_task is not None and not self._interact_task.done():
-            self._interact_task.cancel()
+        if self._interact_task is None:
+            return
+        if self._interact_task.done():
+            await self._interact_task
+            return
+        self._interact_task.cancel()
+        try:
+            await self._interact_task
+        except asyncio.CancelledError:
+            pass
 
 
 class FSDPRewardWorker(FSDPModelManager, Worker):

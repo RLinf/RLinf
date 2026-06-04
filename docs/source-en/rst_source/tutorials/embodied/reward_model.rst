@@ -394,9 +394,10 @@ The SGLang backend reuses the same QwenTrend input builder, reward parser, and
 history buffer settings. When ``inference_backend: sglang`` is selected, the
 embodied runner launches an external ``python -m sglang.launch_server`` process
 and the reward worker calls its OpenAI-compatible ``/v1/chat/completions`` API
-synchronously. History frames are sent as multiple ``image_url`` data URLs in a
-single chat message, so the backend does not use in-process ``sglang.Engine`` or
-temporary MP4/video inputs.
+by submitting one request per valid history-window input concurrently. Each
+request sends history frames as multiple ``image_url`` data URLs in a single chat
+message, so the backend does not use in-process ``sglang.Engine`` or temporary
+MP4/video inputs.
 
 Select SGLang by overriding the backend field:
 
