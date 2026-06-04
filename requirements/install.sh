@@ -2065,8 +2065,8 @@ install_agentic() {
         uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
     fi
 
-    install_flash_attn
     install_apex
+    install_flash_attn
     uv pip uninstall pynvml || true
 }
 

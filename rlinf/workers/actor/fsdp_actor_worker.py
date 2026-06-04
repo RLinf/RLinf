@@ -525,8 +525,6 @@ class FSDPActor(FSDPModelManager, Worker):
 
         logits: torch.Tensor = outputs.logits
 
-        # here is a minor risk of mismatching between rollout and training
-        # because this division is done on bf16/fp16
         logits.div_(self.cfg.algorithm.sampling_params.temperature)
 
         if self.enable_dynamic_batch_size or self.variable_seq_lengths:
