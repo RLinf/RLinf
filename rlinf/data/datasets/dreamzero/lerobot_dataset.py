@@ -742,12 +742,19 @@ class DreamZeroLeRobotDataset(Dataset):
             return self._decode_video_frames_decord(video_path, timestamps, tolerance_s)
 
         if self._video_backend == "torchcodec":
-            return self._decode_video_frames_torchcodec(video_path, timestamps, tolerance_s)
+            return self._decode_video_frames_torchcodec(
+                video_path, timestamps, tolerance_s
+            )
 
-        from lerobot.datasets.video_utils import decode_video_frames as decode_video_frames_lerobot
+        from lerobot.datasets.video_utils import (
+            decode_video_frames as decode_video_frames_lerobot,
+        )
 
         return decode_video_frames_lerobot(
-            video_path, timestamps, tolerance_s, backend=self._video_backend,
+            video_path,
+            timestamps,
+            tolerance_s,
+            backend=self._video_backend,
         )
 
     @staticmethod
@@ -768,10 +775,14 @@ class DreamZeroLeRobotDataset(Dataset):
         vr = decord.VideoReader(str(video_path), num_threads=1)
         total_frames = len(vr)
         average_fps = vr.get_avg_fps()
-        frame_indices = [min(round(ts * average_fps), total_frames - 1) for ts in timestamps]
+        frame_indices = [
+            min(round(ts * average_fps), total_frames - 1) for ts in timestamps
+        ]
 
         frames = vr.get_batch(frame_indices)
         arr = frames.asnumpy()  # (T, H, W, C) uint8
+        return arr
+
     @staticmethod
     def _decode_video_frames_torchcodec(
         video_path: Path | str,
@@ -792,11 +803,14 @@ class DreamZeroLeRobotDataset(Dataset):
 
         from torchcodec.decoders import VideoDecoder
 
-        decoder = VideoDecoder(str(video_path), device="cpu", seek_mode="approximate", dimension_order="NHWC")
+        decoder = VideoDecoder(
+            str(video_path),
+            device="cpu",
+            seek_mode="approximate",
+            dimension_order="NHWC",
+        )
         loaded_frames = []
         loaded_ts = []
-
-        total_frames = len(decoder)
 
         # get metadata for frame information
         metadata = decoder.metadata
@@ -808,7 +822,9 @@ class DreamZeroLeRobotDataset(Dataset):
         # retrieve frames based on indices
         frames_batch = decoder.get_frames_at(indices=frame_indices)
 
-        for frame, pts in zip(frames_batch.data, frames_batch.pts_seconds, strict=False):
+        for frame, pts in zip(
+            frames_batch.data, frames_batch.pts_seconds, strict=False
+        ):
             loaded_frames.append(frame)
             loaded_ts.append(pts.item())
 
@@ -1145,7 +1161,9 @@ def build_single_dreamzero_lerobot_dataset(
 
     metadata = load_dreamzero_dataset_metadata(sub_model_cfg)
     transform_on_gpu = bool(data_cfg.get("transform_on_gpu", False))
-    data_transform = build_dreamzero_composed_transform(sub_model_cfg, tokenizer_path, transform_on_gpu=transform_on_gpu)
+    data_transform = build_dreamzero_composed_transform(
+        sub_model_cfg, tokenizer_path, transform_on_gpu=transform_on_gpu
+    )
 
     assert isinstance(data_transform, ComposedModalityTransform), f"{data_transform=}"
     data_transform.set_metadata(metadata)

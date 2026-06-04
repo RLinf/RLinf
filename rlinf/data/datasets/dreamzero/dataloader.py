@@ -155,7 +155,9 @@ def build_dreamzero_sft_dataloader(
         pin_memory=True,  # faster CPU->GPU transfer
         persistent_workers=num_workers > 0,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
-        multiprocessing_context="spawn" if transform_on_gpu and num_workers > 0 else None,
+        multiprocessing_context="spawn"
+        if transform_on_gpu and num_workers > 0
+        else None,
         collate_fn=DreamZeroCollator(
             tokenizer_path=tokenizer_path,
             max_seq_len=max_seq_len,

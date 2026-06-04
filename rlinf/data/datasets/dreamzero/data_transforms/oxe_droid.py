@@ -172,7 +172,9 @@ class OxeDroidDataTransform:
         action_k = list(_ACTION_KEYS)
 
         transforms: list[Any] = [
-            VideoToTensor(apply_to=vk, backend=_VIDEO_BACKEND, output_on_cuda=transform_on_gpu),
+            VideoToTensor(
+                apply_to=vk, backend=_VIDEO_BACKEND, output_on_cuda=transform_on_gpu
+            ),
             VideoCrop(apply_to=vk, backend=_VIDEO_BACKEND, scale=0.95),
             VideoResize(
                 apply_to=vk,
