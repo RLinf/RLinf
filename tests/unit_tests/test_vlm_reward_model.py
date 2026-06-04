@@ -18,6 +18,7 @@ import os
 import signal
 import sys
 import threading
+import types
 from pathlib import Path
 from unittest import mock
 
@@ -723,7 +724,7 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
     assert command[command.index("--grammar-backend") + 1] == "none"
 
 
-def test_sglang_reward_server_readiness_polls_v1_models():
+def test_sglang_reward_server_readiness_polls_v1_models(monkeypatch):
     cfg = OmegaConf.create(
         {
             "model_path": "/models/QwenTrend",
@@ -736,6 +737,10 @@ def test_sglang_reward_server_readiness_polls_v1_models():
     server.process = mock.Mock()
     server.process.poll.return_value = None
     opened_urls = []
+
+    sglang_module = types.ModuleType("sglang")
+    monkeypatch.setitem(sys.modules, "sglang", sglang_module)
+    monkeypatch.setitem(sys.modules, "sglang.utils", None)
 
     class FakeResponse:
         status = 200
@@ -757,12 +762,47 @@ def test_sglang_reward_server_readiness_polls_v1_models():
     assert opened_urls == ["http://127.0.0.1:30124/v1/models"]
 
 
-def test_sglang_reward_server_stop_terminates_process_group():
+def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
+    cfg = OmegaConf.create(
+        {
+            "model_path": "/models/QwenTrend",
+            "server_port": 30124,
+            "server_startup_timeout": 1,
+            "server_readiness_interval": 0,
+        }
+    )
+    server = SGLangRewardServer(cfg)
+    server.process = mock.Mock()
+    server.process.poll.return_value = None
+    calls = []
+
+    sglang_module = types.ModuleType("sglang")
+    utils_module = types.ModuleType("sglang.utils")
+
+    def fake_wait_for_server(base_url, timeout=None):
+        calls.append((base_url, timeout))
+
+    utils_module.wait_for_server = fake_wait_for_server
+    sglang_module.utils = utils_module
+    monkeypatch.setitem(sys.modules, "sglang", sglang_module)
+    monkeypatch.setitem(sys.modules, "sglang.utils", utils_module)
+
+    server.wait_until_ready()
+
+    assert calls == [("http://127.0.0.1:30124", 1)]
+
+
+def test_sglang_reward_server_stop_terminates_process_group(monkeypatch):
     cfg = OmegaConf.create({"model_path": "/models/QwenTrend"})
     server = SGLangRewardServer(cfg)
     server.process = mock.Mock()
     server.process.pid = 123
     server.process.poll.return_value = None
+    sglang_module = types.ModuleType("sglang")
+    utils_module = types.ModuleType("sglang.utils")
+    sglang_module.utils = utils_module
+    monkeypatch.setitem(sys.modules, "sglang", sglang_module)
+    monkeypatch.setitem(sys.modules, "sglang.utils", utils_module)
 
     with mock.patch("os.killpg") as killpg:
         server.stop()

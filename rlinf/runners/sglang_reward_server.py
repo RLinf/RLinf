@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 import signal
@@ -124,13 +125,15 @@ class SGLangRewardServer:
         try:
             from sglang.utils import wait_for_server
         except ImportError:
-            pass
-        else:
-            wait_for_server(
-                self.server_url,
-                timeout=int(self.startup_timeout),
-                process=self.process,
-            )
+            wait_for_server = None
+
+        if wait_for_server is not None:
+            if self.process is not None and self.process.poll() is not None:
+                raise RuntimeError(
+                    "SGLang reward server exited before readiness check succeeded "
+                    f"with code {self.process.returncode}."
+                )
+            self._call_sglang_wait_for_server(wait_for_server)
             logger.info("SGLang reward server is ready at %s", self.api_base)
             return
 
@@ -157,6 +160,26 @@ class SGLangRewardServer:
             "Timed out waiting for SGLang reward server readiness at "
             f"{self.models_url}: {last_error}"
         )
+
+    def _call_sglang_wait_for_server(self, wait_for_server) -> None:
+        kwargs: dict[str, Any] = {}
+        try:
+            parameters = inspect.signature(wait_for_server).parameters
+        except (TypeError, ValueError):
+            parameters = {}
+        accepts_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+        if accepts_kwargs or "timeout" in parameters:
+            kwargs["timeout"] = int(self.startup_timeout)
+
+        try:
+            wait_for_server(self.server_url, **kwargs)
+        except TypeError as exc:
+            if "timeout" not in kwargs or "timeout" not in str(exc):
+                raise
+            wait_for_server(self.server_url)
 
     def stop(self) -> None:
         if self.process is None:
