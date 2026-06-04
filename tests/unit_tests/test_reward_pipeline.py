@@ -24,6 +24,7 @@ from rlinf.data.embodied_io_struct import (
     EnvOutput,
     RolloutResult,
 )
+from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.workers.env.env_worker import EnvWorker, PendingRolloutStep
 from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
@@ -205,7 +206,9 @@ def test_env_no_pending_reward_mode_waits_and_finalizes_immediately():
     worker.n_train_chunk_steps = 1
     worker.reward_pending_step_window = 0
     worker.collect_transitions = False
+    worker.use_training_pipeline = False
     worker._timer_metrics = {}
+    worker._accelerator_type = AcceleratorType.NO_ACCEL
     worker._prefetched_train_bootstrap = None
 
     env_outputs = [
