@@ -628,6 +628,14 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05
 
+      - name: Maniskill PPO Pi05 training pipeline test
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
+
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |

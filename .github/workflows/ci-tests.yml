@@ -82,6 +82,7 @@ jobs:
               - *shared
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'rlinf/runners/offline_runner.py'
               - 'rlinf/workers/actor/async_fsdp_dagger_policy_worker.py'
               - 'rlinf/envs/**'
@@ -141,6 +142,7 @@ jobs:
               - '.github/workflows/sft-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'tests/unit_tests/**'
               - '.github/workflows/unit-tests.yml'
             scheduler_test_filter: &scheduler
@@ -162,6 +164,9 @@ jobs:
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
+              - '.claude/skills/**'
+              - '.codex/skills/**'
+              - '.cursor/skills/**'
             all_changes_filter: &all_changes
               - *install
               - *docker

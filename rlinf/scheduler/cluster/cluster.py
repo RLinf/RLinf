@@ -15,7 +15,6 @@
 import logging
 import os
 import re
-import shlex
 import signal
 import sys
 import tempfile
@@ -33,7 +32,8 @@ from ray._private import ray_logging
 from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
-from .config import ClusterConfig, NsightConfig
+from ..hardware.accelerators.accelerator import ProfileConfig
+from .config import ClusterConfig
 from .node import NodeGroupInfo, NodeInfo, NodeProbe
 from .utils import DistributedRayLogCollector, without_http_proxies
 
@@ -165,7 +165,6 @@ class Cluster:
         num_nodes: Optional[int] = None,
         cluster_cfg: Optional[DictConfig] = None,
         distributed_log_dir: Optional[str] = None,
-        nsight_output_dir: Optional[str] = None,
     ):
         """Initialize the cluster.
 
@@ -173,13 +172,11 @@ class Cluster:
             num_nodes (int): The number of nodes in the cluster. When you wish to acquire the cluster instance in a processes other than the main driver process, do not pass this argument. Instead, use the `Cluster()` constructor without arguments. If num_nodes is 0, it will initialize the cluster with all ray-connected nodes.
             cluster_cfg (Optional[DictConfig]): The cluster's configuration dictionary. If set, num_nodes will be ignored and inferred from the config.
             distributed_log_dir (Optional[str]): Output directory for split logs. This must be provided when ``distributed_logging`` is True.
-            nsight_output_dir (Optional[str]): Default directory for Nsight reports when ``cluster.nsight`` is enabled and no explicit ``o``/``output`` option is configured.
         """
         if self._has_initialized:
             return
         self._setup_logger()
         self._distributed_log_collector: Optional[DistributedRayLogCollector] = None
-        self._nsight_output_dir: Optional[str] = nsight_output_dir
         self._ray_code_sync_fragment: Optional[dict[str, Any]] = None
         self._runtime_code_sync_strip_roots: tuple[str, ...] = ()
         if num_nodes is not None or cluster_cfg is not None:
@@ -190,7 +187,6 @@ class Cluster:
                         num_nodes,
                         cluster_cfg,
                         distributed_log_dir,
-                        nsight_output_dir,
                     )
                     break
                 except Cluster.NamespaceConflictError:
@@ -210,7 +206,6 @@ class Cluster:
                 return self.__init__(
                     num_nodes=0,
                     distributed_log_dir=distributed_log_dir,
-                    nsight_output_dir=nsight_output_dir,
                 )
 
         self._has_initialized = True
@@ -275,7 +270,6 @@ class Cluster:
         num_nodes: int,
         cluster_cfg: Optional[DictConfig],
         distributed_log_dir: Optional[str],
-        nsight_output_dir: Optional[str],
     ):
         if ray.is_initialized():
             if self._ray_instance_count > 0:
@@ -301,7 +295,6 @@ class Cluster:
         self._cluster_cfg = (
             ClusterConfig.from_dict_cfg(cluster_cfg) if cluster_cfg else None
         )
-        self._nsight_output_dir = nsight_output_dir
         if (
             self._cluster_cfg is not None
             and num_nodes is not None
@@ -560,55 +553,107 @@ class Cluster:
         return re.sub(r"[^A-Za-z0-9._-]", "_", worker_name)
 
     @classmethod
-    def _get_default_nsight_output_prefix(
+    def _get_default_profiling_output_prefix(
         cls,
         worker_name: str,
         output_dir: str,
     ) -> str:
         safe_worker_name = cls._sanitize_worker_name_for_path(worker_name)
-        return os.path.join(output_dir, f"rlinf_nsight_{safe_worker_name}_%p")
+        return os.path.join(output_dir, f"rlinf_profile_{safe_worker_name}_%p")
 
     @classmethod
-    def maybe_prepend_nsight_to_py_executable(
+    def modify_profile_context(
         cls,
         python_interpreter_path: str,
         worker_name: str,
-        nsight_cfg: Optional[NsightConfig],
-        nsight_output_dir: Optional[str] = None,
+        profiling_cfg: Optional[ProfileConfig],
     ) -> str:
-        """Build the worker ``py_executable``, optionally wrapped with Nsight."""
-        if nsight_cfg is None:
+        """Wrap ``py_executable`` with a profiler command if profiling is configured.
+
+        Dispatches to the accelerator manager that owns the profiling config type,
+        so all profiler-specific CLI construction stays in the hardware layer.
+        """
+        if profiling_cfg is None:
             return python_interpreter_path
 
+        from ..hardware.accelerators.accelerator import AcceleratorManager
         from ..manager import WorkerAddress
 
         worker_group_name = WorkerAddress.from_name(worker_name).root_group_name
-        if not nsight_cfg.profiles_worker_group(worker_group_name):
+        if not profiling_cfg.profiles_worker_group(worker_group_name):
             return python_interpreter_path
 
-        if nsight_output_dir is None:
+        # Resolve the accelerator manager registered for this profiling config class.
+        manager = None
+        for accel_type, cfg_cls in AcceleratorManager.profiling_config_register.items():
+            if isinstance(profiling_cfg, cfg_cls):
+                manager = AcceleratorManager.manager_register.get(accel_type)
+                break
+
+        if manager is None:
+            return python_interpreter_path
+
+        if profiling_cfg.output_dir is None:
             output_dir = tempfile.gettempdir()
 
             from rlinf.utils.logging import get_logger
 
             get_logger().warning(
-                f"Nsight profiling is enabled for worker group '{worker_group_name}' but no output directory is configured. Nsight reports will be saved to the system temporary directory: {output_dir}."
+                f"Profiling is enabled for worker group '{worker_group_name}' but no "
+                f"output directory is configured. Reports will be saved to: {output_dir}."
             )
         else:
-            output_dir = nsight_output_dir
+            output_dir = profiling_cfg.output_dir
         os.makedirs(output_dir, exist_ok=True)
-        default_output_prefix = cls._get_default_nsight_output_prefix(
+        output_prefix = cls._get_default_profiling_output_prefix(
             worker_name,
             output_dir=output_dir,
         )
 
-        nsight_cmd = [
-            "nsys",
-            "profile",
-            *nsight_cfg.to_cli_tokens(default_output_prefix=default_output_prefix),
-            python_interpreter_path,
-        ]
-        return " ".join(shlex.quote(token) for token in nsight_cmd)
+        return manager.modify_profiling_context(
+            python_interpreter_path, profiling_cfg, output_prefix
+        )
+
+    @classmethod
+    def get_profiling_env_vars_for_worker(
+        cls,
+        worker_name: str,
+        profiling_cfg: Optional[ProfileConfig],
+    ) -> dict[str, str]:
+        """Return backend-specific env vars to inject when profiling is active.
+
+        Called alongside :meth:`modify_profile_context`; the
+        returned dict is merged into the worker's environment so that backends
+        relying on env-var configuration (e.g. ``ROCPROFSYS_OUTPUT_PATH``) work
+        without requiring manual ``node_groups.env_configs`` entries.
+
+        Returns an empty dict when profiling is disabled or no env vars are needed.
+        """
+        if profiling_cfg is None:
+            return {}
+
+        from ..hardware.accelerators.accelerator import AcceleratorManager
+        from ..manager import WorkerAddress
+
+        worker_group_name = WorkerAddress.from_name(worker_name).root_group_name
+        if not profiling_cfg.profiles_worker_group(worker_group_name):
+            return {}
+
+        manager = None
+        for accel_type, cfg_cls in AcceleratorManager.profiling_config_register.items():
+            if isinstance(profiling_cfg, cfg_cls):
+                manager = AcceleratorManager.manager_register.get(accel_type)
+                break
+
+        if manager is None:
+            return {}
+
+        output_dir = profiling_cfg.output_dir or tempfile.gettempdir()
+        os.makedirs(output_dir, exist_ok=True)
+        output_prefix = cls._get_default_profiling_output_prefix(
+            worker_name, output_dir=output_dir
+        )
+        return manager.get_profiling_env_vars(profiling_cfg, output_prefix)
 
     def allocate(
         self,
@@ -671,14 +716,40 @@ class Cluster:
         cfg_python_path = node_group.get_node_python_interpreter_path(node_rank)
         if cfg_python_path is not None:
             python_interpreter_path = cfg_python_path
-        python_interpreter_path = self.maybe_prepend_nsight_to_py_executable(
+
+        _profiling_cfg = (
+            self._cluster_cfg.profiling if self._cluster_cfg is not None else None
+        )
+        if _profiling_cfg is not None:
+            from ..manager import WorkerAddress
+
+            worker_group_name = WorkerAddress.from_name(worker_name).root_group_name
+            if (
+                _profiling_cfg.profiles_worker_group(worker_group_name)
+                and _profiling_cfg.backend not in node.profiler_backends
+            ):
+                raise RuntimeError(
+                    f"Profiling backend '{_profiling_cfg.backend}' is enabled for worker "
+                    f"group '{worker_group_name}' but is not available on node "
+                    f"{node.node_rank} ({node.node_ip}). "
+                    f"Available backends: {node.profiler_backends}. "
+                    f"Please install the required tools before running with profiling enabled."
+                )
+        python_interpreter_path = self.modify_profile_context(
             python_interpreter_path=python_interpreter_path,
             worker_name=worker_name,
-            nsight_cfg=self._cluster_cfg.nsight
-            if self._cluster_cfg is not None
-            else None,
-            nsight_output_dir=self._nsight_output_dir,
+            profiling_cfg=_profiling_cfg,
         )
+        profiling_env_vars = self.get_profiling_env_vars_for_worker(
+            worker_name=worker_name,
+            profiling_cfg=_profiling_cfg,
+        )
+        if profiling_env_vars:
+            merged_env_vars = self.merge_worker_env_vars(
+                merged_env_vars,
+                profiling_env_vars,
+                path_env_merge_mode,
+            )
 
         if self._runtime_code_sync_strip_roots:
             merged_env_vars = Cluster._strip_sync_roots_from_pythonpath(

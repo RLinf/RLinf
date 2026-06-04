@@ -93,6 +93,42 @@ For **OpenVLA-OFT**:
    source switch_env openvla-oft
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
+Training Pipeline Mode
+--------------------------
+
+For embodied FSDP training, ``runner.use_training_pipeline`` enables a pipeline
+execution path between environment rollout and actor training. When it is set to
+``True``, rollout trajectories are processed on the environment worker, converted
+into packed actor micro-batches, and streamed to the actor through the channel.
+The actor can then train on ready-to-use micro-batches while rollout generation is
+still progressing.
+
+This mode is useful when rollout payloads contain nested observations or large
+tensors. Sending packed micro-batches makes the channel payload more friendly to
+the tensor fast path and reduces extra reconstruction work on the actor side. It
+is especially helpful when environment workers and actor workers are placed on
+different nodes and the inter-node connection crosses a wide-area network, where
+smaller packed tensor payloads reduce transfer overhead.
+
+Example:
+
+.. code-block:: yaml
+
+   runner:
+     use_training_pipeline: True
+
+   algorithm:
+     normalize_advantages: False
+
+Current limitations:
+
+- ``algorithm.normalize_advantages`` must be ``False`` because the pipeline path
+  computes advantages on the environment worker and streams actor micro-batches
+  without rebuilding the full rollout batch on the actor for normalization.
+- This mode is intended for embodied FSDP actor training with PPO/GRPO-style
+  actor losses. It is not supported for ``embodied_sac``, ``embodied_dagger``,
+  or ``embodied_nft``.
+
 
 View Training Results
 --------------------------

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import time
 from functools import partial
 from typing import Optional
@@ -273,6 +272,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         torch.distributed.barrier()
 
+    @Worker.timer("actor/sync_model_to_rollout")
     def sync_model_to_rollout(self):
         """
         Sync the model's full state dict to the rollout worker.
@@ -988,6 +988,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # create weight syncer
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        ), "global_batch_size is not divisible by micro_batch_size * world_size"
+
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+        self.update_epoch = self.cfg.algorithm.get("update_epoch", 1)
+
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
         self._is_weight_sender = self._rank == 0
@@ -1021,6 +1035,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def get_rollout_state_dict(self) -> dict:
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
+    @Worker.timer("actor/sync_model_to_rollout")
     async def sync_model_to_rollout(self) -> None:
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
@@ -1069,6 +1084,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
             self.offload_param_and_grad(True)
 
+    @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
         Receive rollout trajectories from rollout workers.
@@ -1168,6 +1184,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
+    @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
         """
         Compute the advantages and returns.
@@ -1295,18 +1312,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 self.rollout_batch, shuffle_id
             )
 
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
-        self.gradient_accumulation = (
-            self.cfg.actor.global_batch_size
-            // self.cfg.actor.micro_batch_size
-            // self._world_size
-        )
-
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
         rollout_size = self.rollout_batch["prev_logprobs"].size(0)
@@ -1340,112 +1345,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.optimizer.zero_grad()
                 for idx, batch in enumerate(train_micro_batch):
-                    batch = put_tensor_device(
-                        batch,
-                        f"{Worker.torch_device_type}:{int(os.environ['LOCAL_RANK'])}",
+                    self.train_micro_batch(
+                        micro_batch=batch,
+                        metrics=metrics,
+                        is_last=(idx + 1) == self.gradient_accumulation,
                     )
-                    backward_ctx = self.before_micro_batch(
-                        self.model,
-                        is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
-                    )
-                    advantages = batch["advantages"]
-                    prev_logprobs = batch["prev_logprobs"]
-                    returns = batch.get("returns", None)
-                    prev_values = batch.get("prev_values", None)
-                    loss_mask = batch.get("loss_mask", None)
-                    loss_mask_sum = batch.get("loss_mask_sum", None)
-
-                    forward_inputs = batch.get("forward_inputs", None)
-
-                    kwargs = {}
-                    if SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.OPENVLA,
-                        SupportedModel.OPENVLA_OFT,
-                    ]:
-                        kwargs["temperature"] = (
-                            self.cfg.algorithm.sampling_params.temperature_train
-                        )
-                        kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-                    elif SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.GR00T,
-                        SupportedModel.ABOT_M0,
-                    ]:
-                        kwargs["prev_logprobs"] = prev_logprobs
-
-                    compute_values = (
-                        True if self.cfg.algorithm.adv_type == "gae" else False
-                    )
-
-                    with self.amp_context:
-                        output_dict = self.model(
-                            forward_inputs=forward_inputs,
-                            compute_logprobs=True,
-                            compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
-                            compute_values=compute_values,
-                            use_cache=False,
-                            **kwargs,
-                        )
-
-                    if SupportedModel(self.cfg.actor.model.model_type) in [
-                        SupportedModel.GR00T,
-                        SupportedModel.ABOT_M0,
-                    ]:
-                        prev_logprobs = output_dict["prev_logprobs"]
-
-                    kwargs = {
-                        "loss_type": self.cfg.algorithm.loss_type,
-                        "logprob_type": self.cfg.algorithm.logprob_type,
-                        "reward_type": self.cfg.algorithm.reward_type,
-                        "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
-                        "logprobs": output_dict["logprobs"],
-                        "values": output_dict.get("values", None),
-                        "old_logprobs": prev_logprobs,
-                        "advantages": advantages,
-                        "returns": returns,
-                        "prev_values": prev_values,
-                        "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
-                        "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
-                        "value_clip": self.cfg.algorithm.get("value_clip", None),
-                        "huber_delta": self.cfg.algorithm.get("huber_delta", None),
-                        "loss_mask": loss_mask,
-                        "loss_mask_sum": loss_mask_sum,
-                        "max_episode_steps": self.cfg.env.train.max_episode_steps,
-                        "task_type": self.cfg.runner.task_type,
-                        "critic_warmup": self.optimizer_steps
-                        < self.critic_warmup_steps,
-                    }
-                    loss, metrics_data = policy_loss(**kwargs)
-
-                    entropy_loss = torch.tensor(
-                        0.0, device=Worker.torch_platform.current_device()
-                    )
-                    if (
-                        self.cfg.algorithm.entropy_bonus > 0
-                        and not kwargs["critic_warmup"]
-                    ):
-                        entropy = output_dict["entropy"]
-                        entropy = reshape_entropy(
-                            entropy,
-                            entropy_type=self.cfg.algorithm.entropy_type,
-                            action_dim=self.cfg.actor.model.get("action_dim", 7),
-                            batch_size=output_dict["logprobs"].shape[0],
-                        )
-                        entropy_loss = masked_mean(entropy, mask=loss_mask)
-                        loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
-                    metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
-
-                    if self.enable_sft_co_train:
-                        self._train_sft_epoch(metrics_data, loss)
-
-                    loss /= self.gradient_accumulation
-                    with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
-
-                    metrics_data["actor/total_loss"] = loss.detach().item()
-                    append_to_dict(metrics, metrics_data)
                     # avoid gpu memory leak
                     train_micro_batch[idx] = None
-                    del batch, output_dict, forward_inputs, loss, metrics_data
+                    del batch
 
                 self.torch_platform.empty_cache()
 
@@ -1468,6 +1375,98 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return mean_metric_dict
 
+    def train_micro_batch(
+        self,
+        micro_batch: dict[str, torch.Tensor],
+        metrics: dict[str, list[float]],
+        *,
+        is_last: bool,
+    ) -> None:
+        micro_batch = put_tensor_device(micro_batch, self.device)
+        backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
+        advantages = micro_batch["advantages"]
+        prev_logprobs = micro_batch["prev_logprobs"]
+        returns = micro_batch.get("returns", None)
+        prev_values = micro_batch.get("prev_values", None)
+        loss_mask = micro_batch.get("loss_mask", None)
+        loss_mask_sum = micro_batch.get("loss_mask_sum", None)
+        forward_inputs = micro_batch.get("forward_inputs", None)
+
+        kwargs = {}
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ]:
+            kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
+            kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.GR00T,
+            SupportedModel.ABOT_M0,
+        ]:
+            kwargs["prev_logprobs"] = prev_logprobs
+
+        compute_values = self.cfg.algorithm.adv_type == "gae"
+        with self.amp_context:
+            output_dict = self.model(
+                forward_inputs=forward_inputs,
+                compute_logprobs=True,
+                compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
+                compute_values=compute_values,
+                use_cache=False,
+                **kwargs,
+            )
+
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.GR00T,
+            SupportedModel.ABOT_M0,
+        ]:
+            prev_logprobs = output_dict["prev_logprobs"]
+
+        loss_kwargs = {
+            "loss_type": self.cfg.algorithm.loss_type,
+            "logprob_type": self.cfg.algorithm.logprob_type,
+            "reward_type": self.cfg.algorithm.reward_type,
+            "single_action_dim": self.cfg.actor.model.get("action_dim", 7),
+            "logprobs": output_dict["logprobs"],
+            "values": output_dict.get("values", None),
+            "old_logprobs": prev_logprobs,
+            "advantages": advantages,
+            "returns": returns,
+            "prev_values": prev_values,
+            "clip_ratio_high": self.cfg.algorithm.clip_ratio_high,
+            "clip_ratio_low": self.cfg.algorithm.clip_ratio_low,
+            "value_clip": self.cfg.algorithm.get("value_clip", None),
+            "huber_delta": self.cfg.algorithm.get("huber_delta", None),
+            "loss_mask": loss_mask,
+            "loss_mask_sum": loss_mask_sum,
+            "max_episode_steps": self.cfg.env.train.max_episode_steps,
+            "task_type": self.cfg.runner.task_type,
+            "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
+        }
+        loss, metrics_data = policy_loss(**loss_kwargs)
+        entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:
+            entropy = output_dict["entropy"]
+            entropy = reshape_entropy(
+                entropy,
+                entropy_type=self.cfg.algorithm.entropy_type,
+                action_dim=self.cfg.actor.model.get("action_dim", 7),
+                batch_size=output_dict["logprobs"].shape[0],
+            )
+            entropy_loss = masked_mean(entropy, mask=loss_mask)
+            loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
+        metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
+
+        if self.enable_sft_co_train:
+            self._train_sft_epoch(metrics_data, loss)
+
+        loss /= self.gradient_accumulation
+        with backward_ctx:
+            self.grad_scaler.scale(loss).backward()
+
+        metrics_data["actor/total_loss"] = loss.detach().item()
+        append_to_dict(metrics, metrics_data)
+
     def set_global_step(self, global_step: int) -> None:
         """
         Set the global step for the model, if needed.
@@ -1475,3 +1474,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.version = global_step
         if hasattr(self.model, "set_global_step"):
             self.model.set_global_step(global_step)
+
+    def finish_global_batch(self, metrics: dict[str, list[float]]) -> None:
+        self.torch_platform.empty_cache()
+        grad_norm, lr_list = self.optimizer_step()
+        self.optimizer.zero_grad()
+        metric_data = {
+            "actor/grad_norm": grad_norm,
+            "actor/lr": lr_list[0],
+        }
+        if len(lr_list) > 1:
+            metric_data["critic/lr"] = lr_list[1]
+        append_to_dict(metrics, metric_data)

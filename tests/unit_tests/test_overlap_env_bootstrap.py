@@ -31,6 +31,7 @@ if "gymnasium" not in sys.modules:
 if "rlinf.envs.wrappers" not in sys.modules:
     sys.modules["rlinf.envs.wrappers"] = MagicMock()
 
+from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
 from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 
 
@@ -90,6 +91,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.n_train_chunk_steps = 2
         self.worker.rollout_epoch = 1
         self.worker.enable_offload = False
+        self.worker.use_training_pipeline = False
         self.worker.collect_transitions = False
         self.worker.collect_prev_infos = True
         self.worker.reward_mode = self.cfg.get("reward", {}).get(
@@ -98,6 +100,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.history_reward_assign = self.cfg.get("reward", {}).get(
             "history_reward_assign", True
         )
+        self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
 
         # Mock env_list
@@ -154,14 +157,20 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         # 2. Interact (should consume the prefetch)
         import asyncio
 
-        loop = asyncio.get_event_loop()
-        # Mock send_rollout_trajectories as it's awaited
-        self.worker.send_rollout_trajectories = MagicMock(return_value=asyncio.Future())
-        self.worker.send_rollout_trajectories.return_value.set_result(None)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            # Mock send_rollout_trajectories as it's awaited
+            self.worker.send_rollout_trajectories = MagicMock(
+                return_value=asyncio.Future()
+            )
+            self.worker.send_rollout_trajectories.return_value.set_result(None)
 
-        loop.run_until_complete(
-            self.worker.interact(input_channel, rollout_channel, None, None)
-        )
+            loop.run_until_complete(
+                self.worker.interact(input_channel, rollout_channel, None, None)
+            )
+        finally:
+            loop.close()
 
         self.assertIsNone(self.worker._prefetched_train_bootstrap)
         # Verify that _bootstrap_and_send_train was NOT called during interact

@@ -26,9 +26,10 @@
    描述如何在不同的 SGLang 版本之间动态切换，
    以满足不同的兼容性需求或实验要求。
 
-- :doc:`nsight`
-   介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
-   包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
+- :doc:`profile`
+   介绍 ``cluster.profiling`` 配置，支持通过 ``nsys profile``（NVIDIA）或
+   ``rocprof-sys-python``（AMD）包装指定的 Ray worker group，并说明
+   ``enabled``、``worker_groups``、``steps``、``output_dir`` 等公共字段的用法。
 
 - :doc:`dynamic_scheduling`
    涵盖 RLinf 的在线扩缩与动态调度机制：如何在训练过程中对资源进行
@@ -48,6 +49,6 @@
    cluster
    collective
    version
-   nsight
+   profile
    dynamic_scheduling
    auto_placement

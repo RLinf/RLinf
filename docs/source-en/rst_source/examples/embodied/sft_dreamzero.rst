@@ -5,7 +5,7 @@ This guide explains how to run DreamZero supervised fine-tuning (SFT) in RLinf, 
 
 Currently supported:
 
-- **Datasets**: LIBERO (LeRobot), LeRobot / OXE DROID
+- **Datasets**: LIBERO (``libero_sim``), OXE DROID (``oxe_droid``), Franka pick-and-place (``franka_pnp``); **mixture SFT** across embodiments (see ``libero_franka_mix_sft_dreamzero_5b.yaml``)
 - **Backbones**: WAN2.1 (e.g. DreamZero-DROID 14B), WAN2.2 (e.g. Wan2.2-TI2V-5B cold start)
 
 
@@ -131,6 +131,8 @@ Supported datasets:
 
 - LIBERO: `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``; see ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID: `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``; see ``droid_sft_dreamzero_14b.yaml``
+- Franka PnP: custom LeRobot dataset — ``embodiment_tag: franka_pnp``; transforms in ``data_transforms/franka_pnp.py`` (extends ``libero_sim`` dual-view layout)
+- Mixture SFT: ``libero_franka_mix_sft_dreamzero_5b.yaml`` uses a **list** for ``data.train_data_paths``; each entry can set ``dataset_path``, ``embodiment_tag``, ``metadata_json_path``, and ``weight``
 
 Download example:
 
@@ -180,7 +182,7 @@ Data-related settings
    * - Field
      - Meaning and role
    * - ``train_data_paths``
-     - LeRobot dataset root or HF ``repo_id``. Determines which episodes / parquet / video files are read.
+     - **Single dataset**: LeRobot root or HF ``repo_id``. **Mixture SFT**: a YAML list; each item sets ``dataset_path`` (or a list of paths), ``weight``, ``embodiment_tag``, ``metadata_json_path``, etc. ``build_dreamzero_mixture_dataset_from_spec`` samples by weight. Optional ``distribute_weights: true`` splits weight by episode length when one spec lists multiple paths.
    * - ``lazy_load``
      - Lazy-load mp4 videos. **Must be ``True`` for ``multi_anchor`` sampling** (otherwise anchor-based frame lookup fails).
    * - ``sampling_mode``
@@ -229,7 +231,7 @@ Model and training settings
    * - ``metadata_json_path``
      - Dataset ``metadata.json``; falls back to ``model_path/experiment_cfg/metadata.json`` if unset.
    * - ``embodiment_tag``
-     - Selects data transform and collate template: ``libero_sim`` or ``oxe_droid``. **Must match the dataset.**
+     - Selects data transform and collate template: ``libero_sim``, ``oxe_droid``, ``franka_pnp`` (``data_transforms/embodiment_tag.py``). For a single dataset, must match the data. For mixture SFT, each list entry in ``train_data_paths`` sets its own tag; ``actor.model.embodiment_tag`` is still required (usually aligned with the primary source for policy-side metadata in ``get_model``).
 
 **Temporal and action shape (must align with data and WAN capacity)**
 
@@ -290,13 +292,25 @@ Model and training settings
 
 .. code:: yaml
 
-   # ---------- data ----------
+   # ---------- data (single dataset) ----------
    data:
      train_data_paths: /path/to/libero
      lazy_load: True
      sampling_mode: multi_anchor
      video_backend: torchcodec
      num_workers: 8
+
+   # ---------- data (mixture; see libero_franka_mix_sft_dreamzero_5b.yaml) ----------
+   data:
+     train_data_paths:
+       - dataset_path: /path/to/libero
+         weight: 4
+         embodiment_tag: libero_sim
+         metadata_json_path: /path/to/libero_metadata.json
+       - dataset_path: /path/to/franka_pnp
+         weight: 1
+         embodiment_tag: franka_pnp
+         metadata_json_path: /path/to/franka_metadata.json
 
    # ---------- model (resume from checkpoint) ----------
    actor:
@@ -323,6 +337,9 @@ From the repository root:
 
    # DROID + WAN2.1 (dreamzero_14b preset; model_path -> DreamZero-DROID)
    bash examples/sft/run_vla_sft.sh droid_sft_dreamzero_14b
+
+   # LIBERO + Franka mixture (WAN2.2; see libero_franka_mix_sft_dreamzero_5b.yaml)
+   bash examples/sft/run_vla_sft.sh libero_franka_mix_sft_dreamzero_5b
 
 Equivalent command:
 
@@ -463,6 +480,7 @@ Extension: adding a new ``embodiment_tag``
 To train DreamZero SFT on a **new robot or LeRobot dataset**, add an ``embodiment_tag`` and register the corresponding transforms and metadata tooling in RLinf. Use existing modules as templates:
 
 - ``rlinf/data/datasets/dreamzero/data_transforms/libero_sim.py`` (two views, simple state/action columns)
+- ``rlinf/data/datasets/dreamzero/data_transforms/franka_pnp.py`` (two views, extends ``libero_sim``, custom ``num_frames``, etc.)
 - ``rlinf/data/datasets/dreamzero/data_transforms/oxe_droid.py`` (three views, ``meta/modality.json`` slicing)
 
 Data flow:
@@ -505,16 +523,19 @@ Create ``rlinf/data/datasets/dreamzero/data_transforms/<your_tag>.py`` implement
 **``modality_keys`` naming** (wired to ``DreamZeroLeRobotDataset``):
 
 - Video: ``video.<short_name>`` (e.g. ``video.image``); short names resolve via ``meta/modality.json`` ``original_key`` or ``info.json`` ``observation.images.*`` / bare column names.
-- State/action: ``state.<name>``, ``action.<name>``; with ``meta/modality.json``, use ``start``/``end`` slices; otherwise fallback to full ``observation.state`` / ``action`` columns or heuristics (see ``_build_component_sources`` in ``dreamzero.py``).
+- State/action: ``state.<name>``, ``action.<name>``; with ``meta/modality.json``, use ``start``/``end`` slices; otherwise fallback to full ``observation.state`` / ``action`` columns or heuristics (see ``_build_component_sources`` in ``lerobot_dataset.py``).
 - Keys in training YAML must match ``*_concat_order`` in ``ConcatTransform``.
 
 Step 2: Register in RLinf
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Edit ``rlinf/data/datasets/dreamzero/data_transforms/__init__.py``:
+1. Add a member to ``EmbodimentTag`` in ``rlinf/data/datasets/dreamzero/data_transforms/embodiment_tag.py`` (value must equal your ``TAG`` string).
+2. Edit ``rlinf/data/datasets/dreamzero/data_transforms/__init__.py``:
 
-1. ``from ...<your_tag> import YourEmbodimentDataTransform``
-2. Add ``YourEmbodimentDataTransform.TAG: YourEmbodimentDataTransform`` to ``_EMBODIMENT_REGISTRY``
+   - ``from ...<your_tag> import YourEmbodimentDataTransform``
+   - Add ``YourEmbodimentDataTransform.TAG: YourEmbodimentDataTransform`` to ``_EMBODIMENT_REGISTRY``
+
+No manual Groot patch is required: ``get_model()`` replaces ``groot.vla.data.schema.embodiment_tags.EmbodimentTag`` with the RLinf enum via ``Patcher.add_patch``.
 
 If unregistered, ``build_dreamzero_composed_transform`` errors and lists known tags.
 
@@ -570,7 +591,7 @@ Step 5: Validate (short run + data checks)
 
 **Pitfall checklist**
 
-- ``embodiment_tag`` string must match in **config**, **metadata.json key**, and Python ``TAG``.
+- ``embodiment_tag`` string must match in **four places**: ``embodiment_tag.py`` enum value, Python ``TAG``, config / ``train_data_paths`` entry, and **metadata.json** top-level key.
 - ``multi_anchor`` + mp4 data: **must** set ``data.lazy_load: True``.
 - Dataset action length is ``action_horizon × max_chunk_size``; do not change only one.
 - Multi-view **concat order** must match **prompt text** or training signal is wrong.
@@ -578,7 +599,7 @@ Step 5: Validate (short run + data checks)
 - Prefer ``target_video_height/width`` or transform-chain resize over hard-coded sizes for WAN2.1/2.2.
 - Inference/eval: set ``embodiment_tag`` correctly in ``examples/embodiment/config/*_dreamzero.yaml``.
 
-For inference only (no RLinf code changes) when upstream Groot/DreamZero already supports the tag, ``metadata.json`` and eval config may suffice; **SFT on new data** usually requires the Python registration and transform steps above.
+For inference only (no RLinf code changes) when upstream Groot/DreamZero already supports the tag, ``metadata.json`` and eval config may suffice; **SFT on new data** requires the enum member, registry entry, and transform module above (``get_model`` patches Groot ``EmbodimentTag`` automatically).
 
 
 Common issues
@@ -612,6 +633,11 @@ Common issues
 6. **multi_anchor requires lazy_load**
 
    - Set ``data.lazy_load: True``
+
+7. **``AttributeError: GR1_UNIFIED_SEGMENTATION`` or unknown ``EmbodimentTag``**
+
+   - Use ``dream_transform.DreamTransform`` (RLinf subclass) in the transform chain, not the Groot base class directly
+   - Register new tags in ``embodiment_tag.py`` and ``_EMBODIMENT_REGISTRY``; ``get_model()`` patches the Groot enum at model load
 
 
 Practical recommendations
