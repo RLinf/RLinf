@@ -747,7 +747,7 @@ def test_sglang_reward_server_start_raises_when_already_started():
     popen.assert_not_called()
 
 
-def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
+def test_sglang_reward_server_uses_sglang_wait_for_server(monkeypatch):
     cfg = OmegaConf.create(
         {
             "model_path": "/models/QwenTrend",
@@ -757,7 +757,6 @@ def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
     )
     server = SGLangRewardServer(cfg)
     server.process = mock.Mock()
-    server.process.poll.return_value = None
     calls = []
 
     sglang_module = types.ModuleType("sglang")
@@ -792,7 +791,6 @@ def test_sglang_reward_server_stop_uses_sglang_terminate_process(monkeypatch):
     cfg = OmegaConf.create({"model_path": "/models/QwenTrend"})
     server = SGLangRewardServer(cfg)
     server.process = mock.Mock()
-    server.process.poll.return_value = None
     process = server.process
     terminate_process = mock.Mock()
     sglang_module = types.ModuleType("sglang")
@@ -802,11 +800,9 @@ def test_sglang_reward_server_stop_uses_sglang_terminate_process(monkeypatch):
     monkeypatch.setitem(sys.modules, "sglang", sglang_module)
     monkeypatch.setitem(sys.modules, "sglang.utils", utils_module)
 
-    with mock.patch("os.killpg") as killpg:
-        server.stop()
+    server.stop()
 
     terminate_process.assert_called_once_with(process)
-    killpg.assert_not_called()
     assert server.process is None
 
 

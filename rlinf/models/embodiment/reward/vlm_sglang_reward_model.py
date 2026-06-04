@@ -125,13 +125,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         self.sampling_params = self._build_sampling_params(cfg)
 
-        self.prepare_inputs_ms = 0.0
-        self.image_encode_ms = 0.0
-        self.media_convert_ms = 0.0
-        self.http_request_ms = 0.0
-        self.sglang_generate_ms = 0.0
-        self.parse_ms = 0.0
-        self.total_ms = 0.0
         self.last_timing_ms: dict[str, float] = {}
         self.last_generation_stats: dict[str, float] = {}
         self.last_outputs: list[str] = []
@@ -319,19 +312,12 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         completion_tokens = [token_count for _, token_count in results]
         return outputs, completion_tokens
 
-    def _set_timing_attrs(
+    def _set_timing_metrics(
         self,
         timing_recorder: SGLangRewardTimingRecorder,
         generation_stats: dict[str, float],
     ) -> None:
         timings = timing_recorder.metrics()
-        self.prepare_inputs_ms = timings["prepare_inputs_ms"]
-        self.image_encode_ms = timings["image_encode_ms"]
-        self.media_convert_ms = timings["media_convert_ms"]
-        self.http_request_ms = timings["http_request_ms"]
-        self.sglang_generate_ms = timings["sglang_generate_ms"]
-        self.parse_ms = timings["parse_ms"]
-        self.total_ms = timings["total_ms"]
         self.last_timing_ms = timings
         self.last_generation_stats = dict(generation_stats)
         logger.debug("%s timing_ms=%s", self.__class__.__name__, self.last_timing_ms)
@@ -427,7 +413,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 rewards[valid_input_ids] = parsed_rewards
 
         self.last_outputs = all_outputs
-        self._set_timing_attrs(
+        self._set_timing_metrics(
             timing_recorder,
             self._summarize_generation_stats(generated_token_counts),
         )

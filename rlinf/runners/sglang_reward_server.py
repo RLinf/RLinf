@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -113,42 +112,16 @@ class SGLangRewardServer:
     def wait_until_ready(self) -> None:
         from sglang.utils import wait_for_server
 
-        if self.process is not None and self.process.poll() is not None:
-            raise RuntimeError(
-                "SGLang reward server exited before readiness check succeeded "
-                f"with code {self.process.returncode}."
-            )
-        self._call_sglang_wait_for_server(wait_for_server)
+        wait_for_server(self.server_url, timeout=int(self.startup_timeout))
         logger.info("SGLang reward server is ready at %s", self.api_base)
-
-    def _call_sglang_wait_for_server(self, wait_for_server) -> None:
-        kwargs: dict[str, Any] = {}
-        try:
-            parameters = inspect.signature(wait_for_server).parameters
-        except (TypeError, ValueError):
-            parameters = {}
-        accepts_kwargs = any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in parameters.values()
-        )
-        if accepts_kwargs or "timeout" in parameters:
-            kwargs["timeout"] = int(self.startup_timeout)
-
-        try:
-            wait_for_server(self.server_url, **kwargs)
-        except TypeError as exc:
-            if "timeout" not in kwargs or "timeout" not in str(exc):
-                raise
-            wait_for_server(self.server_url)
 
     def stop(self) -> None:
         if self.process is None:
             return
-        if self.process.poll() is None:
-            logger.info("Stopping SGLang reward server on %s", self.api_base)
-            from sglang.utils import terminate_process
+        logger.info("Stopping SGLang reward server on %s", self.api_base)
+        from sglang.utils import terminate_process
 
-            terminate_process(self.process)
+        terminate_process(self.process)
         self.process = None
 
 
