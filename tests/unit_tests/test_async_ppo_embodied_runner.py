@@ -109,6 +109,9 @@ class _FakeActor:
         self.recv_rollout_trajectories_calls.append(input_channel)
         return _FakeHandle()
 
+    def construct_rollout_batch(self):
+        return _FakeHandle(result={})
+
     def compute_advantages_and_returns(self):
         return _FakeHandle(result=[{"rewards": 0.25, "advantages_mean": 0.0}])
 

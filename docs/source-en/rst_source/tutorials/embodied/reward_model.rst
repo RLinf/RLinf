@@ -408,7 +408,8 @@ Select SGLang by overriding the backend field:
        inference_backend: sglang
 
 The runner starts a local server by default. You can override the server surface
-or point to a user-managed server:
+or point to a user-managed server. Request concurrency is controlled by the
+SGLang server, for example through ``sglang_server_args.max_running_requests``:
 
 .. code-block:: yaml
 
@@ -422,6 +423,7 @@ or point to a user-managed server:
        # api_base: "http://127.0.0.1:30000/v1"  # set to skip runner launch
        # sglang_server_args:
        #   tp_size: 2
+       #   max_running_requests: 64
 
 Launch the MLP RL run with:
 

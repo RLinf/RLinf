@@ -63,7 +63,6 @@ class EmbodiedRunner:
         env: Union["EnvWorker", "AsyncEnvWorker"],
         reward: Union["EmbodiedRewardWorker"] = None,
         critic=None,
-        sglang_reward_server=None,
     ):
         self.cfg = cfg
         self.actor = actor
@@ -71,14 +70,14 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
-        self.sglang_reward_server = sglang_reward_server
         self.weight_sync_interval = self.cfg.runner.weight_sync_interval
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
         )
 
         # Step-gated profiling: ``cluster.profiling.steps`` lists the global step
-        profiling_raw = self.cfg.cluster.get("profiling", None)
+        cluster_cfg = self.cfg.get("cluster", {})
+        profiling_raw = cluster_cfg.get("profiling", None)
         profiling_enabled = profiling_raw is not None and bool(
             profiling_raw.get("enabled", True)
         )
@@ -466,8 +465,6 @@ class EmbodiedRunner:
         self.stop_logging = True
         self.log_queue.join()  # Wait for all queued logs to be processed
         self.log_thread.join(timeout=1.0)
-        if self.sglang_reward_server is not None:
-            self.sglang_reward_server.stop()
 
     def _should_profile_step(self, step_idx: int) -> bool:
         return self._profile_all_steps or (

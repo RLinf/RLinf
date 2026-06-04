@@ -286,7 +286,6 @@ class EmbodiedRewardWorker(Worker):
 
     @Worker.timer("compute_rewards")
     async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        # breakpoint()
         if self.enable_offload:
             self.model.to(self.device)
 

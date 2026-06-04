@@ -44,7 +44,6 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         env: "AsyncEnvWorker",
         critic=None,
         reward=None,
-        sglang_reward_server=None,
     ):
         if reward is not None and cfg.get("reward", {}).get("use_output_step", 0) != 0:
             raise ValueError(
@@ -60,7 +59,6 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             env=env,
             reward=reward,
             critic=critic,
-            sglang_reward_server=sglang_reward_server,
         )
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
@@ -383,5 +381,3 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()
-        if self.sglang_reward_server is not None:
-            self.sglang_reward_server.stop()

@@ -117,7 +117,6 @@ def main(cfg) -> None:
             rollout=rollout_group,
             env=env_group,
             reward=reward_group,
-            sglang_reward_server=sglang_reward_server,
         )
 
         runner.init_workers()

@@ -18,9 +18,6 @@ import inspect
 import logging
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -46,18 +43,11 @@ class SGLangRewardServer:
         self.startup_timeout = float(
             reward_model_cfg.get("server_startup_timeout", 600.0)
         )
-        self.readiness_interval = float(
-            reward_model_cfg.get("server_readiness_interval", 2.0)
-        )
         self.process: subprocess.Popen | None = None
 
     @property
     def server_url(self) -> str:
         return f"http://{self.host}:{self.port}"
-
-    @property
-    def models_url(self) -> str:
-        return f"{self.api_base}/models"
 
     def build_command(self) -> list[str]:
         model_path = self.reward_model_cfg.get("model_path")
@@ -120,44 +110,15 @@ class SGLangRewardServer:
         return self.api_base
 
     def wait_until_ready(self) -> None:
-        try:
-            from sglang.utils import wait_for_server
-        except ImportError:
-            wait_for_server = None
+        from sglang.utils import wait_for_server
 
-        if wait_for_server is not None:
-            if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError(
-                    "SGLang reward server exited before readiness check succeeded "
-                    f"with code {self.process.returncode}."
-                )
-            self._call_sglang_wait_for_server(wait_for_server)
-            logger.info("SGLang reward server is ready at %s", self.api_base)
-            return
-
-        deadline = time.monotonic() + self.startup_timeout
-        last_error: Exception | None = None
-        while time.monotonic() < deadline:
-            if self.process is not None and self.process.poll() is not None:
-                raise RuntimeError(
-                    "SGLang reward server exited before readiness check succeeded "
-                    f"with code {self.process.returncode}."
-                )
-            try:
-                with urllib.request.urlopen(self.models_url, timeout=5) as response:
-                    if 200 <= response.status < 300:
-                        logger.info(
-                            "SGLang reward server is ready at %s", self.api_base
-                        )
-                        return
-            except (urllib.error.URLError, TimeoutError, OSError) as exc:
-                last_error = exc
-            time.sleep(self.readiness_interval)
-
-        raise TimeoutError(
-            "Timed out waiting for SGLang reward server readiness at "
-            f"{self.models_url}: {last_error}"
-        )
+        if self.process is not None and self.process.poll() is not None:
+            raise RuntimeError(
+                "SGLang reward server exited before readiness check succeeded "
+                f"with code {self.process.returncode}."
+            )
+        self._call_sglang_wait_for_server(wait_for_server)
+        logger.info("SGLang reward server is ready at %s", self.api_base)
 
     def _call_sglang_wait_for_server(self, wait_for_server) -> None:
         kwargs: dict[str, Any] = {}

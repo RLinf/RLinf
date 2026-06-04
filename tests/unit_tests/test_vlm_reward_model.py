@@ -239,16 +239,27 @@ def _make_cfg(infer_micro_batch_size: int) -> OmegaConf:
     )
 
 
-def _make_sglang_cfg(infer_micro_batch_size: int) -> OmegaConf:
-    cfg = _make_cfg(infer_micro_batch_size)
-    cfg.model_path = "dummy"
-    return cfg
+def _make_sglang_cfg() -> OmegaConf:
+    return OmegaConf.create(
+        {
+            "model_path": "dummy",
+            "precision": "bf16",
+            "input_builder_name": "history_vlm_input_builder",
+            "reward_parser_name": "base_reward_parser",
+            "history_buffers": {
+                "history_window": {
+                    "history_size": 10,
+                    "input_interval": 10,
+                    "history_keys": ["main_images"],
+                    "input_on_done": False,
+                }
+            },
+        }
+    )
 
 
-def _make_sglang_cfg_with_success_bonus(
-    infer_micro_batch_size: int, gt_success_bonus: float
-) -> OmegaConf:
-    cfg = _make_sglang_cfg(infer_micro_batch_size)
+def _make_sglang_cfg_with_success_bonus(gt_success_bonus: float) -> OmegaConf:
+    cfg = _make_sglang_cfg()
     cfg.gt_success_bonus = gt_success_bonus
     return cfg
 
@@ -558,7 +569,7 @@ def test_history_vlm_sglang_generates_http_requests_concurrently_in_order():
 
 
 def test_history_vlm_sglang_reward_model_submits_full_batch_to_server():
-    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
+    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg())
 
     rewards = model.compute_reward(_make_sglang_reward_input([10, 11, 12, 13]))
 
@@ -567,8 +578,8 @@ def test_history_vlm_sglang_reward_model_submits_full_batch_to_server():
     assert model.last_outputs == ["10", "11", "12", "13"]
 
 
-def test_history_vlm_sglang_slices_nested_observation_metadata():
-    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
+def test_history_vlm_sglang_preserves_nested_observation_metadata():
+    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg())
     reward_input = _make_sglang_reward_input([10, 11, 12, 13])
     reward_input["env_infos"] = {
         "success": torch.tensor([True, False, True, False]),
@@ -586,7 +597,7 @@ def test_history_vlm_sglang_slices_nested_observation_metadata():
 
 def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
     model = _TestHistoryVLMSGLangRewardModel(
-        _make_sglang_cfg_with_success_bonus(2, gt_success_bonus=20.0)
+        _make_sglang_cfg_with_success_bonus(gt_success_bonus=20.0)
     )
     reward_input = _make_sglang_reward_input([10, 11, 12, 13])
     reward_input["env_infos"] = {
@@ -599,7 +610,7 @@ def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
 
 
 def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots():
-    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
+    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg())
 
     rewards = model.compute_reward(
         _make_sglang_reward_input([20, 21, 22, 23], valid_env_ids=[1, 3])
@@ -656,7 +667,7 @@ def test_history_vlm_sglang_extracts_text_and_token_count_from_openai_response()
 
 
 def test_history_vlm_sglang_pads_mismatched_outputs():
-    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(0))
+    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg())
     model._build_chat_payloads = lambda prepared_inputs: [{"model": "dummy"}]
     model._generate = lambda payloads: (["1.0"], [5])
 
@@ -667,7 +678,7 @@ def test_history_vlm_sglang_pads_mismatched_outputs():
 
 
 def test_history_vlm_sglang_records_timing_and_generation_stats():
-    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(0))
+    model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg())
     model._build_chat_payloads = lambda prepared_inputs: [
         {"model": "dummy"},
         {"model": "dummy"},
@@ -737,51 +748,12 @@ def test_sglang_reward_server_start_raises_when_already_started():
     popen.assert_not_called()
 
 
-def test_sglang_reward_server_readiness_polls_v1_models(monkeypatch):
-    cfg = OmegaConf.create(
-        {
-            "model_path": "/models/QwenTrend",
-            "server_port": 30124,
-            "server_startup_timeout": 1,
-            "server_readiness_interval": 0,
-        }
-    )
-    server = SGLangRewardServer(cfg)
-    server.process = mock.Mock()
-    server.process.poll.return_value = None
-    opened_urls = []
-
-    sglang_module = types.ModuleType("sglang")
-    monkeypatch.setitem(sys.modules, "sglang", sglang_module)
-    monkeypatch.setitem(sys.modules, "sglang.utils", None)
-
-    class FakeResponse:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            return False
-
-    def fake_urlopen(url, timeout):
-        del timeout
-        opened_urls.append(url)
-        return FakeResponse()
-
-    with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        server.wait_until_ready()
-
-    assert opened_urls == ["http://127.0.0.1:30124/v1/models"]
-
-
 def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
     cfg = OmegaConf.create(
         {
             "model_path": "/models/QwenTrend",
             "server_port": 30124,
             "server_startup_timeout": 1,
-            "server_readiness_interval": 0,
         }
     )
     server = SGLangRewardServer(cfg)
