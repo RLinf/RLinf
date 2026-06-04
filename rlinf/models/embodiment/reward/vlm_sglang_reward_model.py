@@ -39,21 +39,46 @@ from rlinf.utils.logging import get_logger
 logger = get_logger()
 
 
+class SGLangRewardTimingRecorder:
+    """Records timing metrics for one SGLang reward inference call."""
+
+    _BASE_KEYS = (
+        "prepare_inputs_ms",
+        "image_encode_ms",
+        "http_request_ms",
+        "parse_ms",
+        "total_ms",
+    )
+
+    def __init__(self) -> None:
+        self.timings = dict.fromkeys(self._BASE_KEYS, 0.0)
+
+    @contextmanager
+    def record(self, key: str):
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.timings[key] += (time.perf_counter() - start) * 1000
+
+    def finish(self, start_time: float) -> None:
+        self.timings["total_ms"] = (time.perf_counter() - start_time) * 1000
+
+    def metrics(self) -> dict[str, float]:
+        return {
+            **self.timings,
+            "media_convert_ms": self.timings["image_encode_ms"],
+            "sglang_generate_ms": self.timings["http_request_ms"],
+            "generate_ms": self.timings["http_request_ms"],
+        }
+
+
 def _to_plain_dict(value: Any) -> dict[str, Any]:
     if value is None:
         return {}
     if isinstance(value, DictConfig):
         return dict(OmegaConf.to_container(value, resolve=True))
     return dict(value)
-
-
-@contextmanager
-def _record_timing_ms(timings: dict[str, float], key: str):
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        timings[key] += (time.perf_counter() - start) * 1000
 
 
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
@@ -88,7 +113,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self.image_format = str(cfg.get("image_format", "jpeg")).lower()
         if self.image_format not in {"jpeg", "png"}:
             raise ValueError(
-                "HistoryVLMSGLangRewardModel supports image_format='jpeg' or 'png', "
+                f"{self.__class__.__name__} supports image_format='jpeg' or 'png', "
                 f"got {self.image_format!r}."
             )
         self.jpeg_quality = int(cfg.get("jpeg_quality", 95))
@@ -146,7 +171,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
     ) -> dict[str, Any]:
         raise NotImplementedError(
-            "HistoryVLMSGLangRewardModel is an inference-time reward model; "
+            f"{self.__class__.__name__} is an inference-time reward model; "
             "training via forward() is not supported."
         )
 
@@ -330,24 +355,20 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     def _set_timing_attrs(
         self,
-        timings: dict[str, float],
+        timing_recorder: SGLangRewardTimingRecorder,
         generation_stats: dict[str, float],
     ) -> None:
+        timings = timing_recorder.metrics()
         self.prepare_inputs_ms = timings["prepare_inputs_ms"]
         self.image_encode_ms = timings["image_encode_ms"]
-        self.media_convert_ms = timings["image_encode_ms"]
+        self.media_convert_ms = timings["media_convert_ms"]
         self.http_request_ms = timings["http_request_ms"]
-        self.sglang_generate_ms = timings["http_request_ms"]
+        self.sglang_generate_ms = timings["sglang_generate_ms"]
         self.parse_ms = timings["parse_ms"]
         self.total_ms = timings["total_ms"]
-        self.last_timing_ms = {
-            **timings,
-            "media_convert_ms": timings["image_encode_ms"],
-            "sglang_generate_ms": timings["http_request_ms"],
-            "generate_ms": timings["http_request_ms"],
-        }
+        self.last_timing_ms = timings
         self.last_generation_stats = dict(generation_stats)
-        logger.debug("HistoryVLMSGLangRewardModel timing_ms=%s", self.last_timing_ms)
+        logger.debug("%s timing_ms=%s", self.__class__.__name__, self.last_timing_ms)
 
     def apply_gt_success_bonus(
         self, rewards: torch.Tensor, reward_input: dict[str, Any]
@@ -391,13 +412,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         reward_input: dict[str, Any],
     ) -> torch.Tensor:
         total_start = time.perf_counter()
-        timings = {
-            "prepare_inputs_ms": 0.0,
-            "image_encode_ms": 0.0,
-            "http_request_ms": 0.0,
-            "parse_ms": 0.0,
-            "total_ms": 0.0,
-        }
+        timing_recorder = SGLangRewardTimingRecorder()
 
         history_input: dict[str, dict[str, list[list[Any]]]] = reward_input.pop(
             "history_input"
@@ -424,17 +439,17 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 reward_chunks.append(reward_chunk)
                 continue
 
-            with _record_timing_ms(timings, "prepare_inputs_ms"):
+            with timing_recorder.record("prepare_inputs_ms"):
                 prepared_inputs = self.input_builder.prepare_inputs(
                     micro_observations,
                     micro_history_input,
                     valid_input_ids,
                 )
 
-            with _record_timing_ms(timings, "image_encode_ms"):
+            with timing_recorder.record("image_encode_ms"):
                 payloads = self._build_chat_payloads(prepared_inputs)
 
-            with _record_timing_ms(timings, "http_request_ms"):
+            with timing_recorder.record("http_request_ms"):
                 outputs, token_counts = self._generate(payloads)
             generated_token_counts.extend(token_counts)
             all_outputs.extend(outputs)
@@ -448,7 +463,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                 outputs += [""] * (len(valid_input_ids) - len(outputs))
                 outputs = outputs[: len(valid_input_ids)]
 
-            with _record_timing_ms(timings, "parse_ms"):
+            with timing_recorder.record("parse_ms"):
                 parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
                     dtype=torch.float32
                 )
@@ -456,10 +471,10 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             reward_chunk[valid_input_ids] = parsed_rewards
             reward_chunks.append(reward_chunk)
 
-        timings["total_ms"] = (time.perf_counter() - total_start) * 1000
+        timing_recorder.finish(total_start)
         self.last_outputs = all_outputs
         self._set_timing_attrs(
-            timings,
+            timing_recorder,
             self._summarize_generation_stats(generated_token_counts),
         )
         rewards = torch.cat(reward_chunks, dim=0)

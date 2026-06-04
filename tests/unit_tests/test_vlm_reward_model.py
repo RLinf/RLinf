@@ -18,6 +18,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -43,6 +44,7 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
 )
 from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
     HistoryVLMSGLangRewardModel,
+    SGLangRewardTimingRecorder,
 )
 from rlinf.runners.sglang_reward_server import (
     SGLangRewardServer,
@@ -790,6 +792,21 @@ def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
     server.wait_until_ready()
 
     assert calls == [("http://127.0.0.1:30124", 1)]
+
+
+def test_sglang_reward_timing_recorder_exposes_compatibility_metrics():
+    recorder = SGLangRewardTimingRecorder()
+    start_time = time.perf_counter()
+
+    with recorder.record("http_request_ms"):
+        pass
+    recorder.finish(start_time)
+
+    metrics = recorder.metrics()
+    assert metrics["http_request_ms"] >= 0.0
+    assert metrics["generate_ms"] == metrics["http_request_ms"]
+    assert metrics["sglang_generate_ms"] == metrics["http_request_ms"]
+    assert metrics["media_convert_ms"] == metrics["image_encode_ms"]
 
 
 def test_sglang_reward_server_stop_terminates_process_group(monkeypatch):
