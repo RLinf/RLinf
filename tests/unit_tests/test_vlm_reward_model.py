@@ -15,7 +15,6 @@
 # ruff: noqa: E402
 
 import os
-import signal
 import sys
 import threading
 import time
@@ -558,13 +557,13 @@ def test_history_vlm_sglang_generates_http_requests_concurrently_in_order():
     assert token_counts == [3, 4]
 
 
-def test_history_vlm_sglang_reward_model_keeps_micro_batch_order():
+def test_history_vlm_sglang_reward_model_submits_full_batch_to_server():
     model = _TestHistoryVLMSGLangRewardModel(_make_sglang_cfg(2))
 
     rewards = model.compute_reward(_make_sglang_reward_input([10, 11, 12, 13]))
 
     assert torch.equal(rewards, torch.tensor([10.0, 11.0, 12.0, 13.0]))
-    assert model.input_builder.calls == [[10, 11], [12, 13]]
+    assert model.input_builder.calls == [[10, 11, 12, 13]]
     assert model.last_outputs == ["10", "11", "12", "13"]
 
 
@@ -582,7 +581,7 @@ def test_history_vlm_sglang_slices_nested_observation_metadata():
     rewards = model.compute_reward(reward_input)
 
     assert torch.equal(rewards, torch.tensor([10.0, 11.0, 12.0, 13.0]))
-    assert model.input_builder.calls == [[10, 11], [12, 13]]
+    assert model.input_builder.calls == [[10, 11, 12, 13]]
 
 
 def test_history_vlm_sglang_reward_model_applies_gt_success_bonus():
@@ -607,7 +606,7 @@ def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots(
     )
 
     assert torch.equal(rewards, torch.tensor([0.0, 21.0, 0.0, 23.0]))
-    assert model.input_builder.calls == [[21], [23]]
+    assert model.input_builder.calls == [[21, 23]]
 
 
 def test_history_vlm_sglang_builds_multiframe_image_url_payload():
@@ -726,6 +725,18 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
     assert command[command.index("--grammar-backend") + 1] == "none"
 
 
+def test_sglang_reward_server_start_raises_when_already_started():
+    cfg = OmegaConf.create({"model_path": "/models/QwenTrend"})
+    server = SGLangRewardServer(cfg)
+    server.process = mock.Mock()
+
+    with mock.patch("subprocess.Popen") as popen:
+        with pytest.raises(RuntimeError, match="already been started"):
+            server.start()
+
+    popen.assert_not_called()
+
+
 def test_sglang_reward_server_readiness_polls_v1_models(monkeypatch):
     cfg = OmegaConf.create(
         {
@@ -809,14 +820,16 @@ def test_sglang_reward_timing_recorder_exposes_compatibility_metrics():
     assert metrics["media_convert_ms"] == metrics["image_encode_ms"]
 
 
-def test_sglang_reward_server_stop_terminates_process_group(monkeypatch):
+def test_sglang_reward_server_stop_uses_sglang_terminate_process(monkeypatch):
     cfg = OmegaConf.create({"model_path": "/models/QwenTrend"})
     server = SGLangRewardServer(cfg)
     server.process = mock.Mock()
-    server.process.pid = 123
     server.process.poll.return_value = None
+    process = server.process
+    terminate_process = mock.Mock()
     sglang_module = types.ModuleType("sglang")
     utils_module = types.ModuleType("sglang.utils")
+    utils_module.terminate_process = terminate_process
     sglang_module.utils = utils_module
     monkeypatch.setitem(sys.modules, "sglang", sglang_module)
     monkeypatch.setitem(sys.modules, "sglang.utils", utils_module)
@@ -824,7 +837,8 @@ def test_sglang_reward_server_stop_terminates_process_group(monkeypatch):
     with mock.patch("os.killpg") as killpg:
         server.stop()
 
-    killpg.assert_called_once_with(123, signal.SIGTERM)
+    terminate_process.assert_called_once_with(process)
+    killpg.assert_not_called()
     assert server.process is None
 
 

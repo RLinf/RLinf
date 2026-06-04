@@ -101,7 +101,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             )
 
         self.history_buffer_names = list(cfg.history_buffers.keys())
-        self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
         self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
         self.api_base = str(cfg.get("api_base") or "").rstrip("/")
         if not self.api_base:
@@ -187,45 +186,6 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         if "top_p" not in sampling_params and cfg.get("top_p", None) is not None:
             sampling_params["top_p"] = float(cfg.get("top_p"))
         return sampling_params
-
-    def slice_history_input(
-        self,
-        history_input: dict[str, dict[str, list[list[Any]]]],
-        start: int,
-        end: int,
-    ) -> dict[str, dict[str, list[list[Any]]]]:
-        return {
-            buffer_name: {
-                history_key: env_sequences[start:end]
-                for history_key, env_sequences in history_buffer.items()
-            }
-            for buffer_name, history_buffer in history_input.items()
-        }
-
-    def slice_observations(
-        self,
-        observations: dict[str, Any],
-        start: int,
-        end: int,
-    ) -> dict[str, Any]:
-        return {
-            observation_key: self._slice_batch_value(observation_values, start, end)
-            for observation_key, observation_values in observations.items()
-        }
-
-    def _slice_batch_value(self, value: Any, start: int, end: int) -> Any:
-        if isinstance(value, dict):
-            return {
-                key: self._slice_batch_value(nested_value, start, end)
-                for key, nested_value in value.items()
-            }
-        if isinstance(value, (torch.Tensor, np.ndarray)):
-            return (
-                value[start:end] if value.ndim > 0 and value.shape[0] >= end else value
-            )
-        if isinstance(value, (list, tuple)):
-            return value[start:end] if len(value) >= end else value
-        return value
 
     def _frame_to_numpy(self, frame: Any) -> np.ndarray:
         if isinstance(frame, torch.Tensor):
@@ -420,29 +380,19 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         input_batch_size = len(next(iter(next(iter(history_input.values())).values())))
         observations = reward_input
 
-        infer_micro_batch_size = self.infer_micro_batch_size or input_batch_size
-
-        reward_chunks: list[torch.Tensor] = []
         all_outputs: list[str] = []
         generated_token_counts: list[int] = []
-        for start in range(0, input_batch_size, infer_micro_batch_size):
-            end = min(start + infer_micro_batch_size, input_batch_size)
-            micro_observations = self.slice_observations(observations, start, end)
-            micro_history_input = self.slice_history_input(history_input, start, end)
-            reward_chunk = torch.zeros((end - start,), dtype=torch.float32)
+        rewards = torch.zeros((input_batch_size,), dtype=torch.float32)
 
-            valid_input_ids = self.input_builder.get_valid_input_ids(
-                micro_observations,
-                micro_history_input,
-            )
-            if len(valid_input_ids) == 0:
-                reward_chunks.append(reward_chunk)
-                continue
-
+        valid_input_ids = self.input_builder.get_valid_input_ids(
+            observations,
+            history_input,
+        )
+        if len(valid_input_ids) > 0:
             with timing_recorder.record("prepare_inputs_ms"):
                 prepared_inputs = self.input_builder.prepare_inputs(
-                    micro_observations,
-                    micro_history_input,
+                    observations,
+                    history_input,
                     valid_input_ids,
                 )
 
@@ -468,8 +418,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                     dtype=torch.float32
                 )
 
-            reward_chunk[valid_input_ids] = parsed_rewards
-            reward_chunks.append(reward_chunk)
+            rewards[valid_input_ids] = parsed_rewards
 
         timing_recorder.finish(total_start)
         self.last_outputs = all_outputs
@@ -477,5 +426,4 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             timing_recorder,
             self._summarize_generation_stats(generated_token_counts),
         )
-        rewards = torch.cat(reward_chunks, dim=0)
         return self.apply_gt_success_bonus(rewards, observations)

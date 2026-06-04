@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
-import signal
 import subprocess
 import sys
 import time
@@ -186,25 +184,10 @@ class SGLangRewardServer:
             return
         if self.process.poll() is None:
             logger.info("Stopping SGLang reward server on %s", self.api_base)
-            try:
-                from sglang.utils import terminate_process
-            except ImportError:
-                self._terminate_process_group()
-            else:
-                terminate_process(self.process)
-        self.process = None
+            from sglang.utils import terminate_process
 
-    def _terminate_process_group(self) -> None:
-        assert self.process is not None
-        try:
-            os.killpg(self.process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        try:
-            self.process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            os.killpg(self.process.pid, signal.SIGKILL)
-            self.process.wait(timeout=10)
+            terminate_process(self.process)
+        self.process = None
 
 
 def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
