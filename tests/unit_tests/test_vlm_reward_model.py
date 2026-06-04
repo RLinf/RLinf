@@ -17,7 +17,6 @@
 import os
 import sys
 import threading
-import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -778,12 +777,9 @@ def test_sglang_reward_server_wait_helper_omits_process(monkeypatch):
 
 
 def test_sglang_reward_timing_recorder_exposes_compatibility_metrics():
-    recorder = SGLangRewardTimingRecorder()
-    start_time = time.perf_counter()
-
-    with recorder.record("http_request_ms"):
-        pass
-    recorder.finish(start_time)
+    with SGLangRewardTimingRecorder() as recorder:
+        with recorder.record("http_request_ms"):
+            pass
 
     metrics = recorder.metrics()
     assert metrics["http_request_ms"] >= 0.0

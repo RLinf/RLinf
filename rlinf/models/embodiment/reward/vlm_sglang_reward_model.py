@@ -52,6 +52,15 @@ class SGLangRewardTimingRecorder:
 
     def __init__(self) -> None:
         self.timings = dict.fromkeys(self._BASE_KEYS, 0.0)
+        self._total_start = 0.0
+
+    def __enter__(self):
+        self._total_start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        del exc_type, exc, traceback
+        self.timings["total_ms"] = (time.perf_counter() - self._total_start) * 1000
 
     @contextmanager
     def record(self, key: str):
@@ -60,9 +69,6 @@ class SGLangRewardTimingRecorder:
             yield
         finally:
             self.timings[key] += (time.perf_counter() - start) * 1000
-
-    def finish(self, start_time: float) -> None:
-        self.timings["total_ms"] = (time.perf_counter() - start_time) * 1000
 
     def metrics(self) -> dict[str, float]:
         return {
@@ -371,56 +377,55 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         self,
         reward_input: dict[str, Any],
     ) -> torch.Tensor:
-        total_start = time.perf_counter()
-        timing_recorder = SGLangRewardTimingRecorder()
+        with SGLangRewardTimingRecorder() as timing_recorder:
+            history_input: dict[str, dict[str, list[list[Any]]]] = reward_input.pop(
+                "history_input"
+            )
+            input_batch_size = len(
+                next(iter(next(iter(history_input.values())).values()))
+            )
+            observations = reward_input
 
-        history_input: dict[str, dict[str, list[list[Any]]]] = reward_input.pop(
-            "history_input"
-        )
-        input_batch_size = len(next(iter(next(iter(history_input.values())).values())))
-        observations = reward_input
+            all_outputs: list[str] = []
+            generated_token_counts: list[int] = []
+            rewards = torch.zeros((input_batch_size,), dtype=torch.float32)
 
-        all_outputs: list[str] = []
-        generated_token_counts: list[int] = []
-        rewards = torch.zeros((input_batch_size,), dtype=torch.float32)
+            valid_input_ids = self.input_builder.get_valid_input_ids(
+                observations,
+                history_input,
+            )
+            if len(valid_input_ids) > 0:
+                with timing_recorder.record("prepare_inputs_ms"):
+                    prepared_inputs = self.input_builder.prepare_inputs(
+                        observations,
+                        history_input,
+                        valid_input_ids,
+                    )
 
-        valid_input_ids = self.input_builder.get_valid_input_ids(
-            observations,
-            history_input,
-        )
-        if len(valid_input_ids) > 0:
-            with timing_recorder.record("prepare_inputs_ms"):
-                prepared_inputs = self.input_builder.prepare_inputs(
-                    observations,
-                    history_input,
-                    valid_input_ids,
-                )
+                with timing_recorder.record("image_encode_ms"):
+                    payloads = self._build_chat_payloads(prepared_inputs)
 
-            with timing_recorder.record("image_encode_ms"):
-                payloads = self._build_chat_payloads(prepared_inputs)
+                with timing_recorder.record("http_request_ms"):
+                    outputs, token_counts = self._generate(payloads)
+                generated_token_counts.extend(token_counts)
+                all_outputs.extend(outputs)
 
-            with timing_recorder.record("http_request_ms"):
-                outputs, token_counts = self._generate(payloads)
-            generated_token_counts.extend(token_counts)
-            all_outputs.extend(outputs)
+                if len(outputs) != len(valid_input_ids):
+                    logger.warning(
+                        "SGLang reward output count mismatch: outputs=%d valid_inputs=%d",
+                        len(outputs),
+                        len(valid_input_ids),
+                    )
+                    outputs += [""] * (len(valid_input_ids) - len(outputs))
+                    outputs = outputs[: len(valid_input_ids)]
 
-            if len(outputs) != len(valid_input_ids):
-                logger.warning(
-                    "SGLang reward output count mismatch: outputs=%d valid_inputs=%d",
-                    len(outputs),
-                    len(valid_input_ids),
-                )
-                outputs += [""] * (len(valid_input_ids) - len(outputs))
-                outputs = outputs[: len(valid_input_ids)]
+                with timing_recorder.record("parse_ms"):
+                    parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
+                        dtype=torch.float32
+                    )
 
-            with timing_recorder.record("parse_ms"):
-                parsed_rewards = self.reward_parser.parse_rewards(outputs).to(
-                    dtype=torch.float32
-                )
+                rewards[valid_input_ids] = parsed_rewards
 
-            rewards[valid_input_ids] = parsed_rewards
-
-        timing_recorder.finish(total_start)
         self.last_outputs = all_outputs
         self._set_timing_attrs(
             timing_recorder,
