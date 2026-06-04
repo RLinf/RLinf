@@ -708,10 +708,12 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
     cfg = OmegaConf.create(
         {
             "model_path": "/models/QwenTrend",
-            "served_model_name": "qwentrend-reward",
-            "server_host": "127.0.0.1",
-            "server_port": 30123,
             "sglang_server_args": {
+                "host": "127.0.0.1",
+                "port": 30123,
+                "served_model_name": "qwentrend-reward",
+                "server_startup_timeout": 5,
+                "api_base": "http://127.0.0.1:30123/v1",
                 "dtype": "float16",
                 "tp_size": 2,
                 "max_running_requests": 16,
@@ -730,6 +732,8 @@ def test_sglang_reward_server_command_uses_safe_defaults_and_overrides():
     assert command[command.index("--dtype") + 1] == "float16"
     assert command[command.index("--tp-size") + 1] == "2"
     assert command[command.index("--max-running-requests") + 1] == "16"
+    assert "--server-startup-timeout" not in command
+    assert "--api-base" not in command
     assert command[command.index("--attention-backend") + 1] == "triton"
     assert command[command.index("--sampling-backend") + 1] == "pytorch"
     assert command[command.index("--grammar-backend") + 1] == "none"
@@ -751,8 +755,10 @@ def test_sglang_reward_server_uses_sglang_wait_for_server(monkeypatch):
     cfg = OmegaConf.create(
         {
             "model_path": "/models/QwenTrend",
-            "server_port": 30124,
-            "server_startup_timeout": 1,
+            "sglang_server_args": {
+                "port": 30124,
+                "server_startup_timeout": 1,
+            },
         }
     )
     server = SGLangRewardServer(cfg)
@@ -814,7 +820,9 @@ def test_sglang_reward_server_skips_user_managed_api_base():
                 "model": {
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "api_base": "http://server:30000/v1",
+                    "sglang_server_args": {
+                        "api_base": "http://server:30000/v1",
+                    },
                 },
             }
         }
@@ -833,7 +841,9 @@ def test_sglang_reward_server_injects_api_base_after_launch():
                     "model_path": "/models/QwenTrend",
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "server_port": 30125,
+                    "sglang_server_args": {
+                        "port": 30125,
+                    },
                 },
             }
         }
@@ -843,8 +853,8 @@ def test_sglang_reward_server_injects_api_base_after_launch():
         server = maybe_start_sglang_reward_server(cfg)
 
     assert isinstance(server, SGLangRewardServer)
-    assert cfg.reward.model.api_base == "http://x/v1"
-    assert cfg.reward.model.served_model_name == "QwenTrend"
+    assert cfg.reward.model.sglang_server_args.api_base == "http://x/v1"
+    assert "served_model_name" not in cfg.reward.model
 
 
 @pytest.mark.parametrize(

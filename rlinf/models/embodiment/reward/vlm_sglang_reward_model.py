@@ -17,6 +17,7 @@ import io
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -87,6 +88,12 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
+def _normalize_sglang_server_args(value: Any) -> dict[str, Any]:
+    return {
+        str(key).replace("_", "-"): val for key, val in _to_plain_dict(value).items()
+    }
+
+
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
     """SGLang HTTP-backed embodied history VLM reward model.
 
@@ -108,12 +115,19 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
-        self.api_base = str(cfg.get("api_base") or "").rstrip("/")
+        sglang_server_args = _normalize_sglang_server_args(
+            cfg.get("sglang_server_args", {})
+        )
+        self.api_base = str(sglang_server_args.get("api-base") or "").rstrip("/")
         if not self.api_base:
-            host = str(cfg.get("server_host", "127.0.0.1"))
-            port = int(cfg.get("server_port", 30000))
+            host = str(sglang_server_args.get("host", "127.0.0.1"))
+            port = int(sglang_server_args.get("port", 30000))
             self.api_base = f"http://{host}:{port}/v1"
-        self.model_name = str(cfg.get("served_model_name") or self.model_path)
+        self.model_name = str(
+            sglang_server_args.get("served-model-name")
+            or Path(str(self.model_path)).name
+            or self.model_path
+        )
         self.request_timeout = float(cfg.get("request_timeout", 120.0))
         self.image_format = str(cfg.get("image_format", "jpeg")).lower()
         if self.image_format not in {"jpeg", "png"}:

@@ -24,6 +24,7 @@ from omegaconf import DictConfig, OmegaConf
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+_RLINF_SERVER_CONFIG_KEYS = {"api-base", "server-startup-timeout"}
 
 
 def _to_plain(value: Any) -> Any:
@@ -32,16 +33,36 @@ def _to_plain(value: Any) -> Any:
     return value
 
 
+def _get_sglang_server_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
+    server_args = _to_plain(reward_model_cfg.get("sglang_server_args", {})) or {}
+    if not isinstance(server_args, dict):
+        raise TypeError(
+            "reward.model.sglang_server_args must be a dict, "
+            f"got {type(server_args).__name__}."
+        )
+    return {str(key).replace("_", "-"): value for key, value in server_args.items()}
+
+
 class SGLangRewardServer:
     """Lifecycle manager for a runner-owned SGLang reward HTTP server."""
 
     def __init__(self, reward_model_cfg: DictConfig):
         self.reward_model_cfg = reward_model_cfg
-        self.host = str(reward_model_cfg.get("server_host", "127.0.0.1"))
-        self.port = int(reward_model_cfg.get("server_port", 30000))
-        self.api_base = f"http://{self.host}:{self.port}/v1"
+        self.sglang_server_args = _get_sglang_server_args(reward_model_cfg)
+        self.host = str(self.sglang_server_args.get("host", "127.0.0.1"))
+        self.port = int(self.sglang_server_args.get("port", 30000))
+        self.api_base = str(
+            self.sglang_server_args.get("api-base")
+            or f"http://{self.host}:{self.port}/v1"
+        ).rstrip("/")
         self.startup_timeout = float(
-            reward_model_cfg.get("server_startup_timeout", 600.0)
+            self.sglang_server_args.get("server-startup-timeout", 600.0)
+        )
+        model_path = reward_model_cfg.get("model_path")
+        self.served_model_name = str(
+            self.sglang_server_args.get("served-model-name")
+            or Path(str(model_path)).name
+            or "history_vlm_reward"
         )
         self.process: subprocess.Popen | None = None
 
@@ -56,14 +77,9 @@ class SGLangRewardServer:
                 "reward.model.model_path must be set to launch SGLang reward server"
             )
 
-        served_model_name = str(
-            self.reward_model_cfg.get("served_model_name")
-            or Path(str(model_path)).name
-            or "history_vlm_reward"
-        )
         args: dict[str, Any] = {
             "model-path": model_path,
-            "served-model-name": served_model_name,
+            "served-model-name": self.served_model_name,
             "host": self.host,
             "port": self.port,
             "trust-remote-code": True,
@@ -74,15 +90,13 @@ class SGLangRewardServer:
             "sampling-backend": "pytorch",
             "grammar-backend": "none",
         }
-        overrides = self.reward_model_cfg.get("sglang_server_args", {})
-        overrides = _to_plain(overrides) or {}
-        if not isinstance(overrides, dict):
-            raise TypeError(
-                "reward.model.sglang_server_args must be a dict, "
-                f"got {type(overrides).__name__}."
-            )
-        for key, value in overrides.items():
-            args[str(key).replace("_", "-")] = value
+        args.update(
+            {
+                key: value
+                for key, value in self.sglang_server_args.items()
+                if key not in _RLINF_SERVER_CONFIG_KEYS
+            }
+        )
 
         command = [sys.executable, "-m", "sglang.launch_server"]
         for key, value in args.items():
@@ -134,7 +148,7 @@ def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
         return False
     if str(model_cfg.get("inference_backend", "")).lower() != "sglang":
         return False
-    return not bool(model_cfg.get("api_base", None))
+    return not bool(_get_sglang_server_args(model_cfg).get("api-base", None))
 
 
 def maybe_start_sglang_reward_server(cfg: DictConfig) -> SGLangRewardServer | None:
@@ -144,9 +158,7 @@ def maybe_start_sglang_reward_server(cfg: DictConfig) -> SGLangRewardServer | No
 
     server = SGLangRewardServer(cfg.reward.model)
     api_base = server.start()
-    cfg.reward.model.api_base = api_base
-    if not cfg.reward.model.get("served_model_name", None):
-        cfg.reward.model.served_model_name = (
-            Path(str(cfg.reward.model.model_path)).name or "history_vlm_reward"
-        )
+    if not cfg.reward.model.get("sglang_server_args", None):
+        cfg.reward.model.sglang_server_args = {}
+    cfg.reward.model.sglang_server_args.api_base = api_base
     return server

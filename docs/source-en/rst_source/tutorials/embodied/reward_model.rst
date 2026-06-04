@@ -418,13 +418,14 @@ SGLang server, for example through ``sglang_server_args.max_running_requests``:
      model:
        model_type: "history_vlm"
        inference_backend: sglang
-       server_port: 30000
-       server_startup_timeout: 600
-       served_model_name: qwentrend-reward
-       # api_base: "http://127.0.0.1:30000/v1"  # set to skip runner launch
-       # sglang_server_args:
-       #   tp_size: 2
-       #   max_running_requests: 64
+       sglang_server_args:
+         host: "127.0.0.1"
+         port: 30000
+         server_startup_timeout: 600
+         served_model_name: qwentrend-reward
+         # api_base: "http://127.0.0.1:30000/v1"  # set to skip runner launch
+         tp_size: 2
+         max_running_requests: 64
 
 Launch the MLP RL run with:
 

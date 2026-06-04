@@ -411,13 +411,14 @@ server。请求并发由 SGLang server 控制，例如通过
      model:
        model_type: "history_vlm"
        inference_backend: sglang
-       server_port: 30000
-       server_startup_timeout: 600
-       served_model_name: qwentrend-reward
-       # api_base: "http://127.0.0.1:30000/v1"  # 设置后跳过 runner 启动
-       # sglang_server_args:
-       #   tp_size: 2
-       #   max_running_requests: 64
+       sglang_server_args:
+         host: "127.0.0.1"
+         port: 30000
+         server_startup_timeout: 600
+         served_model_name: qwentrend-reward
+         # api_base: "http://127.0.0.1:30000/v1"  # 设置后跳过 runner 启动
+         tp_size: 2
+         max_running_requests: 64
 
 启动 MLP RL：
 
