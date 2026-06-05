@@ -15,7 +15,7 @@ jobs:
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
-          uv pip install transformers
+          uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
         timeout-minutes: 20
@@ -47,7 +47,7 @@ jobs:
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
-          uv pip install transformers
+          uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
         timeout-minutes: 20
@@ -70,7 +70,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform amd --no-flash-attn embodied --env dummy
           source .venv/bin/activate
-          uv pip install transformers
+          uv pip install "transformers<=5.9.0"
 
       - name: Run scheduler unit tests
         timeout-minutes: 20
@@ -98,7 +98,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh --platform ascend --no-flash-attn embodied --env dummy
           source .venv/bin/activate
-          uv pip install transformers
+          uv pip install "transformers<=5.9.0"
 
       - name: Run scheduler unit tests
         timeout-minutes: 30

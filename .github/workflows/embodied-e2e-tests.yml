@@ -1228,3 +1228,33 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-gr00t_n1d6-maniskill-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.6/
+          bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d6
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

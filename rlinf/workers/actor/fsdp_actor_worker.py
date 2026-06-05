@@ -1401,6 +1401,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
+            SupportedModel.GR00T_N1D6,
             SupportedModel.ABOT_M0,
         ]:
             kwargs["prev_logprobs"] = prev_logprobs
@@ -1418,6 +1419,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
+            SupportedModel.GR00T_N1D6,
             SupportedModel.ABOT_M0,
         ]:
             prev_logprobs = output_dict["prev_logprobs"]
@@ -1443,6 +1445,20 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
         }
+
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.GR00T_N1D6,
+        ]:
+            loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+            if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
+                loss_kwargs["clip_log_ratio_min"] = (
+                    self.cfg.algorithm.clip_log_ratio_min
+                )
+            if self.cfg.algorithm.get("clip_log_ratio_max") is not None:
+                loss_kwargs["clip_log_ratio_max"] = (
+                    self.cfg.algorithm.clip_log_ratio_max
+                )
+
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:

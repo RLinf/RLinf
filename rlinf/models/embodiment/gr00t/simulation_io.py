@@ -19,9 +19,9 @@ import torch.nn.functional as F
 
 def convert_libero_obs_to_gr00t_format(env_obs):
     """
-    Convert the observation to the format expected by the GR00T model.
-    The data format is determined by the modality_config and meta/info.json following LeRobot format.
-    Considering that we don't have a unified data inferface, we use direct logic here.
+    Convert the observation to the format expected by GR00T models.
+    The data format is determined by the modality_config and meta/info.json
+    following LeRobot format.
     """
     groot_obs = {}
 
@@ -43,12 +43,11 @@ def convert_libero_obs_to_gr00t_format(env_obs):
 
 def convert_maniskill_obs_to_gr00t_format(env_obs):
     """
-    Convert the observation to the format expected by the GR00T model.
-    The data format is determined by the modality_config and meta/info.json following LeRobot format.
-    Considering that we don't have a unified data inferface, we use direct logic here.
+    Convert the observation to the format expected by GR00T models.
+    The data format is determined by the modality_config and meta/info.json
+    following LeRobot format.
     """
     groot_obs = {}
-    # video
     # TODO(lx): If we have a dataset on maniskill, resize can be avoided.
     # But now we have to resize images to libero data version.
     env_obs["main_images"] = cut_and_resize_images(
@@ -58,30 +57,18 @@ def convert_maniskill_obs_to_gr00t_format(env_obs):
     )
     # [B, H, W, C] -> [B, T, H, W, C]
     groot_obs["video.ego_view"] = env_obs["main_images"].unsqueeze(1).numpy()
-    # state
     if "state" in env_obs:
         raise NotImplementedError("State from simulation are not unified yet.")
-    else:
-        # gr00t pad the state to input dimension
-        # create state of [B, T, C]
-        groot_obs["state.left_arm"] = np.zeros((env_obs["main_images"].shape[0], 1, 7))
-    # annotation
+    # Pad state to input dimension: [B, T, C]
+    groot_obs["state.left_arm"] = np.zeros((env_obs["main_images"].shape[0], 1, 7))
     groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
     return groot_obs
 
 
-def convert_to_libero_action(
+def convert_to_libero_action_n1d5(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
-    """Convert GR00T action chunk to Libero format.
-
-    Args:
-        action_chunk: Dictionary of action components from GR00T policy
-        chunk_size: Number of action steps to consider from the chunk
-
-    Returns:
-        7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
-    """
+    """Convert GR00T N1.5 action chunk to Libero format."""
     action_components = [
         action_chunk["action.x"][:, :chunk_size],
         action_chunk["action.y"][:, :chunk_size],
@@ -99,29 +86,61 @@ def convert_to_libero_action(
     return action_array
 
 
+def convert_to_libero_action_n1d6(
+    action_chunk: dict[str, np.array],
+    chunk_size: int = 1,
+) -> np.ndarray:
+    """Convert GR00T N1.6 action chunk to a 7-dim Libero action array.
+
+    Gripper normalization is NOT applied here; it is handled by the shared
+    ``prepare_actions_for_libero`` in ``rlinf.envs.action_utils``.
+    """
+    try:
+        pos = action_chunk["end_effector_position"][:, :chunk_size]
+        rot = action_chunk["end_effector_rotation"][:, :chunk_size]
+        gripper = action_chunk["gripper_close"][:, :chunk_size]
+        action_array = np.concatenate([pos, rot, gripper], axis=-1)
+    except KeyError:
+        if all(
+            key in action_chunk
+            for key in ("x", "y", "z", "roll", "pitch", "yaw", "gripper")
+        ):
+            action_array = np.concatenate(
+                [
+                    action_chunk["x"][:, :chunk_size],
+                    action_chunk["y"][:, :chunk_size],
+                    action_chunk["z"][:, :chunk_size],
+                    action_chunk["roll"][:, :chunk_size],
+                    action_chunk["pitch"][:, :chunk_size],
+                    action_chunk["yaw"][:, :chunk_size],
+                    action_chunk["gripper"][:, :chunk_size],
+                ],
+                axis=-1,
+            )
+        elif "rel_arm_action" in action_chunk:
+            arm = action_chunk["rel_arm_action"][:, :chunk_size]
+            grp = action_chunk["gripper_action"][:, :chunk_size]
+            action_array = np.concatenate([arm, grp], axis=-1)
+        else:
+            raise KeyError(f"can not find Action Keys: {list(action_chunk.keys())}")
+
+    assert action_array.shape[-1] == 7, (
+        f"Expected 7-dim action, got {action_array.shape[-1]}"
+    )
+    return action_array
+
+
 def convert_to_maniskill_action(
     action_chunk: dict[str, np.array], chunk_size: int = 16
 ) -> np.ndarray:
     """Convert GR00T action chunk to Maniskill format."""
-    # Accord to gr1 definition, action.left_arm happens to be 7 dims, matching the demand of maniskill.
-
     return action_chunk["action.left_arm"][:, :chunk_size]
 
 
 def convert_to_isaaclab_stack_cube_action(
     action_chunk: dict[str, np.array], chunk_size: int = 1
 ) -> np.ndarray:
-    """Convert GR00T action chunk to Isaaclab Stack Cube format.
-    The main difference of Libero and Isaaclab Stack Cube is gripper action in
-    Libero is 0 and 1, but in Isaaclab Stack Cube is -1 and +1.
-
-    Args:
-        action_chunk: Dictionary of action components from GR00T policy
-        chunk_size: Number of action steps to consider from the chunk
-
-    Returns:
-        7-dim numpy array: [dx, dy, dz, droll, dpitch, dyaw, gripper]
-    """
+    """Convert GR00T action chunk to Isaaclab Stack Cube format."""
     action_components = [
         action_chunk["action.x"][:, :chunk_size],
         action_chunk["action.y"][:, :chunk_size],
@@ -139,15 +158,20 @@ def convert_to_isaaclab_stack_cube_action(
     return action_array
 
 
-# TODO: we need a unified embodiement data.
 OBS_CONVERSION = {
     "maniskill": convert_maniskill_obs_to_gr00t_format,
     "libero": convert_libero_obs_to_gr00t_format,
     "isaaclab_stack_cube": convert_libero_obs_to_gr00t_format,
 }
 
-ACTION_CONVERSION = {
-    "libero": convert_to_libero_action,
+ACTION_CONVERSION_N1D5 = {
+    "libero": convert_to_libero_action_n1d5,
+    "maniskill": convert_to_maniskill_action,
+    "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
+}
+
+ACTION_CONVERSION_N1D6 = {
+    "libero": convert_to_libero_action_n1d6,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
 }
@@ -156,38 +180,29 @@ ACTION_CONVERSION = {
 def cut_and_resize_images(
     images: torch.Tensor, crop_size: int, target_size: int = 256
 ) -> torch.Tensor:
-    """
-    Cut and resize the images to the crop size.
-    """
+    """Cut and resize the images to the crop size."""
     images_nchw = images.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
 
-    original_width = images_nchw.shape[-1]  # W
+    original_width = images_nchw.shape[-1]
     start = (original_width - crop_size) // 2
     end = start + crop_size
 
-    # Crop: keep batch, channels, full height; crop width to [start:end]
-    cropped_tensor = images_nchw[:, :, :, start:end]  # [B, C, H, crop_W]
+    cropped_tensor = images_nchw[:, :, :, start:end]
 
-    # Resize: interpolate to target_size x target_size
     resized_tensor = F.interpolate(
         cropped_tensor,
         size=(target_size, target_size),
-        mode="bilinear",  # Or 'bicubic' for smoother results
+        mode="bilinear",
         align_corners=False,
-    )  # [B, C, target_size, target_size]
+    )
 
-    # Convert back to NHWC
-    resized_nhwc = resized_tensor.permute(
-        0, 2, 3, 1
-    ).contiguous()  # [B, C, H, W] -> [B, H, W, C]
+    resized_nhwc = resized_tensor.permute(0, 2, 3, 1).contiguous()
     return resized_nhwc
 
 
 def normalize_gripper_action(action, binarize=True):
     """
     Changes gripper action (last dimension of action vector) from [0,1] to [+1,-1].
-
-    Normalization formula: y = 1 - 2 * (x - orig_low) / (orig_high - orig_low)
     """
     orig_low, orig_high = 0.0, 1.0
     action[..., -1] = 1 - 2 * (action[..., -1] - orig_low) / (orig_high - orig_low)

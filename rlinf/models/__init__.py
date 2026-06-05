@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -111,6 +111,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_gr00t_n1d6(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.gr00t import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
@@ -208,6 +213,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.VALUE_MODEL.value,
         _build_value_model,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.GR00T_N1D6.value,
+        _build_gr00t_n1d6,
         category="embodied",
         force=True,
     )
