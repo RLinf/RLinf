@@ -65,11 +65,7 @@ def _axis_vector(value: Any, default: list[float]) -> np.ndarray:
         value = axes.get(key, default)
 
     vec = np.array(value if value is not None else default, dtype=np.float64)
-    if (
-        vec.shape != (3,)
-        or not np.all(np.isfinite(vec))
-        or np.linalg.norm(vec) < 1e-9
-    ):
+    if vec.shape != (3,) or not np.all(np.isfinite(vec)) or np.linalg.norm(vec) < 1e-9:
         vec = np.array(default, dtype=np.float64)
     return vec / np.linalg.norm(vec)
 
@@ -163,7 +159,9 @@ class PicoExpert:
             calibration_cfg.get("base_position", [0.0, 0.0, 0.0]),
             dtype=np.float64,
         )
-        if self.base_position.shape != (3,) or not np.all(np.isfinite(self.base_position)):
+        if self.base_position.shape != (3,) or not np.all(
+            np.isfinite(self.base_position)
+        ):
             self.base_position = np.zeros(3, dtype=np.float64)
         self.head_forward_axis = _axis_vector(
             calibration_cfg.get("head_forward_axis", "-z"),
@@ -245,32 +243,48 @@ class PicoExpert:
         data = self._snapshot()
         if data is None:
             self._deactivate()
-            return self._last_action.copy(), False, {
-                "pico_active": False,
-                "pico_ready": False,
-                "pico_stale": True,
-                "pico_hand": self.hand,
-            }
+            return (
+                self._last_action.copy(),
+                False,
+                {
+                    "pico_active": False,
+                    "pico_ready": False,
+                    "pico_stale": True,
+                    "pico_hand": self.hand,
+                },
+            )
 
         self._maybe_update_calibration(data)
-        if self.calibration_enabled and self.require_calibration and not self._calibrated:
+        if (
+            self.calibration_enabled
+            and self.require_calibration
+            and not self._calibrated
+        ):
             self._deactivate()
-            return self._last_action.copy(), False, {
-                "pico_active": False,
-                "pico_ready": True,
-                "pico_calibrated": False,
-                "pico_hand": self.hand,
-            }
+            return (
+                self._last_action.copy(),
+                False,
+                {
+                    "pico_active": False,
+                    "pico_ready": True,
+                    "pico_calibrated": False,
+                    "pico_hand": self.hand,
+                },
+            )
 
         controller_pose = self._controller_pose(data, self.hand)
         if not _is_valid_pose(controller_pose):
             self._deactivate()
-            return self._last_action.copy(), False, {
-                "pico_active": False,
-                "pico_ready": True,
-                "pico_invalid_pose": True,
-                "pico_hand": self.hand,
-            }
+            return (
+                self._last_action.copy(),
+                False,
+                {
+                    "pico_active": False,
+                    "pico_ready": True,
+                    "pico_invalid_pose": True,
+                    "pico_hand": self.hand,
+                },
+            )
 
         control_value = self._control_value(data, self.hand, self.control_trigger)
         active = control_value >= self.control_threshold
@@ -405,11 +419,14 @@ class PicoExpert:
         target_pos = self._ref_tcp_pos + command_delta
 
         delta_local_rot = self._ref_controller_rot.inv() * controller_rot
-        command_rotvec = self._operator_vector_to_robot_vector(
-            self._controller_local_vector_to_command_vector(
-                delta_local_rot.as_rotvec()
+        command_rotvec = (
+            self._operator_vector_to_robot_vector(
+                self._controller_local_vector_to_command_vector(
+                    delta_local_rot.as_rotvec()
+                )
             )
-        ) * self.rotation_scale
+            * self.rotation_scale
+        )
         target_rot = R.from_rotvec(command_rotvec) * self._ref_tcp_rot
         return target_pos, target_rot
 
@@ -433,7 +450,9 @@ class PicoExpert:
             if self._active and not self.allow_calibration_while_active:
                 logger.warning("Ignoring PICO calibration while control is active")
             elif not self._calibrate_base(data):
-                logger.warning("PICO calibration requested, but headset pose is invalid")
+                logger.warning(
+                    "PICO calibration requested, but headset pose is invalid"
+                )
         self._prev_calibration_button = pressed
 
     def _calibrate_base(self, data: Mapping[str, Any]) -> bool:
@@ -452,9 +471,7 @@ class PicoExpert:
         forward /= norm
         yaw = float(np.arctan2(forward[1], forward[0]))
         self._calibration_rot = R.from_euler("z", -yaw)
-        self._calibration_t = self.base_position - self._calibration_rot.apply(
-            head_pos
-        )
+        self._calibration_t = self.base_position - self._calibration_rot.apply(head_pos)
         self._calibrated = True
         self._deactivate()
         logger.info(
@@ -483,9 +500,7 @@ class PicoExpert:
         return np.array([-vector[2], -vector[0], vector[1]], dtype=np.float64)
 
     def _operator_vector_to_robot_vector(self, vector: np.ndarray) -> np.ndarray:
-        return self._operator_to_robot_rot.apply(
-            np.asarray(vector, dtype=np.float64)
-        )
+        return self._operator_to_robot_rot.apply(np.asarray(vector, dtype=np.float64))
 
     @staticmethod
     def _controller_pose(data: Mapping[str, Any], side: str) -> list[float]:

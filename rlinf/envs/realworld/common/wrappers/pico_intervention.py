@@ -83,7 +83,8 @@ class PicoIntervention(gym.ActionWrapper):
             pico_info.get("pico_active", False) and pico_info.get("pico_hand") == "left"
         )
         self.right = bool(
-            pico_info.get("pico_active", False) and pico_info.get("pico_hand") == "right"
+            pico_info.get("pico_active", False)
+            and pico_info.get("pico_hand") == "right"
         )
 
         if replaced:
