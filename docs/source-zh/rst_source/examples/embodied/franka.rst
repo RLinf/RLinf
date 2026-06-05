@@ -87,6 +87,7 @@ Franka真机强化学习
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
 - **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
+- **VR / PICO（可选）**：通过 PICO 头显和手柄进行 6D 末端遥操作，可替代空间鼠标进行数据采集。
 
 .. warning::
 
@@ -98,6 +99,9 @@ Franka真机强化学习
    **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
    :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
    YAML 配置字段以及数据采集。
+
+   **使用 VR / PICO 遥操作？** 请参考 :doc:`franka_vr`，了解
+   XRoboToolkit、ZeroMQ、PICO wrapper 配置以及操作步骤。
 
 依赖安装
 -------------------------
@@ -408,6 +412,55 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
    bash examples/embodiment/collect_data.sh realworld_collect_data_gello
 
 整体流程与空间鼠标采集相同：使用 GELLO 设备操控机器人完成任务，脚本会自动保存成功的 episode。
+
+使用 VR  进行数据采集
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+除空间鼠标和 GELLO 外，RLinf 还支持使用 VR 头显与手柄进行遥操作数据采集。
+VR 数据由外部 publisher 通过 ZeroMQ 发布，RLinf 中的 ``PicoIntervention`` 订阅该数据流，
+并在按住 deadman 按键时将 PICO 手柄运动转换为 Franka 末端动作。
+
+**前置条件**
+
+- 安装并启动 PICO / XRoboToolkit 相关服务。
+- 启动 VR 数据 publisher，并确认 ZeroMQ 地址可从 Franka 控制节点访问。
+- 在运行 ``PicoIntervention`` 的 RLinf 环境中安装 ``pyzmq``。
+- 详细安装、网络与操作说明请参考 :doc:`franka_vr`。
+
+**配置**
+
+使用配置文件 ``examples/embodiment/config/realworld_collect_data_pico.yaml``。
+与空间鼠标配置的关键区别如下：
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       use_spacemouse: False
+       use_pico: True
+       pico:
+         zmq_addr: "tcp://<vr_publisher_ip>:<port>"
+         position_scale: 1.0
+         rotation_scale: 1.0
+         calibration:
+           button: "trigger"
+
+当前 PICO 操作语义：
+
+.. code-block:: text
+
+   trigger -> base calibration
+   grip    -> deadman control
+   A       -> close gripper
+   B       -> open gripper
+
+**运行**
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data_pico
+
+整体流程与空间鼠标采集相同：使用 VR 手柄操控机器人完成任务，脚本会自动保存成功的 episode。
 
 集群配置
 ~~~~~~~~~~~~~~~~~
