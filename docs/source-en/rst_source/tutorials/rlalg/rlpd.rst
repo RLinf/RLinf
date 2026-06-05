@@ -59,12 +59,6 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
 
 .. code-block:: yaml
 
-   data: # add offline demo data
-     type: robot_demo
-     channel:
-       name: demo_data
-     path: "/path/to/demo_data"
-
    algorithm:
      update_epoch: 30
      group_size: 1
@@ -72,7 +66,16 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
 
      backup_entropy: False # remove entropy term
      critic_subsample_size: 2 # Number of critics to subsample for target calculation
+     edac_eta: 0.0 # Experimental EDAC critic diversity coefficient. Disabled by default.
+     edac_grad_eps: 1.0e-6 # Numerical epsilon for EDAC gradient normalization.
      eval_rollout_epoch: 1
+
+     demo_buffer: # add offline demo data
+       enable_cache: True
+       cache_size: 200 # number of trajectories cached in memory
+       sample_window_size: 200 # number of latest trajectories to sample from for demo buffer
+       min_buffer_size: 1
+       load_path: "/path/to/demo_data"
 
      adv_type: embodied_sac
      loss_type: embodied_sac
@@ -81,6 +84,10 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
      bootstrap_type: standard
      gamma: 0.96
      tau: 0.005
+
+   actor:
+     model:
+       num_q_heads: 10 # Number of Q-networks in the critic ensemble
 
    rollout:
      group_name: "RolloutGroup"
@@ -91,4 +98,21 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
      model:
        model_path: "/path/to/model"
        precision: ${actor.model.precision}
-       num_q_heads: 10 # Number of Q-networks in the ensemble
+
+5. Optional EDAC Critic Diversity
+---------------------------------
+
+RLPD configurations commonly use a critic ensemble. When
+``actor.model.num_q_heads > 1`` and ``algorithm.critic_subsample_size > 0``,
+random critic subsetting is used for target calculation. RLinf also has a
+unit-tested EDAC-style critic diversity loss helper for SAC-N/EDAC-style
+experiments.
+
+Because EDAC differentiates Q-values with respect to actions and keeps that
+gradient graph for the critic update, wiring it into critic training would
+increase critic-step memory and compute cost. The current FSDP SAC/RLPD worker
+does not wire this helper into the critic update path, and positive
+``algorithm.edac_eta`` fails fast during config validation. Import
+``rlinf.algorithms.critic_regularizers.compute_edac_critic_diversity_loss``
+from a custom worker if you want to experiment with the helper directly. Use it
+as an experimental building block rather than a default training setting.

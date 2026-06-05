@@ -79,6 +79,8 @@ The algorithm configuration is defined as follows:
       update_epoch: 32
       group_size: 1
       agg_q: min # ["min", "mean"]. Option to aggregate multiple Q-values.
+      edac_eta: 0.0 # Experimental EDAC critic diversity coefficient. Disabled by default.
+      edac_grad_eps: 1.0e-6 # Numerical epsilon for EDAC gradient normalization.
 
 
       adv_type: embodied_sac
@@ -104,3 +106,21 @@ The algorithm configuration is defined as follows:
          cache_size: 6000  # number of trajectories cached in memory
          sample_window_size: 6000  # number of latest trajectories to sample from for replay buffer
          min_buffer_size: 2  # Minimum buffer size before training starts (in number of trajectories)
+
+4. Optional EDAC Critic Diversity Regularization
+------------------------------------------------
+
+SAC has a unit-tested EDAC-style critic diversity loss helper for experiments
+with SAC-N/RLPD-style critic ensembles. The regularizer computes action
+gradients for each Q head and penalizes aligned gradients across the critic
+ensemble.
+
+The option is disabled by default and does not change existing SAC behavior when
+``edac_eta: 0.0`` or the field is omitted. Enabling EDAC would require an
+additional autograd graph through the critic action gradients, so critic updates
+would use more memory and compute. The current FSDP SAC/RLPD worker does not
+wire this helper into the critic update path, and positive ``edac_eta`` fails
+fast during config validation. Import
+``rlinf.algorithms.critic_regularizers.compute_edac_critic_diversity_loss``
+from a custom worker if you want to experiment with the helper directly. EDAC
+is also not enabled for CrossQ.
