@@ -46,6 +46,7 @@ R_PICO_TO_WORLD = np.array(
     ],
     dtype=np.float64,
 )
+R_PICO_TO_WORLD_ROT = R.from_matrix(R_PICO_TO_WORLD)
 
 
 def _axis_vector(value: Any, default: list[float]) -> np.ndarray:
@@ -93,7 +94,7 @@ class PicoExpert:
         self,
         *,
         zmq_addr: Optional[str] = None,
-        zmq: Optional[Mapping[str, Any]] = None,
+        zmq_config: Optional[Mapping[str, Any]] = None,
         ipc_addr: Optional[str] = None,
         hand: str = "right",
         control_trigger: str = "grip",
@@ -111,10 +112,10 @@ class PicoExpert:
         max_stale_s: float = 0.25,
         calibration: Optional[Mapping[str, Any]] = None,
     ) -> None:
-        if zmq is None:
+        if zmq_config is None:
             zmq_cfg = {}
         else:
-            zmq_cfg = dict(zmq)
+            zmq_cfg = dict(zmq_config)
 
         if zmq_addr is None:
             zmq_addr = ipc_addr or zmq_cfg.get("ipc_addr", "ipc:///tmp/vr_data.ipc")
@@ -222,13 +223,14 @@ class PicoExpert:
 
     def stop(self) -> None:
         self._running = False
+        if self._socket is not None:
+            self._socket.close(linger=0)
+            self._socket = None
+
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self._thread = None
 
-        if self._socket is not None:
-            self._socket.close(linger=0)
-            self._socket = None
         if self._context is not None:
             self._context.term()
             self._context = None
@@ -368,6 +370,8 @@ class PicoExpert:
             except zmq.error.Again:
                 continue
             except Exception as exc:
+                if not self._running:
+                    break
                 logger.warning("Error receiving PICO data: %s", exc)
                 time.sleep(self.reconnect_interval_s)
 
@@ -483,9 +487,7 @@ class PicoExpert:
 
     def _transform_raw_pose_to_aligned(self, pose: list[float]) -> tuple[np.ndarray, R]:
         pos = R_PICO_TO_WORLD @ np.asarray(pose[:3], dtype=np.float64)
-        rot = R.from_matrix(R_PICO_TO_WORLD) * R.from_quat(
-            np.asarray(pose[3:7], dtype=np.float64)
-        )
+        rot = R_PICO_TO_WORLD_ROT * R.from_quat(np.asarray(pose[3:7], dtype=np.float64))
         return pos, rot
 
     def _transform_raw_pose_to_world(self, pose: list[float]) -> tuple[np.ndarray, R]:
