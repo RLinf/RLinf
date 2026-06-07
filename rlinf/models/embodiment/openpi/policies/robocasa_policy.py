@@ -26,7 +26,7 @@ def make_robocasa_example() -> dict:
     return {
         # "": np.random.rand(12),
         # NOTE: TODO: it seems that pi0 ask state and action be the same meaning, but informed that not in need
-        "observation/state": np.random.rand(25),
+        "observation/state": np.random.rand(16),
         "observation/image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
         "observation/wrist_image": np.random.randint(
             256, size=(224, 224, 3), dtype=np.uint8
@@ -67,7 +67,11 @@ def extract_state_dict(data: Dict, state_space: Union[str, List[str]]) -> Dict:
 
     state_dict = {}
     all_state_ids = get_state_ids(state_space)
-    state_dict["state"] = data["observation/state"][all_state_ids]
+    state = data["observation/state"]
+    if state.shape[-1] == len(all_state_ids):
+        state_dict["state"] = state
+    else:
+        state_dict["state"] = state[all_state_ids]
 
     return state_dict
 
