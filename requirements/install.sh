@@ -1533,7 +1533,7 @@ install_robocasa365_env() {
 
     uv pip install -e "$robocasa_dir"
     uv pip install --no-deps "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
-    uv pip install --no-deps "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@232ce7d4a6ed89c949a9aba024a05c8c32fdd08b"
+    uv pip install --no-deps "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
     uv pip install protobuf==6.33.0
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
