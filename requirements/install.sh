@@ -1519,6 +1519,13 @@ install_robocasa365_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b main)
 
     if [[ -z "${ROBOCASA_PATH:-}" && -d "$robocasa_dir/.git" ]]; then
+        local assets_path assets_backup
+        assets_path="$robocasa_dir/robocasa/models/assets"
+        if [[ -e "$assets_path" || -L "$assets_path" ]] && ! git -C "$robocasa_dir" ls-files -- robocasa/models/assets | grep -q .; then
+            assets_backup="${assets_path}.rlinf-backup.$(date +%Y%m%d%H%M%S)"
+            echo "[install_robocasa365_env] Moving untracked RoboCasa assets to $assets_backup before switching to main." >&2
+            mv "$assets_path" "$assets_backup"
+        fi
         git -C "$robocasa_dir" fetch origin main >&2
         git -C "$robocasa_dir" checkout main >&2 || git -C "$robocasa_dir" checkout -B main origin/main >&2
         git -C "$robocasa_dir" pull --ff-only origin main >&2
