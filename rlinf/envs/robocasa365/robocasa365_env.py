@@ -217,33 +217,6 @@ def _build_benchmark_selection(
     return "/".join(parts) if parts else "registry"
 
 
-def _build_split_kwargs(split: Optional[str]) -> dict[str, Any]:
-    if split == "target":
-        return {
-            "obj_instance_split": "target",
-            "layout_ids": None,
-            "style_ids": None,
-            "layout_and_style_ids": list(zip(range(1, 11), range(1, 11))),
-        }
-    if split == "pretrain":
-        return {
-            "obj_instance_split": "pretrain",
-            "layout_ids": -2,
-            "style_ids": -2,
-            "layout_and_style_ids": None,
-        }
-    if split == "all":
-        return {
-            "obj_instance_split": None,
-            "layout_ids": -3,
-            "style_ids": -3,
-            "layout_and_style_ids": None,
-        }
-    if split is None:
-        return {}
-    raise ValueError('split must be either {None, "all", "pretrain", "target"}')
-
-
 def _get_task_horizon(task_name: str, fallback_horizon: int) -> int:
     try:
         from robocasa.utils.dataset_registry_utils import get_task_horizon
@@ -755,13 +728,6 @@ class Robocasa365Env(gym.Env):
         warmup_reset_on_init = self.warmup_reset_on_init
         has_renderer = bool(self.cfg.get("has_renderer", False))
         env_kwargs = {
-            "has_renderer": has_renderer,
-            "has_offscreen_renderer": bool(
-                self.cfg.get("has_offscreen_renderer", not has_renderer)
-            ),
-            "ignore_done": bool(self.cfg.get("ignore_done", True)),
-            "use_object_obs": bool(self.cfg.get("use_object_obs", True)),
-            "use_camera_obs": bool(self.cfg.get("use_camera_obs", not has_renderer)),
             "camera_depths": bool(self.cfg.get("camera_depths", False)),
             "translucent_robot": bool(self.cfg.get("translucent_robot", False)),
         }
@@ -774,7 +740,6 @@ class Robocasa365Env(gym.Env):
             env_id = int(env_id)
             task_spec = self.task_specs[self.task_ids[env_id]]
             env_seed = self.env_seeds[env_id]
-            split_kwargs = _build_split_kwargs(env_split)
             self._debug_log_event(
                 "build_env_fn",
                 {
@@ -783,7 +748,6 @@ class Robocasa365Env(gym.Env):
                     "task_name": task_spec["task_name"],
                     "seed": env_seed,
                     "split": env_split,
-                    "split_kwargs": split_kwargs,
                     "camera_names": camera_names,
                     "camera_widths": camera_widths,
                     "camera_heights": camera_heights,
@@ -803,32 +767,28 @@ class Robocasa365Env(gym.Env):
                 robot=robot_name,
                 render_camera_name=render_camera,
                 warmup=warmup_reset_on_init,
+                render_onscreen=has_renderer,
                 extra_env_kwargs=env_kwargs,
-                split_kwargs=split_kwargs,
+                split_name=env_split,
             ):
                 import robocasa  # noqa: F401 Robocasa must be imported to register envs
-                import robosuite
-                from robosuite.controllers import load_composite_controller_config
+                from robocasa.utils.env_utils import create_env
 
-                controller_config = load_composite_controller_config(
-                    controller=None,
-                    robot=robot,
-                )
                 common_kwargs = {
                     "env_name": spec["task_name"],
                     "robots": robot,
-                    "controller_configs": controller_config,
                     "camera_names": cameras,
                     "camera_widths": width,
                     "camera_heights": height,
                     "seed": seed,
-                    **split_kwargs,
+                    "render_onscreen": render_onscreen,
+                    "split": split_name,
                     **extra_env_kwargs,
                 }
                 if render_camera_name:
                     common_kwargs["render_camera"] = render_camera_name
 
-                env = robosuite.make(**common_kwargs)
+                env = create_env(**common_kwargs)
                 if warmup:
                     env.reset()
 
