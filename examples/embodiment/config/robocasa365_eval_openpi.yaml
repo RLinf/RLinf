@@ -103,8 +103,8 @@ env:
     task_sampling_strategy: ordered
     auto_reset: False
     ignore_terminations: False
-    max_episode_steps: 1050
-    max_steps_per_rollout_epoch: 1050
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 700
     group_size: 1
     is_eval: True
     video_cfg:

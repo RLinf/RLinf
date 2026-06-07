@@ -16,15 +16,15 @@ robot_name: PandaOmron
 # Camera configuration
 camera_names:
   - robot0_agentview_left
-  - robot0_agentview_right
   - robot0_eye_in_hand
+  - robot0_agentview_right
+render_camera: robot0_agentview_left
 has_renderer: False
 has_offscreen_renderer: True
 ignore_done: True
 use_object_obs: True
 use_camera_obs: True
 camera_depths: False
-enable_render: True
 
 total_num_envs: null
 
@@ -55,27 +55,33 @@ video_cfg:
   video_base_dir: "../results/video/train"
 
 init_params:
-  camera_heights: 256
-  camera_widths: 256
+  camera_heights: 224
+  camera_widths: 224
 
 observation:
-  main_camera_key: video.robot0_agentview_left
-  wrist_camera_key: video.robot0_eye_in_hand
+  main_camera_key: robot0_agentview_left_image
+  wrist_camera_key: robot0_eye_in_hand_image
   extra_camera_keys:
-    - video.robot0_agentview_right
-  flip_images_vertical: False
+    - robot0_agentview_right_image
+  flip_images_vertical: True
   state_layout:
-    - end_effector_position_relative
-    - end_effector_rotation_relative
-    - base_position
-    - base_rotation
+    - eef_pos
+    - eef_quat
     - gripper_qpos
+    - gripper_qvel
+    - base_to_eef_pos
+    - base_to_eef_quat
+    - base_pos
+    - base_quat
   state_key_map:
-    end_effector_position_relative: state.end_effector_position_relative
-    end_effector_rotation_relative: state.end_effector_rotation_relative
-    base_position: state.base_position
-    base_rotation: state.base_rotation
-    gripper_qpos: state.gripper_qpos
+    eef_pos: robot0_eef_pos
+    eef_quat: robot0_eef_quat
+    gripper_qpos: robot0_gripper_qpos
+    gripper_qvel: robot0_gripper_qvel
+    base_to_eef_pos: robot0_base_to_eef_pos
+    base_to_eef_quat: robot0_base_to_eef_quat
+    base_pos: robot0_base_pos
+    base_quat: robot0_base_quat
 
 action_space:
   env_action_dim: 12

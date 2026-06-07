@@ -60,20 +60,6 @@ _OFFICIAL_PROMPT_INFO_KEY = "ep_meta"
 _OFFICIAL_PROMPT_LANG_KEY = "lang"
 
 
-class _OpenPIRoboCasaGymAdapter(gym.Wrapper):
-    """Adapter that lets RLinf send 12D OpenPI actions to RoboCasa's Gym env."""
-
-    def step(self, action):
-        if not isinstance(action, dict):
-            from robocasa.utils.env_utils import convert_action
-
-            action = convert_action(np.asarray(action, dtype=np.float32))
-        return self.env.step(action)
-
-    def __getattr__(self, name):
-        return getattr(self.env, name)
-
-
 def _debug_jsonable(value: Any) -> Any:
     if OmegaConf.is_config(value):
         return _debug_jsonable(OmegaConf.to_container(value, resolve=True))
@@ -148,19 +134,6 @@ def _official_prompt_from_info(info_single: dict[str, Any]) -> str:
         f"'{_OFFICIAL_PROMPT_INFO_KEY}.{_OFFICIAL_PROMPT_LANG_KEY}' must contain "
         f"a string, got {type(value).__name__}."
     )
-
-
-def _official_prompt_from_obs_or_info(
-    obs_single: dict[str, Any], info_single: dict[str, Any]
-) -> str:
-    value = obs_single.get("annotation.human.task_description")
-    if isinstance(value, str) and value:
-        return value.strip()
-    if isinstance(value, np.ndarray) and value.shape == ():
-        scalar_value = value.item()
-        if isinstance(scalar_value, str) and scalar_value:
-            return scalar_value.strip()
-    return _official_prompt_from_info(info_single)
 
 
 def _normalize_task_filter(task_filter: Any) -> dict[str, list[str]]:
@@ -774,38 +747,50 @@ class Robocasa365Env(gym.Env):
         camera_names = self._get_camera_names()
         camera_widths = self.cfg.init_params.camera_widths
         camera_heights = self.cfg.init_params.camera_heights
+        render_camera = self.cfg.get("render_camera", None) or (
+            camera_names[0] if camera_names else None
+        )
         robot_name = self.cfg.robot_name
         env_split = self.split
-        enable_render = bool(self.cfg.get("enable_render", True))
-        gym_env_kwargs = {
+        warmup_reset_on_init = self.warmup_reset_on_init
+        has_renderer = bool(self.cfg.get("has_renderer", False))
+        env_kwargs = {
+            "has_renderer": has_renderer,
+            "has_offscreen_renderer": bool(
+                self.cfg.get("has_offscreen_renderer", not has_renderer)
+            ),
+            "ignore_done": bool(self.cfg.get("ignore_done", True)),
+            "use_object_obs": bool(self.cfg.get("use_object_obs", True)),
+            "use_camera_obs": bool(self.cfg.get("use_camera_obs", not has_renderer)),
             "camera_depths": bool(self.cfg.get("camera_depths", False)),
             "translucent_robot": bool(self.cfg.get("translucent_robot", False)),
         }
         if self.cfg.get("generative_textures", None) is not None:
-            gym_env_kwargs["generative_textures"] = self.cfg.generative_textures
+            env_kwargs["generative_textures"] = self.cfg.generative_textures
         if self.cfg.get("randomize_cameras", None) is not None:
-            gym_env_kwargs["randomize_cameras"] = bool(self.cfg.randomize_cameras)
+            env_kwargs["randomize_cameras"] = bool(self.cfg.randomize_cameras)
 
         for env_id in env_idx:
             env_id = int(env_id)
             task_spec = self.task_specs[self.task_ids[env_id]]
             env_seed = self.env_seeds[env_id]
+            split_kwargs = _build_split_kwargs(env_split)
             self._debug_log_event(
                 "build_env_fn",
                 {
                     "env_id": env_id,
                     "task_id": int(self.task_ids[env_id]),
                     "task_name": task_spec["task_name"],
-                    "gym_env_id": task_spec["env_name"],
                     "seed": env_seed,
                     "split": env_split,
+                    "split_kwargs": split_kwargs,
                     "camera_names": camera_names,
                     "camera_widths": camera_widths,
                     "camera_heights": camera_heights,
+                    "render_camera": render_camera,
                     "robot": robot_name,
-                    "enable_render": enable_render,
-                    "extra_env_kwargs": gym_env_kwargs,
-                    "warmup_reset_on_init": "handled_by_RoboCasaGymEnv.__init__",
+                    "extra_env_kwargs": env_kwargs,
+                    "warmup_reset_on_init": warmup_reset_on_init,
                 },
             )
 
@@ -816,25 +801,38 @@ class Robocasa365Env(gym.Env):
                 width=camera_widths,
                 height=camera_heights,
                 robot=robot_name,
-                render_enabled=enable_render,
-                extra_env_kwargs=gym_env_kwargs,
-                split_name=env_split,
+                render_camera_name=render_camera,
+                warmup=warmup_reset_on_init,
+                extra_env_kwargs=env_kwargs,
+                split_kwargs=split_kwargs,
             ):
                 import robocasa  # noqa: F401 Robocasa must be imported to register envs
+                import robosuite
+                from robosuite.controllers import load_composite_controller_config
 
+                controller_config = load_composite_controller_config(
+                    controller=None,
+                    robot=robot,
+                )
                 common_kwargs = {
-                    "split": split_name,
-                    "seed": seed,
+                    "env_name": spec["task_name"],
                     "robots": robot,
+                    "controller_configs": controller_config,
                     "camera_names": cameras,
                     "camera_widths": width,
                     "camera_heights": height,
-                    "enable_render": render_enabled,
+                    "seed": seed,
+                    **split_kwargs,
                     **extra_env_kwargs,
                 }
+                if render_camera_name:
+                    common_kwargs["render_camera"] = render_camera_name
 
-                env = gym.make(spec["env_name"], **common_kwargs)
-                return _OpenPIRoboCasaGymAdapter(env)
+                env = robosuite.make(**common_kwargs)
+                if warmup:
+                    env.reset()
+
+                return env
 
             env_fns.append(env_fn)
 
@@ -921,16 +919,16 @@ class Robocasa365Env(gym.Env):
         task_descriptions = []
 
         main_camera_key = self._get_obs_key(
-            "main_camera_key", "video.robot0_agentview_left"
+            "main_camera_key", "robot0_agentview_left_image"
         )
         wrist_camera_key = self._get_obs_key(
-            "wrist_camera_key", "video.robot0_eye_in_hand"
+            "wrist_camera_key", "robot0_eye_in_hand_image"
         )
         extra_camera_keys = [
             str(key) for key in _ensure_list(self._get_obs_key("extra_camera_keys", []))
         ]
         flip_images_vertical = bool(
-            self.observation_cfg.get("flip_images_vertical", False)
+            self.observation_cfg.get("flip_images_vertical", True)
         )
 
         for env_id in range(len(obs)):
@@ -974,9 +972,7 @@ class Robocasa365Env(gym.Env):
                 extra_view_images.append(env_extra_views)
 
             states.append(self._extract_state_vector(obs_single))
-            task_descriptions.append(
-                _official_prompt_from_obs_or_info(obs_single, info_list[env_id])
-            )
+            task_descriptions.append(_official_prompt_from_info(info_list[env_id]))
 
         return {
             "base_image": np.asarray(base_images),
@@ -1115,22 +1111,15 @@ class Robocasa365Env(gym.Env):
 
         self._elapsed_steps += 1
 
-        step_return = self.env.step(actions)
-        if len(step_return) == 5:
-            raw_obs, rewards, _dones, gym_truncations, info_lists = step_return
-        else:
-            raw_obs, rewards, _dones, info_lists = step_return
-            gym_truncations = np.zeros(self.num_envs, dtype=bool)
-        del rewards, _dones
+        raw_obs, rewards, dones, info_lists = self.env.step(actions)
+        del rewards, dones
         self.current_raw_obs = raw_obs
         self.current_info_list = info_lists
 
         terminations = np.array(
             [info.get("success", False) for info in info_lists]
         ).astype(bool)
-        truncations = np.asarray(gym_truncations, dtype=bool) | (
-            self._elapsed_steps >= self.task_horizons
-        )
+        truncations = self._elapsed_steps >= self.task_horizons
         obs = self._wrap_obs(raw_obs, info_lists)
 
         step_reward = self._calc_step_reward(terminations)
