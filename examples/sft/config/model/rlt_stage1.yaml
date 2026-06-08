@@ -1,0 +1,26 @@
+model_type: "rlt_stage1"
+
+model_path: "/path/to/model/openpi"
+precision: null
+load_to_device: True
+
+num_action_chunks: 10
+action_dim: 8
+
+is_lora: False
+lora_rank: 32
+
+add_value_head: False
+
+rlt_stage1:
+  config_name: "pi05_rlt_maniskill_joint"
+  norm_stats_path: null
+  num_images_in_input: 2
+  num_steps: 5
+  embedding_dim: 2048
+  encoder_layers: 2
+  encoder_heads: 8
+  decoder_layers: 2
+  decoder_heads: 8
+  vla_finetune_alpha: 0.0
+  gradient_checkpointing: True

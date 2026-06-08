@@ -126,6 +126,16 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_rlt_stage2(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.rlt_stage2 import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_rlt_stage1(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.rlt_stage1 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     register_model(
         SupportedModel.OPENVLA.value,
         _build_openvla,
@@ -219,6 +229,18 @@ def _register_builtin_models():
     register_model(
         SupportedModel.GR00T_N1D6.value,
         _build_gr00t_n1d6,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_STAGE1.value,
+        _build_rlt_stage1,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_STAGE2.value,
+        _build_rlt_stage2,
         category="embodied",
         force=True,
     )
