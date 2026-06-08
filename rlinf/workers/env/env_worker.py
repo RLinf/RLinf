@@ -757,12 +757,60 @@ class EnvWorker(Worker):
         assert mode in ["train", "eval"], f"{mode=} is not supported"
         dst_ranks_and_sizes = self.dst_rank_map[f"rollout_{mode}"]
         split_sizes = [size for _, size in dst_ranks_and_sizes]
+        env_batch = dict(env_batch)
+        step_obs = env_batch.pop("step_obs", None)
         env_batches = split_dict(env_batch, split_sizes)
+        step_obs_batches = self._split_rlt_step_obs(step_obs, split_sizes)
+        for env_batch_i, step_obs_i in zip(
+            env_batches, step_obs_batches, strict=True
+        ):
+            env_batch_i["step_obs"] = step_obs_i
         for (rank, _), env_batch_i in zip(dst_ranks_and_sizes, env_batches):
             rollout_channel.put(
                 item=env_batch_i,
                 key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_obs"),
             )
+
+    @staticmethod
+    def _split_rlt_step_obs(
+        step_obs: dict[str, Any] | None,
+        split_sizes: list[int],
+    ) -> list[dict[str, Any] | None]:
+        if step_obs is None:
+            return [None for _ in split_sizes]
+
+        def split_value(value: Any) -> list[Any]:
+            if isinstance(value, torch.Tensor):
+                return [
+                    split_value.contiguous()
+                    for split_value in torch.split(value, split_sizes, dim=1)
+                ]
+            if isinstance(value, list):
+                split_values: list[Any] = []
+                begin = 0
+                for size in split_sizes:
+                    split_values.append(
+                        [step_values[begin : begin + size] for step_values in value]
+                    )
+                    begin += size
+                return split_values
+            if isinstance(value, dict):
+                split_dicts: list[dict[str, Any]] = [
+                    {} for _ in range(len(split_sizes))
+                ]
+                for sub_key, sub_value in value.items():
+                    sub_splits = split_value(sub_value)
+                    for idx, sub_split in enumerate(sub_splits):
+                        split_dicts[idx][sub_key] = sub_split
+                return split_dicts
+            return [value for _ in split_sizes]
+
+        step_obs_batches: list[dict[str, Any]] = [{} for _ in split_sizes]
+        for key, value in step_obs.items():
+            value_splits = split_value(value)
+            for idx, value_split in enumerate(value_splits):
+                step_obs_batches[idx][key] = value_split
+        return step_obs_batches
 
     def send_reward_input(
         self,
@@ -971,6 +1019,8 @@ class EnvWorker(Worker):
                 {
                     "obs": env_batch["obs"],
                     "final_obs": env_batch["final_obs"],
+                    "step_obs": env_batch["step_obs"],
+                    "policy_info": env_batch["policy_info"],
                 },
             )
 
@@ -1122,6 +1172,8 @@ class EnvWorker(Worker):
                         {
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
+                            "step_obs": env_batch["step_obs"],
+                            "policy_info": env_batch["policy_info"],
                         },
                     )
                     if self.collect_transitions:
@@ -1256,6 +1308,8 @@ class EnvWorker(Worker):
                         {
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
+                            "step_obs": env_batch["step_obs"],
+                            "policy_info": env_batch["policy_info"],
                         },
                         mode="eval",
                     )
@@ -1288,6 +1342,8 @@ class EnvWorker(Worker):
                         {
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
+                            "step_obs": env_batch["step_obs"],
+                            "policy_info": env_batch["policy_info"],
                         },
                         mode="eval",
                     )

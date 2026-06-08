@@ -141,3 +141,89 @@ def test_merge_env_outputs_with_partial_optional_fields():
     assert torch.equal(
         merged["intervene_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
     )
+
+
+def test_merge_env_outputs_preserves_env_infos():
+    env_output_0 = EnvOutput(
+        obs=_make_obs(0, 2),
+        final_obs=None,
+        env_infos={
+            "episode": {
+                "success": torch.tensor([[0.0], [1.0]], dtype=torch.float32),
+            }
+        },
+    ).to_dict()
+    env_output_1 = EnvOutput(
+        obs=_make_obs(100, 3),
+        final_obs=None,
+        env_infos={
+            "episode": {
+                "success": torch.tensor([[1.0], [1.0], [0.0]], dtype=torch.float32),
+            }
+        },
+    ).to_dict()
+
+    merged = EnvOutput.merge_env_outputs([env_output_0, env_output_1])
+
+    assert merged["env_infos"] is not None
+    assert merged["env_infos"]["episode"]["success"].shape == (5, 1)
+    assert torch.equal(
+        merged["env_infos"]["episode"]["success"][:2],
+        env_output_0["env_infos"]["episode"]["success"],
+    )
+    assert torch.equal(
+        merged["env_infos"]["episode"]["success"][2:],
+        env_output_1["env_infos"]["episode"]["success"],
+    )
+
+
+def test_merge_env_outputs_supports_step_obs_and_policy_info():
+    env_output_0 = EnvOutput(
+        obs=_make_obs(0, 2),
+        step_obs={
+            "states": torch.arange(12, dtype=torch.float32).view(3, 2, 2),
+            "_rlt_step_offsets": torch.tensor(
+                [[0, 0], [2, 2], [4, 4]], dtype=torch.int64
+            ),
+        },
+        policy_info={
+            "expert_takeover": torch.tensor([[0], [1]], dtype=torch.bool),
+        },
+    ).to_dict()
+    env_output_1 = EnvOutput(
+        obs=_make_obs(100, 3),
+        step_obs={
+            "states": torch.arange(18, dtype=torch.float32).view(3, 3, 2),
+            "_rlt_step_offsets": torch.tensor(
+                [[0, 0, 0], [2, 2, 2], [4, 4, 4]], dtype=torch.int64
+            ),
+        },
+        policy_info={
+            "expert_takeover": torch.tensor([[1], [0], [1]], dtype=torch.bool),
+        },
+    ).to_dict()
+
+    merged = EnvOutput.merge_env_outputs([env_output_0, env_output_1])
+
+    assert merged["step_obs"] is not None
+    assert merged["step_obs"]["states"].shape == (3, 5, 2)
+    assert merged["step_obs"]["_rlt_step_offsets"].shape == (3, 5)
+    assert torch.equal(
+        merged["step_obs"]["states"][:, :2],
+        env_output_0["step_obs"]["states"],
+    )
+    assert torch.equal(
+        merged["step_obs"]["states"][:, 2:],
+        env_output_1["step_obs"]["states"],
+    )
+
+    assert merged["policy_info"] is not None
+    assert merged["policy_info"]["expert_takeover"].shape == (5, 1)
+    assert torch.equal(
+        merged["policy_info"]["expert_takeover"][:2],
+        env_output_0["policy_info"]["expert_takeover"],
+    )
+    assert torch.equal(
+        merged["policy_info"]["expert_takeover"][2:],
+        env_output_1["policy_info"]["expert_takeover"],
+    )

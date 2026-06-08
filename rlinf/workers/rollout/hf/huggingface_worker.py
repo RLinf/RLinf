@@ -562,6 +562,8 @@ class MultiStepRolloutWorker(Worker):
             for obs_batch in obs_batches
         ]
         final_obs_list = [obs_batch.get("final_obs", None) for obs_batch in obs_batches]
+        step_obs_list = [obs_batch.get("step_obs", None) for obs_batch in obs_batches]
+        policy_info_list = [obs_batch.get("policy_info", None) for obs_batch in obs_batches]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
             merged: dict[str, Any] = {}
@@ -589,7 +591,71 @@ class MultiStepRolloutWorker(Worker):
             ]
             merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
 
-        return {"obs": merged_obs, "final_obs": merged_final_obs}
+        merged_step_obs = None
+        if any(step_obs is not None for step_obs in step_obs_list):
+            if any(step_obs is None for step_obs in step_obs_list):
+                raise ValueError(
+                    "Inconsistent RLT step_obs: some env shards are None while others are present."
+                )
+            assert step_obs_list[0] is not None
+            merged_step_obs = {}
+            for key in step_obs_list[0].keys():
+                values = [step_obs[key] for step_obs in step_obs_list]
+                first_non_none = next(
+                    (value for value in values if value is not None), None
+                )
+                if first_non_none is None:
+                    merged_step_obs[key] = None
+                elif isinstance(first_non_none, torch.Tensor):
+                    merged_step_obs[key] = torch.cat(values, dim=1)
+                elif isinstance(first_non_none, list):
+                    merged_step_obs[key] = [
+                        [item for value in values for item in value[t]]
+                        for t in range(len(first_non_none))
+                    ]
+                else:
+                    merged_step_obs[key] = values
+
+        merged_policy_info = None
+        if any(policy_info is not None for policy_info in policy_info_list):
+            batch_sizes = [
+                MultiStepRolloutWorker._infer_env_batch_size(obs_batch)
+                for obs_batch in obs_batches
+            ]
+            keys = set()
+            for policy_info in policy_info_list:
+                if policy_info is not None:
+                    keys.update(policy_info.keys())
+            merged_policy_info = {}
+            for key in keys:
+                ref_tensor = next(
+                    (
+                        policy_info[key]
+                        for policy_info in policy_info_list
+                        if policy_info is not None and key in policy_info
+                    ),
+                    None,
+                )
+                assert ref_tensor is not None
+                values = []
+                for batch_size, policy_info in zip(batch_sizes, policy_info_list):
+                    if policy_info is None or key not in policy_info:
+                        values.append(
+                            torch.zeros(
+                                (batch_size, *ref_tensor.shape[1:]),
+                                dtype=ref_tensor.dtype,
+                            )
+                        )
+                    else:
+                        values.append(policy_info[key])
+                merged_policy_info[key] = torch.cat(values, dim=0)
+
+        return {
+            "obs": merged_obs,
+            "final_obs": merged_final_obs,
+            "step_obs": merged_step_obs,
+            "policy_info": merged_policy_info,
+        }
 
     @Worker.timer("rollout/send_actions")
     def send_chunk_actions(
@@ -651,6 +717,17 @@ class MultiStepRolloutWorker(Worker):
                 for idx in range(len(sizes))
             ]
         )
+        split_rlt_step_trace = (
+            [{} for _ in sizes]
+            if not rollout_result.rlt_step_trace
+            else [
+                {
+                    key: torch.split(value, sizes, dim=1)[idx]
+                    for key, value in rollout_result.rlt_step_trace.items()
+                }
+                for idx in range(len(sizes))
+            ]
+        )
 
         return [
             RolloutResult(
@@ -660,6 +737,7 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=split_bootstrap_values[idx],
                 save_flags=split_save_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
+                rlt_step_trace=split_rlt_step_trace[idx],
                 versions=split_versions[idx],
             )
             for idx in range(len(sizes))
