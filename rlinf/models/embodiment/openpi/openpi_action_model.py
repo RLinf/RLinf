@@ -100,8 +100,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     def _no_split_modules(self) -> list[str]:
         if self.config.train_expert_only:
             no_split_modules = [
-                "Embedding",
-                "GemmaModel",
+                "GemmaDecoderLayer",
                 "SiglipVisionEmbeddings",
                 "GemmaRMSNorm",
                 "GemmaRotaryEmbedding",
@@ -859,16 +858,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         position_ids = prefix_offsets + torch.cumsum(suffix_pad_masks, dim=1) - 1
 
         # Prepare attention masks
-        dtype = None
-        if (
-            self.paligemma_with_expert.gemma_expert.model.layers[
-                0
-            ].self_attn.q_proj.weight.dtype
-            == torch.bfloat16
-        ):
-            dtype = torch.bfloat16
-        full_att_2d_masks_4d = self._prepare_attention_masks_4d(
-            full_att_2d_masks, dtype=dtype
+        full_att_2d_masks_4d = self._prepare_attention_masks_4d(full_att_2d_masks)
+        self.paligemma_with_expert.gemma_expert.model.config._attn_implementation = (
+            "eager"  # noqa: SLF001
         )
 
         outputs_embeds, _ = self.paligemma_with_expert.forward(
@@ -900,9 +892,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(
-            prefix_att_2d_masks, dtype=prefix_embs.dtype
-        )
+        prefix_att_2d_masks_4d = self._prepare_attention_masks_4d(prefix_att_2d_masks)
+        self.paligemma_with_expert.paligemma.language_model.config._attn_implementation = "eager"  # noqa: SLF001
         (prefix_output, _), past_key_values = self.paligemma_with_expert.forward(
             attention_mask=prefix_att_2d_masks_4d,
             position_ids=prefix_position_ids,
@@ -1402,75 +1393,3 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if states.dtype != torch.bfloat16:
             states = states.to(torch.bfloat16)
         return states
-
-    def _prepare_attention_masks_4d(self, att_2d_masks, dtype=None):
-        """wrap to use flash attention"""
-        result = super()._prepare_attention_masks_4d(att_2d_masks)
-        if dtype is not None:
-            result = result.to(dtype=dtype)
-        return result
-
-    def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer to prepare
-        for PaliGemma transformer processing.
-        """
-        embs = [None] * len(images)
-        pad_masks = [None] * len(images)
-        att_masks = []
-
-        # Group images by shape so same-size images can be batched for parallelism
-        shape_to_indices: dict[tuple, list[int]] = {}
-        for i, img in enumerate(images):
-            shape_key = tuple(img.shape)
-            shape_to_indices.setdefault(shape_key, []).append(i)
-
-        # Embed images grouped by shape: same shape → batched, different shape → serial
-        for shape_key, indices in shape_to_indices.items():
-            if len(indices) == 1:
-                # Single image of this shape: process individually
-                batched_images = images[indices[0]]
-            else:
-                # Multiple images of same shape: batch them together
-                batched_images = torch.cat([images[j] for j in indices], dim=0)
-            img_emb_batch = self._apply_checkpoint(
-                self.paligemma_with_expert.embed_image, batched_images
-            )
-            bsize = images[indices[0]].shape[0]
-            num_img_embs = img_emb_batch.shape[1]
-            if len(indices) == 1:
-                img_emb_batch_group = [img_emb_batch]
-            else:
-                img_emb_batch_group = torch.chunk(img_emb_batch, len(indices), dim=0)
-            for idx, img_emb in zip(indices, img_emb_batch_group, strict=True):
-                embs[idx] = img_emb
-                pad_masks[idx] = img_masks[idx][:, None].expand(bsize, num_img_embs)
-                att_masks += [0] * num_img_embs
-
-        # Process language tokens
-        def lang_embed_func(lang_tokens):
-            lang_emb = self.paligemma_with_expert.paligemma.language_model.embed_tokens(
-                lang_tokens
-            )
-            lang_emb_dim = lang_emb.shape[-1]
-            return lang_emb * math.sqrt(lang_emb_dim)
-
-        lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
-
-        embs.append(lang_emb)
-        pad_masks.append(lang_masks)
-
-        # full attention between image and language inputs
-        num_lang_embs = lang_emb.shape[1]
-        att_masks += [0] * num_lang_embs
-
-        embs = torch.cat(embs, dim=1)
-        pad_masks = torch.cat(pad_masks, dim=1)
-        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
-
-        # Get batch size from the first dimension of the concatenated tensors
-        bsize = pad_masks.shape[0]
-        att_masks = att_masks[None, :].expand(bsize, len(att_masks))
-
-        return embs, pad_masks, att_masks
