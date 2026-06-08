@@ -69,7 +69,7 @@ algorithm:
   # 这里的 10 不是 batch size，而是在线训练周期的最小 transition 间隔。
   # 设为 10 表示每新增 10 条 replay transition，就新增 1 个训练周期预算；
   # 每个周期补 update_epoch=5 次 critic update。
-  train_every_transitions: 50
+  train_every_transitions: 10
   group_size: 1
   rollout_epoch: 1
   eval_rollout_epoch: 1
@@ -301,7 +301,7 @@ actor:
       # chunk 边界 x/a_tilde 复用正常 policy forward 的 cache；
       # 非边界 stride anchor 才用冻结 VLA+RL token 编码，避免 rollout 端全量重算。
       # 设 0 可回退到旧的 chunk-boundary replay 构造。
-      replay_subsample_stride: 2
+      replay_subsample_stride: 0
       # 只允许 terminal partial chunk；非 terminal rollout 边界不会 padding 造假 transition。
       replay_allow_terminal_partial: True
       # 重新编码 step-level obs 的 micro batch size；太大会增加 rollout 显存峰值。
