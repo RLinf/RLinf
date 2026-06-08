@@ -33,7 +33,7 @@ from transformers.feature_extraction_utils import BatchFeature
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.gr00t.simulation_io import (
-    ACTION_CONVERSION,
+    ACTION_CONVERSION_N1D5,
     OBS_CONVERSION,
 )
 from rlinf.models.embodiment.gr00t.utils import (
@@ -471,7 +471,7 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
                 self.action_head.num_inference_timesteps = denoising_steps
 
         self.obs_convert_fn = OBS_CONVERSION[obs_converter_type]
-        self.action_convert_fn = ACTION_CONVERSION[obs_converter_type]
+        self.action_convert_fn = ACTION_CONVERSION_N1D5[obs_converter_type]
         self._load_metadata(self.model_path / "experiment_cfg")
 
         # The param loading is after construction in from_pretrained(), so it should be safe to to so.
@@ -684,19 +684,6 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         }
 
         return actions, result
-
-    def _get_action_from_normalized_input(
-        self, normalized_input: dict[str, Any]
-    ) -> torch.Tensor:
-        # Set up autocast context if needed
-        with (
-            torch.inference_mode(),
-            torch.autocast(device_type="cuda", dtype=self.compute_dtype),
-        ):
-            model_pred = self.get_action(normalized_input)
-
-        normalized_action = model_pred["action_pred"].float()
-        return normalized_action
 
     def _get_unnormalized_action(
         self, normalized_action: torch.Tensor

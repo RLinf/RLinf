@@ -310,6 +310,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                         )
                         target_param.data.copy_(shadow.to(target_param.data.dtype))
 
+    @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
         Receive rollout trajectories from rollout workers.
@@ -745,6 +746,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         torch.cuda.empty_cache()
         return mean_metric_dict
 
+    @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self):
         """
         SAC doesn't compute advantages/returns like PPO.

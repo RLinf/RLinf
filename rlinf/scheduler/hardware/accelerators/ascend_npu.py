@@ -16,14 +16,21 @@
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/npu.py
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from ray._private.accelerators.npu import NPUAcceleratorManager
 
-from .accelerator import AcceleratorManager, AcceleratorType
+from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
+
+
+@AcceleratorManager.register_profiling_config(AcceleratorType.NPU)
+@dataclass
+class AscendNPUProfileConfig(ProfileConfig):
+    """Ascend NPU profiling configuration."""
 
 
 @AcceleratorManager.register_manager(AcceleratorType.NPU)

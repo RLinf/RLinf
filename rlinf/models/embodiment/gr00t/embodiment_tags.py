@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,48 +12,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from enum import Enum
 
 
 class EmbodimentTag(Enum):
     GR1 = "gr1"
-    """
-    The GR1 dataset.
-    """
+    """The Fourier GR1 robot."""
 
     OXE_DROID = "oxe_droid"
-    """
-    The OxE Droid dataset.
-    """
+    """The Open-X-Embodiment DROID robot with relative joint position actions."""
 
     AGIBOT_GENIE1 = "agibot_genie1"
-    """
-    The AgiBot Genie-1 with gripper dataset.
-    """
+    """The AgiBot Genie-1 with gripper dataset."""
 
     LIBERO_FRANKA = "libero_franka"
-    """
-    The Libero Franka dataset.
-    """
+    """The Libero Franka dataset."""
 
     MANISKILL_WIDOWX = "maniskill_widowx"
-    """
-    The maniskill widowx dataset.
-    """
+    """The ManiSkill WidowX dataset."""
 
     ISAACLAB_FRANKA = "isaaclab_franka"
-    """
-    The isaaclab Franka dataset.
-    """
+    """The Isaac Lab Franka dataset."""
+
+    ROBOCASA_PANDA_OMRON = "robocasa_panda_omron"
+    """The RoboCasa Panda robot with omron mobile base."""
+
+    UNITREE_G1 = "unitree_g1"
+    """The Unitree G1 robot."""
+
+    LIBERO_PANDA = "libero_panda"
+    """The Libero Panda robot."""
+
+    OXE_GOOGLE = "oxe_google"
+    """The Open-X-Embodiment Google robot."""
+
+    OXE_WIDOWX = "oxe_widowx"
+    """The Open-X-Embodiment WidowX robot."""
+
+    BEHAVIOR_R1_PRO = "behavior_r1_pro"
+    """The Behavior R1 Pro robot."""
+
+    NEW_EMBODIMENT = "new_embodiment"
+    """Any new embodiment used during post-training."""
 
 
-# Embodiment tag string: to projector index in the Action Expert Module
+# Embodiment tag string -> projector index in the Action Expert Module.
+# Shared by GR00T N1.5 / N1.6 (N1.6-only tags are unused by N1.5 loaders).
+# IDs must match official gr00t (see gr00t_n1d6 processing / embodiment_id.json).
 EMBODIMENT_TAG_MAPPING = {
+    EmbodimentTag.LIBERO_PANDA.value: 2,
+    EmbodimentTag.ROBOCASA_PANDA_OMRON.value: 13,
     EmbodimentTag.LIBERO_FRANKA.value: 31,
     EmbodimentTag.OXE_DROID.value: 17,
     EmbodimentTag.AGIBOT_GENIE1.value: 26,
     EmbodimentTag.GR1.value: 24,
     EmbodimentTag.MANISKILL_WIDOWX.value: 30,
     EmbodimentTag.ISAACLAB_FRANKA.value: 31,
+    EmbodimentTag.NEW_EMBODIMENT.value: 10,
 }

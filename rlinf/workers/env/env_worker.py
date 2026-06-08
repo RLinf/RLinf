@@ -21,12 +21,14 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
     EnvOutput,
     RolloutResult,
     Trajectory,
+    convert_trajectories_to_batch,
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
@@ -38,9 +40,15 @@ from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
     split_dict,
+    split_dict_to_chunk,
     update_nested_cfg,
 )
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.utils.utils import (
+    flatten_embodied_batch,
+    pack_batch,
+    preprocess_embodied_batch,
+)
 from rlinf.workers.env.history_manager import HistoryManager
 
 
@@ -85,6 +93,7 @@ class EnvWorker(Worker):
             self.env_reward_weight = self.cfg.reward.get("env_reward_weight", 0.0)
 
         # Env configurations
+        self.use_training_pipeline = self.cfg.runner.get("use_training_pipeline", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
         train_env_cfg = self.cfg.env.get("train", None)
         eval_env_cfg = self.cfg.env.eval
@@ -586,6 +595,7 @@ class EnvWorker(Worker):
 
         return merged_final_obs
 
+    @Worker.timer("env/recv_actions")
     def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
         """Receive and merge chunked actions for the current env worker.
 
@@ -727,6 +737,7 @@ class EnvWorker(Worker):
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
+    @Worker.timer("env/send_obs")
     def send_env_batch(
         self,
         rollout_channel: Channel,
@@ -898,6 +909,7 @@ class EnvWorker(Worker):
             for reward_assign_step in range(2, reward_assign_length + 1):
                 rollout_rewards[-reward_assign_step][env_id] += reward[env_id]
 
+    @Worker.timer("env/bootstrap_step")
     def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
             return (
@@ -1000,6 +1012,7 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
+    @Worker.timer("env/send_rollout_trajectories")
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
@@ -1167,10 +1180,22 @@ class EnvWorker(Worker):
                 ):
                     self.assign_history_reward(stage_id, reward_model_output)
 
+            if self.use_training_pipeline and actor_channel is not None:
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories_pipeline(
+                        self.rollout_results[stage_id], actor_channel
+                    )
+                self.rollout_results: list[EmbodiedRolloutResult] = [
+                    EmbodiedRolloutResult(
+                        max_episode_length=self.cfg.env.train.max_episode_steps,
+                    )
+                    for _ in range(self.stage_num)
+                ]
+
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
-        if actor_channel is not None:
+        if not self.use_training_pipeline and actor_channel is not None:
             for stage_id in range(self.stage_num):
                 await self.send_rollout_trajectories(
                     self.rollout_results[stage_id], actor_channel
@@ -1284,3 +1309,76 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
+
+    def compute_advantages_and_returns(
+        self, rollout_batch: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        # Advantages/returns are rollout-level quantities, so compute them before
+        # splitting. After this point each channel item is an actor micro-batch that can
+        # be trained directly without reconstructing the full rollout batch on actor.
+        kwargs = {
+            "task_type": self.cfg.runner.task_type,
+            "adv_type": self.cfg.algorithm.adv_type,
+            "rewards": rollout_batch["rewards"],
+            "dones": rollout_batch["dones"],
+            "values": rollout_batch.get("prev_values", None),
+            "gamma": self.cfg.algorithm.get("gamma", 1),
+            "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
+            "group_size": self.cfg.algorithm.get("group_size", 8),
+            "reward_type": self.cfg.algorithm.reward_type,
+            "loss_mask": rollout_batch.get("loss_mask", None),
+            "loss_mask_sum": rollout_batch.get("loss_mask_sum", None),
+            "normalize_advantages": self.cfg.algorithm.get(
+                "normalize_advantages", True
+            ),
+        }
+        advantages_and_returns = calculate_adv_and_returns(**kwargs)
+        rollout_batch.update(advantages_and_returns)
+        if kwargs["loss_mask"] is not None:
+            rollout_batch["loss_mask"] = kwargs["loss_mask"]
+        if kwargs["loss_mask_sum"] is not None:
+            rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
+        return rollout_batch
+
+    def prepare_micro_batches(
+        self, trajectory: Trajectory
+    ) -> list[dict[str, torch.Tensor]]:
+        # In training pipeline mode, send ready-to-train actor micro-batches instead of
+        # full rollout trajectories. This keeps nested observations out of the channel
+        # payload so packed tensors can use the channel tensor fast path.
+        batch = convert_trajectories_to_batch([trajectory])
+        batch = preprocess_embodied_batch(
+            batch,
+            rollout_epoch=1,
+            auto_reset=self.cfg.env.train.auto_reset,
+            ignore_terminations=self.cfg.env.train.ignore_terminations,
+            reward_type=self.cfg.algorithm.reward_type,
+            filter_rewards=self.cfg.algorithm.get("filter_rewards", False),
+            group_size=self.cfg.algorithm.group_size,
+            rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
+            rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+        )
+
+        batch = self.compute_advantages_and_returns(batch)
+
+        batch_size = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
+        flatten_batch = flatten_embodied_batch(batch, torch.arange(batch_size))
+        micro_batch_size = self.cfg.actor.micro_batch_size
+        assert batch_size % micro_batch_size == 0, (
+            f"Batch size {batch_size} is not divisible by micro_batch_size {micro_batch_size}."
+        )
+        num_micro_batches = batch_size // micro_batch_size
+        micro_batches = split_dict_to_chunk(flatten_batch, num_micro_batches, dim=0)
+        return [pack_batch(micro_batch) for micro_batch in micro_batches]
+
+    async def send_rollout_trajectories_pipeline(
+        self, rollout_result: EmbodiedRolloutResult, channel: Channel
+    ) -> None:
+        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
+            self.actor_split_num
+        )
+        for trajectory in trajectories:
+            with self.worker_timer("prepare_micro_batches"):
+                micro_batches = self.prepare_micro_batches(trajectory)
+                for micro_batch in micro_batches:
+                    channel.put(micro_batch, async_op=True)

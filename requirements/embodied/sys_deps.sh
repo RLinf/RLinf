@@ -94,6 +94,7 @@ install_deps_apt() {
         curl \
         cmake \
         patchelf \
+        git-lfs \
         lsb-release \
         libavutil-dev \
         libavcodec-dev \
@@ -146,6 +147,7 @@ install_deps_dnf() {
         curl \
         cmake \
         patchelf \
+        git-lfs \
         ffmpeg-free-devel \
         libibverbs-devel \
         ncurses \
@@ -187,6 +189,7 @@ install_deps_yum() {
         curl \
         cmake \
         patchelf \
+        git-lfs \
         ffmpeg-devel \
         libibverbs-devel \
         ncurses \
@@ -228,6 +231,7 @@ install_deps_pacman() {
         lsb-release \
         cmake \
         patchelf \
+        git-lfs \
         ffmpeg \
         rdma-core \
         ncurses \

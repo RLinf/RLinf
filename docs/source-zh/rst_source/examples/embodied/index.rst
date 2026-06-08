@@ -212,9 +212,9 @@
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="gr00t.html" style="text-decoration: underline; color: blue;">
-           <b>GR00T-N1.5模型强化学习训练</b>
+           <b>GR00T模型强化学习训练</b>
          </a><br>
-         支持GR00T-N1.5强化学习微调
+         支持GR00T-N1.5与N1.6强化学习微调
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">

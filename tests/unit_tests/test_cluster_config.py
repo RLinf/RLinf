@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -28,7 +29,9 @@ from rlinf.scheduler import (
     Worker,
 )
 from rlinf.scheduler.cluster.cluster import ClusterEnvVar, PathEnvMergeMode
-from rlinf.scheduler.cluster.config import ClusterConfig, NsightConfig
+from rlinf.scheduler.cluster.config import ClusterConfig
+from rlinf.scheduler.hardware.accelerators.amd_gpu import RocprofSysConfig
+from rlinf.scheduler.hardware.accelerators.nvidia_gpu import NsightConfig
 from rlinf.scheduler.hardware.robots.franka import FrankaConfig
 
 
@@ -474,12 +477,13 @@ def test_cluster_config_num_nodes_must_be_positive():
         ClusterConfig.from_dict_cfg(config)
 
 
-def test_cluster_config_parses_nsight_settings():
+def test_cluster_config_parses_profiling_settings():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "worker_groups": ["actor", "rollout"],
                 "options": {
                     "t": "cuda,cudnn,cublas,nvtx",
@@ -492,22 +496,24 @@ def test_cluster_config_parses_nsight_settings():
 
     cluster_cfg = ClusterConfig.from_dict_cfg(config)
 
-    assert cluster_cfg.nsight is not None
-    assert cluster_cfg.nsight.enabled is True
-    assert cluster_cfg.nsight.worker_groups == ["actor", "rollout"]
-    assert cluster_cfg.nsight.options == {
+    assert cluster_cfg.profiling is not None
+    assert isinstance(cluster_cfg.profiling, NsightConfig)
+    assert cluster_cfg.profiling.enabled is True
+    assert cluster_cfg.profiling.worker_groups == ["actor", "rollout"]
+    assert cluster_cfg.profiling.options == {
         "t": "cuda,cudnn,cublas,nvtx",
         "capture-range": "nvtx",
         "capture-range-end": "stop",
     }
 
 
-def test_cluster_config_parses_disabled_nsight_settings():
+def test_cluster_config_parses_disabled_profiling_settings():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "enabled": False,
                 "worker_groups": ["actor"],
                 "options": {"t": "cuda,cudnn,cublas,nvtx"},
@@ -517,18 +523,20 @@ def test_cluster_config_parses_disabled_nsight_settings():
 
     cluster_cfg = ClusterConfig.from_dict_cfg(config)
 
-    assert cluster_cfg.nsight is not None
-    assert cluster_cfg.nsight.enabled is False
-    assert cluster_cfg.nsight.worker_groups == ["actor"]
-    assert cluster_cfg.nsight.options == {"t": "cuda,cudnn,cublas,nvtx"}
+    assert cluster_cfg.profiling is not None
+    assert isinstance(cluster_cfg.profiling, NsightConfig)
+    assert cluster_cfg.profiling.enabled is False
+    assert cluster_cfg.profiling.worker_groups == ["actor"]
+    assert cluster_cfg.profiling.options == {"t": "cuda,cudnn,cublas,nvtx"}
 
 
-def test_cluster_config_nsight_rejects_duplicate_range_end_options():
+def test_cluster_config_profiling_rejects_duplicate_range_end_options():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "options": {
                     "stop-on-range-end": True,
                     "capture-range-end": "stop",
@@ -544,12 +552,13 @@ def test_cluster_config_nsight_rejects_duplicate_range_end_options():
         ClusterConfig.from_dict_cfg(config)
 
 
-def test_cluster_config_nsight_options_must_be_mapping():
+def test_cluster_config_profiling_options_must_be_mapping():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "options": ["BAD"],
             },
         }
@@ -559,12 +568,13 @@ def test_cluster_config_nsight_options_must_be_mapping():
         ClusterConfig.from_dict_cfg(config)
 
 
-def test_cluster_config_parses_nsight_flags():
+def test_cluster_config_parses_profiling_flags():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "flags": ["python-backtrace"],
             },
         }
@@ -572,16 +582,18 @@ def test_cluster_config_parses_nsight_flags():
 
     cluster_cfg = ClusterConfig.from_dict_cfg(config)
 
-    assert cluster_cfg.nsight is not None
-    assert cluster_cfg.nsight.flags == ["python-backtrace"]
+    assert cluster_cfg.profiling is not None
+    assert isinstance(cluster_cfg.profiling, NsightConfig)
+    assert cluster_cfg.profiling.flags == ["python-backtrace"]
 
 
-def test_cluster_config_rejects_duplicate_nsight_flag_and_option():
+def test_cluster_config_rejects_duplicate_profiling_flag_and_option():
     config = DictConfig(
         {
             "num_nodes": 1,
             "component_placement": {},
-            "nsight": {
+            "profiling": {
+                "backend": "nsight",
                 "flags": ["python-backtrace"],
                 "options": {"python-backtrace": "cuda"},
             },
@@ -594,13 +606,43 @@ def test_cluster_config_rejects_duplicate_nsight_flag_and_option():
         ClusterConfig.from_dict_cfg(config)
 
 
+def test_cluster_config_profiling_requires_backend():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "profiling": {
+                "worker_groups": ["actor"],
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="backend must be specified"):
+        ClusterConfig.from_dict_cfg(config)
+
+
+def test_cluster_config_profiling_rejects_unknown_backend():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "profiling": {
+                "backend": "unknown_backend",
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="Unknown profiling backend"):
+        ClusterConfig.from_dict_cfg(config)
+
+
 def test_nsight_default_preset_enables_cpu_sampling_and_cuda_backtrace():
     preset_path = (
         Path(__file__).resolve().parents[2]
         / "examples"
         / "embodiment"
         / "config"
-        / "nsight"
+        / "profile"
         / "default.yaml"
     )
     preset_cfg = OmegaConf.load(preset_path)
@@ -618,11 +660,85 @@ def test_nsight_to_cli_tokens_supports_flags():
     assert nsight_cfg.to_cli_tokens() == ["--python-backtrace"]
 
 
-def test_maybe_prepend_nsight_to_py_executable_skips_non_matching_group():
-    py_executable = Cluster.maybe_prepend_nsight_to_py_executable(
+def test_cluster_config_parses_profiling_steps():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "profiling": {
+                "backend": "nsight",
+                "worker_groups": ["actor"],
+                "steps": [5, 10, 20],
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.profiling is not None
+    assert isinstance(cluster_cfg.profiling, NsightConfig)
+    assert cluster_cfg.profiling.steps == [5, 10, 20]
+
+
+def test_nsight_steps_auto_sets_capture_range():
+    nsight_cfg = NsightConfig(steps=[5])
+
+    assert nsight_cfg.options is not None
+    assert nsight_cfg.options["capture-range"] == "cudaProfilerApi"
+    assert nsight_cfg.options["capture-range-end"] == "stop"
+
+
+def test_nsight_steps_respects_explicit_capture_range():
+    nsight_cfg = NsightConfig(
+        steps=[5],
+        options={"capture-range": "nvtx", "capture-range-end": "none"},
+    )
+
+    # User's explicit values must win over the auto-set defaults.
+    assert nsight_cfg.options["capture-range"] == "nvtx"
+    assert nsight_cfg.options["capture-range-end"] == "none"
+
+
+def test_nsight_steps_none_does_not_touch_options():
+    nsight_cfg = NsightConfig(steps=None, options={"t": "cuda"})
+
+    # With steps unset, capture-range stays absent.
+    assert "capture-range" not in nsight_cfg.options
+    assert "capture-range-end" not in nsight_cfg.options
+
+
+def test_nsight_rejects_negative_steps():
+    with pytest.raises(AssertionError, match="non-negative"):
+        NsightConfig(steps=[-1])
+
+
+def test_nsight_should_profile_step_matches_configured_steps():
+    nsight_cfg = NsightConfig(steps=[5, 10])
+
+    assert nsight_cfg.should_profile_step(5) is True
+    assert nsight_cfg.should_profile_step(10) is True
+    assert nsight_cfg.should_profile_step(0) is False
+    assert nsight_cfg.should_profile_step(7) is False
+
+
+def test_nsight_should_profile_step_profiles_all_steps_when_steps_none():
+    nsight_cfg = NsightConfig(steps=None)
+
+    assert nsight_cfg.should_profile_step(0) is True
+    assert nsight_cfg.should_profile_step(100) is True
+
+
+def test_nsight_should_profile_step_returns_false_when_disabled():
+    nsight_cfg = NsightConfig(enabled=False, steps=[5])
+
+    assert nsight_cfg.should_profile_step(5) is False
+
+
+def test_modify_profile_context_skips_non_matching_group():
+    py_executable = Cluster.modify_profile_context(
         python_interpreter_path=sys.executable,
         worker_name="actor:0",
-        nsight_cfg=NsightConfig(
+        profiling_cfg=NsightConfig(
             worker_groups=["rollout"],
             options={"t": "cuda,cudnn,cublas,nvtx"},
         ),
@@ -631,11 +747,11 @@ def test_maybe_prepend_nsight_to_py_executable_skips_non_matching_group():
     assert py_executable == sys.executable
 
 
-def test_maybe_prepend_nsight_to_py_executable_skips_disabled_nsight():
-    py_executable = Cluster.maybe_prepend_nsight_to_py_executable(
+def test_modify_profile_context_skips_disabled_config():
+    py_executable = Cluster.modify_profile_context(
         python_interpreter_path=sys.executable,
         worker_name="actor:0",
-        nsight_cfg=NsightConfig(
+        profiling_cfg=NsightConfig(
             enabled=False,
             worker_groups=["actor"],
             options={"t": "cuda,cudnn,cublas,nvtx"},
@@ -643,6 +759,125 @@ def test_maybe_prepend_nsight_to_py_executable_skips_disabled_nsight():
     )
 
     assert py_executable == sys.executable
+
+
+def test_rocprof_sys_config_defaults():
+    cfg = RocprofSysConfig()
+    assert cfg.backend == "rocprof_sys"
+    assert cfg.enabled is True
+    assert cfg.args is None
+    assert cfg.env is None
+
+
+def test_rocprof_sys_to_cli_tokens_no_args():
+    cfg = RocprofSysConfig()
+    assert cfg.to_cli_tokens() == ["rocprof-sys-python", "--"]
+
+
+def test_rocprof_sys_to_cli_tokens_single_char_arg():
+    cfg = RocprofSysConfig(args={"F": "true"})
+    tokens = cfg.to_cli_tokens()
+    assert tokens == ["rocprof-sys-python", "-F", "true", "--"]
+
+
+def test_rocprof_sys_to_cli_tokens_multi_char_arg():
+    cfg = RocprofSysConfig(args={"output-format": "json"})
+    tokens = cfg.to_cli_tokens()
+    assert tokens == ["rocprof-sys-python", "--output-format=json", "--"]
+
+
+def test_rocprof_sys_to_cli_tokens_mixed_args():
+    cfg = RocprofSysConfig(args={"F": "true", "output-format": "json"})
+    tokens = cfg.to_cli_tokens()
+    assert tokens[0] == "rocprof-sys-python"
+    assert "-F" in tokens
+    assert "true" in tokens
+    assert "--output-format=json" in tokens
+    assert tokens[-1] == "--"
+
+
+def test_rocprof_sys_rejects_non_dict_args():
+    with pytest.raises(AssertionError, match="args must be a dictionary"):
+        RocprofSysConfig(args=["bad"])
+
+
+def test_rocprof_sys_rejects_non_dict_env():
+    with pytest.raises(AssertionError, match="env must be a dictionary"):
+        RocprofSysConfig(env=["bad"])
+
+
+def test_rocprof_sys_cluster_config_parses():
+    config = DictConfig(
+        {
+            "num_nodes": 1,
+            "component_placement": {},
+            "profiling": {
+                "backend": "rocprof_sys",
+                "worker_groups": ["actor"],
+                "args": {"F": "true"},
+                "env": {"ROCPROFSYS_OUTPUT_PATH": "/tmp/traces"},
+            },
+        }
+    )
+
+    cluster_cfg = ClusterConfig.from_dict_cfg(config)
+
+    assert cluster_cfg.profiling is not None
+    assert isinstance(cluster_cfg.profiling, RocprofSysConfig)
+    assert cluster_cfg.profiling.worker_groups == ["actor"]
+    assert cluster_cfg.profiling.args == {"F": "true"}
+    assert cluster_cfg.profiling.env == {"ROCPROFSYS_OUTPUT_PATH": "/tmp/traces"}
+
+
+def test_rocprof_sys_modify_profiling_context_prepends_command():
+    cfg = RocprofSysConfig(
+        worker_groups=["actor"],
+        args={"F": "true"},
+        output_dir="/tmp/traces",
+    )
+    result = Cluster.modify_profile_context(
+        python_interpreter_path=sys.executable,
+        worker_name="actor:0",
+        profiling_cfg=cfg,
+    )
+    tokens = shlex.split(result)
+    assert tokens[0] == "rocprof-sys-python"
+    assert "-F" in tokens
+    assert "true" in tokens
+    assert "--" in tokens
+    assert tokens[-1] == sys.executable
+
+
+def test_rocprof_sys_get_profiling_env_vars_derives_output_path():
+    cfg = RocprofSysConfig(worker_groups=["actor"], output_dir="/tmp/traces")
+    env_vars = Cluster.get_profiling_env_vars_for_worker(
+        worker_name="actor:0",
+        profiling_cfg=cfg,
+    )
+    assert env_vars.get("ROCPROFSYS_OUTPUT_PATH") == "/tmp/traces"
+    assert "ROCPROFSYS_OUTPUT_PREFIX" in env_vars
+
+
+def test_rocprof_sys_get_profiling_env_vars_user_env_wins():
+    cfg = RocprofSysConfig(
+        worker_groups=["actor"],
+        output_dir="/tmp/traces",
+        env={"ROCPROFSYS_OUTPUT_PATH": "/custom/path"},
+    )
+    env_vars = Cluster.get_profiling_env_vars_for_worker(
+        worker_name="actor:0",
+        profiling_cfg=cfg,
+    )
+    assert env_vars["ROCPROFSYS_OUTPUT_PATH"] == "/custom/path"
+
+
+def test_rocprof_sys_get_profiling_env_vars_skips_non_matching_group():
+    cfg = RocprofSysConfig(worker_groups=["rollout"], output_dir="/tmp/traces")
+    env_vars = Cluster.get_profiling_env_vars_for_worker(
+        worker_name="actor:0",
+        profiling_cfg=cfg,
+    )
+    assert env_vars == {}
 
 
 def test_path_env_merge_mode_default_is_append():
