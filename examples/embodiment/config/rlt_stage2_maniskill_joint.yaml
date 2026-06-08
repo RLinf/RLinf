@@ -194,6 +194,9 @@ env:
     reward_mode: only_success
     max_episode_steps: 500
     max_steps_per_rollout_epoch: 500
+    # Formal eval uses deterministic policy actions; set to train only for
+    # stochastic diagnostic runs.
+    policy_mode: eval
     # Eval 时每次执行完整 10-step action chunk。
     action_exec_chunks: 10
     group_size: 1

@@ -77,6 +77,12 @@ class MultiStepRolloutWorker(Worker):
         )
         self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
         self.enable_eval = cfg.runner.val_check_interval > 0 or cfg.runner.only_eval
+        self.eval_policy_mode = str(cfg.env.eval.get("policy_mode", "eval"))
+        if self.eval_policy_mode not in {"train", "eval"}:
+            raise ValueError(
+                "env.eval.policy_mode must be either 'train' or 'eval', got "
+                f"{self.eval_policy_mode!r}"
+            )
         self.eval_action_exec_chunks = int(
             cfg.env.eval.get("action_exec_chunks", cfg.actor.model.num_action_chunks)
         )
@@ -841,7 +847,7 @@ class MultiStepRolloutWorker(Worker):
                     env_output = await self.recv_env_output(input_channel, mode="eval")
                     actions, _ = self.predict(
                         env_output["obs"],
-                        mode="eval",
+                        mode=self.eval_policy_mode,
                         allow_expert=False,
                         policy_info=env_output.get("policy_info", None),
                     )

@@ -209,5 +209,3 @@ Then, execute the following command in the terminal to start the evaluation.
 
 This script first evaluates 13 **Out-Of-Distribution (OOD) tasks**, and then evaluates 3 **In-Distribution (ID) tasks**.
 All logs are saved in ``logs/eval/<EVAL_NAME>/…/run_ppo.log``.
-
-

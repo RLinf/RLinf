@@ -1413,7 +1413,10 @@ class EnvWorker(Worker):
                     self.eval_env_list[i], RecordVideo
                 ):
                     self.eval_env_list[i].flush_video()
-                if not self.cfg.env.eval.auto_reset:
+                if (
+                    not self.cfg.env.eval.auto_reset
+                    and not self.cfg.env.eval.use_fixed_reset_state_ids
+                ):
                     self.eval_env_list[i].update_reset_state_ids()
 
     @Worker.timer("env/send_obs")
