@@ -373,7 +373,9 @@ class DreamZeroLeRobotDataset(Dataset):
             self._root, self._info, allowed_episode_indices=meta_episode_indices
         )
         self._episode_lengths = [
-            episode_lengths.get(ep, self._infer_episode_length_from_parquet(ep))
+            episode_lengths[ep]
+            if ep in episode_lengths
+            else self._infer_episode_length_from_parquet(ep)
             for ep in self._episodes
         ]
         self._episode_starts = [0]
