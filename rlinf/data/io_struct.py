@@ -758,7 +758,7 @@ class RolloutResult:
         #           |<- cfg.data.seq_length ->|<------ cfg.runner.seq_length - cfg.data.seq_length ------>|
         #           |<------------------------------ cfg.runner.seq_length ------------------------------>|
 
-        # len = training_seq_length - data_seq_length: advantage, recomputed_logprobs, ref_logprobs
+        # len = training_seq_length - data_seq_length: advantage, recomputed_logprobs/rollout_logprobs, ref_logprobs
         # each row: [response_ids, ...,                , response_padding]
         #           |<----- true response length ----->|<--- padding --->|
         #           |<-- cfg.runner.seq_length - cfg.data.seq_length ->|
@@ -1142,7 +1142,7 @@ class DynamicRolloutResult:
         #           |<-- pmp len -->|<-- resp len --->|<-- padding --->|
         #           |<------------------ cfg.runner.seq_length ------->|
 
-        # len = seq_length: advantage, recomputed_logprobs, ref_logprobs
+        # len = seq_length: advantage, recomputed_logprobs/rollout_logprobs, ref_logprobs
         #           [mask or response_ids, ...,        , response_padding]
         #           |<----- true response length ----->|<--- padding --->|
         #           |<------------------ cfg.runner.seq_length --------->|

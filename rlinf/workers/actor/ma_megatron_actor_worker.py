@@ -583,8 +583,7 @@ class MAMegatronActor(MegatronActor):
                 logprob = batch.get("recomputed_logprobs")
                 if logprob is None:
                     logprob = batch.get("rollout_logprobs")
-                if logprob is not None:
-                    logprob = logprob.cuda()
+                logprob = logprob.cuda()
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.cfg.runner.task_type,
                     adv_type=self.cfg.algorithm.adv_type,

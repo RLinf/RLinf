@@ -688,6 +688,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         batch = RolloutResult.merge_batches(batches)
         rollout_result = RolloutResult.merge_result_list(rollout_results)
 
+        assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         # Compute advantages and returns
         if "advantages" not in batch:
             batch = self.compute_advantages_and_returns(batch)
@@ -1268,7 +1269,7 @@ class MegatronWorker(MegatronModelManager, Worker):
             logprob = batch.get("recomputed_logprobs")
             if logprob is None:
                 logprob = batch.get("rollout_logprobs")
-            logprobs = logprob.cuda() if logprob is not None else None
+            logprobs = logprob.cuda()
             ref_logprobs = (
                 batch["ref_logprobs"].cuda() if "ref_logprobs" in batch else None
             )

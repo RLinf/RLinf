@@ -930,6 +930,10 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         global_batch = RolloutResult.merge_batches(batches)
 
+        assert (
+            "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
+        )
+
         # Compute advantages and returns
         global_batch = self.compute_advantages_and_returns(global_batch)
 
@@ -989,8 +993,8 @@ class FSDPActor(FSDPModelManager, Worker):
                 logprob = batch.get("recomputed_logprobs")
                 if logprob is None:
                     logprob = batch.get("rollout_logprobs")
-                if logprob is not None:
-                    logprob = logprob.to(Worker.torch_device_type)
+                logprob = logprob.to(Worker.torch_device_type)
+
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
