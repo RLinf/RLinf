@@ -447,14 +447,27 @@ class EnvWorker(Worker):
             and self.cfg.actor.model.get("model_type", None) == "rlt_stage2"
         )
 
+    def _rlt_stage2_intervention_mode(self) -> str:
+        intervention_cfg = self.cfg.algorithm.get("intervention", {})
+        return str(intervention_cfg.get("mode", "local_correction"))
+
     def _rlt_stage2_intervention_enabled(self) -> bool:
         intervention_cfg = self.cfg.algorithm.get("intervention", {})
         return self._rlt_stage2_td3_enabled() and bool(
             intervention_cfg.get("enable", False)
+        ) and self._rlt_stage2_intervention_mode() in {
+            "local_correction",
+            "human_override",
+        }
+
+    def _rlt_stage2_local_correction_enabled(self) -> bool:
+        return (
+            self._rlt_stage2_intervention_enabled()
+            and self._rlt_stage2_intervention_mode() == "local_correction"
         )
 
     def _rlt_stage2_policy_info_enabled(self) -> bool:
-        return self._rlt_stage2_intervention_enabled()
+        return self._rlt_stage2_local_correction_enabled()
 
     def _rlt_policy_env_type(self, mode: Literal["train", "eval"]) -> str:
         env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
@@ -684,7 +697,7 @@ class EnvWorker(Worker):
         infos = self._select_rlt_policy_source_info(infos, required_keys)
 
         intervention_cfg = self.cfg.algorithm.get("intervention", {})
-        intervention_enabled = self._rlt_stage2_intervention_enabled()
+        intervention_enabled = self._rlt_stage2_local_correction_enabled()
         state = states[stage_id]
         device = infos["peg_head_hole_x"].device
         if "intervention_region" not in state:

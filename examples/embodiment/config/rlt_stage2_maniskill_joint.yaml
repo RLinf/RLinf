@@ -176,7 +176,7 @@ actor:
     policy_setup: "panda-qpos"
     num_steps: 5
     rlt_stage2:
-      config_name: "pi05_rlt_maniskill_joint"
+      config_name: "pi05_rlt_joint"
       norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"  # Must match base/student VLA stats.
       rl_token_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/RLinf/logs/20260603-23:07:52/rlt_stage1_maniskill_joint/checkpoints/global_step_5000/actor/rl_token/rl_token_model.pt"  # Stage1 RL-token checkpoint.
       num_images_in_input: 2  # Base + wrist views.

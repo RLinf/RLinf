@@ -1,0 +1,81 @@
+env_type: realworld
+
+total_num_envs: null
+
+auto_reset: True
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 100
+max_episode_steps: 100
+no_gripper: False
+use_spacemouse: False
+use_gello: True
+gello_port: "${oc.env:RLT_REALWORLD_GELLO_PORT,/dev/ttyUSB0}"
+gello_action_mode: joint_target
+use_relative_frame: False
+use_quat_tcp_pose: True
+use_rlt_joint_obs: True
+main_image_key: "${oc.env:RLT_REALWORLD_MAIN_IMAGE_KEY,camera_0}"
+default_prompt: "insert the peg in the hole"
+keyboard_reward_wrapper: null
+
+# Match the realworld RLT dataset layout:
+# state[0] gripper
+# state[1:8] joint_pos
+# state[8:15] joint_vel
+# state[15:18] tcp_force
+# state[18:25] tcp_pose
+# state[25:28] tcp_torque
+# state[28:34] tcp_vel
+state_key_order:
+  - gripper
+  - joint_pos
+  - joint_vel
+  - tcp_force
+  - tcp_pose
+  - tcp_torque
+  - tcp_vel
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+init_params:
+  # Must be an env that consumes 8D actions:
+  # actions[0:7] absolute joint targets, actions[7] gripper command.
+  id: "${oc.env:RLT_REALWORLD_JOINT_ENV_ID,FrankaJointPegInsertionEnv-v1}"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "insert the peg in the hole"
+  joint_command_topic: "${oc.env:RLT_REALWORLD_JOINT_COMMAND_TOPIC,/joint_states_gripper}"
+  joint_command_joint_names:
+    - panda_joint1
+    - panda_joint2
+    - panda_joint3
+    - panda_joint4
+    - panda_joint5
+    - panda_joint6
+    - panda_joint7
+  # Replace these with the calibrated real setup before running hardware.
+  target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+  reset_ee_pose: [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]
+  reset_joint_qpos: [0.0, -0.785, 0.0, -2.35, 0.0, 1.57, 0.785]
+  joint_reset_qpos: [0.0, 0.0, 0.0, -1.9, 0.0, 2.0, 0.0]
+  joint_limit_low: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
+  joint_limit_high: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]
+  max_joint_delta: 0.08
+  joint_move_timeout: 1.5
+  reset_gripper_action: -1.0
+  reward_threshold: [0.015, 0.015, 0.03, 0.2, 0.2, 0.2]
+  check_orientation_success: false
+  use_dense_reward: false
+  reward_scale: 1.0
+  enable_gripper_penalty: false
+  max_num_steps: 100

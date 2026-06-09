@@ -111,8 +111,17 @@ class MultiStepRolloutWorker(Worker):
         self.version = 0
         self.finished_episodes = None
         intervention_cfg = self.cfg.algorithm.get("intervention", {})
+        self.intervention_mode = str(
+            intervention_cfg.get("mode", "local_correction")
+        )
         self.intervention_enabled = bool(intervention_cfg.get("enable", False)) and (
-            intervention_cfg.get("mode", None) == "local_correction"
+            self.intervention_mode in {"local_correction", "human_override"}
+        )
+        self.local_correction_enabled = self.intervention_enabled and (
+            self.intervention_mode == "local_correction"
+        )
+        self.human_override_enabled = self.intervention_enabled and (
+            self.intervention_mode == "human_override"
         )
         self.intervention_success_baseline = None
         self.intervention_last_success = None

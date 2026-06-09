@@ -154,7 +154,7 @@ actor:
     num_steps: 5
     policy_setup: "panda-qpos"
     openpi:
-      config_name: "pi05_rlt_maniskill_joint"
+      config_name: "pi05_rlt_joint"
       num_images_in_input: 2
       train_expert_only: False
       detach_critic_input: True

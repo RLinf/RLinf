@@ -35,6 +35,7 @@ from omegaconf import DictConfig
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
 from .components import DirectGaussianActor, TwinQCritic, compute_td_target
+from .proprio import resolve_proprio_dim
 from .rl_token import RLTokenModel
 from .vla_wrapper import Stage2VLAWrapper
 
@@ -56,7 +57,13 @@ class RLTStage2Policy(torch.nn.Module, BasePolicy):
         self.chunk_length = int(cfg.num_action_chunks)
         self.action_dim = int(cfg.action_dim)
         self.action_chunk_dim = self.chunk_length * self.action_dim
-        self.proprio_dim = int(stage2_cfg.get("proprio_dim", self.action_dim))
+        self.proprio_mode = stage2_cfg.get("proprio_mode", None)
+        if self.proprio_mode is not None:
+            self.proprio_mode = str(self.proprio_mode)
+        self.proprio_dim = resolve_proprio_dim(
+            stage2_cfg,
+            default_dim=self.action_dim,
+        )
         self.act_as_vla_reference = bool(stage2_cfg.get("act_as_vla_reference", False))
         self.load_feature_backbones = bool(
             stage2_cfg.get("load_feature_backbones", True)
@@ -224,7 +231,11 @@ class RLTStage2Policy(torch.nn.Module, BasePolicy):
         self._validate_action_chunk(a_tilde, name="a_tilde")
         a_tilde_flat = a_tilde.reshape(a_tilde.shape[0], -1)
         self._validate_flat_action(a_tilde_flat, name="a_tilde_flat")
-        state = self.vla.extract_proprio(observation, self.proprio_dim)
+        state = self.vla.extract_proprio(
+            observation,
+            proprio_dim=self.proprio_dim,
+            proprio_mode=self.proprio_mode,
+        )
         x = torch.cat([z_rl.to(torch.float32), state], dim=-1)
         return x, a_tilde_flat, processed_obs
 

@@ -13,7 +13,7 @@ lora_rank: 32
 add_value_head: False
 
 rlt_stage1:
-  config_name: "pi05_rlt_maniskill_joint"
+  config_name: "pi05_rlt_joint"
   norm_stats_path: null
   num_images_in_input: 2
   num_steps: 5

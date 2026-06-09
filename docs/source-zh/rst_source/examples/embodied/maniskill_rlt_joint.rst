@@ -102,7 +102,7 @@ learner 侧 replay，以及 actor-only weight sync 是否一致。
 数据格式与目录约定
 ------------------
 
-Stage1 和 Stage2 都使用 ``pi05_rlt_maniskill_joint`` 这套 dataconfig。
+Stage1 和 Stage2 都使用 ``pi05_rlt_joint`` 这套 dataconfig。
 数据集字段采用 LeRobot schema：
 
 - ``image``: 主视角图像
@@ -141,7 +141,7 @@ RLT Stage1/Stage2 开始前需要先准备一个 joint-control 的 OpenPI SFT ch
 - ``actor.model.model_path``: OpenPI 基座权重
 - ``actor.openpi_data.repo_id``: ManiSkill joint LeRobot 数据路径
 - ``actor.openpi_data.norm_stats_path``: 与数据集匹配的归一化统计
-- ``actor.model.openpi.config_name``: ``pi05_rlt_maniskill_joint``
+- ``actor.model.openpi.config_name``: ``pi05_rlt_joint``
 
 完成后会得到类似如下目录：
 
@@ -154,7 +154,7 @@ RLT Stage1/Stage2 开始前需要先准备一个 joint-control 的 OpenPI SFT ch
 Step 1：准备 joint-control 数据集
 ---------------------------------
 
-公开的 RLT 流程默认你已经有一份符合 ``pi05_rlt_maniskill_joint`` 的
+公开的 RLT 流程默认你已经有一份符合 ``pi05_rlt_joint`` 的
 LeRobot 格式数据集。
 
 至少需要包含以下字段：
@@ -174,7 +174,7 @@ LeRobot 格式数据集。
 
    export HF_LEROBOT_HOME=/data
    python toolkits/lerobot/calculate_norm_stats.py \
-     --config-name pi05_rlt_maniskill_joint \
+     --config-name pi05_rlt_joint \
      --repo-id rlt_maniskill_joint
 
 若你直接使用绝对路径采集，也可以把数据集移动到 ``HF_LEROBOT_HOME`` 下，再以 repo name 方式生成统计。

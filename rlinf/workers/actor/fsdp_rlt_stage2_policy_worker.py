@@ -33,6 +33,7 @@ from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.utils import clear_memory
 
 from ...models.embodiment.rlt_stage2.components import actor_loss, critic_loss
+from ...models.embodiment.rlt_stage2.proprio import resolve_proprio_dim
 from ...models.embodiment.rlt_stage2.replay_buffer import RLTStage2ReplayBuffer
 from ...models.embodiment.rlt_stage2.transition import (
     TransitionSource,
@@ -237,10 +238,13 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         capacity = int(
             replay_cfg.get("capacity", stage2_cfg.get("buffer_capacity", 200000))
         )
+        state_dim = int(stage2_cfg.embedding_dim) + resolve_proprio_dim(
+            stage2_cfg,
+            default_dim=int(self.cfg.actor.model.action_dim),
+        )
         self.replay_buffer = RLTStage2ReplayBuffer(
             capacity=capacity,
-            state_dim=int(self.cfg.actor.model.rlt_stage2.embedding_dim)
-            + int(self.cfg.actor.model.rlt_stage2.proprio_dim),
+            state_dim=state_dim,
             action_chunk_dim=int(self.cfg.actor.model.num_action_chunks)
             * int(self.cfg.actor.model.action_dim),
             chunk_length=int(self.cfg.actor.model.num_action_chunks),
@@ -251,8 +255,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             return
         self.demo_buffer = RLTStage2ReplayBuffer(
             capacity=int(demo_cfg.get("capacity", capacity)),
-            state_dim=int(self.cfg.actor.model.rlt_stage2.embedding_dim)
-            + int(self.cfg.actor.model.rlt_stage2.proprio_dim),
+            state_dim=state_dim,
             action_chunk_dim=int(self.cfg.actor.model.num_action_chunks)
             * int(self.cfg.actor.model.action_dim),
             chunk_length=int(self.cfg.actor.model.num_action_chunks),

@@ -36,12 +36,16 @@ from rlinf.envs.realworld.common.wrappers.euler_obs import Quat2EulerWrapper
 from rlinf.envs.realworld.common.wrappers.gello_intervention import (
     GelloIntervention,
 )
+from rlinf.envs.realworld.common.wrappers.gello_joint_target_intervention import (
+    GelloJointTargetIntervention,
+)
 from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
 from rlinf.envs.realworld.common.wrappers.relative_frame import RelativeFrame
 from rlinf.envs.realworld.common.wrappers.reward_done_wrapper import (
     KeyboardRewardDoneMultiStageWrapper,
     KeyboardRewardDoneWrapper,
 )
+from rlinf.envs.realworld.common.wrappers.rlt_joint_obs import RLTJointObsWrapper
 from rlinf.envs.realworld.common.wrappers.spacemouse_intervention import (
     SpacemouseIntervention,
 )
@@ -122,13 +126,33 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
                 "use_gello=True requires 'gello_port' in the env config "
                 "(e.g. env.eval.gello_port)."
             )
-        env = GelloIntervention(env, port=gello_port, gripper_enabled=gripper_enabled)
+        gello_action_mode = str(cfg.get("gello_action_mode", "ee_delta"))
+        if gello_action_mode == "ee_delta":
+            env = GelloIntervention(
+                env,
+                port=gello_port,
+                gripper_enabled=gripper_enabled,
+            )
+        elif gello_action_mode == "joint_target":
+            env = GelloJointTargetIntervention(
+                env,
+                port=gello_port,
+                gripper_enabled=gripper_enabled,
+            )
+        else:
+            raise ValueError(
+                "Unsupported gello_action_mode. Expected 'ee_delta' or "
+                f"'joint_target', got {gello_action_mode!r}."
+            )
 
     env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
 
     if cfg.get("use_relative_frame", True):
         env = RelativeFrame(env)
-    env = Quat2EulerWrapper(env)
+    if not cfg.get("use_quat_tcp_pose", False):
+        env = Quat2EulerWrapper(env)
+    if cfg.get("use_rlt_joint_obs", False):
+        env = RLTJointObsWrapper(env)
     return env
 
 

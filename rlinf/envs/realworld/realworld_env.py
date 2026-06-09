@@ -54,6 +54,8 @@ class RealWorldEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.main_image_key = cfg.main_image_key
+        self.default_prompt = cfg.get("default_prompt", None)
+        self.state_key_order = cfg.get("state_key_order", None)
         self.manual_episode_control_only = bool(
             self.override_cfg.get("manual_episode_control_only", False)
         )
@@ -213,7 +215,21 @@ class RealWorldEnv(gym.Env):
 
         # Process states
         full_states = []
-        raw_states = OrderedDict(sorted(raw_obs["state"].items()))
+        if self.state_key_order is None:
+            raw_states = OrderedDict(sorted(raw_obs["state"].items()))
+        else:
+            raw_states = OrderedDict()
+            missing_keys = [
+                key for key in self.state_key_order if key not in raw_obs["state"]
+            ]
+            if missing_keys:
+                raise KeyError(
+                    "RealWorldEnv state_key_order contains keys missing from "
+                    f"raw_obs['state']: {missing_keys}. Available keys: "
+                    f"{list(raw_obs['state'])}."
+                )
+            for key in self.state_key_order:
+                raw_states[key] = raw_obs["state"][key]
         for value in raw_states.values():
             full_states.append(value)
         full_states = np.concatenate(full_states, axis=-1)
@@ -232,7 +248,10 @@ class RealWorldEnv(gym.Env):
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         obs = to_tensor(obs)
-        obs["task_descriptions"] = self.task_descriptions
+        if self.default_prompt is not None:
+            obs["task_descriptions"] = [self.default_prompt] * self.num_envs
+        else:
+            obs["task_descriptions"] = self.task_descriptions
         return obs
 
     def step(self, actions=None, auto_reset=True):

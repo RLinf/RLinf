@@ -15,7 +15,7 @@ lora_rank: 32
 add_value_head: False
 
 rlt_stage2:
-  config_name: "pi05_rlt_maniskill_joint"
+  config_name: "pi05_rlt_joint"
   norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint/norm_stats.json"
   rl_token_path: "/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_xxx/actor/rl_token/rl_token_model.pt"
   num_images_in_input: 2

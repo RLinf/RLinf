@@ -49,7 +49,7 @@ actor:
     num_action_chunks: 10
     action_dim: 8
     rlt_stage1:
-      config_name: "pi05_rlt_maniskill_joint"
+      config_name: "pi05_rlt_joint"
       norm_stats_path: ${actor.openpi_data.norm_stats_path}
       num_images_in_input: 2
       num_steps: 5
