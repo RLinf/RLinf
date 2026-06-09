@@ -445,17 +445,13 @@ After SFT or checkpoint conversion, use ``examples/embodiment/config/realworld_p
 
 **Prepare Ray on two machines**
 
-The example below uses two machines: one GPU node and one Franka node. Before starting Ray on each node, activate the environment and export consistent RLinf / DreamZero paths. Use rank 0 for the GPU node and rank 1 for the Franka node:
+The example below uses two machines: one GPU node and one Franka node. Before starting Ray on each node, activate the environment and set the node rank. Use rank 0 for the GPU node and rank 1 for the Franka node:
 
 .. code:: bash
 
    # GPU / head node
    source /path/to/RLinf/.venv/bin/activate
    export RANK=0
-   export DREAMZERO_PATH=/path/to/dreamzero
-   export PYTHONPATH=/path/to/RLinf:${DREAMZERO_PATH}:${PYTHONPATH:-}
-   export HYDRA_FULL_ERROR=1
-   export TOKENIZERS_PARALLELISM=false
    # Optional for machines with multiple network interfaces:
    # export RLINF_COMM_NET_DEVICES=<network_interface>
    ray stop
@@ -464,7 +460,6 @@ The example below uses two machines: one GPU node and one Franka node. Before st
    # Franka node
    source /path/to/RLinf/.venv/bin/activate
    export RANK=1
-   export PYTHONPATH=/path/to/RLinf
    # Optional for machines with multiple network interfaces:
    # export RLINF_COMM_NET_DEVICES=<network_interface>
    ray stop
@@ -476,7 +471,7 @@ Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` accordin
 
    cluster:
      node_groups:
-       - label: "4090"
+       - label: "train"
          node_ranks: 0
        - label: franka
          node_ranks: 1
@@ -484,7 +479,6 @@ Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` accordin
            type: Franka
            configs:
              - robot_ip: ROBOT_IP
-               camera_serials: ["SERIAL1", "SERIAL2"]
                node_rank: 1
 
    actor:
@@ -503,6 +497,8 @@ Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` accordin
          video_base_dir: /path/on/franka_node/video/eval
        override_cfg:
          task_description: "pick up the object and place it into the container"
+         target_ee_pose: TARGET_EE_POSE
+         camera_serials: ["SERIAL1", "SERIAL2"]
          is_dummy: False
          max_num_steps: 100
          enable_gripper_penalty: False
@@ -514,10 +510,6 @@ After Ray is connected, run on the GPU / head node:
 .. code:: bash
 
    export CUDA_VISIBLE_DEVICES=0
-   export DREAMZERO_PATH=/path/to/dreamzero
-   export DREAMZERO_FRANKA_CKPT=/path/to/ckpt_pnp
-   export DREAMZERO_TOKENIZER_PATH=/path/to/umt5-xxl
-   export RLINF_REALWORLD_VIDEO_DIR=/path/on/franka_node/video/eval
    export RLINF_CODE_WORKING_DIR=auto
 
    bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval_dreamzero

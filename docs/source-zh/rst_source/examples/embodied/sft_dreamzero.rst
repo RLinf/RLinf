@@ -442,17 +442,13 @@ Franka 真机部署评测
 
 **在两台机器上准备 Ray**
 
-下面是在两台机器上部署的示例, 一台为GPU节点, 一台是Franka节点, 每个节点启动 Ray 前，都先激活环境并导出一致的 RLinf / DreamZero 路径。GPU 节点使用 rank 0, Franka 节点使用 rank 1:
+下面是在两台机器上部署的示例，一台为 GPU 节点，一台是 Franka 节点。每个节点启动 Ray 前，都先激活环境并设置节点 rank。GPU 节点使用 rank 0，Franka 节点使用 rank 1：
 
 .. code:: bash
 
    # GPU / head 节点
    source /path/to/RLinf/.venv/bin/activate
    export RANK=0
-   export DREAMZERO_PATH=/path/to/dreamzero
-   export PYTHONPATH=/path/to/RLinf:${DREAMZERO_PATH}:${PYTHONPATH:-}
-   export HYDRA_FULL_ERROR=1
-   export TOKENIZERS_PARALLELISM=false
    # 多网卡机器可按需指定通信网卡：
    # export RLINF_COMM_NET_DEVICES=<network_interface>
    ray stop
@@ -461,7 +457,6 @@ Franka 真机部署评测
    # Franka 节点
    source /path/to/RLinf/.venv/bin/activate
    export RANK=1
-   export PYTHONPATH=/path/to/RLinf
    # 多网卡机器可按需指定通信网卡：
    # export RLINF_COMM_NET_DEVICES=<network_interface>
    ray stop
@@ -473,7 +468,7 @@ Franka 真机部署评测
 
    cluster:
      node_groups:
-       - label: "4090"
+       - label: "train"
          node_ranks: 0
        - label: franka
          node_ranks: 1
@@ -481,7 +476,6 @@ Franka 真机部署评测
            type: Franka
            configs:
              - robot_ip: ROBOT_IP
-               camera_serials: ["SERIAL1", "SERIAL2"]
                node_rank: 1
 
    actor:
@@ -500,6 +494,8 @@ Franka 真机部署评测
          video_base_dir: /path/on/franka_node/video/eval
        override_cfg:
          task_description: "pick up the object and place it into the container"
+         target_ee_pose: TARGET_EE_POSE
+         camera_serials: ["SERIAL1", "SERIAL2"]
          is_dummy: False
          max_num_steps: 100
          enable_gripper_penalty: False
@@ -510,11 +506,7 @@ Ray 已连接后，在 GPU / head 节点执行：
 
 .. code:: bash
 
-   export CUDA_VISIBLE_DEVICES=0  
-   export DREAMZERO_PATH=/path/to/dreamzero
-   export DREAMZERO_FRANKA_CKPT=/path/to/ckpt_pnp
-   export DREAMZERO_TOKENIZER_PATH=/path/to/umt5-xxl
-   export RLINF_REALWORLD_VIDEO_DIR=/path/on/franka_node/video/eval
+   export CUDA_VISIBLE_DEVICES=0
    export RLINF_CODE_WORKING_DIR=auto
 
    bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval_dreamzero

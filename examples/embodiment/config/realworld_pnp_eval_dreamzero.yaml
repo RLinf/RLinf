@@ -115,7 +115,7 @@ env:
     video_cfg:
       save_video: True
       info_on_video: True
-      video_base_dir: ${oc.env:RLINF_REALWORLD_VIDEO_DIR,${runner.logger.log_path}/video/eval}
+      video_base_dir: "/path/to/video/eval"
 
     override_cfg:
       task_description: null  # e.g. "pick up the object and place it into the container"
