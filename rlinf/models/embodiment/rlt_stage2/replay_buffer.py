@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -349,6 +350,18 @@ class RLTStage2ReplayBuffer:
         rng_state = state.get("rng_state")
         if rng_state is not None:
             self._rng.bit_generator.state = rng_state
+
+    def save_checkpoint(self, save_path: str) -> None:
+        os.makedirs(save_path, exist_ok=True)
+        torch.save(self.state_dict(), os.path.join(save_path, "buffer.pt"))
+
+    def load_checkpoint(self, load_path: str) -> None:
+        if os.path.isdir(load_path):
+            load_path = os.path.join(load_path, "buffer.pt")
+        state = torch.load(load_path, map_location="cpu", weights_only=False)
+        if "replay_buffer" in state:
+            state = state["replay_buffer"]
+        self.load_state_dict(state)
 
     def get_stats(self) -> dict[str, float]:
         n = self._size

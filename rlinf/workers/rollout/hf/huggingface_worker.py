@@ -14,6 +14,7 @@
 
 import copy
 import gc
+import os
 from typing import Any, Literal
 
 import numpy as np
@@ -142,12 +143,16 @@ class MultiStepRolloutWorker(Worker):
         self.intervention_last_success = last_success
 
     def _rlt_stage2_online_update_gate(self) -> tuple[bool, int]:
+        td3_bc_cfg = self.cfg.algorithm.get("td3_bc", {})
         warmup_required_updates = int(
-            self.cfg.algorithm.get("warmup_post_collect_updates", 0)
+            td3_bc_cfg.get(
+                "warmup_updates",
+                self.cfg.algorithm.get("warmup_post_collect_updates", 0),
+            )
         )
         if warmup_required_updates < 0:
             raise ValueError(
-                "algorithm.warmup_post_collect_updates must be >= 0, "
+                "algorithm.td3_bc.warmup_updates must be >= 0, "
                 f"got {warmup_required_updates}."
             )
         return self.version >= warmup_required_updates, warmup_required_updates
@@ -213,9 +218,17 @@ class MultiStepRolloutWorker(Worker):
 
     def _build_expert_model_config(self):
         expert_model_config = copy.deepcopy(self.cfg.actor.model)
+        expert_ckpt_path = self.cfg.runner.get("expert_ckpt_path", None)
+        expert_model_path = self.cfg.rollout.expert_model.model_path
+        if (
+            self._is_rlt_stage2_td3()
+            and expert_ckpt_path
+            and os.path.isdir(str(expert_ckpt_path))
+        ):
+            expert_model_path = expert_ckpt_path
         with open_dict(expert_model_config):
             expert_model_config.precision = self.cfg.rollout.expert_model.precision
-            expert_model_config.model_path = self.cfg.rollout.expert_model.model_path
+            expert_model_config.model_path = expert_model_path
             if expert_model_config.get("rlt_stage2", None) is not None:
                 act_as_vla_reference = self.cfg.rollout.expert_model.get(
                     "act_as_vla_reference", self._is_rlt_stage2_td3()
@@ -237,8 +250,9 @@ class MultiStepRolloutWorker(Worker):
             )
 
         self.expert_model = get_model(self._expert_model_config)
-        if self.cfg.runner.get("expert_ckpt_path", None):
-            expert_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+        expert_ckpt_path = self.cfg.runner.get("expert_ckpt_path", None)
+        if expert_ckpt_path and not os.path.isdir(str(expert_ckpt_path)):
+            expert_model_dict = torch.load(expert_ckpt_path)
             self.expert_model.load_state_dict(expert_model_dict)
         self.expert_model.eval()
         return self.expert_model

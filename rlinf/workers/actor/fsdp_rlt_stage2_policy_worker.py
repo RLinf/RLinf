@@ -38,6 +38,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         self.version = 0
 
         self.replay_buffer: RLTStage2ReplayBuffer | None = None
+        self.demo_buffer: RLTStage2ReplayBuffer | None = None
         self.qf_optimizer = None
         self.qf_lr_scheduler = None
         self.update_step = 0
@@ -67,42 +68,71 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         )
 
     def _warmup_required_updates(self) -> int:
+        td3_bc_cfg = self.cfg.algorithm.get("td3_bc", {})
         warmup_required_updates = int(
-            self.cfg.algorithm.get("warmup_post_collect_updates", 0)
+            td3_bc_cfg.get(
+                "warmup_updates",
+                self.cfg.algorithm.get("warmup_post_collect_updates", 0),
+            )
         )
         if warmup_required_updates < 0:
             raise ValueError(
-                "algorithm.warmup_post_collect_updates must be >= 0, "
+                "algorithm.td3_bc.warmup_updates must be >= 0, "
                 f"got {warmup_required_updates}."
             )
         return warmup_required_updates
 
     def _resolve_actor_loss_weights(self) -> tuple[float, float, float, bool, float]:
+        td3_bc_cfg = self.cfg.algorithm.get("td3_bc", {})
         stage2_cfg = self.cfg.actor.model.rlt_stage2
         loss_warmup_updates = int(
-            self.cfg.algorithm.get("actor_loss_warmup_updates", 0)
+            td3_bc_cfg.get(
+                "actor_loss_warmup_updates",
+                self.cfg.algorithm.get("actor_loss_warmup_updates", 0),
+            )
         )
         in_warmup = self.update_step < loss_warmup_updates
         warmup_bc_weight = float(
-            stage2_cfg.get(
+            td3_bc_cfg.get(
                 "warmup_bc_weight",
-                stage2_cfg.get("bc_regularizer_beta", 1.0),
+                stage2_cfg.get(
+                    "warmup_bc_weight",
+                    stage2_cfg.get("bc_regularizer_beta", 1.0),
+                ),
             )
         )
-        warmup_q_weight = float(stage2_cfg.get("warmup_q_weight", 0.1))
+        warmup_q_weight = float(
+            td3_bc_cfg.get(
+                "warmup_q_weight",
+                stage2_cfg.get("warmup_q_weight", 0.1),
+            )
+        )
         online_bc_weight = float(
-            stage2_cfg.get(
+            td3_bc_cfg.get(
                 "online_bc_weight",
-                stage2_cfg.get("bc_regularizer_beta", 1.0),
+                stage2_cfg.get(
+                    "online_bc_weight",
+                    stage2_cfg.get("bc_regularizer_beta", 1.0),
+                ),
             )
         )
-        online_q_weight = float(stage2_cfg.get("online_q_weight", 0.1))
+        online_q_weight = float(
+            td3_bc_cfg.get(
+                "online_q_weight",
+                stage2_cfg.get("online_q_weight", 0.1),
+            )
+        )
         if in_warmup:
             bc_weight = warmup_bc_weight
             q_weight = warmup_q_weight
             ramp_progress = 0.0
         else:
-            ramp_updates = int(self.cfg.algorithm.get("actor_loss_ramp_updates", 0))
+            ramp_updates = int(
+                td3_bc_cfg.get(
+                    "actor_loss_ramp_updates",
+                    self.cfg.algorithm.get("actor_loss_ramp_updates", 0),
+                )
+            )
             if ramp_updates > 0:
                 ramp_progress = min(
                     1.0,
@@ -120,7 +150,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             q_weight = warmup_q_weight + ramp_progress * (
                 online_q_weight - warmup_q_weight
             )
-        delta_weight = float(stage2_cfg.get("delta_weight", 0.0))
+        delta_weight = float(
+            td3_bc_cfg.get("delta_weight", stage2_cfg.get("delta_weight", 0.0))
+        )
         return bc_weight, q_weight, delta_weight, in_warmup, ramp_progress
 
     def init_worker(self):
@@ -187,7 +219,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
 
     def _init_replay_buffer(self) -> None:
         stage2_cfg = self.cfg.actor.model.rlt_stage2
-        capacity = int(stage2_cfg.get("buffer_capacity", 200000))
+        replay_cfg = self.cfg.algorithm.get("replay_buffer", {})
+        capacity = int(
+            replay_cfg.get("capacity", stage2_cfg.get("buffer_capacity", 200000))
+        )
         self.replay_buffer = RLTStage2ReplayBuffer(
             capacity=capacity,
             state_dim=int(self.cfg.actor.model.rlt_stage2.embedding_dim)
@@ -197,6 +232,25 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             chunk_length=int(self.cfg.actor.model.num_action_chunks),
             seed=int(self.cfg.actor.get("seed", 1234)) + self._rank,
         )
+        demo_cfg = self.cfg.algorithm.get("demo_buffer", None)
+        if demo_cfg is None:
+            return
+        self.demo_buffer = RLTStage2ReplayBuffer(
+            capacity=int(demo_cfg.get("capacity", capacity)),
+            state_dim=int(self.cfg.actor.model.rlt_stage2.embedding_dim)
+            + int(self.cfg.actor.model.rlt_stage2.proprio_dim),
+            action_chunk_dim=int(self.cfg.actor.model.num_action_chunks)
+            * int(self.cfg.actor.model.action_dim),
+            chunk_length=int(self.cfg.actor.model.num_action_chunks),
+            seed=int(self.cfg.actor.get("seed", 1234)) + self._rank + 17,
+        )
+        if demo_cfg.get("load_path", None) is not None:
+            self.demo_buffer.load_checkpoint(demo_cfg.load_path)
+
+    def soft_update_target_model(self, tau: float | None = None) -> None:
+        if tau is None:
+            tau = float(self.cfg.algorithm.tau)
+        self.model.update_target_networks(float(tau))
 
     def get_rollout_state_dict(self) -> dict:
         state_dict = self.model.filter_rollout_state_dict(
@@ -792,13 +846,45 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         )
         return int(reduced["min_replay_size"])
 
+    def _global_min_demo_size(self) -> int:
+        demo_size = 0 if self.demo_buffer is None else len(self.demo_buffer)
+        reduced = all_reduce_dict(
+            {"min_demo_size": float(demo_size)},
+            op=torch.distributed.ReduceOp.MIN,
+        )
+        return int(reduced["min_demo_size"])
+
+    def _sample_training_batch(
+        self,
+        batch_size: int,
+        *,
+        use_demo: bool,
+    ) -> dict[str, torch.Tensor]:
+        assert self.replay_buffer is not None
+        if not use_demo or self.demo_buffer is None:
+            return self.replay_buffer.sample(batch_size, self.device).to_dict()
+
+        replay_batch_size = batch_size - batch_size // 2
+        demo_batch_size = batch_size - replay_batch_size
+        replay_batch = self.replay_buffer.sample(
+            replay_batch_size,
+            self.device,
+        ).to_dict()
+        demo_batch = self.demo_buffer.sample(demo_batch_size, self.device).to_dict()
+        return {
+            key: torch.cat([replay_batch[key], demo_batch[key]], dim=0)
+            for key in replay_batch
+        }
+
     def _append_training_schedule_metrics(
         self,
         metrics: dict[str, Any],
         *,
         global_counters: dict[str, float],
         global_min_replay_size: int,
+        global_min_demo_size: int,
         warmup_min_size: int,
+        min_demo_buffer_size: int,
         warmup_required_updates: int,
         update_ratio: int,
         train_every_transitions: int,
@@ -822,6 +908,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     self.update_step >= warmup_required_updates
                 ),
                 "rlt_stage2/global_min_replay_size": float(global_min_replay_size),
+                "rlt_stage2/global_min_demo_size": float(global_min_demo_size),
+                "rlt_stage2/min_replay_buffer_size": float(warmup_min_size),
+                "rlt_stage2/min_demo_buffer_size": float(min_demo_buffer_size),
                 "rlt_stage2/update_epoch": float(update_ratio),
                 "rlt_stage2/warmup_required_updates": float(
                     warmup_required_updates
@@ -845,6 +934,13 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             if key == "capacity":
                 continue
             append_to_dict(metrics, {f"replay_buffer/{key}": value})
+        if self.demo_buffer is None:
+            return
+        demo_stats = self.demo_buffer.get_stats()
+        for key, value in demo_stats.items():
+            if key == "capacity":
+                continue
+            append_to_dict(metrics, {f"demo_buffer/{key}": value})
 
     @Worker.timer("run_training")
     def run_training(self):
@@ -852,10 +948,11 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             return {}
 
         metrics: dict[str, Any] = {}
+        replay_cfg = self.cfg.algorithm.get("replay_buffer", {})
         warmup_min_size = int(
-            self.cfg.algorithm.get(
-                "warmup_min_size",
-                self.cfg.algorithm.replay_buffer.get("min_buffer_size", 1),
+            replay_cfg.get(
+                "min_buffer_size",
+                self.cfg.algorithm.get("warmup_min_size", 1),
             )
         )
         warmup_required_updates = self._warmup_required_updates()
@@ -869,7 +966,17 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         train_every_episodes = int(self.cfg.algorithm.get("train_every_episodes", 0))
         global_counters = self._global_rollout_counters()
         global_min_replay_size = self._global_min_replay_size()
-        buffer_ready = global_min_replay_size >= warmup_min_size
+        global_min_demo_size = self._global_min_demo_size()
+        min_demo_buffer_size = int(
+            self.cfg.algorithm.get("demo_buffer", {}).get("min_buffer_size", 0)
+        )
+        if self.demo_buffer is not None:
+            min_demo_buffer_size = max(min_demo_buffer_size, 1)
+        demo_ready = (
+            self.demo_buffer is None or global_min_demo_size >= min_demo_buffer_size
+        )
+        use_demo = self.demo_buffer is not None and demo_ready
+        buffer_ready = global_min_replay_size >= warmup_min_size and demo_ready
         global_total_transitions_added = int(
             global_counters["total_transitions_added"]
         )
@@ -929,7 +1036,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 metrics,
                 global_counters=global_counters,
                 global_min_replay_size=global_min_replay_size,
+                global_min_demo_size=global_min_demo_size,
                 warmup_min_size=warmup_min_size,
+                min_demo_buffer_size=min_demo_buffer_size,
                 warmup_required_updates=warmup_required_updates,
                 update_ratio=update_ratio,
                 train_every_transitions=train_every_transitions,
@@ -963,8 +1072,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         if max_updates_per_train_step > 0:
             updates_to_run = min(updates_to_run, max_updates_per_train_step)
         for _ in range(updates_to_run):
-            batch = self.replay_buffer.sample(global_batch_size_per_rank, self.device)
-            batch_dict = batch.to_dict()
+            batch_dict = self._sample_training_batch(
+                global_batch_size_per_rank,
+                use_demo=use_demo,
+            )
             micro_batches = []
             for i in range(micro_batch_cnt):
                 begin = i * self.cfg.actor.micro_batch_size
@@ -986,7 +1097,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             metrics,
             global_counters=global_counters,
             global_min_replay_size=global_min_replay_size,
+            global_min_demo_size=global_min_demo_size,
             warmup_min_size=warmup_min_size,
+            min_demo_buffer_size=min_demo_buffer_size,
             warmup_required_updates=warmup_required_updates,
             update_ratio=update_ratio,
             train_every_transitions=train_every_transitions,
@@ -1055,10 +1168,11 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             "critic/lr": self.qf_optimizer.param_groups[0]["lr"],
         }
 
+        replay_cfg = self.cfg.algorithm.get("replay_buffer", {})
         warmup_min_size = int(
-            self.cfg.algorithm.get(
-                "warmup_min_size",
-                self.cfg.algorithm.replay_buffer.get("min_buffer_size", 1),
+            replay_cfg.get(
+                "min_buffer_size",
+                self.cfg.algorithm.get("warmup_min_size", 1),
             )
         )
         replay_ready = global_min_replay_size >= warmup_min_size
@@ -1172,7 +1286,13 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 }
             )
 
-        self.model.update_target_networks(float(self.cfg.algorithm.tau))
+        target_update_freq = int(self.cfg.algorithm.get("target_update_freq", 1))
+        if target_update_freq <= 0:
+            raise ValueError(
+                f"algorithm.target_update_freq must be positive, got {target_update_freq}."
+            )
+        if (self.update_step + 1) % target_update_freq == 0:
+            self.soft_update_target_model()
         return metrics
 
     def _process_train_metrics(self, metrics: dict[str, Any]) -> dict[str, float]:
@@ -1223,6 +1343,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 "replay_buffer": self.replay_buffer.state_dict()
                 if self.replay_buffer is not None
                 else None,
+                "demo_buffer": self.demo_buffer.state_dict()
+                if self.demo_buffer is not None
+                else None,
             },
             os.path.join(stage2_save_path, f"checkpoint_rank_{self._rank}.pt"),
         )
@@ -1272,6 +1395,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             self.total_episodes_added = int(state.get("total_episodes_added", 0))
             if self.replay_buffer is not None and state.get("replay_buffer") is not None:
                 self.replay_buffer.load_state_dict(state["replay_buffer"])
+            if self.demo_buffer is not None and state.get("demo_buffer") is not None:
+                self.demo_buffer.load_state_dict(state["demo_buffer"])
 
     def set_global_step(self, global_step: int) -> None:
         self.version = global_step

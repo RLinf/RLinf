@@ -69,7 +69,7 @@ algorithm:
   # 这里的 10 不是 batch size，而是在线训练周期的最小 transition 间隔。
   # 设为 10 表示每新增 10 条 replay transition，就新增 1 个训练周期预算；
   # 每个周期补 update_epoch=5 次 critic update。
-  train_every_transitions: 10
+  train_every_transitions: 5
   group_size: 1
   rollout_epoch: 1
   eval_rollout_epoch: 1
@@ -102,30 +102,29 @@ algorithm:
     # local_correction：连续检测到偏离后，请 expert 接管若干个 action chunk。
     # deviation_patience 单位是 action chunk；2 表示连续 2 个 10-step chunk 偏离就触发，
     # 比 3 更早介入，能增加 expert 纠偏样本。
-    deviation_patience: 2
+    deviation_patience: 3
     # 触发后至少接管多少个 action chunk；一个 chunk = 10 个 env control step。
     # 这里保持 3，避免 expert 只接一小段还没把轨迹拉回安全区就退出。
-    takeover_chunks: 3
+    takeover_chunks: 2
     # 如果还没恢复安全状态，最多连续接管多少个 action chunk。
     # 从 5 放到 6，给 expert 多一个 chunk 修正空间，但仍避免整段都由 expert 控制。
-    takeover_max_chunks: 6
+    takeover_max_chunks: 4
     # y/z 安全范围倍数，乘以当前 widened hole radius；越小越严格、expert 越容易介入。
     # 1.5 比 2.0 更敏感：靠近孔但 y/z 偏得明显时更早认为不安全。
-    safe_yz_margin: 1.5
+    safe_yz_margin: 1.8
     # x 插入进展阈值，单位 m/chunk；小于该进展视为没有向孔内推进。
     # 0.01 表示一个 10-step chunk 内至少推进 1cm，否则视为停滞。
     progress_eps: 0.01
     # y/z 误差恶化阈值，单位 m/chunk；超过该增量视为对孔变差。
-    # 从 0.01 降到 0.005，让横向/竖向偏离变差 5mm 就能累计 deviation。
-    yz_error_eps: 0.005
+    # 横向/竖向偏离变差 10mm 就能累计 deviation。
+    yz_error_eps: 0.01
     # expert 偏离检测开始的 x 门槛，单位 m，相对孔口坐标。
-    # 从 -0.02 提前到 -0.06：更早进入“可能需要纠偏”的插入前区域。
-    near_hole_x_min: -0.06
+    # 从 -0.02 提前到 -0.04：更早进入“可能需要纠偏”的插入前区域。
+    near_hole_x_min: -0.04
     # expert 可纠偏区的 y/z 半径倍数；只影响 expert 纠偏触发区。
-    # 从 1.5 放宽到 2.0，让偏得稍远但仍可由 expert 拉回的样本也进入检测。
-    near_hole_yz_margin: 2.0
+    near_hole_yz_margin: 1.5
     # 已进入 expert 可纠偏区后，x 退到该阈值外就退出局部偏离检测。
-    exit_hole_x_min: -0.12
+    exit_hole_x_min: -0.10
     # 如果 env 没暴露 widened hole 半径，用这个半径做 expert 偏离检测，单位 m。
     fallback_hole_radius: 0.035
   replay_buffer:
@@ -290,10 +289,10 @@ actor:
       warmup_q_weight: 0.05
       # actor loss ramp 结束后的 online 权重：
       # actor_loss = online_bc_weight * BC_loss - online_q_weight * Q + delta_weight * delta_loss。
-      online_bc_weight: 2.8
-      online_q_weight: 0.16
+      online_bc_weight: 2.7
+      online_q_weight: 0.13
       # chunk 内动作差分正则；0 表示不启用。
-      delta_weight: 0.0
+      delta_weight: 0.1
       # TD3 常用设置：2 次 critic update 对 1 次 actor update。
       critic_updates_per_actor: 2
       # 按论文从 step-level trace 里用 stride=2 滑窗构造 replay chunk：
