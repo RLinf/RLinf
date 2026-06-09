@@ -37,6 +37,26 @@ from rlinf.utils.logging import get_logger
 __all__ = ["BehaviorEnv"]
 
 
+def _preload_numba_llvmlite() -> None:
+    # Isaac Sim's ``omni.isaac.core_archive`` ships an older numba in its
+    # ``pip_prebundle`` and loads a few submodules during Kit startup,
+    # which then mix with the venv's newer ``llvmlite`` and fail with
+    # ``unknown attr 'nocapture'``. Preload the venv copies of just those
+    # submodules so they win the ``sys.modules`` cache.
+    import importlib
+
+    for name in (
+        "llvmlite",
+        "numba",
+        "numba.np.arrayobj",
+        "numba.core.runtime.context",
+    ):
+        try:
+            importlib.import_module(name)
+        except Exception:
+            pass
+
+
 @ray.remote(num_cpus=1)
 class BehaviorProcess:
     def __init__(
@@ -45,6 +65,7 @@ class BehaviorProcess:
         num_envs: int,
         pipeline_stage_num: int,
     ):
+        _preload_numba_llvmlite()
         from omnigibson.envs import VectorEnvironment
 
         self.logger = get_logger()
