@@ -23,3 +23,5 @@ PKG-INFO
 .claude/settings.json
 data/*
 openpi-RLT/*
+tmp/*
+tmp

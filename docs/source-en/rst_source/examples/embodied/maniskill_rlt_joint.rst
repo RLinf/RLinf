@@ -39,6 +39,19 @@ The key idea of RLT is to **freeze the large VLA backbone and only train a small
 2. **Stage1**: train an RL token encoder/decoder to learn a compact state representation from VLA embeddings.
 3. **Stage2**: freeze both the VLA and RL token, and only train a direct Gaussian actor plus twin-Q critic.
 
+Current implementation notes
+----------------------------
+
+The current RLinf integration keeps the learner path lightweight:
+
+- rollout workers run the frozen OpenPI VLA and frozen RL-token encoder
+- actor workers only train the Stage2 actor and critic
+- rollout workers sync only ``actor.*`` weights from the learner
+
+This matters for both performance and interpretation. If Stage2 behavior looks
+wrong, first check whether the rollout-side cached features, learner-side
+replay, and actor-only weight sync are aligned.
+
 Prerequisites
 -------------
 
@@ -150,87 +163,22 @@ After training, you should get a checkpoint like:
 
 Both Stage1 and Stage2 should point their ``model_path`` to this kind of SFT checkpoint.
 
-Step 1: Collect Joint-Control Data
-----------------------------------
+Step 1: Prepare the Joint-Control Dataset
+-----------------------------------------
 
-RLinf provides dedicated scripts for this pipeline:
+The public RLT workflow assumes that you already have a LeRobot-format dataset
+matching ``pi05_rlt_maniskill_joint``.
 
-- ``examples/embodiment/collect_maniskill_peg_lerobot_joint.py``
-- ``examples/embodiment/replay_maniskill_peg_lerobot_joint.py``
-- ``examples/embodiment/check_maniskill_joint_wide_smoke.sh``
+At minimum, the dataset must provide:
 
-This is not just trajectory dumping. The collector does the following:
+- ``image``: main-view RGB image
+- ``wrist_image``: wrist RGB image
+- ``state``: first 9 Panda qpos values
+- ``actions``: 8D ``pd_joint_delta_pos`` action
+- ``task``: instruction text
 
-1. run ManiSkill's official Panda motion-planning solver under ``pd_joint_pos``
-2. convert the solver outputs into ``pd_joint_delta_pos`` actions
-3. replay them in a fresh ``pd_joint_delta_pos`` environment
-4. save only trajectories that replay successfully
-
-1. Quick smoke test
-~~~~~~~~~~~~~~~~~~~
-
-Run a smoke test first to verify the widened peg insertion variant, camera outputs,
-LeRobot writing, and action replay path.
-
-.. code-block:: bash
-
-   bash examples/embodiment/check_maniskill_joint_wide_smoke.sh \
-     /tmp/rlt_maniskill_joint_wide_smoke
-
-This script performs four checks:
-
-- verify widened env geometry and cameras
-- collect one joint episode
-- inspect dataset fields
-- replay episode 0 from saved actions
-
-2. Full data collection
-~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   python examples/embodiment/collect_maniskill_peg_lerobot_joint.py \
-     --repo-id /data/rlt_maniskill_joint \
-     --num-episodes 200 \
-     --max-attempts 2000 \
-     --seed 0 \
-     --overwrite \
-     --sim-backend physx_cpu \
-     --image-width 384 \
-     --image-height 384 \
-     --save-videos
-
-Useful flags:
-
-- ``--repo-id``: output dataset directory, preferably an absolute path
-- ``--num-episodes``: number of successful episodes to keep
-- ``--max-attempts``: upper bound on collection attempts
-- ``--save-videos``: save a side-by-side mp4 for each successful episode
-- ``--target-control-mode``: defaults to ``pd_joint_delta_pos`` and should normally stay that way
-
-3. Replay validation
-~~~~~~~~~~~~~~~~~~~~
-
-After collection, replay at least a few episodes:
-
-.. code-block:: bash
-
-   python examples/embodiment/replay_maniskill_peg_lerobot_joint.py \
-     --dataset-path /data/rlt_maniskill_joint \
-     --episode-index 0 \
-     --sim-backend physx_cpu \
-     --image-width 384 \
-     --image-height 384
-
-This script:
-
-- loads one LeRobot episode
-- resets ManiSkill with the original seed
-- replays the saved 8D joint actions
-- compares replayed states against the recorded 9D Panda qpos states
-
-4. Normalization statistics
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Normalization statistics
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 If this is a newly collected dataset, generate ``norm_stats.json`` before SFT or RLT:
 
@@ -298,37 +246,21 @@ The main output artifact is:
 
 That ``rl_token_model.pt`` is the checkpoint required by Stage2.
 
-3. Optional: inspect the SFT / Stage1 behavior
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+3. Optional: evaluate the SFT base
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Before Stage2, it is useful to verify that the joint SFT path is sensible. Two helper files
-are already in the repo:
+Before Stage2, it is useful to verify that the joint SFT path is sensible.
+The repo contains a matching eval config:
 
 - ``examples/embodiment/config/rlt_maniskill_joint_pi05_sft_eval.yaml``
-- ``examples/embodiment/plot_rlt_sft_episode_actions.py``
 
-Evaluate a joint SFT checkpoint:
+Evaluate a joint SFT checkpoint with the standard wrapper:
 
 .. code-block:: bash
 
-   ROBOT_PLATFORM=LIBERO python examples/embodiment/eval_embodied_agent.py \
-     --config-path examples/embodiment/config \
-     --config-name rlt_maniskill_joint_pi05_sft_eval \
+   bash examples/embodiment/eval_embodiment.sh rlt_maniskill_joint_pi05_sft_eval LIBERO \
      actor.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor \
      rollout.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor
-
-Plot model actions against dataset actions on one collected episode:
-
-.. code-block:: bash
-
-   python examples/embodiment/plot_rlt_sft_episode_actions.py \
-     --config-name rlt_maniskill_joint_pi05_sft \
-     --dataset-path /data/rlt_maniskill_joint \
-     --model-path /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor \
-     --episode-index 0 \
-     --compare-chunk
-
-This is a good place to produce screenshots for the final documentation page.
 
 Step 3: Run Stage2 Online TD3 Training
 --------------------------------------
@@ -337,7 +269,7 @@ Stage2 runs online RL with a frozen VLA, a frozen RL token encoder, and a small 
 The main files are:
 
 - ``examples/embodiment/config/rlt_stage2_maniskill_joint.yaml``
-- entrypoint: ``examples/embodiment/train_embodied_agent.py``
+- launcher: ``examples/embodiment/run_embodiment.sh``
 
 1. Update the key Stage2 paths
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -368,17 +300,13 @@ It is also recommended to switch the logger backend to ``tensorboard`` and enabl
 
 .. code-block:: bash
 
-   ROBOT_PLATFORM=LIBERO python examples/embodiment/train_embodied_agent.py \
-     --config-path examples/embodiment/config \
-     --config-name rlt_stage2_maniskill_joint
+   bash examples/embodiment/run_embodiment.sh rlt_stage2_maniskill_joint LIBERO
 
 To override paths directly from the command line:
 
 .. code-block:: bash
 
-   ROBOT_PLATFORM=LIBERO python examples/embodiment/train_embodied_agent.py \
-     --config-path examples/embodiment/config \
-     --config-name rlt_stage2_maniskill_joint \
+   bash examples/embodiment/run_embodiment.sh rlt_stage2_maniskill_joint LIBERO \
      actor.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_1000/actor \
      rollout.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_1000/actor \
      rollout.expert_model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_8000/actor \
@@ -387,6 +315,12 @@ To override paths directly from the command line:
      runner.logger.logger_backends='[tensorboard]' \
      env.eval.video_cfg.save_video=True
 
+.. note::
+
+   The second positional argument of ``run_embodiment.sh`` is written into
+   ``ROBOT_PLATFORM``. This config uses ``policy_setup: panda-qpos`` internally,
+   so keeping the wrapper interface unchanged is fine.
+
 3. Important Stage2 hyperparameters
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -394,13 +328,28 @@ Some important defaults in the current config:
 
 - ``algorithm.warmup_min_size: 1000``: replay must reach 1000 chunk transitions before training
 - ``algorithm.warmup_post_collect_updates: 30000``: critic warmup before the actor goes online
-- ``algorithm.train_every_transitions: 50``: add training budget every 50 new replay transitions
+- ``algorithm.train_every_transitions: 5``: add training budget every 5 new replay transitions
 - ``algorithm.max_updates_per_train_step: 1600``: cap actual learner updates in one runner step
-- ``actor.model.rlt_stage2.replay_subsample_stride: 2``: use stride replay for better data efficiency
+- ``actor.model.rlt_stage2.replay_subsample_stride: 0``: use boundary-only replay by default
 - ``actor.model.rlt_stage2.actor_noise_sigma: 0.002``: training-time exploration noise
 - ``actor.model.rlt_stage2.ref_action_dropout: 0.5``: prevent the actor from merely copying the VLA reference
 
-4. Stage2 outputs
+4. Current rollout and replay semantics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The most important implementation details are:
+
+- rollout workers open the student-control gate only after the synced learner
+  update version reaches ``algorithm.warmup_post_collect_updates``
+- before that gate opens, rollout executes the base VLA reference chunk
+- the default public config uses boundary-only replay because
+  ``replay_subsample_stride`` is ``0``
+- stride replay still exists in the implementation, but it is a heavier
+  optional mode
+- when expert intervention executes a replacement action, the replay-side
+  reference chunk is replaced on the intervened steps as well
+
+5. Stage2 outputs
 ~~~~~~~~~~~~~~~~~
 
 Logs, checkpoints, and eval videos usually end up in:
@@ -442,9 +391,7 @@ To evaluate a Stage2 checkpoint separately, reuse the same config:
 
 .. code-block:: bash
 
-   ROBOT_PLATFORM=LIBERO python examples/embodiment/eval_embodied_agent.py \
-     --config-path examples/embodiment/config \
-     --config-name rlt_stage2_maniskill_joint \
+   bash examples/embodiment/eval_embodiment.sh rlt_stage2_maniskill_joint LIBERO \
      actor.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_1000/actor \
      rollout.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_1000/actor \
      actor.model.rlt_stage2.rl_token_path=/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_5000/actor/rl_token/rl_token_model.pt \
@@ -456,7 +403,6 @@ To evaluate a Stage2 checkpoint separately, reuse the same config:
 
 The final page should ideally include:
 
-- Stage1 action-alignment plots from ``plot_rlt_sft_episode_actions.py``
 - Stage2 ``eval/success_once`` curve screenshots
 - success/failure episode videos from ``logs/.../video/eval``
 
@@ -493,6 +439,8 @@ If the pipeline does not behave as expected, first check that these are aligned:
 - ``norm_stats_path`` matches the current dataset
 - ``num_action_chunks`` / ``action_dim`` stay at ``10`` / ``8``
 - dataset prompts are normalized to ``insert the peg in the hole``
+- ``warmup_post_collect_updates`` is interpreted as completed learner updates,
+  not runner steps
 
 If Stage2 shows "train goes up, eval does not", inspect:
 
@@ -500,3 +448,5 @@ If Stage2 shows "train goes up, eval does not", inspect:
 - whether intervention is too frequent or almost never triggered
 - whether the base VLA, RL token, and norm stats are mismatched
 - whether eval is using a fixed but unusually hard set of reset ids
+- whether the policy was still in the base-VLA warmup regime when you expected
+  student control
