@@ -484,9 +484,9 @@ class DreamZeroLeRobotDataset(Dataset):
         video_offsets, state_offsets, action_offsets = self._temporal_offsets_for_frame(
             frame_in_ep, episode_index, ep_len
         )
-
-        def clamp(offset: int) -> int:
-            return min(max(frame_in_ep + int(offset), 0), ep_len - 1)
+        video_idx, state_idx, action_idx = self._episode_frame_indices(
+            frame_in_ep, ep_len, video_offsets, state_offsets, action_offsets
+        )
 
         sample: dict[str, Any] = {
             "episode_index": episode_index,
@@ -495,13 +495,13 @@ class DreamZeroLeRobotDataset(Dataset):
         for transform_key, source_key in self._source_video_key.items():
             sample[transform_key] = np.stack(
                 [
-                    self._decode_v2_image(table.column(source_key)[clamp(o)])
-                    for o in video_offsets
+                    self._decode_v2_image(table.column(source_key)[int(i)])
+                    for i in video_idx
                 ],
                 axis=0,
             )
-        state_rows = [clamp(o) for o in state_offsets]
-        action_rows = [clamp(o) for o in action_offsets]
+        state_rows = state_idx.tolist()
+        action_rows = action_idx.tolist()
         state_sources = {source for source, _ in self._state_components.values()}
         action_sources = {source for source, _ in self._action_components.values()}
         for source in state_sources:
@@ -604,6 +604,31 @@ class DreamZeroLeRobotDataset(Dataset):
     @staticmethod
     def _clip_indices(indices: np.ndarray, length: int) -> np.ndarray:
         return np.clip(indices.astype(np.int64), 0, max(0, int(length) - 1))
+
+    def _episode_frame_indices(
+        self,
+        frame_in_ep: int,
+        ep_len: int,
+        video_offsets: np.ndarray,
+        state_offsets: np.ndarray,
+        action_offsets: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Map temporal sampling output to episode-local frame indices.
+
+        ``fixed_window`` returns offsets relative to ``frame_in_ep``; ``multi_anchor``
+        returns episode-local absolute indices.
+        """
+        if self.sampling_mode == "fixed_window":
+            return (
+                self._clip_indices(frame_in_ep + video_offsets, ep_len),
+                self._clip_indices(frame_in_ep + state_offsets, ep_len),
+                self._clip_indices(frame_in_ep + action_offsets, ep_len),
+            )
+        return (
+            self._clip_indices(video_offsets, ep_len),
+            self._clip_indices(state_offsets, ep_len),
+            self._clip_indices(action_offsets, ep_len),
+        )
 
     @staticmethod
     def _video_to_thwc_uint8(frames: Any) -> np.ndarray:
@@ -868,9 +893,9 @@ class DreamZeroLeRobotDataset(Dataset):
         video_offsets, state_offsets, action_offsets = self._temporal_offsets_for_frame(
             frame_in_ep, episode_index, ep_len
         )
-        video_idx = self._clip_indices(frame_in_ep + video_offsets, ep_len)
-        state_idx = self._clip_indices(frame_in_ep + state_offsets, ep_len)
-        action_idx = self._clip_indices(frame_in_ep + action_offsets, ep_len)
+        video_idx, state_idx, action_idx = self._episode_frame_indices(
+            frame_in_ep, ep_len, video_offsets, state_offsets, action_offsets
+        )
 
         sample: dict[str, Any] = {
             "episode_index": episode_index,
