@@ -13,7 +13,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor,env,rollout: all
 
 runner:
   task_type: sft
@@ -32,7 +32,7 @@ data:
   train_data_paths:
     # Raw realworld images in the current LeRobot dump are 128x128 for both views.
     # OpenPI will resize them to 224x224 in the model transform stack.
-    - dataset_path: "/Users/lixiaoqun/Downloads/pixiv/rlt-openpi-sim/RLinf-dev/data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_4"
+    - dataset_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/collected_data_id3_id4/rank_0/id_4"
       weight: 1.0
 
 algorithm:
@@ -41,17 +41,17 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 256
+  micro_batch_size: 256
+  global_batch_size: 1024
   seed: 0
   openpi_data:
-    repo_id: "data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_4"
-    norm_stats_path: "data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_4/norm_stats.json"
+    repo_id: "data/collected_data_id3_id4/rank_0/id_4"
+    norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/collected_data_id3_id4/rank_0/id_4/norm_stats.json"
     default_prompt: "insert the peg in the hole"
 
   model:
     precision: null
-    model_path: "${oc.env:OPENPI_PI05_BASE_PATH,/path/to/pi05_base}"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/pi05_base"
     num_action_chunks: 10
     action_dim: 8
     add_value_head: False

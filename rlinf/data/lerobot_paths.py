@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,14 +36,15 @@ def resolve_lerobot_repo_id(data_paths: Any) -> str | None:
         return None
     if isinstance(data_paths, str):
         return data_paths
-    if isinstance(data_paths, dict):
+    if isinstance(data_paths, Mapping):
         path = data_paths.get("dataset_path", data_paths.get("data_path"))
         return str(path) if path is not None else None
-    if isinstance(data_paths, (list, tuple)):
-        if len(data_paths) == 0:
+    if isinstance(data_paths, Sequence):
+        items = list(data_paths)
+        if len(items) == 0:
             return None
-        first = data_paths[0]
-        if isinstance(first, dict):
+        first = items[0]
+        if isinstance(first, Mapping):
             path = first.get("dataset_path", first.get("data_path"))
             if path is None:
                 raise ValueError(
