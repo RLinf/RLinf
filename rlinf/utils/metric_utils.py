@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import time
 
 import numpy as np
@@ -208,9 +209,25 @@ def compute_loss_mask(dones):
 
 
 def print_metrics_table(
-    step: int, total_steps: int, start_time: float, metrics: dict, start_step: int = 0
+    step: int,
+    total_steps: int,
+    start_time: float,
+    metrics: dict,
+    start_step: int = 0,
+    log_path: str | None = None,
 ):
-    """Print training metrics in a simple, fast formatted table."""
+    """Print training metrics in a simple, fast formatted table.
+
+    The rendered table is written to stdout and, when ``log_path`` is given,
+    also appended to ``<log_path>/metrics.log``.
+    """
+    # Accumulate the table into lines so the exact same rendering goes to both
+    # stdout and the log file.
+    lines: list[str] = []
+
+    def emit(text: str = "") -> None:
+        lines.append(text)
+
     # Calculate progress info
     progress = (step + 1) / total_steps * 100
     elapsed_time = time.time() - start_time
@@ -254,9 +271,9 @@ def print_metrics_table(
         padding = total_width - 2 - len(title_text)
         left = padding // 2
         right = padding - left
-        print(f"├{'─' * left}{title_text}{'─' * right}┤")
+        emit(f"├{'─' * left}{title_text}{'─' * right}┤")
 
-    print(f"\n╭{'─' * (total_width - 2)}╮")
+    emit(f"\n╭{'─' * (total_width - 2)}╮")
     _print_section_title("Metric Table")
 
     # First line: Global Step and Progress
@@ -264,7 +281,7 @@ def print_metrics_table(
     progress_str = f"Progress: {bar} │ {progress:5.1f}%"
     line1 = f"│ {step_str} │ {progress_str}"
     line1 = _fit_line(line1, total_width - 2)
-    print(f"{line1} │")
+    emit(f"{line1} │")
 
     # Second line: Time information
     elapsed_str_formatted = f"Elapsed: {elapsed_str}"
@@ -272,7 +289,7 @@ def print_metrics_table(
     step_time_str = f"Step Time: {elapsed_time / steps_done:.3f}s"
     line2 = f"│ {elapsed_str_formatted} │ {eta_str_formatted} │ {step_time_str}"
     line2 = _fit_line(line2, total_width - 2)
-    print(f"{line2} │")
+    emit(f"{line2} │")
 
     # Group metrics by category
     categories = {
@@ -324,7 +341,7 @@ def print_metrics_table(
         if category_metrics:
             _print_section_title(category_name)
             # Blank line before metrics (except Global Step section, which is separate)
-            print(f"│{' ' * (table_width - 2)}│")
+            emit(f"│{' ' * (table_width - 2)}│")
 
             # Sort metrics for consistent output
             sorted_metrics = sorted(category_metrics.items())
@@ -363,12 +380,19 @@ def print_metrics_table(
                     f"│{_fit_cell(row_metrics[1], col_widths[1])}"
                     f"│{_fit_cell(row_metrics[2], col_widths[2])}│"
                 )
-                print(line)
+                emit(line)
 
             # Section separator (minimal)
-            print(f"│{' ' * (table_width - 2)}│")
+            emit(f"│{' ' * (table_width - 2)}│")
 
     # Bottom border
-    print(f"╰{'─' * (table_width - 2)}╯")
+    emit(f"╰{'─' * (table_width - 2)}╯")
 
-    print()
+    emit()
+
+    table = "\n".join(lines)
+    print(table)
+    if log_path:
+        os.makedirs(log_path, exist_ok=True)
+        with open(os.path.join(log_path, "metrics.log"), "a") as metrics_file:
+            metrics_file.write(table + "\n")

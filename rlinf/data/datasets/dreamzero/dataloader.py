@@ -145,6 +145,7 @@ def build_dreamzero_sft_dataloader(
     )
     num_workers = int(cfg.data.get("num_workers", 4))
     prefetch_factor = int(cfg.data.get("prefetch_factor", 4))
+    transform_on_gpu = bool(cfg.data.get("transform_on_gpu", False))
     data_loader = StatefulDataLoader(
         dataset,
         batch_size=cfg.actor.micro_batch_size,  # samples per GPU per step
@@ -154,6 +155,9 @@ def build_dreamzero_sft_dataloader(
         pin_memory=True,  # faster CPU->GPU transfer
         persistent_workers=num_workers > 0,
         prefetch_factor=prefetch_factor if num_workers > 0 else None,
+        multiprocessing_context="spawn"
+        if transform_on_gpu and num_workers > 0
+        else None,
         collate_fn=DreamZeroCollator(
             tokenizer_path=tokenizer_path,
             max_seq_len=max_seq_len,
