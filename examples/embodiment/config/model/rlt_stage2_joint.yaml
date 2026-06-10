@@ -1,6 +1,6 @@
 model_type: "rlt_stage2"
 
-model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
+model_path: "/path/to/rlt_maniskill_joint_pi05_sft_or_stage1/checkpoints/global_step_xxx/actor"
 precision: null
 load_to_device: True
 
@@ -16,7 +16,7 @@ add_value_head: False
 
 rlt_stage2:
   config_name: "pi05_rlt_maniskill_joint"
-  norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint/norm_stats.json"
+  norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
   rl_token_path: "/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_xxx/actor/rl_token/rl_token_model.pt"
   num_images_in_input: 2
   proprio_dim: 9

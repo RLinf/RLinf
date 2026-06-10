@@ -30,7 +30,7 @@ runner:
 
 data:
   train_data_paths:
-    - dataset_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint"
+    - dataset_path: "/path/to/rlt_maniskill_joint"
       weight: 1.0
 
 algorithm:
@@ -45,7 +45,7 @@ actor:
 
   model:
     precision: null
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/RLinf/logs/20260530-22:57:46/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_2000/actor"
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
     num_action_chunks: 10
     action_dim: 8
     rlt_stage1:
@@ -62,8 +62,8 @@ actor:
       gradient_checkpointing: True
 
   openpi_data:
-    repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint"
-    norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint/norm_stats.json"
+    repo_id: "/path/to/rlt_maniskill_joint"
+    norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
     default_prompt: "insert the peg in the hole"
 
   optim:
