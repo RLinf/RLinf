@@ -1,0 +1,41 @@
+env_type: maniskill
+
+total_num_envs: null
+
+wrap_obs_mode: rlt_openpi_joint
+use_full_state: False
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: False
+reward_mode: only_success
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 500
+max_episode_steps: 500
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  fps: 10
+  record_every: 1
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+enable_offload: False
+
+init_params:
+  id: "PegInsertionSideWideClearance-v1"
+  num_envs: null
+  obs_mode: "rgb"
+  control_mode: "pd_joint_delta_pos"
+  sim_backend: "gpu"
+  reward_mode: "sparse"
+  sim_config:
+    sim_freq: 100
+    control_freq: 10
+  max_episode_steps: ${env.train.max_episode_steps}
+  sensor_configs:
+    shader_pack: "default"
+    width: 384
+    height: 384
+  render_mode: all

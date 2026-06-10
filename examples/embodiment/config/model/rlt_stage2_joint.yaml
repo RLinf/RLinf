@@ -1,0 +1,33 @@
+model_type: "rlt_stage2"
+
+model_path: "/path/to/rlt_maniskill_joint_pi05_sft_or_stage1/checkpoints/global_step_xxx/actor"
+precision: null
+load_to_device: True
+
+num_action_chunks: 10
+action_dim: 8
+policy_setup: "panda-qpos"
+num_steps: 5
+
+is_lora: False
+lora_rank: 32
+
+add_value_head: False
+
+rlt_stage2:
+  config_name: "pi05_rlt_maniskill_joint"
+  norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
+  rl_token_path: "/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_xxx/actor/rl_token/rl_token_model.pt"
+  num_images_in_input: 2
+  proprio_dim: 9
+  embedding_dim: 2048
+  encoder_layers: 2
+  encoder_heads: 8
+  decoder_layers: 2
+  decoder_heads: 8
+  mlp_hidden_dim: 256
+  mlp_num_hidden_layers: 2
+  actor_noise_sigma: 0.1
+  ref_action_dropout: 0.0
+  target_noise_sigma: 0.2
+  target_noise_clip: 0.5

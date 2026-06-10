@@ -30,20 +30,26 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type in [SupportedModel.OPENPI, SupportedModel.RLT_STAGE1]:
             repo_id = resolve_lerobot_repo_id(data_paths)
             if repo_id is None:
                 raise ValueError(
-                    "OpenPI SFT requires data.train_data_paths to be set to a local "
-                    "dataset path or LeRobot repo id."
+                    "OpenPI/RLT Stage 1 SFT requires data.train_data_paths to be set "
+                    "to a local dataset path or LeRobot repo id."
                 )
 
             import openpi.training.data_loader as openpi_data_loader
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
+            if model_type == SupportedModel.RLT_STAGE1:
+                config_name = self.cfg.actor.model.rlt_stage1.config_name
+            else:
+                config_name = self.cfg.actor.model.openpi.config_name
+
             config = get_openpi_config(
-                self.cfg.actor.model.openpi.config_name,
+                config_name,
                 model_path=self.cfg.actor.model.model_path,
                 batch_size=self.cfg.actor.micro_batch_size * self._world_size,
                 repo_id=repo_id,
@@ -144,7 +150,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:
             return 0
-        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENPI,
+            SupportedModel.RLT_STAGE1,
+        ]:
             num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
             return max(1, num_batches // self.gradient_accumulation)
         return super().get_max_steps_per_epoch()
