@@ -180,6 +180,7 @@ override-dependencies = [
     "datasets==3.6.0",
     "pywin32==306; sys_platform == 'win32'",
     "sympy>=1.13.1",
+    "tensorflow-metadata<=1.17.3",
 ]
 
 [tool.setuptools]
