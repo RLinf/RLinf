@@ -494,9 +494,18 @@ class MultiStepRolloutWorker(Worker):
                     source_chunk[expert_takeover] = int(TransitionSource.HUMAN)
                     expert_label_flag = True
 
+                ref_flat = base_flat.detach()
+                next_ref_flat = ref_flat
+                if use_expert:
+                    expert_flat = expert_actions.reshape(expert_actions.shape[0], -1).detach()
+                    expert_takeover_flat = expert_takeover[:, None].expand_as(ref_flat)
+                    ref_flat = torch.where(expert_takeover_flat, expert_flat, ref_flat)
+                    next_ref_flat = ref_flat
+
                 action_flat = actions.reshape(actions.shape[0], -1)
                 forward_inputs["base_a_tilde"] = base_flat
-                forward_inputs["ref_chunk"] = base_flat.detach()
+                forward_inputs["ref_chunk"] = ref_flat
+                forward_inputs["next_ref_chunk"] = next_ref_flat
                 forward_inputs["action"] = action_flat.detach()
                 forward_inputs["action_chunk"] = action_flat.detach()
                 forward_inputs["student_control"] = student_control[:, None].to(
@@ -585,6 +594,8 @@ class MultiStepRolloutWorker(Worker):
                     forward_inputs["base_a_tilde"] = forward_inputs["a_tilde"].detach()
                 if "a_tilde" in forward_inputs and "ref_chunk" not in forward_inputs:
                     forward_inputs["ref_chunk"] = forward_inputs["a_tilde"].detach()
+                if "ref_chunk" in forward_inputs and "next_ref_chunk" not in forward_inputs:
+                    forward_inputs["next_ref_chunk"] = forward_inputs["ref_chunk"].detach()
                 if "action_chunk" not in forward_inputs:
                     forward_inputs["action_chunk"] = actions.reshape(
                         actions.shape[0],

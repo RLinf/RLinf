@@ -328,6 +328,40 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
     def _to_numpy_uint8(tensor: torch.Tensor) -> np.ndarray:
         return tensor.detach().cpu().numpy().astype(np.uint8, copy=False)
 
+    @staticmethod
+    def _merge_ref_chunk_with_executed_actions(
+        ref_chunk: np.ndarray,
+        action_chunk: np.ndarray,
+        source_chunk: np.ndarray,
+    ) -> np.ndarray:
+        ref_chunk = np.asarray(ref_chunk, dtype=np.float32)
+        action_chunk = np.asarray(action_chunk, dtype=np.float32)
+        source_chunk = np.asarray(source_chunk, dtype=np.uint8).reshape(-1)
+        if ref_chunk.shape != action_chunk.shape:
+            raise ValueError(
+                "RLT ref/action chunk shape mismatch while merging intervention "
+                f"references: {ref_chunk.shape=} vs {action_chunk.shape=}."
+            )
+        if ref_chunk.ndim == 1:
+            chunk_len = int(source_chunk.shape[0])
+            action_dim = ref_chunk.size // chunk_len
+            ref_chunk = ref_chunk.reshape(chunk_len, action_dim)
+            action_chunk = action_chunk.reshape(chunk_len, action_dim)
+            merged = ref_chunk.copy()
+            human_mask = np.logical_or(
+                source_chunk == int(TransitionSource.HUMAN),
+                source_chunk == int(TransitionSource.MIXED),
+            )
+            merged[human_mask] = action_chunk[human_mask]
+            return merged.reshape(-1)
+        merged = ref_chunk.copy()
+        human_mask = np.logical_or(
+            source_chunk == int(TransitionSource.HUMAN),
+            source_chunk == int(TransitionSource.MIXED),
+        )
+        merged[human_mask] = action_chunk[human_mask]
+        return merged
+
     def _step_trace_to_transitions(self, traj: Trajectory) -> tuple[int, int]:
         if (
             self.replay_buffer is None
@@ -339,19 +373,25 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             return 0, 0
 
         x_boundary = traj.forward_inputs.get("x") if traj.forward_inputs else None
-        a_tilde_boundary = (
-            traj.forward_inputs.get("a_tilde") if traj.forward_inputs else None
+        ref_boundary = (
+            traj.forward_inputs.get("ref_chunk")
+            if traj.forward_inputs
+            else None
         )
-        if x_boundary is None or a_tilde_boundary is None:
+        if ref_boundary is None and traj.forward_inputs:
+            ref_boundary = traj.forward_inputs.get("a_tilde")
+        if x_boundary is None or ref_boundary is None:
             raise RuntimeError(
                 "RLT Stage2 stride replay requires chunk-boundary "
-                "forward_inputs['x'] and forward_inputs['a_tilde']; rollout must "
+                "forward_inputs['x'] and ['ref_chunk' or 'a_tilde']; rollout must "
                 "cache policy-call features instead of forcing actor-side VLA encoding."
             )
 
         anchor_offsets = traj.rlt_step_trace.get("anchor_offsets")
         x_trace = traj.rlt_step_trace.get("x")
-        a_tilde_trace = traj.rlt_step_trace.get("a_tilde")
+        ref_trace = traj.rlt_step_trace.get("ref_chunk")
+        if ref_trace is None:
+            ref_trace = traj.rlt_step_trace.get("a_tilde")
         if anchor_offsets is None:
             raise RuntimeError(
                 "RLT Stage2 stride replay requires sparse "
@@ -375,10 +415,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 f"for bootstrapping: expected at least {chunk_steps + 1}, got "
                 f"{x_boundary.shape[0]}."
             )
-        if x_boundary.shape[1] != bsz or a_tilde_boundary.shape[1] != bsz:
+        if x_boundary.shape[1] != bsz or ref_boundary.shape[1] != bsz:
             raise ValueError(
                 "RLT boundary feature batch mismatch: "
-                f"{x_boundary.shape=}, {a_tilde_boundary.shape=}, expected B={bsz}."
+                f"{x_boundary.shape=}, {ref_boundary.shape=}, expected B={bsz}."
             )
         if traj.rewards.shape[0] != chunk_steps:
             raise ValueError(
@@ -397,22 +437,22 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             )
         feature_steps = int(anchor_offsets.shape[1])
         if feature_steps > 0:
-            if x_trace is None or a_tilde_trace is None:
+            if x_trace is None or ref_trace is None:
                 raise RuntimeError(
                     "RLT sparse anchor trace has non-boundary offsets but is missing "
-                    "rlt_step_trace['x'] or rlt_step_trace['a_tilde']."
+                    "rlt_step_trace['x'] or ['ref_chunk'/'a_tilde']."
                 )
             if (
                 x_trace.shape[0] != chunk_steps
                 or x_trace.shape[1] != feature_steps
                 or x_trace.shape[2] != bsz
-                or a_tilde_trace.shape[0] != chunk_steps
-                or a_tilde_trace.shape[1] != feature_steps
-                or a_tilde_trace.shape[2] != bsz
+                or ref_trace.shape[0] != chunk_steps
+                or ref_trace.shape[1] != feature_steps
+                or ref_trace.shape[2] != bsz
             ):
                 raise ValueError(
                     "RLT sparse anchor feature shape mismatch: "
-                    f"{x_trace.shape=}, {a_tilde_trace.shape=}, "
+                    f"{x_trace.shape=}, {ref_trace.shape=}, "
                     f"{anchor_offsets.shape=}."
                 )
 
@@ -490,7 +530,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 if boundary_idx < x_boundary.shape[0]:
                     return (
                         x_boundary[boundary_idx, env_idx],
-                        a_tilde_boundary[boundary_idx, env_idx],
+                        ref_boundary[boundary_idx, env_idx],
                     )
                 if terminal_fallback is not None:
                     return terminal_fallback
@@ -508,14 +548,14 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     "Missing RLT sparse feature beyond rollout chunk range: "
                     f"{global_step=}, {chunk_idx=}."
                 )
-            if feature_steps > 0 and x_trace is not None and a_tilde_trace is not None:
+            if feature_steps > 0 and x_trace is not None and ref_trace is not None:
                 env_offsets = anchor_offsets[chunk_idx, :, env_idx].to(torch.long)
                 match = torch.nonzero(env_offsets == offset, as_tuple=False).reshape(-1)
                 if match.numel() > 0:
                     pos = int(match[0].item())
                     return (
                         x_trace[chunk_idx, pos, env_idx],
-                        a_tilde_trace[chunk_idx, pos, env_idx],
+                        ref_trace[chunk_idx, pos, env_idx],
                     )
             if terminal_fallback is not None:
                 return terminal_fallback
@@ -560,19 +600,19 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                         # rollout boundary would fabricate future actions/rewards.
                         continue
 
-                    x_tensor, a_tilde_tensor = get_feature(start, env_idx)
-                    next_x_tensor, next_a_tilde_tensor = get_feature(
+                    x_tensor, ref_tensor = get_feature(start, env_idx)
+                    next_x_tensor, next_ref_tensor = get_feature(
                         valid_end,
                         env_idx,
                         terminal_fallback=(
-                            (x_tensor, a_tilde_tensor) if terminal else None
+                            (x_tensor, ref_tensor) if terminal else None
                         ),
                     )
 
                     x = self._to_numpy_float(x_tensor)
-                    a_tilde = self._to_numpy_float(a_tilde_tensor)
+                    ref_chunk = self._to_numpy_float(ref_tensor)
                     next_x = self._to_numpy_float(next_x_tensor)
-                    next_a_tilde = self._to_numpy_float(next_a_tilde_tensor)
+                    next_ref_chunk = self._to_numpy_float(next_ref_tensor)
 
                     valid_len = valid_end - start
                     action_chunk = torch.zeros(
@@ -606,6 +646,33 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     rewards_np = self._to_numpy_float(reward_chunk)
                     intervention_np = self._to_numpy_float(intervention_chunk)
                     source_chunk_np = self._to_numpy_uint8(source_chunk)
+                    ref_chunk = self._merge_ref_chunk_with_executed_actions(
+                        ref_chunk,
+                        action_np,
+                        source_chunk_np,
+                    )
+                    next_source_chunk = torch.full(
+                        (chunk_len,),
+                        int(TransitionSource.BASE),
+                        dtype=torch.uint8,
+                        device=env_sources.device,
+                    )
+                    next_action_chunk = torch.zeros(
+                        chunk_len,
+                        action_dim,
+                        dtype=env_actions.dtype,
+                        device=env_actions.device,
+                    )
+                    if valid_end < segment_end_idx:
+                        next_end = min(valid_end + chunk_len, segment_end_idx)
+                        next_valid_len = next_end - valid_end
+                        next_action_chunk[:next_valid_len] = env_actions[valid_end:next_end]
+                        next_source_chunk[:next_valid_len] = env_sources[valid_end:next_end]
+                    next_ref_chunk = self._merge_ref_chunk_with_executed_actions(
+                        next_ref_chunk,
+                        self._to_numpy_float(next_action_chunk).reshape(-1),
+                        self._to_numpy_uint8(next_source_chunk),
+                    )
                     collection_phase_id = None
                     if collection_phase_id_all is not None:
                         phase_idx = min(start // chunk_len, collection_phase_id_all.shape[0] - 1)
@@ -620,10 +687,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     self.replay_buffer.add(
                         x=x,
                         action_chunk=action_np,
-                        ref_chunk=a_tilde,
+                        ref_chunk=ref_chunk,
                         rewards=rewards_np,
                         next_x=next_x,
-                        next_ref_chunk=next_a_tilde,
+                        next_ref_chunk=next_ref_chunk,
                         done=float(terminal),
                         intervention=intervention_np,
                         source=resolve_chunk_source(source_chunk_np),
@@ -676,8 +743,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         completed_episodes = 0
 
         x_all = traj.forward_inputs.get("x")
-        a_tilde_all = traj.forward_inputs.get("a_tilde")
-        if x_all is None or a_tilde_all is None:
+        ref_all = traj.forward_inputs.get("ref_chunk")
+        if ref_all is None:
+            ref_all = traj.forward_inputs.get("a_tilde")
+        if x_all is None or ref_all is None:
             return 0, 0
 
         dones_all = traj.dones
@@ -729,8 +798,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     )
 
                 x = x_all[t, env_idx].detach().cpu().numpy().astype(np.float32, copy=False)
-                a_tilde = (
-                    a_tilde_all[t, env_idx]
+                ref_chunk = (
+                    ref_all[t, env_idx]
                     .detach()
                     .cpu()
                     .numpy()
@@ -753,7 +822,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
 
                 if done > 0.0:
                     next_x = x
-                    next_a_tilde = a_tilde
+                    next_ref_chunk = ref_chunk
                 elif t + 1 < traj_len:
                     next_x = (
                         x_all[t + 1, env_idx]
@@ -762,18 +831,18 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                         .numpy()
                         .astype(np.float32, copy=False)
                     )
-                    next_a_tilde = (
-                        a_tilde_all[t + 1, env_idx]
+                    next_ref_chunk = (
+                        ref_all[t + 1, env_idx]
                         .detach()
                         .cpu()
                         .numpy()
                         .astype(np.float32, copy=False)
                     )
                 else:
-                    if x_all.shape[0] <= t + 1 or a_tilde_all.shape[0] <= t + 1:
+                    if x_all.shape[0] <= t + 1 or ref_all.shape[0] <= t + 1:
                         raise RuntimeError(
                             "RLT Stage2 rollout boundary transition is non-terminal "
-                            "but missing cached final x/a_tilde. Rollout must send "
+                            "but missing cached final x/ref_chunk. Rollout must send "
                             "the final student forward_inputs so actor training can "
                             "bootstrap without re-encoding VLA observations."
                         )
@@ -784,8 +853,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                         .numpy()
                         .astype(np.float32, copy=False)
                     )
-                    next_a_tilde = (
-                        a_tilde_all[t + 1, env_idx]
+                    next_ref_chunk = (
+                        ref_all[t + 1, env_idx]
                         .detach()
                         .cpu()
                         .numpy()
@@ -795,10 +864,10 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 self.replay_buffer.add(
                     x=x,
                     action_chunk=action,
-                    ref_chunk=a_tilde,
+                    ref_chunk=ref_chunk,
                     rewards=rewards,
                     next_x=next_x,
-                    next_ref_chunk=next_a_tilde,
+                    next_ref_chunk=next_ref_chunk,
                     done=done,
                     intervention=intervention_mask,
                     source=source,

@@ -116,7 +116,7 @@ class EnvWorker(Worker):
         )
         self.eval_enable_init_offload = eval_env_cfg.get("enable_init_offload", True)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
-                self.eval_action_exec_chunks = int(
+        self.eval_action_exec_chunks = int(
             self.cfg.env.eval.get(
                 "action_exec_chunks", self.cfg.actor.model.num_action_chunks
             )
