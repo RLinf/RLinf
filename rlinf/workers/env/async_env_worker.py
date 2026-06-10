@@ -24,7 +24,9 @@ class AsyncEnvWorker(EnvWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self._interact_task: asyncio.Task = None
-        assert not self.enable_offload, "Offload not supported in AsyncEnvWorker"
+        assert not (self.train_enable_offload or self.eval_enable_offload), (
+            "Offload not supported in AsyncEnvWorker"
+        )
 
     @Worker.timer("interact")
     async def interact(

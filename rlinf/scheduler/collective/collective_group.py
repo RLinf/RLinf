@@ -848,18 +848,33 @@ class CollectiveGroup:
             definitely_same_ranks, uncertain_ranks, diff_dev_ranks = (
                 self._classify_broadcast_ranks(src_rank)
             )
+            # Different-device receivers may still share an accelerator with each
+            # other (just not with src). NCCL rejects a collective with two ranks
+            # on one accelerator, so group them by device: only one representative
+            # per distinct device joins the accelerator collective with src, then
+            # re-broadcasts to its same-device peers via CUDA IPC.
+            diff_dev_groups = self._group_ranks_by_device(diff_dev_ranks)
+            diff_dev_repr_ranks = [group[0] for group in diff_dev_groups]
+            diff_dev_ipc_recv_ranks = [
+                rank for group in diff_dev_groups for rank in group[1:]
+            ]
         else:
             definitely_same_ranks, uncertain_ranks, diff_dev_ranks = [], [], []
+            diff_dev_groups = []
+            diff_dev_repr_ranks = []
+            diff_dev_ipc_recv_ranks = []
 
         # Non-src ranks that will receive accel tensors via the IPC hybrid path
-        # (definitely-same-device or uncertain peers) get freshly-allocated
-        # tensors back from the recv functions and overwrite their slots in
-        # `broadcast_tensors`. Preallocating accel buffers for those slots here
-        # would just churn device memory on large weight syncs, so defer the
-        # allocation. CPU slots are still preallocated since the CPU broadcast
-        # at the end of this function receives into them in-place.
+        # (definitely-same-device, uncertain, or a different-device non-representative
+        # peer) get freshly-allocated tensors back from the recv functions and
+        # overwrite their slots in `broadcast_tensors`. Preallocating accel buffers
+        # for those slots here would just churn device memory on large weight syncs,
+        # so defer the allocation. CPU slots are still preallocated since the CPU
+        # broadcast at the end of this function receives into them in-place.
         skip_accel_prealloc = self._rank != src_rank and (
-            self._rank in definitely_same_ranks or self._rank in uncertain_ranks
+            self._rank in definitely_same_ranks
+            or self._rank in uncertain_ranks
+            or self._rank in diff_dev_ipc_recv_ranks
         )
 
         if self._rank == src_rank:
@@ -883,8 +898,13 @@ class CollectiveGroup:
             ]
 
         with self._track_payload_time(work=work):
-            if not definitely_same_ranks and not uncertain_ranks:
-                # No same-device or uncertain workers: straightforward collective for every tensor.
+            if (
+                not definitely_same_ranks
+                and not uncertain_ranks
+                and not diff_dev_ipc_recv_ranks
+            ):
+                # Every receiver sits on a distinct accelerator from src and from
+                # each other: a straightforward full-group collective is safe.
                 for idx, tensor in enumerate(broadcast_tensors):
                     self._broadcast(
                         tensor,
@@ -896,10 +916,13 @@ class CollectiveGroup:
                     )
             else:
                 # Hybrid path:
-                #   - definitely-same-device workers: P2P IPC
+                #   - definitely-same-device workers: P2P IPC from src
                 #   - uncertain workers (overlapping multi-device sets): exchange current device
                 #     at runtime, then IPC or accelerator P2P send/recv per pair
-                #   - different-device workers: accelerator collective via dedicated sub-group
+                #   - different-device workers: one representative per distinct accelerator joins
+                #     an accelerator collective with src; that representative then re-broadcasts
+                #     to the remaining same-device receivers via CUDA IPC. This guarantees the
+                #     collective never contains two ranks on the same accelerator.
                 accel_tensors = [
                     t
                     for t, is_cpu in zip(broadcast_tensors, cpu_tensor_mask)
@@ -926,11 +949,11 @@ class CollectiveGroup:
                         ipc_grp._send_tensor_list_to_uncertain_peer(
                             accel_tensors, next(ipc_grp._send_comm_id_iter)
                         )
-                    # Collective broadcast to different-device receivers.
-                    if diff_dev_ranks:
+                    # Collective broadcast to one representative per distinct device.
+                    if diff_dev_repr_ranks:
                         sub_grp, sub_src = (
                             self._get_or_create_diff_dev_broadcast_sub_group(
-                                src_rank, diff_dev_ranks
+                                src_rank, diff_dev_repr_ranks
                             )
                         )
                         sub_grp._init_process_group(options=options)
@@ -961,10 +984,11 @@ class CollectiveGroup:
                     for i, is_cpu in enumerate(cpu_tensor_mask):
                         if not is_cpu:
                             broadcast_tensors[i] = next(accel_iter)
-                else:
-                    # Different-device: receive via collective sub-group.
+                elif self._rank in diff_dev_repr_ranks:
+                    # Different-device representative: receive via the collective
+                    # sub-group, then re-broadcast to same-device peers via IPC.
                     sub_grp, sub_src = self._get_or_create_diff_dev_broadcast_sub_group(
-                        src_rank, diff_dev_ranks
+                        src_rank, diff_dev_repr_ranks
                     )
                     sub_grp._init_process_group(options=options)
                     sub_comm_id = next(sub_grp._broadcast_comm_id_iter)
@@ -972,6 +996,37 @@ class CollectiveGroup:
                         sub_grp._broadcast(
                             tensor, CollectiveGroup.ACCEL, sub_comm_id, sub_src
                         )
+                    # The accelerator collective only enqueues the broadcast on the
+                    # stream; force completion before exposing the tensors over IPC
+                    # so same-device peers don't read stale memory.
+                    same_device_peers = next(
+                        group[1:] for group in diff_dev_groups if group[0] == self._rank
+                    )
+                    if same_device_peers:
+                        Worker.torch_platform.current_stream().synchronize()
+                        for peer in same_device_peers:
+                            ipc_grp = self._get_or_create_ipc_sub_group(
+                                self._rank, peer
+                            )
+                            ipc_grp._init_process_group(options=options)
+                            ipc_grp._send_tensor_list_via_ipc(
+                                accel_tensors, next(ipc_grp._send_comm_id_iter)
+                            )
+                else:
+                    # Different-device non-representative: receive via IPC from this
+                    # accelerator's representative (no collective involvement).
+                    repr_rank = next(
+                        group[0] for group in diff_dev_groups if self._rank in group
+                    )
+                    ipc_grp = self._get_or_create_ipc_sub_group(repr_rank, self._rank)
+                    ipc_grp._init_process_group(options=options)
+                    received = ipc_grp._recv_tensor_list_via_ipc(
+                        next(ipc_grp._recv_comm_id_iter)
+                    )
+                    accel_iter = iter(received)
+                    for i, is_cpu in enumerate(cpu_tensor_mask):
+                        if not is_cpu:
+                            broadcast_tensors[i] = next(accel_iter)
 
                 # CPU tensors still go through the full-group CPU collective.
                 for idx, tensor in enumerate(broadcast_tensors):
@@ -1385,6 +1440,35 @@ class CollectiveGroup:
                 uncertain.append(i)
         return definitely_same, uncertain, definitely_diff
 
+    def _group_ranks_by_device(self, ranks: list[int]) -> list[list[int]]:
+        """Group ranks that are guaranteed to share the same accelerator.
+
+        Two ranks share an accelerator when they sit on the same cluster node and
+        each exposes exactly one (identical) accelerator id. Multi-accelerator
+        workers cannot be matched statically -- their runtime device is unknown
+        until the tensor is produced -- so each forms its own singleton group.
+
+        Args:
+            ranks: Ranks (indices within this collective group) to partition.
+
+        Returns:
+            A list of groups; within each group the first rank is the device
+            representative. Group order and membership are deterministic across
+            workers (they derive solely from ``group_info``), so every process
+            computes the same partition.
+        """
+        groups: dict[tuple[int, int], list[int]] = {}
+        singletons: list[list[int]] = []
+        for rank in ranks:
+            worker = self._group_info.workers[rank]
+            accelerators = worker.available_accelerators
+            if len(accelerators) == 1:
+                key = (worker.cluster_node_rank, accelerators[0])
+                groups.setdefault(key, []).append(rank)
+            else:
+                singletons.append([rank])
+        return list(groups.values()) + singletons
+
     def _get_or_create_ipc_sub_group(
         self, src_rank: int, dst_rank: int
     ) -> "CollectiveGroup":
@@ -1402,17 +1486,18 @@ class CollectiveGroup:
         return self._ipc_sub_groups[key]
 
     def _get_or_create_diff_dev_broadcast_sub_group(
-        self, src_rank: int, diff_dev_ranks: list[int]
+        self, src_rank: int, diff_dev_repr_ranks: list[int]
     ) -> tuple["CollectiveGroup", int]:
         """Return (creating if needed) the accelerator collective sub-group for different-device workers.
 
-        The group spans src_rank and all different-device ranks. Returns the sub-group
-        and src's rank index within it.
+        The group spans src_rank and one representative per distinct accelerator
+        among the different-device receivers, so no two members share an
+        accelerator. Returns the sub-group and src's rank index within it.
         """
         if src_rank not in self._diff_dev_broadcast_sub_groups:
             src_address = self._group_info.workers[src_rank].address
             diff_addresses = [
-                self._group_info.workers[r].address for r in diff_dev_ranks
+                self._group_info.workers[r].address for r in diff_dev_repr_ranks
             ]
             sub_addresses = sorted([src_address] + diff_addresses)
             sub_src_rank = sub_addresses.index(src_address)
@@ -1452,8 +1537,16 @@ class CollectiveGroup:
         if len(receivers) < 2:
             return False  # nothing to gain over a direct send/broadcast
 
-        same, uncertain, _ = self._classify_broadcast_ranks(src_rank)
+        same, uncertain, diff = self._classify_broadcast_ranks(src_rank)
         if same or uncertain:
+            return False
+
+        # Receiver-to-receiver same-device sharing would force the ring fan-out to
+        # issue same-device P2P send/recv (which NCCL rejects); fall back to the
+        # hybrid IPC path, which routes such pairs through CUDA IPC.
+        if has_accel_tensor and any(
+            len(group) > 1 for group in self._group_ranks_by_device(diff)
+        ):
             return False
 
         if has_accel_tensor:
