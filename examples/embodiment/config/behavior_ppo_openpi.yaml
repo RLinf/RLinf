@@ -16,8 +16,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-0
-    env,rollout: 1-1
+    rollout: 0-1
+    env: 2-3
+    actor: all
 
 runner:
   task_type: embodied
@@ -84,18 +85,27 @@ algorithm:
 env:
   group_name: "EnvGroup"
 
-  # Override the default values in env/behavior_r1pro
   train:
-    total_num_envs: 1
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
+    reward_coef: ${algorithm.reward_coef}
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
+      fps: 15
+    num_env_subprocess: 2
+    enable_offload: True
+    enable_init_offload: False
   eval:
-    total_num_envs: 1
-    max_episode_steps: 20 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 20
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
+    num_env_subprocess: 2
 
 rollout:
   group_name: "RolloutGroup"

@@ -15,6 +15,7 @@
 import math
 import random
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -264,8 +265,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # tensor -> numpy
         inputs = tree_map(_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
-        # split & transform
-        transformed_samples = []
+        # split
+        batch_samples = []
         for i in range(batch_size):
             sample = tree_map(lambda x: x[i], inputs)
             if transpose:
@@ -282,8 +283,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 sample["prompt"] = obs["prompt"][i]
             else:
                 sample["prompt"] = "xxxx"
-            transformed_sample = self._input_transform(sample)
-            transformed_samples.append(transformed_sample)
+            batch_samples.append(sample)
+        # transform
+        with ThreadPoolExecutor(max_workers=min(len(batch_samples), 8)) as ex:
+            transformed_samples = list(ex.map(self._input_transform, batch_samples))
         # recombine
         inputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
