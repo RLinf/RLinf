@@ -509,6 +509,7 @@
    :maxdepth: 2
 
    maniskill
+   maniskill_rlt_joint
    libero
    libero_amd
    libero_ascend

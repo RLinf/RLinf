@@ -517,6 +517,7 @@ as well as reinforcement learning training examples on real robots.
    :maxdepth: 2
 
    maniskill
+   maniskill_rlt_joint
    libero
    libero_amd
    libero_ascend
