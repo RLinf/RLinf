@@ -636,6 +636,20 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
+      - name: RLT Stage2 ManiSkill joint test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export RLT_MANISKILL_JOINT_DATASET=${RLT_MANISKILL_JOINT_DATASET:-/workspace/dataset/data/sft-ci-data/rlt_maniskill_joint}
+          export RLT_MANISKILL_JOINT_NORM_STATS=${RLT_MANISKILL_JOINT_NORM_STATS:-${RLT_MANISKILL_JOINT_DATASET}/norm_stats.json}
+          export RLT_MANISKILL_JOINT_SFT_MODEL=${RLT_MANISKILL_JOINT_SFT_MODEL:-/workspace/dataset/rlt_maniskill_joint_pi05_sft}
+          export RLT_STAGE2_STUDENT_MODEL=${RLT_STAGE2_STUDENT_MODEL:-${RLT_MANISKILL_JOINT_SFT_MODEL}}
+          export RLT_STAGE1_RL_TOKEN_PATH=${RLT_STAGE1_RL_TOKEN_PATH:-/workspace/dataset/rlt_stage1_maniskill_joint/checkpoints/global_step_1/actor/rl_token/rl_token_model.pt}
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh rlt_stage2_maniskill_joint
+
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
         run: |
