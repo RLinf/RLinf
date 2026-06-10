@@ -52,6 +52,15 @@ class RelativeFrame(gym.Wrapper):
             # Homogeneous transformation matrix from reset pose's relative frame to base frame
             self.T_b_r_inv = np.zeros((4, 4))
 
+    @staticmethod
+    def _split_pose_tail(tcp_pose: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        if tcp_pose.shape[0] not in (7, 8):
+            raise ValueError(
+                "RelativeFrame expects tcp_pose shape (7,) or (8,), "
+                f"got {tcp_pose.shape}."
+            )
+        return tcp_pose[:7], tcp_pose[7:]
+
     def step(self, action: np.ndarray):
         # action is assumed to be (x, y, z, rx, ry, rz, gripper)
         # Transform action from end-effector frame to base frame
@@ -66,7 +75,8 @@ class RelativeFrame(gym.Wrapper):
             )
 
         # Update adjoint matrix
-        self.adjoint_matrix = construct_adjoint_matrix(obs["state"]["tcp_pose"])
+        pose7, _ = self._split_pose_tail(obs["state"]["tcp_pose"])
+        self.adjoint_matrix = construct_adjoint_matrix(pose7)
 
         # Transform observation to spatial frame
         transformed_obs = self.transform_observation(obs)
@@ -76,12 +86,11 @@ class RelativeFrame(gym.Wrapper):
         obs, info = self.env.reset(**kwargs)
 
         # Update adjoint matrix
-        self.adjoint_matrix = construct_adjoint_matrix(obs["state"]["tcp_pose"])
+        pose7, _ = self._split_pose_tail(obs["state"]["tcp_pose"])
+        self.adjoint_matrix = construct_adjoint_matrix(pose7)
         if self.include_relative_pose:
             # Update transformation matrix from the reset pose's relative frame to base frame
-            self.T_b_r_inv = np.linalg.inv(
-                construct_homogeneous_matrix(obs["state"]["tcp_pose"])
-            )
+            self.T_b_r_inv = np.linalg.inv(construct_homogeneous_matrix(pose7))
 
         # Transform observation to spatial frame
         return self.transform_observation(obs), info
@@ -96,13 +105,15 @@ class RelativeFrame(gym.Wrapper):
             obs["state"]["tcp_vel"] = adjoint_inv @ obs["state"]["tcp_vel"]
 
         if self.include_relative_pose:
-            T_b_o = construct_homogeneous_matrix(obs["state"]["tcp_pose"])
+            tcp_pose = obs["state"]["tcp_pose"]
+            pose7, tail = self._split_pose_tail(tcp_pose)
+            T_b_o = construct_homogeneous_matrix(pose7)
             T_r_o = self.T_b_r_inv @ T_b_o
 
             # Reconstruct transformed tcp_pose vector
             p_r_o = T_r_o[:3, 3]
             quat_r_o = R.from_matrix(T_r_o[:3, :3].copy()).as_quat()
-            obs["state"]["tcp_pose"] = np.concatenate((p_r_o, quat_r_o))
+            obs["state"]["tcp_pose"] = np.concatenate((p_r_o, quat_r_o, tail))
 
         return obs
 
@@ -130,12 +141,11 @@ class RelativeTargetFrame(RelativeFrame):
         obs, info = self.env.reset(**kwargs)
 
         # Update adjoint matrix
-        self.adjoint_matrix = construct_adjoint_matrix(self.env.target_ee_pose)
+        pose7, _ = self._split_pose_tail(self.env.target_ee_pose)
+        self.adjoint_matrix = construct_adjoint_matrix(pose7)
         if self.include_relative_pose:
             # Update transformation matrix from the reset pose's relative frame to base frame
-            self.T_b_r_inv = np.linalg.inv(
-                construct_homogeneous_matrix(self.env.target_ee_pose)
-            )
+            self.T_b_r_inv = np.linalg.inv(construct_homogeneous_matrix(pose7))
 
         # Transform observation to spatial frame
         return self.transform_observation(obs), info
