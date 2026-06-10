@@ -75,7 +75,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 
 #=======================Utility Functions=======================
@@ -755,7 +755,8 @@ unset_mirror() {
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
         unset HF_ENDPOINT
-        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf
+        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
+        unset GITHUB_PREFIX
     fi
 }
 
@@ -1153,6 +1154,12 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
+        polaris)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_polaris_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -1443,6 +1450,9 @@ install_env_only() {
         dosw1)
             install_dosw1_env
             ;;
+        polaris)
+            install_polaris_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -1593,6 +1603,24 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
     uv pip install --upgrade hydra-core==1.3.2
+}
+
+install_polaris_env() {
+    local polaris_dir
+    polaris_dir=$(clone_or_reuse_repo POLARIS_PATH "$VENV_DIR/polaris" https://github.com/RLinf/polaris.git --recurse-submodules)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+
+    uv pip install "setuptools<82"
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    uv pip install sympy==1.13.3
+    uv pip install -e "$polaris_dir"
+    
+    python - <<'EOF'
+import isaacsim
+EOF
 }
 
 install_isaaclab_env() {
