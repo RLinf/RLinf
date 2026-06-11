@@ -770,22 +770,6 @@ class EmbodiedRolloutResult:
                     last_fi["action_chunk"] = (
                         last_full_action.reshape(bsz, -1).cpu().contiguous()
                     )
-                if "ref_chunk" in last_fi:
-                    ref_chunk = last_fi["ref_chunk"].reshape(bsz, num_action_chunks, -1)
-                    ref_chunk = intervene_actions.reshape(
-                        bsz, num_action_chunks, -1
-                    ) * flags + ref_chunk * (~flags)
-                    last_fi["ref_chunk"] = ref_chunk.reshape(bsz, -1).cpu().contiguous()
-                if "next_ref_chunk" in last_fi:
-                    next_ref_chunk = last_fi["next_ref_chunk"].reshape(
-                        bsz, num_action_chunks, -1
-                    )
-                    next_ref_chunk = intervene_actions.reshape(
-                        bsz, num_action_chunks, -1
-                    ) * flags + next_ref_chunk * (~flags)
-                    last_fi["next_ref_chunk"] = (
-                        next_ref_chunk.reshape(bsz, -1).cpu().contiguous()
-                    )
                 if "source_chunk" in last_fi:
                     source_chunk = last_fi["source_chunk"].clone()
                     source_chunk = source_chunk.reshape(bsz, num_action_chunks)

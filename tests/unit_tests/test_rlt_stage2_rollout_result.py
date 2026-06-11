@@ -17,7 +17,7 @@ import torch
 from rlinf.data.embodied_io_struct import ChunkStepResult, EmbodiedRolloutResult
 
 
-def test_update_last_actions_updates_action_ref_and_sources_consistently():
+def test_update_last_actions_updates_actions_and_sources_without_rewriting_refs():
     rollout_result = EmbodiedRolloutResult()
     rollout_result.append_step_result(
         ChunkStepResult(
@@ -71,11 +71,11 @@ def test_update_last_actions_updates_action_ref_and_sources_consistently():
     )
     assert torch.equal(
         last_forward_inputs["ref_chunk"],
-        torch.tensor([[5.0, 50.0, 22.0, 220.0]], dtype=torch.float32),
+        torch.tensor([[11.0, 110.0, 22.0, 220.0]], dtype=torch.float32),
     )
     assert torch.equal(
         last_forward_inputs["next_ref_chunk"],
-        torch.tensor([[5.0, 50.0, 44.0, 440.0]], dtype=torch.float32),
+        torch.tensor([[33.0, 330.0, 44.0, 440.0]], dtype=torch.float32),
     )
     assert torch.equal(
         last_forward_inputs["source_chunk"],

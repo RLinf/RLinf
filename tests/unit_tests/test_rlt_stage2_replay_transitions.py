@@ -57,26 +57,6 @@ def _build_test_worker(*, stride: int) -> RLTStage2FSDPPolicyWorker:
     return worker
 
 
-def test_merge_ref_chunk_with_executed_actions_only_replaces_human_steps():
-    ref_chunk = np.array([1.0, 10.0, 2.0, 20.0], dtype=np.float32)
-    action_chunk = np.array([5.0, 50.0, 6.0, 60.0], dtype=np.float32)
-    source_chunk = np.array(
-        [int(TransitionSource.HUMAN), int(TransitionSource.RL)],
-        dtype=np.uint8,
-    )
-
-    merged = RLTStage2FSDPPolicyWorker._merge_ref_chunk_with_executed_actions(
-        ref_chunk,
-        action_chunk,
-        source_chunk,
-    )
-
-    np.testing.assert_allclose(
-        merged,
-        np.array([5.0, 50.0, 2.0, 20.0], dtype=np.float32),
-    )
-
-
 def test_chunk_trajectory_to_transitions_prefers_ref_chunk_over_legacy_a_tilde():
     worker = _build_test_worker(stride=0)
 
@@ -126,7 +106,7 @@ def test_chunk_trajectory_to_transitions_prefers_ref_chunk_over_legacy_a_tilde()
     )
 
 
-def test_step_trace_to_transitions_replaces_human_refs_for_current_and_next_windows():
+def test_step_trace_to_transitions_keeps_reference_chunks_for_human_windows():
     worker = _build_test_worker(stride=1)
 
     traj = Trajectory(
@@ -216,19 +196,19 @@ def test_step_trace_to_transitions_replaces_human_refs_for_current_and_next_wind
 
     np.testing.assert_allclose(
         worker.replay_buffer._ref_chunk[0],
-        np.array([1.0, 10.0, 202.0, 2002.0], dtype=np.float32),
+        np.array([101.0, 1001.0, 202.0, 2002.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
         worker.replay_buffer._next_ref_chunk[0],
-        np.array([3.0, 30.0, 404.0, 4004.0], dtype=np.float32),
+        np.array([303.0, 3003.0, 404.0, 4004.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
         worker.replay_buffer._ref_chunk[1],
-        np.array([111.0, 1111.0, 3.0, 30.0], dtype=np.float32),
+        np.array([111.0, 1111.0, 222.0, 2222.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
         worker.replay_buffer._ref_chunk[2],
-        np.array([3.0, 30.0, 404.0, 4004.0], dtype=np.float32),
+        np.array([303.0, 3003.0, 404.0, 4004.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
         worker.replay_buffer._next_ref_chunk[2],

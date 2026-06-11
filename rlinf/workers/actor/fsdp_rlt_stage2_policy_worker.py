@@ -328,40 +328,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
     def _to_numpy_uint8(tensor: torch.Tensor) -> np.ndarray:
         return tensor.detach().cpu().numpy().astype(np.uint8, copy=False)
 
-    @staticmethod
-    def _merge_ref_chunk_with_executed_actions(
-        ref_chunk: np.ndarray,
-        action_chunk: np.ndarray,
-        source_chunk: np.ndarray,
-    ) -> np.ndarray:
-        ref_chunk = np.asarray(ref_chunk, dtype=np.float32)
-        action_chunk = np.asarray(action_chunk, dtype=np.float32)
-        source_chunk = np.asarray(source_chunk, dtype=np.uint8).reshape(-1)
-        if ref_chunk.shape != action_chunk.shape:
-            raise ValueError(
-                "RLT ref/action chunk shape mismatch while merging intervention "
-                f"references: {ref_chunk.shape=} vs {action_chunk.shape=}."
-            )
-        if ref_chunk.ndim == 1:
-            chunk_len = int(source_chunk.shape[0])
-            action_dim = ref_chunk.size // chunk_len
-            ref_chunk = ref_chunk.reshape(chunk_len, action_dim)
-            action_chunk = action_chunk.reshape(chunk_len, action_dim)
-            merged = ref_chunk.copy()
-            human_mask = np.logical_or(
-                source_chunk == int(TransitionSource.HUMAN),
-                source_chunk == int(TransitionSource.MIXED),
-            )
-            merged[human_mask] = action_chunk[human_mask]
-            return merged.reshape(-1)
-        merged = ref_chunk.copy()
-        human_mask = np.logical_or(
-            source_chunk == int(TransitionSource.HUMAN),
-            source_chunk == int(TransitionSource.MIXED),
-        )
-        merged[human_mask] = action_chunk[human_mask]
-        return merged
-
     def _step_trace_to_transitions(self, traj: Trajectory) -> tuple[int, int]:
         if (
             self.replay_buffer is None
@@ -646,33 +612,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     rewards_np = self._to_numpy_float(reward_chunk)
                     intervention_np = self._to_numpy_float(intervention_chunk)
                     source_chunk_np = self._to_numpy_uint8(source_chunk)
-                    ref_chunk = self._merge_ref_chunk_with_executed_actions(
-                        ref_chunk,
-                        action_np,
-                        source_chunk_np,
-                    )
-                    next_source_chunk = torch.full(
-                        (chunk_len,),
-                        int(TransitionSource.BASE),
-                        dtype=torch.uint8,
-                        device=env_sources.device,
-                    )
-                    next_action_chunk = torch.zeros(
-                        chunk_len,
-                        action_dim,
-                        dtype=env_actions.dtype,
-                        device=env_actions.device,
-                    )
-                    if valid_end < segment_end_idx:
-                        next_end = min(valid_end + chunk_len, segment_end_idx)
-                        next_valid_len = next_end - valid_end
-                        next_action_chunk[:next_valid_len] = env_actions[valid_end:next_end]
-                        next_source_chunk[:next_valid_len] = env_sources[valid_end:next_end]
-                    next_ref_chunk = self._merge_ref_chunk_with_executed_actions(
-                        next_ref_chunk,
-                        self._to_numpy_float(next_action_chunk).reshape(-1),
-                        self._to_numpy_uint8(next_source_chunk),
-                    )
                     collection_phase_id = None
                     if collection_phase_id_all is not None:
                         phase_idx = min(start // chunk_len, collection_phase_id_all.shape[0] - 1)
