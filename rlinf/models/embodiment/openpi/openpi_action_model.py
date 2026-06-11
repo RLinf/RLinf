@@ -1418,6 +1418,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
             self.paligemma_with_expert.gemma_expert.model.forward, mode=mode, fullgraph=True
         )
-
         self.get_logprob_norm = torch.compile(self.get_logprob_norm, mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode)
+
         self.torch_compile_enabled = True
