@@ -117,8 +117,7 @@ class MultiStepRolloutWorker(Worker):
         if self.expert_model is not None:
             self.expert_model.eval()
 
-        self.enable_torch_compile = self.cfg.rollout.get("enable_torch_compile", False)
-        if self.enable_torch_compile:
+        if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
                 "torch_compile_mode", "max-autotune-no-cudagraphs"
             )
