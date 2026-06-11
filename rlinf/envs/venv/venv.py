@@ -289,6 +289,25 @@ def _worker(
                 p.send(getattr(env, data) if hasattr(env, data) else None)
             elif cmd == "setattr":
                 setattr(env.unwrapped, data["key"], data["value"])
+            elif cmd == "env_call":
+                # data: {"target": "env" | "self" | "robosuite", "method": str,
+                #        "args": list, "kwargs": dict}
+                target = data.get("target", "robosuite")
+                if target == "self":
+                    obj = env
+                elif target == "env":
+                    obj = env.env
+                elif target == "robosuite":
+                    obj = getattr(env, "env", env)
+                    while hasattr(obj, "env"):
+                        obj = obj.env
+                else:
+                    obj = env
+                method_name = data["method"]
+                args = data.get("args", [])
+                kwargs = data.get("kwargs", {})
+                ret = getattr(obj, method_name)(*args, **kwargs)
+                p.send(ret)
             elif cmd == "check_success":
                 p.send(env.check_success())
             elif cmd == "get_segmentation_of_interest":
@@ -395,6 +414,35 @@ class SubprocEnvWorker(EnvWorker):
 
     def set_env_attr(self, key: str, value: Any) -> None:
         self.parent_remote.send(["setattr", {"key": key, "value": value}])
+
+    def env_call(self, method: str, args: list = None, kwargs: dict = None,
+                 target: str = "robosuite") -> Any:
+        """Invoke a method on the worker's env (or one of its unwrapped layers).
+
+        target='robosuite' walks env.env.env... down to the deepest robosuite
+        MujocoEnv; 'env' uses one-level unwrap; 'self' uses the outermost env.
+        """
+        self.parent_remote.send([
+            "env_call",
+            {
+                "target": target,
+                "method": method,
+                "args": args or [],
+                "kwargs": kwargs or {},
+            },
+        ])
+        return self.parent_remote.recv()
+
+    def get_camera_meta(self, camera_name: str = "agentview",
+                        height: int = 256, width: int = 256) -> Any:
+        """Fetch static camera calibration (intrinsics, cam->world extrinsics,
+        depth near/far) for the named camera. Handled by the libero worker
+        loop, which has access to the robosuite sim."""
+        self.parent_remote.send([
+            "get_camera_meta",
+            {"camera_name": camera_name, "height": height, "width": width},
+        ])
+        return self.parent_remote.recv()
 
     def _decode_obs(self) -> Union[dict, tuple, np.ndarray]:
         def decode_obs(
