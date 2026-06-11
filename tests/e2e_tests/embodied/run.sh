@@ -4,7 +4,14 @@ set -x
 tabs 4
 
 CONFIG=$1
-BACKEND=${2:-"egl"}
+# check if $2 is a hydra override
+if [[ "${2:-}" == +* ]]; then
+    BACKEND="egl"
+    SHIFT_COUNT=1
+else
+    BACKEND=${2:-"egl"}
+    SHIFT_COUNT=2
+fi
 
 export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
@@ -34,5 +41,5 @@ else
     echo "Evaluation Mode: Standard LIBERO"
 fi
 
-shift 2
+shift $SHIFT_COUNT
 python ${REPO_PATH}/examples/embodiment/train_embodied_agent.py --config-path ${REPO_PATH}/tests/e2e_tests/embodied --config-name ${CONFIG} $@
