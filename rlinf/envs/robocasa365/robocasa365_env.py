@@ -280,8 +280,6 @@ class Robocasa365Env(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
         self.seed_strategy = str(cfg.get("seed_strategy", "worker_offset"))
-        self.warmup_reset_on_init = bool(cfg.get("warmup_reset_on_init", False))
-
         self._generator = np.random.default_rng(seed=self.seed)
 
         self.task_source = str(cfg.get("task_source", "dataset_registry"))
@@ -345,7 +343,6 @@ class Robocasa365Env(gym.Env):
                 "task_sampling_strategy": self.task_sampling_strategy,
                 "rotate_tasks_on_auto_reset": self.rotate_tasks_on_auto_reset,
                 "seed_strategy": self.seed_strategy,
-                "warmup_reset_on_init": self.warmup_reset_on_init,
                 "is_eval": bool(self.cfg.get("is_eval", False)),
             },
         )
@@ -725,7 +722,6 @@ class Robocasa365Env(gym.Env):
         )
         robot_name = self.cfg.robot_name
         env_split = self.split
-        warmup_reset_on_init = self.warmup_reset_on_init
         has_renderer = bool(self.cfg.get("has_renderer", False))
         env_kwargs = {
             "camera_depths": bool(self.cfg.get("camera_depths", False)),
@@ -754,7 +750,6 @@ class Robocasa365Env(gym.Env):
                     "render_camera": render_camera,
                     "robot": robot_name,
                     "extra_env_kwargs": env_kwargs,
-                    "warmup_reset_on_init": warmup_reset_on_init,
                 },
             )
 
@@ -766,7 +761,6 @@ class Robocasa365Env(gym.Env):
                 height=camera_heights,
                 robot=robot_name,
                 render_camera_name=render_camera,
-                warmup=warmup_reset_on_init,
                 render_onscreen=has_renderer,
                 extra_env_kwargs=env_kwargs,
                 split_name=env_split,
@@ -789,8 +783,6 @@ class Robocasa365Env(gym.Env):
                     common_kwargs["render_camera"] = render_camera_name
 
                 env = create_env(**common_kwargs)
-                if warmup:
-                    env.reset()
 
                 return env
 

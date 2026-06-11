@@ -96,7 +96,6 @@ env:
     total_num_envs: 18 #Atomic-Seen has 18 tasks，Composite-Seen has 16 tasks, Composite-Unseen has 16 tasks
     seed: 7
     seed_strategy: openpi
-    warmup_reset_on_init: True
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
