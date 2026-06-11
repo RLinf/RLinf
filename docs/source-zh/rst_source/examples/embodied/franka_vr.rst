@@ -123,11 +123,13 @@ RLinf consumer 侧则连接到 publisher 所在机器：
 3. 安装 RLinf 侧依赖
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-运行 PICO intervention 的 RLinf 环境需要 ``pyzmq``：
+运行 PICO intervention 的 RLinf 环境请直接使用 ``franka-vr`` env 安装。
+该 env 包含基础 ``franka`` 真机依赖，并额外安装 VR / PICO 链路所需的 ``pyzmq``：
 
 .. code-block:: bash
 
-   pip install pyzmq
+   bash requirements/install.sh embodied --env franka-vr
+   source .venv/bin/activate
 
 如果使用 Ray，请在 ``ray start`` **之前** 完成安装并 source 对应环境。
 
@@ -136,6 +138,35 @@ RLinf consumer 侧则连接到 publisher 所在机器：
    Ray 会在 ``ray start`` 时捕获 Python 解释器和环境变量。若 ``pyzmq``、
    ROS 环境或 ``PYTHONPATH`` 在 ``ray start`` 之后才配置，worker 进程可能无法导入
    ``PicoIntervention`` 或无法连接 ZeroMQ。
+
+
+4. 验证 PICO 数据流
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+启动 VR 数据 publisher 后，可以在运行 ``PicoIntervention`` 的节点上先执行
+RLinf 内置检查脚本，确认已经能收到 PICO / ZeroMQ 数据：
+
+.. code-block:: bash
+
+   python toolkits/realworld_check/test_pico_data.py \
+       --zmq-addr ipc:///tmp/vr_data.ipc
+
+如果 publisher 和 RLinf env worker 跨机器运行，请把 ``--zmq-addr`` 改成
+YAML 中 ``pico.zmq_addr`` 使用的 TCP 地址：
+
+.. code-block:: bash
+
+   python toolkits/realworld_check/test_pico_data.py \
+       --zmq-addr tcp://<vr_publisher_ip>:<port>
+
+你应该看到持续更新的输出，类似于：
+
+.. code-block:: text
+
+   [000012] recv_rate=79.8Hz | headset: pos=[0.120 1.430 0.210] quat=[0.000 0.707 0.000 0.707] | right: pos=[0.320 1.120 0.850] quat=[0.010 0.690 0.020 0.724] grip=0.000 trigger=0.000 | buttons_active=none
+
+如果输出持续刷新，就说明 RLinf 侧已经能收到 PICO 数据流；移动手柄、按下
+``grip`` / ``trigger`` / ``A`` / ``B`` 时，对应数值或按键状态也会随数据变化。
 
 
 YAML 配置说明
@@ -159,13 +190,6 @@ YAML 配置说明
          rotation_scale: 1.0
          calibration:
            button: "trigger"
-
-
-.. note::
-
-   如果当前分支尚未在 wrapper 构建逻辑中接入 ``use_pico``，需要先确认
-   ``rlinf.envs.realworld.common.wrappers.apply`` 会在 ``use_pico=True`` 时创建
-   ``PicoIntervention``。否则 YAML 中设置 ``use_pico`` 不会生效。
 
 
 夹爪配置
@@ -218,11 +242,12 @@ YAML 配置说明
 ---------------------
 
 1. 在 Franka 控制节点上完成 ROS、catkin workspace、RLinf venv 和 ``PYTHONPATH`` 配置。
-2. 在启动 Ray 前确认 ``pyzmq`` 已安装。
+2. 在启动 Ray 前确认已经安装并 source ``franka-vr`` 环境。
 3. 启动 Ray 集群。单节点或多节点步骤与 :doc:`franka` 相同。
 4. 启动 PICO / XRoboToolkit PC Service，并确认头显和手柄已连接。
 5. 启动 VR 数据 publisher。
-6. 在 Ray head 节点启动采集脚本：
+6. 首次运行或修改 ZeroMQ 地址后，运行 ``test_pico_data.py`` 确认 PICO 数据可达。
+7. 在 Ray head 节点启动采集脚本，并确认采集脚本已经接入 ``PicoIntervention``。
 
 .. code-block:: bash
 
@@ -271,6 +296,7 @@ VR 操作步骤
 
 - 确认 XRoboToolkit PC Service / runService 正在运行。
 - 确认 VR publisher 进程没有退出。
+- 先运行 ``test_pico_data.py``，确认 RLinf 侧能直接收到 PICO 数据。
 - 确认 ``pico.zmq_addr`` 与 publisher 地址匹配。
 - TCP 场景下确认可以从 RLinf env worker 节点访问 publisher IP 和端口。
 

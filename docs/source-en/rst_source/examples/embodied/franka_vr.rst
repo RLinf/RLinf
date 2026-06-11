@@ -132,11 +132,14 @@ The RLinf consumer connects to the publisher machine:
 3. Install RLinf-side dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The RLinf environment that runs the PICO intervention needs ``pyzmq``:
+Install the RLinf environment that runs the PICO intervention with the
+``franka-vr`` env. It includes the base ``franka`` real-world dependencies
+and additionally installs ``pyzmq`` for the VR / PICO pipeline:
 
 .. code-block:: bash
 
-   pip install pyzmq
+   bash requirements/install.sh embodied --env franka-vr
+   source .venv/bin/activate
 
 If you use Ray, install it and source the corresponding environment **before**
 running ``ray start``.
@@ -147,6 +150,37 @@ running ``ray start``.
    ``ray start`` time. If ``pyzmq``, ROS environment variables, or
    ``PYTHONPATH`` are configured after ``ray start``, worker processes may
    fail to import ``PicoIntervention`` or connect to ZeroMQ.
+
+
+4. Verify the PICO data stream
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After starting the VR data publisher, run the built-in RLinf check script on
+the node that will run ``PicoIntervention`` to confirm that PICO / ZeroMQ data
+is being received:
+
+.. code-block:: bash
+
+   python toolkits/realworld_check/test_pico_data.py \
+       --zmq-addr ipc:///tmp/vr_data.ipc
+
+For cross-machine publisher and RLinf env-worker setups, replace
+``--zmq-addr`` with the TCP address used by ``pico.zmq_addr`` in YAML:
+
+.. code-block:: bash
+
+   python toolkits/realworld_check/test_pico_data.py \
+       --zmq-addr tcp://<vr_publisher_ip>:<port>
+
+You should see continuously updating output like:
+
+.. code-block:: text
+
+   [000012] recv_rate=79.8Hz | headset: pos=[0.120 1.430 0.210] quat=[0.000 0.707 0.000 0.707] | right: pos=[0.320 1.120 0.850] quat=[0.010 0.690 0.020 0.724] grip=0.000 trigger=0.000 | buttons_active=none
+
+If the output keeps refreshing, RLinf can receive the PICO data stream. When
+you move the controller or press ``grip`` / ``trigger`` / ``A`` / ``B``, the
+corresponding values or button states should update with the incoming data.
 
 
 YAML Configuration
@@ -170,14 +204,6 @@ The key configuration is:
          rotation_scale: 1.0
          calibration:
            button: "trigger"
-
-
-.. note::
-
-   If the current branch has not wired ``use_pico`` into the wrapper builder,
-   first confirm that ``rlinf.envs.realworld.common.wrappers.apply`` creates
-   ``PicoIntervention`` when ``use_pico=True``. Otherwise, setting
-   ``use_pico`` in YAML will not take effect.
 
 
 Gripper Configuration
@@ -245,13 +271,17 @@ Startup Order
 
 1. On the Franka controller node, configure ROS, the catkin workspace, the
    RLinf virtual environment, and ``PYTHONPATH``.
-2. Confirm that ``pyzmq`` is installed before starting Ray.
+2. Confirm that the ``franka-vr`` environment is installed and sourced before
+   starting Ray.
 3. Start the Ray cluster. Single-node and multi-node startup follow the same
    steps as :doc:`franka`.
 4. Start the PICO / XRoboToolkit PC Service and confirm that the headset and
    controller are connected.
 5. Start the VR data publisher.
-6. On the Ray head node, start data collection:
+6. On the first run, or after changing the ZeroMQ address, run
+   ``test_pico_data.py`` to confirm that PICO data is reachable.
+7. On the Ray head node, start data collection, and confirm that the data
+   collection script has integrated ``PicoIntervention``.
 
 .. code-block:: bash
 
@@ -305,6 +335,8 @@ Troubleshooting
 
 - Confirm that XRoboToolkit PC Service / runService is running.
 - Confirm that the VR publisher process has not exited.
+- Run ``test_pico_data.py`` first to confirm that the RLinf side can receive
+  PICO data directly.
 - Confirm that ``pico.zmq_addr`` matches the publisher address.
 - For TCP setups, confirm that the publisher IP and port are reachable from
   the RLinf env worker node.

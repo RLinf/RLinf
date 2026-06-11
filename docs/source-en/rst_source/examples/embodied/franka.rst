@@ -425,7 +425,8 @@ while the deadman control is held.
 - Install and start the PICO / XRoboToolkit services.
 - Start the VR data publisher and confirm that its ZeroMQ address is reachable
   from the Franka controller node.
-- Install ``pyzmq`` in the RLinf environment that runs ``PicoIntervention``.
+- Install the RLinf environment that runs ``PicoIntervention`` with
+  ``bash requirements/install.sh embodied --env franka-vr``.
 - See :doc:`franka_vr` for detailed installation, network, and operation
   instructions.
 

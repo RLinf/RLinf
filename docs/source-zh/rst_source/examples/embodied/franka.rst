@@ -424,7 +424,8 @@ VR 数据由外部 publisher 通过 ZeroMQ 发布，RLinf 中的 ``PicoIntervent
 
 - 安装并启动 PICO / XRoboToolkit 相关服务。
 - 启动 VR 数据 publisher，并确认 ZeroMQ 地址可从 Franka 控制节点访问。
-- 在运行 ``PicoIntervention`` 的 RLinf 环境中安装 ``pyzmq``。
+- 使用 ``bash requirements/install.sh embodied --env franka-vr`` 安装运行
+  ``PicoIntervention`` 的 RLinf 环境。
 - 详细安装、网络与操作说明请参考 :doc:`franka_vr`。
 
 **配置**

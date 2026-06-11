@@ -276,7 +276,7 @@ Full Argument Reference
    * - ``--env <name>``
      - Environment to install alongside the model. Required for most embodied models.
        Supported: ``behavior``, ``maniskill_libero``, ``libero``, ``metaworld``, ``calvin``,
-       ``isaaclab``, ``robocasa``, ``franka``, ``franka-dexhand``, ``frankasim``, ``robotwin``,
+       ``isaaclab``, ``robocasa``, ``franka``, ``franka-vr``, ``franka-dexhand``, ``frankasim``, ``robotwin``,
        ``habitat``, ``opensora``, ``wan``, ``xsquare_turtle2``, ``liberopro``, ``liberoplus``,
        ``roboverse``, ``embodichain``, ``d4rl``, ``dosw1``, ``gim_arm``, ``dummy``.
    * - ``--venv <dir>``
