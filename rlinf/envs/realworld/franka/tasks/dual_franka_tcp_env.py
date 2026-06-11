@@ -38,17 +38,17 @@ PROPRIO_DIM_PER_ARM = 9  # xyz(3) + rot6d(6); gripper has its own slot
 
 
 @dataclass
-class DualFrankaTcpRobotConfig(DualFrankaRobotConfig):
-    """Config for :class:`DualFrankaTcpEnv`."""
+class DualFrankaTCPRobotConfig(DualFrankaRobotConfig):
+    """Config for :class:`DualFrankaTCPEnv`."""
 
     # Only "rot6d" is implemented; other values raise NotImplementedError.
     rotation_repr: str = "rot6d"
 
 
-class DualFrankaTcpEnv(DualFrankaEnv):
+class DualFrankaTCPEnv(DualFrankaEnv):
     """Dual-arm Franka env with TCP waypoint actions (rotation_repr-selected)."""
 
-    CONFIG_CLS: type[DualFrankaTcpRobotConfig] = DualFrankaTcpRobotConfig
+    CONFIG_CLS: type[DualFrankaTCPRobotConfig] = DualFrankaTCPRobotConfig
 
     PER_ARM_ACTION_DIM = ACTION_DIM_PER_ARM
     GRIPPER_IDX_IN_ARM = 9  # xyz(3) + rot6d(6) then gripper
@@ -67,7 +67,7 @@ class DualFrankaTcpEnv(DualFrankaEnv):
     def _init_action_obs_spaces(self):
         if self.config.rotation_repr != "rot6d":
             raise NotImplementedError(
-                f"DualFrankaTcpEnv currently only supports rotation_repr='rot6d', "
+                f"DualFrankaTCPEnv currently only supports rotation_repr='rot6d', "
                 f"got {self.config.rotation_repr!r}."
             )
         self._cartesian_safety_boxes()
@@ -114,7 +114,6 @@ class DualFrankaTcpEnv(DualFrankaEnv):
                 ),
             }
         )
-        self._base_observation_space = copy.deepcopy(self.observation_space)
 
     # --------------------------------------------------------- step dispatch
 
@@ -145,7 +144,7 @@ class DualFrankaTcpEnv(DualFrankaEnv):
 
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
-            return self._base_observation_space.sample()
+            return self.observation_space.sample()
         frames = self._get_camera_frames()
 
         state = {

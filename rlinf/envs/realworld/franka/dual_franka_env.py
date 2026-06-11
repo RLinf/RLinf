@@ -12,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-arm Franka env driven through ``FrankyController`` (libfranka).
-
-Abstract base; concrete subclasses (Joint, Rot6d) set ``PER_ARM_ACTION_DIM``
-/ ``GRIPPER_IDX_IN_ARM`` and implement ``_init_action_obs_spaces`` +
-``_get_observation`` + ``_dispatch_arm_motion``.
-"""
+"""Dual-arm Franka env driven through ``FrankyController`` (libfranka)."""
 
 from __future__ import annotations
 

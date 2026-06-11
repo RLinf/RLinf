@@ -33,7 +33,7 @@ from rlinf.envs.realworld.franka.tasks.dual_franka_joint_env import (
     DualFrankaJointEnv as DualFrankaJointEnv,
 )
 from rlinf.envs.realworld.franka.tasks.dual_franka_tcp_env import (
-    DualFrankaTcpEnv as DualFrankaTcpEnv,
+    DualFrankaTCPEnv as DualFrankaTCPEnv,
 )
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
@@ -82,7 +82,7 @@ def create_dual_franka_tcp_env(
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
-    env = DualFrankaTcpEnv(
+    env = DualFrankaTCPEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
@@ -166,7 +166,7 @@ register(
 )
 
 register(
-    id="DualFrankaTcpEnv-v1",
+    id="DualFrankaTCPEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_tcp_env",
 )
 

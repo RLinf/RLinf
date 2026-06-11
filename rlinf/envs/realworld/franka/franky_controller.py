@@ -49,23 +49,16 @@ _JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
 
-def _envf(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return float(raw)
-
-
-_CART_TRANS_STIFFNESS = _envf("RLINF_CART_K_T", 1000.0)  # N/m
-_CART_ROT_STIFFNESS = _envf("RLINF_CART_K_R", 50.0)  # Nm/rad
-_CART_MAX_DELTA_TAU = _envf("RLINF_CART_MAX_DTAU", 0.3)  # Nm / 1 kHz cycle
-_CART_TRANS_ERROR_CLIP_M = _envf("RLINF_CART_ERR_CLIP_M", 0.05)  # m
-_CART_ROT_ERROR_CLIP_RAD = _envf("RLINF_CART_ERR_CLIP_RAD", 0.3)  # rad
-_CART_GAINS_TC = _envf("RLINF_CART_GAINS_TC", 0.1)  # s
+_CART_TRANS_STIFFNESS = float(os.environ.get("RLINF_CART_K_T", 1000.0))  # N/m
+_CART_ROT_STIFFNESS = float(os.environ.get("RLINF_CART_K_R", 50.0))  # Nm/rad
+_CART_MAX_DELTA_TAU = float(os.environ.get("RLINF_CART_MAX_DTAU", 0.3))  # Nm / 1 kHz cycle
+_CART_TRANS_ERROR_CLIP_M = float(os.environ.get("RLINF_CART_ERR_CLIP_M", 0.05))  # m
+_CART_ROT_ERROR_CLIP_RAD = float(os.environ.get("RLINF_CART_ERR_CLIP_RAD", 0.3))  # rad
+_CART_GAINS_TC = float(os.environ.get("RLINF_CART_GAINS_TC", 0.1))  # s
 
 # Per-call slew limit so a single-frame dataset jump becomes a ramp.
-_CART_MAX_STEP_M = _envf("RLINF_CART_MAX_STEP_M", 0.03)  # m / call
-_CART_MAX_STEP_RAD = _envf("RLINF_CART_MAX_STEP_RAD", 0.15)  # rad / call
+_CART_MAX_STEP_M = float(os.environ.get("RLINF_CART_MAX_STEP_M", 0.03))  # m / call
+_CART_MAX_STEP_RAD = float(os.environ.get("RLINF_CART_MAX_STEP_RAD", 0.15))  # rad / call
 
 _DYNAMICS_FACTOR = 0.2
 

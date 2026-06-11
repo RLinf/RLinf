@@ -18,6 +18,10 @@ import threading
 import time
 from collections import deque
 
+from rlinf.utils.logging import get_logger
+
+_logger = get_logger()
+
 
 class KeyboardListener:
     """Headless keyboard listener backed by Linux evdev input devices."""
@@ -171,7 +175,18 @@ class KeyboardListener:
                                 self.latest_data["key"] = None
             except OSError as exc:
                 if exc.errno != errno.ENODEV:
+                    _logger.error(
+                        "Keyboard device %s read failed (errno=%s): %s",
+                        device_path,
+                        exc.errno,
+                        exc,
+                    )
                     raise
+                _logger.warning(
+                    "Keyboard device %s disconnected (errno=ENODEV); "
+                    "reopening until it returns.",
+                    device_path,
+                )
                 with self.state_lock:
                     self.latest_data["key"] = None
                 try:
@@ -186,6 +201,7 @@ class KeyboardListener:
                         break
                     except (FileNotFoundError, OSError):
                         continue
+                _logger.info("Keyboard device %s reopened.", device_path)
 
     def _event_to_key(self, key_code: int) -> str | None:
         key_name = self._ecodes.bytype[self._ecodes.EV_KEY].get(key_code)

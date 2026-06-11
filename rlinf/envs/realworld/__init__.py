@@ -22,8 +22,8 @@ from .franka.tasks.dual_franka_joint_env import (
     DualFrankaJointRobotConfig,
 )
 from .franka.tasks.dual_franka_tcp_env import (
-    DualFrankaTcpEnv,
-    DualFrankaTcpRobotConfig,
+    DualFrankaTCPEnv,
+    DualFrankaTCPRobotConfig,
 )
 from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
 from .gim_arm import tasks as gim_arm_tasks
@@ -37,8 +37,8 @@ __all__ = [
     "DualFrankaEnv",
     "DualFrankaJointEnv",
     "DualFrankaJointRobotConfig",
-    "DualFrankaTcpEnv",
-    "DualFrankaTcpRobotConfig",
+    "DualFrankaTCPEnv",
+    "DualFrankaTCPRobotConfig",
     "DualFrankaRobotConfig",
     "DOSW1Config",
     "DOSW1Env",

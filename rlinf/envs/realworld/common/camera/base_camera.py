@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import queue
 import threading
 import time
@@ -22,7 +21,9 @@ from typing import Optional
 
 import numpy as np
 
-_logger = logging.getLogger(__name__)
+from rlinf.utils.logging import get_logger
+
+_logger = get_logger()
 
 
 @dataclass

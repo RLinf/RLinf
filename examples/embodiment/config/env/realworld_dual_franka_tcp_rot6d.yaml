@@ -27,13 +27,13 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/eval
 
 init_params:
-  id: "DualFrankaTcpEnv-v1"
+  id: "DualFrankaTCPEnv-v1"
   num_envs: null
 
 override_cfg:
   is_dummy: false
   task_description: "dual arm TCP-rot6d manipulation task"
-  # Only "rot6d" is currently implemented in DualFrankaTcpEnv.
+  # Only "rot6d" is currently implemented in DualFrankaTCPEnv.
   rotation_repr: rot6d
   max_num_steps: 300
   # Only [2] (gripper channel) is consumed; [0] / [1] are Cartesian-only

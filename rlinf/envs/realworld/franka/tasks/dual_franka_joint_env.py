@@ -85,7 +85,6 @@ class DualFrankaJointEnv(DualFrankaEnv):
         self.action_space = gym.spaces.Box(act_low, act_high)
 
         self.observation_space = self._build_observation_space(joint_position_dim=2 * 7)
-        self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def _dispatch_arm_motion(
         self,
@@ -128,7 +127,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
 
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
-            return self._base_observation_space.sample()
+            return self.observation_space.sample()
         frames = self._get_camera_frames()
 
         state = {
