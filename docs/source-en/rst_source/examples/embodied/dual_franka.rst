@@ -114,6 +114,42 @@ Install GELLO dependencies on ``node 0`` by following :doc:`franka_gello`.
 The two GELLO leaders must stay local to ``node 0``; do not route their
 1 kHz stream over the LAN.
 
+Real-time prerequisites
+~~~~~~~~~~~~~~~~~~~~~~~
+
+``franka-franky`` uses franky/libfranka to communicate with each Franka at
+1 kHz. The RLinf installer installs runtime dependencies only; configure the
+PREEMPT_RT kernel and real-time permissions according to the official `Franka
+real-time kernel guide
+<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
+
+Run this example on each workstation that directly communicates with a Franka
+before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
+``<ROBOT_IP>`` with ``LEFT_ROBOT_IP`` on ``node 0`` or ``RIGHT_ROBOT_IP`` on
+``node 1``.
+
+.. code-block:: bash
+
+   # Per-boot tuning.
+   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+       echo performance > "$g"
+   done'
+   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+   sudo ethtool -C <FRANKA_NIC> rx-usecs 0 tx-usecs 0 2>/dev/null || true
+
+   # Optional: keep the RT scheduling budget setting after reboot.
+   echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
+
+   # Check realtime permissions and the robot link before running RLinf.
+   uname -a | grep -o PREEMPT_RT
+   ulimit -r
+   ulimit -l
+   sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
+   ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
+
+``ulimit -r`` should report ``99`` or ``unlimited``; ``ulimit -l`` should report
+``unlimited``. Re-apply the per-boot tuning after every workstation reboot.
+
 Training node
 ~~~~~~~~~~~~~
 

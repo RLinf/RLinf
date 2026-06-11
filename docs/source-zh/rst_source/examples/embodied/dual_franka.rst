@@ -104,6 +104,41 @@ ID 和模型 checkpoint。
 按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应
 保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
 
+实时性前提
+~~~~~~~~~~
+
+``franka-franky`` 通过 franky/libfranka 与每台 Franka 进行 1 kHz 通信。
+RLinf 安装脚本只安装运行依赖；PREEMPT_RT 内核与实时权限请按 Franka 官方
+`实时内核文档
+<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_
+配置。
+
+启动 Ray 前，在每台直接与 Franka 通信的工作站上执行以下示例。将
+``<FRANKA_NIC>`` 替换为机器人专用网卡；``<ROBOT_IP>`` 在 ``node 0`` 上使用
+``LEFT_ROBOT_IP``，在 ``node 1`` 上使用 ``RIGHT_ROBOT_IP``。
+
+.. code-block:: bash
+
+   # 每次开机后重新执行。
+   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+       echo performance > "$g"
+   done'
+   sudo sysctl -w kernel.sched_rt_runtime_us=-1
+   sudo ethtool -C <FRANKA_NIC> rx-usecs 0 tx-usecs 0 2>/dev/null || true
+
+   # 可选：让 RT 调度预算设置跨重启持久化。
+   echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/99-franka-rt.conf
+
+   # 启动 RLinf 前检查实时权限和机器人链路。
+   uname -a | grep -o PREEMPT_RT
+   ulimit -r
+   ulimit -l
+   sudo cyclictest -p 80 -t 4 -i 1000 -l 300000 -m
+   ping -c 1000 -i 0.001 <ROBOT_IP> | tail -3
+
+``ulimit -r`` 应为 ``99`` 或 ``unlimited``；``ulimit -l`` 应为
+``unlimited``。每次重启机器人工作站后，都需要重新执行每次开机后的调优命令。
+
 训练节点
 ~~~~~~~~
 
