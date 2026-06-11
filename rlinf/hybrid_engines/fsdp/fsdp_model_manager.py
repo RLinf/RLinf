@@ -294,6 +294,20 @@ class FSDPModelManager:
         self.model = self._strategy.wrap_model(
             model=module, device_mesh=self._device_mesh
         )
+        
+        # Apply MixedPrecisionWrapper AFTER FSDP wrapping so hooks fire on
+        # FSDP-managed params (FlatParameter for FSDP1, DTensor for FSDP2).
+        if True:
+            model = MixedPrecisionWrapper(
+                model,
+                compute_dtype=torch.bfloat16,
+                keep_master_weights_on_cpu=True,
+                stream_grads_to_cpu=True,
+            )
+            if is_main:
+                logging.info(
+                    f"MixedPrecisionWrapper: master_cpu={master_cpu}, stream_grads={stream_grads}"
+                )
 
         self._strategy.load_hf_checkpoint_to_fsdp2_model(
             model=self.model,
@@ -301,6 +315,8 @@ class FSDPModelManager:
             device_mesh=self._device_mesh,
             dtype=self.torch_dtype,
         )
+        
+        self._strategy.debug_fsdp2_param_memory(self.model, self.torch_dtype)
         
         self.optimizer = self.build_optimizer(
             model=self.model, enable_critic_warmup=self.critic_warmup_steps > 0

@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import time
+import subprocess
 from functools import partial
 from typing import Optional
 
@@ -141,6 +143,267 @@ def compute_rollout_train_kl(
     recomputed_logprobs = m_batch["recomputed_logprobs"]
     kl = torch.abs(recomputed_logprobs - rollout_logprobs)
     return masked_mean(kl, loss_mask)
+
+
+def _get_device_type():
+    if hasattr(torch, "npu"):
+        try:
+            import torch_npu  # noqa: F401
+            if torch.npu.is_available():
+                return "npu"
+        except Exception:
+            pass
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+def _get_device_api(device_type):
+    if device_type == "npu":
+        return torch.npu
+    if device_type == "cuda":
+        return torch.cuda
+    return None
+
+
+def _gib(x):
+    return x / 1024**3
+
+
+def _sync_device(device_type):
+    api = _get_device_api(device_type)
+    if api is not None:
+        try:
+            api.synchronize()
+        except Exception:
+            pass
+
+
+def _reset_peak_mem(device_type):
+    api = _get_device_api(device_type)
+    if api is not None:
+        try:
+            api.reset_peak_memory_stats()
+        except Exception:
+            pass
+
+
+def _mem_report(tag, rank=None, log_all_ranks=False, sync=True):
+    device_type = _get_device_type()
+    api = _get_device_api(device_type)
+
+    if rank is None:
+        rank = int(os.environ.get("RANK", "0"))
+
+    if not log_all_ranks and rank != 0:
+        return
+
+    if sync:
+        _sync_device(device_type)
+
+    if api is None:
+        print(f"[BWD_MEM][rank={rank}] {tag}: no cuda/npu memory api", flush=True)
+        return
+
+    def safe_call(name):
+        try:
+            return getattr(api, name)()
+        except Exception:
+            return -1
+
+    alloc = safe_call("memory_allocated")
+    reserved = safe_call("memory_reserved")
+    max_alloc = safe_call("max_memory_allocated")
+    max_reserved = safe_call("max_memory_reserved")
+
+    print(
+        f"[BWD_MEM][rank={rank}] {tag}: "
+        f"alloc={_gib(alloc):.3f} GiB, "
+        f"reserved={_gib(reserved):.3f} GiB, "
+        f"max_alloc={_gib(max_alloc):.3f} GiB, "
+        f"max_reserved={_gib(max_reserved):.3f} GiB",
+        flush=True,
+    )
+
+
+def _get_submodule_by_path(model, path):
+    cur = model
+    for part in path.split("."):
+        if not hasattr(cur, part):
+            return None
+        cur = getattr(cur, part)
+    return cur
+
+
+def _find_transformer_layers(model):
+    """
+    尽量兼容：
+      - AutoModel: model.layers
+      - AutoModelForCausalLM: model.model.layers
+      - Qwen/LLaMA 类结构
+      - 某些 wrapper: module.model.layers / base_model.model.layers
+    """
+    candidate_paths = [
+        "layers",
+        "h",
+        "blocks",
+        "model.layers",
+        "model.h",
+        "model.blocks",
+        "model.model.layers",
+        "base_model.layers",
+        "base_model.model.layers",
+        "module.layers",
+        "module.model.layers",
+        "transformer.h",
+        "transformer.blocks",
+    ]
+
+    for path in candidate_paths:
+        obj = _get_submodule_by_path(model, path)
+        if obj is not None and isinstance(obj, torch.nn.ModuleList):
+            return path, obj
+
+    # fallback：找名字像 decoder layer 的模块
+    rows = []
+    for name, mod in model.named_modules():
+        cls = mod.__class__.__name__.lower()
+        if (
+            "decoderlayer" in cls
+            or "transformerlayer" in cls
+            or "qwen" in cls and "layer" in cls
+            or "llama" in cls and "layer" in cls
+        ):
+            rows.append((name, mod))
+
+    if rows:
+        return "fallback_named_modules", rows
+
+    raise RuntimeError("Cannot find transformer layers in self.model")
+
+
+def install_backward_memory_hooks(
+    model,
+    *,
+    hook_every=1,
+    log_all_ranks=False,
+    reset_peak_before_backward=True,
+    include_param_grad_hooks=False,
+    max_param_hooks_per_layer=2,
+):
+    """
+    返回 handles，训练结束后需要 remove。
+
+    hook_every:
+      每隔多少层打一次 hook。想精确定位就设 1。
+      层很多、日志太多时可以设 4/8。
+
+    include_param_grad_hooks:
+      是否额外给每层前几个参数挂 Tensor grad hook。
+      这个日志会更多，但可以看到 grad 具体在哪个参数附近 ready。
+    """
+    rank = int(os.environ.get("RANK", "0"))
+    handles = []
+
+    if reset_peak_before_backward:
+        _reset_peak_mem(_get_device_type())
+
+    layer_path, layers = _find_transformer_layers(model)
+
+    if rank == 0 or log_all_ranks:
+        if isinstance(layers, torch.nn.ModuleList):
+            print(
+                f"[BWD_HOOK][rank={rank}] found layers at {layer_path}, "
+                f"num_layers={len(layers)}, hook_every={hook_every}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[BWD_HOOK][rank={rank}] found fallback layers, "
+                f"num_layers={len(layers)}, hook_every={hook_every}",
+                flush=True,
+            )
+
+    def need_hook(i):
+        return hook_every > 0 and (i % hook_every == 0)
+
+    def make_bwd_pre(name):
+        def hook(module, grad_output):
+            _mem_report(f"BWD_PRE  {name}", rank=rank, log_all_ranks=log_all_ranks)
+        return hook
+
+    def make_bwd_post(name):
+        def hook(module, grad_input, grad_output):
+            _mem_report(f"BWD_POST {name}", rank=rank, log_all_ranks=log_all_ranks)
+        return hook
+
+    def make_param_grad_hook(name):
+        def hook(grad):
+            _mem_report(
+                f"PARAM_GRAD_READY {name} "
+                f"grad_shape={tuple(grad.shape)} grad_dtype={grad.dtype} grad_device={grad.device}",
+                rank=rank,
+                log_all_ranks=log_all_ranks,
+            )
+            return grad
+        return hook
+
+    if isinstance(layers, torch.nn.ModuleList):
+        iterable = [(f"layer.{i}", layer) for i, layer in enumerate(layers)]
+    else:
+        iterable = [(name, mod) for name, mod in layers]
+
+    for idx, (name, layer) in enumerate(iterable):
+        if not need_hook(idx):
+            continue
+
+        try:
+            handles.append(layer.register_full_backward_pre_hook(make_bwd_pre(name)))
+        except Exception as e:
+            if rank == 0 or log_all_ranks:
+                print(f"[BWD_HOOK][rank={rank}] failed pre hook {name}: {e}", flush=True)
+
+        try:
+            handles.append(layer.register_full_backward_hook(make_bwd_post(name)))
+        except Exception as e:
+            if rank == 0 or log_all_ranks:
+                print(f"[BWD_HOOK][rank={rank}] failed post hook {name}: {e}", flush=True)
+
+        if include_param_grad_hooks:
+            n = 0
+            for pname, p in layer.named_parameters(recurse=True):
+                if not p.requires_grad:
+                    continue
+                if n >= max_param_hooks_per_layer:
+                    break
+                try:
+                    handles.append(
+                        p.register_hook(make_param_grad_hook(f"{name}.{pname}"))
+                    )
+                    n += 1
+                except Exception as e:
+                    if rank == 0 or log_all_ranks:
+                        print(
+                            f"[BWD_HOOK][rank={rank}] failed param grad hook "
+                            f"{name}.{pname}: {e}",
+                            flush=True,
+                        )
+
+    if rank == 0 or log_all_ranks:
+        print(
+            f"[BWD_HOOK][rank={rank}] installed num_handles={len(handles)}",
+            flush=True,
+        )
+
+    return handles
+
+
+def remove_hooks(handles):
+    for h in handles:
+        try:
+            h.remove()
+        except Exception:
+            pass
 
 
 class FSDPActor(FSDPModelManager, Worker):
@@ -327,6 +590,8 @@ class FSDPActor(FSDPModelManager, Worker):
                 if rollout_dtype is not None:
                     v = v.to(rollout_dtype)
                 if not self.is_pipeline:
+                    # TODO: nv support
+                    v = v.detach().to('cpu')
                     v = reduce_tensor(v)
                 buffer[k] = v
             if bucket_idx == 0:
@@ -704,6 +969,201 @@ class FSDPActor(FSDPModelManager, Worker):
         assert total_result_len == total_result_len_per_dp, (
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
+        
+    def _print_optimizer_state_summary(self, tag):
+        if not self._should_print_mem():
+            return
+
+        rank = self._debug_mem_rank()
+        total_numel = 0
+        total_bytes = 0
+        dtype_count = {}
+
+        try:
+            states = self.optimizer.state
+        except Exception as e:
+            print(f"[OPT_STATE][rank={rank}][{tag}] cannot access optimizer.state: {e}", flush=True)
+            return
+
+        n_state_tensors = 0
+
+        for _, state in states.items():
+            if not isinstance(state, dict):
+                continue
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    n_state_tensors += 1
+                    numel = v.numel()
+                    elem_size = v.element_size()
+                    total_numel += numel
+                    total_bytes += numel * elem_size
+                    key = str(v.dtype)
+                    dtype_count[key] = dtype_count.get(key, 0) + numel
+
+        print(
+            f"[OPT_STATE][rank={rank}][{tag}] "
+            f"num_state_entries={len(states)}, "
+            f"n_state_tensors={n_state_tensors}, "
+            f"total_numel={total_numel:,}, "
+            f"total_bytes={total_bytes / 1024**3:.2f} GiB, "
+            f"dtype_numel={dtype_count}",
+            flush=True,
+        )
+        
+    def _print_batch_summary(self, batch, tag):
+        if not self._should_print_mem():
+            return
+
+        rank = self._debug_mem_rank()
+
+        def walk(x, prefix=""):
+            if torch.is_tensor(x):
+                print(
+                    f"[BATCH][rank={rank}][{tag}] "
+                    f"{prefix}: shape={tuple(x.shape)}, "
+                    f"dtype={x.dtype}, device={x.device}, "
+                    f"bytes={x.numel() * x.element_size() / 1024**2:.2f} MiB",
+                    flush=True,
+                )
+            elif isinstance(x, dict):
+                for k, v in x.items():
+                    walk(v, f"{prefix}.{k}" if prefix else str(k))
+            elif isinstance(x, (list, tuple)):
+                for i, v in enumerate(x):
+                    walk(v, f"{prefix}[{i}]")
+
+        walk(batch)
+
+    def _tensor_local_numel_and_bytes(self, p):
+        """
+        兼容普通 Tensor / DTensor。
+        返回:
+        logical_numel, local_numel, logical_bytes, local_bytes, dtype_str, device_str
+        """
+        try:
+            logical_numel = p.numel()
+        except Exception:
+            logical_numel = 0
+
+        try:
+            elem_size = p.element_size()
+        except Exception:
+            elem_size = 0
+
+        local_numel = logical_numel
+        local_elem_size = elem_size
+
+        # DTensor 通常有 to_local()
+        try:
+            if hasattr(p, "to_local"):
+                lp = p.to_local()
+                local_numel = lp.numel()
+                local_elem_size = lp.element_size()
+        except Exception:
+            pass
+
+        logical_bytes = logical_numel * elem_size
+        local_bytes = local_numel * local_elem_size
+
+        try:
+            dtype_str = str(p.dtype)
+        except Exception:
+            dtype_str = "unknown"
+
+        try:
+            device_str = str(p.device)
+        except Exception:
+            device_str = "unknown"
+
+        return (
+            logical_numel,
+            local_numel,
+            logical_bytes,
+            local_bytes,
+            dtype_str,
+            device_str,
+        )
+
+    def _print_fsdp_unit_sizes(self, max_units=200):
+        if not self._should_print_mem():
+            return
+
+        rank = self._debug_mem_rank()
+
+        rows = []
+
+        for name, module in self.model.named_modules():
+            cls_name = module.__class__.__name__
+
+            # 适配你现在看到的 FSDPQwen2DecoderLayer / FSDPEmbedding 等
+            if "FSDP" not in cls_name and "FullySharded" not in cls_name:
+                continue
+
+            logical_numel = 0
+            local_numel = 0
+            logical_bytes = 0
+            local_bytes = 0
+            dtype_counter = {}
+            device_counter = {}
+            n_params = 0
+
+            # root module 会递归统计全模型；也可以保留，但解释时要注意
+            for p_name, p in module.named_parameters(recurse=True):
+                n_params += 1
+                (
+                    ln,
+                    locn,
+                    lb,
+                    locb,
+                    dtype_str,
+                    device_str,
+                ) = self._tensor_local_numel_and_bytes(p)
+
+                logical_numel += ln
+                local_numel += locn
+                logical_bytes += lb
+                local_bytes += locb
+                dtype_counter[dtype_str] = dtype_counter.get(dtype_str, 0) + ln
+                device_counter[device_str] = device_counter.get(device_str, 0) + ln
+
+            rows.append(
+                (
+                    name,
+                    cls_name,
+                    n_params,
+                    logical_numel,
+                    local_numel,
+                    logical_bytes,
+                    local_bytes,
+                    dtype_counter,
+                    device_counter,
+                )
+            )
+
+        print(f"[FSDP_UNITS_V2][rank={rank}] num_units={len(rows)}", flush=True)
+
+        for (
+            name,
+            cls_name,
+            n_params,
+            logical_numel,
+            local_numel,
+            logical_bytes,
+            local_bytes,
+            dtype_counter,
+            device_counter,
+        ) in rows[:max_units]:
+            print(
+                f"[FSDP_UNITS_V2][rank={rank}] "
+                f"name={name}, cls={cls_name}, n_params={n_params}, "
+                f"logical_numel={logical_numel:,}, "
+                f"local_numel={local_numel:,}, "
+                f"logical_bytes={logical_bytes / 1024**3:.2f} GiB, "
+                f"local_bytes={local_bytes / 1024**3:.2f} GiB, "
+                f"dtypes={dtype_counter}, "
+                f"devices={device_counter}",
+                flush=True,
+            )
 
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
@@ -817,8 +1277,53 @@ class FSDPActor(FSDPModelManager, Worker):
             # scale loss for gradient accumulation and backprop
             final_loss_metric = loss.detach()
             loss = loss / self.gradient_accumulation
-            with backward_ctx:
-                self.grad_scaler.scale(loss).backward()
+
+            self._print_fsdp_unit_sizes()
+
+            self._print_mem(
+                f"training_step: mb={idx}: before backward",
+                reset_peak=True,
+            )
+
+            # with backward_ctx:
+            #     self.grad_scaler.scale(loss).backward()
+                
+            rank = int(os.environ.get("RANK", "0"))
+
+            bwd_hook_handles = install_backward_memory_hooks(
+                self.model,
+                hook_every=1,                 # 精确定位时设 1
+                log_all_ranks=False,          # 先只看 rank0；如果 OOM rank 不确定，再改 True
+                reset_peak_before_backward=True,
+                include_param_grad_hooks=False,
+            )
+
+            try:
+                _mem_report(
+                    "BEFORE grad_scaler.scale(loss).backward()",
+                    rank=rank,
+                    log_all_ranks=False,
+                )
+
+                from contextlib import nullcontext
+                with nullcontext():
+                    self.grad_scaler.scale(loss).backward()
+
+                _mem_report(
+                    "AFTER grad_scaler.scale(loss).backward()",
+                    rank=rank,
+                    log_all_ranks=False,
+                )
+
+            finally:
+                remove_hooks(bwd_hook_handles)
+
+            self._print_mem(f"training_step: mb={idx}: after backward")
+
+            # --------------------------------------------------------
+            # metrics update
+            # --------------------------------------------------------
+            self._print_mem(f"training_step: mb={idx}: before metrics update")
 
             mbs_metrics_data.update(
                 {
@@ -830,9 +1335,51 @@ class FSDPActor(FSDPModelManager, Worker):
 
             append_to_dict(mbs_metrics_list, mbs_metrics_data)
 
+            self._print_mem(f"training_step: mb={idx}: after metrics update")
+
+            # 可选：释放一些明显不再需要的局部引用，帮助判断是否有中间张量被保留。
+            # 注意这不会破坏 autograd，因为 backward 已经完成。
+            self._print_mem(f"training_step: mb={idx}: before delete local tensors")
+
+            try:
+                del logprobs
+                del entropy
+                del loss
+                del final_loss_metric
+                del entropy_loss
+                del kl_loss
+                if "kld" in locals():
+                    del kld
+            except Exception:
+                pass
+
+            self._print_mem(f"training_step: mb={idx}: after delete local tensors")
+
+        # ------------------------------------------------------------
+        # 4. optimizer step
+        # 如果日志停在 before optimizer_step，强烈怀疑 Adam state lazy init、
+        # grad norm、unscale、clip_grad 或 optimizer.step 内部峰值。
+        # ------------------------------------------------------------
+        self._print_mem(
+            "training_step: before optimizer_step",
+            reset_peak=True,
+        )
+
+        if hasattr(self, "_print_optimizer_state_summary"):
+            self._print_optimizer_state_summary("training_step: before optimizer_step")
+
         grad_norm, lr_list = self.optimizer_step()
 
+        self._print_mem("training_step: after optimizer_step")
+
+        if hasattr(self, "_print_optimizer_state_summary"):
+            self._print_optimizer_state_summary("training_step: after optimizer_step")
+
+        # ------------------------------------------------------------
+        # 5. lr scheduler
+        # ------------------------------------------------------------
         if self.lr_sched_sync_with_optim:
+            self._print_mem("training_step: before lr_scheduler.step")
             self.lr_scheduler.step()
 
         # display the degree of mismatch between training and rollout
@@ -846,12 +1393,20 @@ class FSDPActor(FSDPModelManager, Worker):
         if rollout_train_kl is not None:
             mean_metric_dict["actor/rollout_train_kl"] = rollout_train_kl
 
+
+        self._print_mem("training_step: after local aggregate metrics before all_reduce")
+
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
 
+        self._print_mem("training_step: after all_reduce_dict")
+
         mean_metric_dict["actor/grad_norm"] = float(grad_norm)
         mean_metric_dict["actor/lr"] = lr_list[0]
+
+        self._print_mem("training_step: before return")
+
         return mean_metric_dict
 
     def run_training_pipeline(self, input_channel: Channel) -> tuple[dict, list]:
@@ -907,6 +1462,171 @@ class FSDPActor(FSDPModelManager, Worker):
             partitioning_tool=get_seqlen_balanced_partitions,
         )
         return batch
+    
+    def _debug_mem_rank(self):
+        """
+        尽量获取全局 rank。优先使用 torch.distributed，其次用环境变量，
+        最后尝试 self 上常见的 rank 属性。
+        """
+        try:
+            if dist is not None and dist.is_available() and dist.is_initialized():
+                return dist.get_rank()
+        except Exception:
+            pass
+
+        for env_name in ("RANK", "WORLD_RANK", "GLOBAL_RANK"):
+            v = os.environ.get(env_name)
+            if v is not None:
+                try:
+                    return int(v)
+                except ValueError:
+                    pass
+
+        for attr_name in (
+            "global_rank",
+            "rank",
+            "_rank",
+            "worker_rank",
+            "actor_rank",
+            "dp_rank",
+        ):
+            if hasattr(self, attr_name):
+                try:
+                    return int(getattr(self, attr_name))
+                except Exception:
+                    pass
+
+        return 0
+
+    def _should_print_mem(self):
+        """
+        默认只让 rank0 打印。
+        如果想所有 rank 都打印，可以设置：
+            export DEBUG_MEM_ALL_RANKS=1
+        """
+        if os.environ.get("DEBUG_MEM_ALL_RANKS", "0") == "1":
+            return True
+        return self._debug_mem_rank() == 0
+
+    def _fmt_bytes(self, x):
+        if x is None:
+            return "N/A"
+        return f"{x / 1024**3:.2f} GiB"
+
+    def _safe_torch_mem_call(self, backend, name, device=None):
+        fn = getattr(backend, name, None)
+        if fn is None:
+            return None
+        try:
+            return fn(device)
+        except TypeError:
+            return fn()
+        except Exception:
+            return None
+
+    def _print_mem(self, tag, *, reset_peak=False, use_smi=False):
+        """
+        打印当前进程视角下的 torch.npu 显存。
+        - allocated: 当前 PyTorch tensor 实际占用
+        - reserved: PyTorch/CANN allocator 当前保留
+        - max_*: 进程启动以来，或 reset_peak 后的峰值
+        """
+        if not self._should_print_mem():
+            return
+
+        rank = self._debug_mem_rank()
+        pid = os.getpid()
+
+        if not hasattr(torch, "npu") or not torch.npu.is_available():
+            print(
+                f"[MEM][rank={rank}][pid={pid}][{tag}] torch.npu unavailable",
+                flush=True,
+            )
+            return
+
+        backend = torch.npu
+
+        try:
+            device = backend.current_device()
+        except Exception:
+            device = None
+
+        try:
+            if device is not None:
+                backend.synchronize(device)
+            else:
+                backend.synchronize()
+        except Exception:
+            pass
+
+        if reset_peak:
+            for name in ("reset_peak_memory_stats", "reset_max_memory_allocated"):
+                fn = getattr(backend, name, None)
+                if fn is not None:
+                    try:
+                        fn(device)
+                    except TypeError:
+                        fn()
+                    except Exception:
+                        pass
+
+        allocated = self._safe_torch_mem_call(backend, "memory_allocated", device)
+        reserved = self._safe_torch_mem_call(backend, "memory_reserved", device)
+        max_allocated = self._safe_torch_mem_call(backend, "max_memory_allocated", device)
+        max_reserved = self._safe_torch_mem_call(backend, "max_memory_reserved", device)
+
+        free_mem = None
+        total_mem = None
+        mem_get_info = getattr(backend, "mem_get_info", None)
+        if mem_get_info is not None:
+            try:
+                free_mem, total_mem = mem_get_info(device)
+            except TypeError:
+                try:
+                    free_mem, total_mem = mem_get_info()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        try:
+            device_name = backend.get_device_name(device)
+        except Exception:
+            device_name = "NPU"
+
+        print(
+            "[MEM]"
+            f"[rank={rank}]"
+            f"[pid={pid}]"
+            f"[device={device}:{device_name}]"
+            f"[{tag}] "
+            f"allocated={self._fmt_bytes(allocated)}, "
+            f"reserved={self._fmt_bytes(reserved)}, "
+            f"max_allocated={self._fmt_bytes(max_allocated)}, "
+            f"max_reserved={self._fmt_bytes(max_reserved)}, "
+            f"free={self._fmt_bytes(free_mem)}, "
+            f"total={self._fmt_bytes(total_mem)}",
+            flush=True,
+        )
+
+        if use_smi or os.environ.get("DEBUG_NPU_SMI", "0") == "1":
+            try:
+                r = subprocess.run(
+                    ["bash", "-lc", "npu-smi info"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    timeout=10,
+                )
+                print(
+                    f"[MEM][rank={rank}][pid={pid}][{tag}] npu-smi info:\n{r.stdout}",
+                    flush=True,
+                )
+            except Exception as e:
+                print(
+                    f"[MEM][rank={rank}][pid={pid}][{tag}] npu-smi failed: {repr(e)}",
+                    flush=True,
+                )
 
     def run_training(
         self, input_channel: Channel, do_offload=False
@@ -967,16 +1687,35 @@ class FSDPActor(FSDPModelManager, Worker):
         training_metrics_list = []
         # Global batch iterations
         with self.worker_timer():
-            for mini_batch in mini_batches:
+            for mb_idx, mini_batch in enumerate(mini_batches):
+                self._print_mem(
+                    f"run_training: before training_step mini_batch={mb_idx}",
+                    reset_peak=True,
+                )
+
                 mean_metric_dict = self.training_step(batch=mini_batch)
+
+                self._print_mem(
+                    f"run_training: after training_step mini_batch={mb_idx}",
+                )
+
                 training_metrics_list.append(mean_metric_dict)
+
             if not self.lr_sched_sync_with_optim:
+                self._print_mem("run_training: before lr_scheduler.step")
                 self.lr_scheduler.step()
+                self._print_mem("run_training: after lr_scheduler.step")
+
+        self._print_mem("run_training: after training loop")
 
         # Rollout metrics
+        self._print_mem("run_training: before compute_math_rollout_metrics")
         rollout_metrics, _, _ = compute_math_rollout_metrics(
             global_batch, self.cfg.data.max_prompt_length, self.response_len
         )
+        self._print_mem("run_training: after compute_math_rollout_metrics")
+
+        self._print_mem("run_training: before return")
 
         return rollout_metrics, training_metrics_list
 

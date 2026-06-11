@@ -697,3 +697,61 @@ class FSDP2Strategy(FSDPStrategyBase):
                 "[FSDP2 load] checkpoint loaded successfully; no meta tensors remain.",
                 flush=True,
             )
+            
+    @staticmethod
+    def debug_fsdp2_param_memory(model, dtype):
+        rank = dist.get_rank()
+
+        local_numel = 0
+        logical_numel = 0
+
+        first_few = []
+
+        for name, p in model.named_parameters():
+            if isinstance(p, DTensor):
+                local = p.to_local()
+                local_numel += local.numel()
+                logical_numel += p.numel()
+
+                if len(first_few) < 10:
+                    first_few.append(
+                        (
+                            name,
+                            tuple(p.shape),
+                            tuple(local.shape),
+                            str(p.placements),
+                            str(local.device),
+                            str(local.dtype),
+                        )
+                    )
+            else:
+                local_numel += p.numel()
+                logical_numel += p.numel()
+
+                if len(first_few) < 10:
+                    first_few.append(
+                        (
+                            name,
+                            tuple(p.shape),
+                            tuple(p.shape),
+                            "NON_DTENSOR",
+                            str(p.device),
+                            str(p.dtype),
+                        )
+                    )
+
+        elem_size = torch.tensor([], dtype=dtype).element_size()
+
+        print(
+            f"[Rank {rank}] FSDP2 param check: "
+            f"local_numel={local_numel:,}, "
+            f"logical_numel={logical_numel:,}, "
+            f"local_param_bytes={local_numel * elem_size / 1024**3:.2f} GiB, "
+            f"logical_param_bytes={logical_numel * elem_size / 1024**3:.2f} GiB",
+            flush=True,
+        )
+
+        if rank == 0:
+            print("[Rank 0] first params:", flush=True)
+            for item in first_few:
+                print(item, flush=True)

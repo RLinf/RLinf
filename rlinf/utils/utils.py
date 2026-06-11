@@ -604,6 +604,36 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
             pass
         return p.detach().new_zeros(p.shape)
 
+    # def zero_grad_like(p):
+    #     if getattr(p, "is_meta", False) or (
+    #         hasattr(p, "device") and p.device.type == "meta"
+    #     ):
+    #         return None
+
+    #     if isinstance(p, DTensor):
+    #         local = p.to_local()
+
+    #         local_grad = torch.zeros_like(
+    #             local.detach(),
+    #             memory_format=torch.preserve_format,
+    #             device=local.device,
+    #         )
+
+    #         return DTensor.from_local(
+    #             local_grad,
+    #             device_mesh=p.device_mesh,
+    #             placements=p.placements,
+    #             run_check=False,
+    #             shape=p.shape,
+    #             stride=p.stride(),
+    #         )
+
+    #     return torch.zeros_like(
+    #         p.detach(),
+    #         memory_format=torch.preserve_format,
+    #         device=p.device,
+    #     )
+
     # backup every param group's lr
     saved_lrs = []
     for g in optimizer.param_groups:
@@ -634,6 +664,71 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
 
     for p in all_params:
         p.grad = saved_grads[p]
+        
+
+@torch.no_grad()
+def init_adamw_optimizer_state(optimizer):
+    def zeros_like_state(p):
+        if getattr(p, "is_meta", False) or (
+            hasattr(p, "device") and p.device.type == "meta"
+        ):
+            return None
+
+        if isinstance(p, DTensor):
+            local = p.to_local()
+
+            local_zero = torch.zeros_like(
+                local.detach(),
+                memory_format=torch.preserve_format,
+                device=local.device,  # 关键：跟 param local 一致
+            )
+
+            return DTensor.from_local(
+                local_zero,
+                device_mesh=p.device_mesh,
+                placements=p.placements,
+                run_check=False,
+                shape=p.shape,
+                stride=p.stride(),
+            )
+
+        return torch.zeros_like(
+            p.detach(),
+            memory_format=torch.preserve_format,
+            device=p.device,
+        )
+
+    for group in optimizer.param_groups:
+        amsgrad = group.get("amsgrad", False)
+        capturable = group.get("capturable", False)
+        fused = group.get("fused", False)
+
+        for p in group.get("params", []):
+            if p is None:
+                continue
+
+            state = optimizer.state[p]
+            if len(state) > 0:
+                continue
+
+            if isinstance(p, DTensor):
+                local_device = p.to_local().device
+            else:
+                local_device = p.device
+
+            step_device = local_device if (capturable or fused) else torch.device("cpu")
+
+            state["step"] = torch.zeros(
+                (),
+                dtype=torch.float32,
+                device=step_device,
+            )
+
+            state["exp_avg"] = zeros_like_state(p)
+            state["exp_avg_sq"] = zeros_like_state(p)
+
+            if amsgrad:
+                state["max_exp_avg_sq"] = zeros_like_state(p)
 
 
 def get_rng_state() -> dict:

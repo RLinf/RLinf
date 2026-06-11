@@ -3,12 +3,12 @@
 set -ex
 
 # Launch step 1: set your wiki_dataset pages path
-WIKI2018_DIR=/your/wiki_dataset/path
+WIKI2018_DIR=/inspire/sj-ssd/project/inference-chip/cengshulin-p-zengshulin/datasets/local_wiki
 pages_file=$WIKI2018_DIR/wiki_webpages.jsonl
 
 # Launch step 2: set your retriever model path
 retriever_name=e5
-retriever_path=/your/retriever/model/path
+retriever_path=/inspire/sj-ssd/project/inference-chip/cengshulin-p-zengshulin/models/e5-base-v2
 
 # Qdrant configuration
 qdrant_url=http://localhost:6333
