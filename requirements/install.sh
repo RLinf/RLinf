@@ -29,10 +29,7 @@ PLATFORM_TORCH_PACKAGES=()
 # Lines appended to the venv's bin/activate by embodied installers (each is a
 # full shell statement, e.g. `export VK_DRIVER_FILES=...`). Populated per-
 # platform by configure_<platform>; other targets ignore the array.
-PLATFORM_VENV_EXPORTS=()=======
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-vr" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
->>>>>>> 8dc9f6f (docs: update docs.)
-
+PLATFORM_VENV_EXPORTS=()
 # Whether the platform supports flash-attn at all. When 0, install_flash_attn
 # returns immediately without installing or building anything (e.g. Ascend
 # where the kernels are CUDA-only and no NPU equivalent ships in the package).
@@ -78,7 +75,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-vr" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-vr" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 
 #=======================Utility Functions=======================
