@@ -93,7 +93,7 @@ The following examples include math reasoning RL and agentic AI workflows, such 
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://datasets-server.huggingface.co/assets/CAIR-HKISI/geo3k/--/5154d54fbe2281051b696070df376371c63d6925/--/default/train/0/images/image-1d100e9.png?Expires=1779457386&Signature=guD0O8PS4fl99LLxRZOcshz-Fahgn38tP~LDOGEvRanj3Y9oAjJ-wLyNdX1Fl1KD0lVIxHb9RGgzcztk9NOO9ky5FUNULAYNNZDdgabuxgYz3KH4FRm1OQNylV43W-N5-7-JCfImyd7rQGaS-Oeic3kqtcu0JtWpAaWYM9JlgxfYVNstHE1pk1ANwDoar4Z583po0P1nKCkvFr79HzE6jcAS5iQf210~RpVBh~Tsbam2goojzwAjcJrtcFhrzvpuKb~IRV-ryYLzoboVZcyyFf7m~ehqgui3ojdL2qYMe~eb5sK5SRDyQDVrn11N4oIEhreAhPL61jVMrkm3LtqPtQ__&Key-Pair-Id=K204OQ5RWQVDLD"
+       <img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
         <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
