@@ -194,6 +194,8 @@ def load_dreamzero_dataset_metadata(cfg: Any) -> DatasetMetadata:
 def build_dreamzero_composed_transform(
     cfg: Any,
     tokenizer_path: str,
+    *,
+    transform_on_gpu: bool = False,
 ) -> ComposedModalityTransform:
     """Construct ``ComposedModalityTransform`` for the current ``embodiment_tag``."""
     tag = cfg.embodiment_tag
@@ -205,4 +207,5 @@ def build_dreamzero_composed_transform(
         tokenizer_path=tokenizer_path,
         cfg=cfg,
         embodiment_tag_mapping=embodiment_tag_mapping,
+        transform_on_gpu=transform_on_gpu,
     )

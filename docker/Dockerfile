@@ -48,6 +48,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberopro
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
 
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
@@ -414,6 +415,17 @@ FROM embodied-common-image AS embodied-roboverse-image
 
 # Install openpi env for RoboVerse
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env roboverse
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Polaris
+##################################################################################################
+FROM embodied-common-image AS embodied-polaris-image
+
+# Install openpi env for Polaris
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env polaris
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
