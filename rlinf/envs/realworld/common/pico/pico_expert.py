@@ -203,9 +203,7 @@ class PicoExpert:
 
     def start(self) -> None:
         if zmq is None:
-            raise ImportError(
-                "pyzmq is required for PICO teleoperation. Install with: pip install pyzmq"
-            )
+            raise ImportError("pyzmq is required for PICO teleoperation. ")
         if self._running:
             return
 
