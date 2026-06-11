@@ -341,6 +341,12 @@ class Scheduler(_Scheduler):
             validate_weight_first_sync = self.cfg.rollout.get(
                 "validate_weight_first_sync", False
             )
+            if self.cfg.actor.training_backend == "fsdp":
+                # FSDP rollout sync rebuilds tensors from actor-provided payloads rather
+                # than comparing two identical HF initialization paths. The first-sync
+                # norm check is therefore prone to false positives and is only reliable
+                # for the Megatron path.
+                validate_weight_first_sync = False
             if self.cfg.runner.resume_dir is not None:
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
