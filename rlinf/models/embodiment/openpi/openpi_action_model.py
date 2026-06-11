@@ -1411,13 +1411,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # tensor aliasing in the shared computation graph). We disable cuda graph for
         # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
         # benefits more from cuda graph.
-        self.paligemma_with_expert.paligemma.model.language_model.forward = torch.compile(
-            self.paligemma_with_expert.paligemma.model.language_model.forward,
-            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+        self.paligemma_with_expert.paligemma.model.language_model.forward = (
+            torch.compile(
+                self.paligemma_with_expert.paligemma.model.language_model.forward,
+                mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+            )
         )
         self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
-            self.paligemma_with_expert.gemma_expert.model.forward, mode=mode, fullgraph=True
+            self.paligemma_with_expert.gemma_expert.model.forward,
+            mode=mode,
+            fullgraph=True,
         )
-        self.get_logprob_norm = torch.compile(self.get_logprob_norm, mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode)
+        self.get_logprob_norm = torch.compile(
+            self.get_logprob_norm,
+            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+        )
 
         self.torch_compile_enabled = True
