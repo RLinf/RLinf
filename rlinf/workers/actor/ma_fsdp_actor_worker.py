@@ -27,13 +27,17 @@ from torch.multiprocessing.reductions import reduce_tensor
 from torch.utils import _pytree
 
 import rlinf.algorithms  # noqa: F401
-from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss, get_loss_scales
+from rlinf.algorithms.registry import (
+    calculate_adv_and_returns,
+    get_loss_scales,
+    policy_loss,
+)
 from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel, torch_dtype_from_precision
 from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
-from rlinf.data.io_struct import BatchResizingIterator, RolloutResult, DynamicRolloutResult
+from rlinf.data.io_struct import BatchResizingIterator, DynamicRolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import (
     FSDPModelManager,
 )
@@ -56,6 +60,7 @@ from rlinf.utils.distributed import (
     RolloutDataBalance,
     all_reduce_dict,
     all_reduce_int,
+    compute_rollout_metrics_dynamic,
     masked_normalization,
 )
 from rlinf.utils.distributed import (
@@ -80,6 +85,7 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
+    cpu_dict,
     cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
@@ -405,7 +411,7 @@ class MAFSDPActor(FSDPActor):
             "enable_dp_load_balance must be True when is_dynamic_rollout_batch is True"
         )
         self.placement = placement
-        assert self.placement_mode == PlacementMode.COLLOCATED, (
+        assert self.placement.is_collocated, (
             "Only collocated placement is supported for multi-agent actor"
         )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
@@ -617,89 +623,6 @@ class MAFSDPActor(FSDPActor):
         input_channel: Channel,
         output_channel: Channel,
         compute_ref_logprobs: bool,
-        do_offload=False,
-    ):
-        inference_split = self.cfg.actor.get("inference_split", None)
-        if inference_split is None:
-            if not self.is_pipeline:
-                inference_split = 1
-            else:
-                inference_split = self.cfg.algorithm.n_minibatches
-        assert self.total_batch_size_per_dp % inference_split == 0, (
-            f"FSDPActor: total_batch_size_per_dp[{self.total_batch_size_per_dp}] should be divisible by inference_split[{inference_split}]"
-        )
-
-        min_result_len = 1
-        max_result_len = (
-            self.cfg.data.rollout_batch_size // self._world_size // inference_split
-        )
-        if not self.is_pipeline:
-            min_result_len = max_result_len
-            coll_rollout_results = []
-        total_result_len = 0
-        total_result_len_per_dp = self.cfg.data.rollout_batch_size // self._world_size
-        cliped_results, unfinished_result = [], None
-        while total_result_len < total_result_len_per_dp:
-            batch, rollout_result, result_len, cliped_results, unfinished_result = (
-                self.get_dynamic_batch_as_much(
-                    input_channel,
-                    min(min_result_len, total_result_len_per_dp - total_result_len),
-                    min(max_result_len, total_result_len_per_dp - total_result_len),
-                    cliped_results,
-                    unfinished_result,
-                )
-            )
-            total_result_len += result_len
-            self.log_debug(
-                f"[dynamic inference rank-{self._rank}] inference result_len={result_len}, total_result_len={total_result_len}/{total_result_len_per_dp}"
-            )
-            self._load_weight_and_optimizer()
-            self.model.eval()
-
-            with self.worker_timer():
-                with torch.no_grad():
-                    prev_logprobs, ref_logprobs = self.inference_step(
-                        batch, rollout_result, compute_ref_logprobs
-                    )
-
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs
-                else:
-                    # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs
-
-                # Ref logprobs
-                if compute_ref_logprobs:
-                    rollout_result.ref_logprobs = ref_logprobs
-
-            if self.is_pipeline:
-                # for pipeline mode, send after inference to reduce latency.
-                # should do split to ensure actor won't get too much batches.
-                split_results = RolloutResult.split_results(rollout_result, result_len)
-                for split_result in split_results:
-                    output_channel.put(split_result, async_op=True)
-            else:
-                coll_rollout_results.append(rollout_result)
-
-        if not self.is_pipeline:
-            # for coll mode, merge results to reduce send time.
-            rollout_result = RolloutResult.merge_result_list(coll_rollout_results)
-            split_results = RolloutResult.split_results(
-                rollout_result,
-                min(total_result_len, self.cfg.algorithm.n_minibatches),
-            )
-            for split_result in split_results:
-                output_channel.put(split_result)
-        assert total_result_len == total_result_len_per_dp, (
-            f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
-        )
-        
-    def run_inference(
-        self,
-        input_channel: Channel,
-        output_channel: Channel,
-        compute_ref_logprobs: bool,
     ):
         """
         Compute prev/ref logprobs using the actor Model's forward.
@@ -709,48 +632,49 @@ class MAFSDPActor(FSDPActor):
             output_channel: The output channel to send results to.
             compute_ref_logprobs: Whether to compute reference logprobs.
         """
-        batches = []
-        rollout_results = []
-        total_batch_size_per_dp: int = (
-            self.cfg.data.rollout_batch_size
-            // parallel_state.get_data_parallel_world_size()
+        assert not self.is_pipeline, (
+            "MAFSDPActor currently only supports collocated inference"
         )
 
-        for _ in range(total_batch_size_per_dp):
+        batches = []
+        rollout_results = []
+        total_result_size_per_dp = (
+            self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
+        )
+
+        for _ in range(total_result_size_per_dp):
             batch, rollout_result = self.get_batch(input_channel)
             batches.append(batch)
             rollout_results.append(rollout_result)
+
         merged_batch, num_sequence_per_group = DynamicRolloutResult.merge_batches(
             batches, adjust_traj_indices=False, return_num_sequence_per_group=True
         )
-
-        rollout_result = DynamicRolloutResult.merge_result_list(
-            rollout_results,
-        )
+        rollout_result = DynamicRolloutResult.merge_result_list(rollout_results)
 
         self._load_weight_and_optimizer()
+        self.model.eval()
         with self.worker_timer():
-            # compute prev logprobs
-            prev_logprobs = self.inference_step(merged_batch).cpu()
+            with torch.no_grad():
+                prev_logprobs, ref_logprobs = self.inference_step(
+                    merged_batch,
+                    rollout_result,
+                    compute_ref_logprobs,
+                )
+
             if rollout_result.rollout_logprobs is not None:
                 rollout_result.recompute_prev_logprobs = prev_logprobs
             else:
                 rollout_result.prev_logprobs = prev_logprobs
+
             if compute_ref_logprobs:
-                assert self.ref_policy_state_dict is not None, (
-                    "ref_policy_state_dict must be set to compute ref_logprobs"
-                )
-                with cpu_weight_swap(self.model[0], self.ref_policy_state_dict):
-                    ref_logprobs = self.inference_step(merged_batch).cpu()
-                    rollout_result.ref_logprobs = ref_logprobs
+                rollout_result.ref_logprobs = ref_logprobs
 
         rollout_result_per_group = DynamicRolloutResult.split_results(
             rollout_result, num_sequence_per_group
         )
         for rollout_result in rollout_result_per_group:
-            self.put_result(rollout_result, output_channel)
-
-        self.scheduler_offload_sync()
+            output_channel.put(rollout_result)
 
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
@@ -794,12 +718,12 @@ class MAFSDPActor(FSDPActor):
 
             # batch for backward
             prev_logprobs = m_batch["prev_logprobs"]
-            advantages = m_batch["advantages"]
+            advantages = m_batch["advantages"] * m_batch["loss_scales"]
             ref_logprobs = None
             if "ref_logprobs" in m_batch:
                 ref_logprobs = m_batch["ref_logprobs"]
 
-            loss_mask = m_batch["response_mask"][:, -self.response_len :]
+            loss_mask = m_batch["response_mask"]
 
             clip_ratio = self.cfg.algorithm.ratio_clip_eps
             clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
@@ -813,11 +737,8 @@ class MAFSDPActor(FSDPActor):
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
             if self.cfg.algorithm.get("importance_sampling_fix", False):
-                rollout_prev_logprobs = prev_logprobs
-                recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
-                advantages = advantages * torch.clamp(
-                    (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                    min=self.cfg.algorithm.importance_sampling_clip,
+                raise AssertionError(
+                    "importance_sampling_fix is not supported for dynamic rollout batch"
                 )
 
             loss, mbs_metrics_data = policy_loss(
@@ -846,8 +767,8 @@ class MAFSDPActor(FSDPActor):
 
             kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
             if self.kl_beta > 0 and ref_logprobs is not None:
-                kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
-                kl_loss = self.loss_agg_func(kld, loss_mask)
+                kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
+                kl_loss = self.loss_agg_func(kld * m_batch["loss_scales"], loss_mask)
                 loss = loss + kl_loss * self.kl_beta
 
             # add to log
@@ -906,57 +827,117 @@ class MAFSDPActor(FSDPActor):
 
         return mean_metric_dict
 
-    def _dp_load_balance(self, batch: dict[str, torch.Tensor]):
-        batch_size = batch["input_ids"].shape[0]
-        assert batch_size == self.total_batch_size_per_dp, (
-            f"DP Load balance is only available when a single batch contains all data, e.g., in collocated mode. But got {batch_size=} and {self.total_batch_size_per_dp=}."
-        )
-        batch = RolloutDataBalance.from_rollout_batches(
+    def _dp_load_balance_dynamic(
+        self,
+        batch: dict[str, torch.Tensor],
+        batch_pad: dict[str, torch.Tensor],
+        split_fix_chunk: int,
+    ):
+        return RolloutDataBalance.from_rollout_batches_dynamic(
             rollout_batches=batch,
             dp_world_size=torch.distributed.get_world_size(),
             dp_rank=torch.distributed.get_rank(),
             dp_group=torch.distributed.group.WORLD,
+            rollout_batch_pad=batch_pad,
+            split_fix_chunk=split_fix_chunk,
             partitioning_tool=get_seqlen_balanced_partitions,
         )
-        return batch
+
+    def _compute_rollout_metrics(self, batch: dict[str, torch.Tensor]):
+        rollout_metrics, total_prompt_lengths, total_decode_lengths = (
+            compute_rollout_metrics_dynamic(
+                batch,
+                self.cfg.data.max_prompt_length,
+                self.response_len,
+                torch.distributed.group.WORLD,
+            )
+        )
+        rollout_metrics = cpu_dict(rollout_metrics)
+
+        if self.cfg.actor.get("calculate_flops", False):
+            rollout_tflops = self.flops_calculator.flops_generate(
+                total_prompt_lengths, total_decode_lengths
+            )
+            rollout_tflops = rollout_tflops.float().sum().item() / 1e12
+            inference_tflops = self.flops_calculator.flops_inference(
+                total_prompt_lengths + total_decode_lengths
+            )
+            inference_tflops = inference_tflops.float().sum().item() / 1e12
+            rollout_metrics.update(
+                {
+                    "rollout_tflops": rollout_tflops,
+                    "inference_tflops": inference_tflops,
+                    "training_tflops": inference_tflops * 3,
+                }
+            )
+        return rollout_metrics
 
     def run_training(
         self, input_channel: Channel, do_offload=False
     ) -> tuple[dict, list]:
-        # Get all batches for this DP
         assert not do_offload, (
             "do_offload argument of run_inference/run_training is not supported in FSDP for now"
         )
-
-        if self.is_pipeline:
-            return self.run_training_pipeline(input_channel)
+        assert not self.is_pipeline, (
+            "MAFSDPActor currently only supports collocated training"
+        )
 
         batches = []
-        recv_batch_size = 0
-        while recv_batch_size < self.total_batch_size_per_dp:
-            batch, rollout_result = self.get_batch(input_channel)
-            batches.append(batch)
-            recv_batch_size += rollout_result.num_sequence
-        assert recv_batch_size == self.total_batch_size_per_dp, (
-            f"Expected {self.total_batch_size_per_dp} sequences from channel, but got {recv_batch_size}"
+        total_result_size_per_dp = (
+            self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
         )
-        global_batch = RolloutResult.merge_batches(batches)
+        for _ in range(total_result_size_per_dp):
+            batch, _ = self.get_batch(input_channel)
+            batches.append(batch)
 
-        # Compute advantages and returns
+        global_batch = DynamicRolloutResult.merge_batches(
+            batches,
+            self.cfg.algorithm.group_size,
+        )
+        assert "prev_logprobs" in global_batch
+
         global_batch = self.compute_advantages_and_returns(global_batch)
-
-        if self.enable_dp_load_balance:
-            global_batch = self._dp_load_balance(global_batch)
+        global_batch["loss_scales"] = torch.ones_like(
+            global_batch["advantages"]
+        ).masked_fill(~global_batch["response_mask"], 0)
 
         if self.cfg.algorithm.normalize_advantages:
-            mask = global_batch["response_mask"][:, -self.response_len :]
-            global_batch["advantages"] = masked_normalization(
-                global_batch["advantages"], mask
-            )
+            raise AssertionError("normalize_advantages is not implemented in multi-agent")
 
-        # Must be called after batch is retrieved, which is when rollout has stopped
-        # Otherwise, loading model might cause OOM
+        rollout_metrics = self._compute_rollout_metrics(global_batch)
+
+        scale_context = {
+            "folding_scale": [],
+            "enable_scale_of_group": False,
+            "actor_global_batch_size": (
+                self.cfg.data.rollout_batch_size
+                * self.cfg.algorithm.get("group_size", 1)
+                / self.cfg.algorithm.n_minibatches
+            ),
+            "data_parallel_world_size": torch.distributed.get_world_size(),
+        }
+        for loss_scale_fn in self.loss_scale_fns:
+            global_batch = loss_scale_fn(scale_context, global_batch)
+        if self.pack_traj:
+            global_batch = DynamicRolloutResult.pack_traj_batch(
+                scale_context, global_batch
+            )
+        for key in list(global_batch.keys()):
+            if key == "idx_to_traj" or key.startswith("extra:"):
+                global_batch.pop(key, None)
+
         self._load_weight_and_optimizer()
+
+        if self.enable_dp_load_balance:
+            batch_pad = DynamicRolloutResult.get_batch_pad(
+                self.cfg.actor.model.encoder_seq_length,
+                list(global_batch.keys()),
+            )
+            global_batch = self._dp_load_balance_dynamic(
+                global_batch,
+                batch_pad,
+                self.cfg.actor.micro_batch_size,
+            )
 
         mini_batches = get_iterator_k_split(
             global_batch,
@@ -966,26 +947,16 @@ class MAFSDPActor(FSDPActor):
         )
 
         self.model.train()
-        assert (
-            self.cfg.actor.global_batch_size
-            % (self.cfg.actor.micro_batch_size * self._world_size)
-            == 0
-        )
-
         training_metrics_list = []
-        # Global batch iterations
         with self.worker_timer():
-            for mb_idx, mini_batch in enumerate(mini_batches):
+            for mini_batch in mini_batches:
+                if mini_batch["input_ids"].shape == torch.Size([0]):
+                    continue
                 mean_metric_dict = self.training_step(batch=mini_batch)
                 training_metrics_list.append(mean_metric_dict)
 
             if not self.lr_sched_sync_with_optim:
                 self.lr_scheduler.step()
-
-        # Rollout metrics
-        rollout_metrics, _, _ = compute_math_rollout_metrics(
-            global_batch, self.cfg.data.max_prompt_length, self.response_len
-        )
 
         return rollout_metrics, training_metrics_list
 
@@ -998,13 +969,16 @@ class MAFSDPActor(FSDPActor):
         """
         with self.worker_timer():
             if batch.get("advantages", None) is None:
-                mask = batch["response_mask"][:, -self.response_len :]
+                mask = batch["response_mask"]
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
+                    advantage_mode=self.cfg.algorithm.advantage_mode,
                     rewards=batch["rewards"].to(Worker.torch_device_type),
                     loss_mask=mask.to(Worker.torch_device_type),
+                    num_sequence=len(batch["input_ids"]),
                     group_size=self.cfg.algorithm.group_size,
+                    idx_to_traj=batch["idx_to_traj"],
                     kl_beta=self.reinpp_kl_beta,
                     kl_penalty_type=self.kl_penalty_type,
                     logprob=batch["prev_logprobs"].to(Worker.torch_device_type)
