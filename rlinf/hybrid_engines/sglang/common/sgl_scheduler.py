@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import nullcontext
 from importlib.metadata import version
 from typing import Any, Literal
 
@@ -51,6 +52,17 @@ from .io_struct import (
 logger.setLevel(logging.WARNING)
 
 
+def _platform_call(platform, method_name: str, device=None, default=None):
+    """Call a torch platform method with optional device argument safely."""
+    if not hasattr(platform, method_name):
+        return default
+    method = getattr(platform, method_name)
+    try:
+        return method(device)
+    except TypeError:
+        return method()
+
+
 class Scheduler(_Scheduler):
     """
     Overridden class of SGLang's TP worker class _Scheduler.
@@ -82,12 +94,28 @@ class Scheduler(_Scheduler):
         self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
     def cuda_info(self, text: str = ""):
-        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
-        free_gpu_memory /= 2**30
-        total_gpu_memory /= 2**30
+        platform = Worker.torch_platform
+        current_device = (
+            _platform_call(platform, "current_device")
+        )
 
-        memory_allocated = torch.cuda.memory_allocated() / 2**30
-        memory_reserved = torch.cuda.memory_reserved() / 2**30
+        free_gpu_memory, total_gpu_memory = (0.0, 0.0)
+        mem_info = _platform_call(platform, "mem_get_info", current_device)
+        if mem_info is not None:
+            free_gpu_memory, total_gpu_memory = mem_info
+            free_gpu_memory /= 2**30
+            total_gpu_memory /= 2**30
+
+        memory_allocated = (
+            _platform_call(platform, "memory_allocated", current_device, 0.0) / 2**30
+            if hasattr(platform, "memory_allocated")
+            else 0.0
+        )
+        memory_reserved = (
+            _platform_call(platform, "memory_reserved", current_device, 0.0) / 2**30
+            if hasattr(platform, "memory_reserved")
+            else 0.0
+        )
 
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
@@ -117,7 +145,7 @@ class Scheduler(_Scheduler):
         device_type = AcceleratorUtil.get_device_type(accel_type)  # "cuda", "npu", "cpu"
         platform = AcceleratorUtil.get_torch_platform(accel_type)  # torch.cuda, torch.npu
 
-        device_id = platform.current_device()
+        device_id = _platform_call(platform, "current_device")
         if device_type == "cpu":
             target_device = torch.device("cpu")
         else:
@@ -136,7 +164,12 @@ class Scheduler(_Scheduler):
                         kwargs[param_name] = args_list[i]
                     else:
                         break
-                with torch.npu.device(inject_value):
+                device_context = (
+                    platform.device(inject_value)
+                    if hasattr(platform, "device") and device_type != "cpu"
+                    else nullcontext()
+                )
+                with device_context:
                     new_weight = func(**kwargs)
                 # if hasattr(new_weight, 'device') and new_weight.device != inject_value:
                 #     new_weight = new_weight.to(target_device)
@@ -609,7 +642,7 @@ def validate_weight_init(model):
         weight_norm_dict[key] = posi_norm(value)
 
     # avoid release memory before norm kernel launch (gpu is async from cpu)
-    torch.cuda.synchronize()
+    Worker.torch_platform.synchronize()
     return weight_norm_dict
 
 
