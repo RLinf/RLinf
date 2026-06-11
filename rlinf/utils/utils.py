@@ -206,14 +206,14 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
 
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
+            if isinstance(item, DTensor):
+                item = item.to_local()
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
-                item = (
-                    item.detach()
-                    .to(device="cpu", non_blocking=True, copy=True)
-                    .pin_memory()
-                )
+                item = item.detach().to(device="cpu", non_blocking=True, copy=True)
+                if not isinstance(item, DTensor):
+                    item = item.pin_memory()
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
