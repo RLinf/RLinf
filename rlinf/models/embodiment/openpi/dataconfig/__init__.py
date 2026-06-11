@@ -415,6 +415,8 @@ _CONFIGS = [
             extra_delta_transform=True,
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
         name="pi0_droid_polaris",
         model=pi0_config.Pi0Config(
             action_horizon=10,
