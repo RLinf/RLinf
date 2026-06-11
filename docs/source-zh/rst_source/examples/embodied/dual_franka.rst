@@ -1,347 +1,260 @@
 双 Franka 真机：GELLO 数据采集、π₀.₅ SFT 与部署
 ====================================================
 
-本指南是 RLinf 中 **双臂 Franka** 真机的端到端流程：双节点环境搭建、
-1 kHz GELLO 关节空间双臂数据采集、π₀.₅ 在 20 维 tcp_rot6d 动作空间上的
-SFT 微调，以及通过脚踏开关将训练好的策略部署回真机。
+本示例介绍 RLinf 双臂 Franka 真机流程的最小可执行工作流：启动双节点真机
+集群，使用两台 GELLO 主手采集双臂演示数据，将数据转换为 tcp_rot6d 后对
+π₀.₅ 执行 SFT，并通过脚踏控制将训练后的策略部署至机器人。
 
-阅读本页前请先阅读：
+本文包含硬件布局、依赖安装、必须替换的配置项、硬件检查、数据采集、
+tcp_rot6d 回填与 SFT、部署，以及常见故障排查。
 
-* :doc:`franka` — 单臂 Franka 基础、Ray cluster 搭建、RealSense +
-  SpaceMouse 数据采集路径。如果尚不熟悉 ``FrankaController`` /
-  ``FCI`` / ``RLINF_NODE_RANK``，请先完整阅读该页。
-* :doc:`franka_gello` — GELLO 硬件安装、Dynamixel SDK、
-  ``gello-teleop`` 包、USB-FTDI 权限。
+首次搭建硬件时，建议先阅读：
+
+* :doc:`franka`：单臂 Franka 基础、Ray 集群、FCI 与
+  ``RLINF_NODE_RANK``。
+* :doc:`franka_gello`：GELLO 安装、Dynamixel 权限和 ``gello-teleop``。
 
 
-硬件拓扑
---------
+概览
+----
+
+流程包含五个阶段：
+
+1. 在两个机器人节点上安装 ``franka-franky`` 依赖。
+2. 在 head 节点设置 ``RLINF_NODE_RANK=0``，在 worker 节点设置
+   ``RLINF_NODE_RANK=1``，然后启动 Ray。
+3. 使用 ``realworld_collect_data_gello_joint_dual_franka`` 采集关节空间演示。
+4. 将数据转换为 tcp_rot6d，并使用
+   ``realworld_sft_openpi_dual_franka_tcp_rot6d`` 执行 π₀.₅ SFT。
+5. 使用 ``realworld_eval_dual_franka`` 部署策略。
+
+仓库预置配置已指定对应环境。通常仅需替换硬件路径、任务文本、数据集
+ID 和模型 checkpoint。
+
+
+环境
+----
+
+硬件布局
+~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 32 50
+   :widths: 20 35 45
 
    * - 节点
      - 角色
-     - 节点上的硬件
-   * - **node 0**\ （head）
-     - Ray head；env worker；左 ``FrankyController``；
-       部署阶段的 actor / rollout；所有相机和 GELLO 采集
-     - 1× GPU（如 RTX 4090，仅 SFT 与部署阶段使用）；
-       左 Franka FR3 直连一张网卡，对接 FCI 端口；
-       左 Robotiq 2F-85（USB-RS485 Modbus）；
-       **左右两台 GELLO** Dynamixel 链（USB-FTDI）；
-       **三台相机全部在此**\ —— base RealSense D435i（第三人称）+
-       左腕 Lumos USB-3 + 右腕 Lumos USB-3；
-       PCsensor 3 键脚踏（放在 node 0）
-   * - **node 1**\ （worker）
-     - Ray worker；只跑右 ``FrankyController``
-     - 可选 GPU（推理不需要）；
-       右 Franka FR3 直连自己的网卡，对接 FCI 端口；
-       右 Robotiq 2F-85
+     - 硬件
+   * - ``node 0`` （head）
+     - Ray head、env worker、左臂 Franka controller、相机、GELLO 输入、
+       采集和部署入口
+     - GPU 机器；左 Franka FR3；左 Robotiq gripper；base 相机；左右腕相机；
+       两台 GELLO 主手；PCsensor 脚踏
+   * - ``node 1`` （worker）
+     - Ray worker 和右臂 Franka controller
+     - 右 Franka FR3；右 Robotiq gripper；GPU 可选
 
-.. note::
+两台 Franka 通常分别通过专用网卡连接到本地控制节点。所有相机、两台 GELLO
+主手和脚踏都连接到 ``node 0``。
 
-   两臂的 FCI IP 与网卡名按你机器实际网络情况填写到下文
-   Hardware YAML 中即可。
+数据与动作空间
+~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 22 22 56
+   :widths: 24 22 20 34
 
-   * - 相机槽位
-     - 后端
+   * - 阶段
+     - 环境
+     - 形状
      - 用途
-   * - ``base_0_rgb``
-     - RealSense D435i
-     - 第三人称视角，左右臂共用
-   * - ``left_wrist_0_rgb``
-     - Lumos USB 3（XVisio vSLAM）
-     - 左臂腕相机，作为 π₀.₅ 主 ``image``
-   * - ``right_wrist_0_rgb``
-     - Lumos USB 3（XVisio vSLAM）
-     - 右臂腕相机
+   * - 采集
+     - ``DualFrankaJointEnv-v1``
+     - ``state=[68]``，``actions=[16]``
+     - GELLO 关节空间演示
+   * - SFT / 部署
+     - ``DualFrankaTCPEnv-v1``
+     - ``state=[20]``，``actions=[20]``
+     - π₀.₅ tcp_rot6d 策略
 
-脚踏（PCsensor 3 键 FootSwitch）必须接在 node 0，键码 ``a`` / ``b`` /
-``c`` 用厂家 Windows 工具刷一次进固件。
+每条 tcp_rot6d 动作为每只手臂一组 ``[xyz(3), rot6d(6), gripper(1)]``。
+主图像键为 ``left_wrist_0_rgb``；额外视角顺序为 ``base_0_rgb`` 和
+``right_wrist_0_rgb``。
 
 
-安装（每个节点都执行）
-----------------------
+依赖安装
+--------
 
-以下步骤需在 ``node 0`` 和 ``node 1`` 上**分别执行一次**。两个节点是
-独立 checkout、独立 venv，只共享 LAN 网络。
+机器人节点
+~~~~~~~~~~
 
-1. 检查 Franka 固件版本
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-在机器人管理网页（一般为 ``http://<robot_ip>/desk``）中，点击
-``SETTINGS`` 选项卡，在 ``DashBoard`` 中查看 ``Control`` 后面的版本号，
-如下所示。请记录该固件版本号，后续步骤会用到。
-
-.. raw:: html
-
-  <div style="flex: 1; text-align: center;">
-      <img src="https://github.com/RLinf/misc/blob/main/pic/franka_firmware.png?raw=true" style="width: 60%;"/>
-  </div>
-
-确认固件版本号后到 Franka 官方 `compatibility matrix
-<https://frankarobotics.github.io/docs/compatibility.html>`_ 查与该
-固件兼容的 libfranka 版本，下一节 "RLinf + franky" 会用到。
-
-2. PREEMPT_RT 内核与 rtprio 限额
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-按 `Setting up the real-time kernel
-<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_
-启动 PREEMPT_RT 内核（验证过 ``5.15.133-rt69``\ ）。验证：
-
-.. code-block:: bash
-
-   uname -a | grep -o PREEMPT_RT
-
-把以下写进 ``/etc/security/limits.d/99-realtime.conf`` 然后重新登录：
-
-.. code-block:: text
-
-   *  -  rtprio    99
-   *  -  memlock   unlimited
-
-退出登录再重新登录让 PAM 重新读取限额；然后 ``ulimit -r`` 应当返回
-``99`` 或 ``unlimited``\ ，``ulimit -l`` 应当返回 ``unlimited``\ 。
-否则 ``FrankyController.__init__`` 会打印 ``SCHED_FIFO denied`` /
-``mlockall failed`` 并 fallback 到默认调度——控制器仍能运行，但
-RT 抖动会回来。
-
-.. note::
-
-   这些限额由
-   ``rlinf/envs/realworld/franka/franky_controller.py`` 中的
-   ``_apply_rt_hardening()`` 在启动时检查；如果 ``SCHED_FIFO``
-   被拒绝或 ``mlockall`` 失败，控制器会以 best-effort 模式继续
-   运行并打 warning，而不会直接退出，warning 文本里附带具体的
-   修复指引。
-
-3. 每次开机的 RT 调优
-~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   sudo bash -c 'for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > "$g"; done'
-   sudo sysctl -w kernel.sched_rt_runtime_us=-1
-   sudo ethtool -C eno1 rx-usecs 0 tx-usecs 0   # eno1 换成你的网卡
-
-4. RLinf + franky
-~~~~~~~~~~~~~~~~~
-
-按 "1. 检查 Franka 固件版本" 一节查到的 libfranka 版本导出
-``LIBFRANKA_VERSION``，然后跑安装脚本：
+在 ``node 0`` 和 ``node 1`` 上分别执行机器人节点安装。根据 Franka 官方 `compatibility matrix
+<https://frankarobotics.github.io/docs/compatibility.html>`_ 选择
+``LIBFRANKA_VERSION``；避免使用 libfranka ``0.18.0``。
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-   # 按 "1. 检查 Franka 固件版本" 一节里查到的 libfranka 版本设这个变量。
-   export LIBFRANKA_VERSION=0.15.0       # 或 0.19.0、...
-
-   # 一次装齐：系统依赖（rt-tests, ethtool, eigen, pinocchio，由
-   # install.sh 内部调 franky_install.sh 处理）+ RLinf Python 依赖
-   # + 与 LIBFRANKA_VERSION 对应的 franky-control wheel。
-   # 非 root 用户在系统依赖安装那一步会提示输 sudo 密码。
+   export LIBFRANKA_VERSION=0.15.0       # 替换为与固件兼容的版本
    bash requirements/install.sh embodied --env franka-franky --use-mirror
    source .venv/bin/activate
 
-``--env franka-franky`` 走 franky 路径 —— 从
-``Brunch-Life/franky`` fork 的 ``wheels-libfranka-<LIBFRANKA_VERSION>``
-release 按当前 Python ABI 挑对应的 ``franky-control`` wheel
-（cp39..cp314，x86_64 manylinux_2_28，**libfranka 内嵌在 wheel 里**），
-**跳过** :doc:`franka` 使用的 ``serl_franka_controllers`` ROS / catkin
-编译流。``--use-mirror`` 面向国内用户（自动切换 PyPI / GitHub /
-HuggingFace 镜像）。
+按照 :doc:`franka_gello` 在 ``node 0`` 安装 GELLO 依赖。两台 GELLO 主手应
+保留在 ``node 0`` 本机，不应通过 LAN 转发 1 kHz 数据流。
 
-.. note::
+训练节点
+~~~~~~~~
 
-   ``requirements/install.sh embodied --env franka-franky`` **一条命令
-   搞定**：uv venv → 内部调 ``franky_install.sh`` 装系统级依赖
-   （``rt-tests``、``ethtool``、``cmake``、``libeigen3-dev``、
-   ``libpoco-dev``、``libfmt-dev``、pinocchio 等）→ 拉对应 libfranka
-   版本的 ``franky-control`` wheel。**不需要单独跑** ``franky_install.sh``。
-
-.. warning::
-
-   **请避开 libfranka 0.18.0**。Franka 官方 0.18.0 release notes 标注
-   了阻抗 / 笛卡尔控制路径的回归 bug。
-
-5. GELLO（env worker 所在节点）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-两台 GELLO 的 USB-FTDI 都接 node 0，跨 LAN 走会破坏 1 kHz 实时性。
-
-按 :doc:`franka_gello` 在 node 0 装 ``gello`` + ``gello-teleop`` +
-USB-FTDI 权限到同一 venv。
-
-6. 脚踏
-~~~~~~~
-
-PCsensor FootSwitch 用厂家 Windows 工具把 3 个踏板刷成键码 ``a`` /
-``b`` / ``c``\ （写入固件，一次永久）。
+在执行 SFT 的远端 GPU 训练集群上安装 OpenPI 依赖：
 
 .. code-block:: bash
 
-   ls -l /dev/input/by-id/*-event-kbd       # 期望: usb-PCsensor_FootSwitch-event-kbd → ../eventXX
-   sudo chmod 666 /dev/input/eventXX
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX   # 必须在 `ray start` 之前
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
+   source .venv/bin/activate
 
 
-硬件验证
+配置
+----
+
+基于仓库预置配置进行参数替换，无需新增独立配置文件：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - 配置
+     - 用途
+   * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
+     - GELLO 关节空间采集
+   * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
+     - 在转换后的 tcp_rot6d 数据上执行 π₀.₅ SFT
+   * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
+     - 真机策略部署
+   * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
+     - 关节空间硬件默认配置
+   * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
+     - tcp_rot6d 硬件默认配置
+
+替换以下带 ``# Replace:`` 标记的占位符：
+
+* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP``：各控制节点可见的 FCI IP。
+* ``BASE_CAMERA_SERIAL``、``LEFT_CAMERA_SERIAL``、``RIGHT_CAMERA_SERIAL``：
+  相机 serial 或稳定的 ``/dev/v4l/by-id`` 路径。
+* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：Robotiq 转接器
+  的稳定 ``/dev/serial/by-id`` 路径。
+* ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT``：两台 GELLO 主手的稳定
+  ``/dev/serial/by-id`` 路径。
+* ``TASK_DESCRIPTION``：采集、SFT 和部署使用的自然语言任务描述。
+* ``SFT_DATASET_REPO_ID``：转换后的数据集 ID，通常是
+  ``<repo_id>/tcp_rot6d_v1``。
+* ``MODEL_PATH``：``node 0`` 上的部署 checkpoint 目录。
+
+
+硬件检查
 --------
 
-启动 Ray 之前每个节点单测各硬件。
+启动 Ray 前完成以下检查。
+
+脚踏
+~~~~
+
+使用厂商工具将 PCsensor FootSwitch 的按键配置为 ``a`` / ``b`` / ``c``。然后在
+``node 0`` 执行：
+
+.. code-block:: bash
+
+   ls -l /dev/input/by-id/*-event-kbd
+   sudo chmod 666 /dev/input/eventXX
+   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
+
+.. note::
+
+   将所有 ``eventXX`` 替换为第一条命令显示的实际 ``eventNN``，例如
+   ``event7``。必须在 ``ray start`` 前导出 ``RLINF_KEYBOARD_DEVICE``。
 
 相机
 ~~~~
 
 .. code-block:: bash
 
-   rs-enumerate-devices | grep -E "Name|Serial|USB Type"   # RealSense
-   ls /dev/v4l/by-id/                                       # 两个 Lumos 节点
-   lsusb -t                                                 # 期望 5000M，480M = USB-2 fallback
+   rs-enumerate-devices | grep -E "Name|Serial|USB Type"
+   ls /dev/v4l/by-id/
+   lsusb -t
 
-GELLO（找串口 + 验关节）
-~~~~~~~~~~~~~~~~~~~~~~~~
+预期输出应包含 RealSense serial、两个 Lumos 设备，以及类似 ``5000M`` 的
+USB-3 速度。``480M`` 表示设备已降级为 USB 2。
 
-每条 GELLO 对应 ``/dev/serial/by-id/usb-FTDI_..._<unique_id>-if00-port0``\ 。
-分辨左右用拔插对照法：
+GELLO 主手
+~~~~~~~~~~
+
+每次仅连接一台主手，并使用以下命令识别两个 FTDI 路径：
 
 .. code-block:: bash
 
-   # 先只插左 → 记一遍；再插右 → 新出现的就是右
    ls /dev/serial/by-id/ | grep -i ftdi
 
-把两条 by-id 写进
-``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
-的 ``env.eval.left_gello_port`` / ``right_gello_port``\ 。
-
-读数实时性：
+验证每台主手能够稳定输出关节值：
 
 .. code-block:: bash
 
+   cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    python -m rlinf.envs.realworld.common.gello.gello_joint_expert \
        --port /dev/serial/by-id/usb-FTDI_..._<LEFT_ID>-if00-port0
 
-如果数值阻塞或突然跳 ±2π，跑下一节的 ``calibrate``\ 。右臂同上。
+该命令会持续刷新输出，例如：
 
-每台机械臂单独验
-~~~~~~~~~~~~~~~~
+.. code-block:: text
 
-每个节点对自己那台跑：
+   joints=[+0.012 -0.604 +0.031 -2.184 +0.019 +1.571 +0.781]  gripper=[0.035]
 
-.. code-block:: bash
-
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   FRANKA_ROBOT_IP=172.16.0.2 \
-   FRANKA_GRIPPER_TYPE=robotiq \
-   FRANKA_GRIPPER_PORT=/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_<id>-if00-port0 \
-       python toolkits/realworld_check/test_franky_controller.py
-
-REPL 关键命令：``getjoint`` / ``home`` / ``hold 30``\ （静置听嗡鸣）/
-``stream 4 0.001 500``\ （1 kHz preemption 压测）/ ``open`` / ``close``\ 。
-
-两边都通过前不要启动 Ray。
-
+如果数值停止更新或出现约 ``2π`` 的跳变，请执行以下标定流程。
 
 GELLO 标定
-----------
+~~~~~~~~~~
 
-每台 GELLO 都要单独标定一次（更换电机后再标）。在左右臂上的标定结果
-一致，**两台 GELLO 都在 node 0 直连的左臂上做即可**。
+.. _dual-franka-gello-calibration-zh:
 
-对每台 GELLO 按 "calibrate → align-sequential 验证" 两步走一遍；第一台
-通过后把 ``GELLO_PORT`` 改成第二台的 by-id 路径，再跑一遍同样的两步。
-
-1. **标定**：
-
-   .. code-block:: bash
-
-      export PYTHONPATH=$PWD:${PYTHONPATH:-}
-      export GELLO_PORT=/dev/serial/by-id/usb-FTDI_..._<ID>-if00-port0
-      python toolkits/realworld_check/test_gello.py calibrate
-
-   脚本会将机器人安全地依次移动到两个已知姿态（``POSE_A`` =
-   Franka 原点，``POSE_B`` = π/4 倍数），让操作员将 GELLO 各
-   摆成相同姿态，然后从两次差值解出 ``joint_signs`` 和
-   ``joint_offsets``，最后打印一段可直接粘贴到
-   ``gello_software/gello/agents/gello_agent.py`` 的
-   ``DynamixelRobotConfig`` 块::
-
-       "/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_<id>-if00-port0":
-           DynamixelRobotConfig(
-               joint_ids=(1, 2, 3, 4, 5, 6, 7),
-               joint_offsets=(...),
-               joint_signs=(...),
-               gripper_config=(8, ..., ...),
-           ),
-
-2. **对齐验证**：标完直接跑 align-sequential 走一遍 J1 → J7，确认每个
-   关节都能稳稳进 ±0.10 rad 容差。如果某关节始终对不上 / 残差超过预期，
-   回到上一步重标。
-
-**对齐**\ （leader 跟机械臂位姿对不上时跑）：
+每台 GELLO 需完成一次标定，并使用 ``align-sequential`` 验证。两台主手均可在
+``node 0`` 上对左臂完成标定。
 
 .. code-block:: bash
 
+   cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export GELLO_PORT=/dev/serial/by-id/usb-FTDI_..._<ID>-if00-port0
+
+   python toolkits/realworld_check/test_gello.py calibrate
    python toolkits/realworld_check/test_gello.py align-sequential
 
-两个脚本都会用 glob ``/dev/serial/by-id/usb-FTDI_USB_TO_RS-485_*-if00-port0``
-自动找到本机的 Robotiq 串口（node 0 上接的就是左臂的 Robotiq），不需要
-手动配置。
+成功时，``align-sequential`` 输出如下：
+
+.. code-block:: text
+
+   ALL JOINTS ALIGNED
+     per-joint Δ (rad): ['+0.012', '-0.008', '+0.005', '+0.021', '-0.041', '+0.009', '-0.003']
+     max |Δ| = 0.041 rad on J5 (stream gate threshold = 0.5 rad — well under)
+   You can now Ctrl-C and start collect_data.sh.
+
+将 ``GELLO_PORT`` 替换为第二台主手路径后，重复上述两条命令。
 
 
-硬件 YAML
----------
+快速开始
+--------
 
-双 Franka 的硬件配置写在
-``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
-（采集）和
-``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
-（tcp_rot6d 部署）。参考这两份示例改即可，需要按本机替换的占位符：
+启动 Ray
+~~~~~~~~
 
-* ``LEFT_ROBOT_IP`` / ``RIGHT_ROBOT_IP`` —— 左右臂 FCI IP（如
-  ``172.16.0.2``）。
-* ``BASE_CAMERA_SERIAL`` —— base 相机 serial（RealSense 用
-  ``rs.context().devices`` 报告的；按 ``base_camera_type`` 后端
-  改成对应 SDK 的 serial）。
-* ``LEFT_CAMERA_SERIAL`` / ``RIGHT_CAMERA_SERIAL`` —— 两腕相机
-  serial（Lumos 用 ``/dev/v4l/by-id/usb-XVisio_..._video-index0``
-  路径；按 ``*_camera_type`` 后端改）。
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``
-  —— Robotiq 2F-85 的 RS-485 串口，固定用
-  ``/dev/serial/by-id/usb-FTDI_..._<id>-if00-port0``，**不要**
-  用 ``/dev/ttyUSB*``\ （重启 / 热插拔后会换号）。
-* ``LEFT_GELLO_PORT`` / ``RIGHT_GELLO_PORT`` —— GELLO 主手的
-  ``/dev/serial/by-id`` 路径（两个都插在 env worker 所在节点，
-  即 ``node_rank: 0``）。
-* override 段内的 ``ee_pose_limit_min`` / ``ee_pose_limit_max``
-  —— 按本机工作空间安全箱调；行 0 是左臂、行 1 是右臂，每行
-  ``[x, y, z, roll, pitch, yaw]``。
-
-``left_controller_node_rank`` / ``right_controller_node_rank``
-（默认 ``0`` / ``1``\ ，每节点各管一台）和 ``node_rank``\ （env
-worker + 相机所在节点）通常不用改。
-
-
-Ray cluster 启动
------------------
-
-Ray 在 ``ray start`` 时快照当前已 export 的环境变量，未 export 的
-worker 永远拿不到。先 export 完再 ``ray start``。
+Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank 和脚踏设备。
 
 .. code-block:: bash
 
-   # node 0（head）
+   # node 0
+   cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=0
@@ -352,126 +265,54 @@ worker 永远拿不到。先 export 完再 ``ray start``。
 
 .. code-block:: bash
 
-   # node 1（worker）
+   # node 1
+   cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export RLINF_NODE_RANK=1
+
    ray stop --force
    ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
 
-node 0 验证 ``ray status`` 两个节点 ALIVE。
+在 ``node 0`` 运行 ``ray status``，确认两个节点均为 ALIVE。
 
-.. warning::
+采集演示数据
+~~~~~~~~~~~~
 
-   两个节点是独立 checkout。node 0 改完代码要
-   ``rsync -av --delete RLinf/ <node1>:/path/to/RLinf/`` 再在
-   node 1 重启 Ray。否则会出现 worker ImportError 或不一致行为。
-
-
-数据采集（GELLO 关节空间）
---------------------------
-
-env = ``DualFrankaJointEnv-v1``\ ；``teleop_direct_stream: true`` 开
-1 kHz 守护线程读 GELLO 直接推到 ``FrankyController``\ ；``env.step``
-以 10 Hz 只读 state + 抓相机帧，不发 motion。这样数据集记录的是 1 kHz
-真实操作员动作而非 100 ms 网格截断后的轨迹。
-
-配置
-~~~~
-
-``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``\ ，
-常改字段：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 38 62
-
-   * - 字段
-     - 含义
-   * - ``runner.num_data_episodes``
-     - 总目标（resume 时跨会话累计）。
-   * - ``env.eval.left_gello_port`` / ``right_gello_port``
-     - 临时换 GELLO 单元时覆盖。
-   * - ``env.eval.override_cfg.task_description``
-     - 每帧 ``task`` 字段的 prompt。
-   * - ``env.eval.override_cfg.joint_action_mode``
-     - 采集用 ``absolute``\ 。
-   * - ``env.eval.override_cfg.teleop_direct_stream``
-     - 必须 ``true``\ 。
-   * - ``data_collection.save_dir``
-     - 数据集根目录，多次会话指同一目录可累积。
-   * - ``data_collection.resume``
-     - ``true`` 从已有 ``id_*`` shard 继续。
-
-启动
-~~~~
-
-Ray 起来后开两个终端（都在 node 0）：
+确认 :ref:`align-sequential <dual-franka-gello-calibration-zh>` 报告
+``ALL JOINTS ALIGNED`` 后，在 ``node 0`` 执行采集：
 
 .. code-block:: bash
 
+   cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    bash examples/embodiment/collect_data.sh \
-        realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
+       realworld_collect_data_gello_joint_dual_franka 2>&1 | tee logs/collect.log
 
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   python toolkits/realworld_check/collect_monitor.py logs/collect.log
-
-monitor 单独存在是因为 Ray 的 log monitor 缓冲会破坏 tqdm 原位刷新；
-它单独 tail 日志渲染干净的进度条 + 脚踏事件 + 最近 reward。
-
-每个 episode 的工作流
-~~~~~~~~~~~~~~~~~~~~~~
-
-确认 ``align-sequential`` 报告 ``ALL JOINTS ALIGNED`` 之后：
-
-1. (pre) reset 跳过 home，机械臂保持在操作员当前位置。
-2. 踩 ``a`` —— 开始录第 0 帧。
-3. 演示任务。机械臂 1 kHz 跟 GELLO，相机 10 Hz 抓帧。
-4. 踩 ``b`` —— ``segment_id`` +1（1 s 防抖），标 approach/grasp/...
-5. 踩 ``c`` —— 成功：reward=1.0、写 LeRobot shard。
-6. 录制中再踩 ``a`` —— 中止：丢 buffer，回 pre，机械臂不 home。
-
-输出格式
-~~~~~~~~
-
-LeRobot v2.1，每会话一个 shard：``<save_dir>/rank_0/id_{N}/``\ 。
-``meta/info.json`` 里 joint 数据为 ``state=[68]``\ 、\ ``actions=[16]``\ ，
-tcp_rot6d 数据为 ``state=[20]``\ 、\ ``actions=[20]``\ 。
-
-关键帧字段：
-
-* ``state`` ——
-  ``[L_grip, R_grip, joint_position(14), joint_velocity(14),
-  tcp_force(6), tcp_pose(14), tcp_torque(6), tcp_vel(12)]`` = 68
-* ``actions`` —— joint 模式
-  ``[L_jpos(7), L_grip, R_jpos(7), R_grip]``
-* ``image`` —— ``left_wrist_0_rgb``\ （主图像）
-* ``extra_view_image-0`` / ``-1`` —— **顺序锁死**
-  ``(base_0_rgb, right_wrist_0_rgb)``\ ，重命名会断言报错
-* ``is_success`` —— 整条 episode 都为 True 当且仅当踩 ``c`` 结束
-* ``segment_id`` —— uint8，踩 ``b`` 自增
-
-断点续采
-~~~~~~~~
-
-``data_collection.resume: true`` + 原 ``save_dir`` 重跑：扫已有
-``id_*`` shard 累计计数，新会话写到新 ``id_{N}``\ 。
-``num_data_episodes`` 是跨会话累计目标。
-
-
-回填 tcp_rot6d
---------------
-
-采集的是 16 维 joint actions + 68 维 joint-env state；π₀.₅ SFT 要求
-20 维 tcp_rot6d state/actions（actions 为
-``[xyz(3) + rot6d(6) + grip(1)] × 2``\ ）。
-
-``<repo_id>`` 是数据集相对 ``HF_LEROBOT_HOME`` 的路径，
-``joint_v1`` / ``tcp_rot6d_v1`` 是版本子目录。
+在另一个 ``node 0`` 终端监控进度：
 
 .. code-block:: bash
 
+   cd /path/to/RLinf
+   python toolkits/realworld_check/collect_monitor.py logs/collect.log
+
+脚踏按键：
+
+* ``a``：开始录制；录制过程中再次按下将中止录制并丢弃当前 buffer。
+* ``b``：递增 ``segment_id``，用于标记子任务边界。
+* ``c``：标记成功，写入 LeRobot shard，并结束当前 episode。
+
+如需继续采集，设置 ``data_collection.resume: true`` 并保持相同的
+``data_collection.save_dir``，新数据将追加为新的 ``id_*`` shard。
+
+回填 tcp_rot6d
+~~~~~~~~~~~~~~
+
+采集结果为关节空间数据。SFT 前需要转换为 tcp_rot6d：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export HF_LEROBOT_HOME=/path/to/lerobot_root
    export DATA_REPO_ID=<repo_id>
@@ -481,234 +322,56 @@ tcp_rot6d 数据为 ``state=[20]``\ 、\ ``actions=[20]``\ 。
        --src $HF_LEROBOT_HOME/$DATA_REPO_ID/joint_v1 \
        --dst $HF_LEROBOT_HOME/$SFT_REPO_ID
 
-重复回填会直接报错。
+运行 SFT
+~~~~~~~~
 
-
-SFT（π₀.₅，tcp_rot6d_v1）
--------------------------
-
-SFT 跑在远端 GPU 训练集群上，不在 node 0 / node 1。
-
-1. 推回填后的数据集到训练机（node 0）：
-
-   .. code-block:: bash
-
-      export HF_LEROBOT_HOME=/path/to/lerobot_root
-      export DATA_REPO_ID=<repo_id>
-      export SFT_REPO_ID=$DATA_REPO_ID/tcp_rot6d_v1
-
-      ssh <train> "mkdir -p $HF_LEROBOT_HOME/$SFT_REPO_ID"
-      rsync -av $HF_LEROBOT_HOME/$SFT_REPO_ID/ \
-          <train>:$HF_LEROBOT_HOME/$SFT_REPO_ID/
-
-2. 装环境（在 ``<train>``\ ）：
-
-   .. code-block:: bash
-
-      # 安装脚本要求填 --env，不实际使用。
-      bash requirements/install.sh embodied --model openpi --env maniskill_libero --use-mirror
-      source .venv/bin/activate
-
-3. 计算 norm_stats（在 ``<train>``\ ）：
-
-   .. code-block:: bash
-
-      export PYTHONPATH=$PWD:${PYTHONPATH:-}
-      export HF_LEROBOT_HOME=/path/to/lerobot_root
-      export DATA_REPO_ID=<repo_id>
-      export SFT_REPO_ID=$DATA_REPO_ID/tcp_rot6d_v1
-
-      python toolkits/lerobot/calculate_norm_stats.py \
-          --config-name pi05_dualfranka_tcp_rot6d \
-          --repo-id $SFT_REPO_ID
-
-4. 把 norm_stats 放到 π₀.₅ base ckpt（在 ``<train>``\ ）：
-
-   .. code-block:: bash
-
-      export PI05_BASE_CKPT=/path/to/pi05/torch
-      export DATA_REPO_ID=<repo_id>
-      export SFT_REPO_ID=$DATA_REPO_ID/tcp_rot6d_v1
-
-      mkdir -p $PI05_BASE_CKPT/$SFT_REPO_ID
-      cp <openpi_assets_dirs>/pi05_dualfranka_tcp_rot6d/$SFT_REPO_ID/norm_stats.json \
-         $PI05_BASE_CKPT/$SFT_REPO_ID/norm_stats.json
-
-5. 修改 SFT 配置（在 ``<train>``\ ）：
-
-   ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``：
-
-   .. code-block:: yaml
-
-      data:
-        train_data_paths: /path/to/lerobot_root
-
-      actor:
-        openpi_data:
-          repo_id: <repo_id>/tcp_rot6d_v1
-        model:
-          model_path: /path/to/pi05/torch
-          openpi_data:
-            repo_id: <repo_id>/tcp_rot6d_v1
-
-   同时把 ``runner.logger.wandb_entity`` 和
-   ``cluster.component_placement`` 改成你的训练集群配置。
-
-6. 开始训练（在 ``<train>``\ ）：
-
-   .. code-block:: bash
-
-      bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
-
-   Ckpt 落在
-   ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``\ 。
-
-真机部署
---------
-
-跟采集用同一套 Ray cluster，换入口脚本 + 配置。
-
-准备部署文件
-~~~~~~~~~~~~
-
-1. 在训练机整理 ckpt：
-
-   .. code-block:: bash
-
-      CKPT=<train_log>/checkpoints/global_step_<N>
-      export PI05_BASE_CKPT=/path/to/pi05/torch
-      export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-
-      mkdir -p $CKPT/$SFT_REPO_ID
-      cp $PI05_BASE_CKPT/$SFT_REPO_ID/norm_stats.json \
-         $CKPT/$SFT_REPO_ID/norm_stats.json
-
-2. 拉回 node 0：
-
-   .. code-block:: bash
-
-      DEPLOY_CKPT=/path/to/deploy/global_step_<N>
-      SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
-
-      mkdir -p $DEPLOY_CKPT/actor/model_state_dict
-      mkdir -p $DEPLOY_CKPT/$SFT_REPO_ID
-
-      rsync -av <train>:<train_log>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
-          $DEPLOY_CKPT/actor/model_state_dict/full_weights.pt
-
-      rsync -av <train>:<train_log>/checkpoints/global_step_<N>/$SFT_REPO_ID/norm_stats.json \
-          $DEPLOY_CKPT/$SFT_REPO_ID/norm_stats.json
-
-``$DEPLOY_CKPT`` 只需要放在 node 0；部署时
-``rollout.model.model_path`` 指向 ``$DEPLOY_CKPT``。
-
-安装
-~~~~
+先将转换后的数据集同步至训练节点，然后在训练节点执行 SFT：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --model openpi --env franka-franky --use-mirror
-   source .venv/bin/activate
+   export TRAINER_IP=<trainer_ip>
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
 
-配置
-~~~~
+   ssh $TRAINER_IP "mkdir -p $HF_LEROBOT_HOME/$SFT_REPO_ID"
+   rsync -av $HF_LEROBOT_HOME/$SFT_REPO_ID/ \
+       $TRAINER_IP:$HF_LEROBOT_HOME/$SFT_REPO_ID/
 
-``examples/embodiment/config/realworld_eval_dual_franka.yaml``。
-占位符标注为 ``# Replace:``。最常修改的字段：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - 字段
-     - 设成
-   * - ``rollout.model.model_path``
-     - ``<DEPLOY_CKPT>`` —— 必须包含
-       ``actor/model_state_dict/full_weights.pt`` 和
-       ``<actor.model.openpi_data.repo_id>/norm_stats.json``\ 。
-   * - ``actor.model.openpi_data.repo_id``
-     - ``<repo_id>/tcp_rot6d_v1``\ 。
-   * - ``env.eval.override_cfg.task_description``
-     - 跟训练 prompt 一致。
-   * - ``env.eval.override_cfg.target_ee_pose``
-     - 跟采集时的 workspace 对齐。
-
-硬件 ``configs`` 与采集 yaml 完全一致 —— 同 IP、同相机 serial、
-同 gripper 串口。Wrapper 是按 ``env.eval.use_*`` flag 装的，所以
-采集 vs 部署的 yaml 差别只有 2 个：
-
-* ``use_gello_joint: false``\ （采集是 ``true``）
-* ``keyboard_reward_wrapper: eval_control``\ （采集是 ``start_end``）
-
-启动
-~~~~
+在训练节点执行：
 
 .. code-block:: bash
 
-   # node 0：先把代码同步到 node 1
-   rsync -av --delete --exclude=results --exclude='.venv*' --exclude=.git \
-       --exclude=__pycache__ --exclude='*.pyc' --exclude=wandb \
-       ./ <node1>:/path/to/RLinf/
-
-.. code-block:: bash
-
-   # node 0（head）
+   cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export RLINF_NODE_RANK=0
-   export RLINF_KEYBOARD_DEVICE=/dev/input/eventXX
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   export DUAL_FRANKA_DATA_ROOT=/path/to/lerobot_root
+   export PI05_BASE_CKPT=/path/to/pi05/torch
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
 
-   ray stop --force
-   ray start --head --port=6379 --node-ip-address=<HEAD_IP>
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi05_dualfranka_tcp_rot6d \
+       --repo-id $SFT_REPO_ID
 
-.. code-block:: bash
+   mkdir -p $PI05_BASE_CKPT/$SFT_REPO_ID
+   cp <openpi_assets_dirs>/pi05_dualfranka_tcp_rot6d/$SFT_REPO_ID/norm_stats.json \
+      $PI05_BASE_CKPT/$SFT_REPO_ID/norm_stats.json
 
-   # node 1（worker）
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-   export RLINF_NODE_RANK=1
-   ray stop --force
-   ray start --address=<HEAD_IP>:6379 --node-ip-address=<WORKER_IP>
+   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
 
-.. code-block:: bash
+并在 ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
+中更新 ``SFT_DATASET_REPO_ID``、``PI05_BASE_CKPT``、logger 设置和集群放置。
+Checkpoint 保存到
+``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
-   # node 0
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka
 
-   # Hydra override 示例：
-   #   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka \
-   #        rollout.model.model_path=/sft/global_step_5000 \
-   #        actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
-   #        env.eval.override_cfg.task_description="pour water"
+评估与部署
+----------
 
-每个 episode 的部署工作流
-~~~~~~~~~~~~~~~~~~~~~~~~~
+准备 checkpoint 文件
+~~~~~~~~~~~~~~~~~~~~
 
-``KeyboardEvalControlWrapper`` 把脚踏 wrapper 切成自主推理模式：
-
-1. ``env.reset()`` 之后两台机械臂保持在 reset 位姿。``env.step()``
-   被截到 **idle** 模式 —— 不向内层 env 转发（impedance 控制器
-   保持上一次 reset 时的目标，机械臂原地静止），但 wrapper 仍会把
-   最近一次 obs 返回，让策略的 chunked rollout 循环空转，不下发
-   任何关节指令。
-2. 踩下 ``a`` —— wrapper 切到 **running**。下一步 ``env.step``
-   开始向内层 env 转发策略输出。
-3. 踩下 ``c`` —— 成功：``terminated=True``、``reward=1.0``、
-   ``info["eval_result"]="success"``。Wrapper 内部立刻调
-   ``env.reset()`` 让机械臂回 home，然后回到 idle 等下一次 ``a``
-   —— 这是脚踏可连续操作的关键，即使 eval ``env_worker``
-   是 ``auto_reset=False``。
-4. 踩下 ``b`` —— 失败：行为同 ``c``，但 ``reward=0.0``、
-   ``info["eval_result"]="failure"``。
-5. running 阶段，wrapper 强制把 ``terminated`` / ``truncated``
-   置 False，除非脚踏触发 —— env 自己的 ``max_episode_steps``
-   不会切断策略。把 ``max_episode_steps`` 设大一点（仓库 yaml
-   是 ``10000``），让脚踏始终是边界 owner。
-
-ckpt / norm_stats 锁步
-~~~~~~~~~~~~~~~~~~~~~~~
-
-部署 ckpt 目录必须包含：
+``node 0`` 上的部署 checkpoint 目录必须包含：
 
 .. code-block:: text
 
@@ -716,77 +379,88 @@ ckpt / norm_stats 锁步
    ├── actor/model_state_dict/full_weights.pt
    └── <repo_id>/tcp_rot6d_v1/norm_stats.json
 
-``actor.model.openpi_data.repo_id`` 必须设为 ``<repo_id>/tcp_rot6d_v1``\ 。
-
-启动前自检：
+将 SFT checkpoint 和匹配的 normalization stats 同步回 ``node 0``：
 
 .. code-block:: bash
 
-   ls <model_path>/actor/model_state_dict/full_weights.pt
-   ls <model_path>/<repo_id>/tcp_rot6d_v1/norm_stats.json
+   export TRAINER_IP=<trainer_ip>
+   export DEPLOY_CKPT=/path/to/deploy/global_step_<N>
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
+
+   mkdir -p $DEPLOY_CKPT/actor/model_state_dict
+   mkdir -p $DEPLOY_CKPT/$SFT_REPO_ID
+
+   rsync -av \
+       $TRAINER_IP:<train_log>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt \
+       $DEPLOY_CKPT/actor/model_state_dict/full_weights.pt
+   rsync -av $TRAINER_IP:<train_log>/checkpoints/global_step_<N>/$SFT_REPO_ID/norm_stats.json \
+       $DEPLOY_CKPT/$SFT_REPO_ID/norm_stats.json
+
+在 ``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 中将
+``rollout.model.model_path`` 设为 ``$DEPLOY_CKPT``，将
+``actor.model.openpi_data.repo_id`` 设为 ``<repo_id>/tcp_rot6d_v1``。
+
+启动策略部署
+~~~~~~~~~~~~
+
+可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。随后在
+``node 0`` 执行：
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+   source .venv/bin/activate
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka
+
+Hydra override 示例：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka \
+       rollout.model.model_path=/path/to/deploy/global_step_<N> \
+       actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
+       env.eval.override_cfg.task_description="handover the object"
+
+部署阶段脚踏按键：
+
+* ``a``：从 idle 状态启动策略执行。
+* ``b``：标记失败并 reset。
+* ``c``：标记成功并 reset。
+
+每次 reset 后，wrapper 会再次等待 ``a``，便于在下一次 episode 前重新布置
+场景。
 
 
 故障排查
 --------
 
-**GELLO 守护线程未启动**
-   GELLO 重新上电、FTDI 重插，然后用
-   ``python -m rlinf.envs.realworld.common.gello.gello_joint_expert --port /dev/...`` 验证
-   两侧都能持续输出 Dynamixel 读数。
-
-**Ray worker 静默死在 import**
-   在跑 ``ray start`` 的同一 shell 里执行
-   ``which python && python -c "import franky, gello, gello_teleop"``
-   确认 venv 和已装包一致；具体报错看
+**Ray worker 导入失败**
+   在运行 ``ray start`` 的同一个 shell 中检查 ``which python`` 和
+   ``python -c "import franky, gello, gello_teleop"``。worker 日志位于
    ``/tmp/ray/session_latest/logs/worker-*.err``。
 
-**有一台机械臂 reset 时挂住**
-   在 controller 节点 ``ping -c 100 <robot_ip>``，若丢包就重启
-   该机械臂再跑。
+**脚踏设备权限不足**
+   重新执行 ``sudo chmod 666 /dev/input/eventXX``，并确认
+   ``RLINF_KEYBOARD_DEVICE`` 指向同一个设备。
 
-**开机后 ``move_joints`` 一直报错**
-   释放白色急停按钮 → Desk 网页（\ ``http://<robot_ip>/desk/``\ ）
-   点 *Activate FCI* → 等关节 LED 由白转蓝 → 再启动。
+**RealSense 显示为 USB 2**
+   更换线缆或接口。``lsusb -t`` 应显示 ``5000M``，而非 ``480M``。
 
-**GELLO 守护线程和 env reset 互相 race**
-   reset 期间把 GELLO leader 放稳在支架上，等
-   ``KeyboardStartEndWrapper`` 报告 reset 结束再继续操作。
+**GELLO 输出停止**
+   重启主手电源，重新连接 FTDI 转接器，并使用
+   ``python -m rlinf.envs.realworld.common.gello.gello_joint_expert --port ...``
+   验证输出。
 
-**脚踏报 "Permission denied"**
-   ``sudo chmod 666 /dev/input/eventXX``；要持久化就写 udev rule
-   （``KERNEL=="event*", SUBSYSTEM=="input",
-   ATTRS{name}=="PCsensor FootSwitch", MODE="0666"``）。
+**某一机械臂 reset 过程无响应**
+   在对应 controller 节点运行 ``ping -c 100 <robot_ip>``。如果出现丢包，先修复
+   NIC/FCI 连接或重启机器人。
 
-**RealSense 退到 USB 2.x**
-   换 USB 线缆，插到主板的蓝色 USB-3 端口，``lsusb -t`` 确认显示
-   ``5000M`` 而不是 ``480M``。
+**部署时无法找到 ``norm_stats.json``**
+   确认文件路径为
+   ``<model_path>/<actor.model.openpi_data.repo_id>/norm_stats.json``。
 
-**Lumos 冷启动第一次失败**
-   重新插拔 USB 线。
-
-**部署时 idle 一直不响应**
-   确认 ``RLINF_KEYBOARD_DEVICE`` 指向正确的
-   ``/dev/input/eventXX`` 且 ``chmod 666`` 仍生效，然后踩 ``a``
-   触发。
-
-**部署阶段跟踪抖动**
-   降 ``RLINF_CART_K_R``、提高 ``RLINF_CART_GAINS_TC``、把
-   ``RLINF_CART_MAX_STEP_RAD`` 收紧；仍不行就缩短策略 chunk
-   长度。
-
-**部署时找不到 ``norm_stats.json``**
-   确认文件在
-   ``<model_path>/<actor.model.openpi_data.repo_id>/norm_stats.json``\ 。
-
-**collect_monitor 无进展**
-   launcher 加 ``2>&1 | tee logs/collect.log``；env worker 在另一
-   节点时给 monitor 加 ``--source=worker``。
-
-**controller 启动时输出 ``sched_setaffinity failed`` warning**
-   换 6+ 核机器，或对 venv 解释器执行
-   ``sudo setcap cap_sys_nice=eip $(which python)``。
-
-**reset 时两台机械臂都动了，但之后只有一根跟踪 GELLO**
-   每台 GELLO 单独跑
-   ``python toolkits/realworld_check/test_gello.py align-check``
-   确认都在持续输出读数，再重启。
+**部署持续停留在 idle**
+   确认脚踏路径和权限后按下 ``a``。eval wrapper 会在两个 episode
+   之间主动停留在 idle 状态。
