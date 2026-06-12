@@ -61,18 +61,20 @@ publisher:
 - On the machine that sends and receives PICO data, install a compatible PC
   Service from
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_.
-- Confirm that the PICO headset and controllers are connected and that pose
-  and button data update continuously.
 - Ensure that the publisher machine is on the same network as the Franka
   controller node, or that it runs on the same machine as the RLinf env worker.
 
-After the PICO headset is connected to the data publisher machine, start the
-XRoboToolkit PC Service on that machine:
+Before connecting the PICO headset, start the XRoboToolkit PC Service on the
+machine that sends and receives PICO data:
 
 .. code-block:: bash
 
    cd /opt/apps/roboticsservice
    bash runService.sh
+
+After the PC Service is running, connect the PICO headset to that service and
+confirm that the headset and controllers are connected and that pose and
+button data update continuously.
 
 Choose an installation directory and clone the repository:
 
@@ -80,7 +82,13 @@ Choose an installation directory and clone the repository:
 
    cd /path/to/install/pico
    git clone git@github.com:tiny-xie/pico_software.git
-   cd pico_software
+   cd pico_software/XRoboToolkit-Teleop-Sample-Python
+
+.. note::
+
+   The ``XRoboToolkit-Teleop-Sample-Python`` module used by ``pico_software``
+   comes from the official open-source repository
+   `XR-Robotics/XRoboToolkit-Teleop-Sample-Python <https://github.com/XR-Robotics/XRoboToolkit-Teleop-Sample-Python>`_.
 
 Set up the environment:
 
@@ -88,12 +96,27 @@ Set up the environment:
 
    bash setup_uv.sh
 
+Before starting the VR data publisher, use the virtual environment created
+above to verify that the XRT connection between the PICO headset and the data
+publisher machine is working:
+
+.. code-block:: bash
+
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
+   source .venv/bin/activate
+   cd /path/to/pico_software
+   python test_pico_xrt_pipeline.py
+
+If the connection is successful, moving the PICO headset and controllers
+should show a continuously changing data stream in the terminal.
+
 Then start the VR data publisher on the same machine:
 
 .. code-block:: bash
 
-   cd /path/to/pico_software
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
    source .venv/bin/activate
+   cd /path/to/pico_software
    python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
 
 2. Configure the ZeroMQ address

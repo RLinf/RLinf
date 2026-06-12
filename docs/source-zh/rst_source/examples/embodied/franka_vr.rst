@@ -56,15 +56,17 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
 - 在负责收发 PICO 数据的机器上，从
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_
   选择适配版本并安装 PC Service。
-- 确认 PICO 头显、左右手柄均已连接，手柄位姿和按键数据会持续更新。
 - 确认 publisher 机器与 Franka 控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
 
-待 PICO 与收发数据的机器连接成功后，在收发数据的机器上启动 XRoboToolkit PC Service：
+在 PICO 头显连接前，先在收发数据的机器上启动 XRoboToolkit PC Service：
 
 .. code-block:: bash
 
    cd /opt/apps/roboticsservice
    bash runService.sh
+
+启动 PC Service 后，再在 PICO 头显端连接该服务，并确认 PICO 头显、左右手柄均已连接，
+手柄位姿和按键数据会持续更新。
 
 选择一个安装目录，然后克隆仓库：
 
@@ -72,7 +74,12 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
 
    cd /path/to/install/pico
    git clone git@github.com:tiny-xie/pico_software.git
-   cd pico_software
+   cd pico_software/XRoboToolkit-Teleop-Sample-Python
+
+.. note::
+
+   ``pico_software`` 中使用的 ``XRoboToolkit-Teleop-Sample-Python`` 模块来自官方开源仓库
+   `XR-Robotics/XRoboToolkit-Teleop-Sample-Python <https://github.com/XR-Robotics/XRoboToolkit-Teleop-Sample-Python>`_。
 
 配置环境：
 
@@ -80,12 +87,25 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
 
    bash setup_uv.sh
 
+启动 VR 数据 publisher 前，可使用刚刚创建的虚拟环境，在 ``pico_software`` 路径下验证
+PICO 与收发数据机器的 XRT 链路是否已经连通：
+
+.. code-block:: bash
+
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
+   source .venv/bin/activate
+   cd /path/to/pico_software
+   python test_pico_xrt_pipeline.py
+
+如果连接成功，移动 PICO 头显和手柄时，终端中应能看到持续变化的数据流。
+
 然后在同一台收发数据的机器上启动 VR 数据 publisher：
 
 .. code-block:: bash
 
-   cd /path/to/pico_software
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
    source .venv/bin/activate
+   cd /path/to/pico_software
    python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
 
 2. 配置 ZeroMQ 地址
