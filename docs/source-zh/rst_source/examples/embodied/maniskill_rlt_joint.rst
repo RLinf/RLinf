@@ -92,12 +92,6 @@ learner 侧 replay，以及 actor-only weight sync 是否一致。
    # 可选：export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
-4. 准备 OpenPI / openpi-RLT 依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-本示例依赖 OpenPI 配置和 RLT 相关 dataconfig。若你的环境没有自动提供
-``openpi-RLT``，请确保其源码路径能被 ``PYTHONPATH`` 找到。仓库中的相关脚本会优先尝试
-从 RLinf 邻目录下的 ``openpi-RLT/src`` 自动导入。
 
 数据格式与目录约定
 ------------------
