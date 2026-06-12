@@ -94,6 +94,9 @@ Set up the environment:
 
 .. code-block:: bash
 
+   # To speed up dependency installation in China, add `--use-mirror` to the setup_uv.sh command below:
+   # bash setup_uv.sh --use-mirror
+
    bash setup_uv.sh
 
 Before starting the VR data publisher, use the virtual environment created
