@@ -116,13 +116,15 @@ actor 侧重新组装和处理 batch 的额外开销。尤其当 env worker 和 
      use_training_pipeline: True
 
    algorithm:
-     normalize_advantages: False
+     adv_type: gae
+     normalize_advantages: True
 
-当前限制：
+说明与限制：
 
-- ``algorithm.normalize_advantages`` 必须为 ``False``，因为 pipeline 路径会在
-  env worker 侧计算 advantages，并以 actor micro-batch 形式流式发送；actor 侧
-  不会再重建完整 rollout batch 来做统一 normalization。
+- 该模式支持 ``algorithm.normalize_advantages``。pipeline 路径会在 env worker
+  侧计算 raw advantages，聚合所有会发送到同一 actor rank 的 env worker 的 masked
+  advantage 统计量，并在流式发送 actor micro-batch 之前完成 normalization。
+- ``algorithm.adv_type`` 在该模式下目前仅支持 ``gae``。
 - 该模式面向具身 FSDP actor 训练中的 PPO/GRPO 类 actor loss；目前不支持
   ``embodied_sac``、``embodied_dagger`` 或 ``embodied_nft``。
 
