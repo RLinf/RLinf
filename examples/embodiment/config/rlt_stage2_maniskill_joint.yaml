@@ -64,11 +64,6 @@ algorithm:
     deviation_patience: 3  # Take over after this many deviating chunks.
     takeover_chunks: 2  # Min takeover chunks once triggered.
     takeover_max_chunks: 4  # Max consecutive takeover chunks.
-    enable_grasp_phase: True  # Also intervene before stable grasp.
-    grasp_near_peg_dist: 0.05  # Trigger grasp checks within this TCP-peg distance.
-    grasp_deviation_patience: 1  # Take over after this many near-peg non-grasp chunks.
-    grasp_takeover_chunks: 1  # Grasp takeover can release immediately once grasped.
-    grasp_takeover_max_chunks: 4  # Max consecutive grasp takeover chunks.
     safe_yz_margin: 1.8  # y/z safety radius multiplier.
     progress_eps: 0.01  # Min x progress per chunk, in meters.
     yz_error_eps: 0.01  # Max y/z error growth per chunk, in meters.
