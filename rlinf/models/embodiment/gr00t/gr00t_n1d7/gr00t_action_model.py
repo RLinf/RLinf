@@ -26,7 +26,7 @@ from gr00t.data.embodiment_tags import EmbodimentTag
 from gr00t.model.gr00t_n1d7.gr00t_n1d7 import Gr00tN1d7, Gr00tN1d7ActionHead
 from gr00t.model.gr00t_n1d7.processing_gr00t_n1d7 import Gr00tN1d7Processor
 from torch.distributions import Normal
-from transformers import Qwen3VLForConditionalGeneration
+from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
 from transformers.feature_extraction_utils import BatchFeature
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
@@ -55,18 +55,32 @@ def redirect_qwen3_backbone_to_local(canonical_name: str, local_path: str | None
     if not local_path.is_dir():
         raise FileNotFoundError(f"Backbone model path does not exist: {local_path}")
 
-    original_from_pretrained = Qwen3VLForConditionalGeneration.from_pretrained
+    original_model_from_pretrained = Qwen3VLForConditionalGeneration.from_pretrained
+    original_processor_from_pretrained = Qwen3VLProcessor.from_pretrained
 
-    def from_pretrained_with_local_redirect(model_name, *args, **kwargs):
-        if str(model_name) == canonical_name:
-            model_name = str(local_path)
-            kwargs["local_files_only"] = True
-        return original_from_pretrained(model_name, *args, **kwargs)
+    def _make_local_redirect(original):
+        def from_pretrained_with_local_redirect(model_name, *args, **kwargs):
+            if str(model_name) == canonical_name:
+                model_name = str(local_path)
+                kwargs["local_files_only"] = True
+            return original(model_name, *args, **kwargs)
 
-    with patch.object(
-        Qwen3VLForConditionalGeneration,
-        "from_pretrained",
-        side_effect=from_pretrained_with_local_redirect,
+        return from_pretrained_with_local_redirect
+
+    # Redirect both the backbone weights and its processor (image processor +
+    # tokenizer): GR00T's Gr00tN1d7DataCollator builds the processor via the
+    # canonical hub name, which would otherwise hit the Hub and fail offline.
+    with (
+        patch.object(
+            Qwen3VLForConditionalGeneration,
+            "from_pretrained",
+            side_effect=_make_local_redirect(original_model_from_pretrained),
+        ),
+        patch.object(
+            Qwen3VLProcessor,
+            "from_pretrained",
+            side_effect=_make_local_redirect(original_processor_from_pretrained),
+        ),
     ):
         yield
 
