@@ -99,17 +99,8 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
 
 如果连接成功，移动 PICO 头显和手柄时，终端中应能看到持续变化的数据流。
 
-然后在同一台收发数据的机器上启动 VR 数据 publisher：
-
-.. code-block:: bash
-
-   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
-   source .venv/bin/activate
-   cd /path/to/pico_software
-   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
-
-2. 配置 ZeroMQ 地址
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+启动 VR 数据 publisher 前，先在 ``pico_software/configs/vr_bridge.yaml`` 中配置
+publisher 侧的 ZeroMQ 地址。
 
 同机运行时可以使用 IPC：
 
@@ -127,20 +118,16 @@ PICO 与收发数据机器的 XRT 链路是否已经连通：
      ipc_addr: "tcp://0.0.0.0:<port>"
    publish_rate: 80
 
-RLinf consumer 侧则连接到 publisher 所在机器：
+然后在同一台收发数据的机器上，使用该配置文件启动 VR 数据 publisher：
 
-.. code-block:: yaml
+.. code-block:: bash
 
-   pico:
-     zmq_addr: "tcp://<vr_publisher_ip>:<port>"
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
+   source .venv/bin/activate
+   cd /path/to/pico_software
+   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
 
-.. warning::
-
-   publisher 的 bind 地址和 RLinf 的 connect 地址必须匹配。跨机器场景下不要使用
-   ``ipc:///tmp/vr_data.ipc``，因为 IPC 文件只在同一台机器内有效。
-
-
-3. 安装 RLinf 侧依赖
+2. 安装 RLinf 侧依赖
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 运行 PICO intervention 的 RLinf 环境请直接使用 ``franka-vr`` env 安装。
@@ -160,7 +147,7 @@ RLinf consumer 侧则连接到 publisher 所在机器：
    ``PicoIntervention`` 或无法连接 ZeroMQ。
 
 
-4. 验证 PICO 数据流
+3. 验证 PICO 数据流
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 启动 VR 数据 publisher 后，可以在运行 ``PicoIntervention`` 的节点上先执行
@@ -194,6 +181,11 @@ YAML 配置说明
 
 要使用 PICO 进行数据采集，请使用配置文件
 ``examples/embodiment/config/realworld_collect_data_pico.yaml``。
+RLinf consumer 侧的 ZeroMQ 连接地址配置在 ``env.eval.pico.zmq_addr``。
+该地址必须与 ``configs/vr_bridge.yaml`` 中的 publisher bind 地址匹配：
+同机运行时可使用 ``ipc:///tmp/vr_data.ipc``；跨机器运行时应使用
+``tcp://<vr_publisher_ip>:<port>``，不要使用 ``tcp://0.0.0.0:<port>`` 作为
+consumer 连接地址。
 
 关键配置如下：
 

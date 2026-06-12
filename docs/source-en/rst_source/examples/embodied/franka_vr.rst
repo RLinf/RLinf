@@ -110,17 +110,8 @@ publisher machine is working:
 If the connection is successful, moving the PICO headset and controllers
 should show a continuously changing data stream in the terminal.
 
-Then start the VR data publisher on the same machine:
-
-.. code-block:: bash
-
-   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
-   source .venv/bin/activate
-   cd /path/to/pico_software
-   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
-
-2. Configure the ZeroMQ address
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Before starting the VR data publisher, configure the publisher-side ZeroMQ
+address in ``pico_software/configs/vr_bridge.yaml``.
 
 For same-machine deployment, IPC can be used:
 
@@ -138,21 +129,16 @@ For cross-machine deployment, the publisher should bind to TCP:
      ipc_addr: "tcp://0.0.0.0:<port>"
    publish_rate: 80
 
-The RLinf consumer connects to the publisher machine:
+Then start the VR data publisher on the same machine with that config file:
 
-.. code-block:: yaml
+.. code-block:: bash
 
-   pico:
-     zmq_addr: "tcp://<vr_publisher_ip>:<port>"
+   cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
+   source .venv/bin/activate
+   cd /path/to/pico_software
+   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
 
-.. warning::
-
-   The publisher bind address and the RLinf connect address must match. Do
-   not use ``ipc:///tmp/vr_data.ipc`` for cross-machine setups, because IPC
-   files are only valid on the same machine.
-
-
-3. Install RLinf-side dependencies
+2. Install RLinf-side dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Install the RLinf environment that runs the PICO intervention with the
@@ -175,7 +161,7 @@ running ``ray start``.
    fail to import ``PicoIntervention`` or connect to ZeroMQ.
 
 
-4. Verify the PICO data stream
+3. Verify the PICO data stream
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 After starting the VR data publisher, run the built-in RLinf check script on
@@ -211,6 +197,12 @@ YAML Configuration
 
 To use PICO for data collection, use the config file
 ``examples/embodiment/config/realworld_collect_data_pico.yaml``.
+The RLinf consumer-side ZeroMQ address is configured by
+``env.eval.pico.zmq_addr``. It must match the publisher bind address in
+``configs/vr_bridge.yaml``: use ``ipc:///tmp/vr_data.ipc`` for same-machine
+deployment; for cross-machine deployment, use
+``tcp://<vr_publisher_ip>:<port>`` instead of ``tcp://0.0.0.0:<port>`` as the
+consumer connect address.
 
 The key configuration is:
 
