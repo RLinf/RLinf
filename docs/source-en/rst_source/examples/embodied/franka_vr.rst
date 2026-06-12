@@ -137,7 +137,7 @@ Then start the VR data publisher on the same machine with that config file:
    cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
    source .venv/bin/activate
    cd /path/to/pico_software
-   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
+   python -m vr_data_publisher --config configs/vr_bridge.yaml
 
 2. Install RLinf-side dependencies
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

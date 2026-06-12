@@ -126,7 +126,7 @@ publisher 侧的 ZeroMQ 地址。
    cd /path/to/pico_software/XRoboToolkit-Teleop-Sample-Python
    source .venv/bin/activate
    cd /path/to/pico_software
-   python -m vr_teleop.vr_data_publisher --config configs/vr_bridge.yaml
+   python -m vr_data_publisher --config configs/vr_bridge.yaml
 
 2. 安装 RLinf 侧依赖
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
