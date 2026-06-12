@@ -246,6 +246,7 @@ def actor_loss(
     bc_weight: float,
     q_weight: float,
     delta_weight: float,
+    human_bc_weight: float = 0.0,
 ) -> tuple[Tensor, dict[str, Tensor]]:
     if action_chunk is None:
         action_chunk = a_tilde
@@ -275,10 +276,11 @@ def actor_loss(
         if human_mask.any()
         else torch.zeros((), device=a.device, dtype=a.dtype)
     )
+    weighted_human_bc_loss = float(human_bc_weight) * bc_human_loss
     delta_loss = chunk_delta_loss(a, bc_target)
     q_mean = q_value.mean()
     total_loss = (
-        bc_weight * bc_loss
+        bc_weight * (bc_loss + weighted_human_bc_loss)
         - q_weight * q_mean
         + delta_weight * delta_loss
     )
@@ -286,6 +288,7 @@ def actor_loss(
         "bc_loss": bc_loss.detach(),
         "bc_ref_loss": bc_ref_loss.detach(),
         "bc_human_loss": bc_human_loss.detach(),
+        "bc_human_weighted_loss": weighted_human_bc_loss.detach(),
         "delta_loss": delta_loss.detach(),
         "human_mask_ratio": human_mask.to(torch.float32).mean().detach(),
         "q_mean": q_mean.detach(),

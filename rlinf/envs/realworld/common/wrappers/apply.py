@@ -32,6 +32,7 @@ from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
 from rlinf.envs.realworld.common.wrappers.dual_spacemouse_intervention import (
     DualSpacemouseIntervention,
 )
+from rlinf.envs.realworld.common.wrappers.critical_phase import CriticalPhaseWrapper
 from rlinf.envs.realworld.common.wrappers.euler_obs import Quat2EulerWrapper
 from rlinf.envs.realworld.common.wrappers.gello_intervention import (
     GelloIntervention,
@@ -77,13 +78,29 @@ def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
 
 
 def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
-    if env.config.is_dummy or not mode:
+    base_env = getattr(env, "unwrapped", env)
+    config = getattr(base_env, "config", None)
+    if bool(getattr(config, "is_dummy", False)) or not mode:
         return env
     if mode == "multi_stage":
         return KeyboardRewardDoneMultiStageWrapper(env)
     if mode == "single_stage":
         return KeyboardRewardDoneWrapper(env)
     return env
+
+
+def _apply_rlt_critical_phase(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
+    task_mode = cfg.get("task_mode", None)
+    if not task_mode:
+        return env
+    return CriticalPhaseWrapper(
+        env,
+        task_mode=str(task_mode),
+        critical_phase_key=str(cfg.get("critical_phase_key", "v")),
+        record_prefix_before_critical_phase=bool(
+            cfg.get("record_prefix_before_critical_phase", False)
+        ),
+    )
 
 
 def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
@@ -145,6 +162,7 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
                 f"'joint_target', got {gello_action_mode!r}."
             )
 
+    env = _apply_rlt_critical_phase(env, cfg)
     env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
 
     if cfg.get("use_relative_frame", True):

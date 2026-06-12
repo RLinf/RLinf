@@ -22,6 +22,9 @@ use_rlt_joint_obs: True
 main_image_key: "${oc.env:RLT_REALWORLD_MAIN_IMAGE_KEY,camera_0}"
 default_prompt: "insert the peg in the hole"
 keyboard_reward_wrapper: null
+task_mode: critical_phase
+critical_phase_key: v
+record_prefix_before_critical_phase: false
 
 # Match the realworld RLT dataset layout:
 # state[0] gripper
@@ -67,6 +70,8 @@ override_cfg:
   target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
   reset_ee_pose: [0.5, 0.0, 0.2, -3.14, 0.0, 0.0]
   reset_joint_qpos: [0.0, -0.785, 0.0, -2.35, 0.0, 1.57, 0.785]
+  critical_phase_reset_joint_qpos: null
+  full_task_reset_joint_qpos: null
   joint_reset_qpos: [0.0, 0.0, 0.0, -1.9, 0.0, 2.0, 0.0]
   joint_limit_low: [-2.8973, -1.7628, -2.8973, -3.0718, -2.8973, -0.0175, -2.8973]
   joint_limit_high: [2.8973, 1.7628, 2.8973, -0.0698, 2.8973, 3.7525, 2.8973]

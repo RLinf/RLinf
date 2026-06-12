@@ -40,6 +40,23 @@ from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
 )
 
 
+def _select_task_mode_reset_qpos(
+    override_cfg: dict[str, Any],
+    env_cfg: Mapping[str, Any],
+) -> dict[str, Any]:
+    selected_cfg = dict(override_cfg)
+    task_mode = str(env_cfg.get("task_mode", "critical_phase"))
+    reset_key = (
+        "full_task_reset_joint_qpos"
+        if task_mode == "full_task"
+        else "critical_phase_reset_joint_qpos"
+    )
+    reset_qpos = selected_cfg.get(reset_key, None)
+    if reset_qpos is not None:
+        selected_cfg["reset_joint_qpos"] = reset_qpos
+    return selected_cfg
+
+
 def create_franka_env(
     override_cfg: dict[str, Any],
     worker_info: Any,
@@ -95,6 +112,7 @@ def create_joint_peg_insertion_env(
     env_idx: int,
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
+    override_cfg = _select_task_mode_reset_qpos(override_cfg, env_cfg)
     env = FrankaJointPegInsertionEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,

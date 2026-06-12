@@ -195,6 +195,7 @@ actor:
       warmup_q_weight: 0.05
       online_bc_weight: 2.7  # BC weight after ramp.
       online_q_weight: 0.13  # Q weight after ramp.
+      human_bc_weight: 1.0  # Extra normalized BC on HUMAN/MIXED correction chunks.
       delta_weight: 0.1  # Within-chunk delta penalty.
       critic_updates_per_actor: 2  # TD3 critic-to-actor ratio.
       replay_subsample_stride: 0  # 0 keeps boundary-only replay.

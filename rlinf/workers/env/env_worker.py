@@ -466,8 +466,16 @@ class EnvWorker(Worker):
             and self._rlt_stage2_intervention_mode() == "local_correction"
         )
 
-    def _rlt_stage2_policy_info_enabled(self) -> bool:
-        return self._rlt_stage2_local_correction_enabled()
+    def _rlt_stage2_policy_info_enabled(
+        self,
+        mode: Literal["train", "eval"] = "train",
+    ) -> bool:
+        if self._rlt_stage2_local_correction_enabled():
+            return True
+        env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
+        return self._rlt_stage2_intervention_enabled() and (
+            str(env_cfg.get("env_type", "")).lower() == "realworld"
+        )
 
     def _rlt_policy_env_type(self, mode: Literal["train", "eval"]) -> str:
         env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
@@ -476,7 +484,7 @@ class EnvWorker(Worker):
     def _init_rlt_local_policy_state(
         self, stage_id: int, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, torch.Tensor] | None:
-        if not self._rlt_stage2_policy_info_enabled():
+        if not self._rlt_stage2_policy_info_enabled(mode):
             return None
 
         batch_size = (
@@ -493,6 +501,21 @@ class EnvWorker(Worker):
             "takeover_used": torch.zeros(batch_size, dtype=torch.int64),
             "prev_yz_error": torch.full((batch_size,), float("nan"), dtype=torch.float32),
             "prev_hole_x": torch.full((batch_size,), float("nan"), dtype=torch.float32),
+            "in_critical_phase": torch.full(
+                (batch_size,),
+                self._rlt_realworld_default_in_critical_phase(mode),
+                dtype=torch.bool,
+            ),
+            "record_transition": torch.full(
+                (batch_size,),
+                self._rlt_realworld_default_record_transition(mode),
+                dtype=torch.bool,
+            ),
+            "critical_phase_started": torch.full(
+                (batch_size,),
+                self._rlt_realworld_default_in_critical_phase(mode),
+                dtype=torch.bool,
+            ),
         }
         states = (
             self.rlt_local_policy_state
@@ -508,13 +531,40 @@ class EnvWorker(Worker):
     def _export_rlt_local_policy_info(
         state: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        return {
+        policy_info = {
             "expert_takeover": state["expert_takeover"][:, None],
             "deviation": state["deviation"][:, None],
             "deviation_count": state["deviation_count"].to(torch.float32)[:, None],
             "takeover_left": state["takeover_left"].to(torch.float32)[:, None],
             "takeover_used": state["takeover_used"].to(torch.float32)[:, None],
         }
+        for key in (
+            "in_critical_phase",
+            "record_transition",
+            "critical_phase_started",
+        ):
+            if key in state:
+                policy_info[key] = state[key].to(torch.bool)[:, None]
+        return policy_info
+
+    def _rlt_realworld_task_mode(self, mode: Literal["train", "eval"]) -> str:
+        env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
+        return str(env_cfg.get("task_mode", "critical_phase"))
+
+    def _rlt_realworld_default_in_critical_phase(
+        self,
+        mode: Literal["train", "eval"],
+    ) -> bool:
+        return self._rlt_realworld_task_mode(mode) == "critical_phase"
+
+    def _rlt_realworld_default_record_transition(
+        self,
+        mode: Literal["train", "eval"],
+    ) -> bool:
+        env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
+        if bool(env_cfg.get("record_prefix_before_critical_phase", False)):
+            return True
+        return self._rlt_realworld_default_in_critical_phase(mode)
 
     @staticmethod
     def _select_rlt_policy_source_info(
@@ -642,6 +692,25 @@ class EnvWorker(Worker):
             torch.zeros_like(intervention_region),
             intervention_region,
         )
+        for key in (
+            "in_critical_phase",
+            "record_transition",
+            "critical_phase_started",
+        ):
+            if key not in state:
+                continue
+            default_value = (
+                self._rlt_realworld_default_record_transition(mode)
+                if key == "record_transition"
+                else self._rlt_realworld_default_in_critical_phase(mode)
+            )
+            default_tensor = torch.full_like(state[key], default_value)
+            current_value = self._coerce_rlt_bool_info(
+                self._lookup_rlt_policy_info_value(infos, key),
+                batch_size=batch_size,
+                device=device,
+            )
+            state[key] = torch.where(done_any, default_tensor, current_value)
         for key in ("deviation_count", "takeover_left", "takeover_used"):
             state[key] = torch.where(
                 done_any,
@@ -669,7 +738,7 @@ class EnvWorker(Worker):
             else self.eval_rlt_local_policy_state
         )
         if (
-            not self._rlt_stage2_policy_info_enabled()
+            not self._rlt_stage2_policy_info_enabled(mode)
             or infos is None
             or not states
         ):
@@ -1849,6 +1918,20 @@ class EnvWorker(Worker):
                     if ready_for_online is not None:
                         env_metrics["rlt_ready_for_online"].append(
                             ready_for_online.detach().float().reshape(-1).cpu()
+                        )
+                    in_critical_phase = rollout_result.forward_inputs.get(
+                        "in_critical_phase", None
+                    )
+                    if in_critical_phase is not None:
+                        env_metrics["rlt_in_critical_phase"].append(
+                            in_critical_phase.detach().float().reshape(-1).cpu()
+                        )
+                    record_transition = rollout_result.forward_inputs.get(
+                        "record_transition", None
+                    )
+                    if record_transition is not None:
+                        env_metrics["rlt_record_transition"].append(
+                            record_transition.detach().float().reshape(-1).cpu()
                         )
                     student_control = rollout_result.forward_inputs.get(
                         "student_control", None

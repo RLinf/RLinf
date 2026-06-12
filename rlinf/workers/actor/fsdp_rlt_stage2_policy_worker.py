@@ -470,6 +470,47 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         collection_phase_id_all = (
             traj.forward_inputs.get("collection_phase_id") if traj.forward_inputs else None
         )
+        record_transition_all = (
+            traj.forward_inputs.get("record_transition") if traj.forward_inputs else None
+        )
+        if record_transition_all is None:
+            flat_record_transitions = torch.ones_like(flat_rewards, dtype=torch.bool)
+        else:
+            if record_transition_all.shape[0] < chunk_steps:
+                raise ValueError(
+                    "RLT record_transition/action length mismatch: "
+                    f"expected at least {chunk_steps}, got "
+                    f"{record_transition_all.shape[0]}."
+                )
+            record_transition_all = record_transition_all[:chunk_steps]
+            if record_transition_all.dim() <= 2:
+                flat_record_transitions = record_transition_all.reshape(
+                    chunk_steps,
+                    bsz,
+                    1,
+                ).expand(-1, -1, chunk_len)
+            elif (
+                record_transition_all.dim() == 3
+                and record_transition_all.shape[2] == 1
+            ):
+                flat_record_transitions = record_transition_all.expand(
+                    -1,
+                    -1,
+                    chunk_len,
+                )
+            elif (
+                record_transition_all.dim() == 3
+                and record_transition_all.shape[2] == chunk_len
+            ):
+                flat_record_transitions = record_transition_all
+            else:
+                flat_record_transitions = record_transition_all.reshape(
+                    chunk_steps,
+                    bsz,
+                    chunk_len,
+                    -1,
+                ).any(dim=-1)
+            flat_record_transitions = flat_record_transitions.to(torch.bool)
 
         added = 0
         completed_episodes = 0
@@ -534,6 +575,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             env_dones = flat_dones[:, env_idx].reshape(total_control_steps)
             env_interventions = flat_interventions[:, env_idx].reshape(total_control_steps)
             env_sources = flat_sources[:, env_idx].reshape(total_control_steps)
+            env_record_transitions = flat_record_transitions[:, env_idx].reshape(
+                total_control_steps
+            )
             done_indices = [
                 int(idx.item())
                 for idx in torch.nonzero(env_dones, as_tuple=False).reshape(-1)
@@ -561,6 +605,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     if is_partial and (not terminal or not allow_terminal_partial):
                         # Only terminal partial windows are valid; padding a live
                         # rollout boundary would fabricate future actions/rewards.
+                        continue
+                    if not bool(env_record_transitions[start:valid_end].all().item()):
                         continue
 
                     x_tensor, a_tilde_tensor = get_feature(start, env_idx)
@@ -692,10 +738,20 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             intervention_flags_all = traj.intervene_flags
         source_chunk_all = traj.forward_inputs.get("source_chunk")
         collection_phase_id_all = traj.forward_inputs.get("collection_phase_id")
+        record_transition_all = traj.forward_inputs.get("record_transition")
         auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
 
         for env_idx in range(bsz):
             for t in range(traj_len):
+                if record_transition_all is not None:
+                    record_transition = (
+                        record_transition_all[t, env_idx]
+                        .detach()
+                        .to(torch.bool)
+                        .reshape(-1)
+                    )
+                    if not bool(record_transition.all().item()):
+                        continue
                 done_idx = min(t + 1, dones_all.shape[0] - 1)
                 env_done = float(dones_all[done_idx, env_idx].any().item())
                 done = float(env_done > 0.0)
@@ -1207,6 +1263,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             actor_bc_losses = []
             actor_bc_ref_losses = []
             actor_bc_human_losses = []
+            actor_bc_human_weighted_losses = []
             actor_human_mask_ratios = []
             self.optimizer.zero_grad()
             self.model.set_online_critic_requires_grad(False)
@@ -1251,6 +1308,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                             bc_weight=bc_weight,
                             q_weight=q_weight,
                             delta_weight=delta_weight,
+                            human_bc_weight=float(
+                                stage2_cfg.get("human_bc_weight", 0.0)
+                            ),
                         )
                         loss = actor_total_loss / self.gradient_accumulation
                     self.grad_scaler.scale(loss).backward()
@@ -1267,6 +1327,11 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 )
                 actor_bc_human_losses.append(
                     float(actor_loss_metrics["bc_human_loss"].float().item())
+                )
+                actor_bc_human_weighted_losses.append(
+                    float(
+                        actor_loss_metrics["bc_human_weighted_loss"].float().item()
+                    )
                 )
                 actor_human_mask_ratios.append(
                     float(actor_loss_metrics["human_mask_ratio"].float().item())
@@ -1292,6 +1357,12 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     "actor/bc_loss": float(np.mean(actor_bc_losses)),
                     "actor/bc_ref_loss": float(np.mean(actor_bc_ref_losses)),
                     "actor/bc_human_loss": float(np.mean(actor_bc_human_losses)),
+                    "actor/bc_human_weighted_loss": float(
+                        np.mean(actor_bc_human_weighted_losses)
+                    ),
+                    "actor/human_bc_weight": float(
+                        stage2_cfg.get("human_bc_weight", 0.0)
+                    ),
                     "actor/human_mask_ratio": float(np.mean(actor_human_mask_ratios)),
                 }
             )
