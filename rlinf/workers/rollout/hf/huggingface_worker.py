@@ -582,6 +582,16 @@ class MultiStepRolloutWorker(Worker):
                 forward_inputs["intervention_requested"] = (
                     requested_expert_takeover[:, None].to(actions.device)
                 )
+                if policy_info is not None and "intervention_phase" in policy_info:
+                    forward_inputs["intervention_phase"] = policy_info[
+                        "intervention_phase"
+                    ].to(actions.device, dtype=torch.float32)
+                else:
+                    forward_inputs["intervention_phase"] = torch.zeros(
+                        (actions.shape[0], 1),
+                        dtype=torch.float32,
+                        device=actions.device,
+                    )
                 forward_inputs["in_critical_phase"] = in_critical_phase[:, None].to(
                     actions.device
                 )
@@ -732,6 +742,18 @@ class MultiStepRolloutWorker(Worker):
                         dtype=torch.bool,
                         device=actions.device,
                     )
+                if "intervention_phase" not in forward_inputs:
+                    batch_size = actions.shape[0]
+                    if policy_info is not None and "intervention_phase" in policy_info:
+                        forward_inputs["intervention_phase"] = policy_info[
+                            "intervention_phase"
+                        ].to(actions.device, dtype=torch.float32)
+                    else:
+                        forward_inputs["intervention_phase"] = torch.zeros(
+                            (batch_size, 1),
+                            dtype=torch.float32,
+                            device=actions.device,
+                        )
                 if "ready_for_online" not in forward_inputs:
                     batch_size = actions.shape[0]
                     forward_inputs["ready_for_online"] = torch.full(

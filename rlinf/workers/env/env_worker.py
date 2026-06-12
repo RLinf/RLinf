@@ -848,7 +848,7 @@ class EnvWorker(Worker):
             enable_grasp_phase = bool(intervention_cfg.get("enable_grasp_phase", False))
             if enable_grasp_phase:
                 grasp_near_peg_dist = float(
-                    intervention_cfg.get("grasp_near_peg_dist", 0.04)
+                    intervention_cfg.get("grasp_near_peg_dist", 0.05)
                 )
                 grasp_entry = (
                     (~grasp) & (tcp_peg_dist <= grasp_near_peg_dist) & (~success)
@@ -1324,17 +1324,6 @@ class EnvWorker(Worker):
             env_info["deviation_rate"] = (
                 policy_info["deviation"].float().mean().reshape(1).cpu()
             )
-            env_info["expert_takeover_rate"] = (
-                policy_info["expert_takeover"].float().mean().reshape(1).cpu()
-            )
-            if "intervention_phase" in policy_info:
-                phase = policy_info["intervention_phase"]
-                env_info["grasp_intervention_rate"] = (
-                    (phase == 1).float().mean().reshape(1).cpu()
-                )
-                env_info["insert_intervention_rate"] = (
-                    (phase == 2).float().mean().reshape(1).cpu()
-                )
 
         env_output = EnvOutput(
             obs=extracted_obs,
@@ -2043,9 +2032,30 @@ class EnvWorker(Worker):
                         "intervention_flags", None
                     )
                     if intervention_flags is not None:
-                        env_metrics["expert_intervention_actual_rate"].append(
+                        actual_intervention = (
                             intervention_flags.detach().float().reshape(-1).cpu()
                         )
+                        env_metrics["expert_intervention_actual_rate"].append(
+                            actual_intervention
+                        )
+                        env_metrics["expert_takeover_rate"].append(actual_intervention)
+                        intervention_phase = rollout_result.forward_inputs.get(
+                            "intervention_phase", None
+                        )
+                        if intervention_phase is not None:
+                            phase = (
+                                intervention_phase.detach()
+                                .float()
+                                .reshape(-1)
+                                .cpu()
+                            )
+                            if phase.numel() == actual_intervention.numel():
+                                env_metrics["grasp_intervention_rate"].append(
+                                    actual_intervention * (phase == 1).float()
+                                )
+                                env_metrics["insert_intervention_rate"].append(
+                                    actual_intervention * (phase == 2).float()
+                                )
                     intervention_requested = rollout_result.forward_inputs.get(
                         "intervention_requested", None
                     )
