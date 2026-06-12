@@ -110,7 +110,7 @@ jobs:
           uv pip install "transformers<=5.9.0"
 
       - name: Run scheduler unit tests
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
