@@ -252,6 +252,7 @@ class ManiskillEnv(gym.Env):
                 "prealign_once",
                 "partial_insert_once",
                 "success",
+                "tcp_peg_dist",
                 "peg_head_hole_x",
                 "peg_head_goal_yz_dist",
                 "peg_body_goal_yz_dist",
@@ -520,6 +521,9 @@ class ManiskillEnv(gym.Env):
         peg_body_goal_yz_dist = torch.linalg.norm(
             peg_wrt_goal.p[:, 1:], dim=1
         ).to(torch.float32)
+        tcp_pos = env.agent.tcp.pose.p.to(self.device, dtype=torch.float32)
+        peg_pos = env.peg.pose.p.to(self.device, dtype=torch.float32)
+        tcp_peg_dist = torch.linalg.norm(tcp_pos - peg_pos, dim=1).to(torch.float32)
 
         is_grasped_current = env.agent.is_grasping(env.peg, max_angle=20)
         self.peg_grasp_count = torch.where(
@@ -575,6 +579,7 @@ class ManiskillEnv(gym.Env):
                 "peg_head_hole_abs_z": peg_head_hole_abs_z,
                 "peg_head_goal_yz_dist": peg_head_goal_yz_dist,
                 "peg_body_goal_yz_dist": peg_body_goal_yz_dist,
+                "tcp_peg_dist": tcp_peg_dist,
                 "is_grasped_current": is_grasped_current,
                 "consecutive_grasp_current": consecutive_grasp_current,
                 "prealigned_current": prealigned_current,

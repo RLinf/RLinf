@@ -494,9 +494,11 @@ class EnvWorker(Worker):
         )
         state = {
             "intervention_region": torch.zeros(batch_size, dtype=torch.bool),
+            "intervention_phase": torch.zeros(batch_size, dtype=torch.int64),
             "expert_takeover": torch.zeros(batch_size, dtype=torch.bool),
             "deviation": torch.zeros(batch_size, dtype=torch.bool),
             "deviation_count": torch.zeros(batch_size, dtype=torch.int64),
+            "grasp_deviation_count": torch.zeros(batch_size, dtype=torch.int64),
             "takeover_left": torch.zeros(batch_size, dtype=torch.int64),
             "takeover_used": torch.zeros(batch_size, dtype=torch.int64),
             "prev_yz_error": torch.full((batch_size,), float("nan"), dtype=torch.float32),
@@ -535,6 +537,12 @@ class EnvWorker(Worker):
             "expert_takeover": state["expert_takeover"][:, None],
             "deviation": state["deviation"][:, None],
             "deviation_count": state["deviation_count"].to(torch.float32)[:, None],
+            "grasp_deviation_count": state["grasp_deviation_count"].to(torch.float32)[
+                :, None
+            ],
+            "intervention_phase": state["intervention_phase"].to(torch.float32)[
+                :, None
+            ],
             "takeover_left": state["takeover_left"].to(torch.float32)[:, None],
             "takeover_used": state["takeover_used"].to(torch.float32)[:, None],
         }
@@ -711,7 +719,12 @@ class EnvWorker(Worker):
                 device=device,
             )
             state[key] = torch.where(done_any, default_tensor, current_value)
-        for key in ("deviation_count", "takeover_left", "takeover_used"):
+        for key in (
+            "deviation_count",
+            "grasp_deviation_count",
+            "takeover_left",
+            "takeover_used",
+        ):
             state[key] = torch.where(
                 done_any,
                 torch.zeros_like(state[key]),
@@ -723,6 +736,11 @@ class EnvWorker(Worker):
             )
         state["prev_yz_error"] = torch.full_like(state["prev_yz_error"], float("nan"))
         state["prev_hole_x"] = torch.full_like(state["prev_hole_x"], float("nan"))
+        state["intervention_phase"] = torch.where(
+            done_any,
+            torch.zeros_like(state["intervention_phase"]),
+            state["intervention_phase"],
+        )
         return self._export_rlt_local_policy_info(state)
 
     def _update_rlt_local_policy_state(
@@ -762,6 +780,7 @@ class EnvWorker(Worker):
             "peg_head_hole_x",
             "peg_head_hole_abs_y",
             "peg_head_hole_abs_z",
+            "tcp_peg_dist",
         ]
         infos = self._select_rlt_policy_source_info(infos, required_keys)
 
@@ -772,6 +791,14 @@ class EnvWorker(Worker):
         if "intervention_region" not in state:
             state["intervention_region"] = torch.zeros(
                 state["expert_takeover"].shape, dtype=torch.bool
+            )
+        if "intervention_phase" not in state:
+            state["intervention_phase"] = torch.zeros(
+                state["expert_takeover"].shape, dtype=torch.int64
+            )
+        if "grasp_deviation_count" not in state:
+            state["grasp_deviation_count"] = torch.zeros(
+                state["expert_takeover"].shape, dtype=torch.int64
             )
         for key, value in state.items():
             state[key] = value.to(device)
@@ -789,6 +816,7 @@ class EnvWorker(Worker):
         hole_x = infos["peg_head_hole_x"].to(torch.float32)
         abs_y = infos["peg_head_hole_abs_y"].to(torch.float32)
         abs_z = infos["peg_head_hole_abs_z"].to(torch.float32)
+        tcp_peg_dist = infos["tcp_peg_dist"].to(torch.float32)
 
         hole_radii = None
         env_list = self.env_list if mode == "train" else self.eval_env_list
@@ -802,9 +830,31 @@ class EnvWorker(Worker):
             )
             hole_radii = torch.full_like(abs_y, float(fallback_hole_radius))
 
-        intervention_entry = torch.zeros_like(success)
-        intervention_hold = torch.zeros_like(success)
+        no_phase = torch.zeros_like(state["intervention_phase"])
+        grasp_phase = torch.full_like(state["intervention_phase"], 1)
+        insert_phase = torch.full_like(state["intervention_phase"], 2)
+        previous_grasp_region = state["intervention_region"] & (
+            state["intervention_phase"] == 1
+        )
+        previous_insert_region = state["intervention_region"] & (
+            state["intervention_phase"] == 2
+        )
+
+        grasp_entry = torch.zeros_like(success)
+        grasp_hold = torch.zeros_like(success)
+        insert_entry = torch.zeros_like(success)
+        insert_hold = torch.zeros_like(success)
         if intervention_enabled:
+            enable_grasp_phase = bool(intervention_cfg.get("enable_grasp_phase", False))
+            if enable_grasp_phase:
+                grasp_near_peg_dist = float(
+                    intervention_cfg.get("grasp_near_peg_dist", 0.04)
+                )
+                grasp_entry = (
+                    (~grasp) & (tcp_peg_dist <= grasp_near_peg_dist) & (~success)
+                )
+                grasp_hold = previous_grasp_region & (~grasp) & (~success)
+
             intervention_near_hole_x_min = float(
                 intervention_cfg.get("near_hole_x_min", -0.05)
             )
@@ -820,17 +870,27 @@ class EnvWorker(Worker):
                 & (abs_z <= intervention_yz_margin * hole_radii)
             ) | prealigned | partial_insert
             intervention_near_hole = hole_x >= intervention_near_hole_x_min
-            intervention_entry = (
+            insert_entry = (
                 grasp & intervention_near_hole & intervention_yz & (~success)
             )
-            intervention_hold = (
-                state["intervention_region"]
+            insert_hold = (
+                previous_insert_region
                 & (~success)
                 & (hole_x >= intervention_exit_hole_x_min)
             )
-            intervention_region = intervention_entry | intervention_hold
+            grasp_region = grasp_entry | grasp_hold
+            insert_region = insert_entry | insert_hold
+            intervention_region = grasp_region | insert_region
         else:
+            grasp_region = torch.zeros_like(success)
+            insert_region = torch.zeros_like(success)
             intervention_region = torch.zeros_like(success)
+
+        region_phase = torch.where(
+            grasp_region,
+            grasp_phase,
+            torch.where(insert_region, insert_phase, no_phase),
+        )
 
         has_prev_yz = torch.isfinite(state["prev_yz_error"])
         has_prev_x = torch.isfinite(state["prev_hole_x"])
@@ -844,23 +904,36 @@ class EnvWorker(Worker):
         )
         moved_away_from_hole = (
             has_prev_x
-            & state["intervention_region"]
+            & previous_insert_region
             & (hole_x < state["prev_hole_x"] - progress_eps)
         )
-        lost_grasp = (~grasp) & state["intervention_region"]
-        deviation = intervention_region & (
+        lost_grasp = (~grasp) & previous_insert_region
+        insert_deviation = insert_region & (
             yz_worse
             | no_x_progress
             | (~safe_yz)
             | lost_grasp
             | moved_away_from_hole
         )
+        grasp_deviation = grasp_region & (~grasp)
+        deviation = insert_deviation | grasp_deviation
 
         patience = int(intervention_cfg.get("deviation_patience", 2))
         state["deviation_count"] = torch.where(
-            deviation,
+            insert_deviation,
             state["deviation_count"] + 1,
             torch.zeros_like(state["deviation_count"]),
+        )
+        grasp_patience = int(
+            intervention_cfg.get(
+                "grasp_deviation_patience",
+                intervention_cfg.get("deviation_patience", 2),
+            )
+        )
+        state["grasp_deviation_count"] = torch.where(
+            grasp_deviation,
+            state["grasp_deviation_count"] + 1,
+            torch.zeros_like(state["grasp_deviation_count"]),
         )
 
         takeover_chunks = int(intervention_cfg.get("takeover_chunks", 5))
@@ -871,30 +944,79 @@ class EnvWorker(Worker):
                 "0 < takeover_chunks <= takeover_max_chunks, got "
                 f"{takeover_chunks=} and {takeover_max_chunks=}."
             )
+        grasp_takeover_chunks = int(
+            intervention_cfg.get("grasp_takeover_chunks", takeover_chunks)
+        )
+        grasp_takeover_max_chunks = int(
+            intervention_cfg.get("grasp_takeover_max_chunks", takeover_max_chunks)
+        )
+        if (
+            grasp_takeover_chunks <= 0
+            or grasp_takeover_max_chunks < grasp_takeover_chunks
+        ):
+            raise ValueError(
+                "algorithm.intervention must satisfy "
+                "0 < grasp_takeover_chunks <= grasp_takeover_max_chunks, got "
+                f"{grasp_takeover_chunks=} and {grasp_takeover_max_chunks=}."
+            )
 
         previous_takeover = state["expert_takeover"]
+        previous_phase = state["intervention_phase"]
         takeover_used_after_chunk = torch.where(
             previous_takeover,
             state["takeover_used"] + 1,
             state["takeover_used"],
         )
-        recovered = intervention_region & grasp & safe_yz & (~deviation)
-        keep_for_min_chunks = previous_takeover & (
-            takeover_used_after_chunk < takeover_chunks
-        )
-        extend_until_recovered = (
-            previous_takeover
-            & (~recovered)
-            & (takeover_used_after_chunk < takeover_max_chunks)
-        )
         if mode == "train" and intervention_enabled:
-            trigger = (
-                intervention_region
+            trigger_grasp = (
+                grasp_region
+                & (~previous_takeover)
+                & (state["grasp_deviation_count"] >= grasp_patience)
+            )
+            trigger_insert = (
+                insert_region
                 & (~previous_takeover)
                 & (state["deviation_count"] >= patience)
             )
         else:
-            trigger = torch.zeros_like(intervention_region)
+            trigger_grasp = torch.zeros_like(intervention_region)
+            trigger_insert = torch.zeros_like(intervention_region)
+        trigger = trigger_grasp | trigger_insert
+        active_phase = torch.where(previous_takeover, previous_phase, region_phase)
+        takeover_phase = torch.where(
+            trigger_grasp,
+            grasp_phase,
+            torch.where(trigger_insert, insert_phase, active_phase),
+        )
+        is_grasp_takeover = takeover_phase == 1
+        phase_min_chunks = torch.where(
+            is_grasp_takeover,
+            torch.full_like(state["takeover_used"], grasp_takeover_chunks),
+            torch.full_like(state["takeover_used"], takeover_chunks),
+        )
+        phase_max_chunks = torch.where(
+            is_grasp_takeover,
+            torch.full_like(state["takeover_used"], grasp_takeover_max_chunks),
+            torch.full_like(state["takeover_used"], takeover_max_chunks),
+        )
+        grasp_recovered = is_grasp_takeover & grasp
+        insert_recovered = (
+            (takeover_phase == 2) & insert_region & grasp & safe_yz & (~insert_deviation)
+        )
+        recovered = grasp_recovered | insert_recovered
+        keep_until_min_chunks = previous_takeover & (
+            takeover_used_after_chunk < phase_min_chunks
+        )
+        keep_for_min_chunks = torch.where(
+            is_grasp_takeover,
+            keep_until_min_chunks & (~recovered),
+            keep_until_min_chunks,
+        )
+        extend_until_recovered = (
+            previous_takeover
+            & (~recovered)
+            & (takeover_used_after_chunk < phase_max_chunks)
+        )
         next_takeover = (trigger | keep_for_min_chunks | extend_until_recovered) & (
             ~success
         )
@@ -913,20 +1035,23 @@ class EnvWorker(Worker):
             state["takeover_used"],
             torch.zeros_like(state["takeover_left"]),
         )
-        remaining_to_min = torch.clamp(takeover_chunks - state["takeover_used"], min=0)
-        remaining_to_max = torch.clamp(
-            takeover_max_chunks - state["takeover_used"], min=0
-        )
+        remaining_to_min = torch.clamp(phase_min_chunks - state["takeover_used"], min=0)
+        remaining_to_max = torch.clamp(phase_max_chunks - state["takeover_used"], min=0)
         state["takeover_left"] = torch.where(
             next_takeover,
             torch.where(
-                state["takeover_used"] < takeover_chunks,
+                state["takeover_used"] < phase_min_chunks,
                 remaining_to_min,
                 remaining_to_max,
             ),
             torch.zeros_like(state["takeover_used"]),
         )
         state["expert_takeover"] = next_takeover
+        state["intervention_phase"] = torch.where(
+            done_any,
+            no_phase,
+            torch.where(next_takeover, takeover_phase, region_phase),
+        )
         state["intervention_region"] = torch.where(
             done_any, torch.zeros_like(intervention_region), intervention_region
         )
@@ -938,13 +1063,18 @@ class EnvWorker(Worker):
             torch.zeros_like(state["deviation_count"]),
             state["deviation_count"],
         )
+        state["grasp_deviation_count"] = torch.where(
+            done_any | (~grasp_region) | trigger | released_takeover | grasp_recovered,
+            torch.zeros_like(state["grasp_deviation_count"]),
+            state["grasp_deviation_count"],
+        )
         state["prev_yz_error"] = torch.where(
-            state["intervention_region"],
+            insert_region,
             yz_error,
             torch.full_like(yz_error, float("nan")),
         )
         state["prev_hole_x"] = torch.where(
-            state["intervention_region"],
+            insert_region,
             hole_x,
             torch.full_like(hole_x, float("nan")),
         )
@@ -1194,6 +1324,17 @@ class EnvWorker(Worker):
             env_info["deviation_rate"] = (
                 policy_info["deviation"].float().mean().reshape(1).cpu()
             )
+            env_info["expert_takeover_rate"] = (
+                policy_info["expert_takeover"].float().mean().reshape(1).cpu()
+            )
+            if "intervention_phase" in policy_info:
+                phase = policy_info["intervention_phase"]
+                env_info["grasp_intervention_rate"] = (
+                    (phase == 1).float().mean().reshape(1).cpu()
+                )
+                env_info["insert_intervention_rate"] = (
+                    (phase == 2).float().mean().reshape(1).cpu()
+                )
 
         env_output = EnvOutput(
             obs=extracted_obs,
