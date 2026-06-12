@@ -25,6 +25,7 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .auto_config import RobotAutoConfig
 
 
 @dataclass
@@ -63,6 +64,18 @@ class FrankaRobot(Hardware):
             if isinstance(config, FrankaConfig) and config.node_rank == node_rank:
                 robot_configs.append(config)
 
+        # Fill unset fields from env vars (e.g. ``ROBOT_IP``), one value per
+        # config when several robots share this node. With no configs given,
+        # create one per comma-separated ``ROBOT_IP``. A remote arm's
+        # ``robot_ip`` may stay unset here; the controller resolves it from its
+        # own node at launch.
+        robot_configs = RobotAutoConfig.resolve(
+            robot_configs,
+            config_cls=FrankaConfig,
+            node_rank=node_rank,
+            count_fields=("robot_ip",),
+        )
+
         if robot_configs:
             franka_infos = []
 
@@ -85,34 +98,36 @@ class FrankaRobot(Hardware):
                 if config.disable_validate:
                     continue
 
-                # Validate IP connectivity
-                try:
-                    from icmplib import ping
-                except ImportError:
-                    raise ImportError(
-                        f"icmplib is required for Franka robot IP connectivity check, but it is not installed on the node with rank {node_rank}."
-                    )
-                try:
-                    response = ping(
-                        config.robot_ip,
-                        count=cls.ROBOT_PING_COUNT,
-                        timeout=cls.ROBOT_PING_TIMEOUT,
-                    )
-                    if not response.is_alive:
-                        raise ConnectionError
-                except ConnectionError as e:
-                    raise ConnectionError(
-                        f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
-                    )
-                except PermissionError as e:
-                    warnings.warn(
-                        f"Permission denied when trying to ping Franka robot at IP {config.robot_ip} from node rank {node_rank}. "
-                        f"This may be due to insufficient permissions to send ICMP packets. Ignoring the ping test. Error: {e}"
-                    )
-                except Exception as e:
-                    warnings.warn(
-                        f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
-                    )
+                # Ping only when the IP is known here; a remote arm's IP is
+                # resolved later on the controller's node.
+                if config.robot_ip is not None:
+                    try:
+                        from icmplib import ping
+                    except ImportError:
+                        raise ImportError(
+                            f"icmplib is required for Franka robot IP connectivity check, but it is not installed on the node with rank {node_rank}."
+                        )
+                    try:
+                        response = ping(
+                            config.robot_ip,
+                            count=cls.ROBOT_PING_COUNT,
+                            timeout=cls.ROBOT_PING_TIMEOUT,
+                        )
+                        if not response.is_alive:
+                            raise ConnectionError
+                    except ConnectionError as e:
+                        raise ConnectionError(
+                            f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
+                        )
+                    except PermissionError as e:
+                        warnings.warn(
+                            f"Permission denied when trying to ping Franka robot at IP {config.robot_ip} from node rank {node_rank}. "
+                            f"This may be due to insufficient permissions to send ICMP packets. Ignoring the ping test. Error: {e}"
+                        )
+                    except Exception as e:
+                        warnings.warn(
+                            f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
+                        )
 
                 # Validate camera SDK and serials
                 cls._validate_camera_sdk(camera_type, node_rank)
@@ -194,8 +209,12 @@ class FrankaRobot(Hardware):
 class FrankaConfig(HardwareConfig):
     """Configuration for a robotic system."""
 
-    robot_ip: str
-    """IP address of the robotic system."""
+    robot_ip: Optional[str] = None
+    """IP address of the robotic system.
+    When unset in YAML it is auto-detected from the ``ROBOT_IP`` environment
+    variable on the node where the arm is enumerated. For a remote
+    ``controller_node_rank`` it may stay unset here and be resolved by the
+    controller from its node's hardware infos at launch."""
 
     camera_serials: Optional[list[str]] = None
     """List of camera serial numbers associated with the robot."""
@@ -225,12 +244,17 @@ class FrankaConfig(HardwareConfig):
             f"'node_rank' in franka config must be an integer. But got {type(self.node_rank)}."
         )
 
-        try:
-            ipaddress.ip_address(self.robot_ip)
-        except ValueError:
-            raise ValueError(
-                f"'robot_ip' in franka config must be a valid IP address. But got {self.robot_ip}."
-            )
+        # ``robot_ip`` may be left unset here and resolved later from an
+        # environment variable (during enumeration) or from the controller
+        # node's hardware infos (at controller launch); only validate when
+        # a value is present.
+        if self.robot_ip is not None:
+            try:
+                ipaddress.ip_address(self.robot_ip)
+            except ValueError:
+                raise ValueError(
+                    f"'robot_ip' in franka config must be a valid IP address. But got {self.robot_ip}."
+                )
 
         if self.camera_serials:
             self.camera_serials = list(self.camera_serials)
