@@ -119,7 +119,6 @@ For same-machine deployment, IPC can be used:
 
    zmq:
      ipc_addr: "ipc:///tmp/vr_data.ipc"
-   publish_rate: 80
 
 For cross-machine deployment, the publisher should bind to TCP:
 
@@ -127,7 +126,6 @@ For cross-machine deployment, the publisher should bind to TCP:
 
    zmq:
      ipc_addr: "tcp://0.0.0.0:<port>"
-   publish_rate: 80
 
 Then start the VR data publisher on the same machine with that config file:
 

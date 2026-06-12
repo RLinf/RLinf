@@ -108,7 +108,6 @@ publisher 侧的 ZeroMQ 地址。
 
    zmq:
      ipc_addr: "ipc:///tmp/vr_data.ipc"
-   publish_rate: 80
 
 跨机器运行时，publisher 侧建议绑定 TCP：
 
@@ -116,7 +115,6 @@ publisher 侧的 ZeroMQ 地址。
 
    zmq:
      ipc_addr: "tcp://0.0.0.0:<port>"
-   publish_rate: 80
 
 然后在同一台收发数据的机器上，使用该配置文件启动 VR 数据 publisher：
 
