@@ -22,6 +22,7 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .auto_config import RobotAutoConfig
 
 
 @dataclass
@@ -57,8 +58,10 @@ class Turtle2Robot(Hardware):
                 robot_configs.append(config)
 
         if robot_configs:
-            turtle2_infos = []
+            # Auto-detect any unset fields from environment variables.
+            RobotAutoConfig.resolve(robot_configs)
 
+            turtle2_infos = []
             for config in robot_configs:
                 turtle2_infos.append(
                     Turtle2HWInfo(

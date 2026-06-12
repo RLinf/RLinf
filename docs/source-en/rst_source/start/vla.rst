@@ -118,13 +118,16 @@ Example:
      use_training_pipeline: True
 
    algorithm:
-     normalize_advantages: False
+     adv_type: gae
+     normalize_advantages: True
 
-Current limitations:
+Notes and limitations:
 
-- ``algorithm.normalize_advantages`` must be ``False`` because the pipeline path
-  computes advantages on the environment worker and streams actor micro-batches
-  without rebuilding the full rollout batch on the actor for normalization.
+- ``algorithm.normalize_advantages`` is supported. The pipeline path computes raw
+  advantages on the environment worker, aggregates masked advantage statistics
+  across the environment workers that feed each actor rank, and normalizes before
+  streaming actor micro-batches.
+- ``algorithm.adv_type`` currently supports only ``gae`` in this mode.
 - This mode is intended for embodied FSDP actor training with PPO/GRPO-style
   actor losses. It is not supported for ``embodied_sac``, ``embodied_dagger``,
   or ``embodied_nft``.
