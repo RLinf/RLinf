@@ -417,8 +417,9 @@ def test_cluster_config_missing_required_hardware_field():
                         "type": "Franka",
                         "configs": [
                             {
-                                "node_rank": 0,
-                                # Missing robot_ip
+                                # Missing node_rank (the only required field;
+                                # robot_ip is optional and auto-resolved).
+                                "robot_ip": "10.0.0.1",
                                 "disable_validate": True,
                             }
                         ],
@@ -429,7 +430,7 @@ def test_cluster_config_missing_required_hardware_field():
     )
 
     with pytest.raises(
-        AssertionError, match=r"Missing fields '\['robot_ip'\]' detected"
+        AssertionError, match=r"Missing fields '\['node_rank'\]' detected"
     ):
         ClusterConfig.from_dict_cfg(config)
 

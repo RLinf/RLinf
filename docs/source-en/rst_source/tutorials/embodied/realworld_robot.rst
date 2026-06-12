@@ -215,6 +215,72 @@ For training, place ``env`` on the GPU node group (camera capture) and pin
    ``ray start``. Configure Robotiq serial permissions on the NUC. See
    :doc:`../../examples/embodied/franka_zed_robotiq`.
 
+Auto-configuration from environment variables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Per-machine hardware values (``robot_ip``, ``camera_serials``,
+``gripper_connection``, …) do not have to be hard-coded in YAML. Any
+``hardware.configs`` field left **unset** is auto-filled during enumeration from
+an environment variable named after the field in **upper case**
+(``robot_ip`` → ``ROBOT_IP``, ``camera_serials`` → ``CAMERA_SERIALS``), which
+keeps IPs and serial numbers out of committed configs.
+
+Rules:
+
+- Values written in YAML always win; environment variables only fill unset fields.
+- The variable is read **on the node that owns the config** (its ``node_rank``),
+  so export it there *before* ``ray start`` (Ray freezes env vars at start).
+- ``node_rank`` and ``controller_node_rank`` are never taken from the environment.
+
+**One robot per node.** The whole value is used; list fields are split on commas:
+
+.. code-block:: yaml
+
+   - label: franka
+     node_ranks: 1
+     hardware:
+       type: Franka
+       configs:
+         - node_rank: 1          # robot_ip / cameras come from the environment
+
+.. code-block:: bash
+
+   # on the rank-1 control node, before `ray start`
+   export ROBOT_IP=<ROBOT_IP>
+   export CAMERA_SERIALS=<serial_1>,<serial_2>
+
+**Several robots on one node.** Give one comma-separated value per robot,
+assigned to the configs in order (so a list field takes one item per robot). The
+value count must match the number of robot configs on that node:
+
+.. code-block:: bash
+
+   # two arms on one control node
+   export ROBOT_IP=<ip_arm0>,<ip_arm1>
+   export CAMERA_SERIALS=<serial_arm0>,<serial_arm1>
+
+**Create robots entirely from the environment.** Leave ``configs`` empty and the
+robots are created from the environment — the robot count is the comma count of
+the identifier variable ``ROBOT_IP``, and every field is read from its variable:
+
+.. code-block:: yaml
+
+   - label: franka
+     node_ranks: 1
+     hardware:
+       type: Franka
+       configs: []              # robots created from ROBOT_IP, CAMERA_SERIALS, …
+
+.. code-block:: bash
+
+   export ROBOT_IP=<ip_arm0>,<ip_arm1>     # two robots
+   export DISABLE_VALIDATE=true,true       # one value per robot
+
+In this mode every variable you set must provide the same number of
+comma-separated values as ``ROBOT_IP``; a mismatch aborts enumeration with an
+explicit error. Other robot types use their own identifier field
+(``GimArm`` → ``CAN_INTERFACE``, ``DOSW1`` → ``ROBOT_URL``).
+
 
 Launch real-world training
 --------------------------
