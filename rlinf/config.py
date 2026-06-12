@@ -818,10 +818,6 @@ def validate_embodied_cfg(cfg):
     )
 
     if cfg.runner.get("use_training_pipeline", False):
-        assert not cfg.algorithm.get("normalize_advantages", True), (
-            "algorithm.normalize_advantages must be False when "
-            "runner.use_training_pipeline is True."
-        )
         assert cfg.algorithm.adv_type == "gae", (
             "algorithm.adv_type only supports 'gae' now"
             "when runner.use_training_pipeline is True."
