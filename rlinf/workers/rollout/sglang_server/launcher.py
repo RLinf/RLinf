@@ -39,25 +39,23 @@ from rlinf.scheduler import (
     PackedPlacementStrategy,
 )
 
-from .router_launcher import SGLangRouterWorker
-from .server_launcher import SGLangServerWorker
+from .router_worker import SGLangRouterWorker
+from .server_worker import SGLangServerWorker
 
 
 def launch_sglang_router_and_server(
     config: DictConfig,
     cluster: Cluster,
     rollout_hardware_ranks: list[int],
+    router_server_args: DictConfig,
     *,
     router_node_rank: int = 0,
 ) -> tuple["object | None", "object | None"]:
     """Launch the sglang server group and a single router worker.
 
     Args:
-        config: Full RLinf ``DictConfig``. The launcher reads
-            ``config.rollout.{tensor_parallel_size, pipeline_parallel_size,
-            server, router, group_name, router_group_name, launch_server,
-            launch_router}`` directly — the caller doesn't break the
-            rollout block apart.
+        config: Full RLinf ``DictConfig`` passed through to the worker
+            groups for cluster/runtime context.
         cluster: Active :class:`rlinf.scheduler.Cluster`.
         rollout_hardware_ranks: Flat list of global hardware ranks the
             sglang engines should occupy — typically
@@ -66,6 +64,11 @@ def launch_sglang_router_and_server(
             contiguous range (the prerequisite for a
             ``PackedPlacementStrategy``). Ignored when
             ``launch_server`` is ``False``.
+        router_server_args: ``DictConfig`` carrying the
+            ``{tensor_parallel_size, pipeline_parallel_size, server,
+            router, group_name, router_group_name, launch_server,
+            launch_router}`` keys the launcher consumes directly
+            (typically ``config.rollout``).
         router_node_rank: Cluster-global node rank on which to place the
             router. Defaults to node 0 (the head).
 
@@ -74,15 +77,14 @@ def launch_sglang_router_and_server(
         (or ``None`` for any side gated off by config). The router's URL
         can be retrieved with ``router_group.get_router_url().wait()[0]``.
     """
-    rollout_cfg = config.rollout
-    launch_server = rollout_cfg.get("launch_server", True)
-    launch_router = rollout_cfg.get("launch_router", True)
+    launch_server = router_server_args.get("launch_server", True)
+    launch_router = router_server_args.get("launch_router", True)
 
     server_group = None
     if launch_server:
-        num_accelerators_per_engine = int(rollout_cfg.tensor_parallel_size) * int(
-            rollout_cfg.pipeline_parallel_size
-        )
+        num_accelerators_per_engine = int(
+            router_server_args.tensor_parallel_size
+        ) * int(router_server_args.pipeline_parallel_size)
         ranks = sorted(int(r) for r in rollout_hardware_ranks)
         assert ranks, "rollout_hardware_ranks must not be empty."
         assert ranks == list(range(ranks[0], ranks[-1] + 1)), (
@@ -97,10 +99,10 @@ def launch_sglang_router_and_server(
 
         server_group = SGLangServerWorker.create_group(
             config=config,
-            sglang_cfg=rollout_cfg.server,
+            sglang_cfg=router_server_args.server,
         ).launch(
             cluster=cluster,
-            name=rollout_cfg.group_name,
+            name=router_server_args.group_name,
             placement_strategy=rollout_placement,
         )
 
@@ -113,10 +115,10 @@ def launch_sglang_router_and_server(
         router_placement = NodePlacementStrategy(node_ranks=[router_node_rank])
         router_group = SGLangRouterWorker.create_group(
             config=config,
-            router_cfg=rollout_cfg.router,
+            router_cfg=router_server_args.router,
         ).launch(
             cluster=cluster,
-            name=rollout_cfg.router_group_name,
+            name=router_server_args.router_group_name,
             placement_strategy=router_placement,
         )
 

@@ -12,21 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""``SGLangRouterWorker`` — spawns the upstream Rust router as a child process.
-
-The router is launched with an empty worker pool; servers are attached
-later via :meth:`register_server`, which mirrors the upstream HTTP API::
-
-    curl -X POST http://<router>/workers \\
-         -H "Content-Type: application/json" \\
-         -d '{"url":"http://<server>","worker_type":"regular"}'
-
-Config keys under ``cfg.rollout.router`` are passed through verbatim —
-they MUST match :class:`sglang_router.router_args.RouterArgs` field
-names (e.g. ``policy``, ``worker_startup_timeout_secs``,
-``max_payload_size``). Unknown keys raise loudly so typos don't go
-unnoticed.
-"""
 
 from __future__ import annotations
 
@@ -122,25 +107,20 @@ class SGLangRouterWorker(Worker):
             replaced by dashes); keys MUST match :class:`RouterArgs` field
             names. Typically ``config.rollout.router`` when used inside a
             rollout, but any compatible block works (the router isn't tied
-            to the rollout pipeline). May be ``None`` / empty to launch a
-            router with no extra flags.
-        bind_host: Host the router process binds to (default ``0.0.0.0``).
-        bind_port: Optional fixed port; otherwise a free port is grabbed
-            via the worker's PortLock.
+            to the rollout pipeline). The ``host`` and ``port`` keys
+            control the router's bind address; if ``port`` is missing or
+            ``None``, a free port is grabbed via the worker's PortLock at
+            :meth:`init_router` time. ``host`` defaults to ``0.0.0.0``.
     """
 
     def __init__(
         self,
         config: DictConfig,
-        router_cfg: Optional[DictConfig] = None,
-        bind_host: str = "0.0.0.0",
-        bind_port: Optional[int] = None,
+        router_cfg: DictConfig,
     ):
         Worker.__init__(self)
         self._cfg = config
         self._router_cfg = router_cfg
-        self._bind_host = bind_host
-        self._bind_port = bind_port
 
         self._proc: Optional[subprocess.Popen] = None
         self._router_url: Optional[str] = None
@@ -161,23 +141,15 @@ class SGLangRouterWorker(Worker):
         """
         assert self._proc is None, "router subprocess already started."
 
-        port = int(self._bind_port or self.acquire_free_port())
-        self._port = port
-
-        router_cfg = (
-            OmegaConf.to_container(self._router_cfg, resolve=True)
-            if self._router_cfg is not None
-            else {}
-        ) or {}
+        router_cfg = OmegaConf.to_container(self._router_cfg, resolve=True)
+        self._port = router_cfg.pop("port", self.acquire_free_port())
 
         cmd = [
             sys.executable,
             "-m",
             "sglang_router.launch_router",
-            "--host",
-            self._bind_host,
             "--port",
-            str(port),
+            str(self._port),
             *_router_cfg_to_cli(router_cfg),
         ]
 
@@ -194,9 +166,9 @@ class SGLangRouterWorker(Worker):
 
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
-        self._router_url = f"http://{self._advertise_host}:{port}"
+        self._router_url = f"http://{self._advertise_host}:{self._port}"
 
-        self._wait_for_router_health(port)
+        self._wait_for_router_health(self._port)
         self.log_info(f"sglang router ready at {self._router_url}")
         return self._router_url
 

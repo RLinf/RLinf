@@ -21,13 +21,11 @@ import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.hybrid_engines.sglang.server import (
-    InferenceHTTPClient,
-    launch_sglang_router_and_server,
-)
 from rlinf.scheduler import Cluster
 from rlinf.scheduler.placement import ComponentPlacement
+from rlinf.utils.http_client import InferenceHTTPClient
 from rlinf.utils.logging import get_logger
+from rlinf.workers.rollout.sglang_server import launch_sglang_router_and_server
 
 logger = get_logger()
 
@@ -125,11 +123,13 @@ def main(cfg: DictConfig) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     placement = ComponentPlacement(cfg, cluster)
+    router_server_args = cfg.rollout
 
     server_group, router_group = launch_sglang_router_and_server(
         cfg,
         cluster,
         rollout_hardware_ranks=placement.get_hardware_ranks("llm"),
+        router_server_args=router_server_args,
     )
     logger.info("launch_sglang_router_and_server returned")
 
@@ -145,7 +145,7 @@ def main(cfg: DictConfig) -> None:
         "temperature": 0.0,
         "max_new_tokens": max_new_tokens,
     }
-    chat_model = cfg.rollout.model_path
+    chat_model = router_server_args.model_path
 
     client = InferenceHTTPClient(router_url)
 

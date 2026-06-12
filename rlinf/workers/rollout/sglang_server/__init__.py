@@ -13,13 +13,11 @@
 # limitations under the License.
 
 
-from .http_client import InferenceHTTPClient
 from .launcher import launch_sglang_router_and_server
-from .router_launcher import SGLangRouterWorker
-from .server_launcher import SGLangServerWorker
+from .router_worker import SGLangRouterWorker
+from .server_worker import SGLangServerWorker
 
 __all__ = [
-    "InferenceHTTPClient",
     "SGLangRouterWorker",
     "SGLangServerWorker",
     "launch_sglang_router_and_server",
