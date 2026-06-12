@@ -118,11 +118,14 @@ class SGLangServerWorker(Worker):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
-    def init_server(self) -> str:
+    def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
-        Returns:
-            The URL the router should register (``http://host:port``).
+        Raises:
+            RuntimeError: if the server fails to become healthy. The
+                subprocess is torn down via :meth:`shutdown` before the
+                exception is re-raised, so the caller can retry / fail
+                fast without leaking a zombie sglang process.
         """
         assert self._server_proc is None, "sglang server already initialized."
 
@@ -165,9 +168,13 @@ class SGLangServerWorker(Worker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
-        _wait_for_http_health(self._advertise_host, http_port)
+        try:
+            _wait_for_http_health(self._advertise_host, http_port)
+        except RuntimeError as e:
+            self.log_error(f"sglang server failed to become healthy: {e!r}")
+            self.shutdown()
+            raise
         self.log_info(f"sglang server ready at {self.get_server_url()}")
-        return self.get_server_url()
 
     def get_server_url(self) -> str:
         """Return the advertised ``http://host:port`` URL for this server."""

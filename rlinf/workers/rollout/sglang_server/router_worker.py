@@ -132,12 +132,19 @@ class SGLangRouterWorker(Worker):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
-    def init_router(self) -> str:
+    def init_router(self) -> None:
         """Spawn the router subprocess with NO workers attached.
 
         Returns:
             The router's advertised URL. Attach workers with
             :meth:`register_server`.
+
+        Raises:
+            RuntimeError: if the router subprocess exits before becoming
+                healthy or fails the ``/health`` probe within the timeout.
+                The subprocess is torn down via :meth:`shutdown` before the
+                exception is re-raised, so the caller can retry / fail
+                fast without leaking a zombie router process.
         """
         assert self._proc is None, "router subprocess already started."
 
@@ -168,9 +175,13 @@ class SGLangRouterWorker(Worker):
             self._advertise_host = ray.util.get_node_ip_address()
         self._router_url = f"http://{self._advertise_host}:{self._port}"
 
-        self._wait_for_router_health(self._port)
+        try:
+            self._wait_for_router_health(self._port)
+        except RuntimeError as e:
+            self.log_error(f"sglang router failed to become healthy: {e!r}")
+            self.shutdown()
+            raise
         self.log_info(f"sglang router ready at {self._router_url}")
-        return self._router_url
 
     def _wait_for_router_health(self, port: int, timeout: float = 300.0) -> None:
         """Block until ``GET /health`` on the router returns 200."""
