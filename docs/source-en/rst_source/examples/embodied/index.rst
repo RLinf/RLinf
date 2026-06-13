@@ -230,7 +230,7 @@ as well as reinforcement learning training examples on real robots.
          <a href="gr00t.html" style="text-decoration: underline; color: blue;">
            <b>RL on GR00T Models</b>
          </a><br>
-         Support GR00T-N1.5 and N1.6 RL fine-tuning.
+         Support GR00T-N1.5, N1.6 and N1.7 RL fine-tuning.
        </p>
      </div>
 
@@ -510,7 +510,7 @@ as well as reinforcement learning training examples on real robots.
         ABot-M0 native integration with LIBERO-plus PPO training
       </p>
     </div>
-  </div>
+   </div>
 
 .. toctree::
    :hidden:
