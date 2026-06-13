@@ -148,7 +148,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
           </ul>
