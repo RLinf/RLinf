@@ -206,6 +206,64 @@ YAML 配置
    ZED SDK 须在 GPU 节点、在 ``ray start`` **之前** 安装到 Ray 使用的同一虚拟环境中；
    Robotiq 串口权限须在 NUC 控制节点上配置好。详见 :doc:`../../examples/embodied/franka_zed_robotiq`。
 
+从环境变量自动配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+各机器的硬件取值（``robot_ip`` 、``camera_serials`` 、``gripper_connection`` 等）不必写死在 YAML 中。
+在枚举（enumeration）阶段，``hardware.configs`` 中任何 **未设置** 的字段都会从与字段同名、**全大写** 的环境变量自动填充
+（``robot_ip`` → ``ROBOT_IP`` 、``camera_serials`` → ``CAMERA_SERIALS``），从而把 IP、序列号等从提交的配置中剥离出来。
+
+规则：
+
+- YAML 中写明的值始终优先；环境变量只填充未设置的字段。
+- 变量在 **拥有该配置的节点上** （即其 ``node_rank``）读取，因此须在该节点 ``ray start`` **之前** 导出（Ray 在启动时冻结环境变量）。
+- ``node_rank`` 与 ``controller_node_rank`` 不会从环境变量读取。
+
+**每个节点一台机器人。** 直接使用整个取值；列表字段按逗号拆分：
+
+.. code-block:: yaml
+
+   - label: franka
+     node_ranks: 1
+     hardware:
+       type: Franka
+       configs:
+         - node_rank: 1          # robot_ip / 相机序列号来自环境变量
+
+.. code-block:: bash
+
+   # 在 rank 1 控制节点、`ray start` 之前
+   export ROBOT_IP=<ROBOT_IP>
+   export CAMERA_SERIALS=<serial_1>,<serial_2>
+
+**同一节点多台机器人。** 为每台机器人提供一个逗号分隔的取值，按顺序赋给各配置（因此列表字段在此模式下每台机器人取一项）。
+取值个数须与该节点上机器人配置的数量一致：
+
+.. code-block:: bash
+
+   # 一台控制节点上两台机械臂
+   export ROBOT_IP=<ip_arm0>,<ip_arm1>
+   export CAMERA_SERIALS=<serial_arm0>,<serial_arm1>
+
+**完全由环境变量创建机器人。** 将 ``configs`` 留空，机器人将完全从环境变量创建——机器人数量由标识变量 ``ROBOT_IP`` 的逗号个数决定，
+每个字段都从对应变量读取：
+
+.. code-block:: yaml
+
+   - label: franka
+     node_ranks: 1
+     hardware:
+       type: Franka
+       configs: []              # 机器人由 ROBOT_IP、CAMERA_SERIALS… 创建
+
+.. code-block:: bash
+
+   export ROBOT_IP=<ip_arm0>,<ip_arm1>     # 两台机器人
+   export DISABLE_VALIDATE=true,true       # 每台机器人一个取值
+
+此模式下，所设置的每个变量都必须提供与 ``ROBOT_IP`` 相同数量的逗号分隔取值；数量不一致会使枚举报错并中止。
+其他机器人类型使用各自的标识字段（``GimArm`` → ``CAN_INTERFACE`` 、``DOSW1`` → ``ROBOT_URL``）。
+
 
 启动真机训练
 ------------

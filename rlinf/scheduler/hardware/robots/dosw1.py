@@ -24,6 +24,7 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .auto_config import RobotAutoConfig
 
 
 @dataclass
@@ -67,6 +68,16 @@ class DOSW1Robot(Hardware):
         for config in configs:
             if isinstance(config, DOSW1HWConfig) and config.node_rank == node_rank:
                 robot_configs.append(config)
+
+        # Fill unset fields from env vars (e.g. ``ROBOT_URL``), one value per
+        # config when several robots share this node. With no configs given,
+        # create one per comma-separated ``ROBOT_URL``.
+        robot_configs = RobotAutoConfig.resolve(
+            robot_configs,
+            config_cls=DOSW1HWConfig,
+            node_rank=node_rank,
+            count_fields=("robot_url",),
+        )
 
         if not robot_configs:
             return None

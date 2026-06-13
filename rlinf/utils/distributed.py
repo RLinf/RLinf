@@ -939,6 +939,32 @@ def masked_normalization(
     return ((x - mean) / (var.sqrt() + eps)).float()
 
 
+def masked_stats(x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Return count, sum, and squared sum for valid values."""
+    x = x.to(dtype=torch.float64)
+    if mask is not None:
+        assert mask.shape == x.shape, (mask.shape, x.shape)
+        x = x[mask.bool()]
+    else:
+        x = x.reshape(-1)
+    return torch.tensor(
+        [x.numel(), x.sum(), x.square().sum()],
+        dtype=torch.float64,
+        device=x.device,
+    )
+
+
+def normalize_from_stats(x: torch.Tensor, stats: torch.Tensor) -> torch.Tensor:
+    """Normalize values using count, sum, and squared sum stats."""
+    stats = stats.to(device=x.device, dtype=torch.float64)
+    count = stats[0].clamp_min(1.0)
+    mean = stats[1] / count
+    var = stats[2] / count - mean.square()
+    return (
+        (x.to(dtype=torch.float64) - mean) * torch.rsqrt(var.clamp_min(0.0) + 1e-5)
+    ).float()
+
+
 def masked_global_mean_var(values, mask, group=None):
     """computes the global mean and var when there is a mask
 
