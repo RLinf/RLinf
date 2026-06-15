@@ -74,6 +74,8 @@ algorithm:
   early_stop_imp_ratio: 5.0
   use_valid_token_scale: False
 
+  entropy_op_type: torch
+
   # params for rollout
   sampling_params:
     do_sample: True
@@ -100,7 +102,7 @@ data:
   validation_shuffle: True
   seed: 1234
   train_data_paths: ["/inspire/sj-ssd/project/inference-chip/cengshulin-p-zengshulin/datasets/Search-R1-Data/train.jsonl"]
-  val_data_paths: ["/inspire/sj-ssd/project/inference-chip/cengshulin-p-zengshulin/datasets/Search-R1-Data/train.jsonl"]
+  val_data_paths: ["/inspire/sj-ssd/project/inference-chip/cengshulin-p-zengshulin/datasets/Search-R1-Data/test.jsonl"]
 
 
 agentloop:
@@ -137,7 +139,7 @@ rollout:
 
   rollout_backend: sglang       # here choose which backend to rollout,support [sglang, vllm]
   sglang:
-    attention_backend: triton   # [flashinfer, triton] for more, see sglang's doc
+    attention_backend: ascend   # [flashinfer, triton] for more, see sglang's doc
     decode_log_interval: 500000 # the interval for SGLang to log the decode time and other stats.
     use_torch_compile: False    # enable torch_compile in SGLang for rollout.
     torch_compile_max_bs: 128   # the maximum batch size for torch compile. If the batch size is larger than this, torch compile will not be used.

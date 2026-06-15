@@ -1,0 +1,40 @@
+{
+    "session_and_graph_id_0_0": {
+        "graph_fusion": {
+            "IndexByTensorStaticFusionPass": {
+                "effect_times": "0",
+                "match_times": "1"
+            },
+            "RefreshInt64ToInt32FusionPass": {
+                "effect_times": "0",
+                "match_times": "1"
+            }
+        },
+        "ub_fusion": {
+            "AutomaticUbFusion": {
+                "effect_times": "0",
+                "match_times": "2",
+                "repository_hit_times": "0"
+            }
+        }
+    },
+    "session_and_graph_id_0_1": {
+        "graph_fusion": {
+            "IndexByTensorStaticFusionPass": {
+                "effect_times": "0",
+                "match_times": "1"
+            },
+            "RefreshInt64ToInt32FusionPass": {
+                "effect_times": "0",
+                "match_times": "1"
+            }
+        },
+        "ub_fusion": {
+            "AutomaticUbFusion": {
+                "effect_times": "1",
+                "match_times": "1",
+                "repository_hit_times": "0"
+            }
+        }
+    }
+}
