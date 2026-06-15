@@ -51,7 +51,40 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
-from rlinf.workers.env.rlt_stage2_policy_info import RLTStage2PolicyInfoAdapter
+
+
+class _DisabledRLTPolicyInfoAdapter:
+    def init_stage(self, **kwargs):
+        return None
+
+    def update_stage(self, **kwargs):
+        return None
+
+
+def _build_rlt_policy_info_adapter(cfg, train_batch_size, eval_batch_size):
+    intervention_cfg = cfg.algorithm.get("intervention", {})
+    is_rlt_stage2 = (
+        cfg.algorithm.get("loss_type", None) == "rlt_td3"
+        and cfg.actor.model.get("model_type", None) == "rlt_stage2"
+    )
+    train_env_type = str(cfg.env.get("train", {}).get("env_type", "")).lower()
+    eval_env_type = str(cfg.env.eval.get("env_type", "")).lower()
+    is_maniskill = train_env_type == "maniskill" or eval_env_type == "maniskill"
+    if (
+        not is_rlt_stage2
+        or not bool(intervention_cfg.get("enable", False))
+        or str(intervention_cfg.get("mode", "local_correction")) != "local_correction"
+        or not is_maniskill
+    ):
+        return _DisabledRLTPolicyInfoAdapter()
+
+    from rlinf.envs.maniskill.rlt_policy_info import RLTStage2PolicyInfoAdapter
+
+    return RLTStage2PolicyInfoAdapter(
+        cfg=cfg,
+        train_batch_size=train_batch_size,
+        eval_batch_size=eval_batch_size,
+    )
 
 
 class EnvWorker(Worker):
@@ -160,8 +193,8 @@ class EnvWorker(Worker):
         self.actor_split_num = self.get_actor_split_num()
         if self.use_training_pipeline and not self.only_eval:
             self._init_pipeline_params()
-        self.rlt_policy_info_adapter = RLTStage2PolicyInfoAdapter(
-            cfg=self.cfg,
+        self.rlt_policy_info_adapter = _build_rlt_policy_info_adapter(
+            self.cfg,
             train_batch_size=(
                 self.train_num_envs_per_stage if not self.only_eval else None
             ),

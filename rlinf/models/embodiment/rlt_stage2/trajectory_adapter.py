@@ -463,8 +463,15 @@ class RLTStage2TrajectoryReplayAdapter:
         return added, completed_episodes
 
     def _chunk_trajectory_to_transitions(self, traj: Trajectory) -> tuple[int, int]:
-        if self.replay_buffer is None or traj.actions is None or not traj.forward_inputs:
+        if self.replay_buffer is None:
             return 0, 0
+        if traj.actions is None:
+            raise RuntimeError("RLT Stage2 replay requires trajectory actions.")
+        if not traj.forward_inputs:
+            raise RuntimeError(
+                "RLT Stage2 replay requires trajectory.forward_inputs; rollout "
+                "must emit the canonical RLT forward-input contract."
+            )
 
         traj_len = traj.actions.shape[0]
         bsz = traj.actions.shape[1]
@@ -474,12 +481,15 @@ class RLTStage2TrajectoryReplayAdapter:
         x_all = traj.forward_inputs.get("x")
         a_tilde_all = traj.forward_inputs.get("a_tilde")
         if x_all is None or a_tilde_all is None:
-            return 0, 0
+            raise RuntimeError(
+                "RLT Stage2 replay requires forward_inputs['x'] and "
+                "forward_inputs['a_tilde']."
+            )
 
         dones_all = traj.dones
         rewards_all = traj.rewards
         if dones_all is None or rewards_all is None:
-            return 0, 0
+            raise RuntimeError("RLT Stage2 replay requires trajectory rewards and dones.")
         intervention_flags_all = traj.forward_inputs.get("intervention_flags")
         if intervention_flags_all is None:
             intervention_flags_all = traj.intervene_flags

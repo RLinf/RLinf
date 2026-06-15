@@ -19,8 +19,10 @@ import torch
 
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.models.embodiment.rlt_stage2.replay_buffer import RLTStage2ReplayBuffer
+from rlinf.models.embodiment.rlt_stage2.trajectory_adapter import (
+    RLTStage2TrajectoryReplayAdapter,
+)
 from rlinf.models.embodiment.rlt_stage2.transition import TransitionSource
-from rlinf.workers.actor.fsdp_rlt_stage2_policy_worker import RLTStage2FSDPPolicyWorker
 
 
 def _build_cfg(*, stride: int) -> SimpleNamespace:
@@ -44,21 +46,26 @@ def _build_cfg(*, stride: int) -> SimpleNamespace:
     )
 
 
-def _build_test_worker(*, stride: int) -> RLTStage2FSDPPolicyWorker:
-    worker = object.__new__(RLTStage2FSDPPolicyWorker)
-    worker.cfg = _build_cfg(stride=stride)
-    worker.replay_buffer = RLTStage2ReplayBuffer(
+def _build_test_adapter(
+    *,
+    stride: int,
+) -> tuple[RLTStage2TrajectoryReplayAdapter, RLTStage2ReplayBuffer]:
+    replay_buffer = RLTStage2ReplayBuffer(
         capacity=8,
         state_dim=4,
         action_chunk_dim=4,
         chunk_length=2,
         seed=1234,
     )
-    return worker
+    adapter = RLTStage2TrajectoryReplayAdapter(
+        cfg=_build_cfg(stride=stride),
+        replay_buffer=replay_buffer,
+    )
+    return adapter, replay_buffer
 
 
-def test_chunk_trajectory_to_transitions_prefers_ref_chunk_over_legacy_a_tilde():
-    worker = _build_test_worker(stride=0)
+def test_chunk_trajectory_to_transitions_uses_canonical_a_tilde():
+    adapter, replay_buffer = _build_test_adapter(stride=0)
 
     traj = Trajectory(
         actions=torch.tensor(
@@ -81,10 +88,6 @@ def test_chunk_trajectory_to_transitions_prefers_ref_chunk_over_legacy_a_tilde()
                 ],
                 dtype=torch.float32,
             ),
-            "ref_chunk": torch.tensor(
-                [[[11.0, 110.0, 22.0, 220.0]]],
-                dtype=torch.float32,
-            ),
             "a_tilde": torch.tensor(
                 [[[101.0, 1001.0, 202.0, 2002.0]]],
                 dtype=torch.float32,
@@ -92,22 +95,22 @@ def test_chunk_trajectory_to_transitions_prefers_ref_chunk_over_legacy_a_tilde()
         },
     )
 
-    added, completed = worker._chunk_trajectory_to_transitions(traj)
+    added, completed = adapter.add_trajectory(traj)
 
     assert added == 1
     assert completed == 1
     np.testing.assert_allclose(
-        worker.replay_buffer._ref_chunk[0],
-        np.array([11.0, 110.0, 22.0, 220.0], dtype=np.float32),
+        replay_buffer._ref_chunk[0],
+        np.array([101.0, 1001.0, 202.0, 2002.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
-        worker.replay_buffer._next_ref_chunk[0],
-        np.array([11.0, 110.0, 22.0, 220.0], dtype=np.float32),
+        replay_buffer._next_ref_chunk[0],
+        np.array([101.0, 1001.0, 202.0, 2002.0], dtype=np.float32),
     )
 
 
 def test_step_trace_to_transitions_keeps_reference_chunks_for_human_windows():
-    worker = _build_test_worker(stride=1)
+    adapter, replay_buffer = _build_test_adapter(stride=1)
 
     traj = Trajectory(
         actions=torch.tensor(
@@ -148,7 +151,7 @@ def test_step_trace_to_transitions_keeps_reference_chunks_for_human_windows():
                 ],
                 dtype=torch.float32,
             ),
-            "ref_chunk": torch.tensor(
+            "a_tilde": torch.tensor(
                 [
                     [[101.0, 1001.0, 202.0, 2002.0]],
                     [[303.0, 3003.0, 404.0, 4004.0]],
@@ -179,7 +182,7 @@ def test_step_trace_to_transitions_keeps_reference_chunks_for_human_windows():
                 ],
                 dtype=torch.float32,
             ),
-            "ref_chunk": torch.tensor(
+            "a_tilde": torch.tensor(
                 [
                     [[[111.0, 1111.0, 222.0, 2222.0]]],
                     [[[333.0, 3333.0, 444.0, 4444.0]]],
@@ -189,28 +192,28 @@ def test_step_trace_to_transitions_keeps_reference_chunks_for_human_windows():
         },
     )
 
-    added, completed = worker._step_trace_to_transitions(traj)
+    added, completed = adapter.add_trajectory(traj)
 
     assert added == 3
     assert completed == 1
 
     np.testing.assert_allclose(
-        worker.replay_buffer._ref_chunk[0],
+        replay_buffer._ref_chunk[0],
         np.array([101.0, 1001.0, 202.0, 2002.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
-        worker.replay_buffer._next_ref_chunk[0],
+        replay_buffer._next_ref_chunk[0],
         np.array([303.0, 3003.0, 404.0, 4004.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
-        worker.replay_buffer._ref_chunk[1],
+        replay_buffer._ref_chunk[1],
         np.array([111.0, 1111.0, 222.0, 2222.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
-        worker.replay_buffer._ref_chunk[2],
+        replay_buffer._ref_chunk[2],
         np.array([303.0, 3003.0, 404.0, 4004.0], dtype=np.float32),
     )
     np.testing.assert_allclose(
-        worker.replay_buffer._next_ref_chunk[2],
+        replay_buffer._next_ref_chunk[2],
         np.array([505.0, 5005.0, 606.0, 6006.0], dtype=np.float32),
     )

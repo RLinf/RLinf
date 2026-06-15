@@ -121,14 +121,11 @@ class RLTStage2ReplayBuffer:
         self,
         *,
         x: np.ndarray,
-        action_chunk: np.ndarray | None = None,
-        ref_chunk: np.ndarray | None = None,
-        a: np.ndarray | None = None,
-        a_tilde: np.ndarray | None = None,
+        action_chunk: np.ndarray,
+        ref_chunk: np.ndarray,
         rewards: np.ndarray,
         next_x: np.ndarray,
-        next_ref_chunk: np.ndarray | None = None,
-        next_a_tilde: np.ndarray | None = None,
+        next_ref_chunk: np.ndarray,
         done: float,
         intervention: float | np.ndarray = 0.0,
         source: int | None = None,
@@ -139,21 +136,6 @@ class RLTStage2ReplayBuffer:
         episode_id: int = 0,
         step_id: int = 0,
     ) -> None:
-        if action_chunk is None:
-            if a is None:
-                raise ValueError("RLT replay add requires action_chunk or legacy a.")
-            action_chunk = a
-        if ref_chunk is None:
-            if a_tilde is None:
-                raise ValueError("RLT replay add requires ref_chunk or legacy a_tilde.")
-            ref_chunk = a_tilde
-        if next_ref_chunk is None:
-            if next_a_tilde is None:
-                raise ValueError(
-                    "RLT replay add requires next_ref_chunk or legacy next_a_tilde."
-                )
-            next_ref_chunk = next_a_tilde
-
         self._x[self._ptr] = x
         self._action_chunk[self._ptr] = action_chunk
         self._ref_chunk[self._ptr] = ref_chunk

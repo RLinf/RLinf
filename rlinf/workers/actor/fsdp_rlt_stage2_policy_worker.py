@@ -38,6 +38,10 @@ from ...models.embodiment.rlt_stage2.replay_buffer import RLTStage2ReplayBuffer
 from ...models.embodiment.rlt_stage2.trajectory_adapter import (
     RLTStage2TrajectoryReplayAdapter,
 )
+from ...models.embodiment.rlt_stage2.training_schedule import (
+    resolve_actor_loss_weights,
+    resolve_update_schedule,
+)
 
 
 class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
@@ -81,94 +85,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         self._rollout_all_ranks = list(
             range(self._component_placement.get_world_size("rollout"))
         )
-
-    def _warmup_required_updates(self) -> int:
-        td3_bc_cfg = self.cfg.algorithm.get("td3_bc", {})
-        warmup_required_updates = int(
-            td3_bc_cfg.get(
-                "warmup_updates",
-                self.cfg.algorithm.get("warmup_post_collect_updates", 0),
-            )
-        )
-        if warmup_required_updates < 0:
-            raise ValueError(
-                "algorithm.td3_bc.warmup_updates must be >= 0, "
-                f"got {warmup_required_updates}."
-            )
-        return warmup_required_updates
-
-    def _resolve_actor_loss_weights(self) -> tuple[float, float, float, bool, float]:
-        td3_bc_cfg = self.cfg.algorithm.get("td3_bc", {})
-        stage2_cfg = self.cfg.actor.model.rlt_stage2
-        loss_warmup_updates = int(
-            td3_bc_cfg.get(
-                "actor_loss_warmup_updates",
-                self.cfg.algorithm.get("actor_loss_warmup_updates", 0),
-            )
-        )
-        in_warmup = self.update_step < loss_warmup_updates
-        warmup_bc_weight = float(
-            td3_bc_cfg.get(
-                "warmup_bc_weight",
-                stage2_cfg.get(
-                    "warmup_bc_weight",
-                    stage2_cfg.get("bc_regularizer_beta", 1.0),
-                ),
-            )
-        )
-        warmup_q_weight = float(
-            td3_bc_cfg.get(
-                "warmup_q_weight",
-                stage2_cfg.get("warmup_q_weight", 0.1),
-            )
-        )
-        online_bc_weight = float(
-            td3_bc_cfg.get(
-                "online_bc_weight",
-                stage2_cfg.get(
-                    "online_bc_weight",
-                    stage2_cfg.get("bc_regularizer_beta", 1.0),
-                ),
-            )
-        )
-        online_q_weight = float(
-            td3_bc_cfg.get(
-                "online_q_weight",
-                stage2_cfg.get("online_q_weight", 0.1),
-            )
-        )
-        if in_warmup:
-            bc_weight = warmup_bc_weight
-            q_weight = warmup_q_weight
-            ramp_progress = 0.0
-        else:
-            ramp_updates = int(
-                td3_bc_cfg.get(
-                    "actor_loss_ramp_updates",
-                    self.cfg.algorithm.get("actor_loss_ramp_updates", 0),
-                )
-            )
-            if ramp_updates > 0:
-                ramp_progress = min(
-                    1.0,
-                    max(
-                        0.0,
-                        float(self.update_step - loss_warmup_updates + 1)
-                        / float(ramp_updates),
-                    ),
-                )
-            else:
-                ramp_progress = 1.0
-            bc_weight = warmup_bc_weight + ramp_progress * (
-                online_bc_weight - warmup_bc_weight
-            )
-            q_weight = warmup_q_weight + ramp_progress * (
-                online_q_weight - warmup_q_weight
-            )
-        delta_weight = float(
-            td3_bc_cfg.get("delta_weight", stage2_cfg.get("delta_weight", 0.0))
-        )
-        return bc_weight, q_weight, delta_weight, in_warmup, ramp_progress
 
     def init_worker(self):
         self.setup_model_and_optimizer()
@@ -477,15 +393,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 self.cfg.algorithm.get("warmup_min_size", 1),
             )
         )
-        warmup_required_updates = self._warmup_required_updates()
-        update_ratio = int(self.cfg.algorithm.get("update_epoch", 1))
-        max_updates_per_train_step = int(
-            self.cfg.algorithm.get("max_updates_per_train_step", 0)
-        )
-        train_every_transitions = int(
-            self.cfg.algorithm.get("train_every_transitions", 0)
-        )
-        train_every_episodes = int(self.cfg.algorithm.get("train_every_episodes", 0))
         global_counters = self._global_rollout_counters()
         global_min_replay_size = self._global_min_replay_size()
         global_min_demo_size = self._global_min_demo_size()
@@ -508,51 +415,18 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 global_counters["total_episodes_added"]
             )
 
-        desired_total_updates = 0
-        if (
-            buffer_ready
-            and self.warmup_ready_total_transitions is not None
-            and update_ratio > 0
-        ):
-            online_transitions_added = max(
-                global_total_transitions_added - self.warmup_ready_total_transitions,
-                0,
-            )
-            online_episodes_added = max(
-                int(global_counters["total_episodes_added"])
-                - int(self.warmup_ready_total_episodes or 0),
-                0,
-            )
-            transition_cycles = (
-                online_transitions_added // train_every_transitions
-                if train_every_transitions > 0
-                else 0
-            )
-            episode_cycles = (
-                online_episodes_added // train_every_episodes
-                if train_every_episodes > 0
-                else 0
-            )
-            if train_every_transitions <= 0 and train_every_episodes <= 0:
-                online_update_cycles = online_transitions_added
-            else:
-                online_update_cycles = max(transition_cycles, episode_cycles)
-            desired_total_updates = (
-                warmup_required_updates + online_update_cycles * update_ratio
-            )
-        self.pending_update_budget = max(desired_total_updates - self.update_step, 0)
-        updates_scheduled = int(self.pending_update_budget)
-        should_train = buffer_ready and updates_scheduled > 0
+        schedule = resolve_update_schedule(
+            self.cfg,
+            update_step=self.update_step,
+            buffer_ready=buffer_ready,
+            global_total_transitions_added=global_total_transitions_added,
+            global_total_episodes_added=int(global_counters["total_episodes_added"]),
+            warmup_ready_total_transitions=self.warmup_ready_total_transitions,
+            warmup_ready_total_episodes=self.warmup_ready_total_episodes,
+        )
+        self.pending_update_budget = schedule.pending_update_budget
 
-        skip_reason = 0
-        if update_ratio <= 0:
-            skip_reason = 3
-        elif not buffer_ready:
-            skip_reason = 1
-        elif not should_train:
-            skip_reason = 2
-
-        if skip_reason != 0:
+        if schedule.skip_reason != 0:
             self._append_replay_stats(metrics)
             self._append_training_schedule_metrics(
                 metrics,
@@ -561,14 +435,14 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 global_min_demo_size=global_min_demo_size,
                 warmup_min_size=warmup_min_size,
                 min_demo_buffer_size=min_demo_buffer_size,
-                warmup_required_updates=warmup_required_updates,
-                update_ratio=update_ratio,
-                train_every_transitions=train_every_transitions,
-                train_every_episodes=train_every_episodes,
+                warmup_required_updates=schedule.warmup_required_updates,
+                update_ratio=schedule.update_ratio,
+                train_every_transitions=schedule.train_every_transitions,
+                train_every_episodes=schedule.train_every_episodes,
                 should_train=False,
-                skip_reason=skip_reason,
+                skip_reason=schedule.skip_reason,
                 pending_update_budget=self.pending_update_budget,
-                updates_scheduled=updates_scheduled,
+                updates_scheduled=schedule.updates_scheduled,
             )
             return self._process_train_metrics(metrics)
 
@@ -590,10 +464,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         self.model.train()
         critic_updates_run = 0
         actor_updates_run = 0
-        updates_to_run = int(self.pending_update_budget)
-        if max_updates_per_train_step > 0:
-            updates_to_run = min(updates_to_run, max_updates_per_train_step)
-        for _ in range(updates_to_run):
+        for _ in range(schedule.updates_to_run):
             batch_dict = self._sample_training_batch(
                 global_batch_size_per_rank,
                 use_demo=use_demo,
@@ -622,14 +493,14 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             global_min_demo_size=global_min_demo_size,
             warmup_min_size=warmup_min_size,
             min_demo_buffer_size=min_demo_buffer_size,
-            warmup_required_updates=warmup_required_updates,
-            update_ratio=update_ratio,
-            train_every_transitions=train_every_transitions,
-            train_every_episodes=train_every_episodes,
+            warmup_required_updates=schedule.warmup_required_updates,
+            update_ratio=schedule.update_ratio,
+            train_every_transitions=schedule.train_every_transitions,
+            train_every_episodes=schedule.train_every_episodes,
             should_train=True,
             skip_reason=0,
             pending_update_budget=self.pending_update_budget,
-            updates_scheduled=updates_scheduled,
+            updates_scheduled=schedule.updates_scheduled,
             critic_updates_run=critic_updates_run,
             actor_updates_run=actor_updates_run,
         )
@@ -698,9 +569,7 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             )
         )
         replay_ready = global_min_replay_size >= warmup_min_size
-        bc_weight, q_weight, delta_weight, in_loss_warmup, loss_ramp_progress = (
-            self._resolve_actor_loss_weights()
-        )
+        loss_weights = resolve_actor_loss_weights(self.cfg, self.update_step)
         update_actor = (
             replay_ready
             and (self.update_step + 1) % int(self.cfg.algorithm.critic_actor_ratio) == 0
@@ -753,9 +622,9 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                             a_tilde=a_tilde_chunk,
                             action_chunk=executed_action_chunk,
                             source_chunk=batch["source_chunk"].to(torch.uint8),
-                            bc_weight=bc_weight,
-                            q_weight=q_weight,
-                            delta_weight=delta_weight,
+                            bc_weight=loss_weights.bc_weight,
+                            q_weight=loss_weights.q_weight,
+                            delta_weight=loss_weights.delta_weight,
                         )
                         loss = actor_total_loss / self.gradient_accumulation
                     self.grad_scaler.scale(loss).backward()
@@ -792,8 +661,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     "actor/grad_norm": float(actor_grad_norm),
                     "actor/lr": self.optimizer.param_groups[0]["lr"],
                     "actor/action_ref_abs_mean": float(np.mean(actor_action_ref_abs)),
-                    "actor/bc_weight": bc_weight,
-                    "actor/q_weight": q_weight,
+                    "actor/bc_weight": loss_weights.bc_weight,
+                    "actor/q_weight": loss_weights.q_weight,
                     "actor/bc_loss": float(np.mean(actor_bc_losses)),
                     "actor/bc_ref_loss": float(np.mean(actor_bc_ref_losses)),
                     "actor/bc_human_loss": float(np.mean(actor_bc_human_losses)),
@@ -803,8 +672,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         else:
             metrics.update(
                 {
-                    "actor/bc_weight": bc_weight,
-                    "actor/q_weight": q_weight,
+                    "actor/bc_weight": loss_weights.bc_weight,
+                    "actor/q_weight": loss_weights.q_weight,
                 }
             )
 

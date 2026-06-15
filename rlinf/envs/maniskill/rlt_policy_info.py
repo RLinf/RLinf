@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build and update EnvWorker policy_info for RLT Stage 2 rollout routing."""
+"""Build and update ManiSkill policy_info for RLT Stage 2 rollout routing."""
 
 from __future__ import annotations
 
@@ -116,10 +116,17 @@ class RLTStage2PolicyInfoAdapter:
 
     def intervention_enabled(self) -> bool:
         intervention_cfg = self.cfg.algorithm.get("intervention", {})
+        mode = self.intervention_mode()
+        if mode != "local_correction":
+            raise ValueError(
+                "RLT Stage2 ManiSkill policy_info only supports "
+                "algorithm.intervention.mode='local_correction', got "
+                f"{mode!r}."
+            )
         return (
             self.td3_enabled()
             and bool(intervention_cfg.get("enable", False))
-            and self.intervention_mode() in {"local_correction", "human_override"}
+            and mode == "local_correction"
         )
 
     def local_correction_enabled(self) -> bool:
@@ -159,9 +166,7 @@ class RLTStage2PolicyInfoAdapter:
         batch_size: int,
         env: Any | None,
     ) -> Any:
-        from rlinf.envs.maniskill.rlt_intervention import (
-            ManiSkillLocalCorrectionController,
-        )
+        from .rlt_intervention import ManiSkillLocalCorrectionController
 
         controllers = self._maniskill_controllers(mode)
         self._ensure_len(controllers, stage_id, None)
