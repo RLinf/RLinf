@@ -71,7 +71,7 @@ def select_proprio(
 ) -> torch.Tensor:
     """Select proprio state columns for RLT Stage 2.
 
-    Realworld RLT uses contiguous prefixes:
+    Joint-space RLT uses contiguous prefixes:
     [gripper, joint_pos, joint_vel, tcp_force, tcp_pose, tcp_torque, tcp_vel].
     ManiSkill configs keep using the legacy ``proprio_dim`` prefix selection.
     """

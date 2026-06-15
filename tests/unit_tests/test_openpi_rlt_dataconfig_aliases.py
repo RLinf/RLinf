@@ -33,10 +33,3 @@ def test_rlt_joint_legacy_alias_matches_canonical_config():
     legacy = get_openpi_config("pi05_rlt_maniskill_joint")
 
     assert _normalize_config(canonical) == _normalize_config(legacy)
-
-
-def test_rlt_realworld_joint_uses_expected_view_mapping():
-    cfg = get_openpi_config("pi05_rlt_realworld_joint")
-
-    assert cfg.data.image_key == "extra_view_image"
-    assert cfg.data.wrist_image_key == "image"

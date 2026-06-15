@@ -23,13 +23,71 @@ ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
 
 
+def _normalize_model_type(model_type: object) -> tuple[str, str | None]:
+    value = getattr(model_type, "value", model_type)
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            raise ValueError(
+                "tuple model_type values must be `(model_type, category)`, got "
+                f"{value!r}."
+            )
+        return str(value[0]), str(value[1])
+    return str(value), None
+
+
 def register_model(
-    model_type: str,
-    model_builder: ModelBuilder,
-    category: str = "embodied",
+    model_type: object,
+    *args: object,
+    category: str | None = None,
     force: bool = False,
 ):
     """Register a model builder for cfg.model_type."""
+    category_explicit = category is not None
+    category = "embodied" if category is None else category
+    tuple_category: str | None
+    model_type, tuple_category = _normalize_model_type(model_type)
+    if tuple_category is not None:
+        if category_explicit and category != tuple_category:
+            raise ValueError(
+                "register_model received conflicting categories: "
+                f"{tuple_category!r} and {category!r}."
+            )
+        category = tuple_category
+
+    positional_force = None
+    if args and isinstance(args[-1], bool):
+        *args, positional_force = args
+        if force and force != positional_force:
+            raise ValueError(
+                "register_model received conflicting force values: "
+                f"{positional_force!r} and {force!r}."
+            )
+        force = bool(positional_force)
+
+    if len(args) == 1:
+        model_builder = args[0]
+    elif len(args) == 2 and isinstance(args[0], str):
+        positional_category, model_builder = args
+        if category_explicit and category != positional_category:
+            raise ValueError(
+                "register_model received conflicting categories: "
+                f"{positional_category!r} and {category!r}."
+            )
+        category = positional_category
+    elif len(args) == 2 and isinstance(args[1], str):
+        model_builder, positional_category = args
+        if category_explicit and category != positional_category:
+            raise ValueError(
+                "register_model received conflicting categories: "
+                f"{positional_category!r} and {category!r}."
+            )
+        category = positional_category
+    else:
+        raise TypeError(
+            "register_model expects `(model_type, model_builder)` or "
+            "`(model_type, category, model_builder)`."
+        )
+
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
     if not callable(model_builder):

@@ -81,17 +81,12 @@ class ManiSkillLocalCorrectionController:
             ),
             "in_critical_phase": torch.full(
                 (batch_size,),
-                cls.default_in_critical_phase(cfg, mode),
+                True,
                 dtype=torch.bool,
             ),
             "record_transition": torch.full(
                 (batch_size,),
-                cls.default_record_transition(cfg, mode),
-                dtype=torch.bool,
-            ),
-            "critical_phase_started": torch.full(
-                (batch_size,),
-                cls.default_in_critical_phase(cfg, mode),
+                True,
                 dtype=torch.bool,
             ),
         }
@@ -113,31 +108,10 @@ class ManiSkillLocalCorrectionController:
         for key in (
             "in_critical_phase",
             "record_transition",
-            "critical_phase_started",
         ):
             if key in state:
                 policy_info[key] = state[key].to(torch.bool)[:, None]
         return policy_info
-
-    @classmethod
-    def default_in_critical_phase(
-        cls,
-        cfg: DictConfig,
-        mode: Literal["train", "eval"],
-    ) -> bool:
-        env_cfg = cfg.env.train if mode == "train" else cfg.env.eval
-        return str(env_cfg.get("task_mode", "critical_phase")) == "critical_phase"
-
-    @classmethod
-    def default_record_transition(
-        cls,
-        cfg: DictConfig,
-        mode: Literal["train", "eval"],
-    ) -> bool:
-        env_cfg = cfg.env.train if mode == "train" else cfg.env.eval
-        if bool(env_cfg.get("record_prefix_before_critical_phase", False)):
-            return True
-        return cls.default_in_critical_phase(cfg, mode)
 
     @classmethod
     def select_info_source(cls, infos: dict[str, Any]) -> dict[str, Any]:

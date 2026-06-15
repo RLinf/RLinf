@@ -21,10 +21,10 @@ def test_resolve_lerobot_repo_id_accepts_omegaconf_listconfig():
     data_paths = OmegaConf.create(
         [
             {
-                "dataset_path": "/tmp/rlt_realworld/id_4",
+                "dataset_path": "/tmp/local_lerobot/id_4",
                 "weight": 1.0,
             }
         ]
     )
 
-    assert resolve_lerobot_repo_id(data_paths) == "/tmp/rlt_realworld/id_4"
+    assert resolve_lerobot_repo_id(data_paths) == "/tmp/local_lerobot/id_4"
