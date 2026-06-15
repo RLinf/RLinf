@@ -50,6 +50,7 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.env.rlt_stage2_policy_info import RLTStage2PolicyInfoAdapter
 
 
 class EnvWorker(Worker):
@@ -138,10 +139,6 @@ class EnvWorker(Worker):
                 f"{self.eval_action_exec_chunks}"
             )
         if not self.only_eval:
-            if train_env_cfg is None:
-                raise ValueError(
-                    "env.train config is required when runner.only_eval=False."
-                )
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
@@ -160,19 +157,28 @@ class EnvWorker(Worker):
             // self.eval_action_exec_chunks
         )
         self.actor_split_num = self.get_actor_split_num()
+        if self.use_training_pipeline and not self.only_eval:
+            self._init_pipeline_params()
+        self.rlt_policy_info_adapter = RLTStage2PolicyInfoAdapter(
+            cfg=self.cfg,
+            train_batch_size=(
+                self.train_num_envs_per_stage if not self.only_eval else None
+            ),
+            eval_batch_size=(
+                self.eval_num_envs_per_stage if self.enable_eval else None
+            ),
+        )
 
         if not self.only_eval:
             self.train_prev_done: list[torch.Tensor] = [
                 torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
-            self.rlt_local_policy_state: list[dict[str, torch.Tensor]] = []
         if self.enable_eval:
             self.eval_prev_done: list[torch.Tensor] = [
                 torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
-            self.eval_rlt_local_policy_state: list[dict[str, torch.Tensor]] = []
 
     def init_worker(self):
         self.dst_rank_map = self._setup_dst_rank_map()
@@ -201,7 +207,6 @@ class EnvWorker(Worker):
                 assert all(hasattr(env, "offload") for env in self.env_list), (
                     "train envs must have an offload method to enable offload!"
                 )
-
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -209,6 +214,10 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.eval,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
+            if self.eval_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
+                    "eval envs must have an offload method to enable offload!"
+                )
             self.log_info(
                 "Eval action scheduling: "
                 f"model_num_action_chunks={self.cfg.actor.model.num_action_chunks}, "
@@ -220,7 +229,11 @@ class EnvWorker(Worker):
                 f"{self.cfg.env.eval.max_steps_per_rollout_epoch}"
             )
             self.eval_policy_info_list = [
-                self._init_rlt_local_policy_state(i, mode="eval")
+                self.rlt_policy_info_adapter.init_stage(
+                    stage_id=i,
+                    mode="eval",
+                    env=self.eval_env_list[i],
+                )
                 for i in range(self.stage_num)
             ]
 
@@ -272,6 +285,52 @@ class EnvWorker(Worker):
             base_eval_cfg = update_nested_cfg(base_eval_cfg, eval_override_cfg)
             setattr(self.cfg.env.eval, "override_cfg", OmegaConf.create(base_eval_cfg))
         self._inject_realworld_reward_cfg(self.cfg.env.eval)
+
+    def _init_pipeline_params(self):
+        actor_ws = self._component_placement.get_world_size("actor")
+        logical_env_ws = self._world_size * self.stage_num
+        self.shuffle_rollout = self.cfg.algorithm.get("shuffle_rollout", True)
+        self.pipeline_stage_actor_splits = [
+            CommMapper.get_dst_ranks(
+                batch_size=self.cfg.env.train.total_num_envs,
+                src_world_size=logical_env_ws,
+                dst_world_size=actor_ws,
+                src_rank=self._rank * self.stage_num + stage_id,
+            )
+            for stage_id in range(self.stage_num)
+        ]
+        local_actor_ranks = {
+            actor_rank
+            for actor_splits in self.pipeline_stage_actor_splits
+            for actor_rank, _ in actor_splits
+        }
+        self.pipeline_actor_env_ranks = {
+            actor_rank: sorted(
+                {
+                    logical_src_rank // self.stage_num
+                    for logical_src_rank, _ in CommMapper.get_src_ranks(
+                        batch_size=self.cfg.env.train.total_num_envs,
+                        src_world_size=logical_env_ws,
+                        dst_world_size=actor_ws,
+                        dst_rank=actor_rank,
+                    )
+                }
+            )
+            for actor_rank in range(actor_ws)
+        }
+        self.pipeline_actor_keys = {
+            actor_rank: CommMapper.build_channel_key(
+                actor_rank, actor_rank, "pipeline_actor"
+            )
+            for actor_rank in local_actor_ranks
+        }
+        if self.shuffle_rollout:
+            self.shuffle_generators = {
+                actor_rank: torch.Generator().manual_seed(
+                    self.cfg.actor.seed + actor_rank + self._rank * actor_ws
+                )
+                for actor_rank in local_actor_ranks
+            }
 
     def _inject_realworld_reward_cfg(self, env_cfg: DictConfig):
         if not (self.use_reward_model and self.use_realworld_reward):
@@ -453,442 +512,18 @@ class EnvWorker(Worker):
                     extracted_obs, _ = self.env_list[i].reset()
                     self.last_obs_list.append(extracted_obs)
                     self.last_intervened_info_list.append((None, None))
-                self.last_policy_info_list.append(
-                    self._init_rlt_local_policy_state(i)
-                )
+                    self.last_policy_info_list.append(
+                        self.rlt_policy_info_adapter.init_stage(
+                            stage_id=i,
+                            mode="train",
+                            env=self.env_list[i],
+                        )
+                    )
                 if self.train_enable_offload and self.train_enable_init_offload:
                     self.env_list[i].offload()
             if self.enable_eval:
                 if self.eval_enable_offload and self.eval_enable_init_offload:
                     self.eval_env_list[i].offload()
-
-    def _rlt_stage2_td3_enabled(self) -> bool:
-        return (
-            self.cfg.algorithm.get("loss_type", None) == "rlt_td3"
-            and self.cfg.actor.model.get("model_type", None) == "rlt_stage2"
-        )
-
-    def _rlt_stage2_intervention_enabled(self) -> bool:
-        intervention_cfg = self.cfg.algorithm.get("intervention", {})
-        return self._rlt_stage2_td3_enabled() and bool(
-            intervention_cfg.get("enable", False)
-        )
-
-    def _rlt_stage2_policy_info_enabled(self) -> bool:
-        return self._rlt_stage2_intervention_enabled()
-
-    def _rlt_policy_env_type(self, mode: Literal["train", "eval"]) -> str:
-        env_cfg = self.cfg.env.train if mode == "train" else self.cfg.env.eval
-        return str(env_cfg.get("env_type", "")).lower()
-
-    def _init_rlt_local_policy_state(
-        self, stage_id: int, mode: Literal["train", "eval"] = "train"
-    ) -> dict[str, torch.Tensor] | None:
-        if not self._rlt_stage2_policy_info_enabled():
-            return None
-
-        batch_size = (
-            self.train_num_envs_per_stage
-            if mode == "train"
-            else self.eval_num_envs_per_stage
-        )
-        state = {
-            "intervention_region": torch.zeros(batch_size, dtype=torch.bool),
-            "expert_takeover": torch.zeros(batch_size, dtype=torch.bool),
-            "deviation": torch.zeros(batch_size, dtype=torch.bool),
-            "deviation_count": torch.zeros(batch_size, dtype=torch.int64),
-            "takeover_left": torch.zeros(batch_size, dtype=torch.int64),
-            "takeover_used": torch.zeros(batch_size, dtype=torch.int64),
-            "prev_yz_error": torch.full((batch_size,), float("nan"), dtype=torch.float32),
-            "prev_hole_x": torch.full((batch_size,), float("nan"), dtype=torch.float32),
-        }
-        states = (
-            self.rlt_local_policy_state
-            if mode == "train"
-            else self.eval_rlt_local_policy_state
-        )
-        while len(states) <= stage_id:
-            states.append({})
-        states[stage_id] = state
-        return self._export_rlt_local_policy_info(state)
-
-    @staticmethod
-    def _export_rlt_local_policy_info(
-        state: dict[str, torch.Tensor],
-    ) -> dict[str, torch.Tensor]:
-        return {
-            "expert_takeover": state["expert_takeover"][:, None],
-            "deviation": state["deviation"][:, None],
-            "deviation_count": state["deviation_count"].to(torch.float32)[:, None],
-            "takeover_left": state["takeover_left"].to(torch.float32)[:, None],
-            "takeover_used": state["takeover_used"].to(torch.float32)[:, None],
-        }
-
-    @staticmethod
-    def _select_rlt_policy_source_info(
-        infos: dict[str, Any],
-        required_keys: list[str],
-    ) -> dict[str, Any]:
-        if all(key in infos for key in required_keys):
-            return infos
-        final_info = infos.get("final_info")
-        if isinstance(final_info, dict) and all(
-            key in final_info for key in required_keys
-        ):
-            return final_info
-        missing = [key for key in required_keys if key not in infos]
-        raise RuntimeError(
-            "RLT intervention control is enabled, but ManiSkill info is missing "
-            f"required keys {missing}. This usually means the env wrapper is not "
-            "using the aligned peg-insertion info path."
-        )
-
-    @staticmethod
-    def _unwrap_env(env: Any) -> Any:
-        while hasattr(env, "env"):
-            env = env.env
-        return getattr(env, "unwrapped", env)
-
-    @staticmethod
-    def _lookup_rlt_policy_info_value(infos: dict[str, Any], key: str) -> Any:
-        if key in infos:
-            return infos[key]
-        policy_info = infos.get("policy_info")
-        if isinstance(policy_info, dict) and key in policy_info:
-            return policy_info[key]
-        final_info = infos.get("final_info")
-        if isinstance(final_info, dict):
-            if key in final_info:
-                return final_info[key]
-            final_policy_info = final_info.get("policy_info")
-            if isinstance(final_policy_info, dict) and key in final_policy_info:
-                return final_policy_info[key]
-        return None
-
-    @staticmethod
-    def _coerce_rlt_bool_info(
-        value: Any,
-        *,
-        batch_size: int,
-        device: torch.device,
-    ) -> torch.Tensor:
-        if value is None:
-            return torch.zeros(batch_size, dtype=torch.bool, device=device)
-        tensor = torch.as_tensor(value, device=device)
-        if tensor.numel() == 1:
-            return torch.full(
-                (batch_size,),
-                bool(tensor.reshape(-1)[0].item()),
-                dtype=torch.bool,
-                device=device,
-            )
-        tensor = tensor.reshape(batch_size, -1)
-        return tensor.to(torch.bool).any(dim=1)
-
-    @staticmethod
-    def _coerce_rlt_int_info(
-        value: Any,
-        *,
-        batch_size: int,
-        device: torch.device,
-    ) -> torch.Tensor:
-        if value is None:
-            return torch.zeros(batch_size, dtype=torch.int64, device=device)
-        tensor = torch.as_tensor(value, device=device)
-        if tensor.numel() == 1:
-            return torch.full(
-                (batch_size,),
-                int(tensor.reshape(-1)[0].item()),
-                dtype=torch.int64,
-                device=device,
-            )
-        tensor = tensor.reshape(batch_size, -1)
-        return tensor[:, -1].to(torch.int64)
-
-    def _update_rlt_generic_policy_state(
-        self,
-        infos: dict[str, Any],
-        chunk_dones: torch.Tensor,
-        stage_id: int,
-        mode: Literal["train", "eval"],
-    ) -> dict[str, torch.Tensor]:
-        states = (
-            self.rlt_local_policy_state
-            if mode == "train"
-            else self.eval_rlt_local_policy_state
-        )
-        state = states[stage_id]
-        device = chunk_dones.device
-        done_any = chunk_dones.any(dim=1).to(device)
-        batch_size = int(done_any.shape[0])
-        for key, value in state.items():
-            state[key] = value.to(device)
-
-        expert_takeover = self._coerce_rlt_bool_info(
-            self._lookup_rlt_policy_info_value(infos, "expert_takeover"),
-            batch_size=batch_size,
-            device=device,
-        )
-        deviation = self._coerce_rlt_bool_info(
-            self._lookup_rlt_policy_info_value(infos, "deviation"),
-            batch_size=batch_size,
-            device=device,
-        )
-        intervention_region = self._coerce_rlt_bool_info(
-            self._lookup_rlt_policy_info_value(infos, "intervention_region"),
-            batch_size=batch_size,
-            device=device,
-        )
-        state["expert_takeover"] = torch.where(
-            done_any,
-            torch.zeros_like(expert_takeover),
-            expert_takeover,
-        )
-        state["deviation"] = torch.where(done_any, torch.zeros_like(deviation), deviation)
-        state["intervention_region"] = torch.where(
-            done_any,
-            torch.zeros_like(intervention_region),
-            intervention_region,
-        )
-        for key in ("deviation_count", "takeover_left", "takeover_used"):
-            state[key] = torch.where(
-                done_any,
-                torch.zeros_like(state[key]),
-                self._coerce_rlt_int_info(
-                    self._lookup_rlt_policy_info_value(infos, key),
-                    batch_size=batch_size,
-                    device=device,
-                ),
-            )
-        state["prev_yz_error"] = torch.full_like(state["prev_yz_error"], float("nan"))
-        state["prev_hole_x"] = torch.full_like(state["prev_hole_x"], float("nan"))
-        return self._export_rlt_local_policy_info(state)
-
-    def _update_rlt_local_policy_state(
-        self,
-        infos: dict[str, Any] | None,
-        chunk_dones: torch.Tensor,
-        stage_id: int,
-        mode: Literal["train", "eval"] = "train",
-    ) -> dict[str, torch.Tensor] | None:
-        states = (
-            self.rlt_local_policy_state
-            if mode == "train"
-            else self.eval_rlt_local_policy_state
-        )
-        if (
-            not self._rlt_stage2_policy_info_enabled()
-            or infos is None
-            or not states
-        ):
-            return None
-
-        if self._rlt_policy_env_type(mode) != "maniskill":
-            return self._update_rlt_generic_policy_state(
-                infos,
-                chunk_dones,
-                stage_id,
-                mode,
-            )
-
-        required_keys = [
-            "consecutive_grasp_current",
-            "prealigned_current",
-            "partial_insert_current",
-            "success_current",
-            "peg_head_goal_yz_dist",
-            "peg_body_goal_yz_dist",
-            "peg_head_hole_x",
-            "peg_head_hole_abs_y",
-            "peg_head_hole_abs_z",
-        ]
-        infos = self._select_rlt_policy_source_info(infos, required_keys)
-
-        intervention_cfg = self.cfg.algorithm.get("intervention", {})
-        intervention_enabled = self._rlt_stage2_intervention_enabled()
-        state = states[stage_id]
-        device = infos["peg_head_hole_x"].device
-        if "intervention_region" not in state:
-            state["intervention_region"] = torch.zeros(
-                state["expert_takeover"].shape, dtype=torch.bool
-            )
-        for key, value in state.items():
-            state[key] = value.to(device)
-
-        done_any = chunk_dones.any(dim=1).to(device)
-
-        success = infos["success_current"].to(torch.bool)
-        grasp = infos["consecutive_grasp_current"].to(torch.bool)
-        prealigned = infos["prealigned_current"].to(torch.bool)
-        partial_insert = infos["partial_insert_current"].to(torch.bool)
-        yz_error = torch.maximum(
-            infos["peg_head_goal_yz_dist"].to(torch.float32),
-            infos["peg_body_goal_yz_dist"].to(torch.float32),
-        )
-        hole_x = infos["peg_head_hole_x"].to(torch.float32)
-        abs_y = infos["peg_head_hole_abs_y"].to(torch.float32)
-        abs_z = infos["peg_head_hole_abs_z"].to(torch.float32)
-
-        hole_radii = None
-        env_list = self.env_list if mode == "train" else self.eval_env_list
-        unwrapped = self._unwrap_env(env_list[stage_id])
-        if hasattr(unwrapped, "box_hole_radii"):
-            hole_radii = unwrapped.box_hole_radii.to(device, dtype=torch.float32)
-        if hole_radii is None:
-            fallback_hole_radius = intervention_cfg.get(
-                "fallback_hole_radius",
-                0.035,
-            )
-            hole_radii = torch.full_like(abs_y, float(fallback_hole_radius))
-
-        intervention_entry = torch.zeros_like(success)
-        intervention_hold = torch.zeros_like(success)
-        if intervention_enabled:
-            intervention_near_hole_x_min = float(
-                intervention_cfg.get("near_hole_x_min", -0.05)
-            )
-            intervention_exit_hole_x_min = float(
-                intervention_cfg.get("exit_hole_x_min", -0.12)
-            )
-            intervention_yz_margin = float(
-                intervention_cfg.get("near_hole_yz_margin", 1.5)
-            )
-            intervention_yz = (
-                (yz_error <= intervention_yz_margin * hole_radii)
-                & (abs_y <= intervention_yz_margin * hole_radii)
-                & (abs_z <= intervention_yz_margin * hole_radii)
-            ) | prealigned | partial_insert
-            intervention_near_hole = hole_x >= intervention_near_hole_x_min
-            intervention_entry = (
-                grasp & intervention_near_hole & intervention_yz & (~success)
-            )
-            intervention_hold = (
-                state["intervention_region"]
-                & (~success)
-                & (hole_x >= intervention_exit_hole_x_min)
-            )
-            intervention_region = intervention_entry | intervention_hold
-        else:
-            intervention_region = torch.zeros_like(success)
-
-        has_prev_yz = torch.isfinite(state["prev_yz_error"])
-        has_prev_x = torch.isfinite(state["prev_hole_x"])
-        progress_eps = float(intervention_cfg.get("progress_eps", 0.002))
-        yz_error_eps = float(intervention_cfg.get("yz_error_eps", 0.002))
-        safe_yz_margin = float(intervention_cfg.get("safe_yz_margin", 1.25))
-        yz_worse = has_prev_yz & (yz_error > state["prev_yz_error"] + yz_error_eps)
-        no_x_progress = has_prev_x & (hole_x <= state["prev_hole_x"] + progress_eps)
-        safe_yz = (abs_y <= safe_yz_margin * hole_radii) & (
-            abs_z <= safe_yz_margin * hole_radii
-        )
-        moved_away_from_hole = (
-            has_prev_x
-            & state["intervention_region"]
-            & (hole_x < state["prev_hole_x"] - progress_eps)
-        )
-        lost_grasp = (~grasp) & state["intervention_region"]
-        deviation = intervention_region & (
-            yz_worse
-            | no_x_progress
-            | (~safe_yz)
-            | lost_grasp
-            | moved_away_from_hole
-        )
-
-        patience = int(intervention_cfg.get("deviation_patience", 2))
-        state["deviation_count"] = torch.where(
-            deviation,
-            state["deviation_count"] + 1,
-            torch.zeros_like(state["deviation_count"]),
-        )
-
-        takeover_chunks = int(intervention_cfg.get("takeover_chunks", 5))
-        takeover_max_chunks = int(intervention_cfg.get("takeover_max_chunks", 10))
-        if takeover_chunks <= 0 or takeover_max_chunks < takeover_chunks:
-            raise ValueError(
-                "algorithm.intervention must satisfy "
-                "0 < takeover_chunks <= takeover_max_chunks, got "
-                f"{takeover_chunks=} and {takeover_max_chunks=}."
-            )
-
-        previous_takeover = state["expert_takeover"]
-        takeover_used_after_chunk = torch.where(
-            previous_takeover,
-            state["takeover_used"] + 1,
-            state["takeover_used"],
-        )
-        recovered = intervention_region & grasp & safe_yz & (~deviation)
-        keep_for_min_chunks = previous_takeover & (
-            takeover_used_after_chunk < takeover_chunks
-        )
-        extend_until_recovered = (
-            previous_takeover
-            & (~recovered)
-            & (takeover_used_after_chunk < takeover_max_chunks)
-        )
-        if mode == "train" and intervention_enabled:
-            trigger = (
-                intervention_region
-                & (~previous_takeover)
-                & (state["deviation_count"] >= patience)
-            )
-        else:
-            trigger = torch.zeros_like(intervention_region)
-        next_takeover = (trigger | keep_for_min_chunks | extend_until_recovered) & (
-            ~success
-        )
-        next_takeover = torch.where(
-            done_any, torch.zeros_like(next_takeover), next_takeover
-        )
-        released_takeover = previous_takeover & (~next_takeover)
-
-        state["takeover_used"] = torch.where(
-            trigger,
-            torch.zeros_like(state["takeover_used"]),
-            takeover_used_after_chunk,
-        )
-        state["takeover_used"] = torch.where(
-            next_takeover,
-            state["takeover_used"],
-            torch.zeros_like(state["takeover_left"]),
-        )
-        remaining_to_min = torch.clamp(takeover_chunks - state["takeover_used"], min=0)
-        remaining_to_max = torch.clamp(
-            takeover_max_chunks - state["takeover_used"], min=0
-        )
-        state["takeover_left"] = torch.where(
-            next_takeover,
-            torch.where(
-                state["takeover_used"] < takeover_chunks,
-                remaining_to_min,
-                remaining_to_max,
-            ),
-            torch.zeros_like(state["takeover_used"]),
-        )
-        state["expert_takeover"] = next_takeover
-        state["intervention_region"] = torch.where(
-            done_any, torch.zeros_like(intervention_region), intervention_region
-        )
-        state["deviation"] = torch.where(
-            done_any, torch.zeros_like(deviation), deviation
-        )
-        state["deviation_count"] = torch.where(
-            done_any | (~intervention_region) | trigger | released_takeover,
-            torch.zeros_like(state["deviation_count"]),
-            state["deviation_count"],
-        )
-        state["prev_yz_error"] = torch.where(
-            state["intervention_region"],
-            yz_error,
-            torch.full_like(yz_error, float("nan")),
-        )
-        state["prev_hole_x"] = torch.where(
-            state["intervention_region"],
-            hole_x,
-            torch.full_like(hole_x, float("nan")),
-        )
-
-        return self._export_rlt_local_policy_info(state)
 
     @staticmethod
     def _shape_str(value) -> str:
@@ -1128,7 +763,13 @@ class EnvWorker(Worker):
                 intervene_actions = final_info["intervene_action"]
                 intervene_flags = final_info["intervene_flag"]
 
-        policy_info = self._update_rlt_local_policy_state(infos, chunk_dones, stage_id)
+        policy_info = self.rlt_policy_info_adapter.update_stage(
+            infos=infos,
+            chunk_dones=chunk_dones,
+            stage_id=stage_id,
+            mode="train",
+            env=self.env_list[stage_id],
+        )
         if policy_info is not None:
             env_info["deviation_rate"] = (
                 policy_info["deviation"].float().mean().reshape(1).cpu()
@@ -1212,8 +853,12 @@ class EnvWorker(Worker):
                 for key in infos["episode"]:
                     env_info[key] = infos["episode"][key][newly_done].cpu()
 
-        policy_info = self._update_rlt_local_policy_state(
-            infos, chunk_dones, stage_id, mode="eval"
+        policy_info = self.rlt_policy_info_adapter.update_stage(
+            infos=infos,
+            chunk_dones=chunk_dones,
+            stage_id=stage_id,
+            mode="eval",
+            env=self.eval_env_list[stage_id],
         )
         if policy_info is not None:
             policy_info["expert_takeover"] = torch.zeros_like(
@@ -1463,11 +1108,12 @@ class EnvWorker(Worker):
         env_batch = dict(env_batch)
         step_obs = env_batch.pop("step_obs", None)
         env_batches = split_dict(env_batch, split_sizes)
-        step_obs_batches = self._split_rlt_step_obs(step_obs, split_sizes)
-        for env_batch_i, step_obs_i in zip(
-            env_batches, step_obs_batches, strict=True
-        ):
-            env_batch_i["step_obs"] = step_obs_i
+        if step_obs is not None:
+            step_obs_batches = self._split_rlt_step_obs(step_obs, split_sizes)
+            for env_batch_i, step_obs_i in zip(
+                env_batches, step_obs_batches, strict=True
+            ):
+                env_batch_i["step_obs"] = step_obs_i
         for (rank, _), env_batch_i in zip(dst_ranks_and_sizes, env_batches):
             rollout_channel.put(
                 item=env_batch_i,
@@ -1690,7 +1336,11 @@ class EnvWorker(Worker):
                     ),
                     intervene_actions=None,
                     intervene_flags=None,
-                    policy_info=self._init_rlt_local_policy_state(stage_id),
+                    policy_info=self.rlt_policy_info_adapter.init_stage(
+                        stage_id=stage_id,
+                        mode="train",
+                        env=self.env_list[stage_id],
+                    ),
                 )
                 env_outputs.append(env_output)
         else:
@@ -1721,13 +1371,20 @@ class EnvWorker(Worker):
             env_batch = env_output.to_dict()
             self.send_env_batch(
                 rollout_channel,
-                {
-                    "obs": env_batch["obs"],
-                    "final_obs": env_batch["final_obs"],
-                    "step_obs": env_batch["step_obs"],
-                    "policy_info": env_batch["policy_info"],
-                },
+                self._build_rollout_env_batch(env_batch),
             )
+
+    @staticmethod
+    def _build_rollout_env_batch(env_batch: dict[str, Any]) -> dict[str, Any]:
+        rollout_env_batch = {
+            "obs": env_batch["obs"],
+            "final_obs": env_batch["final_obs"],
+        }
+        for key in ("step_obs", "policy_info"):
+            value = env_batch.get(key, None)
+            if value is not None:
+                rollout_env_batch[key] = value
+        return rollout_env_batch
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
@@ -1834,8 +1491,11 @@ class EnvWorker(Worker):
                         "intervention_flags", None
                     )
                     if intervention_flags is not None:
-                        env_metrics["expert_intervention_actual_rate"].append(
+                        actual_intervention = (
                             intervention_flags.detach().float().reshape(-1).cpu()
+                        )
+                        env_metrics["expert_intervention_actual_rate"].append(
+                            actual_intervention
                         )
                     intervention_requested = rollout_result.forward_inputs.get(
                         "intervention_requested", None
@@ -1850,6 +1510,20 @@ class EnvWorker(Worker):
                     if ready_for_online is not None:
                         env_metrics["rlt_ready_for_online"].append(
                             ready_for_online.detach().float().reshape(-1).cpu()
+                        )
+                    in_critical_phase = rollout_result.forward_inputs.get(
+                        "in_critical_phase", None
+                    )
+                    if in_critical_phase is not None:
+                        env_metrics["rlt_in_critical_phase"].append(
+                            in_critical_phase.detach().float().reshape(-1).cpu()
+                        )
+                    record_transition = rollout_result.forward_inputs.get(
+                        "record_transition", None
+                    )
+                    if record_transition is not None:
+                        env_metrics["rlt_record_transition"].append(
+                            record_transition.detach().float().reshape(-1).cpu()
                         )
                     student_control = rollout_result.forward_inputs.get(
                         "student_control", None
@@ -1887,12 +1561,7 @@ class EnvWorker(Worker):
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                            "step_obs": env_batch["step_obs"],
-                            "policy_info": env_batch["policy_info"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                     )
                     if self.collect_transitions:
                         next_obs = (
@@ -1962,10 +1631,9 @@ class EnvWorker(Worker):
                     self.assign_history_reward(stage_id, reward_model_output)
 
             if self.use_training_pipeline and actor_channel is not None:
-                for stage_id in range(self.stage_num):
-                    await self.send_rollout_trajectories_pipeline(
-                        self.rollout_results[stage_id], actor_channel
-                    )
+                await self.send_rollout_trajectories_pipeline(
+                    self.rollout_results, actor_channel
+                )
                 self.rollout_results: list[EmbodiedRolloutResult] = [
                     EmbodiedRolloutResult(
                         max_episode_length=self.cfg.env.train.max_episode_steps,
@@ -2034,12 +1702,7 @@ class EnvWorker(Worker):
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                            "step_obs": env_batch["step_obs"],
-                            "policy_info": env_batch["policy_info"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                         mode="eval",
                     )
 
@@ -2068,12 +1731,7 @@ class EnvWorker(Worker):
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                            "step_obs": env_batch["step_obs"],
-                            "policy_info": env_batch["policy_info"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                         mode="eval",
                     )
 
@@ -2123,12 +1781,7 @@ class EnvWorker(Worker):
             rollout_batch["loss_mask_sum"] = kwargs["loss_mask_sum"]
         return rollout_batch
 
-    def prepare_micro_batches(
-        self, trajectory: Trajectory
-    ) -> list[dict[str, torch.Tensor]]:
-        # In training pipeline mode, send ready-to-train actor micro-batches instead of
-        # full rollout trajectories. This keeps nested observations out of the channel
-        # payload so packed tensors can use the channel tensor fast path.
+    def prepare_pipeline_batch(self, trajectory: Trajectory) -> dict[str, torch.Tensor]:
         batch = convert_trajectories_to_batch([trajectory])
         batch = preprocess_embodied_batch(
             batch,
@@ -2141,11 +1794,20 @@ class EnvWorker(Worker):
             rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
             rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
         )
+        return self.compute_advantages_and_returns(batch)
 
-        batch = self.compute_advantages_and_returns(batch)
-
+    def pack_pipeline_micro_batches(
+        self, batch: dict[str, torch.Tensor], actor_rank: int
+    ) -> list[dict]:
         batch_size = batch["prev_logprobs"].shape[0] * batch["prev_logprobs"].shape[1]
-        flatten_batch = flatten_embodied_batch(batch, torch.arange(batch_size))
+        if self.shuffle_rollout:
+            shuffle_id = torch.randperm(
+                batch_size, generator=self.shuffle_generators[actor_rank]
+            )
+        else:
+            shuffle_id = torch.arange(batch_size)
+
+        flatten_batch = flatten_embodied_batch(batch, shuffle_id)
         micro_batch_size = self.cfg.actor.micro_batch_size
         assert batch_size % micro_batch_size == 0, (
             f"Batch size {batch_size} is not divisible by micro_batch_size {micro_batch_size}."
@@ -2155,13 +1817,27 @@ class EnvWorker(Worker):
         return [pack_batch(micro_batch) for micro_batch in micro_batches]
 
     async def send_rollout_trajectories_pipeline(
-        self, rollout_result: EmbodiedRolloutResult, channel: Channel
+        self,
+        rollout_results: list[EmbodiedRolloutResult],
+        channel: Channel,
     ) -> None:
-        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
-            self.actor_split_num
-        )
-        for trajectory in trajectories:
-            with self.worker_timer("prepare_micro_batches"):
-                micro_batches = self.prepare_micro_batches(trajectory)
-                for micro_batch in micro_batches:
-                    channel.put(micro_batch, async_op=True)
+        pending_batches: list[tuple[int, dict[str, torch.Tensor]]] = []
+
+        with self.worker_timer("prepare_micro_batches"):
+            for stage_id, rollout_result in enumerate(rollout_results):
+                actor_splits = self.pipeline_stage_actor_splits[stage_id]
+                trajectories = rollout_result.to_splited_trajectories_by_sizes(
+                    [split_size for _, split_size in actor_splits]
+                )
+
+                for (actor_rank, _), trajectory in zip(actor_splits, trajectories):
+                    batch = self.prepare_pipeline_batch(trajectory)
+                    pending_batches.append((actor_rank, batch))
+
+            for actor_rank, batch in pending_batches:
+                for micro_batch in self.pack_pipeline_micro_batches(batch, actor_rank):
+                    channel.put(
+                        micro_batch,
+                        key=self.pipeline_actor_keys[actor_rank],
+                        async_op=True,
+                    )

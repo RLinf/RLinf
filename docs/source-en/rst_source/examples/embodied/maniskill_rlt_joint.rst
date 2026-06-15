@@ -105,7 +105,7 @@ Then switch to the correct environment inside the container:
 Dataset Layout
 --------------
 
-Both Stage1 and Stage2 use the ``pi05_rlt_maniskill_joint`` dataconfig.
+Both Stage1 and Stage2 use the ``pi05_rlt_joint`` dataconfig.
 The LeRobot dataset schema is:
 
 - ``image``: main view image
@@ -145,7 +145,7 @@ The key fields are:
 - ``actor.model.model_path``: OpenPI base weights
 - ``actor.openpi_data.repo_id``: ManiSkill joint LeRobot dataset path
 - ``actor.openpi_data.norm_stats_path``: normalization stats for that dataset
-- ``actor.model.openpi.config_name``: ``pi05_rlt_maniskill_joint``
+- ``actor.model.openpi.config_name``: ``pi05_rlt_joint``
 
 After training, you should get a checkpoint like:
 
@@ -159,7 +159,7 @@ Step 1: Prepare the Joint-Control Dataset
 -----------------------------------------
 
 The public RLT workflow assumes that you already have a LeRobot-format dataset
-matching ``pi05_rlt_maniskill_joint``.
+matching ``pi05_rlt_joint``.
 
 At minimum, the dataset must provide:
 
@@ -178,7 +178,7 @@ If this is a newly collected dataset, generate ``norm_stats.json`` before SFT or
 
    export HF_LEROBOT_HOME=/data
    python toolkits/lerobot/calculate_norm_stats.py \
-     --config-name pi05_rlt_maniskill_joint \
+     --config-name pi05_rlt_joint \
      --repo-id rlt_maniskill_joint
 
 If you collected into an absolute path, you can move the dataset under ``HF_LEROBOT_HOME``

@@ -1,5 +1,5 @@
 defaults:
-  - model/rlt_stage1@actor.model
+  - model/pi0_5@actor.model
   - training_backend/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -13,24 +13,26 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor,env,rollout: all
 
 runner:
   task_type: sft
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "rlt_stage1_maniskill_joint"
+    experiment_name: "rlt_realworld_joint_pi05_sft"
     logger_backends: ["wandb"]
 
   max_epochs: -1
   max_steps: 5000
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: 500
 
 data:
   train_data_paths:
-    - dataset_path: "/path/to/rlt_maniskill_joint"
+    # Raw realworld images in the current LeRobot dump are 128x128 for both views.
+    # OpenPI will resize them to 224x224 in the model transform stack.
+    - dataset_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/collected_data_id3_id4/rank_0/id_4"
       weight: 1.0
 
 algorithm:
@@ -39,46 +41,39 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 8
-  global_batch_size: 64
+  micro_batch_size: 256
+  global_batch_size: 1024
   seed: 0
+  openpi_data:
+    repo_id: "data/collected_data_id3_id4/rank_0/id_4"
+    norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/collected_data_id3_id4/rank_0/id_4/norm_stats.json"
+    default_prompt: "insert the peg in the hole"
 
   model:
     precision: null
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/pi05_base"
     num_action_chunks: 10
     action_dim: 8
-    rlt_stage1:
-      config_name: "pi05_rlt_joint"
-      norm_stats_path: ${actor.openpi_data.norm_stats_path}
+    add_value_head: False
+    openpi:
+      config_name: "pi05_rlt_realworld_joint"
+      detach_critic_input: True
       num_images_in_input: 2
-      num_steps: 5
-      embedding_dim: 2048
-      encoder_layers: 2
-      encoder_heads: 8
-      decoder_layers: 2
-      decoder_heads: 8
-      vla_finetune_alpha: 0.0
-      gradient_checkpointing: True
-
-  openpi_data:
-    repo_id: "/path/to/rlt_maniskill_joint"
-    norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
-    default_prompt: "insert the peg in the hole"
+      train_expert_only: False
 
   optim:
-    lr: 1.0e-4
-    value_lr: 1.0e-4
+    lr: 2.5e-5
+    value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-08
-    weight_decay: 1.0e-5
+    weight_decay: 1.0e-10
     clip_grad: 1.0
     total_training_steps: 5000
     lr_warmup_steps: 500
     lr_scheduler: "cosine"
     num_cycles: 0.5
-    min_lr: 1.0e-5
+    min_lr: 2.5e-6
 
   fsdp_config:
     strategy: "fsdp"

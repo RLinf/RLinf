@@ -26,6 +26,8 @@ from omegaconf import OmegaConf, open_dict
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi import get_model as get_openpi_model
 
+from .proprio import select_proprio
+
 
 class Stage2VLAWrapper:
     """Frozen OpenPI VLA wrapper for embedding extraction and reference actions."""
@@ -118,9 +120,14 @@ class Stage2VLAWrapper:
     def extract_proprio(
         self,
         observation: _model.Observation,
-        proprio_dim: int,
+        proprio_dim: int | None = None,
+        proprio_mode: str | None = None,
     ) -> torch.Tensor:
-        return observation.state[:, :proprio_dim].to(
+        return select_proprio(
+            observation.state,
+            proprio_dim=proprio_dim,
+            proprio_mode=proprio_mode,
+        ).to(
             device=self.device,
             dtype=torch.float32,
         )

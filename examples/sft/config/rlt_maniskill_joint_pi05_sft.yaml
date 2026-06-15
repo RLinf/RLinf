@@ -54,7 +54,7 @@ actor:
     action_dim: 8
     add_value_head: False
     openpi:
-      config_name: "pi05_rlt_maniskill_joint"
+      config_name: "pi05_rlt_joint"
       detach_critic_input: True
       num_images_in_input: 2
       train_expert_only: False

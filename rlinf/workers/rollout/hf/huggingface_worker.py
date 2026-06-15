@@ -29,10 +29,12 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.models.embodiment.rlt_stage2.transition import (
-    COLLECTION_PHASE_ONLINE,
-    COLLECTION_PHASE_WARMUP,
-    TransitionSource,
+from rlinf.models.embodiment.rlt_stage2.action_router import (
+    RLTActionRouteInputs,
+    route_rlt_stage2_actions,
+)
+from rlinf.models.embodiment.rlt_stage2.rollout_schema import (
+    require_rlt_stage2_forward_inputs,
 )
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
@@ -111,8 +113,17 @@ class MultiStepRolloutWorker(Worker):
         self.version = 0
         self.finished_episodes = None
         intervention_cfg = self.cfg.algorithm.get("intervention", {})
+        self.intervention_mode = str(
+            intervention_cfg.get("mode", "local_correction")
+        )
         self.intervention_enabled = bool(intervention_cfg.get("enable", False)) and (
-            intervention_cfg.get("mode", None) == "local_correction"
+            self.intervention_mode in {"local_correction", "human_override"}
+        )
+        self.local_correction_enabled = self.intervention_enabled and (
+            self.intervention_mode == "local_correction"
+        )
+        self.human_override_enabled = self.intervention_enabled and (
+            self.intervention_mode == "human_override"
         )
         self.intervention_success_baseline = None
         self.intervention_last_success = None
@@ -156,6 +167,58 @@ class MultiStepRolloutWorker(Worker):
                 f"got {warmup_required_updates}."
             )
         return self.version >= warmup_required_updates, warmup_required_updates
+
+    @staticmethod
+    def _rlt_bool_policy_info(
+        policy_info: dict[str, torch.Tensor] | None,
+        key: str,
+        *,
+        batch_size: int,
+        device: torch.device,
+        default: bool,
+    ) -> torch.Tensor:
+        if policy_info is None or key not in policy_info:
+            return torch.full(
+                (batch_size,),
+                bool(default),
+                dtype=torch.bool,
+                device=device,
+            )
+        value = torch.as_tensor(policy_info[key], device=device)
+        if value.numel() == 1:
+            return torch.full(
+                (batch_size,),
+                bool(value.reshape(-1)[0].item()),
+                dtype=torch.bool,
+                device=device,
+            )
+        return value.reshape(batch_size, -1).to(torch.bool).any(dim=1)
+
+    @staticmethod
+    def _rlt_float_policy_info(
+        policy_info: dict[str, torch.Tensor] | None,
+        key: str,
+        *,
+        batch_size: int,
+        device: torch.device,
+        default: float,
+    ) -> torch.Tensor:
+        if policy_info is None or key not in policy_info:
+            return torch.full(
+                (batch_size,),
+                float(default),
+                dtype=torch.float32,
+                device=device,
+            )
+        value = torch.as_tensor(policy_info[key], device=device)
+        if value.numel() == 1:
+            return torch.full(
+                (batch_size,),
+                float(value.reshape(-1)[0].item()),
+                dtype=torch.float32,
+                device=device,
+            )
+        return value.reshape(batch_size, -1)[:, -1].to(torch.float32)
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
@@ -443,36 +506,38 @@ class MultiStepRolloutWorker(Worker):
                 )
                 forward_inputs = result["forward_inputs"]
                 base_flat = forward_inputs["a_tilde"].detach()
-                base_actions = base_flat.reshape(
-                    base_flat.shape[0],
-                    self.cfg.actor.model.num_action_chunks,
-                    self.cfg.actor.model.action_dim,
-                )
-                student_control = torch.full(
-                    (student_actions.shape[0],),
-                    ready_for_online,
-                    dtype=torch.bool,
+                batch_size = int(student_actions.shape[0])
+                in_critical_phase = self._rlt_bool_policy_info(
+                    policy_info,
+                    "in_critical_phase",
+                    batch_size=batch_size,
                     device=student_actions.device,
+                    default=True,
                 )
-                actions = student_actions if ready_for_online else base_actions
-                intervention_flags = torch.zeros(
-                    (actions.shape[0], self.cfg.actor.model.num_action_chunks),
-                    dtype=torch.bool,
-                    device=actions.device,
+                record_transition = self._rlt_bool_policy_info(
+                    policy_info,
+                    "record_transition",
+                    batch_size=batch_size,
+                    device=student_actions.device,
+                    default=True,
                 )
-                source_chunk = torch.full(
-                    (actions.shape[0], self.cfg.actor.model.num_action_chunks),
-                    int(
-                        TransitionSource.RL
-                        if ready_for_online
-                        else TransitionSource.BASE
-                    ),
-                    dtype=torch.uint8,
-                    device=actions.device,
+                intervention_phase = self._rlt_float_policy_info(
+                    policy_info,
+                    "intervention_phase",
+                    batch_size=batch_size,
+                    device=student_actions.device,
+                    default=0.0,
                 )
+                if requested_expert_takeover is None:
+                    requested_expert_takeover = torch.zeros(
+                        batch_size,
+                        dtype=torch.bool,
+                        device=student_actions.device,
+                    )
+                if expert_takeover is None:
+                    expert_takeover = torch.zeros_like(requested_expert_takeover)
+                expert_actions = None
                 if use_expert:
-                    if expert_takeover is None:
-                        expert_takeover = torch.zeros_like(student_control)
                     expert_model = self._ensure_expert_model_loaded()
                     if getattr(expert_model, "act_as_vla_reference", False) and hasattr(
                         expert_model, "predict_vla_reference_action_batch"
@@ -488,57 +553,26 @@ class MultiStepRolloutWorker(Worker):
                             env_obs=env_obs,
                             **kwargs,
                         )
-                    expert_mask = expert_takeover[:, None, None].to(actions.device)
-                    actions = torch.where(expert_mask, expert_actions, actions)
-                    intervention_flags[expert_takeover] = True
-                    source_chunk[expert_takeover] = int(TransitionSource.HUMAN)
                     expert_label_flag = True
 
-                action_flat = actions.reshape(actions.shape[0], -1)
-                forward_inputs["base_a_tilde"] = base_flat
-                forward_inputs["ref_chunk"] = base_flat.detach()
-                forward_inputs["action"] = action_flat.detach()
-                forward_inputs["action_chunk"] = action_flat.detach()
-                forward_inputs["student_control"] = student_control[:, None].to(
-                    actions.device
+                route = route_rlt_stage2_actions(
+                    RLTActionRouteInputs(
+                        student_actions=student_actions,
+                        base_flat=base_flat,
+                        expert_actions=expert_actions,
+                        expert_takeover=expert_takeover,
+                        requested_expert_takeover=requested_expert_takeover,
+                        intervention_phase=intervention_phase,
+                        in_critical_phase=in_critical_phase,
+                        record_transition=record_transition,
+                        ready_for_online=ready_for_online,
+                        online_gate_step=online_gate_step,
+                        chunk_length=self.cfg.actor.model.num_action_chunks,
+                        action_dim=self.cfg.actor.model.action_dim,
+                    )
                 )
-                forward_inputs["intervention_flags"] = intervention_flags
-                forward_inputs["source_chunk"] = source_chunk
-                forward_inputs["source"] = torch.where(
-                    source_chunk.eq(source_chunk[:, :1]).all(dim=1, keepdim=True),
-                    source_chunk[:, :1],
-                    torch.full(
-                        (actions.shape[0], 1),
-                        int(TransitionSource.MIXED),
-                        dtype=torch.uint8,
-                        device=actions.device,
-                    ),
-                )
-                forward_inputs["collection_phase_id"] = torch.full(
-                    (actions.shape[0], 1),
-                    COLLECTION_PHASE_ONLINE
-                    if ready_for_online
-                    else COLLECTION_PHASE_WARMUP,
-                    dtype=torch.uint8,
-                    device=actions.device,
-                )
-                if requested_expert_takeover is None:
-                    requested_expert_takeover = torch.zeros_like(student_control)
-                forward_inputs["intervention_requested"] = (
-                    requested_expert_takeover[:, None].to(actions.device)
-                )
-                forward_inputs["ready_for_online"] = torch.full(
-                    (actions.shape[0], 1),
-                    ready_for_online,
-                    dtype=torch.bool,
-                    device=actions.device,
-                )
-                forward_inputs["online_gate_step"] = torch.full(
-                    (actions.shape[0], 1),
-                    float(online_gate_step),
-                    dtype=torch.float32,
-                    device=actions.device,
-                )
+                actions = route.actions
+                forward_inputs.update(route.to_forward_input_updates())
                 if policy_info is not None and "deviation" in policy_info:
                     forward_inputs["deviation"] = policy_info["deviation"].to(
                         actions.device, dtype=torch.bool
@@ -579,98 +613,20 @@ class MultiStepRolloutWorker(Worker):
                     result["forward_inputs"]["model_action"] = expert_target
                 expert_label_flag = True
 
-            if is_rlt_stage2_td3 and "forward_inputs" in result:
+            if is_rlt_stage2_td3:
+                if "forward_inputs" not in result:
+                    raise RuntimeError(
+                        "RLT Stage2 rollout requires result['forward_inputs']; "
+                        "model.predict_action_batch must expose cached features "
+                        "and rollout labels explicitly."
+                    )
                 forward_inputs = result["forward_inputs"]
-                if "a_tilde" in forward_inputs and "base_a_tilde" not in forward_inputs:
-                    forward_inputs["base_a_tilde"] = forward_inputs["a_tilde"].detach()
-                if "a_tilde" in forward_inputs and "ref_chunk" not in forward_inputs:
-                    forward_inputs["ref_chunk"] = forward_inputs["a_tilde"].detach()
-                if "ref_chunk" in forward_inputs and "next_ref_chunk" not in forward_inputs:
-                    forward_inputs["next_ref_chunk"] = forward_inputs["ref_chunk"].detach()
-                if "action_chunk" not in forward_inputs:
-                    forward_inputs["action_chunk"] = actions.reshape(
-                        actions.shape[0],
-                        -1,
-                    ).detach()
-                if "intervention_flags" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["intervention_flags"] = torch.zeros(
-                        (batch_size, self.cfg.actor.model.num_action_chunks),
-                        dtype=torch.bool,
-                        device=actions.device,
-                    )
-                if "source_chunk" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    source_value = int(
-                        TransitionSource.RL
-                        if ready_for_online
-                        else TransitionSource.BASE
-                    )
-                    forward_inputs["source_chunk"] = torch.full(
-                        (batch_size, self.cfg.actor.model.num_action_chunks),
-                        source_value,
-                        dtype=torch.uint8,
-                        device=actions.device,
-                    )
-                if "source" not in forward_inputs:
-                    source_chunk = forward_inputs["source_chunk"].to(actions.device)
-                    forward_inputs["source"] = torch.where(
-                        source_chunk.eq(source_chunk[:, :1]).all(dim=1, keepdim=True),
-                        source_chunk[:, :1],
-                        torch.full(
-                            (actions.shape[0], 1),
-                            int(TransitionSource.MIXED),
-                            dtype=torch.uint8,
-                            device=actions.device,
-                        ),
-                    )
-                if "collection_phase_id" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["collection_phase_id"] = torch.full(
-                        (batch_size, 1),
-                        COLLECTION_PHASE_ONLINE
-                        if ready_for_online
-                        else COLLECTION_PHASE_WARMUP,
-                        dtype=torch.uint8,
-                        device=actions.device,
-                    )
                 forward_inputs["intervention_enabled"] = torch.full(
                     (actions.shape[0], 1),
                     self.intervention_enabled,
                     dtype=torch.bool,
                     device=actions.device,
                 )
-                if "student_control" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["student_control"] = torch.full(
-                        (batch_size, 1),
-                        ready_for_online,
-                        dtype=torch.bool,
-                        device=actions.device,
-                    )
-                if "intervention_requested" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["intervention_requested"] = torch.zeros(
-                        (batch_size, 1),
-                        dtype=torch.bool,
-                        device=actions.device,
-                    )
-                if "ready_for_online" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["ready_for_online"] = torch.full(
-                        (batch_size, 1),
-                        ready_for_online,
-                        dtype=torch.bool,
-                        device=actions.device,
-                    )
-                if "online_gate_step" not in forward_inputs:
-                    batch_size = actions.shape[0]
-                    forward_inputs["online_gate_step"] = torch.full(
-                        (batch_size, 1),
-                        float(online_gate_step),
-                        dtype=torch.float32,
-                        device=actions.device,
-                    )
                 if self.intervention_success_baseline is not None:
                     forward_inputs["intervention_success_baseline"] = torch.full(
                         (actions.shape[0], 1),
@@ -678,6 +634,13 @@ class MultiStepRolloutWorker(Worker):
                         dtype=torch.float32,
                         device=actions.device,
                     )
+                require_rlt_stage2_forward_inputs(
+                    forward_inputs,
+                    batch_size=actions.shape[0],
+                    chunk_length=self.cfg.actor.model.num_action_chunks,
+                    action_dim=self.cfg.actor.model.action_dim,
+                    context="predict",
+                )
                 if self.intervention_last_success is not None:
                     forward_inputs["intervention_last_success"] = torch.full(
                         (actions.shape[0], 1),

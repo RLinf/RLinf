@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "rlt_stage1_maniskill_joint"
+    experiment_name: "rlt_stage1_realworld_joint"
     logger_backends: ["wandb"]
 
   max_epochs: -1
@@ -30,7 +30,9 @@ runner:
 
 data:
   train_data_paths:
-    - dataset_path: "/path/to/rlt_maniskill_joint"
+    # Raw realworld images in the current LeRobot dump are 128x128 for both views.
+    # OpenPI will resize them to 224x224 in the model transform stack.
+    - dataset_path: "data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_3"
       weight: 1.0
 
 algorithm:
@@ -45,11 +47,11 @@ actor:
 
   model:
     precision: null
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
+    model_path: "${oc.env:RLT_REALWORLD_JOINT_SFT_PATH,/path/to/rlt_realworld_joint_pi05_sft/checkpoints/global_step_5000/actor}"
     num_action_chunks: 10
     action_dim: 8
     rlt_stage1:
-      config_name: "pi05_rlt_joint"
+      config_name: "pi05_rlt_realworld_joint"
       norm_stats_path: ${actor.openpi_data.norm_stats_path}
       num_images_in_input: 2
       num_steps: 5
@@ -62,8 +64,8 @@ actor:
       gradient_checkpointing: True
 
   openpi_data:
-    repo_id: "/path/to/rlt_maniskill_joint"
-    norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
+    repo_id: "data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_3"
+    norm_stats_path: "data/rlt_id3_id4_dataset/collected_data_id3_id4/rank_0/id_3/norm_stats.json"
     default_prompt: "insert the peg in the hole"
 
   optim:

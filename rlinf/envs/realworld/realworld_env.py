@@ -17,7 +17,7 @@ import os
 import pathlib
 import time
 from functools import partial
-from typing import OrderedDict
+from typing import Any, OrderedDict
 
 import gymnasium as gym
 import numpy as np
@@ -54,6 +54,8 @@ class RealWorldEnv(gym.Env):
         self.num_group = num_envs // cfg.group_size
         self.group_size = cfg.group_size
         self.main_image_key = cfg.main_image_key
+        self.default_prompt = cfg.get("default_prompt", None)
+        self.state_key_order = cfg.get("state_key_order", None)
         self.manual_episode_control_only = bool(
             self.override_cfg.get("manual_episode_control_only", False)
         )
@@ -213,7 +215,21 @@ class RealWorldEnv(gym.Env):
 
         # Process states
         full_states = []
-        raw_states = OrderedDict(sorted(raw_obs["state"].items()))
+        if self.state_key_order is None:
+            raw_states = OrderedDict(sorted(raw_obs["state"].items()))
+        else:
+            raw_states = OrderedDict()
+            missing_keys = [
+                key for key in self.state_key_order if key not in raw_obs["state"]
+            ]
+            if missing_keys:
+                raise KeyError(
+                    "RealWorldEnv state_key_order contains keys missing from "
+                    f"raw_obs['state']: {missing_keys}. Available keys: "
+                    f"{list(raw_obs['state'])}."
+                )
+            for key in self.state_key_order:
+                raw_states[key] = raw_obs["state"][key]
         for value in raw_states.values():
             full_states.append(value)
         full_states = np.concatenate(full_states, axis=-1)
@@ -232,7 +248,10 @@ class RealWorldEnv(gym.Env):
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
         obs = to_tensor(obs)
-        obs["task_descriptions"] = self.task_descriptions
+        if self.default_prompt is not None:
+            obs["task_descriptions"] = [self.default_prompt] * self.num_envs
+        else:
+            obs["task_descriptions"] = self.task_descriptions
         return obs
 
     def step(self, actions=None, auto_reset=True):
@@ -273,6 +292,7 @@ class RealWorldEnv(gym.Env):
                     intervene_action[env_id] = env_intervene_action.copy()
         infos["intervene_action"] = to_tensor(intervene_action)
         infos["intervene_flag"] = to_tensor(intervene_flag)
+        self._inject_rlt_policy_info(infos)
 
         dones = terminations | truncations
         _auto_reset = auto_reset and self.auto_reset
@@ -299,6 +319,7 @@ class RealWorldEnv(gym.Env):
 
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
+        raw_chunk_policy_info = []
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
@@ -309,6 +330,8 @@ class RealWorldEnv(gym.Env):
             if "intervene_action" in infos:
                 raw_chunk_intervene_actions.append(infos["intervene_action"])
                 raw_chunk_intervene_flag.append(infos["intervene_flag"])
+            if isinstance(infos, dict) and isinstance(infos.get("policy_info"), dict):
+                raw_chunk_policy_info.append(infos["policy_info"])
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -332,6 +355,14 @@ class RealWorldEnv(gym.Env):
                 raw_chunk_intervene_actions, dim=1
             ).reshape(self.num_envs, -1)
             infos_last["intervene_flag"] = torch.stack(raw_chunk_intervene_flag, dim=1)
+            infos_list[-1] = infos_last
+        if raw_chunk_policy_info:
+            infos_last["policy_info"] = self._stack_chunk_policy_info(
+                raw_chunk_policy_info
+            )
+            for key, value in infos_last["policy_info"].items():
+                if isinstance(value, torch.Tensor):
+                    infos_last[key] = value
             infos_list[-1] = infos_last
 
         if past_dones.any() and self.auto_reset:
@@ -375,6 +406,76 @@ class RealWorldEnv(gym.Env):
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
         return obs, infos
+
+    def _inject_rlt_policy_info(self, infos: dict[str, Any]) -> None:
+        policy_info = infos.get("policy_info")
+        if not isinstance(policy_info, dict):
+            return
+
+        for key, value in list(policy_info.items()):
+            if isinstance(value, str):
+                policy_info.pop(key, None)
+                continue
+            tensor = self._rlt_policy_info_value_to_tensor(value)
+            if tensor.numel() == 0:
+                policy_info.pop(key, None)
+                continue
+            if tensor.numel() == 1:
+                tensor = tensor.reshape(1).repeat(self.num_envs)
+            else:
+                tensor = tensor.reshape(self.num_envs, -1).squeeze(-1)
+            policy_info[key] = tensor
+            infos[key] = tensor
+
+    @staticmethod
+    def _rlt_policy_info_value_to_tensor(value: Any) -> torch.Tensor:
+        if isinstance(value, torch.Tensor):
+            return value
+        if isinstance(value, np.ndarray):
+            if value.dtype != object:
+                return torch.as_tensor(value)
+            items = value.reshape(-1).tolist()
+        elif isinstance(value, (list, tuple)):
+            items = list(value)
+        else:
+            return torch.as_tensor(value)
+
+        tensors = []
+        for item in items:
+            if item is None:
+                continue
+            if isinstance(item, torch.Tensor):
+                tensors.append(item.reshape(-1))
+            elif isinstance(item, np.ndarray):
+                tensors.append(torch.as_tensor(item).reshape(-1))
+            else:
+                tensors.append(torch.as_tensor([item]))
+        if not tensors:
+            return torch.empty(0)
+        return torch.cat(tensors, dim=0)
+
+    @staticmethod
+    def _stack_chunk_policy_info(
+        policy_infos: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not policy_infos:
+            return {}
+        keys = set().union(*(info.keys() for info in policy_infos))
+        stacked = {}
+        for key in keys:
+            values = [info.get(key) for info in policy_infos]
+            if any(isinstance(value, str) for value in values):
+                stacked[key] = next(value for value in values if isinstance(value, str))
+                continue
+            tensor_values = [
+                value if isinstance(value, torch.Tensor) else torch.as_tensor(value)
+                for value in values
+                if value is not None
+            ]
+            if len(tensor_values) != len(values):
+                continue
+            stacked[key] = torch.stack(tensor_values, dim=1)
+        return stacked
 
     def _calc_step_reward(self, reward: np.ndarray):
         return reward.astype(np.float32)

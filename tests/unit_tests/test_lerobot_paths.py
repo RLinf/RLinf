@@ -11,9 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from rlinf.models.embodiment.openpi.dataconfig.rlt_joint_dataconfig import (
-    LeRobotRLTJointDataConfig,
-)
+
+from omegaconf import OmegaConf
+
+from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
 
 
-LeRobotRLTManiSkillJointDataConfig = LeRobotRLTJointDataConfig
+def test_resolve_lerobot_repo_id_accepts_omegaconf_listconfig():
+    data_paths = OmegaConf.create(
+        [
+            {
+                "dataset_path": "/tmp/rlt_realworld/id_4",
+                "weight": 1.0,
+            }
+        ]
+    )
+
+    assert resolve_lerobot_repo_id(data_paths) == "/tmp/rlt_realworld/id_4"
