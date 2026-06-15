@@ -148,6 +148,19 @@ class SO101RobotConfig:
     save_video_path: Optional[str] = None
     """Path to save episode videos. ``None`` disables saving."""
 
+    enable_keyboard_listener: bool = True
+    """When ``True``, start a keyboard listener for manual episode control
+    (press 's' to mark episode done during teleoperation data collection)."""
+
+    manual_episode_control_only: bool = False
+    """When ``True``, episodes only terminate via the keyboard 's' key
+    (``manual_done``). When ``False``, reward-based termination is also
+    allowed (useful for RL training)."""
+
+    max_episode_steps: Optional[int] = None
+    """Override ``max_num_steps`` from the env-level config. When set,
+    truncation uses this value instead of ``max_num_steps``."""
+
     def __post_init__(self):
         if self.joint_limit_low is not None:
             self.joint_limit_low = np.array(self.joint_limit_low, dtype=np.float64)
@@ -212,20 +225,29 @@ class SO101Env(gym.Env):
         self._robot = None
         self._leader = None
         self._cameras = {}
+        self._pynput_listener = None
+        self._key_state_lock = None
+        self._key_state: dict[str, bool] = {
+            "episode_success": False,
+            "rerecord_episode": False,
+            "stop_recording": False,
+        }
 
         if not self.config.is_dummy:
             self._setup_hardware()
 
-        if self.config.camera_serials is None:
-            self.config.camera_serials = []
-
-        self._init_action_obs_spaces()
-
         if self.config.is_dummy:
+            self._init_action_obs_spaces()
             return
+
+        # Start keyboard listener for manual episode control ('s' to mark done,
+        # 'q' to quit early). Only active when teleop is enabled.
+        self._start_keyboard_listener()
 
         # Connect to the robot hardware.
         self._connect_robot()
+
+        self._init_action_obs_spaces()
 
     # ── Hardware setup ─────────────────────────────────────────────────────
 
@@ -289,6 +311,96 @@ class SO101Env(gym.Env):
         self._leader = SO101Leader(leader_cfg)
         self._leader.connect()
         self._logger.info(f"SO101 leader connected on port {self.config.leader_port}")
+
+    # ── Keyboard listener ──────────────────────────────────────────────────
+
+    def _start_keyboard_listener(self) -> None:
+        """Start a ``pynput``-based keyboard listener for manual episode control.
+
+        Key mappings (matching LeRobot convention):
+        - ``s`` / right-arrow → save & end episode (``episode_success``)
+        - ``r`` / left-arrow  → discard & rerecord (``rerecord_episode``)
+        - ``q`` / escape      → stop all recording (``stop_recording``)
+
+        If ``pynput`` is not available or the listener fails to start,
+        episodes end via timeout only.
+        """
+        if not self.config.enable_teleop:
+            return
+
+        self._key_state: dict[str, bool] = {
+            "episode_success": False,
+            "rerecord_episode": False,
+            "stop_recording": False,
+        }
+
+        try:
+            from pynput import keyboard as pynput_keyboard
+        except ImportError:
+            self._logger.info(
+                "[SO101Env] pynput not available — episodes will end "
+                "via timeout only (max_episode_steps)."
+            )
+            return
+
+        import threading
+
+        self._key_state_lock = threading.Lock()
+
+        def _on_press(key):
+            try:
+                with self._key_state_lock:
+                    if key == pynput_keyboard.Key.right:
+                        self._key_state["episode_success"] = True
+                        self._logger.info(
+                            "[SO101Env] → pressed — episode saved."
+                        )
+                    elif key == pynput_keyboard.Key.left:
+                        self._key_state["rerecord_episode"] = True
+                        self._logger.info(
+                            "[SO101Env] ← pressed — rerecord."
+                        )
+                    elif key == pynput_keyboard.Key.esc:
+                        self._key_state["stop_recording"] = True
+                        self._logger.info(
+                            "[SO101Env] Esc pressed — stop recording."
+                        )
+                    elif hasattr(key, "char") and key.char:
+                        if key.char == "s":
+                            self._key_state["episode_success"] = True
+                            self._logger.info(
+                                "[SO101Env] 's' pressed — episode saved."
+                            )
+                        elif key.char == "r":
+                            self._key_state["rerecord_episode"] = True
+                            self._logger.info(
+                                "[SO101Env] 'r' pressed — rerecord."
+                            )
+                        elif key.char == "q":
+                            self._key_state["stop_recording"] = True
+                            self._logger.info(
+                                "[SO101Env] 'q' pressed — stop recording."
+                            )
+            except Exception:
+                pass
+
+        try:
+            self._pynput_listener = pynput_keyboard.Listener(on_press=_on_press)
+            self._pynput_listener.start()
+            self._logger.info(
+                "[SO101Env] Keyboard listener started. "
+                "Press 's'/→ to save, 'r'/← to rerecord, 'q'/Esc to stop."
+            )
+        except Exception as e:
+            self._logger.info(
+                f"[SO101Env] Failed to start keyboard listener: {e}. "
+                "Episodes will end via timeout only."
+            )
+
+    def _poll_keyboard(self) -> None:
+        """No-op: pynput updates ``_key_state`` in its callback thread.
+        Kept as a hook point for subclasses that may need polling."""
+        return
 
     # ── Action / observation spaces ────────────────────────────────────────
 
@@ -374,16 +486,61 @@ class SO101Env(gym.Env):
 
         self._num_steps += 1
 
+        # Poll keyboard for manual episode boundary (only meaningful during
+        # teleoperation data collection).
+        if self.config.enable_teleop:
+            self._poll_keyboard()
+
         observation = self._get_observation()
         reward = self._calc_step_reward(observation)
-        terminated = reward >= 1.0
-        truncated = self._num_steps >= self.config.max_num_steps
+
+        # Determine termination.
+        # During teleop: only terminate via keyboard events or truncation.
+        # Reward-based termination is disabled because the reward function
+        # measures distance to a fixed target joint config — meaningless
+        # for arbitrary human demonstrations.
+        if self.config.enable_teleop and self.config.manual_episode_control_only:
+            manual_done = any(
+                self._key_state.get(k, False)
+                for k in ("episode_success", "rerecord_episode", "stop_recording")
+            )
+            terminated = bool(manual_done)
+        else:
+            terminated = reward >= 1.0
+
+        # Respect max_episode_steps from env config when set, otherwise
+        # fall back to the robot-level max_num_steps.
+        max_steps = (
+            self.config.max_episode_steps
+            if self.config.max_episode_steps is not None
+            else self.config.max_num_steps
+        )
+        truncated = self._num_steps >= max_steps
+
+        info: dict = {}
+        # Surface the leader action so CollectEpisode can record the actual
+        # teleoperation commands (LeRobot format overrides the recorded action
+        # with intervene_action from info when intervene_flag is True).
+        if self.config.enable_teleop and self._leader is not None:
+            intervene_action = np.array(
+                [robot_action.get(name, 0.0) for name in _SO101_MOTOR_NAMES],
+                dtype=np.float32,
+            )
+            info["intervene_action"] = intervene_action
+
+        # Expose keyboard-driven episode-control events (LeRobot-style).
+        if self.config.enable_teleop:
+            info["episode_success"] = self._key_state.get("episode_success", False)
+            info["rerecord_episode"] = self._key_state.get("rerecord_episode", False)
+            info["stop_recording"] = self._key_state.get("stop_recording", False)
+            # Backward-compat alias for collect_real_data.py's existing check.
+            info["manual_done"] = terminated
 
         # Maintain step frequency.
         step_time = time.time() - start_time
         time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
 
-        return observation, reward, terminated, truncated, {}
+        return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
         """Reset the environment to the rest pose.
@@ -391,11 +548,14 @@ class SO101Env(gym.Env):
         Moves the arm to :attr:`~SO101RobotConfig.reset_joint_qpos` and
         resets the step counter.
         """
+        self._num_steps = 0
+        # Clear keyboard event flags for the new episode.
+        for k in self._key_state:
+            self._key_state[k] = False
+
         if self.config.is_dummy:
-            self._num_steps = 0
             return self._get_observation(), {}
 
-        self._num_steps = 0
         self._go_to_rest()
         self._update_state()
         return self._get_observation(), {}
@@ -495,6 +655,14 @@ class SO101Env(gym.Env):
 
     def close(self):
         """Disconnect from the robot and clean up resources."""
+        if self._pynput_listener is not None:
+            try:
+                if self._pynput_listener.is_alive():
+                    self._pynput_listener.stop()
+            except Exception:
+                pass
+            self._pynput_listener = None
+
         if self._robot is not None:
             try:
                 self._robot.disconnect()

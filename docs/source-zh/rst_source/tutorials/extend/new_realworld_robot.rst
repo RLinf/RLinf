@@ -435,11 +435,11 @@ SO101 数据采集使用**双边遥操作**：人类物理移动 leader 臂，fo
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py \
+   python examples/embodiment/collect_real_data.py \
        --config-name realworld_so101_collect_data
 
 环境创建一个 ``SO101Leader`` 实例，读取 leader 臂的关节角度并转发给 follower。
-采集的 episode 以 pickle 文件形式保存在配置的 ``save_dir`` 中。
+采集的 episode 以 LeRobot 格式保存在配置的 ``save_dir`` 中。
 
 SFT 训练（行为克隆）
 -----------------------

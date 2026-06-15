@@ -450,12 +450,12 @@ connect via USB serial.
 
 .. code-block:: bash
 
-   python examples/embodiment/train_embodied_agent.py \
+   python examples/embodiment/collect_real_data.py \
        --config-name realworld_so101_collect_data
 
 The env creates a ``SO101Leader`` instance that reads the leader arm's joint
 positions and forwards them to the follower.
-Collected episodes are saved as pickle files in the configured ``save_dir``.
+Collected episodes are saved in LeRobot format under the configured ``save_dir``.
 
 SFT Training (Behavior Cloning)
 --------------------------------

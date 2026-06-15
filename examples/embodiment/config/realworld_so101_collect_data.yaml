@@ -3,7 +3,7 @@
 # Prerequisite: assemble both leader and follower SO101 arms (see LeRobot docs).
 #
 # Usage:
-#   python examples/embodiment/train_embodied_agent.py \
+#   python examples/embodiment/collect_real_data.py \
 #       --config-name realworld_so101_collect_data
 
 defaults:
@@ -53,11 +53,13 @@ env:
     override_cfg:
       enable_teleop: True
       success_hold_steps: 1
+      manual_episode_control_only: True
+      max_episode_steps: ${env.eval.max_episode_steps}
 
     data_collection:
       enabled: True
       save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
+      export_format: "lerobot"
       only_success: False
       robot_type: "so101"
       fps: 30

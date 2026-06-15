@@ -28,6 +28,27 @@ from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
 
+def _extract_scalar_bool(info: dict, key: str) -> bool:
+    """Extract a boolean scalar from a batched info dict.
+
+    Handles the tensor / ndarray / list wrappers that ``RealWorldEnv``
+    and vectorised envs add.
+    """
+    val = info.get(key)
+    if val is None:
+        return False
+
+    if isinstance(val, (bool, np.bool_)):
+        return bool(val)
+    if isinstance(val, torch.Tensor):
+        return bool(val.reshape(-1)[0].item())
+    if isinstance(val, np.ndarray):
+        return bool(val.reshape(-1)[0])
+    if isinstance(val, (list, tuple)) and len(val) > 0:
+        return bool(val[0])
+    return bool(val)
+
+
 class DataCollector(Worker):
     def __init__(self, cfg):
         super().__init__()
@@ -157,25 +178,43 @@ class DataCollector(Worker):
                 if isinstance(r_val, torch.Tensor):
                     r_val = r_val.item()
 
-                manual_done = False
-                if "manual_done" in info:
-                    md = info["manual_done"]
-                    if hasattr(md, "__getitem__") and len(md) > 0:
-                        manual_done = bool(md[0])
-                    else:
-                        manual_done = bool(md)
+                # Extract LeRobot-style keyboard events from info.
+                # Backward-compat: also check legacy "manual_done".
+                episode_success = bool(
+                    _extract_scalar_bool(info, "episode_success")
+                )
+                rerecord_episode = bool(
+                    _extract_scalar_bool(info, "rerecord_episode")
+                )
+                stop_recording = bool(
+                    _extract_scalar_bool(info, "stop_recording")
+                )
+                manual_done = bool(_extract_scalar_bool(info, "manual_done"))
+
+                # "stop_recording" bails out of the entire collection loop.
+                if stop_recording:
+                    self.log_info("Stop recording requested — exiting.")
+                    break
 
                 self.total_cnt += 1
+
                 if self.manual_episode_control_only:
-                    save_episode = bool(manual_done)
+                    save_episode = bool(episode_success or manual_done)
                 else:
-                    save_episode = bool(r_val >= 0.5 or manual_done)
+                    save_episode = bool(
+                        r_val >= 0.5 or episode_success or manual_done
+                    )
+
+                if rerecord_episode:
+                    self.log_info(
+                        f"Episode {self.total_cnt} — rerecord requested. Discarding."
+                    )
+                    save_episode = False
 
                 if save_episode:
                     success_cnt += 1
-
                     self.log_info(
-                        f"Success (reward={r_val}, manual_done={manual_done}). "
+                        f"Success (reward={r_val}, episode_success={episode_success}). "
                         f"Total: {success_cnt}/{self.num_data_episodes}"
                     )
 

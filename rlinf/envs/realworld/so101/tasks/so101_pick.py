@@ -130,9 +130,12 @@ class SO101PickEnv(SO101Env):
 
     def reset(self, joint_reset=False, seed=None, options=None):
         """Reset with optional random perturbation on joint positions."""
+        self._num_steps = 0
+        self._success_hold_counter = 0
+        for k in self._key_state:
+            self._key_state[k] = False
+
         if self.config.is_dummy:
-            self._num_steps = 0
-            self._success_hold_counter = 0
             return self._get_observation(), {}
 
         if self.config.enable_random_reset:
@@ -150,8 +153,6 @@ class SO101PickEnv(SO101Env):
         else:
             self._perturbed_reset_qpos = None
 
-        self._num_steps = 0
-        self._success_hold_counter = 0
         self.go_to_rest(joint_reset)
         self._update_state()
         return self._get_observation(), {}
