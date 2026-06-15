@@ -304,6 +304,10 @@ def _register_builtin_models():
     register_model(
         SupportedModel.RLT_STAGE2.value,
         _build_rlt_stage2,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.GR00T_N1D7.value,
         _build_gr00t_n1d7,
         category="embodied",
