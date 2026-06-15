@@ -1,15 +1,15 @@
-AMD ROCm 平台上的 LIBERO 强化学习
+AMD ROCm 芯片上的 LIBERO 强化学习
 =================================
 
-本文介绍在 AMD ROCm 平台上运行 RLinf LIBERO 强化学习示例所需的配置。
+本文介绍在 AMD ROCm 芯片上运行 RLinf LIBERO 强化学习示例所需的配置。
 本文重点说明依赖安装和运行时环境变量。LIBERO 任务说明、PPO/GRPO
-算法、模型下载、配置文件、指标和结果均与平台无关；这些内容请参考
-:doc:`基于LIBERO评测平台的强化学习训练 <libero>`。
+算法、模型下载、配置文件、指标和结果均与芯片无关；这些内容请参考
+:doc:`基于 LIBERO 的强化学习训练 <../../examples/embodied/libero>`\ 。
 
 依赖安装
 --------
 
-与 NVIDIA 流程相比，AMD 平台的关键区别是依赖需要使用 ROCm 后端安装，
+与 NVIDIA 流程相比，AMD 芯片的关键区别是依赖需要使用 ROCm 后端安装，
 并且 LIBERO 建议使用 OSMesa 进行 CPU 渲染。
 
 方式 1：Docker 镜像
@@ -39,7 +39,7 @@ AMD ROCm 平台上的 LIBERO 强化学习
 
    source switch_env openvla-oft
 
-如果需要自行构建镜像，请显式指定 AMD 平台和 ROCm 版本：
+如果需要自行构建镜像，请显式指定 AMD 芯片和 ROCm 版本：
 
 .. code-block:: bash
 
@@ -85,7 +85,7 @@ GPU 架构。此时需要显式传入目标架构列表：
 LIBERO CPU 渲染
 ---------------
 
-AMD 平台运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以下环境变量：
+AMD 芯片运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以下环境变量：
 
 .. code-block:: bash
 
@@ -98,7 +98,7 @@ AMD 平台运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以下
 在 AMD 上启动 LIBERO
 --------------------
 
-依赖和模型路径准备完成后，使用 :doc:`LIBERO 主文档 <libero>` 中相同的配置，
+依赖和模型路径准备完成后，使用 :doc:`LIBERO 主文档 <../../examples/embodied/libero>` 中相同的配置，
 但保持 OSMesa 渲染：
 
 .. code-block:: bash
@@ -120,7 +120,7 @@ AMD 平台运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以下
 保持不变的部分
 --------------
 
-- 使用 :doc:`基于LIBERO评测平台的强化学习训练 <libero>` 中相同的 LIBERO 配置。
+- 使用 :doc:`基于 LIBERO 的强化学习训练 <../../examples/embodied/libero>` 中相同的 LIBERO 配置。
 - 使用相同的模型下载和 ``model_path`` 配置流程。
 - 使用相同的 PPO/GRPO 算法设置和 placement 概念。
 - 监控相同的训练、rollout 和环境指标。

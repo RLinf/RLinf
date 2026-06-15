@@ -21,7 +21,7 @@ SOTA 强化学习复现
 
 RLinf 提供了一整套**可复现的 SOTA 强化学习配置**，用户无需额外工程改造，只需直接运行官方脚本和配置文件，即可复现论文级或业界领先的训练效果。
 
-在具身智能任务上，RLinf 在 **LIBERO**、**ManiSkill**、**RoboTwin** 等多个基准中达到了或接近当前最优的成功率，支持 OpenVLA、OpenVLA-OFT、π₀/π₀.₅、GR00T 等多种 VLA 模型（详见 :doc:`../examples/embodied/index` 中的示例库与 :doc:`../tutorials/rlalg/index` 中的算法教程）。
+在具身智能任务上，RLinf 在 **LIBERO**、**ManiSkill**、**RoboTwin** 等多个基准中达到了或接近当前最优的成功率，支持 OpenVLA、OpenVLA-OFT、π₀/π₀.₅、GR00T 等多种 VLA 模型（详见 :doc:`../examples/index` 中的示例库与 :doc:`../tutorials/rlalg/index` 中的算法教程）。
 
 在智能体任务（包含数学推理）上，RLinf 基于 DeepSeek-R1-Distill-Qwen 系列模型，在 **AIME24 / AIME25 / GPQA-diamond** 等基准上达到 SOTA 表现，同时支持诸如Search-R1与在线代码补全等单智能体与多智能体训练任务（详见 :doc:`../examples/agentic/reasoning` ）。
 
