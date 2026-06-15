@@ -32,29 +32,9 @@ from rlinf.envs.realworld.franka.tasks.dex_pnp import (
 from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
     FrankaBinRelocationEnv as FrankaBinRelocationEnv,
 )
-from rlinf.envs.realworld.franka.tasks.joint_peg_insertion_env import (
-    FrankaJointPegInsertionEnv as FrankaJointPegInsertionEnv,
-)
 from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
     PegInsertionEnv as PegInsertionEnv,
 )
-
-
-def _select_task_mode_reset_qpos(
-    override_cfg: dict[str, Any],
-    env_cfg: Mapping[str, Any],
-) -> dict[str, Any]:
-    selected_cfg = dict(override_cfg)
-    task_mode = str(env_cfg.get("task_mode", "critical_phase"))
-    reset_key = (
-        "full_task_reset_joint_qpos"
-        if task_mode == "full_task"
-        else "critical_phase_reset_joint_qpos"
-    )
-    reset_qpos = selected_cfg.get(reset_key, None)
-    if reset_qpos is not None:
-        selected_cfg["reset_joint_qpos"] = reset_qpos
-    return selected_cfg
 
 
 def create_franka_env(
@@ -97,23 +77,6 @@ def create_peg_insertion_env(
     env_cfg: Mapping[str, Any],
 ) -> gym.Env:
     env = PegInsertionEnv(
-        override_cfg=override_cfg,
-        worker_info=worker_info,
-        hardware_info=hardware_info,
-        env_idx=env_idx,
-    )
-    return apply_single_arm_wrappers(env, env_cfg)
-
-
-def create_joint_peg_insertion_env(
-    override_cfg: dict[str, Any],
-    worker_info: Any,
-    hardware_info: Any,
-    env_idx: int,
-    env_cfg: Mapping[str, Any],
-) -> gym.Env:
-    override_cfg = _select_task_mode_reset_qpos(override_cfg, env_cfg)
-    env = FrankaJointPegInsertionEnv(
         override_cfg=override_cfg,
         worker_info=worker_info,
         hardware_info=hardware_info,
@@ -183,11 +146,6 @@ register(
 register(
     id="PegInsertionEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_peg_insertion_env",
-)
-
-register(
-    id="FrankaJointPegInsertionEnv-v1",
-    entry_point="rlinf.envs.realworld.franka.tasks:create_joint_peg_insertion_env",
 )
 
 register(

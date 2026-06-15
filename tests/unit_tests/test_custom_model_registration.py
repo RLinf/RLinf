@@ -73,6 +73,34 @@ def test_custom_model_registration_smoke():
     assert received["torch_dtype"] == torch.float32
 
 
+def test_custom_model_registration_accepts_tuple_style_model_value():
+    model_type = f"custom_model_tuple_{int(time.time() * 1000)}"
+
+    def _builder(cfg, torch_dtype):
+        return _DummyModel()
+
+    register_model(
+        *(model_type, "embodied"),
+        _builder,
+        category="embodied",
+    )
+
+    supported_model = SupportedModel(model_type)
+    assert supported_model.value == model_type
+
+
+def test_custom_model_registration_accepts_positional_category():
+    model_type = f"custom_model_positional_category_{int(time.time() * 1000)}"
+
+    def _builder(cfg, torch_dtype):
+        return _DummyModel()
+
+    register_model(model_type, _builder, "embodied")
+
+    supported_model = SupportedModel(model_type)
+    assert supported_model.value == model_type
+
+
 def test_custom_model_registration_with_fsdp_wrap_policy():
     model_type = f"custom_model_fsdp_{int(time.time() * 1000)}"
 

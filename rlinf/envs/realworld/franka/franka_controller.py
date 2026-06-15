@@ -46,8 +46,6 @@ class FrankaController(Worker):
         end_effector_config: Optional[dict] = None,
         gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
-        joint_command_topic: Optional[str] = None,
-        joint_command_joint_names: Optional[list[str]] = None,
     ):
         """Launch a FrankaController on the specified worker's node."""
         cluster = Cluster()
@@ -59,8 +57,6 @@ class FrankaController(Worker):
             end_effector_config or {},
             gripper_type,
             gripper_connection,
-            joint_command_topic,
-            joint_command_joint_names,
         ).launch(
             cluster=cluster,
             placement_strategy=placement,
@@ -75,15 +71,11 @@ class FrankaController(Worker):
         end_effector_config: Optional[dict] = None,
         gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
-        joint_command_topic: Optional[str] = None,
-        joint_command_joint_names: Optional[list[str]] = None,
     ):
         super().__init__()
         self._logger = get_logger()
         self._robot_ip = robot_ip
         self._ros_pkg = ros_pkg
-        self._joint_command_topic = joint_command_topic
-        self._joint_command_joint_names = joint_command_joint_names
         self._end_effector_type = normalize_end_effector_type(
             end_effector_type,
             gripper_type,
@@ -94,14 +86,12 @@ class FrankaController(Worker):
         import rospy
         from dynamic_reconfigure.client import Client as ReconfClient
         from franka_msgs.msg import ErrorRecoveryActionGoal, FrankaState
-        from sensor_msgs.msg import JointState
         from serl_franka_controllers.msg import ZeroJacobian
 
         self._geom_msg = geom_msg
         self._rospy = rospy
         self._ErrorRecoveryActionGoal = ErrorRecoveryActionGoal
         self._FrankaState = FrankaState
-        self._JointState = JointState
         self._ZeroJacobian = ZeroJacobian
         self._ReconfClient = ReconfClient
 
@@ -182,12 +172,6 @@ class FrankaController(Worker):
             self._FrankaState,
             self._on_arm_state_msg,
         )
-        if self._joint_command_topic is not None:
-            self._ros.create_ros_channel(
-                self._joint_command_topic,
-                self._JointState,
-                queue_size=10,
-            )
 
     def _on_arm_jacobian_msg(self, msg):
         self._state.arm_jacobian = np.array(list(msg.zero_jacobian)).reshape(
@@ -323,30 +307,6 @@ class FrankaController(Worker):
 
         self._ros.put_channel(self._arm_equilibrium_channel, pose_msg)
         self.log_debug(f"Move arm to position: {position}")
-
-    def move_joints(self, joint_positions: np.ndarray):
-        """Publish an absolute 7-DoF joint target for online joint control."""
-        if self._joint_command_topic is None:
-            raise RuntimeError(
-                "FrankaController.move_joints requires joint_command_topic. "
-                "Set env override_cfg.joint_command_topic for joint-target tasks."
-            )
-
-        joint_positions = np.asarray(joint_positions, dtype=np.float64).reshape(-1)
-        assert len(joint_positions) == 7, (
-            "Invalid joint target, expected 7 dimensions but got "
-            f"{len(joint_positions)}"
-        )
-
-        msg = self._JointState()
-        msg.header.stamp = self._rospy.Time.now()
-        if self._joint_command_joint_names:
-            msg.name = list(self._joint_command_joint_names)
-        msg.position = joint_positions.astype(float).tolist()
-        msg.velocity = [0.0] * 7
-        msg.effort = [0.0] * 7
-        self._ros.put_channel(self._joint_command_topic, msg)
-        self.log_debug(f"Move joints to target: {joint_positions}")
 
     def command_end_effector(self, action: np.ndarray) -> bool:
         """Send an action to the active end-effector."""

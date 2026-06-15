@@ -39,7 +39,6 @@ class GelloExpert:
         self.state_lock = threading.Lock()
         self._ready = False
         self.latest_data = {
-            "joints": np.zeros(7),
             "target_pos": np.zeros(3),
             "target_quat": np.zeros(4),
             "gripper": np.zeros(1),
@@ -56,10 +55,6 @@ class GelloExpert:
             target_pos, target_quat = self.fk.get_fk(gello_joints)
 
             with self.state_lock:
-                self.latest_data["joints"] = np.asarray(
-                    gello_joints,
-                    dtype=np.float64,
-                ).reshape(-1)
                 self.latest_data["target_pos"] = target_pos
                 self.latest_data["target_quat"] = target_quat
                 self.latest_data["gripper"] = gello_gripper
@@ -79,14 +74,6 @@ class GelloExpert:
                 self.latest_data["target_pos"],
                 self.latest_data["target_quat"],
                 self.latest_data["gripper"],
-            )
-
-    def get_joint_action(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(joint_targets, gripper)`` from the latest GELLO reading."""
-        with self.state_lock:
-            return (
-                self.latest_data["joints"].copy(),
-                self.latest_data["gripper"].copy(),
             )
 
 

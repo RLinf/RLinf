@@ -50,8 +50,6 @@ class FrankaRobotConfig:
     camera_type: Optional[str] = None
     gripper_type: Optional[str] = None
     gripper_connection: Optional[str] = None
-    joint_command_topic: Optional[str] = None
-    joint_command_joint_names: Optional[list[str]] = None
     enable_camera_player: bool = True
     # Per-camera crop regions keyed by serial number.
     # Each value is [top%, left%, bottom%, right%] in 0..1 range.
@@ -270,8 +268,6 @@ class FrankaEnv(gym.Env):
             end_effector_type=self.config.end_effector_type,
             end_effector_config=self.config.end_effector_config,
             gripper_connection=self.config.gripper_connection,
-            joint_command_topic=self.config.joint_command_topic,
-            joint_command_joint_names=self.config.joint_command_joint_names,
         )
 
     def _setup_reward_worker(self):
