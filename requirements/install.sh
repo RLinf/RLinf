@@ -91,14 +91,6 @@ Targets:
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
-                             - franka:        Franka with the legacy ROS/catkin
-                                              + serl controller stack.
-                             - franka-dexhand: Franka (ROS) plus the Ruiyan
-                                              dexterous hand pip deps.
-                             - franka-franky: Franka driven through the
-                                              franky-control pip package
-                                              (libfranka + Ruckig in a C++ RT
-                                              thread).
 
 Common options:
     -h, --help             Show this help message and exit.
