@@ -495,7 +495,7 @@ class FSDPActor(FSDPModelManager, Worker):
         ) and self.combine_reference_model:
             self.ref_policy_state_dict = self.get_model_state_dict(
                 cpu_offload=True,
-                full_state_dict=True,
+                full_state_dict=False,
             )
             self.offload_model_buffer = {}
 
@@ -746,8 +746,14 @@ class FSDPActor(FSDPModelManager, Worker):
     def _swap_to_ref_policy(self):
         """Temporarily swap the actor weights to the reference-policy weights.
 
-        FSDP/FSDP2 models need full-state-dict semantics here; local/sharded state dicts
-        cannot be round-tripped through ``load_state_dict`` for reference-logprob passes.
+        FSDP/FSDP2 models cannot safely use plain ``model.load_state_dict(...)`` for
+        reference-logprob passes. We therefore save and restore per-rank sharded state
+        dicts through the FSDP strategy API instead of using the old generic swap helper.
+
+        Using ``full_state_dict=True`` here is not reliable in our runtime because
+        non-zero ranks may observe an empty state dict. Per-rank shard state dicts are
+        therefore the safer choice as long as loading also goes through
+        ``set_model_state_dict`` with ``full_state_dict=False``.
         """
         assert self.ref_policy_state_dict is not None, (
             "Reference policy state dict is None but reference swap is requested"
@@ -755,13 +761,13 @@ class FSDPActor(FSDPModelManager, Worker):
 
         current_policy_state_dict = self.get_model_state_dict(
             cpu_offload=True,
-            full_state_dict=True,
+            full_state_dict=False,
         )
         self._strategy.load_model_with_state_dict(
             self.model,
             self.ref_policy_state_dict,
             cpu_offload=False,
-            full_state_dict=True,
+            full_state_dict=False,
         )
 
         try:
@@ -771,7 +777,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 self.model,
                 current_policy_state_dict,
                 cpu_offload=False,
-                full_state_dict=True,
+                full_state_dict=False,
             )
 
     def compute_logprobs(self, logits, target):
