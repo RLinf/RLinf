@@ -21,8 +21,6 @@ from typing import Any, Literal
 import torch
 from omegaconf import DictConfig
 
-from rlinf.envs.maniskill.rlt_intervention import ManiSkillLocalCorrectionController
-
 
 class RLTStage2PolicyInfoAdapter:
     """Owns RLT Stage 2 env-side state exposed to rollout workers.
@@ -45,12 +43,8 @@ class RLTStage2PolicyInfoAdapter:
         self.eval_batch_size = eval_batch_size
         self.train_states: list[dict[str, torch.Tensor]] = []
         self.eval_states: list[dict[str, torch.Tensor]] = []
-        self.train_maniskill_controllers: list[
-            ManiSkillLocalCorrectionController | None
-        ] = []
-        self.eval_maniskill_controllers: list[
-            ManiSkillLocalCorrectionController | None
-        ] = []
+        self.train_maniskill_controllers: list[Any | None] = []
+        self.eval_maniskill_controllers: list[Any | None] = []
 
     def init_stage(
         self,
@@ -161,7 +155,24 @@ class RLTStage2PolicyInfoAdapter:
     def export_policy_info(
         state: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        return ManiSkillLocalCorrectionController.export_policy_info(state)
+        policy_info = {
+            "expert_takeover": state["expert_takeover"][:, None],
+            "deviation": state["deviation"][:, None],
+            "deviation_count": state["deviation_count"].to(torch.float32)[:, None],
+            "intervention_phase": state["intervention_phase"].to(torch.float32)[
+                :, None
+            ],
+            "takeover_left": state["takeover_left"].to(torch.float32)[:, None],
+            "takeover_used": state["takeover_used"].to(torch.float32)[:, None],
+        }
+        for key in (
+            "in_critical_phase",
+            "record_transition",
+            "critical_phase_started",
+        ):
+            if key in state:
+                policy_info[key] = state[key].to(torch.bool)[:, None]
+        return policy_info
 
     def _init_maniskill_controller(
         self,
@@ -170,7 +181,11 @@ class RLTStage2PolicyInfoAdapter:
         mode: Literal["train", "eval"],
         batch_size: int,
         env: Any | None,
-    ) -> ManiSkillLocalCorrectionController:
+    ) -> Any:
+        from rlinf.envs.maniskill.rlt_intervention import (
+            ManiSkillLocalCorrectionController,
+        )
+
         controllers = self._maniskill_controllers(mode)
         self._ensure_len(controllers, stage_id, None)
         controller = ManiSkillLocalCorrectionController(
@@ -325,7 +340,7 @@ class RLTStage2PolicyInfoAdapter:
     def _maniskill_controllers(
         self,
         mode: Literal["train", "eval"],
-    ) -> list[ManiSkillLocalCorrectionController | None]:
+    ) -> list[Any | None]:
         return (
             self.train_maniskill_controllers
             if mode == "train"
