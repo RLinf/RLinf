@@ -1,10 +1,15 @@
-# SO101 arm data collection config.
-# Uses LeRobot's leader-follower teleoperation to collect demonstration data.
-# Prerequisite: assemble both leader and follower SO101 arms (see LeRobot docs).
+# SO101 teleoperation data collection.
+# Uses LeRobot's leader/follower bilateral teleop. Hold the leader arm to
+# guide the follower; press 's'/→ to save the episode, 'r'/← to discard and
+# rerecord, 'q'/Esc to stop.
+#
+# Prerequisite: assemble + calibrate both leader and follower SO101 arms
+# (see https://huggingface.co/docs/lerobot/so101).
 #
 # Usage:
 #   python examples/embodiment/collect_real_data.py \
-#       --config-name realworld_so101_collect_data
+#       --config-name realworld_so101_collect_data \
+#       runner.logger.log_path=/path/to/output
 
 defaults:
   - env/realworld_so101@env.eval
@@ -36,7 +41,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: null
+    log_path: "../results/so101-collect-data"
     project_name: rlinf
     experiment_name: "so101-collect-data"
     logger_backends: ["tensorboard"]
@@ -52,8 +57,8 @@ env:
     max_episode_steps: 10000
     override_cfg:
       enable_teleop: True
-      success_hold_steps: 1
       manual_episode_control_only: True
+      success_hold_steps: 1
       max_episode_steps: ${env.eval.max_episode_steps}
 
     data_collection:

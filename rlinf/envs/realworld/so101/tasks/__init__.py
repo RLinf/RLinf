@@ -14,16 +14,11 @@
 
 from gymnasium.envs.registration import register
 
-from rlinf.envs.realworld.so101.tasks.so101_pick import (
-    SO101PickEnv as SO101PickEnv,
-)
-
-register(
-    id="SO101Env-v1",
-    entry_point="rlinf.envs.realworld.so101.tasks:SO101PickEnv",
-)
+from .so101_pick import SO101PickConfig, SO101PickEnv
 
 register(
     id="SO101PickEnv-v1",
     entry_point="rlinf.envs.realworld.so101.tasks:SO101PickEnv",
 )
+
+__all__ = ["SO101PickConfig", "SO101PickEnv"]

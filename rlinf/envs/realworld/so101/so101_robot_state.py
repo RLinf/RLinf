@@ -19,30 +19,26 @@ import numpy as np
 
 @dataclass
 class SO101RobotState:
-    """State snapshot for the SO101 6-DOF robot arm.
+    """State snapshot for the SO101 6-DOF arm.
 
-    The SO101 arm has 6 Feetech STS3215 motors:
-    shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper.
-
-    Joint positions are in **degrees** (LeRobot convention).
+    The arm has 5 revolute joints (``shoulder_pan``, ``shoulder_lift``,
+    ``elbow_flex``, ``wrist_flex``, ``wrist_roll``) plus a 1-DOF gripper.
+    Joint values are in degrees (LeRobot convention when ``use_degrees=True``).
     """
 
-    joint_position: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    """Joint positions ``[q1, ..., q6]`` in degrees.
-    Order: shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll."""
+    joint_position: np.ndarray = field(default_factory=lambda: np.zeros(5))
+    """Arm joint positions in degrees, shape ``(5,)``."""
 
-    joint_velocity: np.ndarray = field(default_factory=lambda: np.zeros(6))
-    """Joint velocities ``[dq1, ..., dq6]`` in deg/s."""
+    joint_velocity: np.ndarray = field(default_factory=lambda: np.zeros(5))
+    """Arm joint velocities in deg/s, shape ``(5,)``."""
 
     gripper_position: float = 0.0
-    """Gripper position in degrees (0 = closed, ~90 = open for STS3215)."""
+    """Gripper opening in degrees (0 = closed, ~90 = open for STS3215)."""
 
     gripper_open: bool = False
-    """``True`` when the gripper is open."""
+    """``True`` when ``gripper_position`` exceeds ``binary_gripper_threshold``."""
 
     is_connected: bool = False
-    """``True`` when the motor bus is actively connected."""
 
     def to_dict(self):
-        """Convert the dataclass to a serializable dictionary."""
         return asdict(self)

@@ -14,16 +14,10 @@
 
 """SO101 6-DOF robot environment powered by LeRobot.
 
-This environment wraps LeRobot's :class:`~lerobot.robots.so_follower.SO101Follower`
-to provide a standard ``gym.Env`` interface for RLinf training, data collection,
-and evaluation.
-
-Key features:
-- **No distributed controller needed** — LeRobot's synchronous API is used directly.
-- **Joint-space control** — actions are absolute joint positions in degrees.
-- **LeRobot calibration** — uses the same calibration JSON as the LeRobot CLI.
-- **Leader teleop** — optional leader arm for bilateral teleoperation data collection.
-- **Dummy mode** — for offline training and testing without hardware.
+Wraps LeRobot's :class:`~lerobot.robots.so_follower.SO101Follower` as a
+``gym.Env`` for RLinf training, data collection, and evaluation. LeRobot's
+synchronous Python API is used directly, so no distributed controller worker
+is required.
 """
 
 import copy
@@ -31,32 +25,48 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+import gymnasium as gym
 import numpy as np
-
-try:
-    import gymnasium as gym
-except ImportError:
-    import gym
 
 from rlinf.scheduler import WorkerInfo
 from rlinf.utils.logging import get_logger
 
 from .so101_robot_state import SO101RobotState
 
-# Default joint limits for SO101 in degrees (Feetech STS3215 range).
-# These are conservative defaults; actual limits are set during calibration.
-_DEFAULT_JOINT_LIMIT_LOW_DEG = np.array([-150.0, -90.0, -150.0, -90.0, -150.0, 0.0])
-_DEFAULT_JOINT_LIMIT_HIGH_DEG = np.array([150.0, 90.0, 150.0, 90.0, 150.0, 90.0])
-
-# LeRobot motor names for SO101 in bus-ID order.
-_SO101_MOTOR_NAMES = [
+# SO101 joints in bus-ID order, matching the motor names LeRobot uses for
+# observation and action keys (suffixed with ``.pos``).
+_SO101_ARM_JOINTS = (
     "shoulder_pan",
     "shoulder_lift",
     "elbow_flex",
     "wrist_flex",
     "wrist_roll",
-    "gripper",
-]
+)
+_SO101_GRIPPER = "gripper"
+_SO101_MOTOR_NAMES = (*_SO101_ARM_JOINTS, _SO101_GRIPPER)
+_NUM_ARM_JOINTS = len(_SO101_ARM_JOINTS)
+
+# Conservative defaults for arm joints (degrees). Final ranges come from
+# LeRobot calibration on first connect.
+_DEFAULT_JOINT_LIMIT_LOW_DEG = np.array(
+    [-150.0, -90.0, -150.0, -90.0, -150.0], dtype=np.float64
+)
+_DEFAULT_JOINT_LIMIT_HIGH_DEG = np.array(
+    [150.0, 90.0, 150.0, 90.0, 150.0], dtype=np.float64
+)
+_DEFAULT_GRIPPER_LIMIT_LOW = 0.0
+_DEFAULT_GRIPPER_LIMIT_HIGH = 90.0
+
+
+def _to_lerobot_action(arm_targets: np.ndarray, gripper_target: float) -> dict:
+    """Build the dict format LeRobot's ``send_action`` expects.
+
+    LeRobot filters incoming keys via ``key.endswith(".pos")``; missing the
+    suffix silently drops the motor.
+    """
+    action = {f"{name}.pos": float(arm_targets[i]) for i, name in enumerate(_SO101_ARM_JOINTS)}
+    action[f"{_SO101_GRIPPER}.pos"] = float(gripper_target)
+    return action
 
 
 @dataclass
@@ -64,143 +74,115 @@ class SO101RobotConfig:
     """Configuration for :class:`SO101Env`.
 
     Hardware connection fields (``port``, ``leader_port``, ``camera_serials``,
-    etc.) are populated automatically from :class:`~rlinf.scheduler.SO101HWInfo`
-    when ``None``.
+    ``camera_type``, ``calibration_id``) are auto-filled from
+    :class:`~rlinf.scheduler.SO101HWInfo` when left as ``None``.
     """
 
-    # ── Hardware connection ────────────────────────────────────────────────
     port: Optional[str] = None
-    """Serial port for the Feetech motor bus (e.g. ``"/dev/ttyACM0"``).
-    Auto-filled from :class:`SO101HWInfo`."""
-
     leader_port: Optional[str] = None
-    """Serial port for the leader arm (teleoperation).
-    Only needed for data collection with bilateral teleop."""
-
-    calibration_id: str = "default"
-    """LeRobot calibration ID. Calibration JSON is stored at
-    ``~/.cache/lerobot/calibration/robots/so_follower/{id}.json``."""
-
+    calibration_id: Optional[str] = None
     arm_variant: str = "so101"
-    """Arm variant: ``"so101"`` or ``"so100"``."""
 
-    # ── Camera ─────────────────────────────────────────────────────────────
     camera_serials: Optional[list] = None
-    """Camera serial numbers or indices. ``None`` or ``[]`` = no cameras."""
-
     camera_type: Optional[str] = None
-    """Camera backend: ``"opencv"``, ``"realsense"``, or ``"zed"``."""
 
-    # ── Control ────────────────────────────────────────────────────────────
     use_degrees: bool = True
-    """Whether joint angles use degrees (LeRobot default) or radians."""
-
     max_relative_target: Optional[float] = None
-    """Maximum per-step joint movement in degrees for safety.
-    ``None`` disables relative clamping (use with caution)."""
+    """Per-step joint movement cap in degrees (LeRobot ``max_relative_target``)."""
 
     step_frequency: float = 30.0
-    """Maximum environment steps per second (SO101 default is 30 Hz)."""
 
-    # ── Joint limits ───────────────────────────────────────────────────────
     joint_limit_low: np.ndarray = field(
         default_factory=lambda: _DEFAULT_JOINT_LIMIT_LOW_DEG.copy()
     )
-    """Lower joint limits ``(6,)`` in degrees."""
+    """Lower limits ``(5,)`` in degrees, one per arm joint (no gripper)."""
 
     joint_limit_high: np.ndarray = field(
         default_factory=lambda: _DEFAULT_JOINT_LIMIT_HIGH_DEG.copy()
     )
-    """Upper joint limits ``(6,)`` in degrees."""
+    """Upper limits ``(5,)`` in degrees, one per arm joint (no gripper)."""
 
-    # ── Task ───────────────────────────────────────────────────────────────
+    gripper_limit_low: float = _DEFAULT_GRIPPER_LIMIT_LOW
+    gripper_limit_high: float = _DEFAULT_GRIPPER_LIMIT_HIGH
+
     max_num_steps: int = 200
-    """Episode truncation horizon."""
+    """Episode truncation horizon when ``max_episode_steps`` is unset."""
+
+    max_episode_steps: Optional[int] = None
+    """Override for ``max_num_steps`` from env-level config."""
 
     reset_joint_qpos: list[float] = field(
         default_factory=lambda: [0.0, -45.0, 90.0, 0.0, 0.0, 45.0]
     )
-    """Joint configuration (degrees) to move to on reset.
-    Default is a neutral pose."""
+    """Reset configuration ``[q1..q5, gripper]`` in degrees."""
 
     target_joint_qpos: Optional[np.ndarray] = None
-    """Target joint configuration for reward computation.
-    When ``None``, a sparse 0/1 reward based on task completion is used."""
+    """Target ``[q1..q5, gripper]`` for reward; ``None`` returns 0 reward."""
 
     reward_threshold_deg: float = 5.0
-    """Per-joint tolerance in degrees for success."""
-
-    # ── Gripper ────────────────────────────────────────────────────────────
     binary_gripper_threshold: float = 45.0
-    """Gripper position threshold (degrees) for open/close decision.
-    Positions above this are considered 'open'."""
 
-    # ── Modes ──────────────────────────────────────────────────────────────
     is_dummy: bool = False
     """When ``True``, skip all hardware calls (useful for offline training)."""
 
     enable_teleop: bool = False
-    """When ``True``, use leader arm for teleoperation instead of policy."""
-
-    enable_video_player: bool = True
-    """Display a live camera window during episodes."""
-
-    save_video_path: Optional[str] = None
-    """Path to save episode videos. ``None`` disables saving."""
-
-    enable_keyboard_listener: bool = True
-    """When ``True``, start a keyboard listener for manual episode control
-    (press 's' to mark episode done during teleoperation data collection)."""
+    """When ``True``, override actions with leader-arm readings each step."""
 
     manual_episode_control_only: bool = False
-    """When ``True``, episodes only terminate via the keyboard 's' key
-    (``manual_done``). When ``False``, reward-based termination is also
-    allowed (useful for RL training)."""
-
-    max_episode_steps: Optional[int] = None
-    """Override ``max_num_steps`` from the env-level config. When set,
-    truncation uses this value instead of ``max_num_steps``."""
+    """When ``True``, episodes terminate only on keyboard events
+    (``s``/``r``/``q``); reward-based termination is disabled. Used for
+    teleoperation data collection where the demo is human-defined."""
 
     def __post_init__(self):
-        if self.joint_limit_low is not None:
-            self.joint_limit_low = np.array(self.joint_limit_low, dtype=np.float64)
-        if self.joint_limit_high is not None:
-            self.joint_limit_high = np.array(self.joint_limit_high, dtype=np.float64)
+        self.joint_limit_low = np.asarray(self.joint_limit_low, dtype=np.float64)
+        self.joint_limit_high = np.asarray(self.joint_limit_high, dtype=np.float64)
+        if self.joint_limit_low.shape != (_NUM_ARM_JOINTS,):
+            raise ValueError(
+                f"joint_limit_low must have shape ({_NUM_ARM_JOINTS},); "
+                f"got {self.joint_limit_low.shape}"
+            )
+        if self.joint_limit_high.shape != (_NUM_ARM_JOINTS,):
+            raise ValueError(
+                f"joint_limit_high must have shape ({_NUM_ARM_JOINTS},); "
+                f"got {self.joint_limit_high.shape}"
+            )
+        if (self.joint_limit_low >= self.joint_limit_high).any():
+            raise ValueError(
+                "Each joint_limit_low must be strictly less than joint_limit_high; "
+                f"got low={self.joint_limit_low}, high={self.joint_limit_high}"
+            )
+        if self.gripper_limit_low >= self.gripper_limit_high:
+            raise ValueError(
+                f"gripper_limit_low ({self.gripper_limit_low}) must be < "
+                f"gripper_limit_high ({self.gripper_limit_high})"
+            )
+        if len(self.reset_joint_qpos) != len(_SO101_MOTOR_NAMES):
+            raise ValueError(
+                f"reset_joint_qpos must have {len(_SO101_MOTOR_NAMES)} entries "
+                f"(arm joints + gripper); got {len(self.reset_joint_qpos)}"
+            )
         if self.target_joint_qpos is not None:
-            self.target_joint_qpos = np.array(self.target_joint_qpos, dtype=np.float64)
+            self.target_joint_qpos = np.asarray(self.target_joint_qpos, dtype=np.float64)
+            if self.target_joint_qpos.shape != (len(_SO101_MOTOR_NAMES),):
+                raise ValueError(
+                    f"target_joint_qpos must have shape ({len(_SO101_MOTOR_NAMES)},); "
+                    f"got {self.target_joint_qpos.shape}"
+                )
 
 
 class SO101Env(gym.Env):
     """SO101 6-DOF robot environment with joint-space actions.
 
-    This environment uses LeRobot's :class:`~lerobot.robots.so_follower.SO101Follower`
-    for hardware control. No distributed controller Worker is needed — LeRobot's
-    synchronous Python API handles all motor communication on the Feetech bus.
+    Action space: ``Box((6,))`` — ``[q1..q5, gripper]`` in degrees, where
+    ``q1..q5`` are absolute joint position targets and ``gripper`` is the
+    gripper opening. All targets are clipped to the configured limits before
+    being sent to the motor bus.
 
-    **Action space**: ``Box((7,))`` — ``[q1, ..., q6, gripper]`` in degrees.
-    The first six dimensions are absolute joint position targets, clamped to
-    the configured joint limits. The seventh dimension is the gripper position.
-
-    **Observation space**: ``Dict{state: Dict{joint_position, gripper_position},
-    frames: Dict{...}}``. Camera frames are only present when cameras are
-    configured.
-
-    The six joints correspond to LeRobot motor names: ``shoulder_pan``,
-    ``shoulder_lift``, ``elbow_flex``, ``wrist_flex``, ``wrist_roll``,
-    ``gripper``.
-
-    Example usage::
-
-        from rlinf.envs.realworld.so101 import SO101Env, SO101RobotConfig
-
-        config = SO101RobotConfig(
-            port="/dev/ttyACM0",
-            is_dummy=False,
-        )
-        env = SO101Env(config, worker_info=None, hardware_info=None, env_idx=0)
-        obs, _ = env.reset()
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
+    Observation space: ``Dict`` with ``state`` containing ``joint_position``
+    (5 arm joints) and ``gripper_position`` (1,). Camera frames are only
+    present in the observation when ``camera_serials`` is configured *and* the
+    cameras are reachable; subclasses are responsible for populating
+    ``self._cameras`` accordingly.
     """
 
     def __init__(
@@ -224,7 +206,7 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._robot = None
         self._leader = None
-        self._cameras = {}
+        self._cameras: dict = {}
         self._pynput_listener = None
         self._key_state_lock = None
         self._key_state: dict[str, bool] = {
@@ -235,55 +217,40 @@ class SO101Env(gym.Env):
 
         if not self.config.is_dummy:
             self._setup_hardware()
-
-        if self.config.is_dummy:
-            self._init_action_obs_spaces()
-            return
-
-        # Start keyboard listener for manual episode control ('s' to mark done,
-        # 'q' to quit early). Only active when teleop is enabled.
-        self._start_keyboard_listener()
-
-        # Connect to the robot hardware.
-        self._connect_robot()
+            self._start_keyboard_listener()
+            self._connect_robot()
 
         self._init_action_obs_spaces()
-
-    # ── Hardware setup ─────────────────────────────────────────────────────
 
     def _setup_hardware(self):
         """Fill connection fields from hardware_info when not set by the user."""
         from rlinf.scheduler.hardware.robots.so101 import SO101HWInfo
 
-        if isinstance(self.hardware_info, SO101HWInfo):
-            hw_config = self.hardware_info.config
-            if self.config.port is None:
-                self.config.port = hw_config.port
-            if self.config.leader_port is None:
-                self.config.leader_port = getattr(hw_config, "leader_port", None)
-            if self.config.camera_serials is None:
-                self.config.camera_serials = getattr(hw_config, "camera_serials", [])
-            if self.config.camera_type is None:
-                self.config.camera_type = getattr(hw_config, "camera_type", "opencv")
-            if self.config.calibration_id is None:
-                self.config.calibration_id = getattr(
-                    hw_config, "calibration_id", "default"
-                )
+        if not isinstance(self.hardware_info, SO101HWInfo):
+            return
+        hw = self.hardware_info.config
+        if self.config.port is None:
+            self.config.port = hw.port
+        if self.config.leader_port is None:
+            self.config.leader_port = getattr(hw, "leader_port", None)
+        if self.config.camera_serials is None:
+            self.config.camera_serials = getattr(hw, "camera_serials", None) or []
+        if self.config.camera_type is None:
+            self.config.camera_type = getattr(hw, "camera_type", "opencv")
+        if self.config.calibration_id is None:
+            self.config.calibration_id = getattr(hw, "calibration_id", "default")
 
     def _connect_robot(self):
-        """Connect to the SO101 follower arm via LeRobot."""
-        # Lazy-import lerobot to avoid issues on GPU-only nodes.
         from lerobot.robots.so_follower import SO101Follower
         from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
 
         robot_cfg = SO101FollowerConfig(
             port=self.config.port,
-            id=self.config.calibration_id,
+            id=self.config.calibration_id or "default",
             use_degrees=self.config.use_degrees,
             max_relative_target=self.config.max_relative_target,
             disable_torque_on_disconnect=True,
         )
-
         self._robot = SO101Follower(robot_cfg)
         self._robot.connect(calibrate=True)
 
@@ -297,219 +264,154 @@ class SO101Env(gym.Env):
         )
 
     def _connect_leader(self):
-        """Connect to the SO101 leader arm for teleoperation."""
-        from lerobot.teleoperators.so_leader import SO101Leader
-        from lerobot.teleoperators.so_leader.config_so100_leader import (
-            SO101LeaderConfig,
-        )
+        from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
         leader_cfg = SO101LeaderConfig(
             port=self.config.leader_port,
-            id=f"{self.config.calibration_id}_leader",
+            id=f"{self.config.calibration_id or 'default'}_leader",
             use_degrees=self.config.use_degrees,
         )
         self._leader = SO101Leader(leader_cfg)
         self._leader.connect()
         self._logger.info(f"SO101 leader connected on port {self.config.leader_port}")
 
-    # ── Keyboard listener ──────────────────────────────────────────────────
-
     def _start_keyboard_listener(self) -> None:
-        """Start a ``pynput``-based keyboard listener for manual episode control.
+        """Start a ``pynput`` listener for keyboard-driven episode control.
 
-        Key mappings (matching LeRobot convention):
-        - ``s`` / right-arrow → save & end episode (``episode_success``)
-        - ``r`` / left-arrow  → discard & rerecord (``rerecord_episode``)
-        - ``q`` / escape      → stop all recording (``stop_recording``)
+        Key bindings match LeRobot's convention used during teleoperation
+        recording:
+          - ``s`` / →   ``episode_success``
+          - ``r`` / ←   ``rerecord_episode``
+          - ``q`` / Esc ``stop_recording``
 
-        If ``pynput`` is not available or the listener fails to start,
-        episodes end via timeout only.
+        Only started in teleop mode. If ``pynput`` is missing or the listener
+        fails to start, episodes terminate by timeout only.
         """
         if not self.config.enable_teleop:
             return
-
-        self._key_state: dict[str, bool] = {
-            "episode_success": False,
-            "rerecord_episode": False,
-            "stop_recording": False,
-        }
 
         try:
             from pynput import keyboard as pynput_keyboard
         except ImportError:
             self._logger.info(
-                "[SO101Env] pynput not available — episodes will end "
-                "via timeout only (max_episode_steps)."
+                "[SO101Env] pynput unavailable — falling back to timeout-only episodes."
             )
             return
 
         import threading
 
         self._key_state_lock = threading.Lock()
+        key_to_event = {
+            pynput_keyboard.Key.right: "episode_success",
+            pynput_keyboard.Key.left: "rerecord_episode",
+            pynput_keyboard.Key.esc: "stop_recording",
+        }
+        char_to_event = {
+            "s": "episode_success",
+            "r": "rerecord_episode",
+            "q": "stop_recording",
+        }
 
         def _on_press(key):
-            try:
-                with self._key_state_lock:
-                    if key == pynput_keyboard.Key.right:
-                        self._key_state["episode_success"] = True
-                        self._logger.info(
-                            "[SO101Env] → pressed — episode saved."
-                        )
-                    elif key == pynput_keyboard.Key.left:
-                        self._key_state["rerecord_episode"] = True
-                        self._logger.info(
-                            "[SO101Env] ← pressed — rerecord."
-                        )
-                    elif key == pynput_keyboard.Key.esc:
-                        self._key_state["stop_recording"] = True
-                        self._logger.info(
-                            "[SO101Env] Esc pressed — stop recording."
-                        )
-                    elif hasattr(key, "char") and key.char:
-                        if key.char == "s":
-                            self._key_state["episode_success"] = True
-                            self._logger.info(
-                                "[SO101Env] 's' pressed — episode saved."
-                            )
-                        elif key.char == "r":
-                            self._key_state["rerecord_episode"] = True
-                            self._logger.info(
-                                "[SO101Env] 'r' pressed — rerecord."
-                            )
-                        elif key.char == "q":
-                            self._key_state["stop_recording"] = True
-                            self._logger.info(
-                                "[SO101Env] 'q' pressed — stop recording."
-                            )
-            except Exception:
-                pass
+            event = key_to_event.get(key)
+            if event is None and getattr(key, "char", None):
+                event = char_to_event.get(key.char)
+            if event is None:
+                return
+            with self._key_state_lock:
+                self._key_state[event] = True
+            self._logger.info(f"[SO101Env] {event} triggered")
 
         try:
             self._pynput_listener = pynput_keyboard.Listener(on_press=_on_press)
             self._pynput_listener.start()
             self._logger.info(
-                "[SO101Env] Keyboard listener started. "
-                "Press 's'/→ to save, 'r'/← to rerecord, 'q'/Esc to stop."
+                "[SO101Env] Keyboard ready: 's'/→ save, 'r'/← rerecord, 'q'/Esc stop."
             )
         except Exception as e:
+            self._pynput_listener = None
             self._logger.info(
-                f"[SO101Env] Failed to start keyboard listener: {e}. "
-                "Episodes will end via timeout only."
+                f"[SO101Env] Keyboard listener failed to start ({e}); "
+                "episodes will end on timeout only."
             )
 
-    def _poll_keyboard(self) -> None:
-        """No-op: pynput updates ``_key_state`` in its callback thread.
-        Kept as a hook point for subclasses that may need polling."""
-        return
-
-    # ── Action / observation spaces ────────────────────────────────────────
-
     def _init_action_obs_spaces(self):
-        """Initialise action and observation spaces."""
-        self._joint_limit_low = np.array(self.config.joint_limit_low, dtype=np.float64)
-        self._joint_limit_high = np.array(
-            self.config.joint_limit_high, dtype=np.float64
-        )
+        self._joint_limit_low = np.asarray(self.config.joint_limit_low, dtype=np.float64)
+        self._joint_limit_high = np.asarray(self.config.joint_limit_high, dtype=np.float64)
 
-        # Action: [q1, q2, q3, q4, q5, q6, gripper] in degrees.
-        action_low = np.append(self._joint_limit_low, 0.0).astype(np.float32)
-        action_high = np.append(self._joint_limit_high, 90.0).astype(np.float32)
-        self.action_space = gym.spaces.Box(action_low, action_high)
+        action_low = np.append(
+            self._joint_limit_low, self.config.gripper_limit_low
+        ).astype(np.float32)
+        action_high = np.append(
+            self._joint_limit_high, self.config.gripper_limit_high
+        ).astype(np.float32)
+        self.action_space = gym.spaces.Box(action_low, action_high, dtype=np.float32)
 
-        # Observation: joint positions + optional camera frames.
-        num_cameras = len(self.config.camera_serials or [])
-        self.observation_space = gym.spaces.Dict(
+        state_space = gym.spaces.Dict(
             {
-                "state": gym.spaces.Dict(
-                    {
-                        "joint_position": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(6,), dtype=np.float32
-                        ),
-                        "gripper_position": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(1,), dtype=np.float32
-                        ),
-                    }
+                "joint_position": gym.spaces.Box(
+                    -np.inf, np.inf, shape=(_NUM_ARM_JOINTS,), dtype=np.float32
                 ),
-                "frames": gym.spaces.Dict(
-                    {
-                        f"camera_{k}": gym.spaces.Box(
-                            0, 255, shape=(128, 128, 3), dtype=np.uint8
-                        )
-                        for k in range(num_cameras)
-                    }
+                "gripper_position": gym.spaces.Box(
+                    -np.inf, np.inf, shape=(1,), dtype=np.float32
                 ),
             }
         )
-        self._base_observation_space = copy.deepcopy(self.observation_space)
 
-    # ── Core gym API ───────────────────────────────────────────────────────
+        spaces = {"state": state_space}
+        num_cameras = len(self.config.camera_serials or [])
+        if num_cameras > 0:
+            spaces["frames"] = gym.spaces.Dict(
+                {
+                    f"camera_{k}": gym.spaces.Box(
+                        0, 255, shape=(128, 128, 3), dtype=np.uint8
+                    )
+                    for k in range(num_cameras)
+                }
+            )
+        self.observation_space = gym.spaces.Dict(spaces)
+        self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def step(self, action: np.ndarray):
         """Execute one environment step.
 
         Args:
-            action: ``(7,)`` float array.
-                ``action[:6]`` are absolute joint positions in degrees,
-                clamped to the configured joint limits.
-                ``action[6]`` is the gripper position in degrees.
+            action: ``(6,)`` float array — ``[q1..q5, gripper]`` in degrees.
+                Arm targets are clipped to the configured joint limits and the
+                gripper to ``[gripper_limit_low, gripper_limit_high]``.
 
         Returns:
-            Tuple of ``(observation, reward, terminated, truncated, info)``.
+            ``(observation, reward, terminated, truncated, info)``.
         """
         start_time = time.time()
-
+        expected_dim = _NUM_ARM_JOINTS + 1
+        action = np.asarray(action, dtype=np.float32).reshape(-1)
+        if action.shape[0] != expected_dim:
+            raise ValueError(
+                f"action must have {expected_dim} entries; got {action.shape[0]}"
+            )
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
+        robot_action = _to_lerobot_action(action[:_NUM_ARM_JOINTS], action[_NUM_ARM_JOINTS])
+
         if not self.config.is_dummy:
-            q_target = np.clip(
-                action[:6], self._joint_limit_low, self._joint_limit_high
-            )
-            gripper_target = float(np.clip(action[6], 0.0, 90.0))
-
-            # Build LeRobot-format action dict.
-            robot_action = {}
-            for i, name in enumerate(_SO101_MOTOR_NAMES):
-                if name == "gripper":
-                    robot_action[name] = gripper_target
-                else:
-                    robot_action[name] = float(q_target[i])
-
-            # If in teleop mode, override with leader positions.
             if self.config.enable_teleop and self._leader is not None:
                 try:
-                    leader_action = self._leader.get_action()
-                    robot_action = leader_action
+                    robot_action = self._leader.get_action()
                 except Exception as e:
                     self._logger.warning(f"Failed to read leader action: {e}")
-
             self._robot.send_action(robot_action)
 
         self._num_steps += 1
 
-        # Poll keyboard for manual episode boundary (only meaningful during
-        # teleoperation data collection).
-        if self.config.enable_teleop:
-            self._poll_keyboard()
-
         observation = self._get_observation()
         reward = self._calc_step_reward(observation)
 
-        # Determine termination.
-        # During teleop: only terminate via keyboard events or truncation.
-        # Reward-based termination is disabled because the reward function
-        # measures distance to a fixed target joint config — meaningless
-        # for arbitrary human demonstrations.
         if self.config.enable_teleop and self.config.manual_episode_control_only:
-            manual_done = any(
-                self._key_state.get(k, False)
-                for k in ("episode_success", "rerecord_episode", "stop_recording")
-            )
-            terminated = bool(manual_done)
+            terminated = any(self._key_state.values())
         else:
-            terminated = reward >= 1.0
+            terminated = bool(reward >= 1.0)
 
-        # Respect max_episode_steps from env config when set, otherwise
-        # fall back to the robot-level max_num_steps.
         max_steps = (
             self.config.max_episode_steps
             if self.config.max_episode_steps is not None
@@ -518,38 +420,26 @@ class SO101Env(gym.Env):
         truncated = self._num_steps >= max_steps
 
         info: dict = {}
-        # Surface the leader action so CollectEpisode can record the actual
-        # teleoperation commands (LeRobot format overrides the recorded action
-        # with intervene_action from info when intervene_flag is True).
-        if self.config.enable_teleop and self._leader is not None:
-            intervene_action = np.array(
-                [robot_action.get(name, 0.0) for name in _SO101_MOTOR_NAMES],
-                dtype=np.float32,
-            )
-            info["intervene_action"] = intervene_action
-
-        # Expose keyboard-driven episode-control events (LeRobot-style).
         if self.config.enable_teleop:
-            info["episode_success"] = self._key_state.get("episode_success", False)
-            info["rerecord_episode"] = self._key_state.get("rerecord_episode", False)
-            info["stop_recording"] = self._key_state.get("stop_recording", False)
-            # Backward-compat alias for collect_real_data.py's existing check.
+            if self._leader is not None:
+                intervene_action = np.array(
+                    [robot_action.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES],
+                    dtype=np.float32,
+                )
+                info["intervene_action"] = intervene_action
+            info["episode_success"] = self._key_state["episode_success"]
+            info["rerecord_episode"] = self._key_state["rerecord_episode"]
+            info["stop_recording"] = self._key_state["stop_recording"]
             info["manual_done"] = terminated
 
-        # Maintain step frequency.
         step_time = time.time() - start_time
         time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
 
         return observation, reward, terminated, truncated, info
 
     def reset(self, seed=None, options=None):
-        """Reset the environment to the rest pose.
-
-        Moves the arm to :attr:`~SO101RobotConfig.reset_joint_qpos` and
-        resets the step counter.
-        """
+        """Reset the environment to ``reset_joint_qpos`` and clear counters."""
         self._num_steps = 0
-        # Clear keyboard event flags for the new episode.
         for k in self._key_state:
             self._key_state[k] = False
 
@@ -561,100 +451,85 @@ class SO101Env(gym.Env):
         return self._get_observation(), {}
 
     def _go_to_rest(self):
-        """Move the arm to the configured rest joint configuration."""
-        rest_action = {}
-        for i, name in enumerate(_SO101_MOTOR_NAMES):
-            rest_action[name] = float(self.config.reset_joint_qpos[i])
+        rest = self.config.reset_joint_qpos
+        rest_action = _to_lerobot_action(
+            np.asarray(rest[:_NUM_ARM_JOINTS], dtype=np.float64),
+            float(rest[_NUM_ARM_JOINTS]),
+        )
         self._robot.send_action(rest_action)
-        time.sleep(1.0)  # Allow time for the move to complete.
-
-    # ── Observation ────────────────────────────────────────────────────────
+        time.sleep(1.0)
 
     def _update_state(self):
-        """Read the latest robot state from hardware."""
         if self.config.is_dummy:
             return
         try:
             obs = self._robot.get_observation()
-            # Map LeRobot observation keys to SO101RobotState.
-            self._state.joint_position = np.array(
-                [obs.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES[:6]],
-                dtype=np.float64,
-            )
-            # Velocity may not be available on all motor models; default to 0.
-            self._state.joint_velocity = np.array(
-                [
-                    obs.get(f"{name}.vel", obs.get(f"{name}.velocity", 0.0))
-                    for name in _SO101_MOTOR_NAMES[:6]
-                ],
-                dtype=np.float64,
-            )
-            gripper_pos = obs.get("gripper.pos", obs.get("gripper.position", 0.0))
-            self._state.gripper_position = float(gripper_pos)
-            self._state.gripper_open = (
-                self._state.gripper_position > self.config.binary_gripper_threshold
-            )
         except Exception as e:
             self._logger.warning(f"Failed to read robot observation: {e}")
+            return
+        self._state.joint_position = np.array(
+            [obs.get(f"{name}.pos", 0.0) for name in _SO101_ARM_JOINTS],
+            dtype=np.float64,
+        )
+        self._state.joint_velocity = np.array(
+            [obs.get(f"{name}.vel", 0.0) for name in _SO101_ARM_JOINTS],
+            dtype=np.float64,
+        )
+        self._state.gripper_position = float(obs.get(f"{_SO101_GRIPPER}.pos", 0.0))
+        self._state.gripper_open = (
+            self._state.gripper_position > self.config.binary_gripper_threshold
+        )
 
     def _get_observation(self) -> dict:
-        """Return the current observation dict."""
         if self.config.is_dummy:
             return self._base_observation_space.sample()
 
         self._update_state()
-
-        state = {
-            "joint_position": self._state.joint_position.astype(np.float32),
-            "gripper_position": np.array(
-                [self._state.gripper_position], dtype=np.float32
-            ),
+        obs: dict = {
+            "state": {
+                "joint_position": self._state.joint_position.astype(np.float32),
+                "gripper_position": np.array(
+                    [self._state.gripper_position], dtype=np.float32
+                ),
+            },
         }
-
-        frames = self._get_camera_frames()
-
-        return copy.deepcopy({"state": state, "frames": frames})
-
-    # ── Cameras ────────────────────────────────────────────────────────────
+        if "frames" in self.observation_space.spaces:
+            obs["frames"] = self._get_camera_frames()
+        return copy.deepcopy(obs)
 
     def _get_camera_frames(self) -> dict:
-        """Read camera frames (placeholder — extend for your camera setup)."""
+        """Read frames from configured cameras.
+
+        Subclasses are expected to populate ``self._cameras`` with objects
+        exposing ``get_frame()``. Missing/unreachable cameras yield blank frames
+        so the observation matches the declared observation space.
+        """
+        frames: dict = {}
         if not self._cameras:
-            return {}
-        frames = {}
+            blank = np.zeros((128, 128, 3), dtype=np.uint8)
+            for k in range(len(self.config.camera_serials or [])):
+                frames[f"camera_{k}"] = blank
+            return frames
         for name, camera in self._cameras.items():
             try:
-                frame = camera.get_frame()
-                frames[name] = frame
+                frames[name] = camera.get_frame()
             except Exception as e:
                 self._logger.warning(f"Failed to read camera '{name}': {e}")
+                frames[name] = np.zeros((128, 128, 3), dtype=np.uint8)
         return frames
 
-    # ── Reward ─────────────────────────────────────────────────────────────
-
     def _calc_step_reward(self, observation: dict) -> float:
-        """Compute reward based on distance to target joint configuration.
-
-        When :attr:`~SO101RobotConfig.target_joint_qpos` is set, computes a
-        dense reward from the L2 joint error. Otherwise, returns a sparse
-        0 reward (task-specific subclasses should override this).
-        """
-        if self.config.is_dummy:
+        """Reward = exp falloff on L2 joint error, saturating at 1.0 within tolerance."""
+        if self.config.is_dummy or self.config.target_joint_qpos is None:
             return 0.0
-
-        if self.config.target_joint_qpos is not None:
-            joint_pos = observation["state"]["joint_position"]
-            error = np.linalg.norm(joint_pos - self.config.target_joint_qpos)
-            if error < self.config.reward_threshold_deg:
-                return 1.0
-            # Dense reward: exponential falloff with distance.
-            return float(np.exp(-error / self.config.reward_threshold_deg))
-        return 0.0
-
-    # ── Cleanup ────────────────────────────────────────────────────────────
+        arm_pos = observation["state"]["joint_position"]
+        target_arm = self.config.target_joint_qpos[:_NUM_ARM_JOINTS]
+        error = float(np.linalg.norm(arm_pos - target_arm))
+        if error < self.config.reward_threshold_deg:
+            return 1.0
+        return float(np.exp(-error / self.config.reward_threshold_deg))
 
     def close(self):
-        """Disconnect from the robot and clean up resources."""
         if self._pynput_listener is not None:
             try:
                 if self._pynput_listener.is_alive():
@@ -682,9 +557,10 @@ class SO101Env(gym.Env):
         self._state.is_connected = False
 
     def __del__(self):
-        self.close()
-
-    # ── Properties ─────────────────────────────────────────────────────────
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @property
     def num_steps(self):
@@ -692,10 +568,8 @@ class SO101Env(gym.Env):
 
     @property
     def robot(self):
-        """The underlying LeRobot :class:`~lerobot.robots.so_follower.SO101Follower` instance."""
         return self._robot
 
     @property
     def leader(self):
-        """The underlying LeRobot :class:`~lerobot.teleoperators.so_leader.SO101Leader` instance."""
         return self._leader

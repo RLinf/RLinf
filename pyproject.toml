@@ -156,9 +156,11 @@ gim_arm = [
     "imageio[ffmpeg]",
 ]
 so101 = [
-    # SO101 arm is powered by LeRobot — no separate SDK needed.
-    # The Lerobot package handles all Feetech motor communication.
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5",
+    # SO101 arm uses LeRobot's SOFollower / SOLeader API, introduced after
+    # commit ccfd609e ("consolidate SO arms implementation"). Pin to v0.5.1
+    # which is the first stable tag containing it.
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@v0.5.1",
+    "pynput",
     "gymnasium",
     "opencv-python",
     "numpy",

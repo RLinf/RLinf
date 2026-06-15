@@ -95,22 +95,21 @@ and the rest of RLinf.
    class SO101RobotState:
        """State snapshot for the SO101 6-DOF robot arm.
 
-       The SO101 has 6 Feetech STS3215 motors:
-       shoulder_pan, shoulder_lift, elbow_flex, wrist_flex,
-       wrist_roll, gripper.
+       The arm has 5 revolute joints (shoulder_pan, shoulder_lift,
+       elbow_flex, wrist_flex, wrist_roll) plus a 1-DOF gripper.
 
        Joint positions are in **degrees** (LeRobot convention).
        """
 
        joint_position: np.ndarray = field(
-           default_factory=lambda: np.zeros(6)
+           default_factory=lambda: np.zeros(5)
        )
-       """Joint positions [q1, ..., q6] in degrees."""
+       """Arm joint positions in degrees, shape (5,)."""
 
        joint_velocity: np.ndarray = field(
-           default_factory=lambda: np.zeros(6)
+           default_factory=lambda: np.zeros(5)
        )
-       """Joint velocities [dq1, ..., dq6] in deg/s."""
+       """Arm joint velocities in deg/s, shape (5,)."""
 
        gripper_position: float = 0.0
        """Gripper position in degrees."""
@@ -181,15 +180,18 @@ hardware SDK. Its ``__init__`` signature must accept:
            self._robot.connect(calibrate=True)
 
        def step(self, action):
-           """action: [q1..q6, gripper] in degrees."""
-           # Build LeRobot-format action dict
+           """action: [q1..q5, gripper] in degrees."""
+           # LeRobot's SOFollower.send_action() filters incoming keys via
+           # ``key.endswith(".pos")`` and silently drops everything else, so
+           # *every* motor key — including the gripper — must use the
+           # ``<motor>.pos`` form.
            robot_action = {
-               "shoulder_pan": float(action[0]),
-               "shoulder_lift": float(action[1]),
-               "elbow_flex": float(action[2]),
-               "wrist_flex": float(action[3]),
-               "wrist_roll": float(action[4]),
-               "gripper": float(action[6]),
+               "shoulder_pan.pos":   float(action[0]),
+               "shoulder_lift.pos":  float(action[1]),
+               "elbow_flex.pos":     float(action[2]),
+               "wrist_flex.pos":     float(action[3]),
+               "wrist_roll.pos":     float(action[4]),
+               "gripper.pos":        float(action[5]),
            }
            self._robot.send_action(robot_action)
            self._update_state()
@@ -198,18 +200,17 @@ hardware SDK. Its ``__init__`` signature must accept:
            return obs, reward, terminated, truncated, {}
 
        def _init_action_obs_spaces(self):
-           # Action: [q1..q6, gripper] in degrees
+           # Action: [q1..q5, gripper] in degrees (6-D)
            self.action_space = gym.spaces.Box(
-               low=np.append(self._joint_limit_low, 0.0),
-               high=np.append(self._joint_limit_high, 90.0),
+               low=np.append(self._joint_limit_low, self.config.gripper_limit_low),
+               high=np.append(self._joint_limit_high, self.config.gripper_limit_high),
            )
-           # Observation: joint state + optional camera frames
+           # Observation: 5-D arm state + 1-D gripper (+ optional camera frames)
            self.observation_space = gym.spaces.Dict({
                "state": gym.spaces.Dict({
-                   "joint_position": Box(-inf, inf, (6,)),
+                   "joint_position": Box(-inf, inf, (5,)),
                    "gripper_position": Box(-inf, inf, (1,)),
                }),
-               "frames": gym.spaces.Dict({...}),
            })
 
 .. important::
@@ -549,7 +550,8 @@ Troubleshooting
        ``so101_tasks`` is listed in ``realworld/__init__.py``.
    * - Policy outputs NaN or zero actions
      - Check ``state_dim`` and ``action_dim`` in your model config.
-       For SO101: ``state_dim: 7``, ``action_dim: 7``.
+       For SO101: ``state_dim: 6`` (5 arm joints + 1 gripper),
+       ``action_dim: 6`` (5 arm targets + 1 gripper target).
 
 
 Adding Your Own Robot: Quick Checklist
@@ -597,9 +599,15 @@ Use this checklist when integrating a new robot:
    * - 11
      - ``requirements/install.sh`` + ``pyproject.toml``
      - Install support
+   * - 12
+     - ``docker/Dockerfile``
+     - ``embodied-<robot>-image`` build stage that runs the install script
+   * - 13
+     - ``tests/e2e_tests/embodied/<robot>_dummy_*.yaml``
+     - Dummy-mode CI smoke test exercising the env end-to-end
 
-That's it — 11 items, no changes to ``SupportedEnvType``, ``get_env_cls``, or
-``action_utils`` needed for real-world robots (they all reuse
+That's it — no changes to ``SupportedEnvType``, ``get_env_cls``, or
+``action_utils`` are needed for real-world robots (they all reuse
 ``SupportedEnvType.REALWORLD``).
 
 For more complex robots that need a distributed controller (e.g. Franka with
