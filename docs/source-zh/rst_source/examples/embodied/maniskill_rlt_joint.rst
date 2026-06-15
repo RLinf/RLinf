@@ -309,8 +309,8 @@ Stage2 使用冻结 VLA + 冻结 RL token + 小 actor-critic 的在线 RL 流程
 - ``algorithm.train_every_transitions: 5``：每新增 5 条 replay transition 增加训练预算
 - ``algorithm.max_updates_per_train_step: 1600``：限制单次 runner step 中的实际更新数
 - ``actor.model.rlt_stage2.replay_subsample_stride: 0``：默认使用 chunk boundary replay
-- ``actor.model.rlt_stage2.actor_noise_sigma: 0.002``：训练探索噪声
-- ``actor.model.rlt_stage2.ref_action_dropout: 0.5``：避免 actor 只复制 VLA reference
+- ``actor.model.rlt_stage2.actor_noise_sigma: 0.003``：训练探索噪声
+- ``actor.model.rlt_stage2.ref_action_dropout: 0.4``：避免 actor 只复制 VLA reference
 
 4. 当前 rollout 与 replay 语义
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -320,11 +320,16 @@ Stage2 使用冻结 VLA + 冻结 RL token + 小 actor-critic 的在线 RL 流程
 - rollout 侧会在同步到的 learner update 版本达到
   ``algorithm.warmup_post_collect_updates`` 后才让 student actor 真正接管
 - 在此之前，rollout 执行的是 base VLA reference chunk
+- rollout 路由会保持 ``ref_chunk`` 作为 base/VLA reference，而把实际执行的替换动作写入
+  ``action_chunk``
+- env 侧 intervention 发生时，会更新对应 step 的 ``action_chunk`` 和 ``source_chunk``，
+  而不是覆盖 ``ref_chunk``
 - 公开默认配置使用的是 boundary-only replay，因为
   ``replay_subsample_stride`` 为 ``0``
 - stride replay 仍然存在，但属于更重的可选路径
-- expert intervention 执行替换动作时，对应 step 的 replay reference chunk
-  也会同步替换
+- actor 的 BC target 会按 ``source_chunk`` 逐 step 选择：
+  human / mixed step 对齐 ``action_chunk``，base / RL step 对齐
+  VLA ``ref_chunk``
 
 5. Stage2 输出
 ~~~~~~~~~~~~~~

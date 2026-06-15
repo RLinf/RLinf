@@ -323,8 +323,8 @@ Some important defaults in the current config:
 - ``algorithm.train_every_transitions: 5``: add training budget every 5 new replay transitions
 - ``algorithm.max_updates_per_train_step: 1600``: cap actual learner updates in one runner step
 - ``actor.model.rlt_stage2.replay_subsample_stride: 0``: use boundary-only replay by default
-- ``actor.model.rlt_stage2.actor_noise_sigma: 0.002``: training-time exploration noise
-- ``actor.model.rlt_stage2.ref_action_dropout: 0.5``: prevent the actor from merely copying the VLA reference
+- ``actor.model.rlt_stage2.actor_noise_sigma: 0.003``: training-time exploration noise
+- ``actor.model.rlt_stage2.ref_action_dropout: 0.4``: prevent the actor from merely copying the VLA reference
 
 4. Current rollout and replay semantics
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -334,12 +334,17 @@ The most important implementation details are:
 - rollout workers open the student-control gate only after the synced learner
   update version reaches ``algorithm.warmup_post_collect_updates``
 - before that gate opens, rollout executes the base VLA reference chunk
+- rollout routing keeps ``ref_chunk`` as the base/VLA reference and stores the
+  actually executed replacement in ``action_chunk``
+- env-side intervention updates ``action_chunk`` and ``source_chunk`` for the
+  affected steps, instead of overwriting ``ref_chunk``
 - the default public config uses boundary-only replay because
   ``replay_subsample_stride`` is ``0``
 - stride replay still exists in the implementation, but it is a heavier
   optional mode
-- when expert intervention executes a replacement action, the replay-side
-  reference chunk is replaced on the intervened steps as well
+- actor BC targets are chosen step by step from ``source_chunk``:
+  human / mixed steps imitate ``action_chunk``, while base / RL steps imitate
+  the VLA ``ref_chunk``
 
 5. Stage2 outputs
 ~~~~~~~~~~~~~~~~~
