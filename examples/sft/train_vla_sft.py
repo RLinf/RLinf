@@ -14,6 +14,7 @@
 
 import json
 import logging
+import os
 
 import hydra
 import torch.multiprocessing as mp
@@ -32,6 +33,13 @@ mp.set_start_method("spawn", force=True)
     version_base="1.1", config_path="config", config_name="maniskill_ppo_openvlaoft"
 )
 def main(cfg) -> None:
+    if not os.environ.get("HF_LEROBOT_HOME"):
+        train_data_paths = cfg.data.get("train_data_paths", [])
+        if len(train_data_paths) > 0:
+            first_dataset = train_data_paths[0].get("dataset_path")
+            if first_dataset:
+                os.environ["HF_LEROBOT_HOME"] = os.path.dirname(first_dataset)
+
     cfg = validate_cfg(cfg)
     logging.info(json.dumps(OmegaConf.to_container(cfg, resolve=True), indent=2))
 

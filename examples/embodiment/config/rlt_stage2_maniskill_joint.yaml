@@ -1,0 +1,230 @@
+defaults:
+  - env/maniskill_rlt_joint@env.train
+  - env/maniskill_rlt_joint@env.eval
+  - model/rlt_stage2_joint@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0  # Keep actor on rank 0 for learner updates.
+    env: all
+    rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "rlt_stage2_maniskill_joint"
+    logger_backends: ["wandb"]
+
+  max_epochs: 5000
+  max_steps: -1
+  only_eval: False
+  weight_sync_interval: 1  # Sync actor -> rollout each runner step.
+  val_check_interval: 50  # Eval every 50 runner steps.
+  eval_before_train: False
+  save_interval: 50
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 5  # Critic updates per train cycle.
+  max_updates_per_train_step: 1600  # Per-step update cap.
+  warmup_min_size: 1000  # Start training after this many replay transitions.
+  warmup_post_collect_updates: 30000  # Critic warmup before student rollout.
+  train_every_episodes: 0
+  train_every_transitions: 5  # One train cycle per N new transitions.
+  group_size: 1
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+  adv_type: rlt_td3
+  loss_type: rlt_td3
+  loss_agg_func: "token-mean"
+  actor_only_train_model: True  # Train only the lightweight actor/critic.
+  gamma: 0.99
+  tau: 0.005
+  critic_actor_ratio: ${actor.model.rlt_stage2.critic_updates_per_actor}  # Critic updates per actor update.
+  actor_loss_warmup_updates: 20000  # Use warmup BC/Q weights before this.
+  actor_loss_ramp_updates: 50000  # Ramp from warmup to online weights.
+  target_update_freq: 1
+  intervention:
+    enable: True
+    mode: local_correction
+    deviation_patience: 3  # Take over after this many deviating chunks.
+    takeover_chunks: 3  # Min takeover chunks once triggered.
+    takeover_max_chunks: 6  # Max consecutive takeover chunks.
+    safe_yz_margin: 2.0  # y/z safety radius multiplier.
+    progress_eps: 0.01  # Min x progress per chunk, in meters.
+    yz_error_eps: 0.01  # Max y/z error growth per chunk, in meters.
+    near_hole_x_min: -0.03  # Start expert checks above this x threshold.
+    near_hole_yz_margin: 1.5  # y/z radius multiplier near the hole.
+    exit_hole_x_min: -0.10  # Exit intervention below this x value.
+    fallback_hole_radius: 0.035  # Fallback hole radius, in meters.
+  replay_buffer:
+    enable_cache: True
+    cache_size: 10000
+    sample_window_size: 10000
+    min_buffer_size: 600  # Legacy alias; keep aligned with warmup_min_size.
+    auto_save: False
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.0
+    top_k: 1
+    top_p: 1.0
+    repetition_penalty: 1.0
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+  train:
+    total_num_envs: 64  # Higher throughput, more sim memory.
+    seed: 2026  # Train seed; eval stays fixed for comparison.
+    auto_reset: False
+    ignore_terminations: False
+    use_fixed_reset_state_ids: False
+    wrap_obs_mode: rlt_openpi_joint  # Image + proprio + prompt wrapper.
+    reward_mode: only_success
+    max_episode_steps: 500
+    max_steps_per_rollout_epoch: 500
+    init_params:
+      id: "PegInsertionSideWideClearance-v1"
+      obs_mode: "rgb"
+      control_mode: "pd_joint_delta_pos"  # Joint delta-pos control.
+      reward_mode: "sparse"
+      sim_config:
+        sim_freq: 100
+        control_freq: 10
+      sensor_configs:
+        width: 384
+        height: 384
+  eval:
+    total_num_envs: 256  # Larger batch for stabler eval.
+    seed: 2026  # Fixed eval seed for checkpoint comparison.
+    auto_reset: False
+    ignore_terminations: False
+    use_fixed_reset_state_ids: True
+    wrap_obs_mode: rlt_openpi_joint
+    reward_mode: only_success
+    max_episode_steps: 500
+    max_steps_per_rollout_epoch: 500
+    policy_mode: eval  # Deterministic eval; use train only for diagnostics.
+    action_exec_chunks: 10  # Execute the full 10-step chunk.
+    group_size: 1
+    video_cfg:
+      save_video: False
+      fps: 10
+      record_every: 1
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      id: "PegInsertionSideWideClearance-v1"
+      obs_mode: "rgb"
+      control_mode: "pd_joint_delta_pos"
+      reward_mode: "sparse"
+      sim_config:
+        sim_freq: 100
+        control_freq: 10
+      sensor_configs:
+        width: 384
+        height: 384
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: True  # Send trajectories to replay.
+  collect_prev_infos: True
+  model:
+    model_path: ${actor.model.model_path}
+    precision: ${actor.model.precision}
+  expert_model:
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
+    precision: null
+    act_as_vla_reference: True  # Expert is VLA reference only.
+  enable_torch_compile: False
+  enable_cuda_graph: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 128  # Per-rank micro batch.
+  global_batch_size: 512  # Replay batch per update.
+  seed: 1234
+  enable_offload: False
+  model:
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft_or_stage1/checkpoints/global_step_xxx/actor"
+    precision: null
+    load_to_device: True
+    num_action_chunks: 10  # Predict 10 actions per chunk.
+    action_dim: 8  # Joint action dim.
+    add_value_head: False
+    policy_setup: "panda-qpos"
+    num_steps: 5
+    rlt_stage2:
+      config_name: "pi05_rlt_maniskill_joint"
+      norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"  # Must match base/student VLA stats.
+      rl_token_path: "/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_xxx/actor/rl_token/rl_token_model.pt"  # Stage1 RL-token checkpoint.
+      num_images_in_input: 2  # Base + wrist views.
+      proprio_dim: 9  # x = [z_rl, proprio].
+      embedding_dim: 2048  # RL-token width.
+      encoder_layers: 2
+      encoder_heads: 8
+      decoder_layers: 2
+      decoder_heads: 8
+      mlp_hidden_dim: 256
+      mlp_num_hidden_layers: 2
+      actor_noise_sigma: 0.003  # Fixed Gaussian std; eval uses the mean.
+      ref_action_dropout: 0.4  # Drop reference actions to force state usage.
+      bc_regularizer_beta: 3.0  # Fallback BC weight.
+      warmup_bc_weight: 7.0  # BC weight during warmup.
+      warmup_q_weight: 0.05
+      online_bc_weight: 2.8  # BC weight after ramp.
+      online_q_weight: 0.15  # Q weight after ramp.
+      delta_weight: 0.1  # Within-chunk delta penalty.
+      critic_updates_per_actor: 2  # TD3 critic-to-actor ratio.
+      replay_subsample_stride: 0  # 0 keeps boundary-only replay.
+      replay_allow_terminal_partial: True  # Allow partial chunks only at terminal.
+      replay_feature_batch_size: 32  # Feature re-encode micro batch.
+      buffer_capacity: 50000  # Replay cap for x/action/reward/reference.
+      tau: 0.005
+      gamma: 0.99
+
+  optim:
+    clip_grad: 10.0
+    lr: 5.0e-5
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 5.0e-5
+    lr_scheduler: torch_constant
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: True
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

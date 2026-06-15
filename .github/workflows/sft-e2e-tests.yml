@@ -57,6 +57,17 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_sft_openpi
 
+      - name: RLT Stage1 ManiSkill joint test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export RLT_MANISKILL_JOINT_DATASET=${RLT_MANISKILL_JOINT_DATASET:-/workspace/dataset/data/sft-ci-data/rlt_maniskill_joint}
+          export RLT_MANISKILL_JOINT_NORM_STATS=${RLT_MANISKILL_JOINT_NORM_STATS:-${RLT_MANISKILL_JOINT_DATASET}/norm_stats.json}
+          export RLT_MANISKILL_JOINT_SFT_MODEL=${RLT_MANISKILL_JOINT_SFT_MODEL:-/workspace/dataset/rlt_maniskill_joint_pi05_sft}
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_rlt_stage1.sh rlt_stage1_maniskill_joint
+
       - name: Clean up
         run: |
           rm -rf .venv

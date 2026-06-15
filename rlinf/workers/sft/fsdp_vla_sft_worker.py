@@ -30,20 +30,26 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type in [SupportedModel.OPENPI, SupportedModel.RLT_STAGE1]:
             repo_id = resolve_lerobot_repo_id(data_paths)
             if repo_id is None:
                 raise ValueError(
-                    "OpenPI SFT requires data.train_data_paths to be set to a local "
-                    "dataset path or LeRobot repo id."
+                    "OpenPI/RLT Stage 1 SFT requires data.train_data_paths to be set "
+                    "to a local dataset path or LeRobot repo id."
                 )
 
             import openpi.training.data_loader as openpi_data_loader
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
+            if model_type == SupportedModel.RLT_STAGE1:
+                config_name = self.cfg.actor.model.rlt_stage1.config_name
+            else:
+                config_name = self.cfg.actor.model.openpi.config_name
+
             config = get_openpi_config(
-                self.cfg.actor.model.openpi.config_name,
+                config_name,
                 model_path=self.cfg.actor.model.model_path,
                 batch_size=self.cfg.actor.micro_batch_size * self._world_size,
                 repo_id=repo_id,
@@ -91,18 +97,27 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         else:
             loss = output["loss"]
 
-        step_metrics = {"loss": loss.detach().item()}
-        if isinstance(output, dict) and output.get("dynamics_loss", None) is not None:
-            step_metrics.update(
-                {
-                    "dynamics_loss": output["dynamics_loss"].detach().item(),
-                    "action_loss": output["action_loss"].detach().item(),
-                }
-            )
+        step_metrics = self._collect_scalar_metrics(output, loss)
         return loss, step_metrics
+
+    @staticmethod
+    def _collect_scalar_metrics(
+        output: torch.Tensor | dict[str, Any], loss: torch.Tensor
+    ) -> dict[str, float]:
+        if not isinstance(output, dict):
+            return {"loss": loss.detach().item()}
+
+        metrics = {"loss": loss.detach().item()}
+        for key, value in output.items():
+            if key == "loss" or not isinstance(value, torch.Tensor):
+                continue
+            if value.numel() == 1:
+                metrics[key] = value.detach().item()
+        return metrics
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
         super().save_checkpoint(save_path, step)
+        self._save_model_sft_artifacts(save_path, step)
 
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
@@ -122,6 +137,28 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
 
             torch.distributed.barrier()
+
+    def _save_model_sft_artifacts(self, save_path: str, step: int) -> None:
+        artifact_saver = self._get_sft_artifact_saver()
+        if artifact_saver is None:
+            return
+
+        model_state = self._strategy.get_model_state_dict(
+            self.model,
+            cpu_offload=True,
+            full_state_dict=True,
+        )
+        if self._rank == 0:
+            artifact_saver(model_state, save_path, step)
+        torch.distributed.barrier()
+
+    def _get_sft_artifact_saver(self):
+        artifact_saver = getattr(self.model, "save_sft_artifacts", None)
+        if artifact_saver is not None:
+            return artifact_saver
+
+        wrapped_module = getattr(self.model, "_fsdp_wrapped_module", None)
+        return getattr(wrapped_module, "save_sft_artifacts", None)
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
@@ -144,7 +181,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:
             return 0
-        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENPI,
+            SupportedModel.RLT_STAGE1,
+        ]:
             num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
             return max(1, num_batches // self.gradient_accumulation)
         return super().get_max_steps_per_epoch()

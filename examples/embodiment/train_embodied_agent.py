@@ -53,6 +53,16 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 
         actor_worker_cls = EmbodiedSACFSDPPolicy
+    elif cfg.algorithm.loss_type == "rlt_td3":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for rlt_td3."
+            )
+        from rlinf.workers.actor.fsdp_rlt_stage2_policy_worker import (
+            RLTStage2FSDPPolicyWorker,
+        )
+
+        actor_worker_cls = RLTStage2FSDPPolicyWorker
     elif cfg.algorithm.loss_type == "embodied_dagger":
         if use_training_pipeline:
             raise ValueError(

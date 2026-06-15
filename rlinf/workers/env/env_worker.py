@@ -51,6 +51,7 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.env.policy_info_adapter import build_policy_info_adapter
 
 
 class EnvWorker(Worker):
@@ -67,6 +68,8 @@ class EnvWorker(Worker):
 
         self.last_obs_list = []
         self.last_intervened_info_list = []
+        self.last_policy_info_list = []
+        self.eval_policy_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
         self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
@@ -115,6 +118,27 @@ class EnvWorker(Worker):
         )
         self.eval_enable_init_offload = eval_env_cfg.get("enable_init_offload", True)
         self.enable_eval = self.cfg.runner.val_check_interval > 0 or self.only_eval
+        self.eval_action_exec_chunks = int(
+            self.cfg.env.eval.get(
+                "action_exec_chunks", self.cfg.actor.model.num_action_chunks
+            )
+        )
+        if self.eval_action_exec_chunks <= 0:
+            raise ValueError(
+                "env.eval.action_exec_chunks must be positive, got "
+                f"{self.eval_action_exec_chunks}"
+            )
+        if (
+            self.cfg.env.eval.max_steps_per_rollout_epoch
+            % self.eval_action_exec_chunks
+            != 0
+        ):
+            raise ValueError(
+                "env.eval.max_steps_per_rollout_epoch must be divisible by "
+                "env.eval.action_exec_chunks, got "
+                f"{self.cfg.env.eval.max_steps_per_rollout_epoch} and "
+                f"{self.eval_action_exec_chunks}"
+            )
         if not self.only_eval:
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
@@ -131,11 +155,20 @@ class EnvWorker(Worker):
             )
         self.n_eval_chunk_steps = (
             self.cfg.env.eval.max_steps_per_rollout_epoch
-            // self.cfg.actor.model.num_action_chunks
+            // self.eval_action_exec_chunks
         )
         self.actor_split_num = self.get_actor_split_num()
         if self.use_training_pipeline and not self.only_eval:
             self._init_pipeline_params()
+        self.policy_info_adapter = build_policy_info_adapter(
+            self.cfg,
+            train_batch_size=(
+                self.train_num_envs_per_stage if not self.only_eval else None
+            ),
+            eval_batch_size=(
+                self.eval_num_envs_per_stage if self.enable_eval else None
+            ),
+        )
 
         if not self.only_eval:
             self.train_prev_done: list[torch.Tensor] = [
@@ -175,7 +208,6 @@ class EnvWorker(Worker):
                 assert all(hasattr(env, "offload") for env in self.env_list), (
                     "train envs must have an offload method to enable offload!"
                 )
-
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -187,6 +219,24 @@ class EnvWorker(Worker):
                 assert all(hasattr(env, "offload") for env in self.eval_env_list), (
                     "eval envs must have an offload method to enable offload!"
                 )
+            self.log_info(
+                "Eval action scheduling: "
+                f"model_num_action_chunks={self.cfg.actor.model.num_action_chunks}, "
+                f"action_exec_chunks={self.eval_action_exec_chunks}, "
+                f"n_eval_chunk_steps={self.n_eval_chunk_steps}, "
+                f"expected_env_steps="
+                f"{self.n_eval_chunk_steps * self.eval_action_exec_chunks}, "
+                f"max_steps_per_rollout_epoch="
+                f"{self.cfg.env.eval.max_steps_per_rollout_epoch}"
+            )
+            self.eval_policy_info_list = [
+                self.policy_info_adapter.init_stage(
+                    stage_id=i,
+                    mode="eval",
+                    env=self.eval_env_list[i],
+                )
+                for i in range(self.stage_num)
+            ]
 
         if not self.only_eval:
             if self.reward_mode == "history_buffer":
@@ -463,15 +513,173 @@ class EnvWorker(Worker):
                     extracted_obs, _ = self.env_list[i].reset()
                     self.last_obs_list.append(extracted_obs)
                     self.last_intervened_info_list.append((None, None))
+                    self.last_policy_info_list.append(
+                        self.policy_info_adapter.init_stage(
+                            stage_id=i,
+                            mode="train",
+                            env=self.env_list[i],
+                        )
+                    )
                 if self.train_enable_offload and self.train_enable_init_offload:
                     self.env_list[i].offload()
             if self.enable_eval:
                 if self.eval_enable_offload and self.eval_enable_init_offload:
                     self.eval_env_list[i].offload()
 
+    @staticmethod
+    def _shape_str(value) -> str:
+        return "None" if value is None else str(tuple(getattr(value, "shape", ())))
+
+    def _validate_env_action_chunk(
+        self,
+        chunk_actions,
+        *,
+        mode: Literal["train", "eval"],
+        expected_chunks: int,
+    ) -> None:
+        expected_action_dim = int(self.cfg.actor.model.action_dim)
+        if (
+            not hasattr(chunk_actions, "shape")
+            or len(chunk_actions.shape) != 3
+            or int(chunk_actions.shape[1]) != int(expected_chunks)
+            or int(chunk_actions.shape[2]) != expected_action_dim
+        ):
+            raise ValueError(
+                f"Invalid {mode} env action chunk shape before chunk_step: "
+                f"expected [B, {expected_chunks}, {expected_action_dim}], got "
+                f"{self._shape_str(chunk_actions)}. Refuse to execute actions; "
+                "check actor.model.num_action_chunks/action_dim, "
+                "env.eval.action_exec_chunks, policy_setup, and action preparation."
+            )
+
+    def _build_rlt_step_obs(
+        self,
+        start_obs: dict[str, Any] | None,
+        obs_list,
+    ) -> dict[str, Any] | None:
+        if start_obs is None or not isinstance(obs_list, (list, tuple)) or not obs_list:
+            return None
+
+        stride = int(self.cfg.actor.model.rlt_stage2.get("replay_subsample_stride", 0))
+        if stride <= 0:
+            return None
+
+        step_obs_list = [start_obs, *obs_list]
+        offsets = self._rlt_sparse_step_obs_offsets(len(step_obs_list))
+        step_obs: dict[str, Any] = {}
+        batch_size = self._infer_obs_batch_size(step_obs_list[0])
+        for key in step_obs_list[0].keys():
+            if not offsets:
+                continue
+            values = [step_obs_list[offset].get(key, None) for offset in offsets]
+            first_non_none = next((value for value in values if value is not None), None)
+            if first_non_none is None:
+                step_obs[key] = None
+            elif isinstance(first_non_none, torch.Tensor):
+                if any(value is None for value in values):
+                    raise ValueError(
+                        f"Inconsistent RLT step_obs key {key!r}: "
+                        "tensor values contain None."
+                    )
+                values = [
+                    value.to(first_non_none.device)
+                    if value.device != first_non_none.device
+                    else value
+                    for value in values
+                ]
+                step_obs[key] = torch.stack(values, dim=0)
+            elif isinstance(first_non_none, list):
+                step_obs[key] = values
+            else:
+                step_obs[key] = values
+        step_obs["_rlt_step_offsets"] = torch.tensor(
+            offsets,
+            dtype=torch.long,
+        )[:, None].expand(len(offsets), batch_size).contiguous()
+        return step_obs
+
+    def _rlt_sparse_step_obs_offsets(self, step_count: int) -> list[int]:
+        stride = int(self.cfg.actor.model.rlt_stage2.get("replay_subsample_stride", 0))
+        chunk_len = int(self.cfg.actor.model.num_action_chunks)
+        if stride <= 0 or chunk_len <= 0:
+            return []
+
+        offsets = set()
+        offset = 0
+        while True:
+            offset = (offset + stride) % chunk_len
+            if offset == 0 or offset in offsets:
+                break
+            if offset < step_count:
+                offsets.add(offset)
+        return sorted(offsets)
+
+    @staticmethod
+    def _infer_obs_batch_size(obs: dict[str, Any]) -> int:
+        for value in obs.values():
+            if isinstance(value, torch.Tensor):
+                return int(value.shape[0])
+            if isinstance(value, list):
+                return len(value)
+        raise ValueError("Cannot infer RLT step_obs batch size from observation.")
+
+    @staticmethod
+    def _is_rlt_stage2_td3_cfg(cfg) -> bool:
+        return (
+            cfg.algorithm.get("loss_type", None) == "rlt_td3"
+            and cfg.actor.model.get("model_type", None) == "rlt_stage2"
+        )
+
+    def _append_rlt_step_trace_to_previous_action(
+        self,
+        stage_id: int,
+        rollout_result: RolloutResult,
+    ) -> None:
+        if not self._is_rlt_stage2_td3_cfg(self.cfg):
+            return
+        if rollout_result.rlt_step_trace:
+            self.rollout_results[stage_id].append_rlt_step_trace(
+                rollout_result.rlt_step_trace
+            )
+
+    def _build_chunk_step_result(
+        self,
+        rollout_result: RolloutResult,
+        env_output: EnvOutput,
+        rewards: torch.Tensor | None,
+        *,
+        final_forward_inputs: dict[str, Any] | None = None,
+        include_action: bool = True,
+    ) -> ChunkStepResult:
+        forward_inputs = (
+            rollout_result.forward_inputs
+            if final_forward_inputs is None
+            else final_forward_inputs
+        )
+        return ChunkStepResult(
+            actions=(
+                rollout_result.forward_inputs.get("action", None)
+                if include_action
+                else None
+            ),
+            prev_logprobs=(
+                rollout_result.prev_logprobs if self.collect_prev_infos else None
+            ),
+            prev_values=rollout_result.prev_values if self.collect_prev_infos else None,
+            forward_inputs=forward_inputs,
+            versions=rollout_result.versions,
+            dones=env_output.dones,
+            truncations=env_output.truncations,
+            terminations=env_output.terminations,
+            rewards=rewards,
+        )
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor, stage_id: int
+        self,
+        chunk_actions: torch.Tensor,
+        stage_id: int,
+        start_obs: dict[str, Any] | None = None,
     ) -> tuple[EnvOutput, dict[str, Any]]:
         """
         This function is used to interact with the environment.
@@ -485,6 +693,11 @@ class EnvWorker(Worker):
             policy=self.cfg.actor.model.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
+        self._validate_env_action_chunk(
+            chunk_actions,
+            mode="train",
+            expected_chunks=int(self.cfg.actor.model.num_action_chunks),
+        )
         env_info = {}
 
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
@@ -492,6 +705,13 @@ class EnvWorker(Worker):
         )
         if isinstance(obs_list, (list, tuple)):
             extracted_obs = obs_list[-1] if obs_list else None
+            step_obs = (
+                self._build_rlt_step_obs(start_obs, obs_list)
+                if self._is_rlt_stage2_td3_cfg(self.cfg)
+                else None
+            )
+        else:
+            step_obs = None
         if isinstance(infos_list, (list, tuple)):
             infos = infos_list[-1] if infos_list else None
         chunk_dones = torch.logical_or(chunk_terminations, chunk_truncations)
@@ -508,31 +728,58 @@ class EnvWorker(Worker):
             if self.cfg.env.train.ignore_terminations:
                 if chunk_truncations[:, -1].any():
                     assert chunk_truncations[:, -1].all()
-                    if "episode" in infos:
+                    if isinstance(infos, dict) and "episode" in infos:
                         for key in infos["episode"]:
                             env_info[key] = infos["episode"][key].cpu()
             else:
-                if "episode" in infos:
+                if isinstance(infos, dict) and "episode" in infos:
                     for key in infos["episode"]:
                         env_info[key] = infos["episode"][key].cpu()
         elif chunk_dones.any():
-            if "final_info" in infos:
+            if isinstance(infos, dict) and "final_info" in infos:
                 final_info = infos["final_info"]
                 for key in final_info["episode"]:
-                    env_info[key] = final_info["episode"][key][chunk_dones[:, -1]].cpu()
+                    env_info[key] = final_info["episode"][key][
+                        chunk_dones.any(dim=1)
+                    ].cpu()
 
         intervene_actions = (
-            infos["intervene_action"] if "intervene_action" in infos else None
+            infos["intervene_action"]
+            if isinstance(infos, dict) and "intervene_action" in infos
+            else None
         )
-        intervene_flags = infos["intervene_flag"] if "intervene_flag" in infos else None
-        if self.cfg.env.train.auto_reset and chunk_dones.any():
-            if "intervene_action" in infos["final_info"]:
-                intervene_actions = infos["final_info"]["intervene_action"]
-                intervene_flags = infos["final_info"]["intervene_flag"]
+        intervene_flags = (
+            infos["intervene_flag"]
+            if isinstance(infos, dict) and "intervene_flag" in infos
+            else None
+        )
+        if (
+            self.cfg.env.train.auto_reset
+            and chunk_dones.any()
+            and isinstance(infos, dict)
+            and "final_info" in infos
+        ):
+            final_info = infos["final_info"]
+            if "intervene_action" in final_info:
+                intervene_actions = final_info["intervene_action"]
+                intervene_flags = final_info["intervene_flag"]
+
+        policy_info = self.policy_info_adapter.update_stage(
+            infos=infos,
+            chunk_dones=chunk_dones,
+            stage_id=stage_id,
+            mode="train",
+            env=self.env_list[stage_id],
+        )
+        if policy_info is not None:
+            env_info["deviation_rate"] = (
+                policy_info["deviation"].float().mean().reshape(1).cpu()
+            )
 
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
+            step_obs=step_obs,
             rewards=chunk_rewards,
             env_infos=infos if isinstance(infos, dict) else None,
             dones=chunk_dones,
@@ -540,6 +787,7 @@ class EnvWorker(Worker):
             truncations=chunk_truncations,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
+            policy_info=policy_info,
         )
         return env_output, env_info
 
@@ -557,6 +805,17 @@ class EnvWorker(Worker):
             action_dim=self.cfg.actor.model.action_dim,
             policy=self.cfg.actor.model.get("policy_setup", None),
             wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
+        )
+        if chunk_actions.shape[1] < self.eval_action_exec_chunks:
+            raise ValueError(
+                f"Policy produced only {chunk_actions.shape[1]} action steps, "
+                f"but env.eval.action_exec_chunks={self.eval_action_exec_chunks}."
+            )
+        chunk_actions = chunk_actions[:, : self.eval_action_exec_chunks]
+        self._validate_env_action_chunk(
+            chunk_actions,
+            mode="eval",
+            expected_chunks=self.eval_action_exec_chunks,
         )
         env_info = {}
 
@@ -578,7 +837,7 @@ class EnvWorker(Worker):
             )
         )
 
-        current_dones = chunk_dones[:, -1]  # [num_envs] bool
+        current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
         if self.cfg.env.eval.auto_reset:
             newly_done = current_dones
         else:
@@ -587,17 +846,34 @@ class EnvWorker(Worker):
             self.eval_prev_done[stage_id] = prev | current_dones
 
         if newly_done.any():
-            if "final_info" in infos:
+            if isinstance(infos, dict) and "final_info" in infos:
                 final_info = infos["final_info"]
                 for key in final_info["episode"]:
                     env_info[key] = final_info["episode"][key][newly_done].cpu()
-            elif "episode" in infos:
+            elif isinstance(infos, dict) and "episode" in infos:
                 for key in infos["episode"]:
                     env_info[key] = infos["episode"][key][newly_done].cpu()
+
+        policy_info = self.policy_info_adapter.update_stage(
+            infos=infos,
+            chunk_dones=chunk_dones,
+            stage_id=stage_id,
+            mode="eval",
+            env=self.eval_env_list[stage_id],
+        )
+        if policy_info is not None:
+            policy_info["expert_takeover"] = torch.zeros_like(
+                policy_info["expert_takeover"]
+            )
+            self.eval_policy_info_list[stage_id] = policy_info
+            env_info["deviation_rate"] = (
+                policy_info["deviation"].float().mean().reshape(1).cpu()
+            )
 
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
+            policy_info=policy_info,
         )
         return env_output, env_info
 
@@ -804,7 +1080,10 @@ class EnvWorker(Worker):
                     self.eval_env_list[i], RecordVideo
                 ):
                     self.eval_env_list[i].flush_video()
-                if not self.cfg.env.eval.auto_reset:
+                if (
+                    not self.cfg.env.eval.auto_reset
+                    and not self.cfg.env.eval.use_fixed_reset_state_ids
+                ):
                     self.eval_env_list[i].update_reset_state_ids()
 
     @Worker.timer("env/send_obs")
@@ -827,12 +1106,61 @@ class EnvWorker(Worker):
         assert mode in ["train", "eval"], f"{mode=} is not supported"
         dst_ranks_and_sizes = self.dst_rank_map[f"rollout_{mode}"]
         split_sizes = [size for _, size in dst_ranks_and_sizes]
+        env_batch = dict(env_batch)
+        step_obs = env_batch.pop("step_obs", None)
         env_batches = split_dict(env_batch, split_sizes)
+        if step_obs is not None:
+            step_obs_batches = self._split_rlt_step_obs(step_obs, split_sizes)
+            for env_batch_i, step_obs_i in zip(
+                env_batches, step_obs_batches, strict=True
+            ):
+                env_batch_i["step_obs"] = step_obs_i
         for (rank, _), env_batch_i in zip(dst_ranks_and_sizes, env_batches):
             rollout_channel.put(
                 item=env_batch_i,
                 key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_obs"),
             )
+
+    @staticmethod
+    def _split_rlt_step_obs(
+        step_obs: dict[str, Any] | None,
+        split_sizes: list[int],
+    ) -> list[dict[str, Any] | None]:
+        if step_obs is None:
+            return [None for _ in split_sizes]
+
+        def split_value(value: Any) -> list[Any]:
+            if isinstance(value, torch.Tensor):
+                return [
+                    split_value.contiguous()
+                    for split_value in torch.split(value, split_sizes, dim=1)
+                ]
+            if isinstance(value, list):
+                split_values: list[Any] = []
+                begin = 0
+                for size in split_sizes:
+                    split_values.append(
+                        [step_values[begin : begin + size] for step_values in value]
+                    )
+                    begin += size
+                return split_values
+            if isinstance(value, dict):
+                split_dicts: list[dict[str, Any]] = [
+                    {} for _ in range(len(split_sizes))
+                ]
+                for sub_key, sub_value in value.items():
+                    sub_splits = split_value(sub_value)
+                    for idx, sub_split in enumerate(sub_splits):
+                        split_dicts[idx][sub_key] = sub_split
+                return split_dicts
+            return [value for _ in split_sizes]
+
+        step_obs_batches: list[dict[str, Any]] = [{} for _ in split_sizes]
+        for key, value in step_obs.items():
+            value_splits = split_value(value)
+            for idx, value_split in enumerate(value_splits):
+                step_obs_batches[idx][key] = value_split
+        return step_obs_batches
 
     def send_reward_input(
         self,
@@ -1009,6 +1337,11 @@ class EnvWorker(Worker):
                     ),
                     intervene_actions=None,
                     intervene_flags=None,
+                    policy_info=self.policy_info_adapter.init_stage(
+                        stage_id=stage_id,
+                        mode="train",
+                        env=self.env_list[stage_id],
+                    ),
                 )
                 env_outputs.append(env_output)
         else:
@@ -1025,6 +1358,7 @@ class EnvWorker(Worker):
                     truncations=truncations,
                     intervene_actions=self.last_intervened_info_list[stage_id][0],
                     intervene_flags=self.last_intervened_info_list[stage_id][1],
+                    policy_info=self.last_policy_info_list[stage_id],
                 )
                 env_outputs.append(env_output)
 
@@ -1038,11 +1372,20 @@ class EnvWorker(Worker):
             env_batch = env_output.to_dict()
             self.send_env_batch(
                 rollout_channel,
-                {
-                    "obs": env_batch["obs"],
-                    "final_obs": env_batch["final_obs"],
-                },
+                self._build_rollout_env_batch(env_batch),
             )
+
+    @staticmethod
+    def _build_rollout_env_batch(env_batch: dict[str, Any]) -> dict[str, Any]:
+        rollout_env_batch = {
+            "obs": env_batch["obs"],
+            "final_obs": env_batch["final_obs"],
+        }
+        for key in ("step_obs", "policy_info"):
+            value = env_batch.get(key, None)
+            if value is not None:
+                rollout_env_batch[key] = value
+        return rollout_env_batch
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
@@ -1073,6 +1416,9 @@ class EnvWorker(Worker):
         self.last_intervened_info_list = [
             (env_output.intervene_actions, env_output.intervene_flags)
             for env_output in env_output_list
+        ]
+        self.last_policy_info_list = [
+            env_output.policy_info for env_output in env_output_list
         ]
 
     @Worker.timer("env/send_rollout_trajectories")
@@ -1125,6 +1471,10 @@ class EnvWorker(Worker):
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
+                        self.policy_info_adapter.update_last_action_metadata(
+                            rollout_result=self.rollout_results[stage_id],
+                            intervene_flags=env_output.intervene_flags,
+                        )
 
                     reward_model_output = None
                     if reward_channel is not None and chunk_step_idx != 0:
@@ -1142,27 +1492,61 @@ class EnvWorker(Worker):
                     rollout_result = self.recv_rollout_results(
                         input_channel, mode="train"
                     )
+                    intervention_flags = rollout_result.forward_inputs.get(
+                        "intervention_flags", None
+                    )
+                    if intervention_flags is not None:
+                        actual_intervention = (
+                            intervention_flags.detach().float().reshape(-1).cpu()
+                        )
+                        env_metrics["expert_intervention_actual_rate"].append(
+                            actual_intervention
+                        )
+                    intervention_requested = rollout_result.forward_inputs.get(
+                        "intervention_requested", None
+                    )
+                    if intervention_requested is not None:
+                        env_metrics["expert_intervention_requested_rate"].append(
+                            intervention_requested.detach().float().reshape(-1).cpu()
+                        )
+                    ready_for_online = rollout_result.forward_inputs.get(
+                        "ready_for_online", None
+                    )
+                    if ready_for_online is not None:
+                        env_metrics["rlt_ready_for_online"].append(
+                            ready_for_online.detach().float().reshape(-1).cpu()
+                        )
+                    in_critical_phase = rollout_result.forward_inputs.get(
+                        "in_critical_phase", None
+                    )
+                    if in_critical_phase is not None:
+                        env_metrics["rlt_in_critical_phase"].append(
+                            in_critical_phase.detach().float().reshape(-1).cpu()
+                        )
+                    record_transition = rollout_result.forward_inputs.get(
+                        "record_transition", None
+                    )
+                    if record_transition is not None:
+                        env_metrics["rlt_record_transition"].append(
+                            record_transition.detach().float().reshape(-1).cpu()
+                        )
+                    student_control = rollout_result.forward_inputs.get(
+                        "student_control", None
+                    )
+                    if student_control is not None:
+                        env_metrics["student_control_rate"].append(
+                            student_control.detach().float().reshape(-1).cpu()
+                        )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, rollout_result.bootstrap_values, reward_model_output
                     )
-                    chunk_step_result = ChunkStepResult(
-                        actions=rollout_result.forward_inputs.get("action", None),
-                        prev_logprobs=(
-                            rollout_result.prev_logprobs
-                            if self.collect_prev_infos
-                            else None
-                        ),
-                        prev_values=(
-                            rollout_result.prev_values
-                            if self.collect_prev_infos
-                            else None
-                        ),
-                        forward_inputs=rollout_result.forward_inputs,
-                        versions=rollout_result.versions,
-                        dones=env_output.dones,
-                        truncations=env_output.truncations,
-                        terminations=env_output.terminations,
-                        rewards=rewards,
+                    self._append_rlt_step_trace_to_previous_action(
+                        stage_id, rollout_result
+                    )
+                    chunk_step_result = self._build_chunk_step_result(
+                        rollout_result,
+                        env_output,
+                        rewards,
                     )
                     self.rollout_results[stage_id].append_step_result(chunk_step_result)
                     if (
@@ -1177,15 +1561,12 @@ class EnvWorker(Worker):
                         )
 
                     env_output, env_info = self.env_interact_step(
-                        rollout_result.actions, stage_id
+                        rollout_result.actions, stage_id, start_obs=curr_obs
                     )
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                     )
                     if self.collect_transitions:
                         next_obs = (
@@ -1212,6 +1593,10 @@ class EnvWorker(Worker):
                         env_output.intervene_actions,
                         env_output.intervene_flags,
                     )
+                    self.policy_info_adapter.update_last_action_metadata(
+                        rollout_result=self.rollout_results[stage_id],
+                        intervene_flags=env_output.intervene_flags,
+                    )
 
                 reward_model_output = None
                 if reward_channel is not None:
@@ -1231,14 +1616,20 @@ class EnvWorker(Worker):
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
-                chunk_step_result = ChunkStepResult(
-                    prev_values=(
-                        rollout_result.prev_values if self.collect_prev_infos else None
-                    ),
-                    dones=env_output.dones,
-                    truncations=env_output.truncations,
-                    terminations=env_output.terminations,
-                    rewards=rewards,
+                self._append_rlt_step_trace_to_previous_action(
+                    stage_id, rollout_result
+                )
+                final_forward_inputs = (
+                    rollout_result.forward_inputs
+                    if self._is_rlt_stage2_td3_cfg(self.cfg)
+                    else {}
+                )
+                chunk_step_result = self._build_chunk_step_result(
+                    rollout_result,
+                    env_output,
+                    rewards,
+                    final_forward_inputs=final_forward_inputs,
+                    include_action=False,
                 )
                 self.rollout_results[stage_id].append_step_result(chunk_step_result)
                 if (
@@ -1320,10 +1711,7 @@ class EnvWorker(Worker):
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                         mode="eval",
                     )
 
@@ -1352,10 +1740,7 @@ class EnvWorker(Worker):
                     env_batch = env_output.to_dict()
                     self.send_env_batch(
                         rollout_channel,
-                        {
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        self._build_rollout_env_batch(env_batch),
                         mode="eval",
                     )
 
@@ -1459,27 +1844,6 @@ class EnvWorker(Worker):
                 for (actor_rank, _), trajectory in zip(actor_splits, trajectories):
                     batch = self.prepare_pipeline_batch(trajectory)
                     pending_batches.append((actor_rank, batch))
-                    batches_by_actor_rank[actor_rank].append(batch)
-
-            if self.cfg.algorithm.get("normalize_advantages", True):
-                for actor_rank, batches in sorted(batches_by_actor_rank.items()):
-                    local_adv_stats = sum(
-                        masked_stats(batch["advantages"], batch.get("loss_mask"))
-                        for batch in batches
-                    )
-                    env_ranks = self.pipeline_actor_env_ranks[actor_rank]
-                    global_adv_stats = sum(
-                        self.broadcast(
-                            local_adv_stats if self._rank == src_rank else None,
-                            groups=[(self._group_name, env_ranks)],
-                            src=(self._group_name, src_rank),
-                        )
-                        for src_rank in env_ranks
-                    )
-                    for batch in batches:
-                        batch["advantages"] = normalize_from_stats(
-                            batch["advantages"], global_adv_stats
-                        )
 
             for actor_rank, batch in pending_batches:
                 for micro_batch in self.pack_pipeline_micro_batches(batch, actor_rank):
