@@ -417,6 +417,21 @@ class MAFSDPActor(FSDPActor):
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
+
+    def _get_num_rollout_results_per_dp(self) -> int:
+        """Return the number of DynamicRolloutResult objects each DP rank should receive.
+
+        For multi-agent dynamic rollout, each channel item corresponds to one trajectory
+        group, while `num_sequence` inside that item can vary across turns. Therefore the
+        receive loop should be counted in rollout-result units, not sequence units.
+        """
+        return self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
+
+    def get_rollout_metrics_group(self, batch: dict[str, torch.Tensor]):
+        """Return the process group used to aggregate rollout metrics."""
+        if batch["input_ids"].shape[0] == 0:
+            return None
+        return torch.distributed.group.WORLD
     
     def get_batch(
         self, channel: Channel
@@ -468,7 +483,6 @@ class MAFSDPActor(FSDPActor):
             input_ids, position_ids, attention_mask = pack_fsdp_input(
                 input_ids,
                 position_ids,
-                attention_mask,
                 idx_starts=idx_starts,
                 idx_ends=idx_ends,
                 max_seq_len_pack=max_seq_len_pack,
@@ -638,9 +652,7 @@ class MAFSDPActor(FSDPActor):
 
         batches = []
         rollout_results = []
-        total_result_size_per_dp = (
-            self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
-        )
+        total_result_size_per_dp = self._get_num_rollout_results_per_dp()
 
         for _ in range(total_result_size_per_dp):
             batch, rollout_result = self.get_batch(input_channel)
@@ -844,12 +856,16 @@ class MAFSDPActor(FSDPActor):
         )
 
     def _compute_rollout_metrics(self, batch: dict[str, torch.Tensor]):
+        rollout_metrics_compute_data_group = self.get_rollout_metrics_group(batch)
+        if rollout_metrics_compute_data_group is None:
+            return None
+
         rollout_metrics, total_prompt_lengths, total_decode_lengths = (
             compute_rollout_metrics_dynamic(
                 batch,
                 self.cfg.data.max_prompt_length,
                 self.response_len,
-                torch.distributed.group.WORLD,
+                rollout_metrics_compute_data_group,
             )
         )
         rollout_metrics = cpu_dict(rollout_metrics)
@@ -883,9 +899,7 @@ class MAFSDPActor(FSDPActor):
         )
 
         batches = []
-        total_result_size_per_dp = (
-            self.cfg.data.rollout_batch_size // torch.distributed.get_world_size()
-        )
+        total_result_size_per_dp = self._get_num_rollout_results_per_dp()
         for _ in range(total_result_size_per_dp):
             batch, _ = self.get_batch(input_channel)
             batches.append(batch)

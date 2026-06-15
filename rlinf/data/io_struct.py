@@ -1220,48 +1220,54 @@ class DynamicRolloutResult:
         available_keys: list[str],
     ) -> dict[str, torch.Tensor]:
         """Get the batch pad for the dynamic rollout result."""
+        if Worker.torch_device_type == "cpu":
+            target_device = torch.device("cpu")
+        else:
+            target_device = torch.device(
+                Worker.torch_device_type, Worker.torch_platform.current_device()
+            )
         pad_seq_shape = (1, seq_length)
         attention_mask = torch.zeros(
-            *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+            *pad_seq_shape, dtype=torch.bool, device=target_device
         )
         attention_mask[:, :1] = True
         batch_pad = {
             "input_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=target_device
             ),
             "attention_mask": attention_mask,
             "response_mask": torch.zeros(
-                *pad_seq_shape, dtype=torch.bool, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.bool, device=target_device
             ),
             "position_ids": torch.zeros(
-                *pad_seq_shape, dtype=torch.long, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.long, device=target_device
             ),
             "is_end": torch.zeros(
-                1, dtype=torch.bool, device=torch.cuda.current_device()
+                1, dtype=torch.bool, device=target_device
             ),
             "prompt_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+                1, dtype=torch.int32, device=target_device
             ),
             "response_lengths": torch.zeros(
-                1, dtype=torch.int32, device=torch.cuda.current_device()
+                1, dtype=torch.int32, device=target_device
             ),
             "ref_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "recomputed_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "rollout_logprobs": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "rewards": torch.zeros(
-                1, dtype=torch.float32, device=torch.cuda.current_device()
+                1, dtype=torch.float32, device=target_device
             ),
             "advantages": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
             "loss_scales": torch.zeros(
-                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+                *pad_seq_shape, dtype=torch.float32, device=target_device
             ),
         }
         batch_pad = {k: v for k, v in batch_pad.items() if k in available_keys}
