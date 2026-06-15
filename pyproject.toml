@@ -155,6 +155,15 @@ gim_arm = [
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "imageio[ffmpeg]",
 ]
+so101 = [
+    # SO101 arm is powered by LeRobot — no separate SDK needed.
+    # The Lerobot package handles all Feetech motor communication.
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5",
+    "gymnasium",
+    "opencv-python",
+    "numpy",
+    "imageio[ffmpeg]",
+]
 
 [tool.uv]
 prerelease = "allow"
@@ -165,7 +174,8 @@ conflicts = [
       { extra = "embodied" },
       { extra = "franka" },
       { extra = "xsquare_turtle2" },
-      { extra = "gim_arm" }
+      { extra = "gim_arm" },
+      { extra = "so101" }
     ],
 ]
 override-dependencies = [

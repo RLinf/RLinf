@@ -6,7 +6,8 @@ by integrating custom environments and new model architectures.
 
 You will learn how to:
 
-- Integrate a :doc:`new environment <new_env>` into RLinf’s task system  
+- Integrate a :doc:`new environment <new_env>` into RLinf’s task system
+- Integrate a :doc:`new real-world robot <new_realworld_robot>` (hardware, data collection, RL)
 - Add a :doc:`new model <new_model_fsdp>` using the FSDP + HuggingFace backend  
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
 - Follow a complete :doc:`reward model workflow <../embodied/reward_model>` (simulation and real-world)
@@ -60,6 +61,7 @@ this section gives you the tools to plug directly into RLinf’s modular design.
    :maxdepth: 2
 
    new_env
+   new_realworld_robot
    new_model_fsdp
    new_model_megatron
    new_model_sft
