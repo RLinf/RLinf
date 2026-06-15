@@ -70,10 +70,6 @@ Worker — just a USB serial connection handled entirely by LeRobot.
      - ``realworld/__init__.py``, ``hardware/robots/__init__.py``,
        ``realworld_so101*.yaml``
 
-.. image:: ../../images/realworld-integration-layers.png
-   :alt: Integration layer diagram
-   :align: center
-
 .. tip::
 
    **Key principle: leverage existing libraries.** RLinf's philosophy is to
@@ -425,7 +421,7 @@ Add your robot to the install script and ``pyproject.toml``:
        uv sync --extra so101 --active $NO_INSTALL_RLINF_CMD
        ;;
 
-.. code-block:: toml
+.. code-block:: text
    :caption: pyproject.toml
 
    [project.optional-dependencies]
