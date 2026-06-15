@@ -106,6 +106,7 @@ jobs:
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
+              - 'toolkits/dual_franka/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared
