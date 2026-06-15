@@ -1402,6 +1402,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
+            SupportedModel.GR00T_N1D7,
             SupportedModel.ABOT_M0,
         ]:
             kwargs["prev_logprobs"] = prev_logprobs
@@ -1420,6 +1421,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
+            SupportedModel.GR00T_N1D7,
             SupportedModel.ABOT_M0,
         ]:
             prev_logprobs = output_dict["prev_logprobs"]
@@ -1448,6 +1450,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
+            SupportedModel.GR00T_N1D7,
         ]:
             loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:

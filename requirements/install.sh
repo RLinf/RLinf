@@ -1268,6 +1268,29 @@ install_gr00t_n1d6_model() {
     uv pip uninstall pynvml || true
 }
 
+install_gr00t_n1d7_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t N1.7." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip uninstall pynvml || true
+}
+
 install_dexbotic_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1356,7 +1379,7 @@ install_abot_m0_model() {
 
     uv pip uninstall pynvml || true
 }
-    
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1862,7 +1885,7 @@ install_opensora_world_model() {
     opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
     
     uv pip install -e "$opensora_dir"
-
+    
     # xformers 0.0.29.post2 only has wheels for torch<=2.5, but we pin
     # torch==2.6.0. UV_TORCH_BACKEND=auto rejects mismatched torch-version
     # labels, so unset UV_TORCH_BACKEND entirely for this install so uv
@@ -1976,6 +1999,9 @@ main() {
                     ;;
                 gr00t_n1d6)
                     install_gr00t_n1d6_model
+                    ;;
+                gr00t_n1d7)
+                    install_gr00t_n1d7_model
                     ;;
                 dexbotic)
                     install_dexbotic_model
