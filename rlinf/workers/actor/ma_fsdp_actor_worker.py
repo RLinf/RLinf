@@ -86,11 +86,9 @@ from rlinf.utils.utils import (
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
     cpu_dict,
-    cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
     reshape_entropy,
-    retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
@@ -614,11 +612,7 @@ class MAFSDPActor(FSDPActor):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with cpu_weight_swap(
-                self.model,
-                self.ref_policy_state_dict,
-                self.offload_model_buffer,
-            ):
+            with self._swap_to_ref_policy():
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()
