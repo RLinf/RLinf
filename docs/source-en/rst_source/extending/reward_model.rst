@@ -240,7 +240,8 @@ RLinf provides several example configs for integrating a reward model into RL:
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml`` (sets ``inference_backend: hf``)
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_sglang_reward.yaml`` (sets ``inference_backend: sglang``)
 
 These configs show how to enable a reward worker in RL training while keeping the policy on state observations
 and the reward model on image or VLM observations.
@@ -316,11 +317,17 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
-Then configure the reward section to use ``history_vlm``. The QwenTrend example
-uses ``reward_mode: history_buffer`` so the env worker maintains per-env history
-windows and sends them to the reward worker only when a valid window is available:
+This installs the Qwen3-VL reward runtime used by the MLP policy example,
+including the dependencies required by the SGLang reward backend.
+
+Then configure the reward section to use ``model_type: history_vlm``. Set
+``inference_backend: hf`` for the Hugging Face/Transformers backend, or
+``inference_backend: sglang`` for the SGLang backend. The QwenTrend example uses
+``reward_mode: history_buffer`` so the env worker maintains per-env history
+windows and sends them to the reward worker only when a valid window is
+available:
 
 .. code-block:: yaml
 
@@ -334,7 +341,7 @@ windows and sends them to the reward worker only when a valid window is availabl
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       inference_backend: hf
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -364,16 +371,79 @@ windows and sends them to the reward worker only when a valid window is availabl
 
 Important fields:
 
+- ``model_type`` selects the reward model family. Use ``history_vlm`` for
+  history-window VLM rewards.
+- ``inference_backend`` selects the inference backend. Set ``hf`` for
+  Hugging Face/Transformers, or ``sglang`` for SGLang.
 - ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
+
+For the Hugging Face/Transformers backend, keep ``inference_backend: hf`` and
+configure ``lora_path`` if needed:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: hf
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+
+The SGLang backend reuses the same QwenTrend input builder, reward parser, and
+history buffer settings. When ``inference_backend: sglang`` is selected, the
+embodied entrypoint launches a Ray-managed SGLang ``reward_server`` group plus
+an ``sglang-router`` group, then writes the router's ``/v1`` URL into the reward
+model config. The reward worker calls the router's OpenAI-compatible
+``/v1/chat/completions`` API by submitting one request per valid history-window
+input concurrently. Each request sends history frames as multiple
+``image_url`` data URLs in a single chat message, so the backend does not use
+in-process ``sglang.Engine`` or temporary MP4/video inputs.
+
+Select SGLang by overriding the backend field:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+
+RLinf starts the Ray-managed server and router by default. You can override the
+server/router surface or point to a user-managed server. Request concurrency is
+controlled by the SGLang server, for example through
+``sglang_server_args.max_running_requests``:
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+       sglang_server_args:
+         host: "127.0.0.1"
+         port: 30000
+         server_startup_timeout: 600
+         served_model_name: qwentrend-reward
+         # api_base: "http://127.0.0.1:30000/v1"  # set to use a user-managed server
+         max_running_requests: 64
+       sglang_router_args:
+         policy: cache_aware
+         worker_startup_timeout_secs: 1800
+         request_timeout_secs: 1800
+
+For auto-launched SGLang, place server GPUs on the dedicated
+``reward_server`` component. For example, ``reward_server: 0-1:0`` launches one
+server worker with two visible GPUs, and RLinf infers ``tp_size: 2`` for that
+server. The ``reward`` component remains the API-calling reward worker.
 
 Launch the MLP RL run with:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
 4. Summary
 ^^^^^^^^^^

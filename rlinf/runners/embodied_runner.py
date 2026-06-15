@@ -18,7 +18,7 @@ import queue
 import threading
 import time
 from collections import defaultdict
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 from omegaconf.dictconfig import DictConfig
 
@@ -76,7 +76,8 @@ class EmbodiedRunner:
         )
 
         # Step-gated profiling: ``cluster.profiling.steps`` lists the global step
-        profiling_raw = self.cfg.cluster.get("profiling", None)
+        cluster_cfg = self.cfg.get("cluster", {})
+        profiling_raw = cluster_cfg.get("profiling", None)
         profiling_enabled = profiling_raw is not None and bool(
             profiling_raw.get("enabled", True)
         )
@@ -94,10 +95,8 @@ class EmbodiedRunner:
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
         self.actor_channel = Channel.create("Actor")
-        if self.reward is not None:
-            self.reward_channel = Channel.create("Reward")
-        else:
-            self.reward_channel = None
+        self.reward_channel = None
+        self.reward_initialized = False
 
         # this timer checks if we should stop training
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
@@ -134,7 +133,7 @@ class EmbodiedRunner:
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Logging error: {e}")
+                self.logger.error("Logging error: %s", e, exc_info=True)
                 continue
 
     def print_metrics_table_async(
@@ -184,6 +183,16 @@ class EmbodiedRunner:
         self.actor.load_checkpoint(actor_checkpoint_path).wait()
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
+    def _maybe_initialize_reward(self) -> None:
+        if (
+            self.reward is not None
+            and not self.reward_initialized
+            and self.global_step >= self.cfg.reward.get("use_output_step", 0)
+        ):
+            self.logger.info("Activating reward worker at step %s", self.global_step)
+            self.reward_channel = Channel.create("Reward")
+            self.reward_initialized = True
+
     def update_rollout_weights(self):
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
@@ -230,7 +239,11 @@ class EmbodiedRunner:
                 rank=rank,
             )
 
-    def _aggregate_numeric_metrics(self, metrics_list: list[dict] | None) -> dict:
+    def _aggregate_numeric_metrics(
+        self,
+        metrics_list: list[dict] | None,
+        reduction: Literal["mean", "max", "sum"] = "mean",
+    ) -> dict:
         if not metrics_list:
             return {}
         merged_metrics = defaultdict(list)
@@ -239,14 +252,26 @@ class EmbodiedRunner:
                 continue
             for key, value in metrics.items():
                 merged_metrics[key].append(value)
-        return {
-            key: (sum(values) / len(values))
-            for key, values in merged_metrics.items()
-            if values
-        }
+        aggregated_metrics = {}
+        for key, values in merged_metrics.items():
+            if not values:
+                continue
+            if reduction == "mean":
+                aggregated_metrics[key] = sum(values) / len(values)
+            elif reduction == "max":
+                aggregated_metrics[key] = max(values)
+            elif reduction == "sum":
+                aggregated_metrics[key] = sum(values)
+            else:
+                raise ValueError(f"Unsupported numeric metric reduction: {reduction}")
+        return aggregated_metrics
 
     def _process_ranked_numeric_results(
-        self, results: list[dict], metric_field: str
+        self,
+        results: list[dict],
+        metric_field: str,
+        intra_rank_reduction: Literal["mean", "max", "sum"] = "mean",
+        cross_rank_reduction: Literal["mean", "max", "sum"] = "mean",
     ) -> tuple[dict, list[dict]]:
         metric_list: list[dict] = []
         per_rank_metrics: dict[int, list[dict]] = defaultdict(list)
@@ -259,15 +284,21 @@ class EmbodiedRunner:
             if rank is not None:
                 per_rank_metrics[int(rank)].append(metrics)
 
-        aggregated_metrics = self._aggregate_numeric_metrics(metric_list)
+        aggregated_metrics = self._aggregate_numeric_metrics(
+            metric_list, reduction=cross_rank_reduction
+        )
         ranked_metrics_list: list[dict] = []
         if per_rank_metrics:
             max_rank = max(per_rank_metrics.keys())
             ranked_metrics_list = [{} for _ in range(max_rank + 1)]
             for rank, metrics_list in per_rank_metrics.items():
                 ranked_metrics_list[rank] = self._aggregate_numeric_metrics(
-                    metrics_list
+                    metrics_list, reduction=intra_rank_reduction
                 )
+            aggregated_metrics = self._aggregate_numeric_metrics(
+                [metrics for metrics in ranked_metrics_list if metrics],
+                reduction=cross_rank_reduction,
+            )
         return aggregated_metrics, ranked_metrics_list
 
     def _process_ranked_eval_results(
@@ -359,7 +390,7 @@ class EmbodiedRunner:
         time_metrics.update(
             {f"time/actor/{k}": v for k, v in actor_time_metrics.items()}
         )
-        if self.reward is not None:
+        if self.reward_initialized:
             assert reward_handle is not None
             reward_time_metrics, reward_time_metrics_per_rank = (
                 reward_handle.consume_durations(return_per_rank=True)
@@ -430,7 +461,7 @@ class EmbodiedRunner:
             prefix="env",
             worker_group_name=self.env.worker_group_name,
         )
-        if self.reward is not None:
+        if self.reward_initialized:
             self._log_ranked_metrics(
                 metrics_list=reward_time_metrics_per_rank,
                 step=step,
@@ -499,6 +530,8 @@ class EmbodiedRunner:
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
+                    self._maybe_initialize_reward()
+
                     env_handle: Handle = self.env.interact(
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
@@ -510,7 +543,7 @@ class EmbodiedRunner:
                         output_channel=self.env_channel,
                     )
                     reward_handle = None
-                    if self.reward is not None:
+                    if self.reward_initialized:
                         reward_handle: Handle = self.reward.compute_rewards(
                             input_channel=self.reward_channel,
                             output_channel=self.env_channel,
@@ -519,7 +552,7 @@ class EmbodiedRunner:
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
-                    if self.reward is not None:
+                    if self.reward_initialized:
                         reward_handle.wait()
 
                 # compute advantages and returns.
@@ -581,6 +614,7 @@ class EmbodiedRunner:
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
+                self._maybe_initialize_reward()
                 env_handle: Handle = self.env.interact(
                     input_channel=self.env_channel,
                     rollout_channel=self.rollout_channel,
@@ -592,7 +626,7 @@ class EmbodiedRunner:
                     output_channel=self.env_channel,
                 )
                 reward_handle = None
-                if self.reward is not None:
+                if self.reward_initialized:
                     reward_handle: Handle = self.reward.compute_rewards(
                         input_channel=self.reward_channel,
                         output_channel=self.env_channel,
@@ -603,7 +637,7 @@ class EmbodiedRunner:
                 )
                 with self.timer("generate_rollouts"):
                     rollout_handle.wait()
-                    if self.reward is not None:
+                    if self.reward_initialized:
                         reward_handle.wait()
 
                 env_bootstrap_handle: Handle | None = None

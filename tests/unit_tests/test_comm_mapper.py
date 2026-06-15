@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from rlinf.data.embodied_io_struct import EnvOutput, RolloutResult
@@ -256,3 +257,27 @@ def test_merge_env_outputs_with_partial_optional_fields():
     assert torch.equal(
         merged["intervene_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
     )
+
+
+def test_merge_env_outputs_rejects_partial_env_infos():
+    env_output_0 = EnvOutput(
+        obs=_make_obs(0, 2),
+        final_obs=None,
+        dones=torch.zeros((2, 1), dtype=torch.bool),
+        terminations=torch.zeros((2, 1), dtype=torch.bool),
+        truncations=torch.zeros((2, 1), dtype=torch.bool),
+        rewards=torch.ones((2, 1), dtype=torch.float32),
+        env_infos=None,
+    ).to_dict()
+    env_output_1 = EnvOutput(
+        obs=_make_obs(100, 3),
+        final_obs=None,
+        dones=torch.zeros((3, 1), dtype=torch.bool),
+        terminations=torch.zeros((3, 1), dtype=torch.bool),
+        truncations=torch.zeros((3, 1), dtype=torch.bool),
+        rewards=torch.ones((3, 1), dtype=torch.float32),
+        env_infos={"episode": {"success": torch.ones((3, 1), dtype=torch.float32)}},
+    ).to_dict()
+
+    with pytest.raises(ValueError, match="Inconsistent field 'env_infos'"):
+        EnvOutput.merge_env_outputs([env_output_0, env_output_1])

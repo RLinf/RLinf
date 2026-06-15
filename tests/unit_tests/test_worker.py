@@ -87,6 +87,19 @@ class DistributedTestWorker(Worker):
         return value + self._rank
 
 
+class CloseHookTestWorker(Worker):
+    """A worker with a private cleanup hook."""
+
+    def __init__(self):
+        super().__init__()
+
+    def ping(self):
+        return "pong"
+
+    def _close(self):
+        return None
+
+
 class TestClusterResource:
     """Tests for the ClusterResource class."""
 
@@ -209,6 +222,15 @@ class TestWorkerGroup:
         results2 = group2.sum_with_rank(200).wait()
         assert len(results2) == num_workers
         assert sorted(results2) == [200 + i for i in range(num_workers)]
+
+    def test_worker_private_close_hook_does_not_conflict(self, cluster: Cluster):
+        """Verify worker cleanup hooks are reserved for WorkerGroup._close."""
+        worker_group = CloseHookTestWorker.create_group()
+
+        worker_group._attach_cls_func()
+
+        assert callable(worker_group.ping)
+        assert "_close" not in worker_group.__dict__
 
 
 class TestLoadUserExtensions:

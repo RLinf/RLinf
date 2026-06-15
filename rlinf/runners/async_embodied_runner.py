@@ -69,7 +69,10 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             return {}, [], []
 
         time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
-            results, metric_field="time"
+            results,
+            metric_field="time",
+            intra_rank_reduction="sum",
+            cross_rank_reduction="max",
         )
         env_metrics, ranked_env_metrics_list = self._process_ranked_eval_results(
             results, metric_field="env"
@@ -96,7 +99,10 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             return {}, []
 
         time_metrics, ranked_time_metrics_list = self._process_ranked_numeric_results(
-            results, metric_field="time"
+            results,
+            metric_field="time",
+            intra_rank_reduction="sum",
+            cross_rank_reduction="max",
         )
         return time_metrics, ranked_time_metrics_list
 
@@ -155,6 +161,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         start_step = self.global_step
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+        if self.reward is not None:
+            self.reward_channel = Channel.create("Reward")
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
@@ -176,6 +184,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor_handle: Handle = self.actor.recv_rollout_trajectories(
             input_channel=self.actor_channel
         )
+        actor_handle.wait()
 
         while self.global_step < self.max_steps:
             # Use the step we're ABOUT to run as the profiling key, mirroring

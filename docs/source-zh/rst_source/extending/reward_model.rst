@@ -235,7 +235,8 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``（设置 ``inference_backend: hf``）
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_sglang_reward.yaml``（设置 ``inference_backend: sglang``）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -312,11 +313,16 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
-随后在 reward 配置中使用 ``history_vlm``。QwenTrend 示例使用
-``reward_mode: history_buffer``，因此 env worker 会按 env 维护历史窗口，
-只在窗口有效时将历史输入发送给 reward worker：
+这会安装 MLP policy 示例所需的 Qwen3-VL reward runtime，并包含 SGLang
+reward 后端所需的依赖。
+
+随后在 reward 配置中使用 ``model_type: history_vlm``。设置
+``inference_backend: hf`` 会使用 Hugging Face/Transformers 后端；设置
+``inference_backend: sglang`` 会启用 SGLang 后端。QwenTrend 示例使用
+``reward_mode: history_buffer``，因此 env worker 会按 env 维护历史窗口，只在窗口
+有效时将历史输入发送给 reward worker：
 
 .. code-block:: yaml
 
@@ -330,7 +336,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       inference_backend: hf
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -360,16 +366,76 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 关键字段说明：
 
+- ``model_type`` 选择 reward model 类型。历史窗口 VLM reward 使用 ``history_vlm``。
+- ``inference_backend`` 选择推理后端。设置为 ``hf`` 时使用
+  Hugging Face/Transformers，设置为 ``sglang`` 时使用 SGLang。
 - ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效历史长度。
 - ``input_builder_name`` 将历史窗口转换为双视角 VLM 输入。
 - ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
 - ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
+
+使用 Hugging Face/Transformers 后端时，保留 ``inference_backend: hf``，
+并按需配置 ``lora_path``：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: hf
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+
+SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history
+buffer 配置。当设置 ``inference_backend: sglang`` 时，embodied entrypoint 会
+启动 Ray 管理的 SGLang ``reward_server`` group 和 ``sglang-router`` group，
+并把 router 的 ``/v1`` URL 写入 reward model config。reward worker 通过兼容
+OpenAI 的 ``/v1/chat/completions`` API 为每个有效 history-window input 并发
+提交一个请求。每个请求会将历史帧作为多个 ``image_url`` data URL 放在同一个
+chat message 中发送，因此该后端不使用进程内 ``sglang.Engine``，也不生成临时
+MP4/video 输入。
+
+通过覆盖 backend 字段选择 SGLang：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+
+RLinf 默认会启动 Ray 管理的 server 和 router。也可以覆盖 server/router 暴露
+参数，或指向用户自己管理的 server。请求并发由 SGLang server 控制，例如通过
+``sglang_server_args.max_running_requests`` 设置：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+       sglang_server_args:
+         host: "127.0.0.1"
+         port: 30000
+         server_startup_timeout: 600
+         served_model_name: qwentrend-reward
+         # api_base: "http://127.0.0.1:30000/v1"  # 设置后使用用户自管 server
+         max_running_requests: 64
+       sglang_router_args:
+         policy: cache_aware
+         worker_startup_timeout_secs: 1800
+         request_timeout_secs: 1800
+
+自动启动 SGLang 时，请把 server GPU 放到专用 ``reward_server`` component 上。
+例如 ``reward_server: 0-1:0`` 会启动一个可见两张 GPU 的 server worker；
+RLinf 会据此为该 server 推断 ``tp_size: 2``。``reward`` component 仍然是调用
+API 的 reward worker。
 
 启动 MLP RL：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
 4. 总结
 ^^^^^^^^^^^^

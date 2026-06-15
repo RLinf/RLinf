@@ -325,6 +325,7 @@ class WorkerGroup(Generic[WorkerClsType]):
             if callable(getattr(self._worker_cls, func))
             and func.startswith("_")
             and not func.startswith("__")
+            and func != "_close"
         ]
         for func_name in func_list:
             if func_name in worker_group_cls_func_list:

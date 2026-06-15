@@ -55,6 +55,7 @@ class EnvOutput:
     terminations: Optional[torch.Tensor] = None  # [B]
     truncations: Optional[torch.Tensor] = None  # [B]
     rewards: Optional[torch.Tensor] = None  # [B]
+    successes: Optional[torch.Tensor] = None  # [B]
     env_infos: Optional[dict[str, Any]] = None
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
@@ -80,6 +81,9 @@ class EnvOutput:
         )
         self.rewards = (
             self.rewards.cpu().contiguous() if self.rewards is not None else None
+        )
+        self.successes = (
+            self.successes.cpu().contiguous() if self.successes is not None else None
         )
         self.env_infos = (
             put_tensor_device(self.env_infos, "cpu")
@@ -223,6 +227,16 @@ class EnvOutput:
         merged_terminations = _merge_optional_tensor_field("terminations")
         merged_truncations = _merge_optional_tensor_field("truncations")
         merged_rewards = _merge_optional_tensor_field("rewards")
+        merged_successes = _merge_optional_tensor_field("successes")
+        env_infos_list = [env_output.get("env_infos") for env_output in env_outputs]
+        if all(env_infos is None for env_infos in env_infos_list):
+            merged_env_infos = None
+        elif any(env_infos is None for env_infos in env_infos_list):
+            raise ValueError(
+                "Inconsistent field 'env_infos': some shards are None while others contain metadata."
+            )
+        else:
+            merged_env_infos = cat_list_of_dict_tensor(env_infos_list, dim=0)
         merged_intervene_actions = _merge_optional_tensor_field(
             "intervene_actions",
             allow_partial_none=True,
@@ -241,6 +255,8 @@ class EnvOutput:
             terminations=merged_terminations,
             truncations=merged_truncations,
             rewards=merged_rewards,
+            successes=merged_successes,
+            env_infos=merged_env_infos,
             intervene_actions=merged_intervene_actions,
             intervene_flags=merged_intervene_flags,
         ).to_dict()
@@ -258,6 +274,7 @@ class EnvOutput:
         env_output_dict["terminations"] = self.terminations
         env_output_dict["truncations"] = self.truncations
         env_output_dict["rewards"] = self.rewards
+        env_output_dict["successes"] = self.successes
         env_output_dict["env_infos"] = self.env_infos
         env_output_dict["intervene_actions"] = self.intervene_actions
         env_output_dict["intervene_flags"] = self.intervene_flags
@@ -347,6 +364,7 @@ class ChunkStepResult:
     truncations: torch.Tensor = None  # [B, 1]
     terminations: torch.Tensor = None  # [B, 1]
     rewards: torch.Tensor = None  # [B, 1]
+    successes: torch.Tensor = None  # [B, 1]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
     versions: torch.Tensor = None  # [B, 1]
 
@@ -365,6 +383,8 @@ class ChunkStepResult:
             self.truncations = self.truncations.cpu().contiguous()
         if self.rewards is not None:
             self.rewards = self.rewards.cpu().contiguous()
+        if self.successes is not None:
+            self.successes = self.successes.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
         if self.versions is not None:
@@ -382,6 +402,7 @@ class Trajectory:
     actions: torch.Tensor = None
     intervene_flags: torch.Tensor = None
     rewards: torch.Tensor = None
+    successes: torch.Tensor = None
     terminations: torch.Tensor = None
     truncations: torch.Tensor = None
     dones: torch.Tensor = None
@@ -467,6 +488,7 @@ class Trajectory:
 
             actions = apply_mask(self.actions, i)
             rewards = apply_mask(self.rewards, i)
+            successes = apply_mask(self.successes, i)
             prev_logprobs = apply_mask(self.prev_logprobs, i)
             prev_values = apply_mask(self.prev_values, i)
             intervene_flags = apply_mask(self.intervene_flags, i)
@@ -491,6 +513,7 @@ class Trajectory:
                     actions=actions,
                     intervene_flags=intervene_flags,
                     rewards=rewards,
+                    successes=successes,
                     terminations=terminations,
                     truncations=truncations,
                     dones=dones,
@@ -519,6 +542,7 @@ class EmbodiedRolloutResult:
         default_factory=list
     )  # trajectory_length
     rewards: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
+    successes: list[torch.Tensor] = field(default_factory=list)  # trajectory_length
     terminations: list[torch.Tensor] = field(
         default_factory=list
     )  # trajectory_length + rollout_epoch
@@ -539,6 +563,10 @@ class EmbodiedRolloutResult:
 
     curr_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
     next_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
+    reward_assign_lengths: list[torch.Tensor] = field(
+        default_factory=list
+    )  # reward_length
+    reward_dones: list[torch.Tensor] = field(default_factory=list)  # reward_length
 
     def append_step_result(self, result: ChunkStepResult):
         if result.actions is not None:
@@ -548,6 +576,8 @@ class EmbodiedRolloutResult:
             )
         if result.rewards is not None:
             self.rewards.append(result.rewards)
+        if result.successes is not None:
+            self.successes.append(result.successes)
         if result.terminations is not None:
             self.terminations.append(result.terminations)
         if result.truncations is not None:
@@ -657,6 +687,8 @@ class EmbodiedRolloutResult:
             )
         if len(self.rewards) > 0:
             trajectory.rewards = torch.stack(self.rewards, dim=0).cpu().contiguous()
+        if len(self.successes) > 0:
+            trajectory.successes = torch.stack(self.successes, dim=0).cpu().contiguous()
         if len(self.terminations) > 0:
             trajectory.terminations = (
                 torch.stack(self.terminations, dim=0).cpu().contiguous()

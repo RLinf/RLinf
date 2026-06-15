@@ -14,7 +14,7 @@
 
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import torch
 from omegaconf import OmegaConf
@@ -96,12 +96,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.use_training_pipeline = False
         self.worker.collect_transitions = False
         self.worker.collect_prev_infos = True
-        self.worker.reward_mode = self.cfg.get("reward", {}).get(
-            "reward_mode", "per_step"
-        )
-        self.worker.history_reward_assign = self.cfg.get("reward", {}).get(
-            "history_reward_assign", True
-        )
+        self.worker.reward_pending_step_window = 1
+        self.worker.reward_mode = "default"
+        self.worker.history_reward_assign = False
         self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
 
@@ -167,21 +164,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         # 2. Interact (should consume the prefetch)
         import asyncio
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            # Mock send_rollout_trajectories as it's awaited
-            self.worker.send_rollout_trajectories = MagicMock(
-                return_value=asyncio.Future()
-            )
-            self.worker.send_rollout_trajectories.return_value.set_result(None)
+        # Mock send_rollout_trajectories as it's awaited
+        self.worker.send_rollout_trajectories = AsyncMock(return_value=None)
 
-            loop.run_until_complete(
-                self.worker.interact(input_channel, rollout_channel, None, None)
-            )
-        finally:
-            asyncio.set_event_loop(None)
-            loop.close()
+        asyncio.run(self.worker.interact(input_channel, rollout_channel, None, None))
 
         self.assertIsNone(self.worker._prefetched_train_bootstrap)
         # Verify that _bootstrap_and_send_train was NOT called during interact

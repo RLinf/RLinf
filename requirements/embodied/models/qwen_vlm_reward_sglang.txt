@@ -1,0 +1,11 @@
+# Reward-specific SGLang runtime override for Qwen3-VL embodied reward workers.
+# The base Ray-managed server/router components come from the agentic-sglang
+# extra; these pins intentionally override that base for Qwen3-VL support.
+sglang==0.5.5.post3
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0
+qwen-vl-utils
+transformers==4.57.1
+tokenizers>=0.22,<0.23
+xgrammar==0.1.25

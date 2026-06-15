@@ -20,13 +20,14 @@ cluster:
     env: 0-0
     rollout: 0-0
     reward: 0-0
+    reward_server: 0-1:0
 
 runner:
   task_type: embodied
   logger:
-    log_path: "/workspace/results/maniskill_ppo_mlp_qwentrend_reward"
+    log_path: "/workspace/results/maniskill_ppo_mlp_qwentrend_sglang_reward"
     project_name: rlinf
-    experiment_name: "ci-test"
+    experiment_name: "ci-test-sglang"
     logger_backends: ["tensorboard"]
 
   max_epochs: 2
@@ -49,6 +50,9 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
+  rollout_epoch: 1
+  eval_rollout_epoch: 1
+
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -67,12 +71,25 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.9
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  length_params:
+    max_new_token: 7
+    max_length: 1024
+    min_length: 1
+
 data:
   rollout_batch_size: 32
 
 env:
   train:
-    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple
@@ -112,7 +129,6 @@ env:
       render_mode: all
     use_3rd_view_as_extra: True
   eval:
-    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple
@@ -228,7 +244,7 @@ reward:
   model:
     model_type: history_vlm
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
-    inference_backend: hf
+    inference_backend: sglang
     lora_path: null
     gt_success_bonus: 20.0
     precision: bf16
@@ -261,6 +277,16 @@ reward:
     do_sample: false
     temperature: 0.0
     use_chat_template: true
+    sglang_server_args:
+      host: "127.0.0.1"
+      port: 30000
+      server_startup_timeout: 600
+      served_model_name: qwentrend-reward
+      max_running_requests: 64
+    sglang_router_args:
+      policy: cache_aware
+      worker_startup_timeout_secs: 1800
+      request_timeout_secs: 1800
 
 critic:
   use_critic_model: false
