@@ -62,12 +62,12 @@ algorithm:
     enable: True
     mode: local_correction
     deviation_patience: 3  # Take over after this many deviating chunks.
-    takeover_chunks: 2  # Min takeover chunks once triggered.
-    takeover_max_chunks: 4  # Max consecutive takeover chunks.
-    safe_yz_margin: 1.8  # y/z safety radius multiplier.
+    takeover_chunks: 3  # Min takeover chunks once triggered.
+    takeover_max_chunks: 6  # Max consecutive takeover chunks.
+    safe_yz_margin: 2.0  # y/z safety radius multiplier.
     progress_eps: 0.01  # Min x progress per chunk, in meters.
     yz_error_eps: 0.01  # Max y/z error growth per chunk, in meters.
-    near_hole_x_min: -0.04  # Start expert checks above this x threshold.
+    near_hole_x_min: -0.03  # Start expert checks above this x threshold.
     near_hole_yz_margin: 1.5  # y/z radius multiplier near the hole.
     exit_hole_x_min: -0.10  # Exit intervention below this x value.
     fallback_hole_radius: 0.035  # Fallback hole radius, in meters.
@@ -93,7 +93,7 @@ env:
   group_name: "EnvGroup"
   train:
     total_num_envs: 64  # Higher throughput, more sim memory.
-    seed: 20260604  # Train seed; eval stays fixed for comparison.
+    seed: 2026  # Train seed; eval stays fixed for comparison.
     auto_reset: False
     ignore_terminations: False
     use_fixed_reset_state_ids: False
@@ -188,13 +188,13 @@ actor:
       decoder_heads: 8
       mlp_hidden_dim: 256
       mlp_num_hidden_layers: 2
-      actor_noise_sigma: 0.002  # Fixed Gaussian std; eval uses the mean.
-      ref_action_dropout: 0.5  # Drop reference actions to force state usage.
+      actor_noise_sigma: 0.003  # Fixed Gaussian std; eval uses the mean.
+      ref_action_dropout: 0.4  # Drop reference actions to force state usage.
       bc_regularizer_beta: 3.0  # Fallback BC weight.
       warmup_bc_weight: 7.0  # BC weight during warmup.
       warmup_q_weight: 0.05
-      online_bc_weight: 2.7  # BC weight after ramp.
-      online_q_weight: 0.13  # Q weight after ramp.
+      online_bc_weight: 2.8  # BC weight after ramp.
+      online_q_weight: 0.15  # Q weight after ramp.
       delta_weight: 0.1  # Within-chunk delta penalty.
       critic_updates_per_actor: 2  # TD3 critic-to-actor ratio.
       replay_subsample_stride: 0  # 0 keeps boundary-only replay.

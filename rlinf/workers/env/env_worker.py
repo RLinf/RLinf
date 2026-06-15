@@ -35,7 +35,6 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -1772,8 +1771,9 @@ class EnvWorker(Worker):
             "reward_type": self.cfg.algorithm.reward_type,
             "loss_mask": rollout_batch.get("loss_mask", None),
             "loss_mask_sum": rollout_batch.get("loss_mask_sum", None),
-            "normalize_advantages": self.cfg.algorithm.get("normalize_advantages", True)
-            and not self.use_training_pipeline,
+            "normalize_advantages": self.cfg.algorithm.get(
+                "normalize_advantages", True
+            ),
         }
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
         rollout_batch.update(advantages_and_returns)
@@ -1824,9 +1824,6 @@ class EnvWorker(Worker):
         channel: Channel,
     ) -> None:
         pending_batches: list[tuple[int, dict[str, torch.Tensor]]] = []
-        batches_by_actor_rank: dict[int, list[dict[str, torch.Tensor]]] = defaultdict(
-            list
-        )
 
         with self.worker_timer("prepare_micro_batches"):
             for stage_id, rollout_result in enumerate(rollout_results):
@@ -1838,27 +1835,6 @@ class EnvWorker(Worker):
                 for (actor_rank, _), trajectory in zip(actor_splits, trajectories):
                     batch = self.prepare_pipeline_batch(trajectory)
                     pending_batches.append((actor_rank, batch))
-                    batches_by_actor_rank[actor_rank].append(batch)
-
-            if self.cfg.algorithm.get("normalize_advantages", True):
-                for actor_rank, batches in sorted(batches_by_actor_rank.items()):
-                    local_adv_stats = sum(
-                        masked_stats(batch["advantages"], batch.get("loss_mask"))
-                        for batch in batches
-                    )
-                    env_ranks = self.pipeline_actor_env_ranks[actor_rank]
-                    global_adv_stats = sum(
-                        self.broadcast(
-                            local_adv_stats if self._rank == src_rank else None,
-                            groups=[(self._group_name, env_ranks)],
-                            src=(self._group_name, src_rank),
-                        )
-                        for src_rank in env_ranks
-                    )
-                    for batch in batches:
-                        batch["advantages"] = normalize_from_stats(
-                            batch["advantages"], global_adv_stats
-                        )
 
             for actor_rank, batch in pending_batches:
                 for micro_batch in self.pack_pipeline_micro_batches(batch, actor_rank):
