@@ -56,7 +56,14 @@ templates_path = ["_templates"]
 exclude_patterns = []
 default_role = "code"
 autosummary_generate = True
-autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
+autodoc_mock_imports = [
+    "sglang",
+    "megatron",
+    "prismatic",
+    "libero",
+    "lerobot",
+    "openpi",
+]
 autodoc_class_signature = "separated"
 autodoc_typehints = "description"
 # autoclass_content = "both"

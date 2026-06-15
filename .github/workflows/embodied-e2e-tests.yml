@@ -371,6 +371,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft osmesa
+          ray stop
 
       - name: Clean up
         run: |
@@ -635,6 +636,20 @@ jobs:
           source .venv/bin/activate
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
+
+      - name: RLT Stage2 ManiSkill joint test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export RLT_MANISKILL_JOINT_DATASET=${RLT_MANISKILL_JOINT_DATASET:-/workspace/dataset/data/sft-ci-data/rlt_maniskill_joint}
+          export RLT_MANISKILL_JOINT_NORM_STATS=${RLT_MANISKILL_JOINT_NORM_STATS:-${RLT_MANISKILL_JOINT_DATASET}/norm_stats.json}
+          export RLT_MANISKILL_JOINT_SFT_MODEL=${RLT_MANISKILL_JOINT_SFT_MODEL:-/workspace/dataset/rlt_maniskill_joint_pi05_sft}
+          export RLT_STAGE2_STUDENT_MODEL=${RLT_STAGE2_STUDENT_MODEL:-${RLT_MANISKILL_JOINT_SFT_MODEL}}
+          export RLT_STAGE1_RL_TOKEN_PATH=${RLT_STAGE1_RL_TOKEN_PATH:-/workspace/dataset/rlt_stage1_maniskill_joint/checkpoints/global_step_1/actor/rl_token/rl_token_model.pt}
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh rlt_stage2_maniskill_joint
 
       - name: Libero-Spatial PPO test
         timeout-minutes: 20
@@ -1253,6 +1268,37 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d6
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-polaris-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export POLARIS_PATH=/workspace/dataset/polaris
+          bash requirements/install.sh embodied --model openpi --env polaris
+
+      - name: PolaRiS PPO OpenPI test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export POLARIS_DATA_PATH=/workspace/dataset/PolaRiS-Hub
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          bash tests/e2e_tests/embodied/run.sh polaris_ppo_openpi
 
       - name: Clean up
         run: |

@@ -153,7 +153,7 @@ rollout:
     model_path: ${actor.model.model_path}
     precision: ${actor.model.precision}
   expert_model:
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/RLinf/logs/20260531-16:37:53/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_8000/actor"
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
     precision: null
     act_as_vla_reference: True  # Expert is VLA reference only.
   enable_torch_compile: False
@@ -167,7 +167,7 @@ actor:
   seed: 1234
   enable_offload: False
   model:
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/RLinf/logs/20260531-16:37:53/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_1000/actor"
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft_or_stage1/checkpoints/global_step_xxx/actor"
     precision: null
     load_to_device: True
     num_action_chunks: 10  # Predict 10 actions per chunk.
@@ -176,9 +176,9 @@ actor:
     policy_setup: "panda-qpos"
     num_steps: 5
     rlt_stage2:
-      config_name: "pi05_rlt_joint"
-      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"  # Must match base/student VLA stats.
-      rl_token_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/RLinf/logs/20260603-23:07:52/rlt_stage1_maniskill_joint/checkpoints/global_step_5000/actor/rl_token/rl_token_model.pt"  # Stage1 RL-token checkpoint.
+      config_name: "pi05_rlt_maniskill_joint"
+      norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"  # Must match base/student VLA stats.
+      rl_token_path: "/path/to/rlt_stage1_maniskill_joint/checkpoints/global_step_xxx/actor/rl_token/rl_token_model.pt"  # Stage1 RL-token checkpoint.
       num_images_in_input: 2  # Base + wrist views.
       proprio_dim: 9  # x = [z_rl, proprio].
       embedding_dim: 2048  # RL-token width.

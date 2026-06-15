@@ -22,7 +22,10 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests
           source .venv/bin/activate
-          pytest tests/unit_tests
+          for file in tests/unit_tests/test_*.py; do
+              pytest "$file"
+              ray stop
+          done
 
       - name: Run doctest
         timeout-minutes: 20
@@ -54,7 +57,10 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH 
           source .venv/bin/activate
-          pytest tests/unit_tests
+          for file in tests/unit_tests/test_*.py; do
+              pytest "$file"
+              ray stop
+          done
 
   scheduler-unit-tests-rocm:
     runs-on: rocm
@@ -77,7 +83,10 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
-          pytest tests/unit_tests
+          for file in tests/unit_tests/test_*.py; do
+              pytest "$file"
+              ray stop
+          done
 
       - name: Clean up
         run: |

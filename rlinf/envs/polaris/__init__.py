@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RLT Stage 2 model package."""
+from .polaris_env import PolarisEnv
 
-from __future__ import annotations
-
-from omegaconf import DictConfig
-
-
-def get_model(cfg: DictConfig, torch_dtype=None):
-    del torch_dtype
-    from .rlt_stage2_policy import RLTStage2Policy
-
-    return RLTStage2Policy(cfg)
+__all__ = ["PolarisEnv"]

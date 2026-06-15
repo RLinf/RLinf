@@ -92,12 +92,6 @@ learner 侧 replay，以及 actor-only weight sync 是否一致。
    # 可选：export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
-4. 准备 OpenPI / openpi-RLT 依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-本示例依赖 OpenPI 配置和 RLT 相关 dataconfig。若你的环境没有自动提供
-``openpi-RLT``，请确保其源码路径能被 ``PYTHONPATH`` 找到。仓库中的相关脚本会优先尝试
-从 RLinf 邻目录下的 ``openpi-RLT/src`` 自动导入。
 
 数据格式与目录约定
 ------------------
@@ -180,7 +174,7 @@ LeRobot 格式数据集。
 若你直接使用绝对路径采集，也可以把数据集移动到 ``HF_LEROBOT_HOME`` 下，再以 repo name 方式生成统计。
 
 Step 2：运行 Stage1 RL token 训练
--------------------------------
+---------------------------------
 
 Stage1 的目标是训练 RL token encoder/decoder，不直接更新大 VLA 主干。主配置为：
 
@@ -249,7 +243,7 @@ eval 配置：
      rollout.model.model_path=/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor
 
 Step 3：运行 Stage2 在线 TD3 训练
---------------------------------
+---------------------------------
 
 Stage2 使用冻结 VLA + 冻结 RL token + 小 actor-critic 的在线 RL 流程。主配置为：
 

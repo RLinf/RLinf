@@ -197,6 +197,17 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/polaris.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="polaris.html" style="text-decoration: underline; color: blue;">
+           <b>基于 PolaRiS 仿真平台的强化学习</b>
+         </a><br>
+         PolaRiS + OpenPI + PPO 训练桌面操作任务
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <img src="https://github.com/RLinf/misc/raw/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -498,6 +509,7 @@
    :maxdepth: 2
 
    maniskill
+   maniskill_rlt_joint
    libero
    libero_amd
    libero_ascend
@@ -515,6 +527,7 @@
    wan
    gsenv
    iql_d4rl
+   polaris
    pi0
    gr00t
    lingbotvla

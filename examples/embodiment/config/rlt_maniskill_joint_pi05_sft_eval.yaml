@@ -144,7 +144,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/sft/checkpoints/global_step_xxx/actor"
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
     precision: null
     model_type: "openpi"
     num_action_chunks: 10
@@ -162,8 +162,8 @@ actor:
       action_chunk: ${actor.model.num_action_chunks}
       action_env_dim: ${actor.model.action_dim}
     openpi_data:
-      repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint"
-      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/rlt_maniskill_joint/norm_stats.json"
+      repo_id: "/path/to/rlt_maniskill_joint"
+      norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
       default_prompt: "insert the peg in the hole"
 
   optim:

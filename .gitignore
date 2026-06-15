@@ -22,7 +22,6 @@ PKG-INFO
 *.egg-info/
 .claude/settings.json
 data/*
-openpi-RLT/*
 tmp/*
 tmp
 openpi-RLT

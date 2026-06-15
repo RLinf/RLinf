@@ -102,14 +102,6 @@ Then switch to the correct environment inside the container:
    # Optional: export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
-4. Prepare OpenPI / openpi-RLT dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This example depends on OpenPI configs and RLT-specific dataconfig wiring. If your
-environment does not already provide ``openpi-RLT``, make sure its source path is
-available in ``PYTHONPATH``. The scripts in this repo will first try to import it from
-``../openpi-RLT/src`` relative to RLinf.
-
 Dataset Layout
 --------------
 

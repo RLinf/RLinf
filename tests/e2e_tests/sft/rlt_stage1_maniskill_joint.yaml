@@ -8,29 +8,29 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:EMBODIED_PATH}/config/
+    - file://${oc.env:REPO_PATH}/examples/sft/config
 
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor,env,rollout: 0-1
 
 runner:
   task_type: sft
   logger:
-    log_path: "../results"
+    log_path: "/workspace/results/rlt_stage1_maniskill_joint"
     project_name: rlinf
-    experiment_name: "rlt_stage1_maniskill_joint"
-    logger_backends: ["wandb"]
+    experiment_name: "rlt_stage1_maniskill_joint_ci"
+    logger_backends: ["tensorboard"]
 
   max_epochs: -1
-  max_steps: 5000
+  max_steps: 1
   val_check_interval: -1
-  save_interval: 1000
+  save_interval: -1
 
 data:
   train_data_paths:
-    - dataset_path: "/path/to/rlt_maniskill_joint"
+    - dataset_path: ${oc.env:RLT_MANISKILL_JOINT_DATASET,/workspace/dataset/data/sft-ci-data/rlt_maniskill_joint}
       weight: 1.0
 
 algorithm:
@@ -39,17 +39,17 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 8
-  global_batch_size: 64
+  micro_batch_size: 1
+  global_batch_size: 2
   seed: 0
 
   model:
     precision: null
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_xxx/actor"
+    model_path: ${oc.env:RLT_MANISKILL_JOINT_SFT_MODEL,/workspace/dataset/rlt_maniskill_joint_pi05_sft}
     num_action_chunks: 10
     action_dim: 8
     rlt_stage1:
-      config_name: "pi05_rlt_joint"
+      config_name: "pi05_rlt_maniskill_joint"
       norm_stats_path: ${actor.openpi_data.norm_stats_path}
       num_images_in_input: 2
       num_steps: 5
@@ -59,11 +59,10 @@ actor:
       decoder_layers: 2
       decoder_heads: 8
       vla_finetune_alpha: 0.0
-      gradient_checkpointing: True
+      gradient_checkpointing: False
 
   openpi_data:
-    repo_id: "/path/to/rlt_maniskill_joint"
-    norm_stats_path: "/path/to/rlt_maniskill_joint/norm_stats.json"
+    norm_stats_path: ${oc.env:RLT_MANISKILL_JOINT_NORM_STATS,/workspace/dataset/data/sft-ci-data/rlt_maniskill_joint/norm_stats.json}
     default_prompt: "insert the peg in the hole"
 
   optim:
@@ -74,8 +73,8 @@ actor:
     adam_eps: 1.0e-08
     weight_decay: 1.0e-5
     clip_grad: 1.0
-    total_training_steps: 5000
-    lr_warmup_steps: 500
+    total_training_steps: 1
+    lr_warmup_steps: 0
     lr_scheduler: "cosine"
     num_cycles: 0.5
     min_lr: 1.0e-5
