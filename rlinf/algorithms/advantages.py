@@ -350,3 +350,32 @@ def compute_raw_advantages(
             advantages = (advantages - valid.mean()) / (valid.std() + 1e-5)
 
     return advantages, None
+
+
+@register_advantage("embodied_sft")
+def compute_embodied_sft_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    **kwargs,
+):
+    """Advantage function for embodied SFT (behavior cloning).
+
+    SFT / behavior cloning does not use RL advantages — the training
+    signal comes directly from imitation of demonstration actions.  We
+    return a dummy zero advantage so the existing training loop can
+    proceed without modification; the ``embodied_sft`` loss function
+    ignores advantages entirely and computes MSE between predicted and
+    demonstration actions.
+
+    Args:
+        rewards: Reward / score values.  Shape ``[T, B]`` or ``[T*B]``.
+        loss_mask: Mask of valid entries, same shape as *rewards*.
+
+    Returns:
+        Tuple of ``(advantages, None)`` where *advantages* is a zero
+        tensor with the same shape as *rewards*.
+    """
+    if rewards.ndim == 2:
+        rewards = rewards.reshape(-1)
+    advantages = torch.zeros_like(rewards).unsqueeze(0).expand_as(loss_mask) * loss_mask
+    return advantages, None

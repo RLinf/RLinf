@@ -61,15 +61,17 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
     def init_worker(self):
-        self.setup_model_and_optimizer(initialize_target=True)
+        is_sft = self.cfg.algorithm.loss_type == "embodied_sft"
+        self.setup_model_and_optimizer(initialize_target=not is_sft)
         self.setup_sac_components()
-        self.soft_update_target_model(tau=1.0)
+        if not is_sft:
+            self.soft_update_target_model(tau=1.0)
         if self.use_dsrl:
             self._init_target_shadow()
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
-        if self.cfg.actor.get("compile_model", False):
+        if self.cfg.actor.get("compile_model", False) and not is_sft:
             self.model = torch.compile(
                 self.model, mode="default"
             )  # max-autotune-no-cudagraphs
@@ -217,6 +219,27 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                     local_rank=self._rank,
                     world_size=self._world_size,
                 )
+            elif self.cfg.algorithm.demo_buffer.get("dataset_path", None) is not None:
+                # Load from a LeRobot-format dataset (written by CollectEpisode
+                # or LeRobotDatasetWriter).
+                from rlinf.data.lerobot_to_buffer import (
+                    load_lerobot_dataset_to_demo_buffer,
+                )
+
+                dataset_path = self.cfg.algorithm.demo_buffer.dataset_path
+                state_dim = self.cfg.actor.model.get("state_dim", 7)
+                action_dim = self.cfg.actor.model.get("action_dim", 7)
+                total = load_lerobot_dataset_to_demo_buffer(
+                    dataset_path=dataset_path,
+                    demo_buffer=self.demo_buffer,
+                    state_dim=state_dim,
+                    action_dim=action_dim,
+                )
+                if self._rank == 0:
+                    self.log_info(
+                        f"Loaded {total} frames from LeRobot dataset "
+                        f"{dataset_path} into demo buffer"
+                    )
 
         if self.cfg.algorithm.replay_buffer.get("enable_preload", False):
             buffer_dataset_cls = PreloadReplayBufferDataset
@@ -701,7 +724,15 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("run_training")
     def run_training(self):
-        """SAC training using replay buffer"""
+        """SAC or SFT training using replay/demo buffer.
+
+        When ``loss_type == "embodied_sft"``, runs a lightweight
+        behaviour-cloning loop that minimises negative log-likelihood
+        of demonstration actions (no critic, no Q-network, no SAC).
+        """
+        if self.cfg.algorithm.loss_type == "embodied_sft":
+            return self._run_sft_training()
+
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
@@ -745,6 +776,109 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         torch.distributed.barrier()
         torch.cuda.empty_cache()
         return mean_metric_dict
+
+    def _run_sft_training(self):
+        """Run a pure SFT / behaviour-cloning training step.
+
+        Loads batches from the demo buffer (populated from a LeRobot
+        dataset) and minimises the negative log-likelihood of the
+        demonstration actions under the predicted Gaussian distribution.
+        """
+        from rlinf.algorithms.registry import policy_loss
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
+
+        # Ensure demo buffer has data.
+        if self.demo_buffer is None or len(self.demo_buffer) == 0:
+            self.log_on_first_rank(
+                "Demo buffer empty — skipping SFT training step."
+            )
+            return {}
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        self.model.train()
+        self.optimizer.zero_grad()
+
+        avg_loss = 0.0
+        total_tokens = 0
+
+        for idx in range(self.gradient_accumulation):
+            backward_ctx = self.before_micro_batch(
+                self.model,
+                is_last_micro_batch=(idx + 1) == self.gradient_accumulation,
+            )
+
+            try:
+                micro_batch = next(self.buffer_dataloader_iter)
+            except StopIteration:
+                self.buffer_dataloader_iter = iter(self.buffer_dataloader)
+                micro_batch = next(self.buffer_dataloader_iter)
+
+            micro_batch = put_tensor_device(micro_batch, self.device)
+            forward_inputs = micro_batch.get("forward_inputs", None)
+            loss_mask = micro_batch.get("loss_mask", None)
+
+            with self.amp_context:
+                output_dict = self.model(
+                    forward_inputs=forward_inputs,
+                    compute_logprobs=True,
+                    compute_entropy=False,
+                    compute_values=False,
+                )
+
+                loss_kwargs = {
+                    "loss_type": "embodied_sft",
+                    "logprobs": output_dict["logprobs"],
+                    "old_logprobs": micro_batch.get("prev_logprobs", output_dict["logprobs"]),
+                    "advantages": torch.zeros_like(output_dict["logprobs"][..., :1]),
+                    "loss_mask": loss_mask,
+                }
+                loss, _metrics = policy_loss(**loss_kwargs)
+
+            loss = loss / self.gradient_accumulation
+            avg_loss += loss.detach().item()
+            with backward_ctx:
+                self.grad_scaler.scale(loss).backward()
+
+            total_tokens += (
+                loss_mask.sum().item() if loss_mask is not None
+                else output_dict["logprobs"].numel()
+            )
+
+        grad_norm, lr_list = self.optimizer_step()
+        self.optimizer.zero_grad(set_to_none=True)
+        lr_value = (
+            lr_list[0] if len(lr_list) > 0
+            else self.optimizer.param_groups[0]["lr"]
+        )
+        self.lr_scheduler.step()
+
+        self.log_on_first_rank(
+            f"[SFT] step={self.global_step} loss={avg_loss:.6f} "
+            f"lr={lr_value:.2e} grad_norm={grad_norm:.2f}"
+        )
+
+        return {
+            "actor/sft_loss": avg_loss,
+            "actor/token_num": total_tokens,
+            "actor/learning_rate": lr_value,
+            "actor/grad_norm": (
+                float(grad_norm) if isinstance(grad_norm, torch.Tensor)
+                else grad_norm
+            ),
+        }
 
     @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self):
