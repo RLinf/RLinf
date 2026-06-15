@@ -15,9 +15,12 @@
 import torch
 
 from rlinf.data.embodied_io_struct import ChunkStepResult, EmbodiedRolloutResult
+from rlinf.models.embodiment.rlt_stage2.rollout_result_adapter import (
+    update_last_rlt_action_metadata,
+)
 
 
-def test_update_last_actions_updates_actions_and_sources_without_rewriting_refs():
+def test_update_last_actions_updates_actions_without_rewriting_rlt_refs():
     rollout_result = EmbodiedRolloutResult()
     rollout_result.append_step_result(
         ChunkStepResult(
@@ -79,6 +82,22 @@ def test_update_last_actions_updates_actions_and_sources_without_rewriting_refs(
     )
     assert torch.equal(
         last_forward_inputs["source_chunk"],
+        torch.tensor([[1, 0]], dtype=torch.uint8),
+    )
+    assert torch.equal(
+        last_forward_inputs["source"],
+        torch.tensor([[3]], dtype=torch.uint8),
+    )
+    assert torch.equal(
+        last_forward_inputs["intervention_flags"],
+        torch.tensor([[True, False]], dtype=torch.bool),
+    )
+    assert "model_action" in last_forward_inputs
+
+    update_last_rlt_action_metadata(rollout_result, intervene_flags)
+
+    assert torch.equal(
+        last_forward_inputs["source_chunk"],
         torch.tensor([[2, 0]], dtype=torch.uint8),
     )
     assert torch.equal(
@@ -89,14 +108,10 @@ def test_update_last_actions_updates_actions_and_sources_without_rewriting_refs(
         last_forward_inputs["intervention_flag"],
         torch.tensor([[True]], dtype=torch.bool),
     )
-    assert torch.equal(
-        last_forward_inputs["intervention_flags"],
-        torch.tensor([[True, False]], dtype=torch.bool),
-    )
     assert "model_action" not in last_forward_inputs
 
 
-def test_update_last_actions_marks_uniform_human_source_as_human():
+def test_rlt_metadata_update_marks_uniform_human_source_as_human():
     rollout_result = EmbodiedRolloutResult()
     rollout_result.append_step_result(
         ChunkStepResult(
@@ -110,6 +125,10 @@ def test_update_last_actions_marks_uniform_human_source_as_human():
 
     rollout_result.update_last_actions(
         intervene_actions=torch.tensor([[9.0, 9.0, 8.0, 8.0]], dtype=torch.float32),
+        intervene_flags=torch.tensor([[True, True]], dtype=torch.bool),
+    )
+    update_last_rlt_action_metadata(
+        rollout_result,
         intervene_flags=torch.tensor([[True, True]], dtype=torch.bool),
     )
 

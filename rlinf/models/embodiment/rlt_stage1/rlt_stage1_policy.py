@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import torch
 from omegaconf import DictConfig
+from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
+from rlinf.utils.pytree import register_pytree_dataclasses
 
 from .rl_token import RLTokenModel
 from .vla_wrapper import Stage1VLAWrapper
@@ -82,9 +85,10 @@ class RLTStage1Policy(torch.nn.Module, BasePolicy):
             return self.default_forward(**kwargs)
         raise NotImplementedError(f"Unsupported forward_type for RLT Stage 1: {forward_type}")
 
-    def sft_forward(self, data: dict[str, Any], **kwargs) -> dict[str, torch.Tensor]:
-        observation = data["observation"]
-        actions = data["actions"].to(self.device, dtype=torch.float32)
+    def sft_forward(
+        self, data: dict[str, Any] | tuple[Any, Any], **kwargs
+    ) -> dict[str, torch.Tensor]:
+        observation, actions = self._prepare_sft_batch(data)
 
         if self.alpha > 0:
             z, pad_mask, l_vla = self.vla.compute_vla_loss_with_embeddings(
@@ -121,6 +125,47 @@ class RLTStage1Policy(torch.nn.Module, BasePolicy):
             key: value for key, value in metrics.items() if key != "loss"
         }
         return metrics
+
+    def _prepare_sft_batch(
+        self, data: dict[str, Any] | tuple[Any, Any]
+    ) -> tuple[Any, torch.Tensor]:
+        if isinstance(data, dict):
+            observation = data["observation"]
+            actions = data["actions"]
+        else:
+            observation, actions = data
+
+        register_pytree_dataclasses(observation)
+        observation = tree_map(
+            lambda x: (
+                torch.as_tensor(x, device=self.device).contiguous().clone()
+                if x is not None
+                else x
+            ),
+            observation,
+        )
+        actions = torch.as_tensor(actions, device=self.device, dtype=torch.float32)
+        return observation, actions.contiguous()
+
+    def save_sft_artifacts(
+        self, model_state: dict[str, Any], save_path: str, step: int
+    ) -> None:
+        rl_token_state = {
+            key.replace("rl_token_model.", "", 1): value
+            for key, value in model_state.items()
+            if key.startswith("rl_token_model.")
+        }
+        if not rl_token_state:
+            raise RuntimeError(
+                "RLT Stage 1 checkpoint is missing rl_token_model.* parameters."
+            )
+
+        rl_token_dir = os.path.join(save_path, "rl_token")
+        os.makedirs(rl_token_dir, exist_ok=True)
+        torch.save(
+            {"model_state_dict": rl_token_state, "step": step},
+            os.path.join(rl_token_dir, "rl_token_model.pt"),
+        )
 
     def default_forward(self, **kwargs):
         raise NotImplementedError("RLT Stage 1 does not use default_forward.")

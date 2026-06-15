@@ -101,6 +101,20 @@ class RLTStage2PolicyInfoAdapter:
         states[stage_id] = controller.state
         return policy_info
 
+    def update_last_action_metadata(
+        self,
+        *,
+        rollout_result: Any,
+        intervene_flags: torch.Tensor,
+    ) -> None:
+        if not self.local_correction_enabled():
+            return
+        from rlinf.models.embodiment.rlt_stage2.rollout_result_adapter import (
+            update_last_rlt_action_metadata,
+        )
+
+        update_last_rlt_action_metadata(rollout_result, intervene_flags)
+
     def enabled(self, mode: Literal["train", "eval"]) -> bool:
         return self.local_correction_enabled() and self.env_type(mode) == "maniskill"
 

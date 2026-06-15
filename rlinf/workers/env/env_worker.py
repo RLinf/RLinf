@@ -51,40 +51,7 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
-
-
-class _DisabledRLTPolicyInfoAdapter:
-    def init_stage(self, **kwargs):
-        return None
-
-    def update_stage(self, **kwargs):
-        return None
-
-
-def _build_rlt_policy_info_adapter(cfg, train_batch_size, eval_batch_size):
-    intervention_cfg = cfg.algorithm.get("intervention", {})
-    is_rlt_stage2 = (
-        cfg.algorithm.get("loss_type", None) == "rlt_td3"
-        and cfg.actor.model.get("model_type", None) == "rlt_stage2"
-    )
-    train_env_type = str(cfg.env.get("train", {}).get("env_type", "")).lower()
-    eval_env_type = str(cfg.env.eval.get("env_type", "")).lower()
-    is_maniskill = train_env_type == "maniskill" or eval_env_type == "maniskill"
-    if (
-        not is_rlt_stage2
-        or not bool(intervention_cfg.get("enable", False))
-        or str(intervention_cfg.get("mode", "local_correction")) != "local_correction"
-        or not is_maniskill
-    ):
-        return _DisabledRLTPolicyInfoAdapter()
-
-    from rlinf.envs.maniskill.rlt_policy_info import RLTStage2PolicyInfoAdapter
-
-    return RLTStage2PolicyInfoAdapter(
-        cfg=cfg,
-        train_batch_size=train_batch_size,
-        eval_batch_size=eval_batch_size,
-    )
+from rlinf.workers.env.policy_info_adapter import build_policy_info_adapter
 
 
 class EnvWorker(Worker):
@@ -193,7 +160,7 @@ class EnvWorker(Worker):
         self.actor_split_num = self.get_actor_split_num()
         if self.use_training_pipeline and not self.only_eval:
             self._init_pipeline_params()
-        self.rlt_policy_info_adapter = _build_rlt_policy_info_adapter(
+        self.policy_info_adapter = build_policy_info_adapter(
             self.cfg,
             train_batch_size=(
                 self.train_num_envs_per_stage if not self.only_eval else None
@@ -263,7 +230,7 @@ class EnvWorker(Worker):
                 f"{self.cfg.env.eval.max_steps_per_rollout_epoch}"
             )
             self.eval_policy_info_list = [
-                self.rlt_policy_info_adapter.init_stage(
+                self.policy_info_adapter.init_stage(
                     stage_id=i,
                     mode="eval",
                     env=self.eval_env_list[i],
@@ -547,7 +514,7 @@ class EnvWorker(Worker):
                     self.last_obs_list.append(extracted_obs)
                     self.last_intervened_info_list.append((None, None))
                     self.last_policy_info_list.append(
-                        self.rlt_policy_info_adapter.init_stage(
+                        self.policy_info_adapter.init_stage(
                             stage_id=i,
                             mode="train",
                             env=self.env_list[i],
@@ -797,7 +764,7 @@ class EnvWorker(Worker):
                 intervene_actions = final_info["intervene_action"]
                 intervene_flags = final_info["intervene_flag"]
 
-        policy_info = self.rlt_policy_info_adapter.update_stage(
+        policy_info = self.policy_info_adapter.update_stage(
             infos=infos,
             chunk_dones=chunk_dones,
             stage_id=stage_id,
@@ -887,7 +854,7 @@ class EnvWorker(Worker):
                 for key in infos["episode"]:
                     env_info[key] = infos["episode"][key][newly_done].cpu()
 
-        policy_info = self.rlt_policy_info_adapter.update_stage(
+        policy_info = self.policy_info_adapter.update_stage(
             infos=infos,
             chunk_dones=chunk_dones,
             stage_id=stage_id,
@@ -1370,7 +1337,7 @@ class EnvWorker(Worker):
                     ),
                     intervene_actions=None,
                     intervene_flags=None,
-                    policy_info=self.rlt_policy_info_adapter.init_stage(
+                    policy_info=self.policy_info_adapter.init_stage(
                         stage_id=stage_id,
                         mode="train",
                         env=self.env_list[stage_id],
@@ -1504,6 +1471,10 @@ class EnvWorker(Worker):
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
+                        self.policy_info_adapter.update_last_action_metadata(
+                            rollout_result=self.rollout_results[stage_id],
+                            intervene_flags=env_output.intervene_flags,
+                        )
 
                     reward_model_output = None
                     if reward_channel is not None and chunk_step_idx != 0:
@@ -1621,6 +1592,10 @@ class EnvWorker(Worker):
                     self.rollout_results[stage_id].update_last_actions(
                         env_output.intervene_actions,
                         env_output.intervene_flags,
+                    )
+                    self.policy_info_adapter.update_last_action_metadata(
+                        rollout_result=self.rollout_results[stage_id],
+                        intervene_flags=env_output.intervene_flags,
                     )
 
                 reward_model_output = None
