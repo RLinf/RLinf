@@ -712,7 +712,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             actor_bc_losses = []
             actor_bc_ref_losses = []
             actor_bc_human_losses = []
-            actor_bc_human_weighted_losses = []
             actor_human_mask_ratios = []
             self.optimizer.zero_grad()
             self.model.set_online_critic_requires_grad(False)
@@ -757,9 +756,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                             bc_weight=bc_weight,
                             q_weight=q_weight,
                             delta_weight=delta_weight,
-                            human_bc_weight=float(
-                                stage2_cfg.get("human_bc_weight", 0.0)
-                            ),
                         )
                         loss = actor_total_loss / self.gradient_accumulation
                     self.grad_scaler.scale(loss).backward()
@@ -776,11 +772,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 )
                 actor_bc_human_losses.append(
                     float(actor_loss_metrics["bc_human_loss"].float().item())
-                )
-                actor_bc_human_weighted_losses.append(
-                    float(
-                        actor_loss_metrics["bc_human_weighted_loss"].float().item()
-                    )
                 )
                 actor_human_mask_ratios.append(
                     float(actor_loss_metrics["human_mask_ratio"].float().item())
@@ -806,12 +797,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                     "actor/bc_loss": float(np.mean(actor_bc_losses)),
                     "actor/bc_ref_loss": float(np.mean(actor_bc_ref_losses)),
                     "actor/bc_human_loss": float(np.mean(actor_bc_human_losses)),
-                    "actor/bc_human_weighted_loss": float(
-                        np.mean(actor_bc_human_weighted_losses)
-                    ),
-                    "actor/human_bc_weight": float(
-                        stage2_cfg.get("human_bc_weight", 0.0)
-                    ),
                     "actor/human_mask_ratio": float(np.mean(actor_human_mask_ratios)),
                 }
             )
