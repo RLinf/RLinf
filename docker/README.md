@@ -8,35 +8,13 @@ RLinf provides a unified Dockerfile for both the math reasoning image and the va
 To build the Docker image, run the following command **in the RLinf root directory**:
 
 ```shell
-export BUILD_TARGET=reason # or one of the embodied-* targets listed below
+export BUILD_TARGET=reason # or one of the embodied-* targets defined in the Dockerfile
 docker build -f docker/Dockerfile --build-arg BUILD_TARGET=$BUILD_TARGET -t rlinf:$BUILD_TARGET .
 ```
 
 ### Available `BUILD_TARGET` values
 
-| `BUILD_TARGET` | Environment | Installed venvs (`/opt/venv/<name>`) |
-| --- | --- | --- |
-| `reason` | (math reasoning, no simulator) | `reason` |
-| `embodied-maniskill_libero` | ManiSkill / LIBERO | `openvla`, `openvla-oft`, `openpi`, `gr00t`, `gr00t_n1d6`, `dexbotic`, `starvla`, `abot_m0` |
-| `embodied-behavior-openvlaoft` | BEHAVIOR | `openvla-oft` |
-| `embodied-behavior-openpi` | BEHAVIOR | `openpi` |
-| `embodied-metaworld` | MetaWorld | `openvla-oft`, `openpi` |
-| `embodied-calvin` | CALVIN | `openvla-oft`, `openpi` |
-| `embodied-robocasa` | RoboCasa | `openpi` |
-| `embodied-isaaclab` | IsaacLab | `gr00t`, `openpi` |
-| `embodied-franka` | Franka (Ubuntu 20.04 + ROS Noetic, GPU-agnostic) | `franka-0.10.0`, `franka-0.13.3`, `franka-0.14.1`, `franka-0.15.0`, `franka-0.18.0`, `franka-0.19.0` |
-| `embodied-robotwin` | RoboTwin | `openvla-oft`, `openpi`, `lingbotvla` |
-| `embodied-opensora` | OpenSora | `openvla-oft` |
-| `embodied-wan` | WAN | `openvla-oft` |
-| `embodied-frankasim` | FrankaSim | `openvla` |
-| `embodied-embodichain` | EmbodiChain | `embodichain` |
-| `embodied-libero` | LIBERO | `openvla`, `openvla-oft` |
-| `embodied-liberopro` | LIBERO-Pro | `openvla-oft` |
-| `embodied-liberoplus` | LIBERO-Plus | `openvla-oft` |
-| `embodied-roboverse` | RoboVerse | `openpi` |
-| `embodied-polaris` | Polaris | `openpi` |
-| `embodied-dreamzero` | (SFT only, no simulator) | `dreamzero` |
-| `embodied-dreamzero-libero` | LIBERO | `dreamzero-libero` |
+Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see the full, up-to-date list of targets and the venvs each one installs, look at the stage names (`FROM ... AS <target>-image`) and the `install.sh` invocations inside them — the Dockerfile is the source of truth, so this README does not duplicate the list.
 
 ### Additional build arguments
 
@@ -57,7 +35,7 @@ docker build -f docker/Dockerfile \
 
 # Using the Docker Image
 
-The built Docker image contains one or more Python virtual environments (venvs) under `/opt/venv/`. Which venvs are present, and which one is activated by default in new shells, depends on the `BUILD_TARGET` — see the table above.
+The built Docker image contains one or more Python virtual environments (venvs) under `/opt/venv/`. Which venvs are present, and which one is activated by default in new shells, depends on the `BUILD_TARGET` — see the corresponding build stage in the [`Dockerfile`](Dockerfile).
 
 To switch between venvs, use the built-in `switch_env` script:
 

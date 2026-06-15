@@ -49,8 +49,6 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-dreamzero
-FROM base-image-platform-${PLATFORM} AS base-image-embodied-dreamzero-libero
 
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
@@ -99,16 +97,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ##################################################################################################
 # Python / pip / uv setup
 ##################################################################################################
-RUN pip config set global.index-url https://mirrors.ustc.edu.cn/pypi/simple
-RUN python3 -m pip install -i https://mirrors.ustc.edu.cn/pypi/simple --upgrade pip setuptools wheel uv
 
-ENV HF_HOME=/opt/.cache/huggingface
-RUN mkdir -p $HF_HOME
-
+ENV PIP_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
+ENV PIP_INDEX=${PIP_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
 ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
 ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
+
+RUN pip config set global.index-url ${PIP_INDEX}
+RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv
+
+ENV HF_HOME=/opt/.cache/huggingface
+RUN mkdir -p $HF_HOME
 
 ENV UV_PATH=/opt/venv
 RUN mkdir $UV_PATH
@@ -200,6 +201,10 @@ RUN chmod +x /usr/local/bin/download_assets
 ##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
+# Clone the LIBERO env repo once into a shared path; every model below reuses it
+# (via clone_or_reuse_repo) instead of re-downloading it per venv.
+ENV LIBERO_PATH=/opt/envs/LIBERO
+
 # Install openvla env
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
@@ -210,7 +215,7 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero
 
-RUN source switch_env openvla && download_assets --dir /opt/assets --assets maniskill,openpi
+RUN source switch_env openvla && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets maniskill,openpi
 RUN link_assets
 
 # Set default env
@@ -235,7 +240,7 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 # omnigibson downloads assets to /tmp during initialization
 RUN source switch_env openpi && python -c "import omnigibson as og; cfg={}; og.Environment(cfg); og.shutdown()" || exit 0
 
-RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
 
 # Set default env
@@ -250,7 +255,7 @@ FROM embodied-common-image AS embodied-metaworld-image
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env metaworld && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env metaworld
 
-RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
 
 # Set default env
@@ -262,11 +267,14 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-calvin-image
 
+# Clone the CALVIN env repo once into a shared path; both models below reuse it.
+ENV CALVIN_PATH=/opt/envs/calvin
+
 # Install openvla-oft and openpi envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env calvin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env calvin
 
-RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
 
 # Set default env
@@ -281,7 +289,7 @@ FROM embodied-common-image AS embodied-robocasa-image
 # Install openpi env
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robocasa
 
-RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
 
 # Set default env
@@ -292,6 +300,9 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 # Embodied: IsaacLab
 ##################################################################################################
 FROM embodied-common-image AS embodied-isaaclab-image
+
+# Clone the IsaacLab env repo once into a shared path; both models below reuse it.
+ENV ISAAC_LAB_PATH=/opt/envs/isaaclab
 
 # Install gr00t env, and openpi env
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env isaaclab && \
@@ -327,7 +338,7 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robotwin && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv lingbotvla --model lingbotvla --env robotwin
 
-RUN source switch_env openpi && download_assets --dir /opt/assets --assets openpi
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
 RUN link_assets
 
 # Set default env
@@ -381,9 +392,14 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-libero-image
 
-# Install openvla env
+# Clone the LIBERO env repo once into a shared path; every model below reuses it
+# (via clone_or_reuse_repo) instead of re-downloading it per venv.
+ENV LIBERO_PATH=/opt/envs/LIBERO
+
+# Install openvla, openvla-oft, and dreamzero envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
@@ -431,28 +447,6 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
-
-##################################################################################################
-# Embodied: DreamZero (SFT-focused; no simulation environment)
-##################################################################################################
-FROM embodied-common-image AS embodied-dreamzero-image
-
-# Install dreamzero (SFT does not require a simulator env)
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero
-
-# Set default env
-RUN echo "source ${UV_PATH}/dreamzero/bin/activate" >> ~/.bashrc
-
-##################################################################################################
-# Embodied: DreamZero (with LIBERO simulation for evaluation)
-##################################################################################################
-FROM embodied-common-image AS embodied-dreamzero-libero-image
-
-# Install dreamzero and libero env
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero-libero --model dreamzero --env libero
-
-# Set default env
-RUN echo "source ${UV_PATH}/dreamzero-libero/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection
