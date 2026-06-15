@@ -74,7 +74,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1278,6 +1278,29 @@ install_gr00t_n1d6_model() {
     uv pip uninstall pynvml || true
 }
 
+install_gr00t_n1d7_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t N1.7." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip uninstall pynvml || true
+}
+
 install_dexbotic_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1853,7 +1876,7 @@ install_dosw1_env() {
 
 install_habitat_env() {
     local habitat_sim_dir
-    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
+    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3.3 --recurse-submodules)
     if [ -d "$habitat_sim_dir/build" ]; then
         rm -rf $habitat_sim_dir/build
     fi
@@ -1888,7 +1911,7 @@ install_opensora_world_model() {
     opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
     
     uv pip install -e "$opensora_dir"
-
+    
     # xformers 0.0.29.post2 only has wheels for torch<=2.5, but we pin
     # torch==2.6.0. UV_TORCH_BACKEND=auto rejects mismatched torch-version
     # labels, so unset UV_TORCH_BACKEND entirely for this install so uv
@@ -2002,6 +2025,9 @@ main() {
                     ;;
                 gr00t_n1d6)
                     install_gr00t_n1d6_model
+                    ;;
+                gr00t_n1d7)
+                    install_gr00t_n1d7_model
                     ;;
                 dexbotic)
                     install_dexbotic_model
