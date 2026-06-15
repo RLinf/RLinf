@@ -117,6 +117,7 @@ class LiberoSimDataTransform:
         tokenizer_path: str,
         cfg: Any,
         embodiment_tag_mapping: dict[str, int],
+        transform_on_gpu: bool = False,
     ) -> ComposedModalityTransform:
         """Build the full ``ComposedModalityTransform`` chain for libero_sim."""
         return LiberoSimDataTransform._build_composed_transform(
@@ -138,6 +139,7 @@ class LiberoSimDataTransform:
             embodiment_tag_mapping=dict(embodiment_tag_mapping),
             video_height=int(cfg.get("target_video_height", _DEFAULT_VIDEO_HEIGHT)),
             video_width=int(cfg.get("target_video_width", _DEFAULT_VIDEO_WIDTH)),
+            transform_on_gpu=transform_on_gpu,
         )
 
     @staticmethod
@@ -154,13 +156,16 @@ class LiberoSimDataTransform:
         embodiment_tag_mapping: dict[str, int],
         video_height: int = _DEFAULT_VIDEO_HEIGHT,
         video_width: int = _DEFAULT_VIDEO_WIDTH,
+        transform_on_gpu: bool = False,
     ) -> ComposedModalityTransform:
         vk = list(_VIDEO_KEYS)
         state_k = list(_STATE_KEYS)
         action_k = list(_ACTION_KEYS)
 
         transforms: list[Any] = [
-            VideoToTensor(apply_to=vk, backend=_VIDEO_BACKEND),
+            VideoToTensor(
+                apply_to=vk, backend=_VIDEO_BACKEND, output_on_cuda=transform_on_gpu
+            ),
             VideoCrop(apply_to=vk, backend=_VIDEO_BACKEND, scale=0.95),
             VideoResize(
                 apply_to=vk,

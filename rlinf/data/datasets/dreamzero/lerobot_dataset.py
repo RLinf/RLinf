@@ -373,7 +373,9 @@ class DreamZeroLeRobotDataset(Dataset):
             self._root, self._info, allowed_episode_indices=meta_episode_indices
         )
         self._episode_lengths = [
-            episode_lengths.get(ep, self._infer_episode_length_from_parquet(ep))
+            episode_lengths[ep]
+            if ep in episode_lengths
+            else self._infer_episode_length_from_parquet(ep)
             for ep in self._episodes
         ]
         self._episode_starts = [0]
@@ -752,6 +754,133 @@ class DreamZeroLeRobotDataset(Dataset):
         )
         return temporal.video, temporal.state, temporal.action
 
+    def _decode_video_frames(
+        self,
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> Any:
+        """Decode video frames, dispatching by ``self._video_backend``.
+
+        decord is handled inline (returns numpy uint8 THWC) so we do not
+        modify the vendored lerobot.  All other backends delegate to lerobot.
+        """
+        if self._video_backend == "decord":
+            return self._decode_video_frames_decord(video_path, timestamps, tolerance_s)
+
+        if self._video_backend == "torchcodec":
+            return self._decode_video_frames_torchcodec(
+                video_path, timestamps, tolerance_s
+            )
+
+        from lerobot.datasets.video_utils import (
+            decode_video_frames as decode_video_frames_lerobot,
+        )
+
+        return decode_video_frames_lerobot(
+            video_path,
+            timestamps,
+            tolerance_s,
+            backend=self._video_backend,
+        )
+
+    @staticmethod
+    def _decode_video_frames_decord(
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> np.ndarray:
+        """Decode frames via decord; return numpy uint8 (T, H, W, C).
+
+        No float conversion or /255 is performed here — the caller
+        (:meth:`_build_modality_dict`) already normalises via
+        :meth:`_video_to_thwc_uint8`.
+        """
+
+        import decord
+
+        vr = decord.VideoReader(str(video_path), num_threads=1)
+        total_frames = len(vr)
+        average_fps = vr.get_avg_fps()
+        frame_indices = [
+            min(round(ts * average_fps), total_frames - 1) for ts in timestamps
+        ]
+
+        frames = vr.get_batch(frame_indices)
+        arr = frames.asnumpy()  # (T, H, W, C) uint8
+        return arr
+
+    @staticmethod
+    def _decode_video_frames_torchcodec(
+        video_path: Path | str,
+        timestamps: list[float],
+        tolerance_s: float,
+    ) -> np.ndarray:
+        """Decode frames via torchcodec; return numpy uint8 (T, H, W, C).
+
+        Mirrors ``lerobot.datasets.video_utils.decode_video_frames_torchcodec``
+        but skips float32 normalisation (the caller normalises via
+        :meth:`_video_to_thwc_uint8`) and returns uint8 THWC instead of
+        float32 TCHW.
+
+        The tolerance check (query vs loaded pts_seconds via cdist) is
+        preserved verbatim from the LeRobot reference implementation so
+        that approximate-seek mismatches are detected early.
+        """
+
+        from torchcodec.decoders import VideoDecoder
+
+        decoder = VideoDecoder(
+            str(video_path),
+            device="cpu",
+            seek_mode="approximate",
+            dimension_order="NHWC",
+        )
+        loaded_frames = []
+        loaded_ts = []
+
+        # get metadata for frame information
+        metadata = decoder.metadata
+        average_fps = metadata.average_fps
+
+        # convert timestamps to frame indices
+        frame_indices = [round(ts * average_fps) for ts in timestamps]
+
+        # retrieve frames based on indices
+        frames_batch = decoder.get_frames_at(indices=frame_indices)
+
+        for frame, pts in zip(
+            frames_batch.data, frames_batch.pts_seconds, strict=False
+        ):
+            loaded_frames.append(frame)
+            loaded_ts.append(pts.item())
+
+        query_ts = torch.tensor(timestamps)
+        loaded_ts = torch.tensor(loaded_ts)
+
+        dist = torch.cdist(query_ts[:, None], loaded_ts[:, None], p=1)
+        min_dists, argmin = dist.min(1)
+
+        is_within_tol = min_dists < float(tolerance_s)
+        if not is_within_tol.all():
+            violators = min_dists[~is_within_tol]
+            raise RuntimeError(
+                f"[dreamzero] torchcodec tolerance violation: {violators.tolist()} > "
+                f"tolerance_s={tolerance_s}. "
+                f"video={video_path} "
+                f"n={len(timestamps)} idx=[{min(frame_indices)}..{max(frame_indices)}]"
+            )
+
+        # Select the closest frame to each query timestamp (handles approximate-seek drift).
+        tensor = torch.stack([loaded_frames[int(idx)] for idx in argmin])
+        # tensor is now (T, H, W, C) uint8 on CPU, contiguous.
+
+        # torchcodec returns FrameBatch with .data as a torch.Tensor.
+        # On CPU with contiguous NHWC layout, .numpy(force=True) is a zero-copy view.
+        arr = tensor.numpy(force=True)
+
+        return arr
+
     def _materialize_parquet_sample(
         self,
         frame_in_ep: int,
@@ -773,16 +902,13 @@ class DreamZeroLeRobotDataset(Dataset):
             "frame_index": frame_in_ep,
         }
         if decode_video:
-            from lerobot.datasets.video_utils import decode_video_frames
-
             for transform_key, source_key in self._source_video_key.items():
                 video_path = self._get_video_path(episode_index, source_key)
                 fps = self._decode_fps_for_video_file(video_path)
-                sample[transform_key] = decode_video_frames(
+                sample[transform_key] = self._decode_video_frames(
                     video_path,
                     [float(int(i)) / fps for i in video_idx.tolist()],
                     tolerance_s=self._video_tolerance_s,
-                    backend=self._video_backend,
                 )
 
         for key in ("task", "task_index"):
@@ -1061,7 +1187,11 @@ def build_single_dreamzero_lerobot_dataset(
     sub_model_cfg = OmegaConf.merge(model_cfg, model_overrides)
 
     metadata = load_dreamzero_dataset_metadata(sub_model_cfg)
-    data_transform = build_dreamzero_composed_transform(sub_model_cfg, tokenizer_path)
+    transform_on_gpu = bool(data_cfg.get("transform_on_gpu", False))
+    data_transform = build_dreamzero_composed_transform(
+        sub_model_cfg, tokenizer_path, transform_on_gpu=transform_on_gpu
+    )
+
     assert isinstance(data_transform, ComposedModalityTransform), f"{data_transform=}"
     data_transform.set_metadata(metadata)
     if eval_dataset:

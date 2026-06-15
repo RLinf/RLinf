@@ -25,6 +25,7 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .auto_config import RobotAutoConfig
 
 
 @dataclass
@@ -69,6 +70,17 @@ class DualFrankaRobot(Hardware):
             if isinstance(config, DualFrankaConfig) and config.node_rank == node_rank:
                 robot_configs.append(config)
 
+        # Fill unset fields from env vars (e.g. ``LEFT_ROBOT_IP``), one value per
+        # config when several robots share this node. With no configs given,
+        # create one per comma-separated arm IP. A remote arm's IP may stay
+        # unset here; the controller resolves it from its own node at launch.
+        robot_configs = RobotAutoConfig.resolve(
+            robot_configs,
+            config_cls=DualFrankaConfig,
+            node_rank=node_rank,
+            count_fields=("left_robot_ip", "right_robot_ip"),
+        )
+
         if not robot_configs:
             return None
 
@@ -96,11 +108,15 @@ class DualFrankaConfig(HardwareConfig):
     is the key mechanism for *Option D* (main controller + remote arm).
     """
 
-    left_robot_ip: str = "0.0.0.0"
-    """IP address of the left Franka arm."""
+    left_robot_ip: Optional[str] = None
+    """IP address of the left Franka arm.
+    When unset in YAML it is auto-detected from the ``LEFT_ROBOT_IP``
+    environment variable on the node where the arm is enumerated."""
 
-    right_robot_ip: str = "0.0.0.0"
-    """IP address of the right Franka arm."""
+    right_robot_ip: Optional[str] = None
+    """IP address of the right Franka arm.
+    When unset in YAML it is auto-detected from the ``RIGHT_ROBOT_IP``
+    environment variable on the node where the arm is enumerated."""
 
     left_camera_serials: Optional[list[str]] = None
     """Camera serial numbers for the left arm's wrist camera(s)."""
@@ -139,20 +155,28 @@ class DualFrankaConfig(HardwareConfig):
             f"'node_rank' in DualFranka config must be an integer. "
             f"But got {type(self.node_rank)}."
         )
+        # IPs may be left unset here and resolved later from environment
+        # variables during enumeration; only validate the ones present.
         for label, ip in [
             ("left_robot_ip", self.left_robot_ip),
             ("right_robot_ip", self.right_robot_ip),
         ]:
-            try:
-                ipaddress.ip_address(ip)
-            except ValueError:
-                raise ValueError(
-                    f"'{label}' in DualFranka config must be a valid IP address. "
-                    f"But got {ip}."
-                )
+            if ip is not None:
+                self._validate_ip(label, ip)
         if self.left_camera_serials:
             self.left_camera_serials = list(self.left_camera_serials)
         if self.right_camera_serials:
             self.right_camera_serials = list(self.right_camera_serials)
         if self.base_camera_serials:
             self.base_camera_serials = list(self.base_camera_serials)
+
+    @staticmethod
+    def _validate_ip(label: str, ip: str) -> None:
+        """Validate that ``ip`` is a valid IP address."""
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            raise ValueError(
+                f"'{label}' in DualFranka config must be a valid IP address. "
+                f"But got {ip}."
+            )

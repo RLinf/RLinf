@@ -35,6 +35,7 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
+from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -1769,9 +1770,8 @@ class EnvWorker(Worker):
             "reward_type": self.cfg.algorithm.reward_type,
             "loss_mask": rollout_batch.get("loss_mask", None),
             "loss_mask_sum": rollout_batch.get("loss_mask_sum", None),
-            "normalize_advantages": self.cfg.algorithm.get(
-                "normalize_advantages", True
-            ),
+            "normalize_advantages": self.cfg.algorithm.get("normalize_advantages", True)
+            and not self.use_training_pipeline,
         }
         advantages_and_returns = calculate_adv_and_returns(**kwargs)
         rollout_batch.update(advantages_and_returns)
@@ -1822,6 +1822,9 @@ class EnvWorker(Worker):
         channel: Channel,
     ) -> None:
         pending_batches: list[tuple[int, dict[str, torch.Tensor]]] = []
+        batches_by_actor_rank: dict[int, list[dict[str, torch.Tensor]]] = defaultdict(
+            list
+        )
 
         with self.worker_timer("prepare_micro_batches"):
             for stage_id, rollout_result in enumerate(rollout_results):

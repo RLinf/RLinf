@@ -92,6 +92,7 @@ def main(cfg) -> None:
             from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
             actor_worker_cls = EmbodiedFSDPActor
+
     actor_group = actor_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )

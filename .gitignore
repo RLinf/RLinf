@@ -21,7 +21,3 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
-data/*
-tmp/*
-tmp
-openpi-RLT

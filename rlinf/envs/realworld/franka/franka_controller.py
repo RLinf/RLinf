@@ -80,6 +80,17 @@ class FrankaController(Worker):
     ):
         super().__init__()
         self._logger = get_logger()
+        # A remote arm's IP may not reach the env worker; resolve it from this
+        # node's hardware infos instead.
+        if not robot_ip:
+            robot_ip = self._resolve_robot_ip_from_node()
+        if not robot_ip:
+            raise ValueError(
+                "Franka 'robot_ip' is not set and could not be resolved from "
+                f"node rank {self._cluster_node_rank}'s hardware infos. Provide "
+                "it in the env config, the Franka hardware config, or set the "
+                "'ROBOT_IP' environment variable on the controller's node."
+            )
         self._robot_ip = robot_ip
         self._ros_pkg = ros_pkg
         self._joint_command_topic = joint_command_topic
@@ -122,6 +133,27 @@ class FrankaController(Worker):
         self._reconf_client = self._ReconfClient(
             "cartesian_impedance_controllerdynamic_reconfigure_compliance_param_node"
         )
+
+    def _resolve_robot_ip_from_node(self) -> Optional[str]:
+        """Return the first ``robot_ip`` in this node's hardware infos, if any.
+
+        The controller's node enumerates the arm and resolves ``robot_ip`` from
+        its local ``ROBOT_IP``, so the value is available here even when the env
+        worker on another node could not detect it.
+        """
+        try:
+            node_info = Cluster().get_node_info(self._cluster_node_rank)
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.warning(
+                "Could not access node info to resolve robot_ip: %s", exc
+            )
+            return None
+        for resource in node_info.hardware_resources:
+            for info in resource.infos:
+                robot_ip = getattr(getattr(info, "config", None), "robot_ip", None)
+                if robot_ip:
+                    return robot_ip
+        return None
 
     def _init_end_effector(
         self,

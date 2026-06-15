@@ -43,6 +43,9 @@ class EmbodimentTag(Enum):
     LIBERO_PANDA = "libero_panda"
     """The Libero Panda robot."""
 
+    LIBERO_SIM = "libero_sim"
+    """The Libero SIM robot for GR00T N1.7."""
+
     OXE_GOOGLE = "oxe_google"
     """The Open-X-Embodiment Google robot."""
 
@@ -57,8 +60,9 @@ class EmbodimentTag(Enum):
 
 
 # Embodiment tag string -> projector index in the Action Expert Module.
-# Shared by GR00T N1.5 / N1.6 (N1.6-only tags are unused by N1.5 loaders).
-# IDs must match official gr00t (see gr00t_n1d6 processing / embodiment_id.json).
+# Shared by GR00T N1.5 / N1.6 / N1.7 (N1.6-only tags are unused by N1.5 loaders).
+# IDs must match official gr00t (see gr00t_n1d6 / gr00t_n1d7 processing / embodiment_id.json).
+# GR00T N1.7 actually not use this mapping, because of new processor loading method.
 EMBODIMENT_TAG_MAPPING = {
     EmbodimentTag.LIBERO_PANDA.value: 2,
     EmbodimentTag.ROBOCASA_PANDA_OMRON.value: 13,

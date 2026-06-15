@@ -7,7 +7,10 @@ export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
 export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 
 export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
+export DREAMZERO_PATH="${DREAMZERO_PATH:-/path/to/DreamZero}"
+export PYTHONPATH="${DREAMZERO_PATH}:${PYTHONPATH}"
 export HYDRA_FULL_ERROR=1
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <config_name> [hydra_overrides...]" >&2
