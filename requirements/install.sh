@@ -75,8 +75,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
-
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1160,6 +1159,17 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
+        franka-franky)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv sync --extra franka --inexact --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1457,6 +1467,13 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
+        franka-franky)
+            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
@@ -1729,6 +1746,23 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_franka_franky_env() {
+    # Prebuilt franky-control wheel (libfranka bundled), published per
+    # libfranka version by the Brunch-Life/franky fork.  LIBFRANKA_VERSION
+    # must match your Franka firmware (compatibility matrix:
+    # https://frankarobotics.github.io/docs/compatibility.html); defaults
+    # to 0.19.0.  Override FRANKY_WHEEL (URL / local path / PyPI spec) when
+    # the host cannot reach github.com.
+    local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
+    local PYTAG
+    PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+    local FRANKY_WHEEL="${FRANKY_WHEEL:-https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
+    echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
+    # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
+    # re-resolve them breaks Ray pickling across nodes.
+    uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
 }
 
 install_franka_dexhand_deps() {

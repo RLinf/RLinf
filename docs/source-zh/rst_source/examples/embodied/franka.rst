@@ -128,7 +128,7 @@ Franka真机强化学习
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 推荐在实时内核（Real-time Kernel）上运行 Franka 控制程序，以获得更好的实时性。
-请参考 `Franka 官方文档 <https://frankarobotics.github.io/docs/libfranka/docs/real_time_kernel.html>`_ 安装实时内核。
+请参考 `Franka 官方文档 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_ 安装实时内核。
 
 3. 依赖安装
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
