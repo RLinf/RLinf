@@ -164,7 +164,7 @@ After extraction, the directory should look like:
        ├── wall_frames.stl
        └── wall.xml
 
-See :doc:`liberoplus_pro` for full LIBERO-Plus details.
+See the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` of the LIBERO benchmarks page for full LIBERO-Plus details.
 
 Model Download
 --------------

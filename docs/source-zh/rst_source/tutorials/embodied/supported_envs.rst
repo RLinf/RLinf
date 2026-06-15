@@ -20,7 +20,7 @@ RLinf 通过标准化 RL 接口支持多种 GPU 和 CPU 模拟器：
 * **Behavior** — 交互式仿真基准，包含复杂家庭活动任务。
 * **EmbodiChain** — 面向链式操作任务的 Gym 环境。
 
-各模拟器的具体训练示例见 :doc:`具身示例库 <../../examples/embodied/index>`。
+各模拟器的具体训练示例见 :doc:`基于模拟器的具身强化学习 <../../examples/simulators_index>`。
 
 真机机器人
 ----------
@@ -64,4 +64,4 @@ RLinf 支持以下 VLA 和具身策略模型：
 * **CNN** — 卷积神经网络策略，用于视觉 RL 任务。
 * **ResNet** — 预训练 ResNet 模型，用于图像奖励建模。
 
-各模型的具体训练示例见 :doc:`具身示例库 <../../examples/embodied/index>`。
+各模型的具体训练示例见 :doc:`VLA / WAM 模型的强化学习 <../../examples/vla_wam_index>`。

@@ -5,7 +5,7 @@ This page covers the Ascend CANN-specific setup for running the LIBERO RL
 example in RLinf. It focuses on dependency installation and runtime access to
 the host Ascend driver. The LIBERO task description, PPO/GRPO algorithm details,
 model download, configuration files, metrics, and results are platform
-independent; for those sections, refer to :doc:`RL with LIBERO Benchmark <libero>`.
+independent; for those sections, refer to :doc:`RL with LIBERO Benchmarks <../../examples/embodied/libero>`.
 
 Dependency Installation
 -----------------------
@@ -95,8 +95,8 @@ Launch LIBERO on Ascend
 -----------------------
 
 After the dependencies and model paths are ready, run the same LIBERO
-configuration described in :doc:`the main LIBERO guide <libero>`, but keep OSMesa
-enabled:
+configuration described in :doc:`the main LIBERO guide <../../examples/embodied/libero>`,
+but keep OSMesa enabled:
 
 .. code-block:: bash
 
@@ -117,7 +117,7 @@ For PPO, use the PPO config from the original LIBERO page:
 What Stays the Same
 -------------------
 
-- Use the same LIBERO configs documented in :doc:`RL with LIBERO Benchmark <libero>`.
+- Use the same LIBERO configs documented in :doc:`RL with LIBERO Benchmarks <../../examples/embodied/libero>`.
 - Use the same model download and ``model_path`` configuration flow.
 - Use the same PPO/GRPO algorithm settings and placement concepts.
 - Monitor the same training, rollout, and environment metrics.

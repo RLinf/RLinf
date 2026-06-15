@@ -187,7 +187,7 @@ Quickstart
 - **ManiSkill:** :doc:`../examples/embodied/maniskill`
 - **LIBERO:** :doc:`../examples/embodied/libero`
 - **RoboTwin:** :doc:`../examples/embodied/robotwin`
-- **More examples:** :doc:`../examples/embodied/index`
+- **More examples:** :doc:`../examples/index`
 
 Citation
 --------

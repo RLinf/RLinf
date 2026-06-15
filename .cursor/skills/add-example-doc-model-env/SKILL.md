@@ -22,11 +22,16 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
    Follow the structure of existing examples in the same category (see [reference.md](reference.md)).
 
 2. **Register in the English category index**  
-   Each category has its own index file (e.g. `docs/source-en/rst_source/examples/embodied/index.rst`).  
-   - Edit `docs/source-en/rst_source/examples/<category>/index.rst`.
-   - Add an entry for `<name>` in the hidden `.. toctree::` at the bottom (e.g. `dexbotic`).
-   - Optionally add a gallery card in the correct section using the same HTML block pattern as existing cards (image, hyperlink to the rendered doc, short title + description).  
-   **Note:** The top-level `examples/index.rst` now only links to the four category indexes and usually does not need to be changed when adding a single example.
+   The embodied gallery is split into five category index files that live directly under `examples/` (not inside `embodied/`):
+   `simulators_index.rst` (benchmark/simulator-centric), `real_world_index.rst` (real-robot hardware),
+   `vla_wam_index.rst` (model-centric: π₀, GR00T, …), `sft_index.rst` (SFT recipes), and
+   `methods_index.rst` (algorithm-centric: DAgger, RECAP, IQL, …). The example RST itself still lives at
+   `docs/source-en/rst_source/examples/embodied/<name>.rst`; the index files reference it as `embodied/<name>`.
+   Non-embodied categories (agentic, system) still use `docs/source-en/rst_source/examples/<category>/index.rst`.
+   - Edit the matching index file (e.g. `docs/source-en/rst_source/examples/vla_wam_index.rst` for a new VLA model, or `examples/<category>/index.rst` for agentic/system).
+   - Add an entry for `<name>` in the hidden `.. toctree::` at the bottom (for embodied, prefixed: e.g. `embodied/dexbotic`).
+   - Optionally add a gallery card in the correct section using the same HTML block pattern as existing cards (image, hyperlink to the rendered doc — `embodied/<name>.html` for embodied — short title + description).  
+   **Note:** The top-level `examples/index.rst` only links to the category indexes and usually does not need to be changed when adding a single example.
 
 3. **If it is an embodied evaluation environment**  
    In `docs/source-en/rst_source/start/vla-eval.rst`, add a line in the “List of currently supported evaluation environments”:
@@ -39,7 +44,7 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
    Mirror the English content (same structure and sections). Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in both `source-en` and `source-zh`) as reference.
 
 5. **Register in the Chinese category index**  
-   Edit `docs/source-zh/rst_source/examples/<category>/index.rst`:  
+   Edit the matching Chinese index file — for embodied, the same five split indexes under `docs/source-zh/rst_source/examples/` (`simulators_index.rst`, `real_world_index.rst`, `vla_wam_index.rst`, `sft_index.rst`, `methods_index.rst`); for agentic/system, `docs/source-zh/rst_source/examples/<category>/index.rst`:  
    - Add the same `<name>` entry to the hidden `.. toctree::`.  
    - If you added a gallery card in the English index, add a matching Chinese gallery card here, following existing HTML patterns.  
    If the Chinese docs have a vla-eval or start page that lists environments, add the new example using the same relative path pattern as in English (typically `../examples/embodied/<name>` for embodied.
