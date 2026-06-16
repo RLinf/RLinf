@@ -325,8 +325,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         min_demo_buffer_size: int,
         warmup_required_updates: int,
         update_ratio: int,
-        train_every_transitions: int,
-        train_every_episodes: int,
         should_train: bool,
         skip_reason: int,
         pending_update_budget: int,
@@ -437,8 +435,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
                 min_demo_buffer_size=min_demo_buffer_size,
                 warmup_required_updates=schedule.warmup_required_updates,
                 update_ratio=schedule.update_ratio,
-                train_every_transitions=schedule.train_every_transitions,
-                train_every_episodes=schedule.train_every_episodes,
                 should_train=False,
                 skip_reason=schedule.skip_reason,
                 pending_update_budget=self.pending_update_budget,
@@ -495,8 +491,6 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
             min_demo_buffer_size=min_demo_buffer_size,
             warmup_required_updates=schedule.warmup_required_updates,
             update_ratio=schedule.update_ratio,
-            train_every_transitions=schedule.train_every_transitions,
-            train_every_episodes=schedule.train_every_episodes,
             should_train=True,
             skip_reason=0,
             pending_update_budget=self.pending_update_budget,
@@ -698,6 +692,8 @@ class RLTStage2FSDPPolicyWorker(FSDPModelManager, Worker):
         return all_reduce_dict(mean_metric_dict, op=torch.distributed.ReduceOp.AVG)
 
     def compute_advantages_and_returns(self):
+        # RLT Stage 2 trains from replayed TD3 transitions rather than rollout
+        # advantages, but the actor worker interface expects this method.
         return {}
 
     def save_checkpoint(self, save_base_path, step):

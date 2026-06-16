@@ -306,34 +306,31 @@ class EnvOutput:
         policy_info_list = [env_output.get("policy_info") for env_output in env_outputs]
         merged_policy_info = None
         if any(policy_info is not None for policy_info in policy_info_list):
-            keys = set()
-            for policy_info in policy_info_list:
-                if policy_info is not None:
-                    keys.update(policy_info.keys())
-            merged_policy_info = {}
-            for key in keys:
-                values = []
-                ref_tensor = next(
-                    (
-                        policy_info[key]
-                        for policy_info in policy_info_list
-                        if policy_info is not None and key in policy_info
-                    ),
-                    None,
+            if any(policy_info is None for policy_info in policy_info_list):
+                raise ValueError(
+                    "Inconsistent policy_info: some env shards are None while "
+                    "others are present."
                 )
-                assert ref_tensor is not None
-                for env_output, policy_info in zip(env_outputs, policy_info_list):
-                    if policy_info is None or key not in policy_info:
-                        batch_size = _get_batch_size(env_output)
-                        values.append(
-                            torch.zeros(
-                                (batch_size, *ref_tensor.shape[1:]),
-                                dtype=ref_tensor.dtype,
-                            )
-                        )
-                    else:
-                        values.append(policy_info[key])
-                merged_policy_info[key] = torch.cat(values, dim=0)
+            policy_info_dicts = [
+                policy_info
+                for policy_info in policy_info_list
+                if policy_info is not None
+            ]
+            expected_keys = set(policy_info_dicts[0].keys())
+            for idx, policy_info in enumerate(policy_info_dicts[1:], start=1):
+                keys = set(policy_info.keys())
+                if keys != expected_keys:
+                    raise ValueError(
+                        "Inconsistent policy_info keys across env shards: "
+                        f"expected {sorted(expected_keys)}, got {sorted(keys)} "
+                        f"at shard {idx}."
+                    )
+            merged_policy_info = {}
+            for key in sorted(expected_keys):
+                merged_policy_info[key] = torch.cat(
+                    [policy_info[key] for policy_info in policy_info_dicts],
+                    dim=0,
+                )
         # turn to EnvOutput and turn to dict to call post init for tensor processing
         return EnvOutput(
             obs=merged_obs,
@@ -952,8 +949,9 @@ class EmbodiedRolloutResult:
                 ):
                     setattr(split_trajectory, field_name, split_value.contiguous())
             elif isinstance(value, dict):
+                split_dim = 2 if field_name == "rlt_step_trace" else 1
                 for split_trajectory, split_value in zip(
-                    trajectories, split_dict(value, split_sizes, dim=1)
+                    trajectories, split_dict(value, split_sizes, dim=split_dim)
                 ):
                     setattr(split_trajectory, field_name, split_value)
             else:
