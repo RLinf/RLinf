@@ -94,6 +94,34 @@ def _normalize_sglang_server_args(value: Any) -> dict[str, Any]:
     }
 
 
+def _infer_lora_adapter_name(
+    sglang_server_args: dict[str, Any],
+    model_name: str,
+) -> str:
+    adapter_name = sglang_server_args.get("lora-name") or sglang_server_args.get(
+        "lora-adapter-name"
+    )
+    if adapter_name:
+        return str(adapter_name)
+
+    lora_paths = sglang_server_args.get("lora-paths")
+    if isinstance(lora_paths, str):
+        lora_paths = [lora_paths]
+    if isinstance(lora_paths, list) and lora_paths:
+        first_lora_path = lora_paths[0]
+        if isinstance(first_lora_path, dict):
+            adapter_name = first_lora_path.get("lora_name")
+            if adapter_name:
+                return str(adapter_name)
+            first_lora_path = first_lora_path.get("lora_path")
+        if isinstance(first_lora_path, str):
+            if "=" in first_lora_path:
+                return first_lora_path.split("=", 1)[0]
+            return Path(first_lora_path).name
+
+    return model_name
+
+
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
     """SGLang HTTP-backed embodied history VLM reward model.
 
@@ -128,6 +156,18 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
             or Path(str(self.model_path)).name
             or self.model_path
         )
+        self.lora_path = cfg.get("lora_path")
+        self.lora_name = None
+        if (
+            self.lora_path
+            or sglang_server_args.get("lora-paths")
+            or sglang_server_args.get("lora-name")
+            or sglang_server_args.get("lora-adapter-name")
+        ):
+            self.lora_name = _infer_lora_adapter_name(
+                sglang_server_args,
+                self.model_name,
+            )
         self.request_timeout = float(cfg.get("request_timeout", 120.0))
         self.image_format = str(cfg.get("image_format", "jpeg")).lower()
         if self.image_format not in {"jpeg", "png"}:
@@ -261,7 +301,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
         payloads: list[dict[str, Any]] = []
         for prompt_texts, videos in zip(prompt_texts_list, videos_list):
             payload = {
-                "model": self.model_name,
+                "model": self.lora_name or self.model_name,
                 "messages": [
                     {
                         "role": "user",
@@ -269,6 +309,8 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
                     }
                 ],
             }
+            if self.lora_name:
+                payload["lora_path"] = self.lora_name
             payload.update(self.sampling_params)
             payloads.append(payload)
         return payloads

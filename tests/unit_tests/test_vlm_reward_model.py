@@ -43,6 +43,7 @@ from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
     SGLangRewardTimingRecorder,
 )
 from rlinf.runners.sglang_reward_server import (
+    _build_server_cfg,
     launch_sglang_reward_server_stack,
     should_launch_sglang_reward_server,
 )
@@ -619,6 +620,7 @@ def test_history_vlm_sglang_reward_model_writes_sparse_valid_envs_back_to_slots(
 def test_history_vlm_sglang_builds_multiframe_image_url_payload():
     model = object.__new__(HistoryVLMSGLangRewardModel)
     model.model_name = "reward-model"
+    model.lora_name = None
     model.sampling_params = {"max_tokens": 16, "temperature": 0.0}
     model.image_format = "jpeg"
     model.jpeg_quality = 95
@@ -646,6 +648,25 @@ def test_history_vlm_sglang_builds_multiframe_image_url_payload():
         for item in image_items
     )
     assert "video_data" not in payloads[0]
+
+
+def test_history_vlm_sglang_builds_lora_openai_payload():
+    model = object.__new__(HistoryVLMSGLangRewardModel)
+    model.model_name = "reward-model"
+    model.lora_name = "qwentrend-reward"
+    model.sampling_params = {"max_tokens": 16, "temperature": 0.0}
+    model.image_format = "jpeg"
+    model.jpeg_quality = 95
+
+    payloads = model._build_chat_payloads(
+        {
+            "prompt_texts_list": [["judge progress"]],
+            "videos_list": [[[np.zeros((2, 2, 3), dtype=np.uint8)]]],
+        }
+    )
+
+    assert payloads[0]["model"] == "qwentrend-reward"
+    assert payloads[0]["lora_path"] == "qwentrend-reward"
 
 
 def test_history_vlm_sglang_extracts_text_and_token_count_from_openai_response():
@@ -784,6 +805,47 @@ class _FakeComponentPlacement:
     def get_strategy(self, component_name):
         assert component_name == "reward_server"
         return "reward-server-placement"
+
+
+def test_sglang_reward_server_registers_reward_lora_path():
+    reward_model_cfg = OmegaConf.create(
+        {
+            "model_path": "/models/Qwen3-VL",
+            "lora_path": "/checkpoints/qwentrend-lora",
+            "sglang_server_args": {
+                "served_model_name": "qwentrend-reward",
+            },
+        }
+    )
+
+    server_cfg = _build_server_cfg(
+        reward_model_cfg,
+        component_placement=_FakeComponentPlacement(),
+    )
+
+    assert server_cfg.enable_lora is True
+    assert server_cfg.lora_paths == ["qwentrend-reward=/checkpoints/qwentrend-lora"]
+
+
+def test_sglang_reward_server_keeps_explicit_lora_paths():
+    reward_model_cfg = OmegaConf.create(
+        {
+            "model_path": "/models/Qwen3-VL",
+            "lora_path": "/checkpoints/qwentrend-lora",
+            "sglang_server_args": {
+                "served_model_name": "qwentrend-reward",
+                "lora_paths": ["custom-reward=/custom/adapter"],
+            },
+        }
+    )
+
+    server_cfg = _build_server_cfg(
+        reward_model_cfg,
+        component_placement=_FakeComponentPlacement(),
+    )
+
+    assert server_cfg.enable_lora is True
+    assert server_cfg.lora_paths == ["custom-reward=/custom/adapter"]
 
 
 def test_sglang_reward_server_stack_launches_router_and_writes_api_base(

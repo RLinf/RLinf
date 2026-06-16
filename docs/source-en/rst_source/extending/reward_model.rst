@@ -401,6 +401,13 @@ input concurrently. Each request sends history frames as multiple
 ``image_url`` data URLs in a single chat message, so the backend does not use
 in-process ``sglang.Engine`` or temporary MP4/video inputs.
 
+When ``reward.model.lora_path`` is set for the SGLang backend, RLinf enables
+SGLang LoRA, registers that path as an adapter, and selects the adapter in
+each OpenAI-compatible request. The adapter name defaults to
+``sglang_server_args.served_model_name``; override it with
+``sglang_server_args.lora_name`` if you provide custom
+``sglang_server_args.lora_paths``.
+
 Select SGLang by overriding the backend field:
 
 .. code-block:: yaml
@@ -433,10 +440,12 @@ controlled by the SGLang server, for example through
          worker_startup_timeout_secs: 1800
          request_timeout_secs: 1800
 
-For auto-launched SGLang, place server GPUs on the dedicated
-``reward_server`` component. For example, ``reward_server: 0-1:0`` launches one
-server worker with two visible GPUs, and RLinf infers ``tp_size: 2`` for that
-server. The ``reward`` component remains the API-calling reward worker.
+For auto-launched SGLang, configure ``cluster.component_placement.reward_server``.
+RLinf launches the SGLang server worker through Ray using that placement and
+infers ``tp_size`` from the GPUs allocated to each server worker. For example,
+``reward_server: 0-1:0`` allocates GPUs through the placement config, so users
+do not need to manually bind server GPUs outside Ray. The ``reward`` component
+remains the API-calling reward worker.
 
 Launch the MLP RL run with:
 

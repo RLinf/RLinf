@@ -394,6 +394,12 @@ OpenAI 的 ``/v1/chat/completions`` API 为每个有效 history-window input 并
 chat message 中发送，因此该后端不使用进程内 ``sglang.Engine``，也不生成临时
 MP4/video 输入。
 
+当 SGLang 后端设置了 ``reward.model.lora_path`` 时，RLinf 会启用 SGLang
+LoRA，将该路径注册为 adapter，并在每个兼容 OpenAI 的请求中选择这个 adapter。
+adapter 名默认使用 ``sglang_server_args.served_model_name``；如果手动提供
+``sglang_server_args.lora_paths``，可以用 ``sglang_server_args.lora_name``
+保持请求侧选择的 adapter 名一致。
+
 通过覆盖 backend 字段选择 SGLang：
 
 .. code-block:: yaml
@@ -425,10 +431,11 @@ RLinf 默认会启动 Ray 管理的 server 和 router。也可以覆盖 server/r
          worker_startup_timeout_secs: 1800
          request_timeout_secs: 1800
 
-自动启动 SGLang 时，请把 server GPU 放到专用 ``reward_server`` component 上。
-例如 ``reward_server: 0-1:0`` 会启动一个可见两张 GPU 的 server worker；
-RLinf 会据此为该 server 推断 ``tp_size: 2``。``reward`` component 仍然是调用
-API 的 reward worker。
+自动启动 SGLang 时，请配置 ``cluster.component_placement.reward_server``。
+RLinf 会通过 Ray 按该 placement 启动 SGLang server worker，并根据每个
+server worker 分配到的 GPU 数推断 ``tp_size``。例如 ``reward_server: 0-1:0``
+表示通过 placement 配置分配 GPU，用户不需要在 Ray 之外手动绑定 server GPU。
+``reward`` component 仍然是调用 API 的 reward worker。
 
 启动 MLP RL：
 

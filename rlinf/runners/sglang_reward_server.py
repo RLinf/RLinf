@@ -26,7 +26,12 @@ from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
-_RLINF_SERVER_CONFIG_KEYS = {"api_base", "server_startup_timeout"}
+_RLINF_SERVER_CONFIG_KEYS = {
+    "api_base",
+    "lora_adapter_name",
+    "lora_name",
+    "server_startup_timeout",
+}
 _RLINF_ROUTER_CONFIG_KEYS = {"router_node_rank"}
 
 
@@ -57,6 +62,32 @@ def _get_sglang_server_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
 
 def _get_sglang_router_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
     return _normalize_config_dict(reward_model_cfg.get("sglang_router_args", {}))
+
+
+def _infer_lora_adapter_name(
+    server_args: dict[str, Any],
+    served_model_name: str,
+) -> str:
+    adapter_name = server_args.get("lora_name") or server_args.get("lora_adapter_name")
+    if adapter_name:
+        return str(adapter_name)
+
+    lora_paths = server_args.get("lora_paths")
+    if isinstance(lora_paths, str):
+        lora_paths = [lora_paths]
+    if isinstance(lora_paths, list) and lora_paths:
+        first_lora_path = lora_paths[0]
+        if isinstance(first_lora_path, dict):
+            adapter_name = first_lora_path.get("lora_name")
+            if adapter_name:
+                return str(adapter_name)
+            first_lora_path = first_lora_path.get("lora_path")
+        if isinstance(first_lora_path, str):
+            if "=" in first_lora_path:
+                return first_lora_path.split("=", 1)[0]
+            return Path(first_lora_path).name
+
+    return served_model_name
 
 
 def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
@@ -163,6 +194,12 @@ def _build_server_cfg(
         "sampling_backend": "pytorch",
         "grammar_backend": "none",
     }
+    lora_path = reward_model_cfg.get("lora_path")
+    if lora_path:
+        defaults["enable_lora"] = True
+        if not server_args.get("lora_paths"):
+            lora_name = _infer_lora_adapter_name(server_args, served_model_name)
+            defaults["lora_paths"] = [f"{lora_name}={lora_path}"]
     server_cfg = {
         **defaults,
         **{
