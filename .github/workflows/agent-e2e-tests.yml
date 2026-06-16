@@ -510,7 +510,7 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/reasoning/run.sh qwen3-vl-4b-grpo-collocated-fsdp-sgl
+          bash tests/e2e_tests/reasoning/run.sh qwen3-vl-2b-grpo-collocated-fsdp-sgl
 
       - name: Clean up
         run: |

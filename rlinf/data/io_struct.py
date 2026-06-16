@@ -1248,6 +1248,9 @@ class DynamicRolloutResult:
             "recomputed_logprobs": torch.zeros(
                 *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
             ),
+            "rollout_logprobs": torch.zeros(
+                *pad_seq_shape, dtype=torch.float32, device=torch.cuda.current_device()
+            ),
             "rewards": torch.zeros(
                 1, dtype=torch.float32, device=torch.cuda.current_device()
             ),

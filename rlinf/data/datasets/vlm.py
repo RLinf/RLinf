@@ -55,10 +55,13 @@ class VLMDatasetRegistry:
         data_paths: Union[list[str], str],
         config: DictConfig,
         tokenizer: AutoTokenizer,
+        **kwargs,
     ) -> "VLMBaseDataset":
         key = dataset_name.lower()
         dataset_class = cls.registry.get(key)
-        return dataset_class(data_paths=data_paths, config=config, tokenizer=tokenizer)
+        return dataset_class(
+            data_paths=data_paths, config=config, tokenizer=tokenizer, **kwargs
+        )
 
 
 @VLMDatasetRegistry.register("base")
