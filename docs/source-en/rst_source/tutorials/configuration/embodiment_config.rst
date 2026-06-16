@@ -60,35 +60,18 @@ algorithm
   algorithm:
     normalize_advantages: True
     kl_penalty: kl
-    rollout_epoch: 1
 
     reward_type: chunk_level
     logprob_type: token_level
     entropy_type: token_level
 
-
-    length_params:
-      max_new_token: null
-      max_length: 1024
-      min_length: 1
-
 ``algorithm.normalize_advantages``: Normalize advantages across the batch.
-
-``algorithm.rollout_epoch``: Number of rollout epochs per training step.
 
 ``algorithm.reward_type``: Reward aggregation level (chunk_level, action_level).
 
 ``algorithm.logprob_type``: Log probability computation level.
 
 ``algorithm.entropy_type``: Entropy computation level.
-
-**length_params:**
-
-``algorithm.length_params.max_new_token``: Maximum new tokens to generate.
-
-``algorithm.length_params.max_length``: Maximum total sequence length.
-
-``algorithm.length_params.min_length``: Minimum sequence length.
 
 env
 ~~~~~~~~~~~~~~~
@@ -97,13 +80,10 @@ env
 
   env:
     group_name: "EnvGroup"
-    channel:
-      name: "env_buffer_list"
-      queue_name: "obs_buffer"
-      queue_size: 0
     enable_offload: True
 
     train:
+      rollout_epoch: 1
       total_num_envs: null
       auto_reset: False
       ignore_terminations: False
@@ -111,6 +91,7 @@ env
       max_episode_steps: 10
 
     eval:
+      rollout_epoch: 1
       total_num_envs: null
       auto_reset: False
       ignore_terminations: False
@@ -119,13 +100,9 @@ env
 
 ``env.group_name``: Logical name for environment worker group.
 
-``env.channel.name``: Shared memory channel name for inter-process communication.
-
-``env.channel.queue_name``: Queue name for observation buffer.
-
-``env.channel.queue_size``: Queue size (0 for unlimited).
-
 ``env.enable_offload``: Enable environment offloading to reduce memory usage.
+
+``env.train.rollout_epoch``: Number of rollout epochs per training step.
 
 ``env.train.total_num_envs``: Total number of parallel environments for training.
 
@@ -136,6 +113,8 @@ env
 ``env.train.use_fixed_reset_state_ids``: Use fixed reset state IDs (false for randomization). Always True for GRPO, default be False for PPO.
 
 ``env.train.max_episode_steps``: Maximum number of steps per episode for training.
+
+``env.eval.rollout_epoch``: Number of evaluation rollout epochs; metrics are averaged over passes with the same seeds.
 
 ``env.eval.total_num_envs``: Total number of parallel environments for evaluation.
 
@@ -153,28 +132,49 @@ rollout
 .. code:: yaml
 
   rollout:
-    channel:
-      name: ${env.channel.name}
-      queue_name: "action_buffer"
-      queue_size: 0
-    mode: "collocate"
+    sampling_params:
+      do_sample: True
+      temperature_train: 1.0
+      temperature_eval: 0.6
+      top_k: 0
+      top_p: 1.0
+      repetition_penalty: 1.0
+      max_new_tokens: 7
+
+    group_name: "RolloutGroup"
     backend: "huggingface"
-    enforce_eager: True
     enable_offload: True
     pipeline_stage_num: 2
 
+    model:
+      model_path: "/path/to/hf_model"
+      precision: ${actor.model.precision}
 
-``rollout.channel.name``: Shared memory channel (inherits from env).
+**sampling_params (autoregressive VLA policies):**
 
-``rollout.channel.queue_name``: Queue name for action buffer.
+``rollout.sampling_params.do_sample``: Deterministic decoding if False.
 
-``rollout.channel.queue_size``: Queue size.
+``rollout.sampling_params.temperature_train`` / ``temperature_eval``: Sampling temperature for training and evaluation.
 
-``rollout.mode``: Rollout mode (collocate for shared GPU).
+``rollout.sampling_params.top_k`` / ``top_p``: Top-k and nucleus sampling parameters.
+
+``rollout.sampling_params.repetition_penalty``: Penalize repeated tokens.
+
+``rollout.sampling_params.max_new_tokens``: Maximum generated tokens per step (action dimension).
+
+Continuous policies (MLP, CNN, OpenPI, GR00T, etc.) do not use ``rollout.sampling_params``.
+
+``rollout.group_name``: Logical name for the rollout worker group.
 
 ``rollout.backend``: Model backend (huggingface, vllm).
 
+``rollout.enable_offload``: Enable rollout model offloading to reduce GPU memory usage.
+
 ``rollout.pipeline_stage_num``: Number of pipeline stages for rollout.
+
+``rollout.model.model_path``: Model checkpoint path used by rollout (may match actor).
+
+``rollout.model.precision``: Inference precision for rollout.
 
 actor
 ~~~~~~~~~~~~~~~
@@ -182,10 +182,7 @@ actor
 .. code:: yaml
 
   actor:
-    channel:
-      name: ${env.channel.name}
-      queue_name: "replay_buffer"
-      queue_size: 0
+    group_name: "ActorGroup"
     training_backend: "fsdp"
     micro_batch_size: 8
     global_batch_size: 160
@@ -235,9 +232,7 @@ actor
       clip_grad: 10.0
 
 
-``actor.channel.name``: Shared memory channel (inherits from env).
-
-``actor.channel.queue_name``: Queue name for replay buffer.
+``actor.group_name``: Logical name for the actor worker group.
 
 ``actor.training_backend``: Training backend (fsdp for distributed training).
 
@@ -347,13 +342,13 @@ The path is
 
 .. code:: yaml
 
-  auto_reset: ${algorithm.auto_reset}
-  ignore_terminations: ${algorithm.ignore_terminations}
+  auto_reset: False
+  ignore_terminations: False
   max_episode_steps: 512
 
-``auto_reset``: Automatically reset environment when episode terminates (inherits from algorithm config).
+``auto_reset``: Automatically reset environment when episode terminates (configured in ``env.train`` / ``env.eval``).
 
-``ignore_terminations``: Ignore episode terminations during training (inherits from algorithm config).
+``ignore_terminations``: Ignore episode terminations during training (configured in ``env.train``).
 
 ``max_episode_steps``: Maximum number of steps per episode (512 for complex Libero tasks).
 

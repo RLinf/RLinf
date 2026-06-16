@@ -134,7 +134,7 @@ PolaRiS has two datasets: one for evaluation and one for co-training.
 
    hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
 
-After downloading, set the ``POLARIS_DATA_PATH`` environment variable to the dataset path in ``examples/embodiment/run_embodiment.sh`` and ``examples/embodiment/eval_embodiment.sh``:
+After downloading, set ``POLARIS_DATA_PATH`` to the dataset path (read automatically by ``run_embodiment.sh`` and ``evaluations/run_eval.sh``):
 
 .. code:: bash
 
@@ -219,13 +219,13 @@ PolaRiS currently supports the following training configurations:
 
 - **PPO Training**
 
-  - ``examples/embodiment/config/polaris_ppo_openpi_pi05.yaml``
-  - ``examples/embodiment/config/polaris_ppo_openpi.yaml``
+  - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``
+  - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
 
 - **Evaluation**
 
-  - ``examples/embodiment/config/polaris_openpi_pi05_eval.yaml``
-  - ``examples/embodiment/config/polaris_openpi_eval.yaml``
+  - ``evaluations/polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml`` (TapeIntoContainer + π₀.₅)
+  - ``evaluations/polaris/polaris_movelattecup_openpi_eval.yaml`` (MoveLatteCup + π₀)
 
 Each task has an independent environment configuration file located under ``examples/embodiment/config/env/``:
 
@@ -238,7 +238,7 @@ Each task has an independent environment configuration file located under ``exam
 
 **2. Key Parameter Configuration**
 
-Parameters below are located in the training configuration file ``examples/embodiment/config/polaris_ppo_openpi_pi05.yaml``.
+Parameters below are located in the training configuration file ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``.
 
 .. code-block:: yaml
 
@@ -287,9 +287,9 @@ The training configuration file references them via Hydra defaults (e.g. ``defau
    source /path/to/isaac_sim/setup_conda_env.sh
 
    # pi05
-   bash examples/embodiment/run_embodiment.sh polaris_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
    # pi0
-   bash examples/embodiment/run_embodiment.sh polaris_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
 .. note::
 
@@ -306,10 +306,12 @@ The training configuration file references them via Hydra defaults (e.g. ``defau
 
    source /path/to/isaac_sim/setup_conda_env.sh
 
-   # pi05
-   bash examples/embodiment/eval_embodiment.sh polaris_openpi_pi05_eval
-   # pi0
-   bash examples/embodiment/eval_embodiment.sh polaris_openpi_eval
+   # π₀.₅ + TapeIntoContainer
+   bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval
+   # π₀ + MoveLatteCup
+   bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval
+
+For the full evaluation workflow (environment variables, config fields, and results), see :doc:`PolaRiS evaluation guide <../../evaluations/guides/polaris>`.
 
 Visualization and Results
 -------------------------

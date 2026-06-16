@@ -20,6 +20,17 @@ from typing import Any
 from rlinf.utils.logging import get_logger
 
 
+def _silence_hf_datasets_progress_bars() -> None:
+    # Disable HF ``datasets`` Map / parquet tqdm bars; called from
+    # ``create()`` so importing this module doesn't affect other consumers.
+    try:
+        import datasets as _hf_datasets
+
+        _hf_datasets.disable_progress_bar()
+    except ImportError:
+        pass
+
+
 class LeRobotDatasetWriter:
     """
     Wrapper for LeRobotDataset that provides a simplified interface for writing episodes.
@@ -59,6 +70,7 @@ class LeRobotDatasetWriter:
         wrist_image_keys: dict[str, tuple[int, ...]] | None = None,
         extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
+        has_segment_id: bool = False,
     ) -> None:
         """
         Create a new LeRobot dataset.
@@ -83,9 +95,14 @@ class LeRobotDatasetWriter:
                 extra-view camera(s).
             has_intervene_flag: Whether to include per-frame human-intervention
                 flag (bool, shape ``(1,)``) in auto-generated features.
+            has_segment_id: Whether to include per-frame ``segment_id``
+                (uint8, shape ``(1,)``) in auto-generated features. Used for
+                in-episode sub-task boundaries set by KeyboardStartEndWrapper.
 
         """
         from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+        _silence_hf_datasets_progress_bars()
 
         if features is None:
             features = {
@@ -115,6 +132,12 @@ class LeRobotDatasetWriter:
                     "dtype": "bool",
                     "shape": (1,),
                     "names": ["intervene_flag"],
+                }
+            if has_segment_id:
+                features["segment_id"] = {
+                    "dtype": "uint8",
+                    "shape": (1,),
+                    "names": ["segment_id"],
                 }
             if has_image:
                 features["image"] = {

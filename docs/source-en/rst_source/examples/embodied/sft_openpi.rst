@@ -1,5 +1,5 @@
-Supervised Fine-Tuning
-=======================
+OpenPI Supervised Fine-Tuning
+=============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

@@ -253,12 +253,12 @@ Async PPO 里的关键量之一是 ``proximal_logprobs``。它有两种来源：
      gamma: 0.99
      gae_lambda: 0.95
      entropy_bonus: 0.0
-     rollout_epoch: 1
      rollout_store_size_per_rank: 2 
      on_policy_min_ratio: 0.1
 
    env:
      train:
+       rollout_epoch: 1
        total_num_envs: 16
        max_episode_steps: 80
        max_steps_per_rollout_epoch: 80

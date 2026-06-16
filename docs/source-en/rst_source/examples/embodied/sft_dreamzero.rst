@@ -369,17 +369,17 @@ Resume training with ``runner.resume_dir`` pointing to a checkpoint directory (f
 Evaluation
 ----------
 
-After SFT, you can evaluate the policy in the embodied environment that matches your training dataset. The steps below use the **LIBERO** simulator as an example (task suite: LIBERO Spatial); see ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml``. Other simulators that support ``env.eval`` can follow the same workflow with their own eval YAML and ``eval_embodiment.sh``.
+After SFT, you can evaluate the policy in the embodied environment that matches your training dataset. The steps below use the **LIBERO** simulator as an example (task suite: LIBERO Spatial); see ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``. Other simulators that support ``env.eval`` can follow the same workflow with their own eval YAML and ``run_eval.sh``.
 
 **Prerequisites**
 
 1. Install with the LIBERO environment (``--env libero`` in **Environment setup** above).
-2. Set ``DREAMZERO_PATH`` to the DreamZero repo root (``eval_embodiment.sh`` adds it to ``PYTHONPATH``).
+2. Set ``DREAMZERO_PATH`` to the DreamZero repo root (``run_eval.sh`` adds it to ``PYTHONPATH``).
 3. Use the same ``metadata.json`` as training (``actor.model.metadata_json_path``).
 
 **Configure the eval YAML**
 
-Copy or edit ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml`` and update at least:
+Copy or edit ``evaluations/libero/libero_spatial_dreamzero_eval.yaml`` and update at least:
 
 .. list-table::
    :header-rows: 1
@@ -389,18 +389,18 @@ Copy or edit ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml`` a
      - Description
    * - ``runner.ckpt_path``
      - SFT weights to evaluate (``.pt``). Typical save path: ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``. If you only have ``.distcp`` shards, convert to ``.pt`` first (see :doc:`Checkpoint conversion <../../tutorials/usage/convertor>`).
-   * - ``actor.model.*_pretrained_path`` / ``tokenizer_path``
+   * - ``rollout.model.*_pretrained_path`` / ``tokenizer_path``
      - Match your SFT cold-start paths when ``model_path: null``; the backbone is built from pretrained paths, then ``ckpt_path`` overlays trainable weights.
-   * - ``actor.model.metadata_json_path``
+   * - ``rollout.model.metadata_json_path``
      - LIBERO normalization stats (same file as SFT when ``embodiment_tag: libero_sim``).
-   * - ``actor.model.embodiment_tag``
+   * - ``rollout.model.embodiment_tag``
      - Must be ``libero_sim`` for LIBERO rollout observation transforms.
-   * - ``actor.model.action_horizon`` / ``num_action_chunks``
+   * - ``rollout.model.action_horizon`` / ``num_action_chunks``
      - Align with SFT (16 for LIBERO).
-   * - ``algorithm.eval_rollout_epoch``
+   * - ``env.eval.rollout_epoch``
      - Number of eval passes; metrics are averaged over passes with the same seeds.
    * - ``env.eval.total_num_envs`` / ``auto_reset`` / ``max_steps_per_rollout_epoch``
-     - Parallel env count and coverage of the test set; see :doc:`VLA evaluation guide <../../start/vla-eval>`.
+     - Parallel env count and coverage of the test set; see :doc:`configuration reference <../../evaluations/reference/configuration>`.
    * - ``env.eval.video_cfg.save_video``
      - Set ``True`` to save videos under ``{log_path}/video/eval``.
 
@@ -412,7 +412,7 @@ Example snippet:
      only_eval: True
      ckpt_path: /path/to/logs/libero_sft_dreamzero/checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt
 
-   actor:
+   rollout:
      model:
        model_path: null
        metadata_json_path: /path/to/metadata.json
@@ -422,6 +422,7 @@ Example snippet:
 
    env:
      eval:
+       rollout_epoch: 1
        total_num_envs: 64
        auto_reset: True
        ignore_terminations: True
@@ -434,14 +435,14 @@ From the repo root, with the DreamZero venv active and ``DREAMZERO_PATH`` set:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh libero_spatial_eval_dreamzero
+   bash evaluations/run_eval.sh libero_spatial_eval_dreamzero
 
-Logs go to ``logs/<timestamp>-libero_spatial_eval_dreamzero/eval_embodiment.log``; the terminal prints metrics such as ``eval/success_once`` and ``eval/return``. For general eval YAML fields, see :doc:`VLA evaluation guide <../../start/vla-eval>`.
+Logs go to ``logs/<timestamp>-libero_spatial_eval_dreamzero/eval_embodiment.log``; the terminal prints metrics such as ``eval/success_once`` and ``eval/return``. For general eval YAML fields, see :doc:`configuration reference <../../evaluations/reference/configuration>`. For the full LIBERO workflow, see :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`.
 
 Franka real-world deployment and evaluation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-After SFT or checkpoint conversion, use ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` to deploy a full DreamZero checkpoint directory on the real Franka pick-and-place task. This workflow uses ``embodiment_tag: franka_pnp`` and the rollout observation mapping defined in ``data_transforms/franka_pnp.py``.
+After SFT or checkpoint conversion, use ``evaluations/realworld/realworld_pnp_eval_dreamzero.yaml`` to deploy a full DreamZero checkpoint directory on the real Franka pick-and-place task. This workflow uses ``embodiment_tag: franka_pnp`` and the rollout observation mapping defined in ``data_transforms/franka_pnp.py``.
 
 **Prepare Ray on two machines**
 
@@ -465,7 +466,7 @@ The example below uses two machines: one GPU node and one Franka node. Before st
    ray stop
    ray start --address=<head_ip>:6379
 
-Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` according to the real robot and checkpoint:
+Update ``evaluations/realworld/realworld_pnp_eval_dreamzero.yaml`` according to the real robot and checkpoint:
 
 .. code:: yaml
 
@@ -481,11 +482,11 @@ Update ``examples/embodiment/config/realworld_pnp_eval_dreamzero.yaml`` accordin
              - robot_ip: ROBOT_IP
                node_rank: 1
 
-   actor:
+   rollout:
      model:
        model_path: /path/to/ckpt_pnp/5b-franka/step_1200
        tokenizer_path: /path/to/umt5-xxl
-       metadata_json_path: ${actor.model.model_path}/experiment_cfg/metadata.json
+       metadata_json_path: ${rollout.model.model_path}/experiment_cfg/metadata.json
        embodiment_tag: franka_pnp
        action_horizon: 12
        num_action_chunks: 12
@@ -512,13 +513,13 @@ After Ray is connected, run on the GPU / head node:
    export CUDA_VISIBLE_DEVICES=0
    export RLINF_CODE_WORKING_DIR=auto
 
-   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval_dreamzero
+   bash evaluations/run_eval.sh realworld_pnp_eval_dreamzero
 
-``max_steps_per_rollout_epoch`` must be divisible by ``actor.model.num_action_chunks``.
+``max_steps_per_rollout_epoch`` must be divisible by ``rollout.model.num_action_chunks``.
 
 Recommended runtime checks:
 
-- ``ray status`` should show both the GPU node and the Franka node, with actor / rollout placed on the specified GPU rank.
+- ``ray status`` should show both the GPU node and the Franka node, with rollout placed on the specified GPU rank.
 - Videos are written to ``env.eval.video_cfg.video_base_dir``; this path is usually on the Franka node.
 
 Optional: convert SFT ``full_weights.pt`` to Hugging Face ``safetensors`` with ``fsdp_dreamzero_convertor`` and ``convert_pt_to_hf`` (``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_dreamzero_convertor.yaml``). For eval in LIBERO and similar simulators, set ``runner.ckpt_path`` to your ``.pt`` checkpoint.

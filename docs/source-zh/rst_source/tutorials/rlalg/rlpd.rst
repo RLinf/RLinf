@@ -57,33 +57,33 @@ RLPD依靠特定的架构来处理由离线数据引起的分布偏移：
 ----------
 
 RLPD建立在SAC配置之上，增加了离线数据集等内容。
+环境配置（``env.train`` / ``env.eval``）与 SAC 相同，完整示例见 :doc:`具身配置 <../configuration/embodiment_config>` 与 ``examples/embodiment/config/realworld_pnp_rlpd_cnn_async.yaml``。
 
 .. code-block:: yaml
-
-   data: # 添加离线演示数据
-      type: robot_demo
-      channel:
-      name: demo_data
-      path: "/path/to/demo_data"
 
    algorithm:
       update_epoch: 30
       group_size: 1
       agg_q: mean
 
-
       backup_entropy: False # 移除熵项
       critic_subsample_size: 2 # 目标计算时采样的 Critic 数量
-      eval_rollout_epoch: 1
 
       adv_type: embodied_sac
       loss_type: embodied_sac
-
       loss_agg_func: "token-mean"
-       
+
       bootstrap_type: standard
       gamma: 0.96
       tau: 0.005
+
+      demo_buffer: # 离线演示数据
+         enable_cache: True
+         cache_size: 200
+         min_buffer_size: 1
+         sample_window_size: 200
+         load_path: "/path/to/demo_data"
+         auto_save: False
 
    rollout:
       group_name: "RolloutGroup"
@@ -91,8 +91,8 @@ RLPD建立在SAC配置之上，增加了离线数据集等内容。
       enable_offload: False
       pipeline_stage_num: 1
 
-   model:
-      model_path: "/path/to/model"
-      precision: ${actor.model.precision}
-      num_q_heads: 10 # 集成的 Q 网络数量
+      model:
+         model_path: "/path/to/model"
+         precision: ${actor.model.precision}
+         num_q_heads: 10 # 集成的 Q 网络数量
 

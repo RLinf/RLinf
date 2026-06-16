@@ -1,4 +1,4 @@
-监督微调训练
+OpenPI 监督微调
 =======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg

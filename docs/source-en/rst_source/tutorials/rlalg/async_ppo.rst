@@ -272,12 +272,12 @@ The following is a minimal Async PPO configuration skeleton aligned with ``examp
      gamma: 0.99
      gae_lambda: 0.95
      entropy_bonus: 0.0
-     rollout_epoch: 1
-     rollout_store_size_per_rank: 2
+     rollout_store_size_per_rank: 2 
      on_policy_min_ratio: 0.1
 
    env:
      train:
+       rollout_epoch: 1
        total_num_envs: 16
        max_episode_steps: 80
        max_steps_per_rollout_epoch: 80

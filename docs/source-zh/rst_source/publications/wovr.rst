@@ -52,7 +52,7 @@ LIBERO（四类任务）
 --------
 
 - **LIBERO：** :doc:`../examples/embodied/wan`
-- **更多示例：** :doc:`../examples/embodied/index`
+- **更多示例：** :doc:`../examples/index`
 
 引用
 ----
