@@ -10,7 +10,7 @@ This example provides a complete guide to fine-tune GR00T models with reinforcem
 
 .. note::
 
-   RLinf supports both GR00T-N1.5 and GR00T-N1.6. N1.6 has significant upgrades in model architecture (Flow-Matching Action Head), distributed training (FSDP), and cross-embodiment generalization. Version-specific differences are marked with **N1.5** / **N1.6** labels.
+   RLinf supports GR00T-N1.5, GR00T-N1.6, and GR00T-N1.7. N1.6 introduced the Flow-Matching Action Head, FSDP-based training, and stronger cross-embodiment support. N1.7 further upgrades the official backbone to Cosmos-Reason2-2B / Qwen3-VL and expands the official universal state/action space. Version-specific differences are marked with **N1.5** / **N1.6** / **N1.7** labels.
 
 Environment
 -----------
@@ -29,6 +29,11 @@ Environment
 
 - **Observation**: RGB images (typical resolutions 128×128, 224×224, or 256×256) captured by off-screen cameras placed around the workspace.
 - **Action Space**: 7-dimensional continuous actions. *Note: GR00T-N1.6 zero-pads these 7-dim actions to a 128-dim cross-embodiment universal action space via embodiment tags.*
+
+**N1.7:**
+
+- **Observation**: For the current RLinf LIBERO integration, the environment still provides main-view and wrist-view RGB observations plus a raw 8-dim LIBERO state tensor, and RLinf converts them to the official GR00T-N1.7 processor input format.
+- **Action Space**: The environment-facing action remains 7-dimensional continuous control for LIBERO. Inside the official GR00T-N1.7 pipeline, actions are decoded from the GR00T action representation and mapped back to the LIBERO 7-dim control space.
 
 **Task Description Format**
 
@@ -50,6 +55,15 @@ GR00T directly uses the environment-provided natural-language task description a
 - **Images**: Continuous RGB video frames from the main view and wrist view, typically named ``main_images`` and ``wrist_images``. Considering timestep history, the shape is usually ``[batch_size, seq_len, 224, 224, 3]``.
 - **State**: End-effector position, pose, and gripper state (concatenated with visual features at the network bottom as state representation).
 - **Task Description**: Natural-language instructions.
+- **Rewards**: Sparse rewards for PPO reinforcement (1 for success, 0 for failure).
+
+**N1.7:**
+
+**Data Structure**
+
+- **Images**: RLinf currently reads ``main_images`` and ``wrist_images`` from LIBERO and converts them to the GR00T-N1.7 observation schema (for example ``video.image`` and ``video.wrist_image``) before calling the official processor.
+- **State**: RLinf currently receives an 8-dim raw LIBERO state tensor and splits it into ``state.x``, ``state.y``, ``state.z``, ``state.roll``, ``state.pitch``, ``state.yaw``, and ``state.gripper``. The current LIBERO example therefore keeps the existing RLinf/LIBERO state contract at the environment boundary, while the official N1.7 model uses a larger universal state/action representation internally.
+- **Task Description**: ``task_descriptions`` are mapped to ``annotation.human.action.task_description`` for the official processor.
 - **Rewards**: Sparse rewards for PPO reinforcement (1 for success, 0 for failure).
 
 Algorithm
@@ -109,6 +123,12 @@ Please switch to the corresponding virtual environment via the built-in `switch_
 
    source switch_env gr00t_n1d6
 
+**N1.7:**
+
+.. code:: bash
+
+   source switch_env gr00t_n1d7
+
 **Option 2: Custom Environment**
 
 **N1.5:**
@@ -125,6 +145,14 @@ Please switch to the corresponding virtual environment via the built-in `switch_
 
    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
    bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
+   source .venv/bin/activate
+
+**N1.7:**
+
+.. code:: bash
+
+   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
    source .venv/bin/activate
 
 Model Download
@@ -160,6 +188,48 @@ You need to run the RLinf-provided GR00T-N1.6 SFT first, obtain the format-conve
 RLinf SFT models will be released soon — stay tuned!
 
 Currently supports four LIBERO tasks: Spatial, Object, Goal, 10.
+
+**N1.7: Temporary official release checkpoint usage**
+
+RLinf does **not** ship a dedicated RLinf-produced GR00T-N1.7 SFT checkpoint yet. In the current repository state, the maintained N1.7 RL example temporarily uses the official released LIBERO checkpoint as the task-checkpoint bootstrap.
+
+In other words:
+
+- ``model_path`` currently points to a locally unpacked official ``nvidia/GR00T-N1.7-LIBERO`` checkpoint, not to an RLinf-exported N1.7 SFT checkpoint produced by RLinf.
+- ``backbone_model_path`` points to a local snapshot of ``Cosmos-Reason2-2B`` so actor, rollout, and processor can run fully offline.
+- This is a practical temporary setup for RL integration and debugging.
+
+This temporary setup is also consistent with the official N1.7 release notes:
+
+- **Relative EEF Action Space**: N1.7 adopts a relative end-effector action space shared across robot and human embodiments, which is one of the key reasons for its cross-embodiment generalization.
+- **Human Video Pretraining**: N1.7 is pretrained on 20K hours of EgoScale human video together with diverse robot demonstrations, so it can transfer manipulation priors from human video into robot control.
+- **Key Changes from N1.6**: N1.7 upgrades the VLM backbone to ``Cosmos-Reason2-2B`` / Qwen3-VL, simplifies the data-processing pipeline, and adds fuller ONNX / TensorRT export support.
+
+Before RLinf ships its own N1.7 SFT checkpoint, you can use the following offline download pattern:
+
+.. code:: bash
+
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+
+   # Download Cosmos-Reason2-2B backbone
+   uv run hf download nvidia/Cosmos-Reason2-2B \
+      --local-dir checkpoints/Cosmos-Reason2-2B
+
+   # Download GR00T-N1.7-LIBERO task checkpoint (libero_spatial minimum file set)
+   uv run hf download nvidia/GR00T-N1.7-LIBERO \
+      --include "libero_spatial/config.json" \
+                "libero_spatial/embodiment_id.json" \
+                "libero_spatial/model-*.safetensors" \
+                "libero_spatial/model.safetensors.index.json" \
+                "libero_spatial/processor_config.json" \
+                "libero_spatial/statistics.json" \
+      --local-dir checkpoints/GR00T-N1.7-LIBERO
+
+The current example can run with this minimum file set. If ``experiment_cfg/metadata.json`` is also available in your local checkpoint directory, keep it there; RLinf prefers it when present, but can fall back to modality/config inference when it is missing.
+
+Currently the maintained RLinf N1.7 RL example is LIBERO Spatial.
 
 --------------
 
@@ -227,6 +297,43 @@ To save memory while preventing "catastrophic forgetting", the framework adopts 
 - Given the significant increase in GR00T-N1.6 parameter scale, the Actor node has been fully restructured to break through the single-GPU memory bottleneck of traditional DDP.
 
 After fine-tuning, the system generates ``metadata.json`` and other statistical files in the output directory, preserving key modality information for inference and deployment.
+
+**N1.7:**
+
+**1. What's New in official GR00T N1.7**
+
+- GR00T N1.7 builds on N1.6 with a new VLM backbone and code-level improvements.
+- **Relative EEF Action Space**: N1.7 adopts a relative end-effector action space shared across robot and human embodiments. Representing actions as deltas from the current pose, instead of absolute targets, improves generalization and is a key reason for its cross-embodiment performance.
+- **Human Video Pretraining**: N1.7 is pretrained on 20K hours of EgoScale human video together with diverse robot demonstrations. Because the relative EEF action representation is shared across human and robot data, manipulation priors learned from human video can transfer more directly to robot control.
+
+**2. Key Changes from N1.6**
+
+- The official backbone is upgraded to ``nvidia/Cosmos-Reason2-2B`` with a Qwen3-VL style architecture, replacing the Eagle backbone used in N1.6.
+- The official ``processing_gr00t_n1d7.py`` path simplifies the data-processing pipeline compared with the older N1.6 stack.
+- The official N1.7 stack also expands ONNX / TensorRT export support.
+- The official N1.7 model config raises the default universal limits to ``max_state_dim=132``, ``max_action_dim=132``, and ``action_horizon=40``.
+
+**3. Current checkpoint strategy in RLinf**
+
+- RLinf does not yet provide a repository-produced N1.7 SFT checkpoint for this RL example.
+- The current maintained example therefore temporarily uses the official released ``GR00T-N1.7-LIBERO/libero_spatial`` checkpoint as ``model_path``.
+
+**4. RLinf N1.7 Interface Adaptation**
+
+- The current raw LIBERO state in RLinf is 8-dim before conversion, while the official N1.7 model uses a larger universal state/action representation internally.
+- The current LIBERO example uses ``embodiment_tag: libero_sim`` and applies the LIBERO gripper convention in the shared environment action utilities.
+
+**5. Checkpoint and Processor Contract**
+
+- RLinf loads the official processor directly from the checkpoint directory.
+- When running in offline or mirrored environments, ``backbone_model_path`` can redirect the official backbone id to a local ``Cosmos-Reason2-2B`` snapshot.
+- The current temporary official-release download command may omit ``experiment_cfg/metadata.json``; that is acceptable for now because RLinf has a fallback path, but keeping metadata is still recommended when available.
+
+**6. RL Training Contract in This Repository**
+
+- The maintained RLinf N1.7 RL example is ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``.
+- The current RL setup uses PPO with ``algorithm.loss_type: actor_critic``, so ``actor.model.add_value_head`` must be ``True`` during training.
+- The repository's validated LIBERO example uses ``num_action_chunks: 16`` and ``denoising_steps: 4``.
 
 ---------------
 
@@ -314,6 +421,26 @@ Use ``noise_method`` to select different noise injection methods. Two options ar
          - "Qwen3DecoderLayer"
          - "Siglip2EncoderLayer"
 
+**N1.7:**
+
+**Actor Model & Action Head Configuration**
+
+.. code:: yaml
+
+   model:
+      model_type: "gr00t_n1d7"
+      add_value_head: True
+      num_action_chunks: 16
+      denoising_steps: 4
+
+**Runtime Path Configuration**
+
+.. code:: yaml
+
+   model:
+      model_path: "/path/to/GR00T-N1.7-LIBERO/libero_spatial"
+      backbone_model_path: "/path/to/Cosmos-Reason2-2B"
+
 **PPO & Optimizer Hyperparameters**
 
 .. code:: yaml
@@ -357,6 +484,19 @@ Update the SFT model path:
    model:
       model_path: "/path/to/RLinf-Gr00t-N1.6-RL-Spatial"
 
+**N1.7:**
+
+- GR00T-N1.7 + PPO + Libero-Spatial:
+  ``examples/embodiment/config/libero_spatial_ppo_gr00t_n1d7.yaml``
+
+Update the SFT model path:
+
+.. code:: yaml
+
+   model:
+      model_path: "/path/to/GR00T-N1.7-LIBERO/libero_spatial"
+      backbone_model_path: "/path/to/Cosmos-Reason2-2B"
+
 --------------
 
 **4. Launch Commands**
@@ -375,6 +515,12 @@ Update the SFT model path:
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d6
+
+**N1.7:**
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t_n1d7
 
 --------------
 
@@ -493,3 +639,15 @@ We would like to point out that the results presented above utilize the identica
 
    * - +PPO
      - |huggingface| `82% <https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-RL-Spatial-Step500>`_
+
+
+**N1.7:**
+
+.. list-table:: **GR00T-N1.7 Results with Flow-SDE on LIBERO Spatial**
+   :header-rows: 1
+
+   * - Model
+     - Spatial
+
+   * - GR00T-N1.7 PPO
+     - |huggingface| TODO
