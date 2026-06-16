@@ -42,31 +42,40 @@ class NoAutoResetSyncVectorEnv(SyncVectorEnv):
     ) -> tuple[Any, NDArray[Any], NDArray[Any], NDArray[Any], dict]:
         """Steps through each of the environments returning the batched results.
 
+        Re-implements the parent ``step`` without per-env auto-reset. Built
+        from scratch so it does not depend on gymnasium-version-specific
+        private attribute names (e.g. ``_terminateds`` vs ``_terminations``,
+        ``observations`` vs ``_observations``).
+
         Returns:
-            The batched environment step results
+            The batched environment step results.
         """
-        self._actions = actions
-        observations, infos = [], {}
-        for i, (env, action) in enumerate(zip(self.envs, self._actions)):
+        rewards = np.zeros(self.num_envs, dtype=np.float64)
+        terminations = np.zeros(self.num_envs, dtype=np.bool_)
+        truncations = np.zeros(self.num_envs, dtype=np.bool_)
+        observations: list = []
+        infos: dict = {}
+        for i, (env, action) in enumerate(zip(self.envs, actions)):
             (
                 observation,
-                self._rewards[i],
-                self._terminateds[i],
-                self._truncateds[i],
+                rewards[i],
+                terminations[i],
+                truncations[i],
                 info,
             ) = env.step(action)
-
             observations.append(observation)
             infos = self._add_info(infos, info, i)
-        self.observations = concatenate(
-            self.single_observation_space, observations, self.observations
+
+        batched = create_empty_array(
+            self.single_observation_space, n=self.num_envs, fn=np.zeros
         )
+        batched = concatenate(self.single_observation_space, observations, batched)
 
         return (
-            deepcopy(self.observations) if self.copy else self.observations,
-            np.copy(self._rewards),
-            np.copy(self._terminateds),
-            np.copy(self._truncateds),
+            deepcopy(batched) if self.copy else batched,
+            rewards,
+            terminations,
+            truncations,
             infos,
         )
 

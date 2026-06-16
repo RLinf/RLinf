@@ -62,7 +62,18 @@ class SO101PickEnv(SO101Env):
     at 1.0 when the arm holds within tolerance for ``success_hold_steps``.
     """
 
-    def __init__(self, override_cfg, worker_info=None, hardware_info=None, env_idx=0):
+    def __init__(
+        self,
+        override_cfg,
+        worker_info=None,
+        hardware_info=None,
+        env_idx=0,
+        env_cfg=None,
+    ):
+        # ``env_cfg`` is the parent ``RealWorldEnv`` config that gym.make
+        # threads through unconditionally. SO101 doesn't currently need it
+        # (no extra wrappers), so we accept and ignore it.
+        del env_cfg
         config = SO101PickConfig(**override_cfg)
         super().__init__(config, worker_info, hardware_info, env_idx)
         self._base_reset_joint_qpos = list(self.config.reset_joint_qpos)

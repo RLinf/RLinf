@@ -210,10 +210,14 @@ class TestSO101EnvDummyLifecycle:
         finally:
             env.close()
 
-    def test_observation_space_has_no_frames_when_no_cameras(self):
+    def test_observation_space_has_default_camera_slot(self):
+        """Even with no cameras, a single ``camera_0`` slot is declared so
+        ``RealWorldEnv._wrap_obs`` (which reads ``main_image_key``) keeps
+        working without conditional branches."""
         env = _make_env()
         try:
-            assert "frames" not in env.observation_space.spaces
+            assert "frames" in env.observation_space.spaces
+            assert "camera_0" in env.observation_space["frames"].spaces
             assert env.observation_space["state"]["joint_position"].shape == (
                 _NUM_ARM_JOINTS,
             )

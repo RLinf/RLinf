@@ -85,7 +85,10 @@ class LeRobotDatasetWriter:
                 flag (bool, shape ``(1,)``) in auto-generated features.
 
         """
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ImportError:
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
         if features is None:
             features = {

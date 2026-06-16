@@ -125,8 +125,12 @@ class SO101Config(HardwareConfig):
     """Arm variant: ``"so101"`` or ``"so100"``."""
 
     calibration_id: str = "default"
-    """Calibration ID for the LeRobot calibration file.
-    Stored at ``~/.cache/lerobot/calibration/robots/so_follower/{id}.json``."""
+    """Calibration ID for the LeRobot follower-arm calibration file.
+    Stored at ``~/.cache/huggingface/lerobot/calibration/robots/so_follower/{id}.json``."""
+
+    leader_calibration_id: Optional[str] = None
+    """Calibration ID for the leader-arm calibration file. When ``None``,
+    defaults to ``f"{calibration_id}_leader"`` in the env layer."""
 
     camera_serials: Optional[list[str]] = None
     """Optional list of camera serial numbers or indices.

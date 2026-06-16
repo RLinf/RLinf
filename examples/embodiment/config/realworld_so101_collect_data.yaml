@@ -36,6 +36,8 @@ cluster:
         configs:
           - port: /dev/ttyACM0
             leader_port: /dev/ttyACM1
+            calibration_id: my_awesome_follower_arm
+            leader_calibration_id: my_awesome_leader_arm
             node_rank: 0
 
 runner:
@@ -58,6 +60,7 @@ env:
     override_cfg:
       enable_teleop: True
       manual_episode_control_only: True
+      auto_calibrate: False
       success_hold_steps: 1
       max_episode_steps: ${env.eval.max_episode_steps}
 

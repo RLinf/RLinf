@@ -81,6 +81,9 @@ class SO101RobotConfig:
     port: Optional[str] = None
     leader_port: Optional[str] = None
     calibration_id: Optional[str] = None
+    leader_calibration_id: Optional[str] = None
+    """Calibration id for the leader arm. When ``None``, defaults to
+    ``f"{calibration_id}_leader"``."""
     arm_variant: str = "so101"
 
     camera_serials: Optional[list] = None
@@ -89,6 +92,13 @@ class SO101RobotConfig:
     use_degrees: bool = True
     max_relative_target: Optional[float] = None
     """Per-step joint movement cap in degrees (LeRobot ``max_relative_target``)."""
+
+    auto_calibrate: bool = True
+    """When ``True``, pass ``calibrate=True`` to LeRobot's ``connect()``: if the
+    motor EEPROM already matches the loaded calibration JSON, this is a no-op;
+    otherwise LeRobot will prompt on stdin to recalibrate. Set to ``False`` to
+    skip calibration entirely (use only when the arm is already calibrated and
+    you don't want any interactive prompt)."""
 
     step_frequency: float = 30.0
 
@@ -239,6 +249,8 @@ class SO101Env(gym.Env):
             self.config.camera_type = getattr(hw, "camera_type", "opencv")
         if self.config.calibration_id is None:
             self.config.calibration_id = getattr(hw, "calibration_id", "default")
+        if self.config.leader_calibration_id is None:
+            self.config.leader_calibration_id = getattr(hw, "leader_calibration_id", None)
 
     def _connect_robot(self):
         from lerobot.robots.so_follower import SO101Follower
@@ -252,7 +264,7 @@ class SO101Env(gym.Env):
             disable_torque_on_disconnect=True,
         )
         self._robot = SO101Follower(robot_cfg)
-        self._robot.connect(calibrate=True)
+        self._robot.connect(calibrate=self.config.auto_calibrate)
 
         if self.config.enable_teleop and self.config.leader_port:
             self._connect_leader()
@@ -266,14 +278,20 @@ class SO101Env(gym.Env):
     def _connect_leader(self):
         from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
+        leader_id = self.config.leader_calibration_id or (
+            f"{self.config.calibration_id or 'default'}_leader"
+        )
         leader_cfg = SO101LeaderConfig(
             port=self.config.leader_port,
-            id=f"{self.config.calibration_id or 'default'}_leader",
+            id=leader_id,
             use_degrees=self.config.use_degrees,
         )
         self._leader = SO101Leader(leader_cfg)
-        self._leader.connect()
-        self._logger.info(f"SO101 leader connected on port {self.config.leader_port}")
+        self._leader.connect(calibrate=self.config.auto_calibrate)
+        self._logger.info(
+            f"SO101 leader connected on port {self.config.leader_port} "
+            f"(calibration_id={leader_id})"
+        )
 
     def _start_keyboard_listener(self) -> None:
         """Start a ``pynput`` listener for keyboard-driven episode control.
@@ -358,18 +376,22 @@ class SO101Env(gym.Env):
             }
         )
 
-        spaces = {"state": state_space}
-        num_cameras = len(self.config.camera_serials or [])
-        if num_cameras > 0:
-            spaces["frames"] = gym.spaces.Dict(
-                {
-                    f"camera_{k}": gym.spaces.Box(
-                        0, 255, shape=(128, 128, 3), dtype=np.uint8
-                    )
-                    for k in range(num_cameras)
-                }
-            )
-        self.observation_space = gym.spaces.Dict(spaces)
+        # ``RealWorldEnv._wrap_obs`` always reads ``frames[main_image_key]``,
+        # so ensure at least one camera slot exists. When no cameras are
+        # configured we fall back to a single blank ``camera_0`` placeholder
+        # to keep downstream wrappers happy.
+        num_cameras = max(1, len(self.config.camera_serials or []))
+        frame_space = gym.spaces.Dict(
+            {
+                f"camera_{k}": gym.spaces.Box(
+                    0, 255, shape=(128, 128, 3), dtype=np.uint8
+                )
+                for k in range(num_cameras)
+            }
+        )
+        self.observation_space = gym.spaces.Dict(
+            {"state": state_space, "frames": frame_space}
+        )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def step(self, action: np.ndarray):
@@ -485,37 +507,36 @@ class SO101Env(gym.Env):
             return self._base_observation_space.sample()
 
         self._update_state()
-        obs: dict = {
-            "state": {
-                "joint_position": self._state.joint_position.astype(np.float32),
-                "gripper_position": np.array(
-                    [self._state.gripper_position], dtype=np.float32
-                ),
-            },
-        }
-        if "frames" in self.observation_space.spaces:
-            obs["frames"] = self._get_camera_frames()
-        return copy.deepcopy(obs)
+        return copy.deepcopy(
+            {
+                "state": {
+                    "joint_position": self._state.joint_position.astype(np.float32),
+                    "gripper_position": np.array(
+                        [self._state.gripper_position], dtype=np.float32
+                    ),
+                },
+                "frames": self._get_camera_frames(),
+            }
+        )
 
     def _get_camera_frames(self) -> dict:
-        """Read frames from configured cameras.
+        """Return frames keyed by ``camera_<i>``.
 
-        Subclasses are expected to populate ``self._cameras`` with objects
-        exposing ``get_frame()``. Missing/unreachable cameras yield blank frames
-        so the observation matches the declared observation space.
+        Returns one blank-image entry per slot in the declared observation
+        space (at least ``camera_0``) so consumers like
+        ``RealWorldEnv._wrap_obs`` always find ``main_image_key``. Real
+        cameras override the blanks via ``self._cameras``.
         """
         frames: dict = {}
-        if not self._cameras:
-            blank = np.zeros((128, 128, 3), dtype=np.uint8)
-            for k in range(len(self.config.camera_serials or [])):
-                frames[f"camera_{k}"] = blank
-            return frames
+        slots = list(self.observation_space.spaces["frames"].spaces.keys())
+        blank = np.zeros((128, 128, 3), dtype=np.uint8)
+        for slot in slots:
+            frames[slot] = blank.copy()
         for name, camera in self._cameras.items():
             try:
                 frames[name] = camera.get_frame()
             except Exception as e:
                 self._logger.warning(f"Failed to read camera '{name}': {e}")
-                frames[name] = np.zeros((128, 128, 3), dtype=np.uint8)
         return frames
 
     def _calc_step_reward(self, observation: dict) -> float:
