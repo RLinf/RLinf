@@ -404,7 +404,6 @@ def math_verify_call(
             for sol in solutions:
                 job = global_executor.submit(verify_math_solution, gen, sol)
                 jobs.append(job)
-            all_jobs.append(jobs)
         else:
             job = global_executor.submit(verify_math_solution, gen, solutions)
             jobs.append(job)
