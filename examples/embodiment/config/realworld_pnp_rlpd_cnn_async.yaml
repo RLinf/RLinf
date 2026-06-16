@@ -63,7 +63,6 @@ algorithm:
 
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -101,21 +100,6 @@ algorithm:
 
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
@@ -139,6 +123,7 @@ env:
       enable_gripper_penalty: False
   
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
 
 rollout:

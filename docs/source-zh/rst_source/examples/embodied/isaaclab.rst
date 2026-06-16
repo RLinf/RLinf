@@ -220,7 +220,7 @@ Gr00t N1.5 运行脚本
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 Openpi π0.5 依赖安装
 --------------------
@@ -337,7 +337,7 @@ Openpi π0.5 运行脚本
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
+   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
 可视化与结果
 ------------

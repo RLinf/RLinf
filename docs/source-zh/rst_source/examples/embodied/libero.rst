@@ -294,7 +294,7 @@ LIBERO 结果
 
 我们根据模型的训练配置来设置评估的超参：
 对于 SFT 训练（LoRA-base）模型，我们设置 `do_sample = False`。
-对于 RL 训练的模型，我们设置 `do_sample = True`、`temperature = 1.6`，并启用 `rollout_epoch=2` 以激发 RL 调优策略的最佳性能。
+对于 RL 训练的模型，我们在 ``rollout.sampling_params`` 中设置 ``do_sample = True``、``temperature_train = 1.6``，并启用 ``env.train.rollout_epoch=2`` 以激发 RL 调优策略的最佳性能。
 
 .. note::
 
@@ -547,14 +547,14 @@ LIBERO-Pro 和 LIBERO-Plus 复用了标准 LIBERO 配置族，并通过额外的
 
 **评测 (Evaluation)**
 
-要评测训练好的模型，请使用 ``eval_embodiment.sh`` 脚本：
+要评测训练好的模型，请使用 ``evaluations/run_eval.sh``。详见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
 
 .. code-block:: bash
 
     # 评测 LIBERO-Pro
     export LIBERO_TYPE=pro
-    bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft
+    bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
 
     # 评测 LIBERO-Plus
     export LIBERO_TYPE=plus
-    bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft
+    bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval

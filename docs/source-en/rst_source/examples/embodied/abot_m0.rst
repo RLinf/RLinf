@@ -261,7 +261,7 @@ Evaluation
 Use standalone evaluation before training to verify the checkpoint, rollout
 pipeline, and environment assets.
 
-The eval entrypoint is ``examples/embodiment/eval_embodied_agent.py``. Both
+The eval entrypoint is ``evaluations/eval_embodied_agent.py``. Both
 benchmarks share the same launch flow; the only differences are
 ``LIBERO_TYPE`` and the config name.
 
@@ -287,14 +287,14 @@ Common environment setup:
 
    export LIBERO_TYPE=standard
 
-   python examples/embodiment/eval_embodied_agent.py \
+   python evaluations/eval_embodied_agent.py \
      --config-name libero_10_ppo_abot_m0 \
      actor.model.model_path=<path_to_abot_m0_ckpt> \
      rollout.model.model_path=<path_to_abot_m0_ckpt> \
      runner.only_eval=True \
      env.eval.total_num_envs=8 \
      env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
+     env.eval.rollout_epoch=1 \
      runner.logger.experiment_name=abot_m0_libero10_eval
 
 **LIBERO-Plus:**
@@ -303,14 +303,14 @@ Common environment setup:
 
    export LIBERO_TYPE=plus
 
-   python examples/embodiment/eval_embodied_agent.py \
+   python evaluations/eval_embodied_agent.py \
      --config-name libero_10_plus_ppo_abot_m0 \
      actor.model.model_path=<path_to_abot_m0_ckpt> \
      rollout.model.model_path=<path_to_abot_m0_ckpt> \
      runner.only_eval=True \
      env.eval.total_num_envs=8 \
      env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
+     env.eval.rollout_epoch=1 \
      runner.logger.experiment_name=abot_m0_liberoplus_eval
 
 Training

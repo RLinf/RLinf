@@ -64,7 +64,7 @@ Evaluation (optional)
 
 .. code-block:: bash
 
-   bash examples/embodiment/eval_embodiment.sh <eval_config_name>
+   bash evaluations/run_eval.sh <benchmark> <eval_config_name>
 ```
 
 ## Index toctree entry

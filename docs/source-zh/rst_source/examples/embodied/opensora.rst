@@ -339,7 +339,7 @@ LIBERO 部分结果
 
 我们根据模型的训练配置设置评估超参：
 对于 SFT 训练（LoRA-base）模型，设置 `do_sample = False`。
-对于 RL 训练模型，设置 `do_sample = True`、`temperature = 1.6`，并启用 `rollout_epoch=2` 以获得最佳性能。
+对于 RL 训练模型，在 ``rollout.sampling_params`` 中设置 ``do_sample = True``、``temperature_train = 1.6``，并启用 ``env.train.rollout_epoch=2`` 以获得最佳性能。
 
 .. note::
 

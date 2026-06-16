@@ -230,7 +230,7 @@ Evaluation
 
 .. code-block:: bash
 
-   python toolkits/eval_scripts_dexbotic/libero_eval.py \
+   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
       --config_name db_pi0_libero \
       --pretrained_path /path/to/checkpoint \
       --task_suite_name libero_spatial \
@@ -243,7 +243,7 @@ DM0 Model
 
 .. code-block:: bash
 
-   python toolkits/eval_scripts_dexbotic/libero_eval.py \
+   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
       --config_name dm0_libero \
       --pretrained_path /path/to/checkpoint \
       --task_suite_name libero_spatial \
@@ -252,7 +252,7 @@ DM0 Model
       --num_steps 10
 
 You can also use RLinf's unified VLA evaluation flow; refer to the
-:doc:`VLA Evaluation Documentation <../../start/vla-eval>` for details.
+:doc:`evaluation <../../evaluations/index>` for details.
 
 .. note::
 

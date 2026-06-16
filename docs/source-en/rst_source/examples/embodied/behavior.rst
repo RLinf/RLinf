@@ -280,7 +280,6 @@ Using behavior as an example:
 - OpenPI (Pi0) + PPO:
   ``examples/embodiment/config/behavior_ppo_openpi.yaml``
 - OpenPI (Pi0.5) + PPO:
-  ``examples/embodiment/config/behavior_ppo_openpi_pi05_eval.yaml``
   ``examples/embodiment/config/behavior_ppo_openpi_pi05.yaml``
 
 .. warning::
@@ -503,7 +502,9 @@ Run evaluation with:
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05_eval
+   bash evaluations/run_eval.sh behavior_ppo_openpi_pi05_eval
+
+For the full evaluation workflow, see :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
 
 
 Visualization and Results

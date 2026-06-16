@@ -59,34 +59,17 @@ algorithm
     normalize_advantages: True
     kl_penalty: kl
 
-    rollout_epoch: 1
-
     reward_type: chunk_level
     logprob_type: token_level
     entropy_type: token_level
 
-    length_params:
-      max_new_token: null
-      max_length: 1024
-      min_length: 1
-
 ``algorithm.normalize_advantages``：是否对优势值归一化处理。
-
-``algorithm.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
 ``algorithm.reward_type``：奖励聚合层级（chunk_level、action_level）。
 
 ``algorithm.logprob_type``：对数概率的计算层级。
 
 ``algorithm.entropy_type``：熵的计算层级。
-
-**length_params：**
-
-``algorithm.length_params.max_new_token``：最大新增 token 数。
-
-``algorithm.length_params.max_length``：最大总序列长度。
-
-``algorithm.length_params.min_length``：最小序列长度。
 
 env
 ~~~~~~~~~~~~~~~
@@ -95,13 +78,10 @@ env
 
   env:
     group_name: "EnvGroup"
-    channel:
-      name: "env_buffer_list"
-      queue_name: "obs_buffer"
-      queue_size: 0
     enable_offload: True
 
     train:
+      rollout_epoch: 1
       total_num_envs: null
       auto_reset: False
       ignore_terminations: False
@@ -109,6 +89,7 @@ env
       max_episode_steps: 10
 
     eval:
+      rollout_epoch: 1
       total_num_envs: null
       auto_reset: False
       ignore_terminations: False
@@ -117,13 +98,9 @@ env
 
 ``env.group_name``：环境 worker 组的逻辑名称。
 
-``env.channel.name``：进程间通信的共享内存通道名。
-
-``env.channel.queue_name``：观测缓冲区队列名。
-
-``env.channel.queue_size``：队列大小（0 表示不限制）。
-
 ``env.enable_offload``：启用环境侧的下放以降低内存占用。
+
+``env.train.rollout_epoch``：每个训练步骤前的 rollout 轮数。
 
 ``env.train.total_num_envs``：训练用的并行环境总数。
 
@@ -134,6 +111,8 @@ env
 ``env.train.use_fixed_reset_state_ids``：使用固定的 reset 状态 ID（false 则随机化）。GRPO 始终为 True，PPO 默认为 False。
 
 ``env.train.max_episode_steps``：训练时每个 episode 的最大步数。
+
+``env.eval.rollout_epoch``：评估 rollout 轮数；多轮在相同种子下跑完测试集后取平均。
 
 ``env.eval.total_num_envs``：评估用的并行环境总数。
 
@@ -151,27 +130,49 @@ rollout
 .. code:: yaml
 
   rollout:
-    channel:
-      name: ${env.channel.name}
-      queue_name: "action_buffer"
-      queue_size: 0
-    mode: "collocate"
+    sampling_params:
+      do_sample: True
+      temperature_train: 1.0
+      temperature_eval: 0.6
+      top_k: 0
+      top_p: 1.0
+      repetition_penalty: 1.0
+      max_new_tokens: 7
+
+    group_name: "RolloutGroup"
     backend: "huggingface"
-    enforce_eager: True
     enable_offload: True
     pipeline_stage_num: 2
 
-``rollout.channel.name``：共享内存通道（继承自 env）。
+    model:
+      model_path: "/path/to/hf_model"
+      precision: ${actor.model.precision}
 
-``rollout.channel.queue_name``：动作缓冲区队列名。
+**sampling_params（VLA 等自回归策略）：**
 
-``rollout.channel.queue_size``：队列大小。
+``rollout.sampling_params.do_sample``：False 时使用贪心解码。
 
-``rollout.mode``：rollout 模式（collocate 表示**共享式**使用 GPU）。
+``rollout.sampling_params.temperature_train`` / ``temperature_eval``：训练与评估时的采样温度。
+
+``rollout.sampling_params.top_k`` / ``top_p``：top-k 与 nucleus 采样参数。
+
+``rollout.sampling_params.repetition_penalty``：重复惩罚系数。
+
+``rollout.sampling_params.max_new_tokens``：单步最大生成 token 数（动作维度）。
+
+连续策略（MLP、CNN、OpenPI、GR00T 等）不使用 ``rollout.sampling_params``。
+
+``rollout.group_name``：rollout worker 组的逻辑名称。
 
 ``rollout.backend``：模型后端（huggingface、vllm）。
 
+``rollout.enable_offload``：启用 rollout 模型下放以降低显存占用。
+
 ``rollout.pipeline_stage_num``：rollout 的流水线阶段数。
+
+``rollout.model.model_path``：rollout 使用的模型权重路径（可与 actor 共享）。
+
+``rollout.model.precision``：rollout 推理精度。
 
 actor
 ~~~~~~~~~~~~~~~
@@ -179,10 +180,7 @@ actor
 .. code:: yaml
 
   actor:
-    channel:
-      name: ${env.channel.name}
-      queue_name: "replay_buffer"
-      queue_size: 0
+    group_name: "ActorGroup"
     training_backend: "fsdp"
     micro_batch_size: 8
     global_batch_size: 160
@@ -231,9 +229,7 @@ actor
       adam_eps: 1.0e-05
       clip_grad: 10.0
 
-``actor.channel.name``：共享内存通道（继承自 env）。
-
-``actor.channel.queue_name``：回放缓冲区队列名。
+``actor.group_name``：actor worker 组的逻辑名称。
 
 ``actor.training_backend``：训练后端（分布式 FSDP）。
 
@@ -331,13 +327,13 @@ actor
 
 .. code:: yaml
 
-  auto_reset: ${algorithm.auto_reset}
-  ignore_terminations: ${algorithm.ignore_terminations}
+  auto_reset: False
+  ignore_terminations: False
   max_episode_steps: 512
 
-``auto_reset``：episode 结束时是否自动重置（继承自 algorithm）。
+``auto_reset``：episode 结束时是否自动重置（在 ``env.train`` / ``env.eval`` 中配置）。
 
-``ignore_terminations``：训练时是否忽略终止（继承自 algorithm）。
+``ignore_terminations``：训练时是否忽略终止（在 ``env.train`` 中配置）。
 
 ``max_episode_steps``：每个 episode 的最大步数（复杂 Libero 任务通常取 512）。
 

@@ -318,11 +318,11 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 .. code:: yaml
 
-   rollout_epoch: 8 -> 2
-   total_num_envs: 64 -> 32
-   micro_batch_size: 128 -> 64
-   global_batch_size: 2048 -> 256
-   lr: 5e-6 -> 1e-6
+   env.train.rollout_epoch: 8 -> 2
+   env.train.total_num_envs: 64 -> 32
+   actor.micro_batch_size: 128 -> 64
+   actor.global_batch_size: 2048 -> 256
+   actor.optim.lr: 5e-6 -> 1e-6
    actor.enable_offload: False -> True
    rollout.enable_offload: False -> True
 
@@ -338,7 +338,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 **如果是rollout阶段遇到OOM问题：**
 
 - 可以尝试将渲染引擎从 ``egl`` 替换为 ``osmesa``
-- 进一步减少 ``total_num_envs``，从32减少为16，但是增加 ``rollout_epoch`` 从2为4，以保证每轮rollout环境总数一致
+- 进一步减少 ``env.train.total_num_envs``，从32减少为16，但是增加 ``env.train.rollout_epoch`` 从2为4，以保证每轮rollout环境总数一致
 - 检查actor的 ``enable_offload`` 是否开启，如果是 ``False`` 则设置为 ``True``
 
 **如果是actor阶段遇到OOM问题：**
@@ -350,17 +350,17 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
    如果遇到 ``micro_batch_size`` 和 ``global_batch_size`` 不匹配的问题，需要保证 ``global_batch_size`` 是 ``micro_batch_size`` × GPU数量 的整数倍。
 
-**2.5 模型评估** 
+**2.5 模型评测** 
 
-针对SFT或RL训练后的模型，我们提供两种评估方式：
+针对SFT或RL训练后的模型，我们提供两种评测方式：
 
-- 使用RLinf统一的评估脚本，参考 `VLA评估文档 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/start/vla-eval.html>`__ 进行评估，这种方式支持并行环境评估，速度快，但是只支持输出整个任务的成功率。
+- 使用 RLinf 统一的评测脚本，参考 :doc:`评测 <../../evaluations/index>` 进行评测，这种方式支持并行环境评测，速度快，但是只支持输出整个任务的成功率。
 
 .. note::
 
-   ``Metaworld`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评估模式，建议使用单个脚本文件进行模型评估。
+   ``Metaworld`` 暂时不支持设置 ``env.eval.auto_reset=True`` 的评测模式，建议使用单个脚本文件进行模型评测。
 
-- 使用单个脚本文件进行模型评估，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/eval_scripts_openpi/README.md>`__，这种方式的评估脚本和 ``openpi`` 官方提供的评估脚本一致，支持输出每个子任务的成功率，但是速度较慢。
+- 使用单个脚本文件进行模型评测，参考示例 `README.md <https://github.com/RLinf/RLinf/blob/main/toolkits/standalone_eval_scripts/openpi/README.md>`__，这种方式的评测脚本和 ``openpi`` 官方提供的评测脚本一致，支持输出每个子任务的成功率，但是速度较慢。
 
 **3. 配置文件**
 

@@ -112,6 +112,15 @@ RLinf is a flexible and scalable open-source infrastructure designed for post-tr
 --------------------------------------------
 
 .. toctree::
+  :maxdepth: 3
+  :includehidden:
+  :titlesonly:
+
+  rst_source/evaluations/index
+
+--------------------------------------------
+
+.. toctree::
   :maxdepth: 2
   :includehidden:
   :titlesonly:

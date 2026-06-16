@@ -305,7 +305,7 @@ For LIBERO-90 and LIBERO-130, we evaluate 4,500 (90 tasks × 50 trials) and 6,50
 
 We evaluate each model according to its training configuration.
 For the SFT-trained (LoRA-base) models, we set `do_sample = False`.
-For the RL-trained models, we set `do_sample = True`, `temperature = 1.6`, and enable `rollout_epoch=2` to elicit the best performance of the RL-tuned policy.
+For the RL-trained models, we set ``do_sample = True`` and ``temperature_train = 1.6`` in ``rollout.sampling_params``, and enable ``env.train.rollout_epoch=2`` to elicit the best performance of the RL-tuned policy.
 
 .. note::
 
@@ -558,14 +558,14 @@ To start training a model on the newly integrated suites, use the ``run_embodime
 
 **Evaluation**
 
-To evaluate the trained models, use the ``eval_embodiment.sh`` script:
+To evaluate the trained models, use ``evaluations/run_eval.sh``. See :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>`.
 
 .. code-block:: bash
 
     # Evaluate on LIBERO-Pro
     export LIBERO_TYPE=pro
-    bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft
+    bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval
 
     # Evaluate on LIBERO-Plus
     export LIBERO_TYPE=plus
-    bash examples/embodiment/eval_embodiment.sh libero_10_grpo_openvlaoft
+    bash evaluations/run_eval.sh libero libero_10_openvlaoft_eval

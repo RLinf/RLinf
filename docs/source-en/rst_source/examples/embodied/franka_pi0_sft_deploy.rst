@@ -286,18 +286,19 @@ After starting the Ray cluster (see the **Cluster configuration** section in
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval
+   bash evaluations/run_eval.sh realworld_pnp_eval
 
 The script runs in **eval-only mode** (``runner.only_eval: True``); the policy
 will autonomously control the robot to complete the Bin-relocation task.
 
 You can control the number of evaluation episodes via the
-``eval_rollout_epoch`` parameter:
+``env.eval.rollout_epoch`` parameter:
 
 .. code:: yaml
 
-   runner:
-     eval_rollout_epoch: 20
+   env:
+     eval:
+       rollout_epoch: 20
 
 Generic Real-World SFT Environment and Deployment
 -------------------------------------------------
@@ -350,4 +351,6 @@ Then launch:
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval
+   bash evaluations/run_eval.sh realworld_eval
+
+For the full real-robot evaluation workflow, see :doc:`real-world evaluation guide <../../evaluations/guides/realworld>`.

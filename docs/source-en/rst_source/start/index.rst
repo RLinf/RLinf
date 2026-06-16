@@ -13,8 +13,6 @@ We present three concise examples to demonstrate the framework's workflow and he
 
 - **Distributed training:** Multi-node training for embodied/agentic tasks (see :doc:`distribute`).
 
-- **Evaluation:** Assessing model performance on embodied intelligence (see :doc:`vla-eval`) and assessing model performance on long-chain-of-thought agentic tasks (see :doc:`llm-eval`).
-
 
 SOTA RL Training Reproduction
 =====================================
@@ -33,5 +31,3 @@ For agentic tasks (including math reasoning), RLinf achieves SOTA performance on
    vla
    llm
    distribute
-   vla-eval
-   llm-eval

@@ -244,7 +244,7 @@ VGGT 加载路径显式改为本地目录。
 
 建议在训练前先执行独立评测，用于验证 checkpoint、rollout 流程和环境资产是否正确。
 
-评测入口是 ``examples/embodiment/eval_embodied_agent.py``。两个 benchmark
+评测入口是 ``evaluations/eval_embodied_agent.py``。两个 benchmark
 共用同一套启动流程，差异只在 ``LIBERO_TYPE`` 与配置文件名。
 
 通用环境变量：
@@ -269,14 +269,14 @@ VGGT 加载路径显式改为本地目录。
 
    export LIBERO_TYPE=standard
 
-   python examples/embodiment/eval_embodied_agent.py \
+   python evaluations/eval_embodied_agent.py \
      --config-name libero_10_ppo_abot_m0 \
      actor.model.model_path=<path_to_abot_m0_ckpt> \
      rollout.model.model_path=<path_to_abot_m0_ckpt> \
      runner.only_eval=True \
      env.eval.total_num_envs=8 \
      env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
+     env.eval.rollout_epoch=1 \
      runner.logger.experiment_name=abot_m0_libero10_eval
 
 **LIBERO-Plus：**
@@ -285,14 +285,14 @@ VGGT 加载路径显式改为本地目录。
 
    export LIBERO_TYPE=plus
 
-   python examples/embodiment/eval_embodied_agent.py \
+   python evaluations/eval_embodied_agent.py \
      --config-name libero_10_plus_ppo_abot_m0 \
      actor.model.model_path=<path_to_abot_m0_ckpt> \
      rollout.model.model_path=<path_to_abot_m0_ckpt> \
      runner.only_eval=True \
      env.eval.total_num_envs=8 \
      env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
+     env.eval.rollout_epoch=1 \
      runner.logger.experiment_name=abot_m0_liberoplus_eval
 
 训练
