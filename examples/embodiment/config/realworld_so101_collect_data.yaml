@@ -47,7 +47,7 @@ runner:
     project_name: rlinf
     experiment_name: "so101-collect-data"
     logger_backends: ["tensorboard"]
-  num_data_episodes: 20
+  num_data_episodes: 4
   record_task_description: False
 
 env:

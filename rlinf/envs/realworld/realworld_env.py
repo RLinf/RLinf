@@ -205,6 +205,22 @@ class RealWorldEnv(gym.Env):
             self._reset_metrics()
         return extracted_obs, infos
 
+    def close(self):
+        """Propagate close() to the underlying vector env so each sub-env's
+        close() (e.g. ``SO101Env.close``) runs — releases motor torque,
+        disconnects buses, frees keyboard listeners, etc.
+
+        ``gym.Env.close()`` is a no-op by default, so without this override
+        the inner SyncVectorEnv would never see a close, and hardware-level
+        cleanup (e.g. moving an arm to rest, disabling motor torque) would
+        be silently skipped.
+        """
+        if getattr(self, "env", None) is not None:
+            try:
+                self.env.close()
+            except Exception:
+                pass
+
     def _wrap_obs(self, raw_obs):
         """
         raw_obs: Dict of list

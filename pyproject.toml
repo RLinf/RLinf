@@ -160,7 +160,7 @@ so101 = [
     # commit ccfd609e ("consolidate SO arms implementation"). Pin to v0.5.1
     # which is the first stable tag containing it.
     "lerobot @ git+https://github.com/huggingface/lerobot.git@v0.5.1",
-    "pynput",
+    "evdev",              # keyboard listener (Linux evdev, no X11 needed)
     "gymnasium",
     "opencv-python",
     "numpy",

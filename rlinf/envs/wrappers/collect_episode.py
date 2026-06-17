@@ -475,13 +475,20 @@ class CollectEpisode(gym.Wrapper):
 
             self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
+            # Each data-collection run gets a fresh, timestamped subdirectory
+            # so we never accidentally append to (or collide with) a prior run.
+            import time
+            run_id = time.strftime("%Y%m%d_%H%M%S")
+            repo_id = os.path.abspath(os.path.join(
+                self.save_dir,
+                f"rank_{self.rank}",
+                f"run_{run_id}",
+            ))
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
-                repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
-                ),
+                repo_id=repo_id,
                 robot_type=self.robot_type,
                 fps=self.fps,
                 image_shape=first["image"].shape if "image" in first else None,

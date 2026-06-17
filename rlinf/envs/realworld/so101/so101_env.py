@@ -217,7 +217,7 @@ class SO101Env(gym.Env):
         self._robot = None
         self._leader = None
         self._cameras: dict = {}
-        self._pynput_listener = None
+        self._evdev_device = None
         self._key_state_lock = None
         self._key_state: dict[str, bool] = {
             "episode_success": False,
@@ -261,7 +261,7 @@ class SO101Env(gym.Env):
             id=self.config.calibration_id or "default",
             use_degrees=self.config.use_degrees,
             max_relative_target=self.config.max_relative_target,
-            disable_torque_on_disconnect=True,
+            disable_torque_on_disconnect=False,
         )
         self._robot = SO101Follower(robot_cfg)
         self._robot.connect(calibrate=self.config.auto_calibrate)
@@ -293,65 +293,124 @@ class SO101Env(gym.Env):
             f"(calibration_id={leader_id})"
         )
 
-    def _start_keyboard_listener(self) -> None:
-        """Start a ``pynput`` listener for keyboard-driven episode control.
+    def _start_evdev_listener(self) -> bool:
+        """Find and start an ``evdev``-based keyboard listener.
 
-        Key bindings match LeRobot's convention used during teleoperation
-        recording:
-          - ``s`` / →   ``episode_success``
-          - ``r`` / ←   ``rerecord_episode``
-          - ``q`` / Esc ``stop_recording``
-
-        Only started in teleop mode. If ``pynput`` is missing or the listener
-        fails to start, episodes terminate by timeout only.
+        Scans ``/dev/input/event*`` for the first keyboard device that
+        supports both ``KEY_S`` and ``KEY_Q``, starts a daemon read-loop
+        thread, and returns ``True``.  Returns ``False`` if no usable
+        keyboard is found (``evdev`` missing, no permission, or no
+        matching input device).
         """
-        if not self.config.enable_teleop:
-            return
-
         try:
-            from pynput import keyboard as pynput_keyboard
+            import evdev
         except ImportError:
-            self._logger.info(
-                "[SO101Env] pynput unavailable — falling back to timeout-only episodes."
-            )
-            return
+            self._logger.info("[SO101Env] evdev not installed.")
+            return False
+
+        # Map evdev key codes → SO101 event name.
+        _ev_key_s = evdev.ecodes.KEY_S
+        _ev_key_r = evdev.ecodes.KEY_R
+        _ev_key_q = evdev.ecodes.KEY_Q
+        _ev_key_right = evdev.ecodes.KEY_RIGHT
+        _ev_key_left = evdev.ecodes.KEY_LEFT
+        _ev_key_esc = evdev.ecodes.KEY_ESC
+
+        code_to_event = {
+            _ev_key_s: "episode_success",
+            _ev_key_r: "rerecord_episode",
+            _ev_key_q: "stop_recording",
+            _ev_key_right: "episode_success",
+            _ev_key_left: "rerecord_episode",
+            _ev_key_esc: "stop_recording",
+        }
+
+        # Find a keyboard device (has KEY_S and KEY_Q in its capabilities).
+        # We glob /dev/input/event* ourselves because evdev's is_device()
+        # requires R_OK|W_OK — we only need read access for the listener.
+        import glob as _glob
+        _paths = sorted(_glob.glob("/dev/input/event*"))
+        if not _paths:
+            self._logger.info("[SO101Env] evdev: no /dev/input/event* devices found.")
+            return False
+
+        device = None
+        for path in _paths:
+            try:
+                _dev = evdev.InputDevice(path)
+            except PermissionError:
+                continue
+            try:
+                caps = _dev.capabilities(verbose=False)
+                key_caps = set(caps.get(evdev.ecodes.EV_KEY, []))
+                if _ev_key_s in key_caps and _ev_key_q in key_caps:
+                    device = _dev
+                    break
+            finally:
+                if device is not _dev:
+                    _dev.close()
+
+        if device is None:
+            self._logger.info("[SO101Env] evdev: no keyboard with KEY_S+KEY_Q found.")
+            return False
 
         import threading
 
         self._key_state_lock = threading.Lock()
-        key_to_event = {
-            pynput_keyboard.Key.right: "episode_success",
-            pynput_keyboard.Key.left: "rerecord_episode",
-            pynput_keyboard.Key.esc: "stop_recording",
-        }
-        char_to_event = {
-            "s": "episode_success",
-            "r": "rerecord_episode",
-            "q": "stop_recording",
-        }
 
-        def _on_press(key):
-            event = key_to_event.get(key)
-            if event is None and getattr(key, "char", None):
-                event = char_to_event.get(key.char)
-            if event is None:
-                return
-            with self._key_state_lock:
-                self._key_state[event] = True
-            self._logger.info(f"[SO101Env] {event} triggered")
+        def _evdev_loop():
+            try:
+                for event in device.read_loop():
+                    if event.type != evdev.ecodes.EV_KEY:
+                        continue
+                    # Only act on key-down (value 1) and auto-repeat (value 2).
+                    if event.value not in (1, 2):
+                        continue
+                    event_name = code_to_event.get(event.code)
+                    if event_name is None:
+                        continue
+                    with self._key_state_lock:
+                        self._key_state[event_name] = True
+                    self._logger.info(f"[SO101Env] evdev: {event_name} triggered")
+            except Exception as e:
+                self._logger.warning(f"[SO101Env] evdev loop exited: {e}")
 
-        try:
-            self._pynput_listener = pynput_keyboard.Listener(on_press=_on_press)
-            self._pynput_listener.start()
-            self._logger.info(
-                "[SO101Env] Keyboard ready: 's'/→ save, 'r'/← rerecord, 'q'/Esc stop."
-            )
-        except Exception as e:
-            self._pynput_listener = None
-            self._logger.info(
-                f"[SO101Env] Keyboard listener failed to start ({e}); "
-                "episodes will end on timeout only."
-            )
+        t = threading.Thread(target=_evdev_loop, daemon=True, name="so101-kbd")
+        t.start()
+        self._evdev_device = device  # keep alive for close()
+        self._logger.info(
+            f"[SO101Env] Keyboard ready (evdev: {device.name}): "
+            "'s'/→ save, 'r'/← rerecord, 'q'/Esc stop."
+        )
+        return True
+
+    def _start_keyboard_listener(self) -> None:
+        """Start a keyboard listener for manual episode control.
+
+        Reads directly from the Linux input event layer via ``evdev``
+        — no X11 or graphical session needed.
+
+        Key bindings:
+          - ``s`` / →   ``episode_success``
+          - ``r`` / ←   ``rerecord_episode``
+          - ``q`` / Esc ``stop_recording``
+
+        Only started in teleop mode.  If ``evdev`` is not available or no
+        readable keyboard device is found, episodes terminate by timeout
+        only.
+        """
+        if not self.config.enable_teleop:
+            return
+
+        if self._start_evdev_listener():
+            return
+
+        self._logger.info(
+            "[SO101Env] no keyboard device found — "
+            "episodes will end via timeout only (max_episode_steps)."
+            "To enable keyboard control, ensure the runtime user has read "
+            "access to /dev/input/event* (e.g. group 'input')."
+        )
 
     def _init_action_obs_spaces(self):
         self._joint_limit_low = np.asarray(self.config.joint_limit_low, dtype=np.float64)
@@ -550,14 +609,40 @@ class SO101Env(gym.Env):
             return 1.0
         return float(np.exp(-error / self.config.reward_threshold_deg))
 
+    def _shutdown_arm_safely(self):
+        """Park the arm at the rest pose and leave torque enabled.
+
+        We deliberately do NOT disable torque on close. With torque enabled
+        and Goal_Position set to rest, the motors actively hold the rest
+        pose until power-cycled — the user-visible "alive" state that
+        re-running the data collection script produces. Disabling torque
+        here would make the arm feel "frozen" (limp + stiff gear-train
+        friction), which collaborators consistently report as a regression.
+
+        Sequence:
+          1. Send rest pose via send_action.
+          2. Wait a fixed 3 s so motors physically reach rest before we
+             return — without this, the script can exit while the arm is
+             still mid-traverse and the motors then hold *that* pose
+             instead of rest.
+        """
+        try:
+            self._go_to_rest()
+        except Exception as e:
+            self._logger.warning(f"Failed to send rest target on close: {e}")
+        time.sleep(3.0)
+        self._logger.info("SO101 parked at rest (torque held).")
+
     def close(self):
-        if self._pynput_listener is not None:
+        if self._evdev_device is not None:
             try:
-                if self._pynput_listener.is_alive():
-                    self._pynput_listener.stop()
+                self._evdev_device.close()
             except Exception:
                 pass
-            self._pynput_listener = None
+            self._evdev_device = None
+
+        if self._robot is not None and not self.config.is_dummy:
+            self._shutdown_arm_safely()
 
         if self._robot is not None:
             try:

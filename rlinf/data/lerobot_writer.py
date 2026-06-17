@@ -182,24 +182,29 @@ class LeRobotDatasetWriter:
         if self.dataset is None:
             raise RuntimeError("Dataset not created. Call create() first.")
 
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.wait_until_done()
+        # Clean up internal resources without triggering property getters.
+        # LeRobotDataset in v0.5.x exposes attributes like `image_writer`,
+        # `episode_buffer`, and `hf_dataset` as @property — hasattr/test
+        # on those would invoke them, triggering expensive I/O or errors.
+        # We check the .__dict__ directly.
+        _d = self.dataset.__dict__
+        iw = _d.get("image_writer")
+        if iw is not None:
+            try:
+                iw.wait_until_done()
+            except Exception:
+                pass
+            try:
+                iw.stop()
+            except Exception:
+                pass
+            _d["image_writer"] = None
 
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.stop()
-            self.dataset.image_writer = None
+        if "episode_buffer" in _d:
+            _d["episode_buffer"] = None
 
-        if hasattr(self.dataset, "episode_buffer"):
-            self.dataset.episode_buffer = None
-
-        if hasattr(self.dataset, "hf_dataset"):
-            self.dataset.hf_dataset = None
+        # Set reader to None (private attribute, not the property).
+        _d["reader"] = None
 
         del self.dataset
         self.dataset = None
