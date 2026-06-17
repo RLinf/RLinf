@@ -15,17 +15,27 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 1. Core path configuration
-# Auto-detect script directory and compute REPO_PATH (two levels up from toolkits/auto_test)
+# Auto-detect script directory and compute REPO_PATH (two levels up from tests/parity_tests)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_PATH="${REPO_PATH:-$(dirname "$(dirname "$SCRIPT_DIR")")}"
 export LOG_DIR="$REPO_PATH/logs"
 export WORKDIR="$REPO_PATH/examples/embodiment"
-export PYTHONPATH="${REPO_PATH}:${PYTHONPATH:-}"
+export PYTHONPATH="${REPO_PATH}:${REPO_PATH}/tests/parity_tests:${PYTHONPATH:-}"
 export SYNC_FLAG_FILE="$REPO_PATH/ray_utils/task_sync.txt"
 export FORCE_REBUILD=1
 
 # Virtual environment configuration
-export VENV_BASE_DIR="/path/to/venvs" # Set this to your actual base directory for virtual environments
+# Override via environment: export VENV_BASE_DIR=/your/venvs/path
+export VENV_BASE_DIR="${VENV_BASE_DIR:-/path/to/venvs}"
+
+# Pre-flight check: ensure VENV_BASE_DIR has been configured
+if [ "$VENV_BASE_DIR" = "/path/to/venvs" ]; then
+    echo "ERROR: VENV_BASE_DIR is not configured."
+    echo "Please set it to your virtual environments directory before running:"
+    echo "  export VENV_BASE_DIR=/path/to/your/venvs"
+    echo "  bash tests/parity_tests/run_all.sh"
+    exit 1
+fi
 # 2. Task list
 #    Format: ENV_NAME MODEL_NAME YAML_ARG T_NODES d T_SAVE
 #    ENV_NAME: Environment name (maniskill_libero, behavior, isaaclab, metaworld, calvin, etc.)
@@ -147,7 +157,7 @@ if [ "$RANK" -eq 0 ]; then
         # Call check.py with log directory and experiment name
         # It will check all matching logs and return aggregated status
         echo "Checking training status for experiment: $YAML_ARG"
-        CHECK_RESULT=$(python3 "$REPO_PATH/toolkits/auto_test/check.py" "$LOG_DIR" --experiment "$YAML_ARG" --threshold=100 --format=simple 2>&1)
+        CHECK_RESULT=$(python3 "$REPO_PATH/tests/parity_tests/check.py" "$LOG_DIR" --experiment "$YAML_ARG" --threshold=100 --format=simple 2>&1)
         
         # Parse result: reached,crashed
         REACHED=$(echo "$CHECK_RESULT" | cut -d',' -f1)
@@ -329,7 +339,7 @@ if [ "$RANK" -eq 0 ]; then
         echo "Conducting Baseline Comparison ..."
         echo ""
         # Run analyze_logs.py with baseline comparison
-        python3 "$REPO_PATH/toolkits/auto_test/analyze_logs.py" "$LOG_DIR" \
+        python3 "$REPO_PATH/tests/parity_tests/analyze_logs.py" "$LOG_DIR" \
             --output-dir "$ANALYSIS_OUTPUT" \
             --baseline-dir "$BASELINE_DIR" \
             --step 100 \

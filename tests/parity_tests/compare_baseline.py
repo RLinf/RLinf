@@ -495,8 +495,10 @@ def save_comparison_results(comparison_results: list, output_path: str | None = 
 
             sim_result = c["similarity_result"]
             similarity = sim_result.get("similarity", "")
-            if similarity is not None:
+            if isinstance(similarity, (int, float)):
                 similarity = f"{similarity:.6f}"
+            elif similarity is None:
+                similarity = "N/A"
             method = sim_result.get("method", "N/A")
             common_steps = sim_result.get("common_steps", 0)
             last_step_diff = c.get("last_step_diff")

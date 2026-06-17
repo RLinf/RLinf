@@ -1,7 +1,7 @@
 Automated Testing
 ====================
 
-The RLinf automated testing toolkit is located in the ``toolkits/auto_test/`` directory. It batch-runs embodied training experiments, detects run status, and performs automatic baseline comparison analysis.
+The RLinf automated testing toolkit is located in the ``tests/parity_tests/`` directory. It batch-runs embodied training experiments, detects run status, and performs automatic baseline comparison analysis.
 The toolkit supports automatic experiment running, automatic Python environment switching, and log-based experiment completion or crash detection.
 
 Environment and Configuration
@@ -62,13 +62,13 @@ Start automated testing with the following command:
 
 .. code-block:: bash
 
-   bash ./toolkits/auto_test/run_all.sh
+   bash ./tests/parity_tests/run_all.sh
 
 ``run_all.sh`` accepts a ``--similarity-method`` parameter to specify the similarity metric for baseline comparison (default: ``pearson``). Available options: ``spearman``, ``mse``, ``mae``, ``cosine``, ``dtw``, ``all``:
 
 .. code-block:: bash
 
-   bash ./toolkits/auto_test/run_all.sh --similarity-method pearson
+   bash ./tests/parity_tests/run_all.sh --similarity-method pearson
 
 .. For multi-node execution, set the ``RANK`` environment variable on each node: ``RANK=0`` (default) for the head node, ``RANK!=0`` for worker nodes. The head node schedules tasks, starts the Ray cluster, and runs training; worker nodes poll the synchronization signal file ``ray_utils/task_sync.txt`` to automatically join the cluster and wait for task completion.
 

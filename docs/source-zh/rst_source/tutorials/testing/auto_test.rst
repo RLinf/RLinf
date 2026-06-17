@@ -1,7 +1,7 @@
 自动测试功能
 ====================
 
-RLinf 自动测试工具位于 ``toolkits/auto_test/`` 目录下，用于批量运行具身训练实验、检测运行状态，并与基线结果进行自动对比分析。
+RLinf 自动测试工具位于 ``tests/parity_tests/`` 目录下，用于批量运行具身训练实验、检测运行状态，并与基线结果进行自动对比分析。
 该工具支持自动顺序执行实验，自动切换 Python 环境、以及根据日志判断实验的完成或崩溃状态。
 
 环境与运行配置
@@ -62,13 +62,13 @@ Python 环境与模型准备
 
 .. code-block:: bash
 
-   bash ./toolkits/auto_test/run_all.sh
+   bash ./tests/parity_tests/run_all.sh
 
 ``run_all.sh`` 支持 ``--similarity-method`` 参数指定基线对比的相似度计算方法（默认 ``pearson``），可选 ``spearman``、``mse``、``mae``、``cosine``、``dtw``、``all``：
 
 .. code-block:: bash
 
-   bash ./toolkits/auto_test/run_all.sh --similarity-method pearson
+   bash ./tests/parity_tests/run_all.sh --similarity-method pearson
 
 .. 多节点运行时，需在各节点设置 ``RANK`` 环境变量：头节点 ``RANK=0``（默认），工作节点 ``RANK!=0``。头节点负责调度任务、启动 Ray 集群并执行训练；工作节点通过轮询同步信号文件 ``ray_utils/task_sync.txt`` 自动加入集群并等待任务完成。
 
