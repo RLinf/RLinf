@@ -549,7 +549,7 @@ class CollectEpisode(gym.Wrapper):
             return
         self._futures.append(self._executor.submit(fn, *args))
         self.logger.info(f"Futures queue length: {len(self._futures)}")
-        self._drain_futures()
+        self._wait_futures()
 
     def _drain_futures(self) -> None:
         remaining = []

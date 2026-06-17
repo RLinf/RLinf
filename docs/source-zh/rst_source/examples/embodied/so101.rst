@@ -49,6 +49,43 @@ SO101 机械臂真机数据采集
 
    SFT（行为克隆）和 RL 训练已在代码中预留但尚未测试。本节将在对应流程验证后补充。
 
+相机
+~~~~
+
+SO101 数据采集支持 LeRobot 的相机系统。在环境 override_cfg 中
+添加 camera_cfgs 字典即可配置最多两台相机。type 键用于选择
+LeRobot 相机后端，其余键直接转发给对应的
+CameraConfig 子类。
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       main_image_key: front      # 将 "front" 记录为主视图
+       override_cfg:
+         camera_cfgs:
+           front:
+             type: intelrealsense
+             serial_number_or_name: "409122274720"
+             width: 848
+             height: 480
+             fps: 30
+             use_depth: true          # 同时读取 "front_depth"
+           handeye:
+             type: opencv
+             index_or_path: /dev/video8
+             width: 640
+             height: 480
+             fps: 30
+
+相机帧由 LeRobot 的 SO101Follower.get_observation() 以配置的名称
+（如 "front"、"handeye"、"front_depth"）存储在观测
+字典中，环境将其直接转发至 frames。当 RealSense 相机设置
+use_depth 时，观测中会额外生成 <name>_depth 键。
+
+未配置相机时，环境会生成一个 128×128 的空白 camera_0 占位图像
+以保持下游封装正常工作。
+
 硬件设置
 --------
 

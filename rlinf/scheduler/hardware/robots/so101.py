@@ -14,7 +14,7 @@
 
 import os
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..hardware import (
@@ -125,20 +125,16 @@ class SO101Config(HardwareConfig):
     """Arm variant: ``"so101"`` or ``"so100"``."""
 
     calibration_id: str = "default"
-    """Calibration ID for the LeRobot follower-arm calibration file.
-    Stored at ``~/.cache/huggingface/lerobot/calibration/robots/so_follower/{id}.json``."""
+    """LeRobot follower-arm calibration id."""
 
     leader_calibration_id: Optional[str] = None
-    """Calibration ID for the leader-arm calibration file. When ``None``,
-    defaults to ``f"{calibration_id}_leader"`` in the env layer."""
+    """LeRobot leader-arm calibration id. When ``None``, defaults to
+    ``f"{calibration_id}_leader"`` in the env layer."""
 
-    camera_serials: Optional[list[str]] = None
-    """Optional list of camera serial numbers or indices.
-    Pass ``[]`` or leave ``None`` to run without cameras."""
-
-    camera_type: str = "opencv"
-    """Camera backend: ``"opencv"`` for USB cameras, ``"realsense"`` for Intel
-    RealSense, or ``"zed"`` for ZED cameras."""
+    camera_cfgs: dict[str, dict] = field(default_factory=dict)
+    """Camera configurations keyed by camera name.  See
+    :attr:`SO101RobotConfig.camera_cfgs` for the format.  Leave empty
+    to run without cameras (a blank ``camera_0`` placeholder is emitted)."""
 
     use_degrees: bool = True
     """Whether joint angles use degrees (LeRobot default) or radians."""
@@ -156,5 +152,3 @@ class SO101Config(HardwareConfig):
             f"'arm_variant' must be 'so101' or 'so100'. "
             f"But got '{self.arm_variant}'."
         )
-        if self.camera_serials:
-            self.camera_serials = list(self.camera_serials)

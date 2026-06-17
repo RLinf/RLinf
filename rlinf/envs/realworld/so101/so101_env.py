@@ -73,8 +73,8 @@ def _to_lerobot_action(arm_targets: np.ndarray, gripper_target: float) -> dict:
 class SO101RobotConfig:
     """Configuration for :class:`SO101Env`.
 
-    Hardware connection fields (``port``, ``leader_port``, ``camera_serials``,
-    ``camera_type``, ``calibration_id``) are auto-filled from
+    Hardware connection fields (``port``, ``leader_port``,
+    ``calibration_id``, ``camera_cfgs``) are auto-filled from
     :class:`~rlinf.scheduler.SO101HWInfo` when left as ``None``.
     """
 
@@ -86,8 +86,33 @@ class SO101RobotConfig:
     ``f"{calibration_id}_leader"``."""
     arm_variant: str = "so101"
 
-    camera_serials: Optional[list] = None
-    camera_type: Optional[str] = None
+    camera_cfgs: dict[str, dict] = field(default_factory=dict)
+    """Camera configurations keyed by camera name.  Each value is a dict
+    forwarded to LeRobot's ``CameraConfig`` constructor.  The ``width``,
+    ``height``, and ``fps`` keys inside each dict are the **capture**
+    parameters accepted by the camera hardware, NOT the stored resolution.
+    To shrink stored frames, set :attr:`image_width` and
+    :attr:`image_height` — frames are resized via OpenCV after capture.
+    Empty = a single blank ``camera_0`` placeholder.  Example::
+
+        camera_cfgs = {
+            "front": {"type": "intelrealsense",
+                      "serial_number_or_name": "409122274720",
+                      "width": 640, "height": 480, "fps": 30,
+                      "use_depth": True},
+            "handeye": {"type": "opencv",
+                        "index_or_path": "/dev/video8",
+                        "width": 640, "height": 480, "fps": 30},
+        }
+    """
+
+    image_width: int = 128
+    """Output image width in pixels.  Camera frames larger than this are
+    resized (OpenCV bilinear) before storage.  Set to ``0`` to keep the
+    native capture resolution."""
+
+    image_height: int = 128
+    """Output image height in pixels.  Paired with :attr:`image_width`."""
 
     use_degrees: bool = True
     max_relative_target: Optional[float] = None
@@ -190,7 +215,7 @@ class SO101Env(gym.Env):
 
     Observation space: ``Dict`` with ``state`` containing ``joint_position``
     (5 arm joints) and ``gripper_position`` (1,). Camera frames are only
-    present in the observation when ``camera_serials`` is configured *and* the
+    present in the observation when ``camera_cfgs`` is configured *and* the
     cameras are reachable; subclasses are responsible for populating
     ``self._cameras`` accordingly.
     """
@@ -216,7 +241,7 @@ class SO101Env(gym.Env):
         self._num_steps = 0
         self._robot = None
         self._leader = None
-        self._cameras: dict = {}
+        self._camera_frames: dict = {}
         self._evdev_device = None
         self._key_state_lock = None
         self._key_state: dict[str, bool] = {
@@ -243,18 +268,42 @@ class SO101Env(gym.Env):
             self.config.port = hw.port
         if self.config.leader_port is None:
             self.config.leader_port = getattr(hw, "leader_port", None)
-        if self.config.camera_serials is None:
-            self.config.camera_serials = getattr(hw, "camera_serials", None) or []
-        if self.config.camera_type is None:
-            self.config.camera_type = getattr(hw, "camera_type", "opencv")
+        if not self.config.camera_cfgs:
+            self.config.camera_cfgs = getattr(hw, "camera_cfgs", None) or {}
         if self.config.calibration_id is None:
             self.config.calibration_id = getattr(hw, "calibration_id", "default")
         if self.config.leader_calibration_id is None:
             self.config.leader_calibration_id = getattr(hw, "leader_calibration_id", None)
 
+    @staticmethod
+    def _build_camera_configs(raw: dict[str, dict]) -> dict:
+        """Build LeRobot ``CameraConfig`` instances from user-facing dicts.
+
+        Each value in *raw* must contain a ``"type"`` key (``"intelrealsense"``
+        or ``"opencv"``) along with the arguments expected by the corresponding
+        :class:`~lerobot.cameras.configs.CameraConfig` subclass.  The ``"type"``
+        key is consumed and not forwarded.
+        """
+        # CameraConfig subclasses register themselves at module import time;
+        # LeRobot does not auto-import them, so we must import the modules
+        # that contain the registrations before get_choice_class() can find them.
+        import lerobot.cameras.opencv.configuration_opencv as _  # registers "opencv"
+        import lerobot.cameras.realsense.configuration_realsense as _  # registers "intelrealsense"
+        from lerobot.cameras.configs import CameraConfig
+
+        result: dict = {}
+        for name, cfg in raw.items():
+            cfg = dict(cfg)
+            cam_type = cfg.pop("type")
+            cls = CameraConfig.get_choice_class(cam_type)
+            result[name] = cls(**cfg)
+        return result
+
     def _connect_robot(self):
         from lerobot.robots.so_follower import SO101Follower
         from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
+
+        camera_configs = self._build_camera_configs(self.config.camera_cfgs)
 
         robot_cfg = SO101FollowerConfig(
             port=self.config.port,
@@ -262,9 +311,14 @@ class SO101Env(gym.Env):
             use_degrees=self.config.use_degrees,
             max_relative_target=self.config.max_relative_target,
             disable_torque_on_disconnect=False,
+            cameras=camera_configs,
         )
         self._robot = SO101Follower(robot_cfg)
         self._robot.connect(calibrate=self.config.auto_calibrate)
+
+        if camera_configs:
+            names = ", ".join(camera_configs)
+            self._logger.info(f"SO101 cameras configured: {names}")
 
         if self.config.enable_teleop and self.config.leader_port:
             self._connect_leader()
@@ -435,21 +489,26 @@ class SO101Env(gym.Env):
             }
         )
 
-        # ``RealWorldEnv._wrap_obs`` always reads ``frames[main_image_key]``,
-        # so ensure at least one camera slot exists. When no cameras are
-        # configured we fall back to a single blank ``camera_0`` placeholder
-        # to keep downstream wrappers happy.
-        num_cameras = max(1, len(self.config.camera_serials or []))
-        frame_space = gym.spaces.Dict(
-            {
-                f"camera_{k}": gym.spaces.Box(
-                    0, 255, shape=(128, 128, 3), dtype=np.uint8
+        # Use the configured LeRobot camera names and the *output* image
+        # size (image_width / image_height), NOT the camera capture
+        # resolution.  Frames are resized on read if the sizes differ.
+        # When no cameras are configured, emit a single blank ``camera_0``
+        # so ``RealWorldEnv._wrap_obs`` keeps working.
+        out_h = self.config.image_height or 128
+        out_w = self.config.image_width or 128
+        frame_entries: dict = {}
+        if self.config.camera_cfgs:
+            for name in self.config.camera_cfgs:
+                frame_entries[name] = gym.spaces.Box(
+                    0, 255, shape=(out_h, out_w, 3), dtype=np.uint8
                 )
-                for k in range(num_cameras)
-            }
-        )
+        else:
+            frame_entries["camera_0"] = gym.spaces.Box(
+                0, 255, shape=(128, 128, 3), dtype=np.uint8
+            )
+
         self.observation_space = gym.spaces.Dict(
-            {"state": state_space, "frames": frame_space}
+            {"state": state_space, "frames": gym.spaces.Dict(frame_entries)}
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
@@ -561,42 +620,86 @@ class SO101Env(gym.Env):
             self._state.gripper_position > self.config.binary_gripper_threshold
         )
 
+        # Camera frames are stored in the observation dict under their
+        # configured names (e.g. "front", "handeye", "front_depth").
+        # Motor keys all end with ".pos" or ".vel" — camera keys don't.
+        # Collect everything that isn't a known motor suffix.
+        motor_affixes = frozenset({".pos", ".vel"})
+        self._camera_frames = {}
+        for key, val in obs.items():
+            if not any(isinstance(key, str) and key.endswith(sfx) for sfx in motor_affixes):
+                self._camera_frames[key] = np.asarray(val)
+
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
             return self._base_observation_space.sample()
 
         self._update_state()
-        return copy.deepcopy(
-            {
-                "state": {
-                    "joint_position": self._state.joint_position.astype(np.float32),
-                    "gripper_position": np.array(
-                        [self._state.gripper_position], dtype=np.float32
-                    ),
-                },
-                "frames": self._get_camera_frames(),
-            }
-        )
+        return {
+            "state": {
+                "joint_position": self._state.joint_position.astype(np.float32),
+                "gripper_position": np.array(
+                    [self._state.gripper_position], dtype=np.float32
+                ),
+            },
+            "frames": self._get_camera_frames(),
+        }
 
     def _get_camera_frames(self) -> dict:
-        """Return frames keyed by ``camera_<i>``.
+        """Return camera frames, resized to ``image_width × image_height``.
 
-        Returns one blank-image entry per slot in the declared observation
-        space (at least ``camera_0``) so consumers like
-        ``RealWorldEnv._wrap_obs`` always find ``main_image_key``. Real
-        cameras override the blanks via ``self._cameras``.
+        When LeRobot cameras are configured, frames are read from
+        ``self._camera_frames`` (populated by ``_update_state`` from
+        ``robot.get_observation()``) and optionally resized via OpenCV.
+        When no cameras are configured, blank ``camera_0`` placeholder
+        frames are emitted.
         """
-        frames: dict = {}
-        slots = list(self.observation_space.spaces["frames"].spaces.keys())
-        blank = np.zeros((128, 128, 3), dtype=np.uint8)
-        for slot in slots:
-            frames[slot] = blank.copy()
-        for name, camera in self._cameras.items():
-            try:
-                frames[name] = camera.get_frame()
-            except Exception as e:
-                self._logger.warning(f"Failed to read camera '{name}': {e}")
-        return frames
+        if self._camera_frames:
+            tw = self.config.image_width or 0
+            th = self.config.image_height or 0
+
+            # Expand obs space lazily for any extra keys LeRobot emits
+            # (e.g. depth) that we didn't declare at init time.
+            declared = set(self.observation_space["frames"].spaces)
+            actual = set(self._camera_frames)
+            new = actual - declared
+            if new:
+                spaces = dict(self.observation_space["frames"].spaces)
+                for key in sorted(new):
+                    arr = self._camera_frames[key]
+                    dtype = np.uint16 if arr.dtype == np.uint16 else np.uint8
+                    low, high = (0, 65535) if dtype == np.uint16 else (0, 255)
+                    h, w = (th, tw) if (tw and th) else arr.shape[:2]
+                    spaces[key] = gym.spaces.Box(
+                        low, high, shape=(h, w) + arr.shape[2:], dtype=dtype
+                    )
+                self.observation_space.spaces["frames"] = gym.spaces.Dict(spaces)
+                self._base_observation_space = copy.deepcopy(self.observation_space)
+                self._logger.info(f"SO101 obs space expanded with: {sorted(new)}")
+
+            if not tw or not th:
+                return dict(self._camera_frames)
+
+            result: dict = {}
+            for key, arr in self._camera_frames.items():
+                if arr.ndim >= 2 and (arr.shape[0] != th or arr.shape[1] != tw):
+                    import cv2
+                    interp = (
+                        cv2.INTER_NEAREST
+                        if arr.ndim == 3 and arr.shape[2] == 1
+                        else cv2.INTER_LINEAR
+                    )
+                    arr = cv2.resize(arr, (tw, th), interpolation=interp)
+                    if arr.ndim == 2:
+                        arr = arr[..., None]
+                result[key] = arr
+            return result
+
+        # No cameras — emit blank placeholder.
+        out_h = self.config.image_height or 128
+        out_w = self.config.image_width or 128
+        blank = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        return {"camera_0": blank.copy()}
 
     def _calc_step_reward(self, observation: dict) -> float:
         """Reward = exp falloff on L2 joint error, saturating at 1.0 within tolerance."""

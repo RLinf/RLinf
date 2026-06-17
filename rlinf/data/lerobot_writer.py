@@ -178,9 +178,12 @@ class LeRobotDatasetWriter:
         )
 
     def finalize(self) -> None:
-        """Finalize the dataset and properly clean up all resources."""
+        """Finalize the dataset and properly clean up all resources.
+
+        Idempotent — safe to call multiple times or after a prior finalize.
+        """
         if self.dataset is None:
-            raise RuntimeError("Dataset not created. Call create() first.")
+            return
 
         # Clean up internal resources without triggering property getters.
         # LeRobotDataset in v0.5.x exposes attributes like `image_writer`,

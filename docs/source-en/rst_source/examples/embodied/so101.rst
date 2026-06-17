@@ -58,6 +58,46 @@ via USB serial.
    SFT (behavior cloning) and RL training are planned but not yet tested.
    This section will be expanded once those workflows are validated.
 
+
+Cameras
+~~~~~~~
+
+SO101 data collection supports LeRobot's camera system. Configure up
+to two cameras by adding a camera_cfgs dict to the environment
+override_cfg.  The type key selects the LeRobot camera backend;
+remaining keys are passed directly to the corresponding
+:class:`~lerobot.cameras.configs.CameraConfig` subclass.
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       main_image_key: front      # record "front" as the primary view
+       override_cfg:
+         camera_cfgs:
+           front:
+             type: intelrealsense
+             serial_number_or_name: "409122274720"
+             width: 848
+             height: 480
+             fps: 30
+             use_depth: true          # also reads "front_depth"
+           handeye:
+             type: opencv
+             index_or_path: /dev/video8
+             width: 640
+             height: 480
+             fps: 30
+
+Camera frames are stored in the observation under their configured
+names ("front", "handeye", "front_depth") by LeRobot's
+SO101Follower.get_observation(). The env forwards them directly
+into frames. When use_depth is set on a RealSense camera, an
+additional <name>_depth key is emitted in the observation.
+
+When *no* cameras are configured, a single blank camera_0 (128×128)
+placeholder is emitted to keep downstream wrappers happy.
+
 Hardware Setup
 --------------
 

@@ -34,12 +34,25 @@ cluster:
       hardware:
         type: SO101
         configs:
-          - port: /dev/ttyACM0
-            leader_port: /dev/ttyACM1
+          - port: /dev/ttyACM1
+            leader_port: /dev/ttyACM0
             calibration_id: my_awesome_follower_arm
             leader_calibration_id: my_awesome_leader_arm
             node_rank: 0
-
+            camera_cfgs:
+              front:
+                type: intelrealsense
+                serial_number_or_name: "409122274720"
+                width: 640
+                height: 480
+                fps: 30
+                use_depth: true
+              handeye:
+                type: opencv
+                index_or_path: /dev/video2
+                width: 640
+                height: 480
+                fps: 30
 runner:
   task_type: embodied
   logger:
@@ -57,12 +70,15 @@ env:
     auto_reset: False
     use_spacemouse: False
     max_episode_steps: 10000
+    main_image_key: front     # the "front" camera is recorded as the main view
     override_cfg:
       enable_teleop: True
       manual_episode_control_only: True
       auto_calibrate: False
       success_hold_steps: 1
       max_episode_steps: ${env.eval.max_episode_steps}
+      image_width: 128
+      image_height: 128
 
     data_collection:
       enabled: True
@@ -71,3 +87,4 @@ env:
       only_success: False
       robot_type: "so101"
       fps: 30
+      finalize_interval: 1
