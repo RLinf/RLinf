@@ -28,6 +28,7 @@ from omegaconf import OmegaConf
 
 from rlinf.envs.robocasa.venv import RobocasaSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
+from rlinf.utils.debug_dump import dump_pt
 
 _LEGACY_TASK_DESC_MAP = {
     "OpenSingleDoor": "open cabinet or microwave door",
@@ -983,6 +984,18 @@ class Robocasa365Env(gym.Env):
             env_idx = [env_idx]
 
         raw_obs, info_list = self.env.reset(id=env_idx)
+        dump_pt(
+            "rlinf_robocasa365_env_reset_raw",
+            {
+                "env_idx": [int(i) for i in env_idx],
+                "raw_obs": raw_obs,
+                "info_list": info_list,
+                "task_ids": self.task_ids.copy(),
+                "task_specs": copy.deepcopy(self.task_specs),
+                "env_seeds": self.env_seeds.copy(),
+                "reset_counts": self._reset_counts.copy(),
+            },
+        )
         reset_debug_records = []
         debug_enabled = getattr(self, "_debug_enabled", False)
         for local_i, target_env_id in enumerate(env_idx):
@@ -1022,6 +1035,15 @@ class Robocasa365Env(gym.Env):
         obs = self._wrap_obs(self.current_raw_obs, self.current_info_list)
         self._reset_metrics(env_idx)
         infos = {}
+        dump_pt(
+            "rlinf_robocasa365_env_reset_wrapped",
+            {
+                "env_idx": [int(i) for i in env_idx],
+                "obs": obs,
+                "infos": infos,
+                "elapsed_steps": self._elapsed_steps.copy(),
+            },
+        )
         return obs, infos
 
     def step(
@@ -1049,6 +1071,16 @@ class Robocasa365Env(gym.Env):
             terminations = np.zeros(self.num_envs, dtype=bool)
             truncations = np.zeros(self.num_envs, dtype=bool)
             rewards = np.zeros(self.num_envs, dtype=np.float32)
+            dump_pt(
+                "rlinf_robocasa365_env_step_initial_reset_output",
+                {
+                    "obs": obs,
+                    "rewards": rewards,
+                    "terminations": terminations,
+                    "truncations": truncations,
+                    "infos": infos,
+                },
+            )
 
             return (
                 obs,
@@ -1061,9 +1093,31 @@ class Robocasa365Env(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
+        dump_pt(
+            "rlinf_robocasa365_env_step_input",
+            {
+                "actions": actions,
+                "auto_reset": auto_reset,
+                "elapsed_steps_before": self._elapsed_steps.copy(),
+                "task_ids": self.task_ids.copy(),
+                "task_descriptions": copy.deepcopy(
+                    getattr(self, "task_descriptions", [])
+                ),
+            },
+        )
         self._elapsed_steps += 1
 
         raw_obs, rewards, dones, info_lists = self.env.step(actions)
+        dump_pt(
+            "rlinf_robocasa365_env_step_raw_output",
+            {
+                "raw_obs": raw_obs,
+                "raw_rewards": rewards,
+                "raw_dones": dones,
+                "info_lists": info_lists,
+                "elapsed_steps_after": self._elapsed_steps.copy(),
+            },
+        )
         del rewards, dones
         self.current_raw_obs = raw_obs
         self.current_info_list = info_lists
@@ -1086,6 +1140,18 @@ class Robocasa365Env(gym.Env):
         _auto_reset = auto_reset and self.auto_reset
         if done_mask.any() and _auto_reset:
             obs, infos = self._handle_auto_reset(done_mask, obs, infos)
+        dump_pt(
+            "rlinf_robocasa365_env_step_wrapped_output",
+            {
+                "obs": obs,
+                "step_reward": step_reward,
+                "terminations": terminations,
+                "truncations": truncations,
+                "infos": infos,
+                "done_mask": done_mask,
+                "auto_reset_applied": bool(done_mask.any() and _auto_reset),
+            },
+        )
         return (
             obs,
             to_tensor(step_reward),
@@ -1112,6 +1178,10 @@ class Robocasa365Env(gym.Env):
         Returns:
             Per-step observations, rewards, terminations, truncations, and infos.
         """
+        dump_pt(
+            "rlinf_robocasa365_env_chunk_step_input",
+            {"chunk_actions": chunk_actions},
+        )
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -1154,6 +1224,18 @@ class Robocasa365Env(gym.Env):
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
+        dump_pt(
+            "rlinf_robocasa365_env_chunk_step_output",
+            {
+                "obs_list": obs_list,
+                "chunk_rewards": chunk_rewards,
+                "chunk_terminations": chunk_terminations,
+                "chunk_truncations": chunk_truncations,
+                "infos_list": infos_list,
+                "raw_chunk_terminations": raw_chunk_terminations,
+                "raw_chunk_truncations": raw_chunk_truncations,
+            },
+        )
         return (
             obs_list,
             chunk_rewards,
