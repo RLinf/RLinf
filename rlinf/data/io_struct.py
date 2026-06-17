@@ -1398,6 +1398,7 @@ class DynamicRolloutResult:
             "prompt_lengths",
             "response_lengths",
             "recomputed_logprobs",
+            "rollout_logprobs",
             "ref_logprobs",
             "rewards",
             "advantages",
@@ -1420,7 +1421,9 @@ class DynamicRolloutResult:
             assert len({split_params["rewards"][idx].item() for idx in idxes}) == 1
 
             # Merge additive token-level stats over response tokens only.
-            for key in ["recomputed_logprobs", "advantages"]:
+            for key in ["recomputed_logprobs", "rollout_logprobs", "advantages"]:
+                if key not in split_params:
+                    continue
                 value = [
                     split_params[key][idx].masked_fill(
                         ~split_params["response_mask"][idx], 0
