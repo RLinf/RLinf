@@ -298,7 +298,7 @@ class TrajectoryReplayBuffer:
 
         # Flattened trajectory cache for fast sampling
         self._flat_trajectory_cache = (
-            TrajectoryCache(cache_size) if enable_cache else None
+            TrajectoryCache(cache_size) if self.enable_cache else None
         )
 
         # Async save executor for add_trajectories

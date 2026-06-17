@@ -97,9 +97,16 @@ class ReplayBufferDataset(IterableDataset):
                 is_ready = False
 
             if is_ready:
-                if self.demo_buffer is not None:
-                    replay_batch = self.replay_buffer.sample(self.batch_size // 2)
-                    demo_batch = self.demo_buffer.sample(self.batch_size // 2)
+                if self.demo_buffer is not None and len(self.replay_buffer) <= 1:
+                    # Demo-only: replay buffer is empty or has ≤1 stray trajectory
+                    # (e.g. from an init-phase rollout).  For pure BC/SFT, we
+                    # always sample exclusively from demonstrations.
+                    batch = self.demo_buffer.sample(self.batch_size)
+                elif self.demo_buffer is not None:
+                    n_replay = self.batch_size // 2
+                    n_demo = self.batch_size - n_replay
+                    replay_batch = self.replay_buffer.sample(n_replay)
+                    demo_batch = self.demo_buffer.sample(n_demo)
                     batch = concat_batch(replay_batch, demo_batch)
                 else:
                     batch = self.replay_buffer.sample(self.batch_size)

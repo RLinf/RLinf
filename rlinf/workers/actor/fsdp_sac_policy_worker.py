@@ -121,14 +121,26 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         else:
             param_filters = {"critic": ["encoders", "encoder", "q_head", "state_proj"]}
         filtered_optim_config = {"critic": self.cfg.actor.critic_optim}
-        optimizers = self.build_optimizers(
-            model=self.model,
-            main_optim_config=self.cfg.actor.optim,
-            param_filters=param_filters,
-            filtered_optim_config=filtered_optim_config,
-        )
-        self.optimizer = optimizers[0]
-        self.qf_optimizer = optimizers[1]
+        is_sft = self.cfg.algorithm.loss_type == "embodied_sft"
+        if is_sft:
+            # SFT / BC doesn't use a critic — build only the actor optimizer.
+            optimizers = self.build_optimizers(
+                model=self.model,
+                main_optim_config=self.cfg.actor.optim,
+                param_filters={},
+                filtered_optim_config={},
+            )
+            self.optimizer = optimizers[0]
+            self.qf_optimizer = None
+        else:
+            optimizers = self.build_optimizers(
+                model=self.model,
+                main_optim_config=self.cfg.actor.optim,
+                param_filters=param_filters,
+                filtered_optim_config=filtered_optim_config,
+            )
+            self.optimizer = optimizers[0]
+            self.qf_optimizer = optimizers[1]
 
         # SAC alpha
         # Initialize temperature parameter for automatic entropy tuning
@@ -162,9 +174,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.lr_scheduler = self.build_lr_scheduler(
             self.optimizer, self.cfg.actor.optim
         )
-        self.qf_lr_scheduler = self.build_lr_scheduler(
-            self.qf_optimizer, self.cfg.actor.critic_optim
-        )
+        if self.qf_optimizer is not None:
+            self.qf_lr_scheduler = self.build_lr_scheduler(
+                self.qf_optimizer, self.cfg.actor.critic_optim
+            )
         if self.alpha_optimizer is not None:
             self.alpha_lr_scheduler = self.build_lr_scheduler(
                 self.alpha_optimizer, self.cfg.algorithm.entropy_tuning.optim
