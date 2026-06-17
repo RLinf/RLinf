@@ -204,10 +204,6 @@ class RLTStage2Policy(torch.nn.Module, BasePolicy):
             )
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
-        if forward_type == ForwardType.SAC:
-            return self.sac_forward(**kwargs)
-        if forward_type == ForwardType.SAC_Q:
-            return self.sac_q_forward(**kwargs)
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         raise NotImplementedError(f"Unsupported forward_type for RLT Stage 2: {forward_type}")
@@ -357,39 +353,6 @@ class RLTStage2Policy(torch.nn.Module, BasePolicy):
             },
         }
         return a_tilde, result
-
-    def sac_forward(
-        self,
-        obs=None,
-        data=None,
-        deterministic: bool = False,
-        **kwargs,
-    ):
-        if obs is None:
-            obs = data if data is not None else kwargs.get("obs")
-        x, a_tilde = self._encode_state_and_reference(obs)
-        action = self.actor_forward(x, a_tilde, deterministic=deterministic)
-        logprob = torch.zeros(
-            action.shape[0], 1, device=action.device, dtype=torch.float32
-        )
-        return action, logprob, {"x": x, "a_tilde": a_tilde}
-
-    def sac_q_forward(
-        self,
-        obs=None,
-        data=None,
-        actions=None,
-        state_info=None,
-        **kwargs,
-    ):
-        if state_info is None:
-            if obs is None:
-                obs = data if data is not None else kwargs.get("obs")
-            x, _ = self._encode_state_and_reference(obs)
-        else:
-            x = state_info["x"]
-        q1, q2 = self.critic_forward(x, actions)
-        return torch.cat([q1, q2], dim=-1)
 
     @torch.no_grad()
     def predict_action_batch(

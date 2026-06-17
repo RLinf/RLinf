@@ -24,35 +24,36 @@ This module keeps the original Stage 2 structure lightweight:
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from .transition import TransitionSource
+from rlinf.models.embodiment.modules.utils import make_mlp
+
+from .rollout import TransitionSource
 
 
-class MLP(nn.Module):
-    """Simple MLP used by the actor and Q networks."""
+def _make_mlp(
+    *,
+    input_dim: int,
+    output_dim: int,
+    hidden_dim: int,
+    num_hidden_layers: int,
+) -> nn.Sequential:
+    """Build an MLP with the historical RLT ``mlp.net.*`` state_dict keys."""
 
-    def __init__(
-        self,
-        input_dim: int,
-        output_dim: int,
-        hidden_dim: int = 256,
-        num_hidden_layers: int = 2,
-    ) -> None:
-        super().__init__()
-        layers: list[nn.Module] = []
-        last_dim = input_dim
-        for _ in range(num_hidden_layers):
-            layers.extend([nn.Linear(last_dim, hidden_dim), nn.ReLU()])
-            last_dim = hidden_dim
-        layers.append(nn.Linear(last_dim, output_dim))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.net(x)
+    layers = make_mlp(
+        in_channels=input_dim,
+        mlp_channels=[
+            *[hidden_dim for _ in range(num_hidden_layers)],
+            output_dim,
+        ],
+        act_builder=nn.ReLU,
+        last_act=False,
+    )
+    return nn.Sequential(OrderedDict([("net", nn.Sequential(*layers))]))
 
 
 class DirectGaussianActor(nn.Module):
@@ -80,7 +81,7 @@ class DirectGaussianActor(nn.Module):
         self.sigma = sigma
         self.ref_dropout = ref_dropout
 
-        self.mlp = MLP(
+        self.mlp = _make_mlp(
             input_dim=state_dim + action_chunk_dim,
             output_dim=action_chunk_dim,
             hidden_dim=hidden_dim,
@@ -129,7 +130,7 @@ class QNetwork(nn.Module):
         num_hidden_layers: int = 2,
     ) -> None:
         super().__init__()
-        self.mlp = MLP(
+        self.mlp = _make_mlp(
             input_dim=state_dim + action_chunk_dim,
             output_dim=1,
             hidden_dim=hidden_dim,

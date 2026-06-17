@@ -29,10 +29,73 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.models.embodiment.rlt_stage2.rollout_adapter import RLTStage2RolloutAdapter
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.placement import HybridComponentPlacement
+
+
+class _NoopRolloutHooks:
+    """Default hooks for standard HuggingFace embodied rollout."""
+
+    enabled = False
+
+    def __init__(self, student_model):
+        self.student_model = student_model
+
+    def expert_model_path(
+        self,
+        configured_path: str,
+        expert_ckpt_path: str | None,
+    ) -> str:
+        del expert_ckpt_path
+        return configured_path
+
+    def configure_expert_model(self, expert_model_config) -> None:
+        del expert_model_config
+
+    def rollout_state_dict(self) -> dict[str, torch.Tensor]:
+        return self.student_model.state_dict()
+
+    def use_dagger_beta(self) -> bool:
+        return True
+
+    def allow_bootstrap_values(self) -> bool:
+        return True
+
+    def predict(self, **kwargs):
+        del kwargs
+        return None
+
+    def encode_step_trace(
+        self,
+        step_obs: dict[str, Any] | None,
+    ) -> dict[str, torch.Tensor]:
+        del step_obs
+        return {}
+
+    def final_forward_inputs(self, result: dict[str, Any]) -> dict[str, Any]:
+        del result
+        return {}
+
+
+def _build_rollout_adapter(
+    *,
+    cfg,
+    student_model,
+    expert_model_getter,
+    has_expert_model_config: bool,
+):
+    from rlinf.models.embodiment.rlt_stage2.rollout import RLTStage2RolloutAdapter
+
+    if not RLTStage2RolloutAdapter.is_enabled_cfg(cfg):
+        del expert_model_getter, has_expert_model_config
+        return _NoopRolloutHooks(student_model)
+    return RLTStage2RolloutAdapter(
+        cfg=cfg,
+        student_model=student_model,
+        expert_model_getter=expert_model_getter,
+        has_expert_model_config=has_expert_model_config,
+    )
 
 
 class MultiStepRolloutWorker(Worker):
@@ -61,6 +124,7 @@ class MultiStepRolloutWorker(Worker):
         self._has_expert_model_config = (
             self.cfg.rollout.get("expert_model", None) is not None
         )
+        self.rollout_adapter = None
 
         self.total_num_train_envs = cfg.env.train.total_num_envs
         self.total_num_eval_envs = cfg.env.eval.total_num_envs
@@ -114,13 +178,6 @@ class MultiStepRolloutWorker(Worker):
         self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
         self._sync_weight_comm_options = self.weight_syncer.comm_options
 
-    def _is_rlt_stage2_td3(self) -> bool:
-        return (
-            self.cfg.algorithm.get("loss_type", None) == "rlt_td3"
-            and SupportedModel(self.cfg.actor.model.model_type)
-            == SupportedModel.RLT_STAGE2
-        )
-
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.cfg.actor.model)
         with open_dict(rollout_model_config):
@@ -133,17 +190,16 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
-        if self._has_expert_model_config:
-            self._expert_model_config = self._build_expert_model_config()
-            if not self._is_rlt_stage2_td3():
-                self._ensure_expert_model_loaded()
-
-        self.rlt_rollout_adapter = RLTStage2RolloutAdapter(
+        self.rollout_adapter = _build_rollout_adapter(
             cfg=self.cfg,
             student_model=self.hf_model,
             expert_model_getter=self._ensure_expert_model_loaded,
             has_expert_model_config=self._has_expert_model_config,
         )
+        if self._has_expert_model_config:
+            self._expert_model_config = self._build_expert_model_config()
+            if self.rollout_adapter.use_dagger_beta():
+                self._ensure_expert_model_loaded()
 
         self.hf_model.eval()
         if self.expert_model is not None:
@@ -190,26 +246,14 @@ class MultiStepRolloutWorker(Worker):
     def _build_expert_model_config(self):
         expert_model_config = copy.deepcopy(self.cfg.actor.model)
         expert_ckpt_path = self.cfg.runner.get("expert_ckpt_path", None)
-        expert_model_path = self.cfg.rollout.expert_model.model_path
-        if (
-            self._is_rlt_stage2_td3()
-            and expert_ckpt_path
-            and os.path.isdir(str(expert_ckpt_path))
-        ):
-            expert_model_path = expert_ckpt_path
+        expert_model_path = self.rollout_adapter.expert_model_path(
+            self.cfg.rollout.expert_model.model_path,
+            expert_ckpt_path,
+        )
         with open_dict(expert_model_config):
             expert_model_config.precision = self.cfg.rollout.expert_model.precision
             expert_model_config.model_path = expert_model_path
-            if expert_model_config.get("rlt_stage2", None) is not None:
-                act_as_vla_reference = self.cfg.rollout.expert_model.get(
-                    "act_as_vla_reference", self._is_rlt_stage2_td3()
-                )
-                expert_model_config.rlt_stage2.act_as_vla_reference = (
-                    act_as_vla_reference
-                )
-                if act_as_vla_reference:
-                    expert_model_config.rlt_stage2.load_feature_backbones = True
-                    expert_model_config.rlt_stage2.load_rl_token_model = False
+            self.rollout_adapter.configure_expert_model(expert_model_config)
         return expert_model_config
 
     def _ensure_expert_model_loaded(self):
@@ -277,7 +321,7 @@ class MultiStepRolloutWorker(Worker):
     def update_dagger_beta(self):
         if not self._has_expert_model_config:
             return
-        if self._is_rlt_stage2_td3():
+        if not self.rollout_adapter.use_dagger_beta():
             return
 
         if self._dagger_sampling_params["beta_schedule"] == "exponential":
@@ -345,7 +389,6 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
-            SupportedModel.GR00T_N1D7,
             SupportedModel.ABOT_M0,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
@@ -367,30 +410,31 @@ class MultiStepRolloutWorker(Worker):
         only_save_expert = self.cfg.algorithm.get("dagger", {}).get(
             "only_save_expert", True
         )
-        is_rlt_stage2_td3 = self._is_rlt_stage2_td3()
 
-        use_expert = (
-            not is_rlt_stage2_td3
-            and mode == "train"
+        if (
+            mode == "train"
             and allow_expert
             and self._has_expert_model_config
-            and torch.rand(1).item() < self._dagger_sampling_params["beta"]
-        )
+            and self.rollout_adapter.use_dagger_beta()
+        ):
+            use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
+        else:
+            use_expert = False
 
         with torch.no_grad():
             expert_label_flag = False
-            if is_rlt_stage2_td3:
-                route_result = self.rlt_rollout_adapter.predict(
-                    env_obs=env_obs,
-                    policy_info=policy_info,
-                    model_kwargs=kwargs,
-                    mode=mode,
-                    allow_expert=allow_expert,
-                    update_version=self.version,
-                )
-                actions = route_result.actions
-                result = route_result.result
-                expert_label_flag = route_result.expert_label_flag
+            adapter_prediction = self.rollout_adapter.predict(
+                env_obs=env_obs,
+                policy_info=policy_info,
+                model_kwargs=kwargs,
+                mode=mode,
+                allow_expert=allow_expert,
+                update_version=self.version,
+            )
+            if adapter_prediction is not None:
+                actions = adapter_prediction.actions
+                result = adapter_prediction.result
+                expert_label_flag = adapter_prediction.expert_label_flag
             elif use_expert:
                 actions, result = self._ensure_expert_model_loaded().predict_action_batch(
                     env_obs=env_obs,
@@ -405,7 +449,7 @@ class MultiStepRolloutWorker(Worker):
 
             # Decide re-label or not
             if (
-                not is_rlt_stage2_td3
+                self.rollout_adapter.use_dagger_beta()
                 and not only_save_expert  # only re-label in classic dagger mode
                 and not use_expert  # only re-label if not using expert
                 and self._has_expert_model_config  # only re-label if expert exists
@@ -434,7 +478,7 @@ class MultiStepRolloutWorker(Worker):
     ) -> torch.Tensor | None:
         if final_obs is None:
             return None
-        if self._is_rlt_stage2_td3():
+        if not self.rollout_adapter.allow_bootstrap_values():
             return None
         if not (
             hasattr(self.hf_model, "value_head") or hasattr(self.hf_model, "q_head")
@@ -477,11 +521,7 @@ class MultiStepRolloutWorker(Worker):
                 ).async_wait()
 
         if not self.weight_syncer.receiver_initialized():
-            receiver_state_dict = (
-                self.rlt_rollout_adapter.rollout_state_dict()
-                if self._is_rlt_stage2_td3()
-                else self.hf_model.state_dict()
-            )
+            receiver_state_dict = self.rollout_adapter.rollout_state_dict()
             await self.weight_syncer.init_receiver(
                 state_dict=receiver_state_dict,
                 recv=recv_func,
@@ -510,7 +550,7 @@ class MultiStepRolloutWorker(Worker):
                     env_output["obs"],
                     policy_info=env_output.get("policy_info", None),
                 )
-                rlt_step_trace = self.rlt_rollout_adapter.encode_step_trace(
+                step_trace = self.rollout_adapter.encode_step_trace(
                     env_output.get("step_obs", None)
                 )
 
@@ -536,7 +576,7 @@ class MultiStepRolloutWorker(Worker):
                         env_output.get("final_obs", None)
                     ),
                     save_flags=save_flags,
-                    rlt_step_trace=rlt_step_trace,
+                    step_trace=step_trace,
                     forward_inputs=result["forward_inputs"],
                     versions=torch.full_like(
                         result["prev_logprobs"],
@@ -552,18 +592,18 @@ class MultiStepRolloutWorker(Worker):
                 allow_expert=False,
                 policy_info=env_output.get("policy_info", None),
             )
-            rlt_step_trace = self.rlt_rollout_adapter.encode_step_trace(
+            step_trace = self.rollout_adapter.encode_step_trace(
                 env_output.get("step_obs", None)
             )
 
-            forward_inputs = result["forward_inputs"] if self._is_rlt_stage2_td3() else {}
+            forward_inputs = self.rollout_adapter.final_forward_inputs(result)
             rollout_result = RolloutResult(
                 actions=actions,
                 prev_values=result["prev_values"] if self.collect_prev_infos else None,
                 bootstrap_values=self.get_bootstrap_values(
                     env_output.get("final_obs", None)
                 ),
-                rlt_step_trace=rlt_step_trace,
+                step_trace=step_trace,
                 forward_inputs=forward_inputs,
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
@@ -732,7 +772,7 @@ class MultiStepRolloutWorker(Worker):
         if any(step_obs is not None for step_obs in step_obs_list):
             if any(step_obs is None for step_obs in step_obs_list):
                 raise ValueError(
-                    "Inconsistent RLT step_obs: some env shards are None while others are present."
+                    "Inconsistent step_obs: some env shards are None while others are present."
                 )
             assert step_obs_list[0] is not None
             merged_step_obs = {}
@@ -755,31 +795,37 @@ class MultiStepRolloutWorker(Worker):
 
         merged_policy_info = None
         if any(policy_info is not None for policy_info in policy_info_list):
-            if any(policy_info is None for policy_info in policy_info_list):
-                raise ValueError(
-                    "Inconsistent policy_info: some env shards are None while "
-                    "others are present."
-                )
-            policy_info_dicts = [
-                policy_info
-                for policy_info in policy_info_list
-                if policy_info is not None
+            batch_sizes = [
+                MultiStepRolloutWorker._infer_env_batch_size(obs_batch)
+                for obs_batch in obs_batches
             ]
-            expected_keys = set(policy_info_dicts[0].keys())
-            for idx, policy_info in enumerate(policy_info_dicts[1:], start=1):
-                keys = set(policy_info.keys())
-                if keys != expected_keys:
-                    raise ValueError(
-                        "Inconsistent policy_info keys across env shards: "
-                        f"expected {sorted(expected_keys)}, got {sorted(keys)} "
-                        f"at shard {idx}."
-                    )
+            keys = set()
+            for policy_info in policy_info_list:
+                if policy_info is not None:
+                    keys.update(policy_info.keys())
             merged_policy_info = {}
-            for key in sorted(expected_keys):
-                merged_policy_info[key] = torch.cat(
-                    [policy_info[key] for policy_info in policy_info_dicts],
-                    dim=0,
+            for key in keys:
+                ref_tensor = next(
+                    (
+                        policy_info[key]
+                        for policy_info in policy_info_list
+                        if policy_info is not None and key in policy_info
+                    ),
+                    None,
                 )
+                assert ref_tensor is not None
+                values = []
+                for batch_size, policy_info in zip(batch_sizes, policy_info_list):
+                    if policy_info is None or key not in policy_info:
+                        values.append(
+                            torch.zeros(
+                                (batch_size, *ref_tensor.shape[1:]),
+                                dtype=ref_tensor.dtype,
+                            )
+                        )
+                    else:
+                        values.append(policy_info[key])
+                merged_policy_info[key] = torch.cat(values, dim=0)
 
         return {
             "obs": merged_obs,
@@ -848,13 +894,13 @@ class MultiStepRolloutWorker(Worker):
                 for idx in range(len(sizes))
             ]
         )
-        split_rlt_step_trace = (
+        split_step_trace = (
             [{} for _ in sizes]
-            if not rollout_result.rlt_step_trace
+            if not rollout_result.step_trace
             else [
                 {
                     key: torch.split(value, sizes, dim=1)[idx]
-                    for key, value in rollout_result.rlt_step_trace.items()
+                    for key, value in rollout_result.step_trace.items()
                 }
                 for idx in range(len(sizes))
             ]
@@ -868,7 +914,7 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=split_bootstrap_values[idx],
                 save_flags=split_save_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
-                rlt_step_trace=split_rlt_step_trace[idx],
+                step_trace=split_step_trace[idx],
                 versions=split_versions[idx],
             )
             for idx in range(len(sizes))

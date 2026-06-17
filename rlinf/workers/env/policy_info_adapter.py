@@ -16,7 +16,12 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
+
+import torch
+
+from rlinf.data.embodied_io_struct import EmbodiedRolloutResult, RolloutResult
 
 
 class NoopPolicyInfoAdapter:
@@ -31,29 +36,62 @@ class NoopPolicyInfoAdapter:
     def update_last_action_metadata(self, **kwargs: Any) -> None:
         return None
 
+    def build_step_obs(self, **kwargs: Any):
+        return None
+
+    def append_step_trace(
+        self,
+        *,
+        rollout_accumulator: EmbodiedRolloutResult,
+        rollout_result: RolloutResult,
+    ) -> None:
+        return None
+
+    def final_forward_inputs(self, rollout_result: RolloutResult) -> dict[str, Any]:
+        return {}
+
+    def collect_rollout_metrics(
+        self,
+        *,
+        env_metrics: dict[str, list],
+        rollout_result: RolloutResult,
+    ) -> None:
+        return None
+
+    def emit_status(
+        self,
+        *,
+        env_metrics: dict[str, torch.Tensor],
+        rank: int,
+        last_logged_phase: str | None,
+        log_info,
+    ) -> str | None:
+        return last_logged_phase
+
 
 def build_policy_info_adapter(cfg, train_batch_size, eval_batch_size):
-    """Build an env-side policy_info adapter for algorithms that need one."""
-    intervention_cfg = cfg.algorithm.get("intervention", {})
-    is_rlt_stage2 = (
-        cfg.algorithm.get("loss_type", None) == "rlt_td3"
-        and cfg.actor.model.get("model_type", None) == "rlt_stage2"
-    )
-    train_env_type = str(cfg.env.get("train", {}).get("env_type", "")).lower()
-    eval_env_type = str(cfg.env.eval.get("env_type", "")).lower()
-    is_maniskill = train_env_type == "maniskill" or eval_env_type == "maniskill"
-    if (
-        not is_rlt_stage2
-        or not bool(intervention_cfg.get("enable", False))
-        or str(intervention_cfg.get("mode", "local_correction")) != "local_correction"
-        or not is_maniskill
-    ):
+    """Build an env-side policy_info adapter for the configured model."""
+    model_type = str(cfg.actor.model.get("model_type", ""))
+    if not model_type:
         return NoopPolicyInfoAdapter()
 
-    from rlinf.envs.maniskill.rlt_policy_info import RLTStage2PolicyInfoAdapter
+    module_name = f"rlinf.models.embodiment.{model_type}.env_policy_info"
+    try:
+        adapter_module = importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name == module_name or module_name.startswith(f"{exc.name}."):
+            return NoopPolicyInfoAdapter()
+        raise
 
-    return RLTStage2PolicyInfoAdapter(
+    adapter_builder = getattr(adapter_module, "build_policy_info_adapter", None)
+    if adapter_builder is None:
+        return NoopPolicyInfoAdapter()
+
+    adapter = adapter_builder(
         cfg=cfg,
         train_batch_size=train_batch_size,
         eval_batch_size=eval_batch_size,
     )
+    if adapter is None:
+        return NoopPolicyInfoAdapter()
+    return adapter

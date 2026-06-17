@@ -12,61 +12,178 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert RLT Stage 2 rollout trajectories into replay transitions."""
+"""Convert RLT Stage 2 rollout trajectories into replay trajectories."""
 
 from __future__ import annotations
 
-import numpy as np
 import torch
 from omegaconf import DictConfig
 
 from rlinf.data.embodied_io_struct import Trajectory
 
-from .replay_buffer import RLTStage2ReplayBuffer
-from .transition import TransitionSource, resolve_chunk_source
+from .rollout import (
+    COLLECTION_PHASE_UNKNOWN,
+    TransitionSource,
+    resolve_chunk_source,
+)
 
 
 class RLTStage2TrajectoryReplayAdapter:
-    """Builds replay-buffer transitions from rollout trajectories."""
+    """Builds RLinf replay trajectories from rollout trajectories.
 
-    def __init__(
-        self,
-        cfg: DictConfig,
-        replay_buffer: RLTStage2ReplayBuffer | None,
-    ) -> None:
+    The adapter owns only RLT's transition semantics. Storage, sampling, and
+    persistence stay in ``TrajectoryReplayBuffer``.
+    """
+
+    def __init__(self, cfg: DictConfig) -> None:
         self.cfg = cfg
-        self.replay_buffer = replay_buffer
 
-    @staticmethod
-    def _to_numpy_float(tensor: torch.Tensor) -> np.ndarray:
-        return tensor.detach().cpu().numpy().astype(np.float32, copy=False)
-
-    @staticmethod
-    def _to_numpy_uint8(tensor: torch.Tensor) -> np.ndarray:
-        return tensor.detach().cpu().numpy().astype(np.uint8, copy=False)
-
-    def add_trajectory(self, traj: Trajectory) -> tuple[int, int]:
-        """Adds trajectory transitions and returns transition/episode counts."""
+    def build_replay_trajectories(self, traj: Trajectory) -> tuple[list[Trajectory], int]:
+        """Returns replay trajectories and completed episode count."""
 
         stride = int(self.cfg.actor.model.rlt_stage2.get("replay_subsample_stride", 0))
         if stride > 0:
-            if not traj.rlt_step_trace:
+            if not traj.step_trace:
                 raise RuntimeError(
                     "RLT Stage2 stride replay is enabled but trajectory has no "
-                    "rlt_step_trace. Refusing to fall back to chunk-boundary replay."
+                    "step_trace. Refusing to fall back to chunk-boundary replay."
                 )
             return self._step_trace_to_transitions(traj)
         return self._chunk_trajectory_to_transitions(traj)
 
-    def _step_trace_to_transitions(self, traj: Trajectory) -> tuple[int, int]:
+    @staticmethod
+    def _transition_trajectory(
+        *,
+        x: torch.Tensor,
+        action_chunk: torch.Tensor,
+        ref_chunk: torch.Tensor,
+        rewards: torch.Tensor,
+        next_x: torch.Tensor,
+        next_ref_chunk: torch.Tensor,
+        done: torch.Tensor | float | bool,
+        intervention: torch.Tensor,
+        source_chunk: torch.Tensor,
+        source: int | None,
+        collection_phase_id: int | None,
+        success: int | bool = 0,
+        intervention_flag: bool | None = None,
+        episode_id: int = 0,
+        step_id: int = 0,
+        model_weights_id: str = "",
+    ) -> Trajectory:
+        chunk_length = int(rewards.reshape(-1).shape[0])
+        source_chunk = source_chunk.to(torch.uint8).reshape(chunk_length)
+        resolved_source = (
+            int(source) if source is not None else resolve_chunk_source(source_chunk.cpu().numpy())
+        )
+        intervention = intervention.to(torch.float32).reshape(-1)
+        resolved_intervention = (
+            bool(intervention_flag)
+            if intervention_flag is not None
+            else bool(
+                intervention.any().item()
+                or (source_chunk == int(TransitionSource.HUMAN)).any().item()
+                or (source_chunk == int(TransitionSource.MIXED)).any().item()
+            )
+        )
+        phase = (
+            COLLECTION_PHASE_UNKNOWN
+            if collection_phase_id is None
+            else int(collection_phase_id)
+        )
+
+        return Trajectory(
+            max_episode_length=1,
+            model_weights_id=model_weights_id,
+            rewards=torch.ones(1, 1, dtype=torch.float32),
+            forward_inputs={
+                "x": x.detach().to(torch.float32).reshape(1, 1, -1).cpu().contiguous(),
+                "a": action_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "a_tilde": ref_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "action_chunk": action_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "ref_chunk": ref_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "rewards": rewards.detach()
+                .to(torch.float32)
+                .reshape(1, 1, chunk_length)
+                .cpu()
+                .contiguous(),
+                "next_x": next_x.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "next_a_tilde": next_ref_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "next_ref_chunk": next_ref_chunk.detach()
+                .to(torch.float32)
+                .reshape(1, 1, -1)
+                .cpu()
+                .contiguous(),
+                "dones": torch.as_tensor(done, dtype=torch.float32)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "intervention": intervention.reshape(1, 1, -1).cpu().contiguous(),
+                "source": torch.as_tensor(resolved_source, dtype=torch.uint8)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "source_chunk": source_chunk.reshape(1, 1, chunk_length)
+                .cpu()
+                .contiguous(),
+                "collection_phase_id": torch.as_tensor(phase, dtype=torch.uint8)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "success": torch.as_tensor(int(bool(success)), dtype=torch.int8)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "intervention_flag": torch.as_tensor(
+                    resolved_intervention,
+                    dtype=torch.bool,
+                )
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "episode_id": torch.as_tensor(episode_id, dtype=torch.int32)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+                "step_id": torch.as_tensor(step_id, dtype=torch.int32)
+                .reshape(1, 1, 1)
+                .cpu()
+                .contiguous(),
+            },
+        )
+
+    def _step_trace_to_transitions(self, traj: Trajectory) -> tuple[list[Trajectory], int]:
         if (
-            self.replay_buffer is None
-            or traj.actions is None
+            traj.actions is None
             or traj.rewards is None
             or traj.dones is None
-            or not traj.rlt_step_trace
+            or not traj.step_trace
         ):
-            return 0, 0
+            return [], 0
 
         x_boundary = traj.forward_inputs.get("x") if traj.forward_inputs else None
         a_tilde_boundary = (
@@ -79,13 +196,13 @@ class RLTStage2TrajectoryReplayAdapter:
                 "cache policy-call features instead of forcing actor-side VLA encoding."
             )
 
-        anchor_offsets = traj.rlt_step_trace.get("anchor_offsets")
-        x_trace = traj.rlt_step_trace.get("x")
-        a_tilde_trace = traj.rlt_step_trace.get("a_tilde")
+        anchor_offsets = traj.step_trace.get("anchor_offsets")
+        x_trace = traj.step_trace.get("x")
+        a_tilde_trace = traj.step_trace.get("a_tilde")
         if anchor_offsets is None:
             raise RuntimeError(
                 "RLT Stage2 stride replay requires sparse "
-                "rlt_step_trace['anchor_offsets']; refusing to fall back to "
+                "step_trace['anchor_offsets']; refusing to fall back to "
                 "chunk-boundary replay."
             )
 
@@ -98,7 +215,7 @@ class RLTStage2TrajectoryReplayAdapter:
             self.cfg.actor.model.rlt_stage2.get("replay_allow_terminal_partial", True)
         )
         if stride <= 0:
-            return 0, 0
+            return [], 0
         if x_boundary.shape[0] < chunk_steps + 1:
             raise ValueError(
                 "RLT stride replay requires one extra final chunk-boundary feature "
@@ -130,7 +247,7 @@ class RLTStage2TrajectoryReplayAdapter:
             if x_trace is None or a_tilde_trace is None:
                 raise RuntimeError(
                     "RLT sparse anchor trace has non-boundary offsets but is missing "
-                    "rlt_step_trace['x'] or rlt_step_trace['a_tilde']."
+                    "step_trace['x'] or step_trace['a_tilde']."
                 )
             if (
                 x_trace.shape[0] != chunk_steps
@@ -150,7 +267,6 @@ class RLTStage2TrajectoryReplayAdapter:
         flat_rewards = traj.rewards.reshape(chunk_steps, bsz, chunk_len)
         dones_all = traj.dones
         if dones_all.shape[0] == chunk_steps + 1:
-            # EmbodiedRolloutResult stores an initial bootstrap done frame.
             dones_all = dones_all[1:]
         if dones_all.shape[0] != chunk_steps:
             raise ValueError(
@@ -249,7 +365,7 @@ class RLTStage2TrajectoryReplayAdapter:
                 ).any(dim=-1)
             flat_record_transitions = flat_record_transitions.to(torch.bool)
 
-        added = 0
+        replay_trajectories: list[Trajectory] = []
         completed_episodes = 0
         auto_reset = bool(self.cfg.env.train.get("auto_reset", False))
         total_control_steps = chunk_steps * chunk_len
@@ -291,9 +407,7 @@ class RLTStage2TrajectoryReplayAdapter:
                 )
             if feature_steps > 0 and x_trace is not None and a_tilde_trace is not None:
                 env_offsets = anchor_offsets[chunk_idx, :, env_idx].to(torch.long)
-                match = torch.nonzero(env_offsets == offset, as_tuple=False).reshape(
-                    -1
-                )
+                match = torch.nonzero(env_offsets == offset, as_tuple=False).reshape(-1)
                 if match.numel() > 0:
                     pos = int(match[0].item())
                     return (
@@ -309,15 +423,10 @@ class RLTStage2TrajectoryReplayAdapter:
             )
 
         for env_idx in range(bsz):
-            env_actions = flat_actions[:, env_idx].reshape(
-                total_control_steps,
-                action_dim,
-            )
+            env_actions = flat_actions[:, env_idx].reshape(total_control_steps, action_dim)
             env_rewards = flat_rewards[:, env_idx].reshape(total_control_steps)
             env_dones = flat_dones[:, env_idx].reshape(total_control_steps)
-            env_interventions = flat_interventions[:, env_idx].reshape(
-                total_control_steps
-            )
+            env_interventions = flat_interventions[:, env_idx].reshape(total_control_steps)
             env_sources = flat_sources[:, env_idx].reshape(total_control_steps)
             env_record_transitions = flat_record_transitions[:, env_idx].reshape(
                 total_control_steps
@@ -335,7 +444,6 @@ class RLTStage2TrajectoryReplayAdapter:
                 *,
                 segment_terminal: bool,
             ) -> None:
-                nonlocal added
                 if segment_end_idx <= segment_start_idx:
                     return
 
@@ -347,8 +455,6 @@ class RLTStage2TrajectoryReplayAdapter:
                     )
                     is_partial = end > segment_end_idx
                     if is_partial and (not terminal or not allow_terminal_partial):
-                        # Only terminal partial windows are valid; padding a live
-                        # rollout boundary would fabricate future actions/rewards.
                         continue
                     if not bool(env_record_transitions[start:valid_end].all().item()):
                         continue
@@ -361,11 +467,6 @@ class RLTStage2TrajectoryReplayAdapter:
                             (x_tensor, a_tilde_tensor) if terminal else None
                         ),
                     )
-
-                    x = self._to_numpy_float(x_tensor)
-                    a_tilde = self._to_numpy_float(a_tilde_tensor)
-                    next_x = self._to_numpy_float(next_x_tensor)
-                    next_a_tilde = self._to_numpy_float(next_a_tilde_tensor)
 
                     valid_len = valid_end - start
                     action_chunk = torch.zeros(
@@ -395,10 +496,6 @@ class RLTStage2TrajectoryReplayAdapter:
                     intervention_chunk[:valid_len] = env_interventions[start:valid_end]
                     source_chunk[:valid_len] = env_sources[start:valid_end]
 
-                    action_np = self._to_numpy_float(action_chunk).reshape(-1)
-                    rewards_np = self._to_numpy_float(reward_chunk)
-                    intervention_np = self._to_numpy_float(intervention_chunk)
-                    source_chunk_np = self._to_numpy_uint8(source_chunk)
                     collection_phase_id = None
                     if collection_phase_id_all is not None:
                         phase_idx = min(
@@ -413,22 +510,24 @@ class RLTStage2TrajectoryReplayAdapter:
                             .item()
                         )
 
-                    self.replay_buffer.add(
-                        x=x,
-                        action_chunk=action_np,
-                        ref_chunk=a_tilde,
-                        rewards=rewards_np,
-                        next_x=next_x,
-                        next_ref_chunk=next_a_tilde,
-                        done=float(terminal),
-                        intervention=intervention_np,
-                        source=resolve_chunk_source(source_chunk_np),
-                        source_chunk=source_chunk_np,
-                        collection_phase=collection_phase_id,
-                        intervention_flag=bool(intervention_np.any()),
-                        step_id=start,
+                    replay_trajectories.append(
+                        self._transition_trajectory(
+                            x=x_tensor,
+                            action_chunk=action_chunk,
+                            ref_chunk=a_tilde_tensor,
+                            rewards=reward_chunk,
+                            next_x=next_x_tensor,
+                            next_ref_chunk=next_a_tilde_tensor,
+                            done=float(terminal),
+                            intervention=intervention_chunk,
+                            source_chunk=source_chunk,
+                            source=resolve_chunk_source(source_chunk.cpu().numpy()),
+                            collection_phase_id=collection_phase_id,
+                            intervention_flag=bool(intervention_chunk.any().item()),
+                            step_id=start,
+                            model_weights_id=traj.model_weights_id,
+                        )
                     )
-                    added += 1
 
                     if terminal and not auto_reset:
                         break
@@ -446,8 +545,6 @@ class RLTStage2TrajectoryReplayAdapter:
                 if not auto_reset:
                     stop_env = True
                     break
-                # A clean new episode is not available until the next action chunk
-                # boundary. Do not treat the post-done tail as replay data.
                 segment_start = min(
                     total_control_steps,
                     ((done_idx // chunk_len) + 1) * chunk_len,
@@ -460,36 +557,26 @@ class RLTStage2TrajectoryReplayAdapter:
                     segment_terminal=False,
                 )
 
-        return added, completed_episodes
+        return replay_trajectories, completed_episodes
 
-    def _chunk_trajectory_to_transitions(self, traj: Trajectory) -> tuple[int, int]:
-        if self.replay_buffer is None:
-            return 0, 0
-        if traj.actions is None:
-            raise RuntimeError("RLT Stage2 replay requires trajectory actions.")
-        if not traj.forward_inputs:
-            raise RuntimeError(
-                "RLT Stage2 replay requires trajectory.forward_inputs; rollout "
-                "must emit the canonical RLT forward-input contract."
-            )
+    def _chunk_trajectory_to_transitions(self, traj: Trajectory) -> tuple[list[Trajectory], int]:
+        if traj.actions is None or not traj.forward_inputs:
+            return [], 0
 
         traj_len = traj.actions.shape[0]
         bsz = traj.actions.shape[1]
-        added = 0
+        replay_trajectories: list[Trajectory] = []
         completed_episodes = 0
 
         x_all = traj.forward_inputs.get("x")
         a_tilde_all = traj.forward_inputs.get("a_tilde")
         if x_all is None or a_tilde_all is None:
-            raise RuntimeError(
-                "RLT Stage2 replay requires forward_inputs['x'] and "
-                "forward_inputs['a_tilde']."
-            )
+            return [], 0
 
         dones_all = traj.dones
         rewards_all = traj.rewards
         if dones_all is None or rewards_all is None:
-            raise RuntimeError("RLT Stage2 replay requires trajectory rewards and dones.")
+            return [], 0
         intervention_flags_all = traj.forward_inputs.get("intervention_flags")
         if intervention_flags_all is None:
             intervention_flags_all = traj.intervene_flags
@@ -512,28 +599,14 @@ class RLTStage2TrajectoryReplayAdapter:
                 done_idx = min(t + 1, dones_all.shape[0] - 1)
                 env_done = float(dones_all[done_idx, env_idx].any().item())
                 done = float(env_done > 0.0)
-                intervention_mask: float | np.ndarray = 0.0
+                intervention_mask = torch.zeros_like(traj.actions[t, env_idx])
                 if intervention_flags_all is not None:
-                    intervention_mask = (
-                        intervention_flags_all[t, env_idx]
-                        .detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.float32, copy=False)
-                        .reshape(-1)
-                    )
-                source_chunk: np.ndarray | None = None
-                source: int | None = None
+                    intervention_mask = intervention_flags_all[t, env_idx].detach()
+                source_chunk = None
+                source = None
                 if source_chunk_all is not None:
-                    source_chunk = (
-                        source_chunk_all[t, env_idx]
-                        .detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.uint8, copy=False)
-                        .reshape(-1)
-                    )
-                    source = resolve_chunk_source(source_chunk)
+                    source_chunk = source_chunk_all[t, env_idx].detach().to(torch.uint8)
+                    source = resolve_chunk_source(source_chunk.cpu().numpy())
                 collection_phase_id = None
                 if collection_phase_id_all is not None:
                     collection_phase_id = int(
@@ -544,17 +617,17 @@ class RLTStage2TrajectoryReplayAdapter:
                         .item()
                     )
 
-                x = self._to_numpy_float(x_all[t, env_idx])
-                a_tilde = self._to_numpy_float(a_tilde_all[t, env_idx])
-                action = self._to_numpy_float(traj.actions[t, env_idx])
-                rewards = self._to_numpy_float(rewards_all[t, env_idx])
+                x = x_all[t, env_idx].detach()
+                a_tilde = a_tilde_all[t, env_idx].detach()
+                action = traj.actions[t, env_idx].detach()
+                rewards = rewards_all[t, env_idx].detach()
 
                 if done > 0.0:
                     next_x = x
                     next_a_tilde = a_tilde
                 elif t + 1 < traj_len:
-                    next_x = self._to_numpy_float(x_all[t + 1, env_idx])
-                    next_a_tilde = self._to_numpy_float(a_tilde_all[t + 1, env_idx])
+                    next_x = x_all[t + 1, env_idx].detach()
+                    next_a_tilde = a_tilde_all[t + 1, env_idx].detach()
                 else:
                     if x_all.shape[0] <= t + 1 or a_tilde_all.shape[0] <= t + 1:
                         raise RuntimeError(
@@ -563,28 +636,54 @@ class RLTStage2TrajectoryReplayAdapter:
                             "the final student forward_inputs so actor training can "
                             "bootstrap without re-encoding VLA observations."
                         )
-                    next_x = self._to_numpy_float(x_all[t + 1, env_idx])
-                    next_a_tilde = self._to_numpy_float(a_tilde_all[t + 1, env_idx])
+                    next_x = x_all[t + 1, env_idx].detach()
+                    next_a_tilde = a_tilde_all[t + 1, env_idx].detach()
 
-                self.replay_buffer.add(
-                    x=x,
-                    action_chunk=action,
-                    ref_chunk=a_tilde,
-                    rewards=rewards,
-                    next_x=next_x,
-                    next_ref_chunk=next_a_tilde,
-                    done=done,
-                    intervention=intervention_mask,
-                    source=source,
-                    source_chunk=source_chunk,
-                    collection_phase=collection_phase_id,
-                    intervention_flag=bool(np.asarray(intervention_mask).any()),
-                    step_id=t,
+                if source_chunk is None:
+                    chunk_len = int(self.cfg.actor.model.num_action_chunks)
+                    action_dim = int(self.cfg.actor.model.action_dim)
+                    step_intervention = intervention_mask.reshape(
+                        chunk_len,
+                        action_dim,
+                    ).any(dim=-1)
+                    source_chunk = torch.where(
+                        step_intervention,
+                        torch.full(
+                            (chunk_len,),
+                            int(TransitionSource.HUMAN),
+                            dtype=torch.uint8,
+                            device=action.device,
+                        ),
+                        torch.full(
+                            (chunk_len,),
+                            int(TransitionSource.RL),
+                            dtype=torch.uint8,
+                            device=action.device,
+                        ),
+                    )
+                    source = resolve_chunk_source(source_chunk.cpu().numpy())
+
+                replay_trajectories.append(
+                    self._transition_trajectory(
+                        x=x,
+                        action_chunk=action,
+                        ref_chunk=a_tilde,
+                        rewards=rewards,
+                        next_x=next_x,
+                        next_ref_chunk=next_a_tilde,
+                        done=done,
+                        intervention=intervention_mask,
+                        source_chunk=source_chunk,
+                        source=source,
+                        collection_phase_id=collection_phase_id,
+                        intervention_flag=bool(intervention_mask.reshape(-1).any().item()),
+                        step_id=t,
+                        model_weights_id=traj.model_weights_id,
+                    )
                 )
-                added += 1
                 if env_done > 0.0:
                     completed_episodes += 1
                     if not auto_reset:
                         break
 
-        return added, completed_episodes
+        return replay_trajectories, completed_episodes
