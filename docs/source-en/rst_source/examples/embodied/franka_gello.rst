@@ -1,47 +1,84 @@
-Real-World Franka with GELLO Teleoperation
-============================================
+Using GELLO with Franka
+=======================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
+   :align: center
+   :width: 80%
 
-This guide explains how to set up and use the **GELLO** teleoperation device
-with the Franka real-world environment in RLinf. It extends the base
-:doc:`franka` documentation with hardware-specific installation,
-configuration, and verification steps.
+   GELLO joint-level teleoperation device used to collect Franka demonstrations.
 
-.. note::
+Use GELLO as a joint-level teleoperation device for Franka data collection. You'll install ``gello_teleop``, verify the serial device, update collection configs, and monitor saved episodes.
 
-   If you have not read the base Franka guide yet, please start with
-   :doc:`franka` first. This page only covers the **additional** steps
-   required for the GELLO hardware.
+Overview
+--------
 
+Collect Franka demonstrations with joint-level GELLO control instead of SpaceMouse.
 
-Hardware Overview
------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-`GELLO <https://github.com/wuphilipp/gello_software>`_ is a joint-level
-teleoperation device that mirrors the kinematic structure of the Franka arm.
-It provides more intuitive and precise control than a SpaceMouse, with
-native gripper support.
+   .. grid-item-card:: Models
+      :text-align: center
 
-A typical GELLO deployment connects the device to the **controller node**
-(usually the NUC or the machine physically connected to the robot) via a
-USB serial adapter (FTDI).
+      Downstream CNN/OpenPI policies
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      Teleop collection · SFT/RL downstream
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      Franka demonstration collection
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Franka · GELLO · gripper
+
+| **You'll do:** install GELLO deps → grant serial permissions → test expert stream → run collection.
+| **Prerequisites:** :doc:`franka` · GELLO hardware · Dynamixel permissions.
+
+Tasks
+~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 24 24 24
 
-   * - Node
-     - Role
-     - Hardware
-   * - **GPU server** (node 0)
-     - Actor, rollout, env worker; camera capture
-     - NVIDIA GPU (e.g. RTX 4090), RealSense cameras
-   * - **NUC** (node 1)
-     - FrankaController, GELLO teleoperation
-     - Franka arm, GELLO device (USB-FTDI)
+   * - Task
+     - Config / entry point
+     - Description
+   * - GELLO test
+     - ``gello_expert``
+     - Verify live joint and gripper readings.
+   * - Collection
+     - ``realworld_collect_data_gello``
+     - Save successful demonstrations from GELLO teleoperation.
+   * - Monitoring
+     - ``collect_monitor.py``
+     - Follow Ray worker collection progress from logs.
 
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
-GELLO Software Installation
-------------------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - Field
+     - Description
+   * - Observation
+     - Same camera/state layout as the target Franka collection config.
+   * - Action
+     - GELLO joint readings converted to Franka target pose or joint action.
+   * - Reward
+     - Collection success flag or downstream task reward.
+   * - Prompt
+     - Inherited from the downstream Franka task config.
+
+Installation
+------------
 
 GELLO depends on two packages that must be installed **in order**:
 
@@ -52,7 +89,7 @@ Both packages should be installed on the node that runs the GELLO device
 (typically the NUC / controller node).
 
 1. Install ``gello`` (gello_software)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Choose a directory to install the GELLO software, then clone the repository
 and initialize only the **Dynamixel SDK** submodule:
@@ -102,7 +139,7 @@ DynamixelRobotConfig, and port mapping), refer to the
 `gello_software README <https://github.com/wuphilipp/gello_software#readme>`_.
 
 2. Install ``gello-teleop``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``gello-teleop`` wraps the ``gello`` driver with Franka forward kinematics
 (using dm_control/MuJoCo) and a teleoperation agent interface. Install it
@@ -116,7 +153,7 @@ as an editable checkout:
 
 
 3. Set up the serial device
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Plug the GELLO device into the controller node via the USB-FTDI adapter.
 Identify the serial port:
@@ -142,7 +179,7 @@ Grant permission:
    devices are plugged in.
 
 4. Verify the GELLO device
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Run the built-in RLinf test script to confirm that the GELLO device is
 communicating correctly and producing valid TCP target readings:
@@ -163,8 +200,8 @@ If the output is updating as you move the GELLO device, the installation
 is successful.
 
 
-YAML Configuration
--------------------
+Configuration File
+------------------
 
 To use GELLO for data collection, use the config file
 ``examples/embodiment/config/realworld_collect_data_gello.yaml``.
@@ -201,8 +238,8 @@ For full data collection instructions, refer to the
 **Data Collection with GELLO** section in :doc:`franka`.
 
 
-Monitoring Collection Progress
--------------------------------
+Run It
+------
 
 Because the collector runs as a Ray worker, its stdout is batched by
 Ray's log monitor, which breaks ``tqdm``'s in-place ``\r`` refresh.

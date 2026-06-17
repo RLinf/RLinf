@@ -3,7 +3,7 @@ RL with Embodied Simulators
 
 This category groups examples in which the **simulator (or benchmark)** is the headline. They show how to bring up RLinf on a specific simulation platform — environment installation, asset paths, observation/action spaces, and a reference RL recipe (typically PPO or GRPO with a VLA policy).
 
-If you are starting from "I want to train on benchmark *X*", this is the right entry point. For model-centric examples (pi₀, GR00T, …) see :doc:`vla_wam_index`. For real-robot setups see :doc:`real_world_index`. For LIBERO setup on AMD ROCm or Ascend CANN accelerators, see the :doc:`Supported Accelerators <../tutorials/accelerators/index>` tutorial.
+If you are starting from "I want to train on benchmark *X*", this is the right entry point. For model-centric examples (pi₀, GR00T, …) see :doc:`vla_wam_index`. For real-robot setups, including Franka, see :doc:`real_world_index`. For LIBERO setup on AMD ROCm or Ascend CANN accelerators, see the :doc:`Supported Accelerators <../guides/index>` tutorial.
 
 .. raw:: html
 
@@ -11,7 +11,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://github.com/RLinf/misc/raw/main/pic/embody.mp4" type="video/mp4">
+         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
          Your browser does not support the video tag.
        </video>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -23,7 +23,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/libero.html" style="text-decoration: underline; color: blue;">
@@ -34,18 +34,18 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/behavior.html" style="text-decoration: underline; color: blue;">
            <b>RL with Behavior Benchmark</b>
          </a><br>
-         Support Behavior+OpenVLA-OFT+PPO/GRPO training
+         Support BEHAVIOR + OpenVLA-OFT / π₀ / π₀.₅ + PPO training
        </p>
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/metaworld.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/metaworld.html" style="text-decoration: underline; color: blue;">
@@ -56,7 +56,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/IsaacLab.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/isaaclab.html" style="text-decoration: underline; color: blue;">
@@ -67,7 +67,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -79,7 +79,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/robocasa.jpeg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/robocasa.html" style="text-decoration: underline; color: blue;">
@@ -126,7 +126,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embodichain.gif"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/embodichain.html" style="text-decoration: underline; color: blue;">
@@ -137,7 +137,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/polaris.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/polaris.html" style="text-decoration: underline; color: blue;">
@@ -148,7 +148,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/gsenv.gif"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/gsenv.html" style="text-decoration: underline; color: blue;">
@@ -175,17 +175,17 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    :hidden:
    :maxdepth: 2
 
-   ManiSkill Benchmark <embodied/maniskill>
-   LIBERO Benchmarks <embodied/libero>
-   Behavior Benchmark <embodied/behavior>
-   MetaWorld Benchmark <embodied/metaworld>
+   ManiSkill <embodied/maniskill>
+   LIBERO <embodied/libero>
+   Behavior <embodied/behavior>
+   MetaWorld <embodied/metaworld>
    IsaacLab <embodied/isaaclab>
-   CALVIN Benchmark <embodied/calvin>
-   RoboCasa Benchmark <embodied/robocasa>
-   RoboTwin Benchmark <embodied/robotwin>
-   RoboVerse Benchmark <embodied/roboverse>
-   Franka-Sim Benchmark <embodied/frankasim>
+   CALVIN <embodied/calvin>
+   RoboCasa <embodied/robocasa>
+   RoboTwin <embodied/robotwin>
+   RoboVerse <embodied/roboverse>
+   Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
-   PolaRiS Simulation Platform <embodied/polaris>
-   Real2Sim2Real GSEnv <embodied/gsenv>
-   Genesis Benchmark <embodied/genesis>
+   PolaRiS <embodied/polaris>
+   GSEnv <embodied/gsenv>
+   Genesis <embodied/genesis>

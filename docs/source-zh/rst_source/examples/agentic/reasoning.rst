@@ -1,22 +1,47 @@
 使用 GRPO 训练 Math 推理任务
-=============================
+========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-本文档介绍了如何在 RLinf 框架下，使用强化学习（RL）来训练大语言模型（LLM）以进行数学推理。  
-与监督微调（SFT）相比，RL 能够鼓励模型探索多样化的推理路径，同时优先保证最终答案的正确性。  
+使用本配方在数学数据上用 GRPO 训练 Qwen 系列推理模型。相比监督微调，RL 鼓励模型探索更多样的推理路径，同时优化最终答案正确性。
 
-我们的目标是提升模型解决复杂数学问题的能力，同时优化推理过程和最终答案。
+概述
+----------------------------------------
+
+使用本配方在数学数据上通过 GRPO 训练 Qwen 系列推理模型。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      Qwen2.5-1.5B 与 Qwen2.5-7B
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      GRPO，使用 token-level loss 与 minibatch early-stop
+
+   .. grid-item-card:: 数据
+      :text-align: center
+
+      AReaL-boba 数学推理数据
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      多节点 Megatron 训练
 
 数据集
--------------
+----------------------------------------
 
-我们使用 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_ 数据集。  
-该数据集整合了 DeepScaleR、Open-Reasoner-Zero、Light-R1、DAPO、NuminaMath（AoPS/Olympiad 子集）和 ZebraLogic。  
-过于简单的问题会被过滤，以保证数据集质量和有效性。  
+我们使用 `AReaL-boba-Data <https://huggingface.co/datasets/inclusionAI/AReaL-boba-Data/>`_ 数据集。
+该数据集整合了 DeepScaleR、Open-Reasoner-Zero、Light-R1、DAPO、NuminaMath（AoPS/Olympiad 子集）和 ZebraLogic。
+过于简单的问题会被过滤，以保证数据集质量和有效性。
 
 一个训练样例如下：
 
@@ -72,41 +97,41 @@
   启用该选项后，原始数据集将通过 `tokenizer.apply_chat_template()` 方法处理，按照使用模型的 tokenizer 中对话模板对提示词信息进行格式化。
   处理完成后，提示词信息将转换为字符串格式，用于模型输入。
 
-算法
----------
+GRPO 工作方式
+----------------------------------------
 
-我们采用 GRPO（Group Relative Policy Optimization），并做了如下改进：  
+我们采用 GRPO（Group Relative Policy Optimization），并做了如下改进：
 
-- **Token 级别的损失**：不是在整个响应序列上平均损失，而是在 token 级别上平均（类似 DAPO）。  
-  这样可以避免过长的回答主导训练，减少它们对梯度的影响。  
+- **Token 级别的损失**：不是在整个响应序列上平均损失，而是在 token 级别上平均（类似 DAPO）。
+  这样可以避免过长的回答主导训练，减少它们对梯度的影响。
 
-- **小批次提前停止**：如果一个 minibatch 中的重要性比率过大，则丢弃该批次，以稳定训练。  
+- **小批次提前停止**：如果一个 minibatch 中的重要性比率过大，则丢弃该批次，以稳定训练。
 
-奖励函数：  
+奖励函数：
 
-- 最终 boxed/数值答案正确：+5  
-- 错误：-5  
+- 最终 boxed/数值答案正确：+5
+- 错误：-5
 
-运行脚本
----------------------
+运行
+----------------------------------------
 
 **1. 关键参数配置**
 
-在启动前，检查配置文件。主要字段包括：  
+在启动前，检查配置文件。主要字段包括：
 
-- 集群设置：``cluster.num_nodes`` （节点数）。  
-- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。  
+- 集群设置：``cluster.num_nodes`` （节点数）。
+- 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。
 
 **2. 配置文件**
 
-推荐配置示例：  
+推荐配置示例：
 
-- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``  
-- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``  
+- ``examples/reasoning/config/math/qwen2.5-1.5b-grpo-megatron.yaml``
+- ``examples/reasoning/config/math/qwen2.5-7b-grpo-megatron.yaml``
 
 **3. 启动命令**
 
-运行以下命令以启动 Ray 集群并开始训练：  
+运行以下命令以启动 Ray 集群并开始训练：
 
 .. code-block:: bash
 
@@ -127,47 +152,38 @@
 
    sleep 10d
 
-结果
--------
+可视化与结果
+----------------------------------------
 
-我们基于 DeepSeek-R1-Distill-Qwen 训练了 1.5B 和 7B 模型。  
+我们基于 DeepSeek-R1-Distill-Qwen 训练了 1.5B 和 7B 模型。
 
-启动训练后，你可以通过以下命令监控指标：  
+训练启动后，通过以下命令监控指标：
 
 .. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-关键监控指标：  
-
-- ``rollout/rewards``：模型在训练数据上的准确率。更高的分数通常意味着更强的推理能力。  
-- ``rollout/response_length``：训练数据集上的平均响应长度。RL 往往会导致回答过长，DAPO 类似的方法可以缓解此问题。  
-- ``train/entropy_loss``：表示模型的探索能力。熵值应逐渐降低并收敛。  
-
-训练曲线
-~~~~~~~~~~~~~~
-
-下面展示训练曲线。
+通用指标含义见 :doc:`训练指标 <../../reference/metrics>`。下面展示训练曲线。
 
 .. raw:: html
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/1.5b-loss-curve.jpg" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/1.5b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 1.5B</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/7b-loss-curve.jpg" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/7b-loss-curve.jpg" style="width: 100%;"/>
        <p><em>MATH 7B</em></p>
      </div>
    </div>
 
 最终性能
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们提供了评估 `工具包 <https://github.com/RLinf/LLMEvalKit>`_。
 
-在 AIME24、AIME25 和 GPQA-diamond 上的评测结果表明，RLinf 达到了 SOTA 性能。  
+在 AIME24、AIME25 和 GPQA-diamond 上的评测结果表明，RLinf 达到了 SOTA 性能。
 
 .. list-table:: **1.5 B 模型结果**
    :header-rows: 1
@@ -214,7 +230,7 @@
      - **38.46**
      - **40.84**
 
-\* 我们使用默认配置对模型进行了 600 步重训。  
+\* 我们使用默认配置对模型进行了 600 步重训。
 
 .. list-table:: **7 B 模型结果**
    :header-rows: 1
@@ -257,9 +273,9 @@
      - **56.23**
 
 公开检查点
-------------------
+----------------------------------------
 
-我们在 Hugging Face 上发布了训练好的模型，供大家使用：  
+我们在 Hugging Face 上发布了训练好的模型，供大家使用：
 
-- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_  
-- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_  
+- `RLinf-math-1.5B <https://huggingface.co/RLinf/RLinf-math-1.5B>`_
+- `RLinf-math-7B <https://huggingface.co/RLinf/RLinf-math-7B>`_

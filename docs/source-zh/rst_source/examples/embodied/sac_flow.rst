@@ -1,61 +1,85 @@
 流匹配策略SAC强化学习训练
 ===============================================
 
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-overview.png
+   :align: center
+   :width: 80%
+
+   SAC-Flow 总览。
+
 本示例展示 RLinf 框架使用 **SAC (Soft Actor-Critic)** 算法训练 **Flow Matching** 策略网络的完整流程。
 该算法结合了最大熵强化学习（SAC）与生成式流匹配模型（Flow Matching）的优势，支持在仿真环境（ManiSkill3）和真机环境（Franka）中进行训练。
 
 相关论文：`SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling <https://arxiv.org/abs/2509.25756>`_
 
-主要目标是让模型具备以下能力：
+概览
+----------------------------------------
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像。  
-2. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。  
-3. **强化学习**：结合环境反馈，使用 SAC 优化策略。
+用 SAC 训练流匹配（Flow Matching）策略——可在 ManiSkill 仿真中或真实 Franka（插销）上进行。
 
-环境
-----
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**ManiSkill3 环境 (仿真)**
+   .. grid-item-card:: 算法
+      :text-align: center
 
--  **Environment**：ManiSkill3 仿真平台
--  **Task**：控制机械臂抓取物体，例如 ``PickCube-v1``
--  **Observation**：机器人关节角度、物体位置等状态信息
--  **Action Space**：4 维连续动作
+      SAC · RLPD
 
-   - 三维位置控制（x, y, z）
-   - 夹爪控制（开/合）
+   .. grid-item-card:: 模型
+      :text-align: center
 
-**Franka 环境 (真机)**
+      Flow Matching 策略
 
--  **Environment**：真机设置
-   
-   - Franka Emika Panda 或 Research 3 机械臂
-   - Realsense 相机
-   - 可使用空间鼠标进行数据采集和人类干预
--  **Task**：目前支持插块插入（Peg Insertion）任务
--  **Observation**：相机 RGB 图像 + 机器人本体状态
--  **Action Space**：末端执行器位姿 (6 dims)
-   
-   - 三维位置控制（x, y, z）
-   - 三维旋转控制（roll, pitch, yaw）
+   .. grid-item-card:: 环境 / 数据
+      :text-align: center
 
-算法
------------------------------------------
+      ManiSkill · Franka
+
+   .. grid-item-card:: 训练
+      :text-align: center
+
+      Sim & Real
+
+| **你将完成：** 安装（仿真或真机）→ 选择配置 → 启动 → 观察 ``env/success_once``。
+| **前置条件：** 仿真请参考 :doc:`安装 </rst_source/start/installation>`，真机请参考 :doc:`franka`。
+
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 32 28 24
+
+   * - 设置
+     - 环境与任务
+     - 观测
+     - 动作
+   * - 仿真
+     - ManiSkill3 —— ``PickCube-v1``
+     - 关节角 + 物体状态
+     - 4 维：3D 位置 + 夹爪
+   * - 真机
+     - Franka Panda + RealSense —— 插销
+     - RGB + 本体感知
+     - 6 维末端执行器位姿
+
+SAC-Flow 工作原理
+----------------------------------------
 
 **核心算法组件**
 
 1.  **SAC (Soft Actor-Critic)**
-    
+
     -   通过 Bellman 公式和熵正则化学习 Q 值。
-    
+
     -   使用 **Flow Matching** 网络作为 Actor 策略。
-    
+
     -   学习温度参数以平衡探索与利用。
 
 2.  **Flow Matching Policy**
 
     -   **速度网络参数化**：将流策略的 K 步采样视为 RNN，将流策略中的速度网络替换成为循环而生的现代 Transformer 架构，解决训练稳定问题。
-    
+
     -   **对数似然计算**：在每步采样中填加高斯噪声 + 配套漂移修正，保证末端动作分布不变，同时把路径密度分解为单步高斯似然的连乘，从而得到可微的 :math:`\log p_{\theta}(A|s)`。
 
 3. **RLPD (Reinforcement Learning with Prior Data)**
@@ -64,15 +88,15 @@
 
    - 为加速在真实世界的训练，SAC-Flow 也可结合 RLPD 使用预采集的离线数据作为演示缓冲区。
 
-依赖安装
----------------
+安装
+----------------------------------------
 
 对于在仿真环境运行，请参考 :doc:`../../start/installation` 进行安装。
 
 对于在真机上运行，请参考 :doc:`franka` 进行安装和硬件配置。
 
-运行脚本
---------
+运行
+----------------------------------------
 
 **1. 配置文件**
 
@@ -91,8 +115,8 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
      model:
        model_type: "flow_policy"
        # 输入类型: 'state' (仿真) 或 'mixed' (真机, 图像+状态)
-       input_type: "state" 
-       
+       input_type: "state"
+
        # Flow Matching 相关参数
        denoising_steps: 4  # 生成动作去噪步数
        d_model: 256        # Transformer 维度
@@ -114,7 +138,7 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
 **2.2 算法参数 (Algorithm)**
 
 .. code:: yaml
-   
+
    algorithm:
       # SAC 超参数
       gamma: 0.96          # 折扣因子
@@ -128,7 +152,7 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
             lr_scheduler: torch_constant
             clip_grad: 10.0
       critic_actor_ratio: 4  # Critic 与 Actor 训练次数比例
-      
+
       # 训练与交互频率
       update_epoch: 30     # 每次交互后的训练步数
 
@@ -156,7 +180,7 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
    bash examples/embodiment/run_realworld_async.sh realworld_sac_flow_image
 
 可视化与结果
--------------------------
+----------------------------------------
 
 **1. TensorBoard 日志**
 
@@ -166,6 +190,8 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
    tensorboard --logdir ./logs
 
 **2. 关键监控指标**
+
+指标含义见 :doc:`训练指标 <../../reference/metrics>`。SAC 相关指标：
 
 - **环境指标**:
 
@@ -195,13 +221,13 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
   - ``train/replay_buffer/utilization``: 重放缓冲区的利用率
 
 真实世界结果
-~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 以下提供了SAC-Flow算法插块插入任务的演示视频（经加速处理）和训练曲线。在 30分钟 的训练时间内，机器人能够学习到一套能够持续成功完成任务的策略。
 
 .. raw:: html
 
   <div style="flex: 0.8; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-success-rate.png" style="width: 100%;"/>
+      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-success-rate.png" style="width: 100%;"/>
       <p><em>训练曲线</em></p>
     </div>
 
@@ -209,7 +235,7 @@ RLinf 提供了针对仿真和真机环境的默认配置文件：
 
   <div style="flex: 1; text-align: center;">
     <video controls autoplay loop muted playsinline preload="metadata" width="720">
-      <source src="https://github.com/RLinf/misc/raw/main/pic/sac-flow-peg-insertion.mp4" type="video/mp4">
+      <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/sac-flow-peg-insertion.mp4" type="video/mp4">
       Your browser does not support the video tag.
     </video>
     <p><em>插块插入（Peg Insertion）</em></p>

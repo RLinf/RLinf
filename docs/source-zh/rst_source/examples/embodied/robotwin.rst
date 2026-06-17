@@ -1,4 +1,4 @@
-基于RoboTwin评测平台的强化学习训练
+基于 RoboTwin 的强化学习训练
 ========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -6,427 +6,314 @@
    :height: 16px
    :class: inline-icon
 
-本文档给出在 RLinf 框架内启动与管理 **Vision-Language-Action Models (VLAs)** 训练任务的完整指南，
-在 RoboTwin 环境中微调 VLA 模型以完成机器人操作。
+.. figure:: https://robotwin-platform.github.io/assets/images/teaser.png
+   :align: center
+   :width: 90%
 
-主要目标是让模型具备以下能力：
+   RoboTwin 2.0 双臂操作任务（图片来源：`RoboTwin <https://robotwin-platform.github.io>`__）。
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像。  
-2. **语言理解**：理解自然语言的任务描述。  
-3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。  
-4. **强化学习**：结合环境反馈，使用 PPO 和 GRPO 优化策略。
+`RoboTwin 2.0 <https://robotwin-platform.github.io>`__ 是包含大规模任务套件的双臂操作基准。
+你将使用 RLinf 在 ``place_empty_cup``、``adjust_bottle`` 等 RoboTwin 任务上对 VLA 策略进行强化学习微调。
 
-RoboTwinEnv 环境介绍
---------------------------
+概览
+----------------------------------------
 
-**RoboTwinEnv 环境**
+在 RoboTwin 2.0 上微调 VLA；OpenVLA-OFT + GRPO 平均任务成功率提升约 +57%。
 
-- **Environment**：RLinf 框架基于 RoboTwin 2.0 仿真环境提供了用于强化学习训练的 RoboTwinEnv 环境。  
-- **Task**：控制机械臂完成多种操作任务。RLinf RoboTwinEnv 目前支持以下 **46 个任务** ，用户可以根据需要选择任务进行训练。
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-  **放置类任务（Placement Tasks）**
+   .. grid-item-card:: 模型
+      :text-align: center
 
-  - ``adjust_bottle``：使用正确的手臂将桌上的瓶子拾起并保持瓶口朝上
-  - ``place_a2b_left``：使用合适的手臂将物体 A 放置在物体 B 的左侧
-  - ``place_a2b_right``：使用合适的手臂将物体 A 放置在物体 B 的右侧
-  - ``place_bread_basket``：若桌上有一个面包，用单臂抓取并放入篮子；若有两个面包，用双臂同时抓取并放入篮子
-  - ``place_bread_skillet``：用单臂抓取桌上的面包并放入平底锅
-  - ``place_burger_fries``：使用双臂抓取汉堡和薯条并放置到托盘上
-  - ``place_can_basket``：一只手臂将易拉罐放入篮子，另一只手臂提起篮子
-  - ``place_cans_plasticbox``：使用双臂将易拉罐抓取并放入塑料箱
-  - ``place_container_plate``：将容器放置到盘子上
-  - ``place_empty_cup``：使用单臂将空杯放置到杯垫上
-  - ``place_mouse_pad``：抓取鼠标并放置到彩色垫子上
-  - ``place_object_basket``：一只手臂将目标物体放入篮子，另一只手臂抓起篮子并向外移动
-  - ``place_object_stand``：使用合适的手臂将物体放置到支架上
-  - ``place_phone_stand``：抓取手机并放置到手机支架上
-  - ``place_shoe``：使用单臂从桌上抓取鞋子并放到垫子上
-  - ``place_dual_shoes``：使用双臂抓取两只鞋并放入鞋盒，且鞋头朝左
+      OpenVLA-OFT · π₀ / π₀.₅ · Lingbot-VLA
 
-  **抓取类任务（Pick Tasks）**
+   .. grid-item-card:: 算法
+      :text-align: center
 
-  - ``pick_dual_bottles``：用双臂分别抓取两个瓶子
-  - ``pick_diverse_bottles``：用双臂分别抓取两个不同的瓶子
-  - ``move_can_pot``：用单臂抓取易拉罐并移动到锅旁
-  - ``move_pillbottle_pad``：用单臂抓取药瓶并放到垫子上
-  - ``move_playingcard_away``：抓取扑克牌并将其朝远离桌面的方向移动
-  - ``move_stapler_pad``：使用合适的手臂将订书机移动到彩色垫子上
-  - ``grab_roller``：使用双臂抓取桌上的滚轴
-  - ``lift_pot``：使用双臂抬起锅
-  - ``put_bottles_dustbin``：抓取瓶子并放入桌子左侧的垃圾桶
+      PPO · GRPO · DAgger
 
-  **堆叠类任务（Stacking Tasks）**
-  
-  - ``stack_blocks_two``：将绿色积木堆叠在红色积木上
-  - ``stack_blocks_three``：将蓝色积木叠在绿色积木上，再将绿色积木叠在红色积木上
-  - ``stack_bowls_two``：将两个碗上下堆叠
-  - ``stack_bowls_three``：将三个碗上下堆叠
+   .. grid-item-card:: 任务
+      :text-align: center
 
-  **排序类任务（Ranking Tasks）**
-  
-  - ``blocks_ranking_rgb``：按红、绿、蓝顺序从左到右排列积木
-  - ``blocks_ranking_size``：将积木从左到右按由大到小排列
+      46 个支持任务 · 10 个配置任务
 
-  **使用工具类任务（Tool Use & Interaction Tasks）**
-  
-  - ``click_alarmclock``：按下闹钟顶部中央按钮
-  - ``click_bell``：按下铃铛顶部中央
-  - ``beat_block_hammer``：抓起锤子敲击积木
-  - ``open_microwave``：用单臂打开微波炉
-  - ``press_stapler``：用单臂按压订书机
-  - ``stamp_seal``：抓取印章并盖在指定颜色的垫子上
-  - ``turn_switch``：用机械臂拨动开关
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-  **交接类任务（Handover Tasks）**
-  - ``handover_block``：左臂抓取红色积木并交接给右臂，随后放置到蓝色垫子上
-  - ``handover_mic``：单臂抓取麦克风并交接给另一只手臂
+      1–2 节点 · 8–16 GPUs
 
-  **倾倒、投掷与摇晃任务（Pouring, Dumping & Shaking Tasks）**
+| **你将完成：** 安装 → 克隆 RoboTwin + 资产 → 下载 SFT 模型 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboTwin 仓库与资产 · SFT 检查点。
 
-  - ``shake_bottle``：使用合适的手臂摇晃瓶子
-  - ``shake_bottle_horizontally``：使用合适的手臂水平摇晃瓶子
-  - ``dump_bin_bigbin``：抓取小箱并将其中物体倒入大箱中
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-  **悬挂与特殊任务（Hanging & Special Tasks）**
+RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境配置：
 
-  - ``hanging_mug``：左臂抓取杯子并调整姿态，右臂再次抓取并将杯子挂到挂架上
-  - ``scan_object``：一只手臂持扫描器，另一只手臂持物体并完成扫描
-  - ``rotate_qrcode``：抓取二维码板并旋转，使二维码朝向机器人
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-  .. note::
-     目前有四个任务尚未支持，分别是 ``place_fan``， ``open_laptop``， ``place_object_scale`` 和 ``put_object_cabinet`` 。另外，dense reward 奖励函数还在开发中，后续将逐步扩展到所有任务。
+   * - 任务
+     - 描述
+   * - ``adjust_bottle``
+     - 使用正确手臂将桌上的瓶子拾起并保持瓶口朝上。
+   * - ``place_empty_cup``
+     - 将空杯放到杯垫上。
+   * - ``place_container_plate``
+     - 将容器放到盘子上。
+   * - ``pick_dual_bottles``
+     - 用双臂分别抓取两个瓶子。
+   * - ``move_can_pot``
+     - 将易拉罐移动到锅旁。
+   * - ``lift_pot``
+     - 用双臂抬起锅。
+   * - ``handover_block``
+     - 左臂抓取红色积木并交接给右臂，随后放到蓝色垫子上。
+   * - ``beat_block_hammer``
+     - 抓起锤子敲击积木。
+   * - ``click_bell``
+     - 按下铃铛顶部中央。
+   * - ``place_shoe``
+     - 抓取鞋子并放到垫子上。
 
-- **Observation**：RLinf RoboTwinEnv 环境返回的观测信息是一个字典（dict），包含以下字段：
+.. note::
 
-  - ``images``：头部相机 RGB 图像
+   RLinf 目前尚未支持四个 RoboTwin 任务：``place_fan``、``open_laptop``、
+   ``place_object_scale`` 和 ``put_object_cabinet``。Dense reward 仍在逐步扩展到更多任务。
 
-    - **类型**：``torch.Tensor``
-    - **形状**：``[batch_size, 224, 224, 3]``
-    - **数据类型**：``uint8`` （0-255）
-    - **说明**：经过中心裁剪（center crop）处理的头部相机图像，每个环境返回一张图像
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-  - ``wrist_images``：腕部相机 RGB 图像（可选）
-  
-    - **类型**：``torch.Tensor`` 或 ``None``
-    - **形状**：``[batch_size, num_wrist_images, 224, 224, 3]`` （如果存在）
-    - **数据类型**：``uint8`` （0-255）
-    - **说明**：可能包含左腕相机（``left_wrist_image``）和/或右腕相机（``right_wrist_image``）的图像，如果任务不需要腕部图像则为 ``None``
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
 
-  - ``states``：本体感觉信息（proprioception）
+   * - 字段
+     - 规格
+   * - ``images``
+     - 头部相机 RGB，``[B, 224, 224, 3]`` uint8；启用时会中心裁剪。
+   * - ``wrist_images``
+     - 可选左/右腕部相机 RGB，``[B, n, 224, 224, 3]`` uint8，或 ``None``。
+   * - ``states``
+     - 本体状态，``[B, 14]`` float32。
+   * - ``task_descriptions``
+     - 自然语言任务描述。
+   * - ``actions``
+     - VLA 相关的 ALOHA 风格双臂连续 action chunk。
 
-    - **类型**：``torch.Tensor``
-    - **形状**：``[batch_size, 14]``
-    - **数据类型**：``float32``
-    - **说明**：包含末端执行器的位姿信息（位置和姿态），共 14 维，对应 ``proprio_dim=14``
+安装
+----------------------------------------
 
-  - ``task_descriptions``：任务描述文本
+.. include:: _setup_common.rst
 
-    - **类型**：``List[str]``
-    - **长度**：``batch_size``
-    - **说明**：每个环境对应的自然语言任务描述，例如 "What action should the robot take to place the empty cup on the coaster?"
-
-- **Action Space**：14 维连续动作空间
-
-  - **类型**：``torch.Tensor`` 或 ``numpy.ndarray``
-  - **形状**：``[batch_size, action_dim]`` 或 ``[batch_size, horizon, action_dim]``，其中 ``action_dim=14``
-  - **数据类型**：``float32``
-  - **动作组成**：
-
-    - 末端执行器三维位置控制（x, y, z）：3 维
-    - 三维旋转控制（roll, pitch, yaw）：3 维
-    - 夹爪控制（开/合）：1 维
-    - 关节位置控制：7 维
-    - **总计**：14 维
-
-依赖安装
------------------------
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # 如果希望在中国大陆更快地下载，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-RLinf 提供了预配置的 RoboTwin 环境 Docker 镜像，镜像中已包含所有必需的依赖，可以直接使用，**无需进行后续安装步骤**。
+**Docker 镜像**
 
 .. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-robotwin
-      # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-robotwin
 
-.. note::
-   Docker 镜像已包含：
-   
-   - RLinf RoboTwin 环境相关依赖
-   - 兼容性补丁已应用
-   - 支持 OpenVLA-OFT、OpenPI 模型
+   # 国内用户可使用：
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-robotwin
 
-   **使用 Docker 镜像后，可以直接跳转到** `RoboTwin 代码克隆 和 Assets 下载`_ **，** `模型下载`_ **和** `运行脚本`_ **章节，无需进行后续安装步骤。**
-
-**选项 2：自建环境**
-
-在本地环境直接安装依赖，运行以下命令。根据要训练的模型，将 ``--model openvla-oft`` 参数替换为对应的模型名称（``openvla-oft`` 或 ``OpenPI``）：
+在镜像中切换到对应虚拟环境：
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+   # OpenVLA-OFT
+   source switch_env openvla-oft
 
+   # OpenPI π₀ / π₀.₅
+   # source switch_env openpi
+
+   # Lingbot-VLA，如镜像中可用
+   # source switch_env lingbotvla
+
+**自定义环境**
+
+为你要运行的模型安装依赖：
+
+.. code:: bash
+
+   # 国内用户可添加 --use-mirror。
+
+   # OpenVLA-OFT
    bash requirements/install.sh embodied --model openvla-oft --env robotwin
+
+   # OpenPI π₀ / π₀.₅
+   # bash requirements/install.sh embodied --model openpi --env robotwin
+
+   # Lingbot-VLA
+   # bash requirements/install.sh embodied --model lingbotvla --env robotwin
+
    source .venv/bin/activate
 
-该脚本会自动完成：
+克隆 RoboTwin 并下载资产：
 
-- 安装 RLinf RoboTwin 环境相关依赖
-- 应用 RoboTwin 兼容性补丁（修复 sapien 和 mplib 的兼容性问题）
-- 安装对应 VLA 模型的依赖包
+.. code:: bash
 
-
-RoboTwin 代码克隆 和 Assets 下载
------------------------------------------
-
-RoboTwin Assets 是 RoboTwin 环境所需的资产文件，需要从 HuggingFace 下载。
-
-.. code-block:: bash
-
-   # 1. 克隆 RoboTwin 仓库
    git clone https://github.com/RoboTwin-Platform/RoboTwin.git -b RLinf_support
-   
-   # 2. 下载并解压 Assets 文件
+   cd RoboTwin
    bash script/_download_assets.sh
 
+   export PYTHONPATH=/path/to/RoboTwin:$PYTHONPATH
+   export ROBOT_PLATFORM=ALOHA
 
-模型下载
------------------------
+下载模型
+----------------------------------------
 
-在开始训练之前，您需要下载相应的SFT模型：
+下载与你的配置匹配的 SFT 检查点。示例：
+
+**OpenVLA-OFT**
 
 .. code-block:: bash
 
-   # 下载模型（选择任一方法）
-   # 方法 1: 使用 git clone
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-   # 方法 2: 使用 huggingface-hub
-   # 为提升国内下载速度，可以设置：
+   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup --local-dir RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup
 
-下载后，请确保在配置 yaml 文件中正确指定模型路径（``actor.model.model_path``）。
-
-运行脚本
--------------------
-
-请确保您在运行下面的命令前已激活正确的 Python 虚拟环境（venv）。
-如果您使用的是官方 Docker 镜像，请根据模型类型切换环境：
-
-- OpenVLA-OFT：``source switch_env openvla-oft``
-- OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）：``source switch_env OpenPI``
-
-**1. 关键参数配置**
-
-**1.1 OpenVLA-OFT + GRPO**
-
-以 OpenVLA-OFT 模型为例，在 ``actor.model`` 中需要配置以下关键参数：
-
-.. code-block:: yaml
-
-   actor:
-     model:
-       model_path: "/path/to/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup"  # SFT 模型路径
-       model_type: "openvla_oft"                                             # 模型类型设置为openvla_oft
-       implement_version: "official"                                         # openvla_oft实现版本（RLinf OpenVLA-OFT模型的实现接入了oft官方版本和rlinf sft微调版本，RoboTwin环境使用官方版本）
-       action_dim: 14                                                        # RoboTwin 动作维度（14维）
-       use_proprio: True                                                     # 是否使用本体感觉信息
-       proprio_dim: 14                                                       # 本体感觉维度
-       use_film: False                                                       # 是否使用 FiLM 层
-       num_images_in_input: 1                                                # 输入图像数量
-       num_action_chunks: 25                                                 # 动作块数量
-       unnorm_key: "place_empty_cup"                                         # 动作归一化键（需与SFT训练时使用的unnorm_key一致）
-
-**1.2** :math:`\pi_0` **+ PPO**
-
-RoboTwin 中的 π\ :sub:`0`\ + PPO 训练推荐沿用 OpenPI 的 RoboTwin 配置，并切换为 actor-critic 形式：
-
-.. code-block:: yaml
-
-   actor:
-     model:
-      model_path: "/path/to/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
-      num_action_chunks: 50 # interface for the env
-      add_value_head: True
-      action_dim: 14
-      OpenPI:
-         config_name: "pi0_aloha_robotwin"
-         num_images_in_input: 3
-         detach_critic_input: True
-
-
-**1.3** :math:`\pi_0.5` **+ PPO**
-
-π\ :sub:`0.5`\ 在 RoboTwin 中已提供现成的 PPO 训练配置，示例如下：
-
-.. code-block:: yaml
-
-   actor:
-      model:
-         model_path: "/path/to/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle"
-         num_action_chunks: 50 # interface for the env
-         action_dim: 14
-         add_value_head: True
-         OpenPI:
-            config_name: "pi05_aloha_robotwin"
-            num_images_in_input: 3
-            detach_critic_input: True
-
-
-**2. 环境配置**
-
-在环境配置文件中，需要设置以下关键参数：
-
-.. code-block:: yaml
-
-   env/train: robotwin_place_empty_cup
-   env/eval: robotwin_place_empty_cup
-   
-   # 在 env/train/robotwin_place_empty_cup.yaml 中：
-   env_type: robotwin
-   assets_path: "/path/to/robotwin_assets"
-   
-   task_config:
-     task_name: place_empty_cup  # 或其他任务名称
-     step_lim: 200
-     embodiment: [piper, piper, 0.6]
-     camera:
-       head_camera_type: D435
-       wrist_camera_type: D435
-       collect_head_camera: true
-       collect_wrist_camera: false
-
-对于 OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）配置，还需要额外注意：
-
-- ``env.train.center_crop: False`` 和 ``env.eval.center_crop: False``：关闭中心裁剪
-- ``env.*.task_config.embodiment: [aloha-agilex]``：切换到 AgileX 机器人配置
-- ``env.*.task_config.camera.collect_wrist_camera: true``：启用腕部相机输入
-
-**3. 配置文件**
-
-RoboTwin 当前可直接参考的配置文件如下：
-
-- **OpenVLA-OFT + GRPO**：``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
-- **π₀ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI.yaml``
-- **π₀ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_eval.yaml``
-- **π₀.₅ + PPO**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05.yaml``
-- **π₀.₅ Eval**：``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05_eval.yaml``
-
-**4. 启动命令**
-
-选择配置后，运行以下命令开始训练：
+**OpenPI π₀ / π₀.₅**
 
 .. code-block:: bash
 
-   # 设置ROBOT_PLATFORM环境变量
-   export ROBOT_PLATFORM=ALOHA
-   # 设置ROBOTWIN_PATH环境变量
-   export ROBOTWIN_PATH=/path/to/RoboTwin
+   cd /path/to/save/model
 
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+   git clone https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-例如，在 RoboTwin 环境中使用 GRPO 训练 OpenVLA-OFT 模型：
+   # 或使用 huggingface-hub：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi0-RoboTwin-SFT-adjust_bottle
+   hf download RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle --local-dir RLinf-Pi05-RoboTwin-SFT-adjust_bottle
 
-.. code-block:: bash
+.. include:: _model_path.rst
 
-   # 设置ROBOT_PLATFORM环境变量
-   export ROBOT_PLATFORM=ALOHA
-   # 设置ROBOTWIN_PATH环境变量
-   export ROBOTWIN_PATH=/path/to/RoboTwin
+对于 Lingbot-VLA 配方，请将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 指向你的 Lingbot-VLA SFT 检查点。
+
+.. note::
+
+   配置中的动作归一化键 ``unnorm_key`` 必须与训练该 SFT 检查点时所用的 ``unnorm_key``
+   一致，例如 ``unnorm_key: "place_empty_cup"``，否则动作会被错误地反归一化。
+
+运行
+----------------------------------------
+
+选择一个配方并启动训练：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 48 28
+
+   * - 配方
+     - 配置
+     - 命令后缀
+   * - OpenVLA-OFT + GRPO
+     - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
+     - ``robotwin_place_empty_cup_grpo_openvlaoft``
+   * - OpenVLA-OFT + PPO
+     - ``examples/embodiment/config/robotwin_place_empty_cup_ppo_openvlaoft.yaml``
+     - ``robotwin_place_empty_cup_ppo_openvlaoft``
+   * - π₀ + PPO
+     - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi.yaml``
+     - ``robotwin_adjust_bottle_ppo_openpi``
+   * - π₀.₅ + PPO
+     - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_openpi_pi05.yaml``
+     - ``robotwin_adjust_bottle_ppo_openpi_pi05``
+   * - OpenPI + DAgger
+     - ``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
+     - ``robotwin_adjust_bottle_dagger_openpi``
+   * - Lingbot-VLA + GRPO
+     - ``examples/embodiment/config/robotwin_click_bell_grpo_lingbotvla.yaml``
+     - ``robotwin_click_bell_grpo_lingbotvla``
+
+.. code:: bash
 
    bash examples/embodiment/run_embodiment.sh robotwin_place_empty_cup_grpo_openvlaoft
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_openpi_pi05
 
-例如，使用 PPO 训练 π\ :sub:`0.5`\ 模型：
+这条命令会：
 
-.. code-block:: bash
+1. 使用选定的 RoboTwin Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 RoboTwin env 组件创建 Ray worker。
+3. 运行 rollout，计算任务奖励，并更新选定的 VLA 策略。
 
-   export ROBOT_PLATFORM=ALOHA
-   export ROBOTWIN_PATH=/path/to/RoboTwin
+独立评估请走 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>`。
+该指南负责 ``ROBOTWIN_PATH`` / ``assets_path`` 设置、可用评测配置
+（如 ``robotwin_place_empty_cup_openvlaoft_eval`` 与 ``robotwin_adjust_bottle_openpi_pi05_eval``）
+和结果解读。
 
-   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_ppo_OpenPI_pi05
+.. note::
+
+   请将配置中的 ``assets_path`` 替换为已下载的 RoboTwin assets 路径。提供的配置使用
+   ``rlinf/envs/robotwin/seeds/`` 下的 train/eval seed 文件。
 
 可视化与结果
--------------------------
+----------------------------------------
 
-**1. TensorBoard 日志**
+在 RLinf 仓库根目录启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs --port 6006
+   tensorboard --logdir ../results --port 6006
 
-**2. 视频生成**
+关键指标是 ``env/success_once``。完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
 
-训练和评估过程中的视频会自动保存。配置如下：
+视频通过 env video 配置保存：
 
-.. code-block:: yaml
+.. code:: yaml
 
    video_cfg:
      save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train  # 训练视频
-     # 或
-     video_base_dir: ${runner.logger.log_path}/video/eval   # 评估视频
+     video_base_dir: ${runner.logger.log_path}/video/eval
 
-评估结果
-~~~~~~~~~~~~~~~~~~~
-
-.. list-table:: **OpenVLA-OFT 模型在七个 RoboTwin 任务上的评估结果**
+.. list-table:: OpenVLA-OFT 在七个 RoboTwin 任务上的评估结果
    :header-rows: 1
 
-   * - Task
-     - OpenVLA-OFT (SFT)
-     - OpenVLA-OFT (RLinf-GRPO)
-     - OpenVLA-OFT (RLinf-PPO)
-   * - beat_block_hammer
-     - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`_
+   * - 任务
+     - SFT
+     - RLinf-GRPO
+     - RLinf-PPO
+   * - ``beat_block_hammer``
+     - |huggingface| `10.15% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-beat_block_hammer>`__
      - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-beat_block_hammer>`__
      - ---
-   * - pick_dual_bottles
-     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`_
+   * - ``pick_dual_bottles``
+     - |huggingface| `20.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-pick_dual_bottles>`__
      - |huggingface| `92.96% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-pick_dual_bottles>`__
      - ---
-   * - place_empty_cup
-     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`_
+   * - ``place_empty_cup``
+     - |huggingface| `75.78% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_empty_cup>`__
      - |huggingface| `94.53% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_empty_cup>`__
-     - |huggingface| `92.97% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-PPO-place_empty_cup>`_
-   * - place_container_plate
-     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`_
+     - |huggingface| `92.97% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-PPO-place_empty_cup>`__
+   * - ``place_container_plate``
+     - |huggingface| `54.69% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-place_container_plate>`__
      - |huggingface| `95.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-place_container_plate>`__
      - ---
-   * - move_can_pot
-     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`_
+   * - ``move_can_pot``
+     - |huggingface| `9.37% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-move_can_pot>`__
      - |huggingface| `83.59% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-move_can_pot>`__
      - ---
-   * - lift_pot
-     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`_
+   * - ``lift_pot``
+     - |huggingface| `3.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-lift_pot>`__
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-lift_pot>`__
      - ---
-   * - handover_block
-     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`_
+   * - ``handover_block``
+     - |huggingface| `28.13% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-SFT-handover_block>`__
      - |huggingface| `70.31% <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-RoboTwin-RL-handover_block>`__
      - ---
    * - Average
@@ -438,178 +325,20 @@ RoboTwin 当前可直接参考的配置文件如下：
      - **+57.37%**
      - ---
 
-
-.. list-table:: **OpenPI 在 RoboTwin 任务上的评估结果**
+.. list-table:: OpenPI 在 RoboTwin ``adjust_bottle`` 上的评估结果
    :header-rows: 1
 
-   * - Task
-     - Pi0 (SFT)
-     - Pi0 (RLinf-PPO)
-     - Pi0.5 (SFT)
-     - Pi0.5 (RLinf-PPO)
-   * - adjust_bottle
-     - |huggingface| `76.56% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`_
-     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`_
-     - |huggingface| `85.94% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`_
-     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`_
-   * - Average
-     - 76.56%
-     - 98.44%
-     - 85.94%
-     - 96.09%
-   * - Δ Avg.
-     - ---
-     - **21.88%**
-     - ---
-     - **10.15%**
+   * - 方法
+     - SFT
+     - RLinf-PPO
+   * - π₀
+     - |huggingface| `76.56% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle>`__
+     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-Pi0-RoboTwin-PPO-adjust_bottle>`__
+   * - π₀.₅
+     - |huggingface| `85.94% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-SFT-adjust_bottle>`__
+     - |huggingface| `96.09% <https://huggingface.co/RLinf/RLinf-Pi05-RoboTwin-PPO-adjust_bottle>`__
 
 .. note::
-   **OpenVLA-OFT** 模型的所有任务都在 **demo_randomized** 设置下进行训练；
-   **OpenPI** 模型的所有任务都在 **demo_clean** 设置下进行训练。
-   更多信息请参考 `RoboTwin 参数配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
 
-评估脚本
-~~~~~~~~~~~~~~~~~~~
-
-本节介绍如何在 RoboTwin 评测平台上对不同 VLA 模型进行评估（Eval）。
-在 RLinf 中，模型评估与训练复用同一套配置文件（YAML），
-通常只需在对应 YAML 中将 ``runner.only_eval`` 设置为 ``True``，即可进入评估模式。
-
-1. **OpenVLA-OFT 模型评估**
-
-   请确保在运行前已激活正确的 Python 虚拟环境。  
-   若使用官方 Docker 镜像，需要通过：
-
-   .. code-block:: bash
-
-      source switch_env openvla-oft
-
-   以 GRPO 算法、``place_empty_cup`` 任务为例，对应配置文件为：
-
-   - ``examples/embodiment/config/robotwin_place_empty_cup_grpo_openvlaoft.yaml``
-
-2. **π₀ 模型评估**
-
-   请确保在运行前已激活正确的 Python 虚拟环境。  
-   若使用官方 Docker 镜像，需要通过：
-
-   .. code-block:: bash
-
-      source switch_env OpenPI
-
-   以 PPO 算法、``adjust_bottle`` 任务为例，对应配置文件为：
-
-   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_eval.yaml``
-
-3. **π₀.₅ 模型评估**
-
-   请确保在运行前已激活正确的 Python 虚拟环境。  
-   若使用官方 Docker 镜像，需要通过：
-
-   .. code-block:: bash
-
-      source switch_env OpenPI
-
-   以 PPO 算法、``adjust_bottle`` 任务为例，对应配置文件为：
-
-   - ``examples/embodiment/config/robotwin_adjust_bottle_ppo_OpenPI_pi05_eval.yaml``
-
-4. **评估模式设置**
-
-   在上述任一配置文件中，将 ``runner.only_eval`` 设置为 ``True``：
-
-   .. code-block:: yaml
-
-      runner:
-        task_type: embodied
-        logger:
-          log_path: "../results"
-          project_name: rlinf
-          experiment_name: "robotwin_grpo_openvlaoft"
-          logger_backends: ["tensorboard"]
-
-        max_epochs: 1000
-        max_steps: -1
-        only_eval: True
-
-5. **启动评估**
-
-   .. code-block:: bash
-
-      export ROBOT_PLATFORM=ALOHA
-      export ROBOTWIN_PATH=/path/to/RoboTwin
-
-      bash evaluations/run_eval.sh CHOSEN_CONFIG
-
-6. **注意事项**
-
-   - OpenVLA-OFT 模型目前使用 ``[piper, piper, 0.6]`` 机械臂配置  
-   - π\ :sub:`0`\ 和 π\ :sub:`0.5`\ 模型目前使用 ``[aloha-agilex]`` 机械臂配置  
-   - 其余详细参数请参考下一节 **配置说明**
-
-配置说明
------------------------
-
-OpenVLA-OFT关键配置
-~~~~~~~~~~~~~~~~~~~
-
-1. **模型配置**：
-
-   - ``actor.model.model_type: "openvla_oft"``：使用 OpenVLA-OFT 模型
-   - ``actor.model.implement_version: "official"``：使用 OpenVLA-OFT 官方版本
-   - ``actor.model.action_dim: 14``：14 维动作空间（包含本体感觉）
-   - ``actor.model.use_proprio: True``：启用本体感觉输入
-   - ``actor.model.proprio_dim: 14``：本体感觉维度
-   - ``actor.model.num_action_chunks: 25``：动作块数量
-
-2. **算法配置**：
-
-   - ``algorithm.reward_type: chunk_level``：chunk 级别的奖励
-   - ``algorithm.logprob_type: token_level``：token 级别的对数概率
-   - ``algorithm.n_chunk_steps: 8``：每个 chunk 的步数
-
-3. **环境配置**：
-
-   - ``env.train.task_config.task_name``：任务名称（如 ``place_empty_cup``）
-   - ``env.train.task_config.embodiment``：机器人配置
-   - ``env.train.task_config.camera``：相机配置
-
-π\ :sub:`0`\ 和 π\ :sub:`0.5`\关键配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. **模型配置**：
-
-   - ``actor.model.num_action_chunks: 50``：动作块数量
-   - ``actor.model.action_dim: 14``：动作维度
-   - ``actor.model.add_value_head: True``：PPO 训练需要 value head
-   - ``actor.model.OpenPI.num_images_in_input: 3``：输入图像数量
-
-2. **模型配置名称**：
-
-   - π\ :sub:`0`：``actor.model.OpenPI.config_name: "pi0_aloha_robotwin"``
-   - π\ :sub:`0.5`：``actor.model.OpenPI.config_name: "pi05_aloha_robotwin"``
-
-3. **算法配置**：
-
-   - ``algorithm.reward_type: chunk_level``：chunk 级奖励
-   - ``algorithm.logprob_type: chunk_level``：chunk 级对数概率
-   - ``algorithm.adv_type: gae``：使用 GAE 估计优势
-   - ``algorithm.loss_type: actor_critic``：使用 actor-critic 损失
-
-4. **环境配置**：
-
-   - ``env.train.center_crop: False`` 与 ``env.eval.center_crop: False``：关闭中心裁剪
-   - ``env.*.task_config.embodiment: [aloha-agilex]``：使用 AgileX 机器人配置，而非oft中使用的[piper, piper, 0.6]
-   - ``env.*.task_config.camera.collect_wrist_camera: true``：启用腕部相机
-   - ``fsdp.gradient_checkpointing: False``：OpenPI 当前不支持开启梯度检查点
-
-更多关于 RoboTwin 配置的详细信息，请参考 `RoboTwin 配置文档 <https://robotwin-platform.github.io/doc/usage/configurations.html>`_。
-
-注意事项
------------------------
-
-1. **资源路径**：确保 ``assets_path`` 路径正确
-2. **ROBOT_PLATFORM 环境变量**：确保 ``ROBOT_PLATFORM`` 变量设置为 ``ALOHA``
-3. **RoboTwin Repo**：确保正确设置 ``ROBOTWIN_PATH``，如 ``export ROBOTWIN_PATH=/path/to/RoboTwin``
-4. **GPU 内存**：RoboTwin 环境可能需要较多 GPU 内存，建议使用 ``enable_offload: True``
-5. **任务配置**：根据具体任务修改 ``task_config`` 中的参数
+   OpenVLA-OFT 结果使用 ``demo_randomized`` 设置。OpenPI 结果使用 ``demo_clean``。
+   任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。
