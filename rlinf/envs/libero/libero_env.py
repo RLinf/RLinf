@@ -285,9 +285,8 @@ class LiberoEnv(gym.Env):
 
             elif variant == "plus":
                 plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
-                if plus_suffix == "all":
-                    clean_name = file_name.replace(".bddl", "")
-                    for marker in [
+                if plus_suffix is not None:
+                    markers = [
                         "_view",
                         "_initstate",
                         "_noise",
@@ -300,7 +299,9 @@ class LiberoEnv(gym.Env):
                         "_copy",
                         "_level",
                         "_tb",
-                    ]:
+                    ]
+                    clean_name = file_name.replace(".bddl", "")
+                    for marker in markers:
                         if marker in clean_name:
                             clean_name = clean_name.split(marker)[0]
                             break
@@ -328,6 +329,20 @@ class LiberoEnv(gym.Env):
                             if clean_name in os.path.basename(f)
                         ]
                         all_candidates.extend(matches)
+
+                    # Restrict to one perturbation type when a concrete suffix
+                    # (e.g. "language") is requested; "all" keeps every type.
+                    if plus_suffix != "all":
+                        normalized = (
+                            plus_suffix
+                            if plus_suffix.startswith("_")
+                            else f"_{plus_suffix}"
+                        )
+                        all_candidates = [
+                            f
+                            for f in all_candidates
+                            if normalized in os.path.basename(f)
+                        ]
 
                     if all_candidates:
                         all_candidates.sort()
