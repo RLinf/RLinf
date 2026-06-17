@@ -41,6 +41,7 @@ from typing import Any
 
 import numpy as np
 import torch
+import yaml
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -186,7 +187,10 @@ except ModuleNotFoundError:
 _install_gym_stub("gymnasium")
 
 
-from rlinf.envs.robocasa365.robocasa365_env import Robocasa365Env
+from rlinf.envs.robocasa365.robocasa365_env import (
+    Robocasa365Env,
+    _task_matches_filter,
+)
 
 
 class CheckSuite:
@@ -198,29 +202,29 @@ class CheckSuite:
     def check(self, name: str, condition: bool, detail: str = "") -> None:
         if condition:
             self.passed += 1
-            print(f"  PASS  {name}")
+            print(f"  通过  {name}")
             return
         self.failed += 1
         suffix = f"  {detail}" if detail else ""
-        print(f"  FAIL  {name}{suffix}")
+        print(f"  失败  {name}{suffix}")
 
     def warn(self, name: str, condition: bool, detail: str = "") -> None:
         if condition:
             self.passed += 1
-            print(f"  PASS  {name}")
+            print(f"  通过  {name}")
             return
         self.warned += 1
         suffix = f"  {detail}" if detail else ""
-        print(f"  WARN  {name}{suffix}")
+        print(f"  警告  {name}{suffix}")
 
     def note(self, message: str) -> None:
-        print(f"  NOTE  {message}")
+        print(f"  说明  {message}")
 
     def summary(self) -> None:
         total = self.passed + self.failed + self.warned
         print(
-            f"\nResults: {self.passed}/{total} passed, "
-            f"{self.warned} warned, {self.failed} failed"
+            f"\n结果：{self.passed}/{total} 通过，"
+            f"{self.warned} 个警告，{self.failed} 个失败"
         )
         if self.failed:
             raise SystemExit(1)
@@ -312,7 +316,7 @@ class ProbeRobocasa365Env(Robocasa365Env):
         )
 
     def _load_task_specs(self) -> list[dict[str, Any]]:
-        return [
+        task_specs = [
             {
                 "task_name": f"MockTask{i:02d}",
                 "task_description": f"mock task {i:02d}",
@@ -327,6 +331,17 @@ class ProbeRobocasa365Env(Robocasa365Env):
             }
             for i in range(self._mock_num_tasks)
         ]
+        task_specs = [
+            task_spec
+            for task_spec in task_specs
+            if self._task_mode_matches(task_spec)
+            and _task_matches_filter(task_spec, self.task_filter)
+        ]
+        if not task_specs:
+            raise ValueError(
+                f"No mock tasks selected by task_filter={self.task_filter}."
+            )
+        return task_specs
 
     def _init_env(self) -> None:
         self._refresh_task_context()
@@ -395,6 +410,7 @@ def _make_env(
     seed: int | None = None,
     is_eval: bool = False,
     total_num_processes: int = 1,
+    task_filter: Any = None,
 ) -> ProbeRobocasa365Env:
     cfg = _load_cfg(args, num_envs=num_envs, group_size=group_size)
     cfg.seed = args.seed if seed is None else seed
@@ -403,6 +419,8 @@ def _make_env(
     cfg.use_fixed_reset_state_ids = fixed_flag
     cfg.rotate_tasks_on_auto_reset = rotate_on_auto_reset
     cfg.is_eval = is_eval
+    if task_filter is not None:
+        cfg.task_filter = task_filter
     return ProbeRobocasa365Env(
         cfg,
         num_envs,
@@ -440,24 +458,40 @@ def _counts(task_ids: np.ndarray, num_tasks: int) -> np.ndarray:
     return np.bincount(task_ids.astype(np.int64), minlength=num_tasks)
 
 
+def _task_names(env: ProbeRobocasa365Env) -> list[str]:
+    return [
+        env.task_specs[int(task_id)]["task_name"]
+        for task_id in env.task_ids.astype(np.int64)
+    ]
+
+
+def _groups_are_uniform(task_ids: np.ndarray, group_size: int) -> bool:
+    grouped = task_ids.reshape(-1, group_size)
+    return bool(np.all(grouped == grouped[:, :1]))
+
+
+def _group_task_ids(task_ids: np.ndarray, group_size: int) -> np.ndarray:
+    return task_ids.reshape(-1, group_size)[:, 0]
+
+
 def _check_ordered_and_group_assignment(
     suite: CheckSuite, args: argparse.Namespace
 ) -> None:
-    print("\n[ordered assignment]")
+    print("\n[顺序任务分配]")
     env = _make_env(args, num_envs=6, strategy="ordered")
     expected = _expected_ordered_ids(6, 1, args.num_tasks)
     suite.check(
-        "task_sampling_strategy=ordered assigns envs sequentially",
+        "task_sampling_strategy=ordered 时按顺序给 env 分配任务",
         np.array_equal(env.task_ids, expected),
-        f"got={env.task_ids.tolist()}, expected={expected.tolist()}",
+        f"实际={env.task_ids.tolist()}，期望={expected.tolist()}",
     )
 
     grouped_env = _make_env(args, num_envs=8, group_size=2, strategy="ordered")
     grouped_expected = _expected_ordered_ids(8, 2, args.num_tasks)
     suite.check(
-        "ordered assignment is per group, not per env",
+        "顺序分配的单位是 group，不是单个 env",
         np.array_equal(grouped_env.task_ids, grouped_expected),
-        f"got={grouped_env.task_ids.tolist()}, expected={grouped_expected.tolist()}",
+        f"实际={grouped_env.task_ids.tolist()}，期望={grouped_expected.tolist()}",
     )
 
     flag_env = _make_env(
@@ -467,50 +501,50 @@ def _check_ordered_and_group_assignment(
         ordered_flag=True,
     )
     suite.check(
-        "use_ordered_reset_state_ids overrides random sampling",
+        "use_ordered_reset_state_ids 会覆盖 random 采样并强制顺序分配",
         np.array_equal(flag_env.task_ids, expected),
-        f"got={flag_env.task_ids.tolist()}, expected={expected.tolist()}",
+        f"实际={flag_env.task_ids.tolist()}，期望={expected.tolist()}",
     )
 
     eval_env = _make_env(args, num_envs=6, strategy="random", is_eval=True)
     suite.check(
-        "is_eval=True forces ordered sampling",
+        "is_eval=True 会强制顺序采样",
         np.array_equal(eval_env.task_ids, expected),
-        f"got={eval_env.task_ids.tolist()}, expected={expected.tolist()}",
+        f"实际={eval_env.task_ids.tolist()}，期望={expected.tolist()}",
     )
 
 
 def _check_random_assignment(suite: CheckSuite, args: argparse.Namespace) -> None:
-    print("\n[random assignment]")
+    print("\n[随机任务分配]")
     env_a = _make_env(args, num_envs=12, strategy="random", seed=123)
     env_b = _make_env(args, num_envs=12, strategy="random", seed=123)
     env_c = _make_env(args, num_envs=12, strategy="random", seed=124)
     ordered = _expected_ordered_ids(12, 1, args.num_tasks)
 
     suite.check(
-        "random sampling is reproducible for the same seed",
+        "random 采样在相同 seed 下可复现",
         np.array_equal(env_a.task_ids, env_b.task_ids),
         f"a={env_a.task_ids.tolist()}, b={env_b.task_ids.tolist()}",
     )
     suite.check(
-        "random sampling keeps task ids in range",
+        "random 采样得到的 task id 在合法范围内",
         bool(np.all((0 <= env_a.task_ids) & (env_a.task_ids < args.num_tasks))),
         f"task_ids={env_a.task_ids.tolist()}, num_tasks={args.num_tasks}",
     )
     suite.warn(
-        "different seeds usually produce different random assignments",
+        "不同 seed 通常会产生不同的随机分配",
         not np.array_equal(env_a.task_ids, env_c.task_ids),
         f"seed123={env_a.task_ids.tolist()}, seed124={env_c.task_ids.tolist()}",
     )
     suite.warn(
-        "random assignment should not usually equal ordered assignment",
+        "random 分配通常不应刚好等于 ordered 分配",
         not np.array_equal(env_a.task_ids, ordered),
         f"random={env_a.task_ids.tolist()}, ordered={ordered.tolist()}",
     )
 
 
 def _check_auto_reset_rotation(suite: CheckSuite, args: argparse.Namespace) -> None:
-    print("\n[auto reset rotation]")
+    print("\n[auto reset 任务轮换]")
     env = _make_env(
         args,
         num_envs=4,
@@ -522,12 +556,12 @@ def _check_auto_reset_rotation(suite: CheckSuite, args: argparse.Namespace) -> N
     expected = before.copy()
     expected[[1, 3]] = np.asarray([4, 5], dtype=np.int32) % args.num_tasks
     suite.check(
-        "rotate_tasks_on_auto_reset=True rotates only done envs when group_size=1",
+        "group_size=1 且 rotate_tasks_on_auto_reset=True 时只轮换 done 的 env",
         np.array_equal(after, expected),
-        f"before={before.tolist()}, after={after.tolist()}, expected={expected.tolist()}",
+        f"reset 前={before.tolist()}，reset 后={after.tolist()}，期望={expected.tolist()}",
     )
     suite.check(
-        "task reconfiguration is requested for rotated envs only",
+        "只对发生任务轮换的 env 请求重建环境",
         env.env.reconfigure_calls[-1]["env_ids"] == [1, 3],
         f"reconfigure_calls={env.env.reconfigure_calls}",
     )
@@ -543,9 +577,9 @@ def _check_auto_reset_rotation(suite: CheckSuite, args: argparse.Namespace) -> N
         no_rotate_env, np.asarray([False, True, False, True])
     )
     suite.check(
-        "rotate_tasks_on_auto_reset=False keeps done env tasks unchanged",
+        "rotate_tasks_on_auto_reset=False 时 done env 的任务不变",
         np.array_equal(no_rotate_after, no_rotate_before),
-        f"before={no_rotate_before.tolist()}, after={no_rotate_after.tolist()}",
+        f"reset 前={no_rotate_before.tolist()}，reset 后={no_rotate_after.tolist()}",
     )
 
     grouped_env = _make_env(
@@ -560,16 +594,158 @@ def _check_auto_reset_rotation(suite: CheckSuite, args: argparse.Namespace) -> N
         grouped_env, np.asarray([False, True, False, True])
     )
     suite.check(
-        "auto-reset rotation is disabled for group_size>1",
+        "group_size>1 时 auto reset 不会触发任务轮换",
         np.array_equal(grouped_after, grouped_before),
-        f"before={grouped_before.tolist()}, after={grouped_after.tolist()}",
+        f"reset 前={grouped_before.tolist()}，reset 后={grouped_after.tolist()}",
     )
+
+
+def _check_single_task_filter_reset_behavior(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[单任务 task_filter 的 reset 行为]")
+    task_filter = {"include": ["MockTask03"], "exclude": []}
+    scenarios = [
+        ("ordered+rotate", "ordered", False, True),
+        ("random+rotate", "random", False, True),
+        ("random+ordered_flag+rotate", "random", True, True),
+        ("ordered+no_rotate", "ordered", False, False),
+    ]
+
+    for num_envs in args.env_counts:
+        for label, strategy, ordered_flag, rotate in scenarios:
+            env = _make_env(
+                args,
+                num_envs=num_envs,
+                strategy=strategy,
+                ordered_flag=ordered_flag,
+                rotate_on_auto_reset=rotate,
+                task_filter=task_filter,
+            )
+            before_names = _task_names(env)
+            after = _run_success_step(env, np.ones(num_envs, dtype=bool))
+            after_names = _task_names(env)
+            expected_names = ["MockTask03"] * num_envs
+            suite.check(
+                f"{num_envs} 个 env，{label}：task_filter 只选中一个任务",
+                len(env.task_specs) == 1
+                and env.task_specs[0]["task_name"] == "MockTask03",
+                f"选中任务={[task['task_name'] for task in env.task_specs]}",
+            )
+            suite.check(
+                f"{num_envs} 个 env，{label}：reset 不能改变被过滤出的单任务",
+                before_names == expected_names and after_names == expected_names,
+                (
+                    f"reset 前任务名={before_names}，reset 后任务名={after_names}，"
+                    f"after_task_ids={after.tolist()}"
+                ),
+            )
+
+
+def _check_unfiltered_reset_parameter_matrix(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[未开启 task_filter 的 reset 参数矩阵]")
+    for num_envs in args.env_counts:
+        ordered_rotate = _make_env(
+            args,
+            num_envs=num_envs,
+            strategy="ordered",
+            rotate_on_auto_reset=True,
+        )
+        ordered_before = ordered_rotate.task_ids.copy()
+        ordered_after = _run_success_step(
+            ordered_rotate, np.ones(num_envs, dtype=bool)
+        )
+        ordered_expected_after = _expected_ordered_ids(
+            num_envs,
+            1,
+            args.num_tasks,
+            start=num_envs % args.num_tasks,
+        )
+        suite.check(
+            f"{num_envs} 个 env，ordered+rotate：全量 env reset 会推进顺序游标",
+            np.array_equal(ordered_after, ordered_expected_after),
+            (
+                f"reset 前={ordered_before.tolist()}，reset 后={ordered_after.tolist()}，"
+                f"期望={ordered_expected_after.tolist()}"
+            ),
+        )
+
+        ordered_no_rotate = _make_env(
+            args,
+            num_envs=num_envs,
+            strategy="ordered",
+            rotate_on_auto_reset=False,
+        )
+        no_rotate_before = ordered_no_rotate.task_ids.copy()
+        no_rotate_after = _run_success_step(
+            ordered_no_rotate, np.ones(num_envs, dtype=bool)
+        )
+        suite.check(
+            f"{num_envs} 个 env，ordered+no_rotate：全量 env reset 保持任务不变",
+            np.array_equal(no_rotate_after, no_rotate_before),
+            (
+                f"reset 前={no_rotate_before.tolist()}，"
+                f"reset 后={no_rotate_after.tolist()}"
+            ),
+        )
+
+        ordered_flag_env = _make_env(
+            args,
+            num_envs=num_envs,
+            strategy="random",
+            ordered_flag=True,
+            rotate_on_auto_reset=True,
+        )
+        ordered_flag_before = ordered_flag_env.task_ids.copy()
+        ordered_flag_after = _run_success_step(
+            ordered_flag_env, np.ones(num_envs, dtype=bool)
+        )
+        suite.check(
+            (
+                f"{num_envs} 个 env，random+use_ordered_reset_state_ids："
+                "reset 行为等价于 ordered"
+            ),
+            np.array_equal(ordered_flag_before, _expected_ordered_ids(num_envs, 1, args.num_tasks))
+            and np.array_equal(ordered_flag_after, ordered_expected_after),
+            (
+                f"reset 前={ordered_flag_before.tolist()}，"
+                f"reset 后={ordered_flag_after.tolist()}，"
+                f"期望 reset 后={ordered_expected_after.tolist()}"
+            ),
+        )
+
+        random_rotate = _make_env(
+            args,
+            num_envs=num_envs,
+            strategy="random",
+            rotate_on_auto_reset=True,
+            seed=777 + num_envs,
+        )
+        random_before = random_rotate.task_ids.copy()
+        random_after = _run_success_step(
+            random_rotate, np.ones(num_envs, dtype=bool)
+        )
+        in_range = bool(
+            np.all((0 <= random_after) & (random_after < args.num_tasks))
+        )
+        suite.check(
+            f"{num_envs} 个 env，random+rotate：reset 采样到合法 task id",
+            in_range,
+            f"reset 前={random_before.tolist()}，reset 后={random_after.tolist()}",
+        )
+        suite.warn(
+            f"{num_envs} 个 env，random+rotate：reset 通常会改变一部分任务",
+            bool(np.any(random_before != random_after)),
+            f"reset 前={random_before.tolist()}，reset 后={random_after.tolist()}",
+        )
 
 
 def _check_fixed_reset_state_ids(
     suite: CheckSuite, args: argparse.Namespace
 ) -> None:
-    print("\n[fixed reset state ids]")
+    print("\n[固定 reset state id]")
     env = _make_env(
         args,
         num_envs=6,
@@ -583,20 +759,20 @@ def _check_fixed_reset_state_ids(
 
     condition = np.array_equal(after_update, before)
     detail = (
-        "Current implementation changes task_ids on update_reset_state_ids even "
-        f"when use_fixed_reset_state_ids=True: before={before.tolist()}, "
-        f"after={after_update.tolist()}."
+        "当前实现中，即使 use_fixed_reset_state_ids=True，"
+        "update_reset_state_ids 仍会改变 task_ids："
+        f"更新前={before.tolist()}，更新后={after_update.tolist()}。"
     )
     if args.strict_fixed_reset:
-        suite.check("use_fixed_reset_state_ids keeps task ids fixed", condition, detail)
+        suite.check("use_fixed_reset_state_ids 应保持 task id 固定", condition, detail)
     else:
-        suite.warn("use_fixed_reset_state_ids keeps task ids fixed", condition, detail)
+        suite.warn("use_fixed_reset_state_ids 应保持 task id 固定", condition, detail)
 
 
 def _check_env_count_distribution(
     suite: CheckSuite, args: argparse.Namespace
 ) -> None:
-    print("\n[env count distribution]")
+    print("\n[不同 env 数量下的任务分布]")
     for num_envs in args.env_counts:
         env = _make_env(
             args,
@@ -608,17 +784,17 @@ def _check_env_count_distribution(
         expected_before = _expected_ordered_ids(num_envs, 1, args.num_tasks)
         counts_before = _counts(before, args.num_tasks)
         suite.check(
-            f"{num_envs} envs: initial ordered assignment is deterministic",
+            f"{num_envs} 个 env：初始 ordered 分配是确定的",
             np.array_equal(before, expected_before),
-            f"got={before.tolist()}, expected={expected_before.tolist()}",
+            f"实际={before.tolist()}，期望={expected_before.tolist()}",
         )
         suite.check(
-            f"{num_envs} envs: initial task distribution is balanced",
+            f"{num_envs} 个 env：初始任务分布是均衡的",
             int(counts_before.max() - counts_before.min()) <= 1,
             f"counts={counts_before.tolist()}",
         )
         suite.check(
-            f"{num_envs} envs: initial assignment is not collapsed to one task",
+            f"{num_envs} 个 env：初始分配没有坍缩到同一个任务",
             len(set(before.tolist())) > 1 or num_envs == 1,
             f"task_ids={before.tolist()}",
         )
@@ -632,53 +808,196 @@ def _check_env_count_distribution(
         )
         counts_after = _counts(after, args.num_tasks)
         suite.check(
-            f"{num_envs} envs: all-env auto reset follows ordered cursor",
+            f"{num_envs} 个 env：全量 env auto reset 符合 ordered 游标推进",
             np.array_equal(after, expected_after),
-            f"after={after.tolist()}, expected={expected_after.tolist()}",
+            f"reset 后={after.tolist()}，期望={expected_after.tolist()}",
         )
         suite.check(
-            f"{num_envs} envs: post-reset task distribution remains balanced",
+            f"{num_envs} 个 env：reset 后任务分布仍然均衡",
             int(counts_after.max() - counts_after.min()) <= 1,
             f"counts={counts_after.tolist()}",
         )
         same_count = int(np.sum(before == after))
         suite.note(
-            f"{num_envs} envs: {same_count}/{num_envs} envs keep the same task "
-            "after a synchronized all-env reset"
+            f"{num_envs} 个 env：同步全量 reset 后，"
+            f"{same_count}/{num_envs} 个 env 保持同一个任务"
         )
+
+
+def _check_ppo_grpo_group_semantics(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[PPO/GRPO 的 group 语义]")
+    ppo_env = _make_env(
+        args,
+        num_envs=8,
+        group_size=1,
+        strategy="ordered",
+        rotate_on_auto_reset=True,
+    )
+    suite.check(
+        "PPO 风格 group_size=1 时，每个 env 都是独立任务组",
+        ppo_env.group_size == 1 and ppo_env.num_group == ppo_env.num_envs,
+        f"group_size={ppo_env.group_size}, num_group={ppo_env.num_group}",
+    )
+    ppo_before = ppo_env.task_ids.copy()
+    ppo_after = _run_success_step(
+        ppo_env, np.asarray([False, True, False, True, False, False, True, False])
+    )
+    ppo_expected = ppo_before.copy()
+    ppo_expected[[1, 3, 6]] = np.asarray([8, 9, 10], dtype=np.int32) % args.num_tasks
+    suite.check(
+        "PPO 风格 group_size=1 支持 done env 独立轮换任务",
+        np.array_equal(ppo_after, ppo_expected),
+        f"reset 前={ppo_before.tolist()}，reset 后={ppo_after.tolist()}",
+    )
+
+    grpo_env = _make_env(
+        args,
+        num_envs=64,
+        group_size=8,
+        strategy="ordered",
+        rotate_on_auto_reset=True,
+    )
+    grpo_before = grpo_env.task_ids.copy()
+    suite.check(
+        "GRPO 风格 group_size=8 时，64 个 env 会形成 8 个本地任务组",
+        grpo_env.group_size == 8 and grpo_env.num_group == 8,
+        f"group_size={grpo_env.group_size}, num_group={grpo_env.num_group}",
+    )
+    suite.check(
+        "GRPO 风格初始分配会保证每个 group 内是同一个任务",
+        _groups_are_uniform(grpo_before, grpo_env.group_size),
+        f"task_ids={grpo_before.tolist()}",
+    )
+    suite.check(
+        "GRPO 风格初始 group task id 按 group 顺序分配",
+        np.array_equal(_group_task_ids(grpo_before, 8), np.arange(8, dtype=np.int32)),
+        f"group_task_ids={_group_task_ids(grpo_before, 8).tolist()}",
+    )
+
+    grpo_after_auto = _run_success_step(grpo_env, np.ones(64, dtype=bool))
+    suite.check(
+        "GRPO 风格 auto reset 会保持 group 任务稳定",
+        np.array_equal(grpo_after_auto, grpo_before),
+        f"reset 前={grpo_before.tolist()}，reset 后={grpo_after_auto.tolist()}",
+    )
+    grpo_env.update_reset_state_ids()
+    grpo_after_update = grpo_env.task_ids.copy()
+    grpo_expected_update = _expected_ordered_ids(64, 8, args.num_tasks, start=8)
+    suite.check(
+        "GRPO 风格 update_reset_state_ids 会按完整 group 轮换任务",
+        np.array_equal(grpo_after_update, grpo_expected_update)
+        and _groups_are_uniform(grpo_after_update, 8),
+        (
+            f"更新后={grpo_after_update.tolist()}，"
+            f"期望={grpo_expected_update.tolist()}"
+        ),
+    )
+
+
+def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} 没有被解析为 YAML mapping。")
+    return data
+
+
+def _check_yaml_group_size_consistency(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[YAML group_size 一致性]")
+    for label, path, expect_grpo in [
+        ("GRPO", args.grpo_config, True),
+        ("PPO/GAE", args.ppo_config, False),
+    ]:
+        data = _load_yaml(path)
+        algorithm = data.get("algorithm", {})
+        env = data.get("env", {})
+        train_env = env.get("train", {})
+        eval_env = env.get("eval", {})
+        alg_group_size = int(algorithm.get("group_size", -1))
+        train_group_size = int(train_env.get("group_size", -1))
+        eval_group_size = int(eval_env.get("group_size", -1))
+        adv_type = str(algorithm.get("adv_type", ""))
+
+        if expect_grpo:
+            suite.check(
+                f"{label} 配置使用 GRPO，且 algorithm.group_size > 1",
+                adv_type in {"grpo", "grpo_dynamic", "reinpp_baseline"}
+                and alg_group_size > 1,
+                f"adv_type={adv_type}, algorithm.group_size={alg_group_size}",
+            )
+            suite.check(
+                f"{label} 配置中 env.train.group_size 与 algorithm.group_size 一致",
+                train_group_size == alg_group_size,
+                (
+                    f"env.train.group_size={train_group_size}, "
+                    f"algorithm.group_size={alg_group_size}"
+                ),
+            )
+            suite.check(
+                f"{label} 配置中 eval 保持 group_size=1",
+                eval_group_size == 1,
+                f"env.eval.group_size={eval_group_size}",
+            )
+        else:
+            suite.check(
+                f"{label} 配置使用非 GRPO，且 group_size=1",
+                adv_type not in {"grpo", "grpo_dynamic", "reinpp_baseline"}
+                and alg_group_size == 1
+                and train_group_size == 1,
+                (
+                    f"adv_type={adv_type}, algorithm.group_size={alg_group_size}, "
+                    f"env.train.group_size={train_group_size}"
+                ),
+            )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate RoboCasa365 task sampling and reset rotation logic."
+        description="验证 RoboCasa365 的任务采样、reset 轮换和 PPO/GRPO group 语义。"
     )
     parser.add_argument(
         "--config",
         type=pathlib.Path,
         default=REPO_ROOT / "examples" / "embodiment" / "config" / "env" / "robocasa365.yaml",
-        help="Base RoboCasa365 env config.",
+        help="基础 RoboCasa365 env 配置。",
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--num-tasks",
         type=int,
         default=18,
-        help="Mock task count. atomic_seen has 18 tasks in the common debug setup.",
+        help="mock 任务数量。常见 debug 设置中 atomic_seen 有 18 个任务。",
     )
     parser.add_argument(
         "--env-counts",
         type=int,
         nargs="+",
         default=[17, 18, 19],
-        help="Env counts used to check <18, =18, and >18 task assignment behavior.",
+        help="用于检查少于、等于、多于 18 个任务时行为的 env 数量。",
     )
     parser.add_argument(
         "--strict-fixed-reset",
         action="store_true",
         help=(
-            "Treat use_fixed_reset_state_ids not keeping task ids fixed as a hard "
-            "failure instead of a warning."
+            "如果 use_fixed_reset_state_ids 没有固定 task id，则记为失败；"
+            "默认只记为警告。"
         ),
+    )
+    parser.add_argument(
+        "--grpo-config",
+        type=pathlib.Path,
+        default=REPO_ROOT / "examples" / "embodiment" / "config" / "robocasa365_grpo_openpi.yaml",
+        help="用于检查 group_size 一致性的 RoboCasa365 GRPO 顶层配置。",
+    )
+    parser.add_argument(
+        "--ppo-config",
+        type=pathlib.Path,
+        default=REPO_ROOT / "examples" / "embodiment" / "config" / "robocasa365_eval_openpi.yaml",
+        help="用于检查 group_size 的 RoboCasa365 PPO/GAE 风格顶层配置。",
     )
     return parser.parse_args()
 
@@ -686,19 +1005,23 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.num_tasks <= 0:
-        raise ValueError(f"--num-tasks must be positive, got {args.num_tasks}")
+        raise ValueError(f"--num-tasks 必须为正数，当前为 {args.num_tasks}")
     if any(num_envs <= 0 for num_envs in args.env_counts):
-        raise ValueError(f"--env-counts must all be positive, got {args.env_counts}")
+        raise ValueError(f"--env-counts 必须全部为正数，当前为 {args.env_counts}")
 
     suite = CheckSuite()
-    print(f"Config: {args.config}")
-    print(f"Mock tasks: {args.num_tasks}")
+    print(f"配置文件：{args.config}")
+    print(f"mock 任务数量：{args.num_tasks}")
 
     _check_ordered_and_group_assignment(suite, args)
     _check_random_assignment(suite, args)
     _check_auto_reset_rotation(suite, args)
+    _check_single_task_filter_reset_behavior(suite, args)
     _check_fixed_reset_state_ids(suite, args)
     _check_env_count_distribution(suite, args)
+    _check_unfiltered_reset_parameter_matrix(suite, args)
+    _check_ppo_grpo_group_semantics(suite, args)
+    _check_yaml_group_size_consistency(suite, args)
     suite.summary()
 
 
