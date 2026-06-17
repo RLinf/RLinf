@@ -1,0 +1,31 @@
+# FastWAM SFT model config.
+#
+# For SFT we initialise the MoT experts from the released FastWAM checkpoint
+# (skip_dit_load_from_pretrain=true in sim_libero), so the 20GB Wan DiT and the
+# ActionDiT backbone preprocessing are *not* required. Only the MoT experts and
+# the proprio encoder are trained (see get_model `freeze_non_dit`).
+model_type: "fastwam"
+precision: bf16
+# Required by rlinf get_model dispatcher; FastWAM is not loaded via LoRA.
+is_lora: false
+model_path: null
+
+# Init weights: the fine-tuned FastWAM checkpoint (contains `mot` + `proprio_encoder`).
+# Set to null to train from base (requires the 20GB Wan DiT + ActionDiT backbone).
+checkpoint_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
+dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
+
+# Only MoT experts (+ proprio encoder) are trainable.
+freeze_non_dit: true
+
+fastwam:
+  config_dir: null
+  config_name: sim_libero
+  overrides:
+    # Training reads cached text embeddings, so the model itself need not load T5.
+    - model.load_text_encoder=false
+    # Enable gradient checkpointing inside both DiT experts to save memory.
+    - model.mot_checkpoint_mixed_attn=true
+    # Load Wan VAE from the original Wan-AI HF repo (.pth) instead of the
+    # ModelScope-only converted-safetensors mirror.
+    - model.redirect_common_files=false

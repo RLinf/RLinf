@@ -1,0 +1,42 @@
+# FastWAM (Wan2.2 video-diffusion world-action model) rollout config for RLinf.
+#
+# The heavy model/architecture/processor definitions live in FastWAM's own Hydra
+# configs (composed at build time by rlinf/models/embodiment/fastwam/get_model);
+# here we only set the RLinf-facing knobs and the checkpoint / normalization paths.
+model_type: "fastwam"
+precision: bf16
+# Unused by FastWAM (kept for rollout-worker compatibility, which reads model_path).
+model_path: null
+# Required by rlinf get_model dispatcher; FastWAM is not loaded via LoRA.
+is_lora: false
+
+# Fine-tuned FastWAM checkpoint (contains the trained `mot` + `proprio_encoder`).
+checkpoint_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
+# Action/state min-max stats shipped next to the checkpoint. If null, get_model
+# looks for `<ckpt_stem>_dataset_stats.json` and `dataset_stats.json` beside it.
+dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
+
+# Action chunking: FastWAM predicts `action_horizon` steps and we execute the
+# first `num_action_chunks` (== FastWAM replan_steps) before re-planning.
+action_dim: 7
+num_action_chunks: 10
+action_horizon: 32
+
+# Flow-matching action sampling.
+num_inference_steps: 10
+binarize_gripper: true
+text_cfg_scale: 1.0
+negative_prompt: ""
+sigma_shift: null
+seed: null
+rand_device: cpu
+tiled: false
+
+# FastWAM Hydra composition (auto-detects FastWAM/configs unless config_dir set).
+fastwam:
+  config_dir: null
+  config_name: sim_libero
+  # Load Wan VAE + T5 from the original Wan-AI HF repo (.pth) instead of the
+  # ModelScope-only converted-safetensors mirror used by default.
+  overrides:
+    - model.redirect_common_files=false
