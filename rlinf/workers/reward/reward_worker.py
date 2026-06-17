@@ -211,7 +211,11 @@ class EmbodiedRewardWorker(Worker):
 
         if not self._standalone_realworld:
             self.total_num_train_envs = cfg.env.train.total_num_envs
-            self.total_num_eval_envs = cfg.env.eval.total_num_envs
+            self.total_num_eval_envs = (
+                cfg.env.eval.total_num_envs
+                if cfg.env.get("eval", None) is not None
+                else 0
+            )
             self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
         else:
             self.total_num_train_envs = 1

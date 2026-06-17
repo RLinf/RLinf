@@ -21,7 +21,7 @@ RLinf supports a wide range of GPU and CPU-based simulators through standardized
 * **Behavior** — Interactive simulation benchmark with complex household activities.
 * **EmbodiChain** — Gym-style environment for chain-based manipulation tasks.
 
-For simulator-specific training examples, see the :doc:`Embodied Examples gallery <../../examples/embodied/index>`.
+For simulator-specific training examples, see :doc:`../../examples/simulators_index`.
 
 Real-World Robotics
 -------------------
@@ -65,4 +65,4 @@ Policy Networks
 * **CNN** — Convolutional neural network policy for visual RL tasks.
 * **ResNet** — Pretrained ResNet models for image-based reward modeling.
 
-For model-specific training examples, see the :doc:`Embodied Examples gallery <../../examples/embodied/index>`.
+For model-specific training examples, see :doc:`../../examples/vla_wam_index`.

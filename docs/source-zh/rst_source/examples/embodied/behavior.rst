@@ -262,7 +262,6 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
 - OpenPI (Pi0) + PPO:
   ``examples/embodiment/config/behavior_ppo_openpi.yaml``
 - OpenPI (Pi0.5) + PPO:
-  ``examples/embodiment/config/behavior_ppo_openpi_pi05_eval.yaml``
   ``examples/embodiment/config/behavior_ppo_openpi_pi05.yaml``
 
 .. warning::
@@ -455,7 +454,9 @@ OpenVLA-OFT 提供了一个适用于 Behavior 环境中所有任务类型的统�
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05_eval
+   bash evaluations/run_eval.sh behavior_ppo_openpi_pi05_eval
+
+完整评测流程见 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
 
 
 可视化和结果

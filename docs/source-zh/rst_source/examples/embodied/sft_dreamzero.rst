@@ -1,7 +1,8 @@
-DreamZero 监督微调
+DreamZero 监督微调和 Franka 真机部署
 ====================================
 
 本文档介绍如何在 RLinf 中运行 DreamZero 监督微调（SFT），覆盖从 **模型与数据准备**、 **配置填写** 到 **启动训练**、 **评测** 与 **排错** 的完整流程。
+同时介绍如何在Franka真机上部署训练好的 DreamZero 模型，并进行评测。
 
 当前支持：
 
@@ -129,7 +130,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 - LIBERO： `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``，配置见 ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID： `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``，配置见 ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP：自定义 LeRobot 数据集 — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
+- Franka PnP：`RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
 - 混合训练：``libero_franka_mix_sft_dreamzero_5b.yaml`` 中 ``data.train_data_paths`` 为列表，每项可指定不同的 ``dataset_path`` / ``embodiment_tag`` / ``metadata_json_path`` / ``weight``
 
 下载示例：
@@ -141,6 +142,8 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    huggingface-cli download physical-intelligence/libero --repo-type dataset --local-dir ./libero
    # DROID
    huggingface-cli download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
+   # Franka PnP 真机数据
+   huggingface-cli download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
 
 生成 metadata.json
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -161,6 +164,12 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
      --dataset-root /path/to/droid \
      --output-metadata /path/to/metadata.json \
      --merge
+
+   # Franka PnP
+   python toolkits/lerobot/generate_dreamzero_metadata.py \
+     --preset franka_pnp \
+     --dataset-root /path/to/franka_pnp \
+     --output-metadata /path/to/franka_pnp_metadata.json
 
 然后在配置中设置 ``actor.model.metadata_json_path`` （ 或放到 ``model_path/experiment_cfg/metadata.json`` ） 。
 
@@ -357,17 +366,17 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 评测
 --------
 
-SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **LIBERO** 仿真环境为例说明完整流程（任务套件为 LIBERO Spatial）；对应示例配置为 ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml``。其它支持 ``env.eval`` 的仿真环境亦可按相同方式编写配置并调用 ``eval_embodiment.sh``。
+SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **LIBERO** 仿真环境为例说明完整流程（任务套件为 LIBERO Spatial）；对应示例配置为 ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``。其它支持 ``env.eval`` 的仿真环境亦可按相同方式编写配置并调用 ``run_eval.sh``。
 
 **前置条件**
 
 1. 安装时需包含 LIBERO 仿真环境（见上文 **环境准备** 中的 ``--env libero``）。
-2. 已设置 ``DREAMZERO_PATH`` 指向 DreamZero 代码库根目录（``eval_embodiment.sh`` 会将其加入 ``PYTHONPATH``）。
+2. 已设置 ``DREAMZERO_PATH`` 指向 DreamZero 代码库根目录（``run_eval.sh`` 会将其加入 ``PYTHONPATH``）。
 3. 已准备与训练一致的 ``metadata.json``（``actor.model.metadata_json_path``）。
 
 **配置评测 YAML**
 
-复制或编辑 ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml``，至少修改以下字段：
+复制或编辑 ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``，至少修改以下字段：
 
 .. list-table::
    :header-rows: 1
@@ -377,18 +386,18 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
      - 说明
    * - ``runner.ckpt_path``
      - 待评测的 SFT 权重（``.pt``）。训练保存路径一般为 ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。若仅有 ``.distcp`` 格式，请先按 :doc:`Checkpoint 转换 <../../tutorials/usage/convertor>` 转为 ``.pt``。
-   * - ``actor.model.*_pretrained_path`` / ``tokenizer_path``
+   * - ``rollout.model.*_pretrained_path`` / ``tokenizer_path``
      - 与 SFT 冷启动配置一致（``model_path: null`` 时从各预训练路径构建骨干，再由 ``ckpt_path`` 覆盖可训练权重）。
-   * - ``actor.model.metadata_json_path``
+   * - ``rollout.model.metadata_json_path``
      - LIBERO 归一化统计（``embodiment_tag: libero_sim`` 时与 SFT 使用同一份 ``metadata.json``）。
-   * - ``actor.model.embodiment_tag``
+   * - ``rollout.model.embodiment_tag``
      - 须为 ``libero_sim``，与 LIBERO 数据及 rollout 观测变换一致。
-   * - ``actor.model.action_horizon`` / ``num_action_chunks``
+   * - ``rollout.model.action_horizon`` / ``num_action_chunks``
      - 与 SFT 一致（LIBERO 常用 16）。
-   * - ``algorithm.eval_rollout_epoch``
+   * - ``env.eval.rollout_epoch``
      - 评测轮数；每轮在相同种子下跑完测试集，最终指标为多轮平均。
    * - ``env.eval.total_num_envs`` / ``auto_reset`` / ``max_steps_per_rollout_epoch``
-     - 并行环境数与是否通过 ``auto_reset`` 覆盖更大测试集；详见 :doc:`评估教程 <../../start/vla-eval>`。
+     - 并行环境数与是否通过 ``auto_reset`` 覆盖更大测试集；详见 :doc:`评测配置参考 <../../evaluations/reference/configuration>`。
    * - ``env.eval.video_cfg.save_video``
      - 设为 ``True`` 可在 ``{log_path}/video/eval`` 下保存评测视频。
 
@@ -400,7 +409,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
      only_eval: True
      ckpt_path: /path/to/logs/libero_sft_dreamzero/checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt
 
-   actor:
+   rollout:
      model:
        model_path: null
        metadata_json_path: /path/to/metadata.json
@@ -410,6 +419,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 
    env:
      eval:
+       rollout_epoch: 1
        total_num_envs: 64
        auto_reset: True
        ignore_terminations: True
@@ -422,9 +432,92 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh libero_spatial_eval_dreamzero
+   bash evaluations/run_eval.sh libero_spatial_eval_dreamzero
 
-脚本会调用 ``eval_embodied_agent.py``，将日志写入 ``logs/<时间戳>-libero_spatial_eval_dreamzero/eval_embodiment.log``，并在终端输出 ``eval/success_once``、 ``eval/return`` 等指标。更多通用评测参数说明见 :doc:`评估教程 <../../start/vla-eval>`。
+脚本会调用 ``eval_embodied_agent.py``，将日志写入 ``logs/<时间戳>-libero_spatial_eval_dreamzero/eval_embodiment.log``，并在终端输出 ``eval/success_once``、 ``eval/return`` 等指标。更多通用评测参数说明见 :doc:`评测配置参考 <../../evaluations/reference/configuration>`；LIBERO 完整流程见 :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>`。
+
+Franka 真机部署评测
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+完成 SFT 或 checkpoint 转换后，可使用 ``evaluations/realworld/realworld_pnp_eval_dreamzero.yaml`` 将完整 DreamZero checkpoint 目录部署到 Franka pick-and-place 真机任务。该流程使用 ``embodiment_tag: franka_pnp``，rollout 观测映射由 ``data_transforms/franka_pnp.py`` 中的布局定义。
+
+**在两台机器上准备 Ray**
+
+下面是在两台机器上部署的示例，一台为 GPU 节点，一台是 Franka 节点。每个节点启动 Ray 前，都先激活环境并设置节点 rank。GPU 节点使用 rank 0，Franka 节点使用 rank 1：
+
+.. code:: bash
+
+   # GPU / head 节点
+   source /path/to/RLinf/.venv/bin/activate
+   export RANK=0
+   # 多网卡机器可按需指定通信网卡：
+   # export RLINF_COMM_NET_DEVICES=<network_interface>
+   ray stop
+   ray start --head --node-ip-address=<head_ip> --port=6379
+
+   # Franka 节点
+   source /path/to/RLinf/.venv/bin/activate
+   export RANK=1
+   # 多网卡机器可按需指定通信网卡：
+   # export RLINF_COMM_NET_DEVICES=<network_interface>
+   ray stop
+   ray start --address=<head_ip>:6379
+
+注意根据真实机器人与 checkpoint 修改 ``evaluations/realworld/realworld_pnp_eval_dreamzero.yaml``：
+
+.. code:: yaml
+
+   cluster:
+     node_groups:
+       - label: "train"
+         node_ranks: 0
+       - label: franka
+         node_ranks: 1
+         hardware:
+           type: Franka
+           configs:
+             - robot_ip: ROBOT_IP
+               node_rank: 1
+
+   rollout:
+     model:
+       model_path: /path/to/ckpt_pnp/5b-franka/step_1200
+       tokenizer_path: /path/to/umt5-xxl
+       metadata_json_path: ${rollout.model.model_path}/experiment_cfg/metadata.json
+       embodiment_tag: franka_pnp
+       action_horizon: 12
+       num_action_chunks: 12
+
+   env:
+     eval:
+       video_cfg:
+         save_video: True
+         video_base_dir: /path/on/franka_node/video/eval
+       override_cfg:
+         task_description: "pick up the object and place it into the container"
+         target_ee_pose: TARGET_EE_POSE
+         camera_serials: ["SERIAL1", "SERIAL2"]
+         is_dummy: False
+         max_num_steps: 100
+         enable_gripper_penalty: False
+
+**启动评测**
+
+Ray 已连接后，在 GPU / head 节点执行：
+
+.. code:: bash
+
+   export CUDA_VISIBLE_DEVICES=0
+   export RLINF_CODE_WORKING_DIR=auto
+
+   bash evaluations/run_eval.sh realworld_pnp_eval_dreamzero
+
+``max_steps_per_rollout_epoch`` 必须能被 ``rollout.model.num_action_chunks`` 整除。
+
+运行时建议检查：
+
+- ``ray status`` 中应同时看到 GPU 节点与 Franka 节点，rollout 应被放在指定 GPU rank 上。
+- 视频会写入 ``env.eval.video_cfg.video_base_dir``，该路径所在节点通常是 Franka 节点。
 
 可选：若需将 SFT 的 ``full_weights.pt`` 转为 Hugging Face ``safetensors`` 目录（便于外部推理或发布），可使用 ``fsdp_dreamzero_convertor`` 配置运行 ``convert_pt_to_hf``（见 ``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_dreamzero_convertor.yaml``）。在 LIBERO 等仿真环境中评测时，只需将 ``runner.ckpt_path`` 指向 ``.pt`` 权重文件即可。
 

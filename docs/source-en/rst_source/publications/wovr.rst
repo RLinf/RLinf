@@ -52,7 +52,7 @@ Quick Start
 -----------
 
 - **LIBERO:** :doc:`../examples/embodied/wan`
-- **More examples:** :doc:`../examples/embodied/index`
+- **More examples:** :doc:`../examples/index`
 
 Citation
 --------

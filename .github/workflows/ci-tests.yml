@@ -100,12 +100,14 @@ jobs:
               - 'examples/recap/process/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
+              - 'tests/e2e_tests/evaluations/**'
               - 'tests/e2e_tests/training_backend/**'
-              - 'toolkits/eval_scripts_openpi/**'
-              - 'toolkits/eval_scripts_dexbotic/**'
+              - 'evaluations/**'
+              - 'toolkits/standalone_eval_scripts/**'
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
+              - 'toolkits/dual_franka/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             agent_reason_filter: &agent
               - *shared

@@ -34,6 +34,7 @@ This design enables users to build large-scale RL training pipelines with minima
    embodied/index
    agentic/index
    rlalg/index
+   accelerators/index
    extend/index
    testing/index
    advance/index

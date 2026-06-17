@@ -144,7 +144,7 @@ PolaRiS 有两个数据集：一个用于评估，一个用于协同训练。
 
    hf download owhan/PolaRiS-Hub --repo-type=dataset --local-dir ./PolaRiS-Hub
 
-下载完成后，需要在 ``examples/embodiment/run_embodiment.sh`` 和 ``examples/embodiment/eval_embodiment.sh`` 中设置 ``POLARIS_DATA_PATH`` 环境变量为数据集路径：
+下载完成后，通过环境变量 ``POLARIS_DATA_PATH`` 指定数据集路径（``run_embodiment.sh`` 与 ``evaluations/run_eval.sh`` 会自动读取）：
 
 .. code:: bash
 
@@ -229,13 +229,13 @@ PolaRiS 目前支持以下训练配置：
 
 - **PPO 训练**
 
-  - ``examples/embodiment/config/polaris_ppo_openpi_pi05.yaml``
-  - ``examples/embodiment/config/polaris_ppo_openpi.yaml``
+  - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml``
+  - ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi.yaml``
 
 - **评估**
 
-  - ``examples/embodiment/config/polaris_openpi_pi05_eval.yaml``
-  - ``examples/embodiment/config/polaris_openpi_eval.yaml``
+  - ``evaluations/polaris/polaris_tapeintocontainer_openpi_pi05_eval.yaml`` （TapeIntoContainer + π₀.₅）
+  - ``evaluations/polaris/polaris_movelattecup_openpi_eval.yaml`` （MoveLatteCup + π₀）
 
 每个任务有独立的环境配置文件，位于 ``examples/embodiment/config/env/`` 下：
 
@@ -248,7 +248,7 @@ PolaRiS 目前支持以下训练配置：
 
 **2. 关键参数配置**
 
-以下参数位于训练配置文件 ``examples/embodiment/config/polaris_ppo_openpi_pi05.yaml`` 中。
+以下参数位于训练配置文件 ``examples/embodiment/config/polaris_tapeintocontainer_ppo_openpi_pi05.yaml`` 中。
 
 .. code-block:: yaml
 
@@ -298,9 +298,9 @@ PolaRiS 目前支持以下训练配置：
    source /path/to/isaac_sim/setup_conda_env.sh
 
    # pi05
-   bash examples/embodiment/run_embodiment.sh polaris_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi_pi05
    # pi0
-   bash examples/embodiment/run_embodiment.sh polaris_ppo_openpi
+   bash examples/embodiment/run_embodiment.sh polaris_tapeintocontainer_ppo_openpi
 
 .. note::
 
@@ -317,10 +317,12 @@ PolaRiS 目前支持以下训练配置：
 
    source /path/to/isaac_sim/setup_conda_env.sh
 
-   # pi05
-   bash examples/embodiment/eval_embodiment.sh polaris_openpi_pi05_eval
-   # pi0
-   bash examples/embodiment/eval_embodiment.sh polaris_openpi_eval
+   # π₀.₅ + TapeIntoContainer
+   bash evaluations/run_eval.sh polaris polaris_tapeintocontainer_openpi_pi05_eval
+   # π₀ + MoveLatteCup
+   bash evaluations/run_eval.sh polaris polaris_movelattecup_openpi_eval
+
+完整评测流程（环境变量、配置字段、结果查看）见 :doc:`PolaRiS 评测指南 <../../evaluations/guides/polaris>`。
 
 可视化与结果
 -----------------

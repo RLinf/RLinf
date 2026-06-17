@@ -1,0 +1,63 @@
+defaults:
+  - env/realworld_franka_sft_env@env.eval
+  - model/pi0@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout:
+      node_group: franka
+      placement: 0
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP  # Replace with your robot's IP address.
+            node_rank: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "realworld-eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  max_steps: 1
+  only_eval: True
+  val_check_interval: -1
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+  model:
+    model_path: MODEL_PATH  # Replace with your checkpoint directory.
+    num_action_chunks: 4
+    action_dim: 7
+    add_value_head: True
+    openpi:
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${rollout.model.num_action_chunks}

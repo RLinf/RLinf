@@ -44,8 +44,6 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  rollout_epoch: 8
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -62,30 +60,14 @@ algorithm:
   value_clip: 0.2
   huber_delta: 10.0
 
-
   gamma: 0.99
   gae_lambda: 0.95
-
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
 
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 8
     total_num_envs: 8
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
@@ -98,6 +80,7 @@ env:
     enable_offload: True
     enable_init_offload: False
   eval:
+    rollout_epoch: 1
     total_num_envs: 8
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096

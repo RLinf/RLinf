@@ -55,14 +55,24 @@ Both packages should be installed on the node that runs the GELLO device
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Choose a directory to install the GELLO software, then clone the repository
-and initialize its submodules (which include the **Dynamixel SDK**):
+and initialize only the **Dynamixel SDK** submodule:
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule init && git submodule update
+   git submodule update --init third_party/DynamixelSDK
+
+.. note::
+
+   ``gello_software`` also registers ``third_party/mujoco_menagerie`` (a
+   large repository of robot MJCF assets used only by the upstream mujoco
+   demo scripts). RLinf's GELLO teleop path goes through
+   ``gello-teleop`` which ships its own Franka MJCF, so the menagerie
+   submodule is not needed. ``git submodule update --init <path>``
+   registers and clones only the requested submodule; a plain
+   ``git submodule init`` would also queue the menagerie.
 
 Install the ``gello`` package and the **Dynamixel SDK** (bundled as a
 third-party submodule):
@@ -96,26 +106,13 @@ DynamixelRobotConfig, and port mapping), refer to the
 
 ``gello-teleop`` wraps the ``gello`` driver with Franka forward kinematics
 (using dm_control/MuJoCo) and a teleoperation agent interface. Install it
-directly from the GitHub repository:
-
-.. code-block:: bash
-
-   pip install git+https://github.com/RLinf/gello-teleop.git
-
-Or, if you prefer an editable installation:
+as an editable checkout:
 
 .. code-block:: bash
 
    git clone https://github.com/RLinf/gello-teleop.git
    cd gello-teleop
    pip install -e .
-
-To also install the ``gello`` dependency automatically (if not already
-installed separately):
-
-.. code-block:: bash
-
-   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
 
 
 3. Set up the serial device
@@ -147,12 +144,13 @@ Grant permission:
 4. Verify the GELLO device
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Run the built-in test script to confirm that the GELLO device is
-communicating correctly and producing valid joint readings:
+Run the built-in RLinf test script to confirm that the GELLO device is
+communicating correctly and producing valid TCP target readings:
 
 .. code-block:: bash
 
-   python -m gello_teleop.gello_expert \
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   python -m rlinf.envs.realworld.common.gello.gello_expert \
        --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
 You should see continuously updating output like:
@@ -201,6 +199,31 @@ The key differences from the standard SpaceMouse config are:
 
 For full data collection instructions, refer to the
 **Data Collection with GELLO** section in :doc:`franka`.
+
+
+Monitoring Collection Progress
+-------------------------------
+
+Because the collector runs as a Ray worker, its stdout is batched by
+Ray's log monitor, which breaks ``tqdm``'s in-place ``\r`` refresh.
+To get a live progress bar, run ``toolkits/realworld_check/collect_monitor.py``
+in a separate terminal — it tails the collector log and renders a
+``tqdm`` bar that surfaces success count, the latest keyboard events,
+and discarded episodes.
+
+.. code-block:: bash
+
+   # terminal 1 — launch (stdout tee'd to a log file)
+   bash examples/embodiment/collect_data.sh \
+       realworld_collect_data_gello_joint_dual_franka 2>&1 \
+       | tee logs/collect.log
+
+   # terminal 2 — live bar (waits for the log file to appear if needed)
+   python toolkits/realworld_check/collect_monitor.py logs/collect.log
+
+The monitor replays the existing log on startup so episodes saved before
+it launched are reflected in the bar's initial position; pass
+``--no-replay`` to tail from EOF instead.
 
 
 Cluster Setup Notes

@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -245,6 +245,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Set _fsdp_wrap_name to the last part of the path (e.g., "model.action_in_proj" -> "action_in_proj")
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+
+        self.torch_compile_enabled = False
 
     def set_global_step(self, global_step):
         self.global_step = global_step
@@ -728,7 +730,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             log_probs = log_probs.mean(dim=1)
         else:
             log_probs = log_probs[
-                torch.arange(log_probs.shape[0]),
+                torch.arange(log_probs.shape[0], device=device),
                 denoise_inds[:, 0],
             ]
         # post process for value
@@ -750,7 +752,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def _get_timesteps(self, denoise_steps, device):
         timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
-        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        timesteps = torch.cat([timesteps, torch.zeros((1), device=device)])
         return timesteps
 
     def sample_mean_var_val(
@@ -774,7 +776,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         bsize = state.shape[0]
         device = state.device
         if isinstance(idx, int):
-            idx = torch.tensor(idx).expand(bsize)
+            idx = torch.full((), idx, device=device).expand(bsize)
         # build parameters
         noise_level = self._get_noise_level(device=device, dtype=x_t.dtype)
         timesteps = self._get_timesteps(denoise_steps, device)
@@ -1311,7 +1313,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
         else:
             noise_level = self.config.noise_level
-        return torch.tensor(noise_level, device=device, dtype=dtype)
+        return torch.full((), noise_level, device=device, dtype=dtype)
 
     def _preprocess_dsrl_images(self, images, train=False):
         """Preprocess images for DSRL: resize to 64x64, use only agentview camera.
@@ -1392,3 +1394,37 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if states.dtype != torch.bfloat16:
             states = states.to(torch.bfloat16)
         return states
+
+    def enable_torch_compile(
+        self,
+        mode: str = "max-autotune",
+    ):
+        if self.torch_compile_enabled:
+            return
+
+        self.paligemma_with_expert.paligemma.model.vision_tower.forward = torch.compile(
+            self.paligemma_with_expert.paligemma.model.vision_tower.forward, mode=mode
+        )
+
+        # NOTE: paligemma.model.language_model and gemma_expert.model share the same LLM backbone.
+        # Enabling cuda graph on both simultaneously causes mysterious crashes (likely due to
+        # tensor aliasing in the shared computation graph). We disable cuda graph for
+        # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
+        # benefits more from cuda graph.
+        self.paligemma_with_expert.paligemma.model.language_model.forward = (
+            torch.compile(
+                self.paligemma_with_expert.paligemma.model.language_model.forward,
+                mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+            )
+        )
+        self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
+            self.paligemma_with_expert.gemma_expert.model.forward,
+            mode=mode,
+            fullgraph=True,
+        )
+        self.get_logprob_norm = torch.compile(
+            self.get_logprob_norm,
+            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+        )
+
+        self.torch_compile_enabled = True

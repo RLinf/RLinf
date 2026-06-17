@@ -56,14 +56,9 @@ RLPD relies on specific architectural and procedural choices to handle the distr
 -------------------
 
 RLPD builds on the SAC configuration with additional parameters for the offline dataset, ensemble size, and normalization.
+Environment settings (``env.train`` / ``env.eval``) follow the same layout as SAC; see :doc:`embodiment_config <../configuration/embodiment_config>` and ``examples/embodiment/config/realworld_pnp_rlpd_cnn_async.yaml`` for a full example.
 
 .. code-block:: yaml
-
-   data: # add offline demo data
-     type: robot_demo
-     channel:
-       name: demo_data
-     path: "/path/to/demo_data"
 
    algorithm:
      update_epoch: 30
@@ -72,15 +67,22 @@ RLPD builds on the SAC configuration with additional parameters for the offline 
 
      backup_entropy: False # remove entropy term
      critic_subsample_size: 2 # Number of critics to subsample for target calculation
-     eval_rollout_epoch: 1
 
      adv_type: embodied_sac
      loss_type: embodied_sac
      loss_agg_func: "token-mean"
-     
+
      bootstrap_type: standard
      gamma: 0.96
      tau: 0.005
+
+     demo_buffer: # offline demonstration data
+       enable_cache: True
+       cache_size: 200
+       min_buffer_size: 1
+       sample_window_size: 200
+       load_path: "/path/to/demo_data"
+       auto_save: False
 
    rollout:
      group_name: "RolloutGroup"

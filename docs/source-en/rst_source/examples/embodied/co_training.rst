@@ -10,7 +10,7 @@ Co-training combines **PPO** in simulation with **SFT** on real data so the
 policy improves task success in sim while retaining real-world priors and
 avoiding sim-only overfitting that hurts sim-to-real transfer.
 
-For technical details, see the paper: *Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models*.
+For technical details, see the paper: :doc:`Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models <../../publications/rlinf_co>`.
 
 After training, the model is expected to support:
 

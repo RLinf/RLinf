@@ -235,17 +235,17 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 
     bash examples/embodiment/run_embodiment.sh robotwin_click_bell_grpo_lingbotvla
 
-评估
+评测
 ----
 
-Lingbot-VLA 在 RoboTwin 环境中提供了针对各项任务的端到端评估脚本（以按铃任务为例）：
+Lingbot-VLA 在 RoboTwin 环境中提供了针对各项任务的端到端评测脚本（以按铃任务为例）：
 
 .. code-block:: bash
 
     export ROBOT_PLATFORM="ALOHA"
-    bash examples/embodiment/eval_embodiment.sh robotwin_click_bell_grpo_lingbotvla_eval
+    bash evaluations/run_eval.sh robotwin_click_bell_grpo_lingbotvla_eval
 
-如需了解 RLinf 统一的 VLA 评估流程，请参考 :doc:`VLA 评估文档 <../../start/vla-eval>`。
+如需了解 RLinf 统一的 VLA 评测流程，请参考 :doc:`评测 <../../evaluations/index>`。
 
 可视化与结果
 ------------

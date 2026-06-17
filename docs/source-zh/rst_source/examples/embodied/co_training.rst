@@ -5,7 +5,7 @@
 
 协同训练的核心在于：在利用 PPO 算法通过仿真环境反馈优化策略的同时，引入真机数据进行监督微调 (SFT)，以确保模型在提升任务成功率的同时不丢失真机物理世界的先验知识。
 
-详细技术细节请参考论文: `Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models`
+详细技术细节请参考论文： :doc:`Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models <../../publications/rlinf_co>`\ 。
 
 模型在训练后应具备以下核心能力：
 
@@ -130,7 +130,7 @@ Stage I：SFT 预训练
 
 2. **执行训练**：
 
-训练方法请参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 RLinf 文档中的 `监督训练微调 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html>`_ 章节。
+训练方法请参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 RLinf 文档中的 :doc:`监督训练微调 <sft_openpi>` 章节。
 
 **方法 B：使用 SFT 预训练权重**
 

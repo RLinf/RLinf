@@ -132,7 +132,7 @@ Please take a note of the firmware version for later use.
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The Franka controller is recommended to run on a real-time kernel for better performance.
-Follow the instructions in `Franka documentation <https://frankarobotics.github.io/docs/libfranka/docs/real_time_kernel.html>`_ to install the real-time kernel.
+Follow the instructions in `Franka documentation <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_ to install the real-time kernel.
 
 3. Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^

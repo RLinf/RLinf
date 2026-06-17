@@ -539,7 +539,7 @@ RoboTwin 当前可直接参考的配置文件如下：
       export ROBOT_PLATFORM=ALOHA
       export ROBOTWIN_PATH=/path/to/RoboTwin
 
-      bash examples/embodiment/eval_embodiment.sh CHOSEN_CONFIG
+      bash evaluations/run_eval.sh CHOSEN_CONFIG
 
 6. **注意事项**
 

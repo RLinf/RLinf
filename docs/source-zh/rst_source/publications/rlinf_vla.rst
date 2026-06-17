@@ -187,7 +187,7 @@ RoboTwin（七项任务）
 - **ManiSkill：** :doc:`../examples/embodied/maniskill`
 - **LIBERO：** :doc:`../examples/embodied/libero`
 - **RoboTwin：** :doc:`../examples/embodied/robotwin`
-- **更多示例：** :doc:`../examples/embodied/index`
+- **更多示例：** :doc:`../examples/index`
 
 引用
 ----

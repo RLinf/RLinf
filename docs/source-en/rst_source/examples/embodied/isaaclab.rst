@@ -224,7 +224,7 @@ To evaluate gr00t n1.5 in the IsaacLab environment, run:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_gr00t
 
 Dependency Installation for Openpi π0.5
 ---------------------------------------
@@ -341,7 +341,7 @@ To evaluate openpi π0.5 in the IsaacLab environment, run:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
+   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
 Visualization and Results
 -------------------------
