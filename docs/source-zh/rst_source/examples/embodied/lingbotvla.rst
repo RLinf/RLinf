@@ -1,6 +1,8 @@
 Lingbot-VLA模型强化学习
 ========================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png
    :align: center
    :width: 90%
@@ -169,15 +171,6 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 
 然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如基础权重 ``/path/to/model/lingbot-vla-4b``，或固定 revision 的 RoboTwin SFT 权重 ``/path/to/model/lingbot-vla-4b-posttrain-robotwin``），并务必将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。
 
-此外，RLinf 还提供了一个可选的 RoboTwin Click Bell GRPO 后训练权重，可用于复现本文中的 RL 评测结果，或作为后续 RL 实验的初始化权重。该权重不是进行 RL 训练的必需输入。
-
-.. code-block:: bash
-
-    huggingface-cli download RLinf/RLinf-lingbotvla-click-bell-grpo \
-        --local-dir RLinf-lingbotvla-click-bell-grpo
-
-评测或从该 RL 权重继续训练时，``actor.model.model_path`` 和 ``rollout.model.model_path`` 仍应指向上文下载的 Lingbot-VLA 基础权重或固定 revision 的 RoboTwin SFT 权重；复现该权重对应结果时，建议使用固定 revision 的 RoboTwin SFT 权重。RL 权重通过 ``runner.ckpt_path=/path/to/RLinf-lingbotvla-click-bell-grpo/actor/model_state_dict/full_weights.pt`` 加载。
-
 运行
 ----------------------------------------
 
@@ -290,17 +283,43 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时查看训练：
+在 RLinf 仓库根目录启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-    tensorboard --logdir ../results --port 6006
+   tensorboard --logdir ../results --port 6006
 
-最值得关注的指标是 **``env/success_once``** —— 回合成功率。每个日志指标的含义见
+关键指标是 ``env/success_once``。完整指标说明见
 :doc:`训练指标 <../../reference/metrics>`。
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla_success_once.png
-   :width: 95%
-   :align: center
+视频通过 env video 配置保存：
 
-   GRPO 在 RoboTwin Click Bell 任务上提升 ``env/success_once``。
+.. code:: yaml
+
+   video_cfg:
+     save_video: True
+     video_base_dir: ${runner.logger.log_path}/video/eval
+
+.. list-table:: Lingbot-VLA 在 RoboTwin 任务上的评估结果
+   :header-rows: 1
+
+   * - 任务
+     - SFT
+     - RLinf-GRPO
+   * - ``click_bell``
+     - |huggingface| `96.88% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.75% <https://huggingface.co/RLinf/RLinf-lingbotvla-click-bell-grpo>`__
+   * - ``place_shoe``
+     - |huggingface| `93.75% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-lingbotvla-place-shoe-grpo>`__
+   * - Average
+     - 95.31%
+     - **98.60%**
+   * - Δ Avg.
+     - ---
+     - **+3.29%**
+
+.. note::
+
+   Lingbot-VLA 结果使用 RoboTwin random setting。SFT 结果链接指向固定 revision 的官方 RoboTwin SFT 权重。
+   任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。
