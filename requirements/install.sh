@@ -1177,10 +1177,12 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             ;;
         so101)
-            # SO101 SFT only needs openpi + lerobot. No simulator env clone.
+            # SO101 SFT only needs openpi. lerobot is pulled in transitively by
+            # openpi. Hardware deps (lerobot>=v0.5.1, evdev, opencv-python) are
+            # installed separately on the robot controller node — see the so101
+            # extra in pyproject.toml for the recommended commands.
             create_and_sync_venv
             install_common_embodied_deps
-            uv sync --extra so101 --inexact --active $NO_INSTALL_RLINF_CMD
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_flash_attn
             ;;

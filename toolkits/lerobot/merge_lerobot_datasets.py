@@ -16,23 +16,35 @@
 """Merge all LeRobot datasets found under a directory into a single dataset.
 
 Recursively discovers every sub-directory that contains a valid LeRobot layout
-(``meta/info.json`` + ``meta/episodes.jsonl`` + ``data/``), re-indexes all
-episodes and frames globally, and writes the unified dataset to ``--output-dir``.
+(``meta/info.json`` + ``data/``), re-indexes all episodes and frames globally,
+and writes the unified dataset to ``--output-dir``.
+
+Supports both LeRobot **v2.x** and **v3.0** dataset layouts:
+
+* v2.x — ``meta/episodes.jsonl`` + ``meta/tasks.jsonl`` (jsonlines), one parquet
+  per episode under ``data/chunk-{C:03d}/episode_{E:06d}.parquet``.
+* v3.0 — ``meta/episodes/chunk-{C:03d}/file-{F:03d}.parquet`` +
+  ``meta/tasks.parquet``, with multiple episodes packed into
+  ``data/chunk-{C:03d}/file-{F:03d}.parquet`` and per-episode row ranges
+  recorded in ``dataset_from_index`` / ``dataset_to_index``.
+
+The output dataset uses the same codebase_version as the first discovered
+source dataset.  Mixing v2.x and v3.0 inputs is not supported.
 
 Typical usage
 -------------
 Single run directory
-    python toolkits/replay_buffer/merge_lerobot_datasets.py \\
+    python toolkits/lerobot/merge_lerobot_datasets.py \\
         --source-dir logs/20260402-16:27:36-maniskill_ppo_cnn/maniskill \\
         --output-dir merged_data
 
 Multiple independent run directories into one dataset
-    python toolkits/replay_buffer/merge_lerobot_datasets.py \\
+    python toolkits/lerobot/merge_lerobot_datasets.py \\
         --source-dir logs/run_a/maniskill logs/run_b/maniskill \\
         --output-dir merged_data
 
 Dry-run (just print what would be merged, no files written)
-    python toolkits/replay_buffer/merge_lerobot_datasets.py \\
+    python toolkits/lerobot/merge_lerobot_datasets.py \\
         --source-dir logs/20260402-16:27:36-maniskill_ppo_cnn/maniskill \\
         --output-dir merged_data --dry-run
 """
@@ -159,6 +171,338 @@ def _ensure_list(value: object) -> list:
     return value if isinstance(value, list) else [value]
 
 
+def _is_v3_dataset(ds_path: Path) -> bool:
+    """Return True iff *ds_path* uses the LeRobot v3.0 layout.
+
+    v3.0 keeps episode metadata under ``meta/episodes/chunk-XXX/file-YYY.parquet``
+    and tasks under ``meta/tasks.parquet`` (with multiple episodes packed into
+    one data parquet).  v2.x uses jsonlines + one parquet per episode.
+    """
+    info_path = ds_path / "meta" / "info.json"
+    if not info_path.is_file():
+        return False
+    try:
+        with open(info_path) as f:
+            info = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    version = str(info.get("codebase_version", ""))
+    # info.json itself tells us; double-check the parquet path template too.
+    if version.startswith("v3"):
+        return True
+    data_path_template = str(info.get("data_path", ""))
+    return "file-" in data_path_template and "episode_" not in data_path_template
+
+
+def _merge_v3(
+    datasets: list[Path],
+    output_path: Path,
+    *,
+    dry_run: bool,
+) -> int:
+    """Merge LeRobot v3.0 datasets.
+
+    Each source has:
+
+    * ``meta/info.json`` (codebase_version=v3.0, features, fps, …)
+    * ``meta/tasks.parquet`` (columns: ``task_index``, ``task``)
+    * ``meta/episodes/chunk-XXX/file-YYY.parquet`` with per-episode metadata
+      (``episode_index``, ``tasks``, ``length``, ``data/chunk_index``,
+      ``data/file_index``, ``dataset_from_index``, ``dataset_to_index``, plus
+      flattened per-feature stats columns).
+    * ``data/chunk-XXX/file-YYY.parquet`` containing all frames for the
+      episodes recorded in that file (rows are sliced by
+      ``dataset_from_index``..``dataset_to_index``).
+
+    The merged output collapses everything into single files
+    (``data/chunk-000/file-000.parquet``,
+    ``meta/episodes/chunk-000/file-000.parquet``) — fine for small datasets,
+    and dwarfed by the upstream chunks_size of 1000 for typical RLinf runs.
+    """
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    # ---- 1. Walk sources, build global task map and episode list ---------
+    reference_info: dict[str, Any] | None = None
+    global_tasks: dict[str, int] = {}
+    # Each entry: (source_dataset_path, episode_meta_row dict, source_data_parquet_path)
+    all_eps: list[tuple[Path, dict, Path]] = []
+
+    for ds_path in datasets:
+        info_path = ds_path / "meta" / "info.json"
+        with open(info_path) as f:
+            info = json.load(f)
+        if reference_info is None:
+            reference_info = info
+
+        episodes_dir = ds_path / "meta" / "episodes"
+        if not episodes_dir.is_dir():
+            print(
+                f"[merge] WARNING: missing meta/episodes/ in {ds_path}, skipping",
+                file=sys.stderr,
+            )
+            continue
+
+        ep_files = sorted(episodes_dir.rglob("file-*.parquet"))
+        if not ep_files:
+            print(
+                f"[merge] WARNING: no episode parquet files in {ds_path}, skipping",
+                file=sys.stderr,
+            )
+            continue
+
+        # tasks: align to global mapping by name
+        tasks_path = ds_path / "meta" / "tasks.parquet"
+        if tasks_path.is_file():
+            tasks_df = pq.read_table(tasks_path).to_pandas()
+            # task name and integer index may live as columns or as the index
+            if "task" in tasks_df.columns and "task_index" in tasks_df.columns:
+                for _, row in tasks_df.iterrows():
+                    name = str(row["task"])
+                    if name not in global_tasks:
+                        global_tasks[name] = len(global_tasks)
+            else:
+                # task as index, task_index as column
+                for task_name in tasks_df.index.tolist():
+                    name = str(task_name)
+                    if name not in global_tasks:
+                        global_tasks[name] = len(global_tasks)
+
+        for ep_file in ep_files:
+            ep_table = pq.read_table(ep_file)
+            ep_df = ep_table.to_pandas()
+            data_template = info.get(
+                "data_path",
+                "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+            )
+            for _, ep_row in ep_df.iterrows():
+                ep_meta = ep_row.to_dict()
+                chunk_idx = int(ep_meta.get("data/chunk_index", 0))
+                file_idx = int(ep_meta.get("data/file_index", 0))
+                data_parquet = ds_path / data_template.format(
+                    chunk_index=chunk_idx, file_index=file_idx
+                )
+                if not data_parquet.is_file():
+                    print(
+                        f"[merge] WARNING: data file not found {data_parquet}, "
+                        f"skipping episode {ep_meta.get('episode_index')}",
+                        file=sys.stderr,
+                    )
+                    continue
+                all_eps.append((ds_path, ep_meta, data_parquet))
+
+                # Register every task name this episode lists, in case the
+                # tasks.parquet table was missing or incomplete.
+                for task_name in ep_meta.get("tasks", []) or []:
+                    name = str(task_name)
+                    if name not in global_tasks:
+                        global_tasks[name] = len(global_tasks)
+
+    total_eps = len(all_eps)
+    print(f"[merge:v3] Total episodes to merge: {total_eps}")
+    print(
+        f"[merge:v3] Unique tasks: {len(global_tasks)} → "
+        f"{list(global_tasks.keys())[:5]}"
+    )
+
+    if total_eps == 0:
+        print("[merge:v3] Nothing to merge.", file=sys.stderr)
+        return 0
+
+    if dry_run:
+        print("[merge:v3] Dry-run mode — no files written.")
+        return total_eps
+
+    # ---- 2. Prepare output dirs ----------------------------------------
+    output_path.mkdir(parents=True, exist_ok=True)
+    (output_path / "meta").mkdir(exist_ok=True)
+    (output_path / "meta" / "episodes" / "chunk-000").mkdir(parents=True, exist_ok=True)
+    (output_path / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+
+    # Cache decoded data parquets so we don't re-read the same source twice.
+    data_cache: dict[Path, "pd.DataFrame"] = {}
+
+    def _load_data(p: Path) -> "pd.DataFrame":
+        if p not in data_cache:
+            data_cache[p] = pq.read_table(p).to_pandas()
+        return data_cache[p]
+
+    # ---- 3. Re-index frames and episodes -------------------------------
+    out_frames: list["pd.DataFrame"] = []
+    out_ep_rows: list[dict] = []
+    global_frame_index = 0
+    out_data_chunk_index = 0
+    out_data_file_index = 0
+    out_ep_chunk_index = 0
+    out_ep_file_index = 0
+    reference_schema_metadata = None
+
+    for new_ep_idx, (ds_path, ep_meta, data_parquet) in enumerate(all_eps):
+        src_df = _load_data(data_parquet)
+        # Cache the first source's pyarrow schema metadata (HF feature dtypes,
+        # image encoding hints, etc.) and reuse it for the merged output.
+        if reference_schema_metadata is None:
+            reference_schema_metadata = pq.read_table(
+                data_parquet, columns=[src_df.columns[0]]
+            ).schema.metadata
+
+        from_idx = int(ep_meta.get("dataset_from_index", 0))
+        to_idx = int(ep_meta.get("dataset_to_index", from_idx + int(ep_meta.get("length", 0))))
+        slice_df = src_df.iloc[from_idx:to_idx].copy()
+        n_frames = len(slice_df)
+        if n_frames == 0:
+            print(
+                f"[merge:v3] WARNING: empty slice for episode "
+                f"{ep_meta.get('episode_index')} in {data_parquet}, skipping"
+            )
+            continue
+
+        new_from = global_frame_index
+        new_to = global_frame_index + n_frames
+
+        # Per-row reindexing.
+        slice_df["episode_index"] = new_ep_idx
+        slice_df["index"] = range(new_from, new_to)
+        slice_df["frame_index"] = range(0, n_frames)
+        # Tasks: map each episode's task list to global indices.  Most lerobot
+        # writers only ever attach one task per episode, but the schema allows
+        # several — take the first one for the per-frame ``task_index``.
+        ep_tasks = ep_meta.get("tasks", []) or []
+        first_task = str(ep_tasks[0]) if len(ep_tasks) else ""
+        new_task_index = global_tasks.get(first_task, 0) if first_task else 0
+        slice_df["task_index"] = new_task_index
+
+        out_frames.append(slice_df)
+
+        # Build the merged episodes row from the source row.
+        new_ep_row = dict(ep_meta)
+        new_ep_row["episode_index"] = new_ep_idx
+        new_ep_row["tasks"] = list(ep_tasks)
+        new_ep_row["length"] = int(n_frames)
+        new_ep_row["data/chunk_index"] = out_data_chunk_index
+        new_ep_row["data/file_index"] = out_data_file_index
+        new_ep_row["dataset_from_index"] = new_from
+        new_ep_row["dataset_to_index"] = new_to
+        new_ep_row["meta/episodes/chunk_index"] = out_ep_chunk_index
+        new_ep_row["meta/episodes/file_index"] = out_ep_file_index
+
+        # Adjust the global-index-style stats so they match the new layout.
+        frame_offset = new_from - from_idx
+        for key_min, key_max, key_mean in (
+            ("stats/episode_index/min", "stats/episode_index/max", "stats/episode_index/mean"),
+        ):
+            if key_min in new_ep_row:
+                new_ep_row[key_min] = [float(new_ep_idx)]
+                new_ep_row[key_max] = [float(new_ep_idx)]
+                new_ep_row[key_mean] = [float(new_ep_idx)]
+            if "stats/episode_index/std" in new_ep_row:
+                new_ep_row["stats/episode_index/std"] = [0.0]
+        # ``index`` stats: shift by frame_offset.  std is preserved (contiguous range).
+        for stat_key in ("min", "max", "mean", "q01", "q10", "q50", "q90", "q99"):
+            full_key = f"stats/index/{stat_key}"
+            if full_key in new_ep_row:
+                # ``_ensure_list`` may yield numpy arrays from a parquet read;
+                # ``.item()`` collapses 0-d / 1-d arrays cleanly without the
+                # numpy-1.25 "ndim > 0 → scalar" DeprecationWarning.
+                shifted = []
+                for v in _ensure_list(new_ep_row[full_key]):
+                    if hasattr(v, "item"):
+                        v = v.item()
+                    shifted.append(float(v) + float(frame_offset))
+                new_ep_row[full_key] = shifted
+        # ``task_index`` stats: every frame in this episode now points to
+        # the new global task id.
+        if "stats/task_index/min" in new_ep_row:
+            new_ep_row["stats/task_index/min"] = [float(new_task_index)]
+            new_ep_row["stats/task_index/max"] = [float(new_task_index)]
+            new_ep_row["stats/task_index/mean"] = [float(new_task_index)]
+            if "stats/task_index/std" in new_ep_row:
+                new_ep_row["stats/task_index/std"] = [0.0]
+
+        out_ep_rows.append(new_ep_row)
+        global_frame_index = new_to
+
+        if (new_ep_idx + 1) % 50 == 0 or (new_ep_idx + 1) == total_eps:
+            print(
+                f"[merge:v3] Processed {new_ep_idx + 1}/{total_eps} episodes "
+                f"({global_frame_index} frames)"
+            )
+
+    # ---- 4. Write merged data parquet ----------------------------------
+    import pandas as pd  # noqa: F811 — re-import so type checkers see the alias here
+
+    merged_data_df = pd.concat(out_frames, ignore_index=True)
+    merged_data_table = pa.Table.from_pandas(merged_data_df, preserve_index=False)
+    if reference_schema_metadata:
+        # Preserve HuggingFace ``datasets`` feature metadata so consumers can
+        # decode image columns the same way the source did.
+        merged_data_table = merged_data_table.replace_schema_metadata(
+            reference_schema_metadata
+        )
+    pq.write_table(
+        merged_data_table,
+        output_path / "data" / "chunk-000" / "file-000.parquet",
+    )
+
+    # ---- 5. Write merged episodes parquet ------------------------------
+    merged_ep_df = pd.DataFrame(out_ep_rows)
+    pq.write_table(
+        pa.Table.from_pandas(merged_ep_df, preserve_index=False),
+        output_path / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
+    )
+
+    # ---- 6. Write merged tasks parquet ---------------------------------
+    sorted_tasks = sorted(global_tasks.items(), key=lambda x: x[1])
+    tasks_df = pd.DataFrame(
+        {
+            "task": [t for t, _ in sorted_tasks],
+            "task_index": [i for _, i in sorted_tasks],
+        }
+    )
+    # The original LeRobot writer keeps task name as the index; mirror that
+    # for downstream loaders that read it back via ``set_index``.
+    tasks_df = tasks_df.set_index("task")
+    pq.write_table(
+        pa.Table.from_pandas(tasks_df, preserve_index=True),
+        output_path / "meta" / "tasks.parquet",
+    )
+
+    # ---- 7. Write merged info.json -------------------------------------
+    info_out: dict[str, Any] = dict(reference_info) if reference_info else {}
+    info_out["total_episodes"] = total_eps
+    info_out["total_frames"] = int(global_frame_index)
+    info_out["total_tasks"] = len(global_tasks)
+    info_out["splits"] = {"train": f"0:{total_eps}"}
+    # We emit a single output data file and a single output episodes file.
+    info_out["chunks_size"] = max(int(info_out.get("chunks_size", 1000)), total_eps)
+    info_out.setdefault(
+        "data_path", "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+    )
+    # No videos are produced by the merge — drop video_path if present.
+    info_out.pop("video_path", None)
+
+    with open(output_path / "meta" / "info.json", "w") as f:
+        json.dump(info_out, f, indent=4)
+
+    # Carry forward stats.json if all sources agree (or copy the first one's
+    # for completeness).  Downstream openpi only needs episode-level stats,
+    # which we already wrote above.
+    first_stats = datasets[0] / "meta" / "stats.json"
+    if first_stats.is_file():
+        with open(first_stats) as f:
+            stats_json = f.read()
+        with open(output_path / "meta" / "stats.json", "w") as f:
+            f.write(stats_json)
+        print("[merge:v3] Copied stats.json from first source dataset.")
+
+    print(
+        f"[merge:v3] Done: {total_eps} episodes, {global_frame_index} frames → "
+        f"{output_path}"
+    )
+    return total_eps
+
+
 def merge_lerobot_datasets(
     source_dirs: list[str | Path],
     output_dir: str | Path,
@@ -195,6 +539,19 @@ def merge_lerobot_datasets(
     print(f"[merge] Found {len(datasets)} dataset(s):")
     for d in datasets:
         print(f"  {d}")
+
+    # ------------------------------------------------------------------
+    # 1a. Dispatch to the v3.0 path when the (first) source uses that layout
+    # ------------------------------------------------------------------
+    v3_flags = [_is_v3_dataset(d) for d in datasets]
+    if all(v3_flags):
+        return _merge_v3(datasets, output_path, dry_run=dry_run)
+    if any(v3_flags):
+        raise ValueError(
+            "Cannot mix LeRobot v2.x and v3.0 datasets in the same merge. "
+            f"v3.0 sources: {[str(d) for d, v in zip(datasets, v3_flags) if v]}; "
+            f"v2.x sources: {[str(d) for d, v in zip(datasets, v3_flags) if not v]}"
+        )
 
     # ------------------------------------------------------------------
     # 2. Collect all episodes across datasets

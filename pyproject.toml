@@ -156,15 +156,19 @@ gim_arm = [
     "imageio[ffmpeg]",
 ]
 so101 = [
-    # SO101 arm uses LeRobot's SOFollower / SOLeader API, introduced after
-    # commit ccfd609e ("consolidate SO arms implementation"). Pin to v0.5.1
-    # which is the first stable tag containing it.
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@v0.5.1",
-    "evdev",              # keyboard listener (Linux evdev, no X11 needed)
-    "gymnasium",
-    "opencv-python",
-    "numpy",
-    "imageio[ffmpeg]",
+    # SO101 has two install scenarios with very different needs:
+    #
+    # * Data collection / RL on the robot host: needs LeRobot's SOFollower /
+    #   SOLeader API, only available in lerobot >= v0.5.1 (Python>=3.12).
+    #   Install separately on the robot machine:
+    #     pip install "lerobot @ git+https://github.com/huggingface/lerobot.git@v0.5.1"
+    #     pip install evdev opencv-python imageio[ffmpeg]
+    #
+    # * Offline SFT on the GPU host: only needs to read LeRobot parquet
+    #   datasets, which OpenPI pulls in transitively. Nothing required here.
+    #
+    # Keeping this extra empty lets the project's broad `requires-python =
+    # ">=3.10"` resolve under uv. Data-collection deps live on the robot host.
 ]
 
 [tool.uv]
