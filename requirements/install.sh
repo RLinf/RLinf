@@ -1085,7 +1085,7 @@ install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
-        bash $SCRIPT_DIR/embodied/sys_deps.sh "$PLATFORM"
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
     if [ ${#PLATFORM_VENV_EXPORTS[@]} -gt 0 ]; then
         printf '%s\n' "${PLATFORM_VENV_EXPORTS[@]}" >> "$VENV_DIR/bin/activate"
@@ -2051,6 +2051,9 @@ install_roboverse_env() {
 install_agentic() {
     uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
     uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
+    fi
 
     # Megatron-LM
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
