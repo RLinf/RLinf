@@ -931,26 +931,39 @@ class Worker(metaclass=WorkerMeta):
 
     @staticmethod
     def timer(tag: Optional[str] = None):
-        """Decorator to time a worker function."""
+        """Decorator to time a worker function and emit a profiling annotation."""
 
         def decorator(func):
+            label = tag or func.__name__
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def wrapper(self, *args, **kwargs):
-                    with self.worker_timer(tag or func.__name__):
-                        return await func(self, *args, **kwargs)
+                    with self.worker_timer(label):
+                        with AcceleratorUtil.profiling_range(
+                            self._accelerator_type, label
+                        ):
+                            return await func(self, *args, **kwargs)
 
                 return wrapper
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                with self.worker_timer(tag or func.__name__):
-                    return func(self, *args, **kwargs)
+                with self.worker_timer(label):
+                    with AcceleratorUtil.profiling_range(self._accelerator_type, label):
+                        return func(self, *args, **kwargs)
 
             return wrapper
 
         return decorator
+
+    def start_profile(self, step_idx: int) -> None:
+        """Open a profiling capture window for the given step on this worker."""
+        AcceleratorUtil.start_profiling(self._accelerator_type, step_idx)
+
+    def stop_profile(self) -> None:
+        """Close the current profiling capture window on this worker."""
+        AcceleratorUtil.stop_profiling(self._accelerator_type)
 
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:

@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
 
+from rlinf.data.utils import forward_set_epoch
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
@@ -153,10 +154,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     logging.info(
                         f"[INFO] data_iter exhausted, reset iterator self._data_epoch {self._data_epoch}"
                     )
-                    if hasattr(self.data_loader, "sampler") and hasattr(
-                        self.data_loader.sampler, "set_epoch"
-                    ):
-                        self.data_loader.sampler.set_epoch(self._data_epoch)
+                    forward_set_epoch(self.data_loader, self._data_epoch)
                     self.data_iter = iter(self.data_loader)
                     batch = next(self.data_iter)
                     self._data_iter_offset = 1

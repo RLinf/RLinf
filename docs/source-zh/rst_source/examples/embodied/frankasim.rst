@@ -1,275 +1,200 @@
-基于 Franka-Sim 评测平台的强化学习训练
-======================================
+基于 Franka-Sim 的强化学习训练
+========================================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+.. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
+   :align: center
+   :width: 70%
 
-本文档给出在 **RLinf** 框架内启动与管理 **Vision-Language-Action Models (VLAs)** 训练任务的完整指南，
-并介绍如何在 **Franka-Sim** 环境中微调 VLA 模型以完成机器人操作任务。
+   RLinf SERL fork 中的 Franka-Sim 资源。
 
-主要目标是让模型具备以下能力：
+Franka-Sim 是基于
+`SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ 栈构建的轻量级
+Franka Panda 仿真环境。你将使用 RLinf 在状态观测上用 PPO 训练 MLP policy，或在 RGB
+观测上用异步 SAC 训练 CNN policy。
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像；
-2. **语言理解**：理解自然语言的任务描述；
-3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）；
-4. **强化学习**：结合环境反馈，使用 PPO 优化策略。
+概览
+----------------------------------------
 
-环境
-----
+使用状态观测或视觉观测训练 Franka pick-cube 策略。
 
-Franka-Sim 环境基于项目 `serl <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`_ 构建，
-包含两个最小化仿真环境：
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- ``PandaPickCube-v0``
-- ``PandaPickCubeVision-v0``
+   .. grid-item-card:: 模型
+      :text-align: center
 
-任务定义
-~~~~~~~~
+      MLP · CNN
 
-- **Task**：控制 Franka Panda 机械臂抓取物块并移动至目标位置；
-- **Observation**：
+   .. grid-item-card:: 算法
+      :text-align: center
 
-  - ``PandaPickCube-v0``：本体感知状态 + 目标位置；
-  - ``PandaPickCubeVision-v0``：多视角 RGB 图像（机器人视角 + 腕部相机）+ 本体感知状态；
+      PPO · SAC
 
-- **Action Space**：4 维连续动作
+   .. grid-item-card:: 任务
+      :text-align: center
 
-  - 三维位置控制（x, y, z）
-  - 夹爪控制（开/合）
+      PickCube state · vision
 
-数据结构
-~~~~~~~~
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-``PandaPickCube-v0``
+      1 节点 · 1 GPU
 
-- **States**：本体感知与目标位置
+| **你将完成：** 安装 → 可选下载 ResNet → 启动训练 → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 安装步骤中的 Franka-Sim 资源。
 
-  - 末端执行器三维位置
-  - 末端执行器三维速度
-  - 夹爪一维开合
-  - 物块三维位置
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``PandaPickCubeVision-v0``
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-- **Images**：第三人称视角与腕部相机视角的 RGB 张量
-- **States**：本体感知
+   * - 任务
+     - 描述
+   * - ``PandaPickCube-v0``
+     - 面向 MLP + PPO 配方的状态观测 pick-cube 任务。
+   * - ``PandaPickCubeVision-v0``
+     - 面向 CNN + 异步 SAC 配方的 RGB 观测 pick-cube 任务。
 
-  - 末端执行器三维位置
-  - 末端执行器三维速度
-  - 夹爪一维开合
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- **Task Descriptions**：自然语言指令
-- **Actions**：归一化连续动作值
-- **Rewards**：基于任务完成度的逐步奖励
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-算法
-----
+   * - 字段
+     - 规格
+   * - 观测
+     - ``PandaPickCube-v0`` 使用本体状态与目标位置；``PandaPickCubeVision-v0`` 使用 RGB 图像与状态。
+   * - 动作
+     - 4 维连续动作：3D 末端执行器位置增量和夹爪控制。
+   * - 奖励
+     - 稠密任务进度奖励。
+   * - 提示词
+     - 状态 MLP 配方不使用提示词；视觉策略从 env wrapper 接收任务条件观测。
 
-核心算法组件包括：
+安装
+----------------------------------------
 
-1. **PPO（近端策略优化）**
+.. include:: _setup_common.rst
 
-   - 使用 GAE（广义优势估计）进行优势估计；
-   - 带比例限制（clipping）的策略裁剪；
-   - 价值函数裁剪；
-   - 熵正则化。
+**Docker 镜像**
 
-2. **SAC (Soft Actor-Critic)**
-
-   - 通过 Bellman 公式和熵正则化学习 Q 值。
-
-   - 学习策略网络以最大化熵正则化的 Q 值。
-
-   - 学习温度参数以平衡探索与利用。
-
-依赖安装
---------
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   # 为提高国内下载速度，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-
-使用 Docker 镜像运行实验：
-
-.. code-block:: bash
+.. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-frankasim
-      # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
 
-选项 2：自定义环境
-^^^^^^^^^^^^^^^^^^
+   # 国内用户可使用：
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
 
-.. code-block:: bash
-
-   # 为提高国内依赖安装速度，可以添加 --use-mirror 到下面的 install.sh 命令
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
-
-模型下载
---------------
-
-如果您正在训练CNN Policy (如果是MLP Policy可以跳过此小节)，您需要先下载我们提供的ResNet checkpoint。
-
-**ResNet Checkpoint下载**
+在镜像中切换到虚拟环境：
 
 .. code:: bash
 
-   # 方法1：使用git clone
+   source switch_env openvla
+
+**自定义环境**
+
+安装 Franka-Sim 依赖：
+
+.. code:: bash
+
+   # 国内用户可添加 --use-mirror。
+   bash requirements/install.sh embodied --model openvla --env frankasim
+   source .venv/bin/activate
+
+下载模型
+----------------------------------------
+
+MLP + PPO 配方可跳过本节。CNN + SAC 配方需要下载 ResNet 检查点：
+
+.. code-block:: bash
+
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
-   # 方法2：使用huggingface-hub
-   # 为提升国内下载速度，可以设置：
+   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
-下载完成后，请确保在配置yaml文件中正确指定模型路径。
-更新 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 为模型文件夹路径。
+然后在 ``examples/embodiment/config/frankasim_sac_cnn_async.yaml`` 中为 rollout 和 actor
+设置相同的检查点路径：
 
 .. code-block:: yaml
-   
+
    rollout:
       model:
-         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+         model_path: /path/to/RLinf-ResNet10-pretrained
    actor:
       model:
-         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+         model_path: /path/to/RLinf-ResNet10-pretrained
 
-运行脚本
---------
+运行
+----------------------------------------
 
-1. 关键参数配置
-~~~~~~~~~~~~~~~~
+选择一个配方并启动训练：
 
-示例 1：流水线重叠（推荐）
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 20 18
 
-.. code-block:: yaml
+   * - 配方
+     - 配置
+     - 入口
+     - 命令后缀
+   * - MLP + PPO
+     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+     - ``run_embodiment.sh``
+     - ``frankasim_ppo_mlp``
+   * - CNN + SAC
+     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+     - ``run_async.sh``
+     - ``frankasim_sac_cnn_async``
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       env: 0-7
-       rollout: 8-15
-       actor: 0-15
+.. code:: bash
 
-   rollout:
-     pipeline_stage_num: 2
-
-该配置允许 **rollout 与 env** 之间流水线重叠，从而提升 rollout 吞吐。
-
-示例 2：完全共享（env / rollout / actor 共用 GPU）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-       env,rollout,actor: all
-
-示例 3：完全分离（互不干扰，无需 offload）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     component_placement:
-       env: 0-3
-       rollout: 4-7
-       actor: 8-15
-
-该配置实现 env、rollout、actor 各自使用独立 GPU, 互不干扰, 因此通常不需要 offload 功能。
-
-2. 启动命令
-~~~~~~~~~~~
-
-选择配置后，在根目录下运行以下命令开始训练：
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-支持在 Franka-Sim 环境中使用 PPO 训练 MLP Policy 或使用SAC 训练 CNN Policy :
-
-.. code-block:: bash
-
+   # 状态观测 PPO 配方
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+
+   # 视觉 SAC 配方
    bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
 
+这条命令会：
+
+1. 启动选定的 embodied 训练入口。
+2. 为 actor、rollout 和 Franka-Sim env 组件创建 Ray worker。
+3. 运行 rollout，计算任务奖励，并更新选定策略。
+
+.. note::
+
+   两个参考配置都运行在 GPU ``0``。如果迁移到更大的机器，请调整
+   ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
+
 可视化与结果
-------------
+----------------------------------------
 
-1. TensorBoard 日志
-~~~~~~~~~~~~~~~~~~~
+在 RLinf 仓库根目录启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs --port 6006
+   tensorboard --logdir ../results --port 6006
 
-2. 关键监控指标
-~~~~~~~~~~~~~~~
+关键指标是 ``env/success_once``。完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
 
-训练指标
-^^^^^^^^
+如需保存 rollout 视频，请启用 video：
 
-- ``train/actor/approx_kl``：近似 KL，用于监控策略更新幅度
-- ``train/actor/clip_fraction``：触发 PPO clip 的样本比例
-- ``train/actor/clipped_ratio``：裁剪后的概率比均值，用来衡量 clip 的影响程度
-- ``train/actor/grad_norm``：梯度范数
-- ``train/actor/lr``：学习率
-- ``train/actor/policy_loss``：策略损失
-- ``train/critic/value_loss``：价值函数损失
-- ``train/critic/value_clip_ratio``：值函数裁剪触发比例
-- ``train/critic/explained_variance``：价值拟合程度，越接近 1 越好
-- ``train/entropy_loss``：策略熵
-- ``train/loss``：总损失（actor + critic + entropy regularization）
-
-Rollout 指标
-^^^^^^^^^^^^
-
-- ``rollout/advantages_max``：优势最大值
-- ``rollout/advantages_mean``：优势均值
-- ``rollout/advantages_min``：优势最小值
-- ``rollout/rewards``：一个 chunk 的奖励统计
-
-环境指标
-^^^^^^^^
-
-- ``env/episode_len``：回合步数（step）
-- ``env/return``：回合总回报（在稀疏奖励中参考意义有限）
-- ``env/reward``：step-level 奖励
-- ``env/success_once``：建议重点监控该指标，反映未归一化成功率，更能体现策略真实性能
-
-3. 视频生成
-~~~~~~~~~~~
-
-仅支持 ``PandaPickCubeVision-v0`` 环境下生成视频：
-
-.. code-block:: yaml
+.. code:: yaml
 
    env:
      eval:
@@ -277,26 +202,17 @@ Rollout 指标
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
-4. 训练日志工具集成
-~~~~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-.. code-block:: yaml
+   * - 配方
+     - 结果描述
+   * - CNN + 异步 SAC
+     - 在原始运行使用的仿真设置中，约一小时内学习到稳定抓取策略。
 
-   runner:
-     task_type: embodied
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "maniskill_ppo_openvla"
-       logger_backends: ["tensorboard"]  # wandb, swanlab
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/frankasim_curve.png
+   :align: center
+   :width: 90%
 
-仿真结果
-~~~~~~~~~~~~~~~~~~~
-以下提供了仿真环境中的异步SAC+CNN训练曲线。在1个小时的时间内, 能够成功学习到抓取抓取策略。并且在后续保持稳定。
-
-.. raw:: html
-
-  <div style="flex: 0.8; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/frankasim_curve.png" style="width: 100%;"/>
-      <p><em>成功率曲线</em></p>
-    </div>
+   Franka-Sim 异步 SAC + CNN 成功率曲线。
