@@ -5,7 +5,7 @@ description: Reviews a pull request from a PR URL by directly fetching the URL c
 
 # Review PR (From PR URL)
 
-Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution rules referenced below.
+Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the contribution rules referenced below.
 
 ## 1. Input: PR URL
 
@@ -65,6 +65,7 @@ The PR must match how RLinf already does things. Mismatches are usually defects 
 
 Both directions matter, and EN/ZH parity must be checked explicitly:
 
+- **If this PR changes documentation**, follow the [docs-check skill](../docs-check/SKILL.md) to drive this review: it cross-checks docs against code and against each other (commands, config keys, paths, model/env names) and enforces EN↔ZH parity.
 - **Docs → code**: every config key, CLI flag, env var, file path, function/class name, and supported model/env name mentioned in changed docs must exist in `origin/main` + this PR. Verify with `git show origin/main:rlinf/...`. Stale references = finding.
 - **Code → docs**: when this PR adds, removes, or renames a public-facing config key, model, env, runner, script, env var, or supported feature, the corresponding doc page **must be updated in the same PR**. If missing, list the exact doc files (EN and ZH) that need edits.
 - **EN ↔ ZH parity** (do this explicitly, even when only one language was touched): paired pages under `docs/source-en/` and `docs/source-zh/` must agree on setup commands, paths, env vars, config keys, supported models/envs/algorithms, capability claims, reported numbers (metrics, table values, dataset sizes, trial counts), and section structure/order. If only one side is updated, name the matching file that also needs the change.
@@ -74,6 +75,7 @@ Both directions matter, and EN/ZH parity must be checked explicitly:
 ### (d) Tests and CI integration
 
 - **User-facing changes** must have **tests** (unit or e2e). Reviewer must be able to validate reproducibility.
+- **If this PR changes the install script** (`requirements/install.sh`, `requirements/embodied/`, or `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md) to review the changes: reuse of common utilities, system deps kept in `sys_deps.sh`, pinned/forked git deps, no ad-hoc `pyproject.toml`/core-dep hacks, and a matching Dockerfile build stage for every new model/env.
 - **Dependencies / CI**: new env/model needs install-script update, Docker stage, and CI/e2e coverage — cross-check with the [add-install-docker-ci-e2e skill](../add-install-docker-ci-e2e/SKILL.md).
 - New CI-relevant YAML must be referenced in the e2e test matrix.
 - Large/new dependencies (docker, models, datasets) → maintainer ping noted.
@@ -86,6 +88,7 @@ Mention only if there are real issues; do not pad the review.
 - Public classes/methods have Google-style docstrings; type hints on parameters; return type when not deducible.
 - Assertions/exceptions have meaningful messages (no empty or `xxx != yyy` restatements).
 - `logging` / `self.log_*` not `print`.
+- **License header (newly-added files)**: every file *added* by this PR must carry the standard RLinf header (`# Copyright <YEAR> The RLinf Authors.`), and `<YEAR>` must equal the current calendar year. Determine the current year (e.g. `date +%Y`), list added files with `git diff --name-status origin/main...<pr-head>` (status `A`), and flag any new file whose header is missing or whose copyright year is not the current year. Files vendored from third parties keep their upstream copyright line — apply this only to the RLinf Authors header.
 - Every commit `Signed-off-by`; messages follow Conventional Commits `<type>(<scope>): <description>`.
 - PR title in Conventional Commits format; PR Description and Checklist sections filled; testing results if performance/stability is affected.
 

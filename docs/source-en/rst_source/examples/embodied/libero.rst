@@ -1,98 +1,133 @@
-RL with LIBERO Benchmark
-========================
+RL with LIBERO Benchmarks
+=========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-This document provides a comprehensive guide to launching and managing the 
-Vision-Language-Action Models (VLAs) training task within the RLinf framework, 
-focusing on finetuning a VLA model for robotic manipulation in the LIBERO environment. 
+.. figure:: https://libero-project.github.io/assets/img/libero/fig1.png
+   :align: center
+   :width: 90%
 
-The primary objective is to develop a model capable of performing robotic manipulation by:
+   An overview of the LIBERO benchmark (image: `LIBERO project <https://libero-project.github.io>`__).
 
-1. **Visual Understanding**: Processing RGB images from the robot's camera.
-2. **Language Comprehension**: Interpreting natural-language task descriptions.
-3. **Action Generation**: Producing precise robotic actions (position, rotation, gripper control).
-4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
+`LIBERO <https://libero-project.github.io>`__ is a benchmark for **lifelong robot
+learning**: a 7-DoF Franka arm performs language-conditioned manipulation —
+pick-and-place, stacking, opening drawers, spatial rearrangement — in
+`robosuite <https://robosuite.ai>`__ / MuJoCo. RLinf uses LIBERO to RL-fine-tune
+vision-language-action (VLA) policies and push task success toward saturation.
 
-Environment
------------------------
+This page covers two families of LIBERO recipes:
 
-**LIBERO Environment**
+- :ref:`Original LIBERO suites <libero-benchmark>` — train OpenVLA-OFT and other VLAs with PPO/GRPO.
+- :ref:`LIBERO-Pro / LIBERO-Plus <liberopro-plus-benchmark>` — harder suites that stress generalization with anti-memorization perturbations.
 
-- **Environment**: LIBERO simulation benchmark built on top of *robosuite* (MuJoCo).
-- **Task**: Command a 7-DoF robotic arm to perform a variety of household manipulation skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
-- **Observation**: RGB images (typical resolutions 128 × 128 or 224 × 224) captured by off-screen cameras placed around the workspace.
-- **Action Space**: 7-dimensional continuous actions  
-  - 3D end-effector position control (x, y, z)  
-  - 3D rotation control (roll, pitch, yaw)  
-  - Gripper control (open / close)
+For LIBERO setup on **AMD ROCm** or **Ascend CANN** accelerators, see the
+:doc:`Supported Accelerators <../../guides/index>` tutorial.
 
-**Task Description Format**
+Overview
+--------
 
-.. code-block:: text
+RL-finetune a VLA on the original LIBERO suites; OpenVLA-OFT + GRPO reaches ~98–99% success.
 
-   In: What action should the robot take to [task_description]?
-   Out: 
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**Data Structure**
+   .. grid-item-card:: Models
+      :text-align: center
 
-- **Images**: RGB tensors ``[batch_size, 224, 224, 3]``
-- **Task Descriptions**: Natural-language instructions
-- **Actions**: Normalized continuous values converted to discrete tokens
-- **Rewards**: Step-level rewards based on task completion
+      OpenVLA-OFT · π₀ / π₀.₅ · GR00T · Dexbotic · ABot-M0 · StarVLA · MLP
 
-Algorithm
------------------------------------------
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-**Core Algorithm Components**
+      PPO · GRPO · DSRL · DAgger
 
-1. **PPO (Proximal Policy Optimization)**
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-   - Advantage estimation using GAE (Generalized Advantage Estimation)
+      130 across 5 suites
 
-   - Policy clipping with ratio limits
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-   - Value function clipping
+      1–2 nodes · 8–16 GPUs
 
-   - Entropy regularization
+| **You'll do:** install deps → download the base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a downloaded base checkpoint (steps below).
 
-2. **GRPO (Group Relative Policy Optimization)**
+Tasks
+~~~~~
 
-   - For every state / prompt the policy generates *G* independent actions
+LIBERO ships **five task suites covering 130 tasks**, from single-step pick-and-place
+to long-horizon, multi-step scenarios. Pick a suite through the config name; ``libero_130``
+trains one unified policy across all of them.
 
-   - Compute the advantage of each action by subtracting the group’s mean reward.
+.. list-table::
+   :header-rows: 1
+   :widths: 24 20 10 46
 
+   * - Suite
+     - Config id
+     - Tasks
+     - Focus
+   * - LIBERO-Spatial
+     - ``libero_spatial``
+     - 10
+     - Same objects, different spatial arrangements — tests spatial reasoning.
+   * - LIBERO-Object
+     - ``libero_object``
+     - 10
+     - Same layout, different objects — tests object grounding.
+   * - LIBERO-Goal
+     - ``libero_goal``
+     - 10
+     - Same objects and layout, different goals — tests goal conditioning.
+   * - LIBERO-Long
+     - ``libero_10``
+     - 10
+     - Long-horizon, multi-step tasks from LIBERO-100.
+   * - LIBERO-90
+     - ``libero_90``
+     - 90
+     - Short-horizon tasks from LIBERO-100.
+   * - LIBERO-130
+     - ``libero_130``
+     - 130
+     - All suites combined, for large-scale multi-task RL.
 
-3. **Vision-Language-Action Model**
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~~
 
-   - OpenVLA architecture with multimodal fusion
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-   - Action tokenization and de-tokenization
+   * - Field
+     - Specification
+   * - Observation
+     - RGB from a third-person (agentview) and a wrist camera — typically 128×128 or 224×224 — plus 8-dim proprioception (end-effector pose and gripper).
+   * - Action
+     - 7-dim continuous, ``Box(-1, 1)``: a 6-DoF end-effector delta (3D position + 3D rotation) and 1-D gripper open/close.
+   * - Reward
+     - Sparse — ``0`` on every step and ``1`` only when the task succeeds at episode termination.
+   * - Task prompt
+     - ``In: What action should the robot take to [task_description]? Out:``
 
-   - Value head for critic function
+.. _libero-benchmark:
 
-Dependency Installation
------------------------
+Standard LIBERO Suites
+----------------------
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The walkthrough below uses **OpenVLA-OFT** with **PPO/GRPO**; switch the config to use another supported model.
 
-.. code:: bash
+Installation
+~~~~~~~~~~~~
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+.. include:: _setup_common.rst
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
+**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
 
 .. code:: bash
 
@@ -102,164 +137,80 @@ Use Docker image for the experiment.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
+   # Inside the container, switch to the model's virtual environment:
    source switch_env openvla-oft
 
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
+**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
    source .venv/bin/activate
 
-Model Download
---------------
+Download the Model
+~~~~~~~~~~~~~~~~~~
 
-Before starting training, you need to download the corresponding pretrained model:
+Download a pretrained base checkpoint (either method works):
 
 .. code:: bash
 
-   # Download the model (choose either method)
-   # Method 1: Using git clone
+   # Method 1: git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
+   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
    hf download RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora --local-dir RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
 
-After downloading, make sure to correctly specify the model path in the configuration yaml file.
+.. include:: _model_path.rst
 
-.. code:: yaml
+Run It
+~~~~~~
 
-   rollout:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
-   actor:
-      model:
-         model_path: Pathto/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+Each recipe is a YAML config under ``examples/embodiment/config/``. For OpenVLA-OFT on LIBERO:
 
-Running the Script
--------------------
+- **OpenVLA-OFT + PPO** — ``libero_10_ppo_openvlaoft.yaml``
+- **OpenVLA-OFT + GRPO** — ``libero_10_grpo_openvlaoft.yaml``
 
-**1. Key Parameters Configuration**
-
-.. code-block:: yaml
-
-   cluster:
-      num_nodes: 2
-      component_placement:
-         env: 0-7
-         rollout: 8-15
-         actor: 0-15
-
-   rollout:
-      pipeline_stage_num: 2
-
-Here you can flexibly configure the GPU count for env, rollout, and actor components.
-Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
-
-.. code-block:: yaml
-   
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can also reconfigure the placement to achieve complete sharing, where env, rollout, and actor components all share all GPUs.
-
-.. code-block:: yaml
-
-   cluster:
-      num_nodes: 2
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 8-15
-
-You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
-
-**2. Configuration Files**
-
-We currently support training in two environments: **ManiSkill3** and **LIBERO**.
-
-We support the **OpenVLA-OFT** model with both **PPO** and **GRPO** algorithms.  
-The corresponding configuration files are:
-
-- **OpenVLA-OFT + PPO**: ``examples/embodiment/config/libero_10_ppo_openvlaoft.yaml``
-- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``
-
-**3. Launch Commands**
-
-To start training with a chosen configuration, run the following command:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-For example, to train the OpenVLA-OFT model using the GRPO algorithm in the LIBERO environment, run:
+Launch a config with ``run_embodiment.sh``:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
 
+**What this command does:**
+
+1. Loads ``examples/embodiment/config/libero_10_grpo_openvlaoft.yaml``.
+2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
+3. Runs the GRPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
+
+.. admonition:: Configure further
+   :class: note
+
+   - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+   - All config keys → :doc:`Configuration <../../guides/index>`
+   - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
+   - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
+   - Stuck or hitting OOM? → :doc:`FAQ <../../resources/faq>`
 
 Visualization and Results
--------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**1. TensorBoard Logging**
+Launch TensorBoard to watch training live:
 
 .. code-block:: bash
 
-   # Start TensorBoard
    tensorboard --logdir ./logs --port 6006
 
-**2. Key Metrics Tracked**
+The key signal to watch is **``env/success_once``** — the unnormalized episodic success
+rate. For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
 
-- **Training Metrics**:
-
-  - ``train/actor/approx_kl``: Approximate KL divergence between old and new policies.
-  - ``train/actor/clip_fraction``: Fraction of updates where the probability ratio was clipped.
-  - ``train/actor/clipped_ratio``: Mean of the clipped probability ratios.
-  - ``train/actor/grad_norm``: Gradient norm.
-  - ``train/actor/lr``: Learning rate.
-  - ``train/actor/policy_loss``: PPO/GRPO policy loss.
-  - ``train/critic/value_loss``: Value function loss.
-  - ``train/critic/value_clip_ratio``: Fraction of value targets whose update was clipped.
-  - ``train/critic/explained_variance``: Explained variance of the value function predictions.
-  - ``train/entropy_loss``: Policy entropy.
-  - ``train/loss``: Total training loss (actor_loss + critic_loss + entropy_loss regularization).
-
-- **Rollout Metrics**:
-
-  - ``rollout/advantages_max``: the max of the advantage.
-  - ``rollout/advantages_mean``: the mean of the advantage.
-  - ``rollout/advantages_min``: the min of the advantage.
-  - ``rollout/rewards``: chunk of reward (refer to L414 in libero_env.py).
-
-- **Environment Metrics**:
-
-  - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
-  - ``env/return``: Episode return. In LIBERO’s sparse-reward setting this metric is not informative, since the reward is almost always 0 until the terminal success step.
-  - ``env/reward``: Step-level reward (0 for all intermediate steps and 1 only at successful termination).  
-    The logged value is normalized by the number of episode steps, which makes it difficult to interpret as real task performance during training.
-  - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
-
-**3. Video Generation**
+To save evaluation videos, enable them in the config:
 
 .. code-block:: yaml
 
@@ -269,7 +220,7 @@ Visualization and Results
             save_video: True
             video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. Train Log Tool Integration**
+Choose logging backends (TensorBoard, Weights & Biases, SwanLab) under ``runner.logger``:
 
 .. code-block:: yaml
 
@@ -279,27 +230,23 @@ Visualization and Results
          log_path: "../results"
          project_name: rlinf
          experiment_name: "libero_10_grpo_openvlaoft"
-         logger_backends: ["tensorboard"] # wandb, swanlab
-
+         logger_backends: ["tensorboard"]  # wandb, swanlab
 
 LIBERO Results
-~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^
 
-In order to show the RLinf’s capability for large-scale multi-task RL. We train a single unified model on all 130 tasks in LIBERO and evaluate its performance across the five LIBERO task suites: LIBERO-Spatial, LIBERO-Goal, LIBERO-Object, LIBERO-Long, and LIBERO-90. 
+To show RLinf's large-scale multi-task RL, we train a single unified model on all 130
+LIBERO tasks and evaluate across the five suites. We evaluate every ``task_id`` × ``trial_id``
+combination: 500 environments each for Object/Spatial/Goal/Long (10 tasks × 50 trials),
+4,500 for LIBERO-90, and 6,500 for LIBERO-130. SFT (LoRA-base) models use ``do_sample = False``;
+RL models use ``do_sample = True`` and ``temperature_train = 1.6`` in ``rollout.sampling_params``, and ``env.train.rollout_epoch = 2``.
 
-For each LIBERO suite, we evaluate every combination of task_id and trial_id. 
-For the Object, Spatial, Goal, and Long suites, we evaluate 500 environments in total (10 tasks × 50 trials). 
-For LIBERO-90 and LIBERO-130, we evaluate 4,500 (90 tasks × 50 trials) and 6,500 environments respectively (130 tasks × 50 trials).
+.. note::
 
-We evaluate each model according to its training configuration.
-For the SFT-trained (LoRA-base) models, we set `do_sample = False`.
-For the RL-trained models, we set `do_sample = True`, `temperature = 1.6`, and enable `rollout_epoch=2` to elicit the best performance of the RL-tuned policy.
+   This unified base model is fine-tuned by ourselves. For details, see the paper
+   https://arxiv.org/abs/2510.06710.
 
-.. note:: 
-   
-   This unified base model is fine-tuned by ourselves. For more details, please refer to paper https://arxiv.org/abs/2510.06710.
-
-.. list-table:: **Evaluation results of the unified model on the five LIBERO task groups**
+.. list-table:: **Unified model evaluated on the five LIBERO task groups**
    :header-rows: 1
 
    * - Model
@@ -330,3 +277,147 @@ For the RL-trained models, we set `do_sample = True`, `temperature = 1.6`, and e
      - +81.55%
      - +55.35%
      - +55.76%
+
+.. _liberopro-plus-benchmark:
+
+LIBERO-Pro & LIBERO-Plus Suites
+-------------------------------
+
+Stress-test generalization on the harder LIBERO-Pro / LIBERO-Plus perturbation suites.
+
+Both suites share the same robosuite/MuJoCo setup and 7-DoF action space as standard
+LIBERO, but apply systematic perturbations to defeat memorization and stress generalization.
+
+**LIBERO-Pro** applies four orthogonal anti-memorization perturbations:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Perturbation
+     - What it changes
+   * - Object attributes
+     - Non-essential attributes of target objects (color, texture, size), preserving semantics.
+   * - Initial positions
+     - Absolute and relative spatial arrangements of objects at episode start.
+   * - Instructions
+     - Semantic paraphrasing (e.g. "grab" vs "pick up") and target-object swaps.
+   * - Environment
+     - Background workspace / scene appearance.
+
+**LIBERO-Plus** expands to **10,030 tasks across 5 difficulty levels**, perturbing seven
+physical and semantic dimensions:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 74
+
+   * - Perturbation
+     - What it changes
+   * - Objects layout
+     - Injects distractor objects and shifts the target's position/pose.
+   * - Camera viewpoints
+     - Third-person camera distance, spherical position (azimuth/elevation), and orientation.
+   * - Robot initial states
+     - Random perturbations to the arm's initial joint angles (qpos).
+   * - Language instructions
+     - LLM rewrites adding conversational distractions, common-sense or complex reasoning.
+   * - Light conditions
+     - Diffuse color, light direction, specular highlights, and shadow casting.
+   * - Background textures
+     - Scene themes (e.g. brick walls) and surface materials.
+   * - Sensor noise
+     - Motion/Gaussian/zoom blur, fog, and glass-refraction distortions.
+
+Installation
+~~~~~~~~~~~~
+
+Install the RLinf-maintained forks for the suite you want.
+
+.. include:: _setup_common.rst
+
+**Option 1: Docker image** — pick the tag for the suite:
+
+.. code:: bash
+
+   # LIBERO-Pro: tag agentic-rlinf0.2-liberopro
+   # LIBERO-Plus: tag agentic-rlinf0.2-liberoplus
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-liberopro   # or ...-liberoplus
+
+**Option 2: Custom environment** — pick the install bundle for the suite:
+
+.. code:: bash
+
+    # Add --use-mirror for faster downloads in mainland China.
+    bash requirements/install.sh embodied --model openvla-oft --env liberopro    # LIBERO-Pro
+    bash requirements/install.sh embodied --model openvla-oft --env liberoplus   # LIBERO-Plus
+    source .venv/bin/activate
+
+Download the Assets (LIBERO-Plus)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+LIBERO-Plus needs hundreds of extra objects, textures, and scenes. Download ``assets.zip``
+from the Hugging Face dataset ``Sylvest/LIBERO-plus`` and extract it into the installed
+``liberoplus.liberoplus`` package directory:
+
+.. code-block:: bash
+
+    LIBERO_PLUS_PACKAGE_DIR=$(python -c "import pathlib; import liberoplus.liberoplus as l_plus; print(pathlib.Path(l_plus.__file__).resolve().parent)")
+    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+    hf download --repo-type dataset Sylvest/LIBERO-plus assets.zip --local-dir "${LIBERO_PLUS_PACKAGE_DIR}"
+    unzip -o "${LIBERO_PLUS_PACKAGE_DIR}/assets.zip" -d "${LIBERO_PLUS_PACKAGE_DIR}"
+
+After extraction the directory should look like:
+
+.. code-block:: text
+
+    <installed liberoplus package dir>/
+    └── assets/
+        ├── articulated_objects/
+        ├── new_objects/
+        ├── scenes/
+        ├── stable_hope_objects/
+        ├── stable_scanned_objects/
+        ├── textures/
+        ├── turbosquid_objects/
+        ├── serving_region.xml
+        ├── wall_frames.stl
+        └── wall.xml
+
+Download the Model
+~~~~~~~~~~~~~~~~~~
+
+LIBERO-Pro / LIBERO-Plus reuse the standard LIBERO base checkpoints:
+
+.. code-block:: bash
+
+    git lfs install
+    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-90-Base-Lora
+    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-LIBERO-130-Base-Lora
+
+.. include:: _model_path.rst
+
+Run It
+~~~~~~
+
+Both suites reuse the standard LIBERO config family and select the suite with the
+``LIBERO_TYPE`` environment variable. Train with ``run_embodiment.sh``; for
+standalone evaluation, use the :doc:`LIBERO evaluation guide
+<../../evaluations/guides/libero>` with the same environment variable.
+
+.. code-block:: bash
+
+    # Train (set LIBERO_TYPE=pro or plus)
+    export LIBERO_TYPE=pro
+    bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
+
+Evaluation configs such as ``libero_10_openvlaoft_eval`` are covered by the
+guide.
+
+See :doc:`Training metrics <../../reference/metrics>` for the metrics
+logged during training and evaluation.

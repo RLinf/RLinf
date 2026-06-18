@@ -40,7 +40,14 @@ class MultiStepRolloutWorker(Worker):
         self.cfg = cfg
         self.should_stop = False
 
-        self.actor_group_name = cfg.actor.group_name
+        self.only_eval = cfg.runner.get("only_eval", False)
+        self.algorithm_cfg = cfg.get("algorithm", {})
+        self.model_cfg = cfg.rollout.model if self.only_eval else cfg.actor.model
+        self.actor_group_name = (
+            cfg.actor.get("group_name", None)
+            if cfg.get("actor", None) is not None
+            else None
+        )
         self.device = self.torch_platform.current_device()
 
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
@@ -52,44 +59,67 @@ class MultiStepRolloutWorker(Worker):
         self.actor_weight_src_rank = 0
         self._weight_sync_rollout_ranks = list(range(rollout_world_size))
         self._weight_sync_is_sender = self._rank == 0
-        self.rollout_epoch = cfg.algorithm.get("rollout_epoch", 1)
+        train_env_cfg = cfg.env.get("train", None)
+        eval_env_cfg = cfg.env.get("eval", None)
+        self.enable_train = not self.only_eval and train_env_cfg is not None
+        self.enable_eval = (
+            cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
+        )
+        self.rollout_epoch = (
+            train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
+        )
+        self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
 
-        self.total_num_train_envs = cfg.env.train.total_num_envs
-        self.total_num_eval_envs = cfg.env.eval.total_num_envs
+        self.total_num_train_envs = (
+            cfg.env.train.total_num_envs if self.enable_train else 0
+        )
+        self.total_num_eval_envs = (
+            cfg.env.eval.total_num_envs if self.enable_eval else 0
+        )
         self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
 
         self.train_batch_size = (
             self.total_num_train_envs // self._world_size // self.num_pipeline_stages
+            if self.enable_train
+            else 0
         )
         self.eval_batch_size = (
             self.total_num_eval_envs // self._world_size // self.num_pipeline_stages
+            if self.enable_eval
+            else 0
         )
         self.enable_cuda_graph = cfg.rollout.get("enable_cuda_graph", False)
-        self.enable_eval = cfg.runner.val_check_interval > 0 or cfg.runner.only_eval
 
         self.n_train_chunk_steps = (
             cfg.env.train.max_steps_per_rollout_epoch
-            // cfg.actor.model.num_action_chunks
+            // self.model_cfg.num_action_chunks
+            if self.enable_train
+            else 0
         )
-        self.n_eval_chunk_steps = (
-            cfg.env.eval.max_steps_per_rollout_epoch
-            // cfg.actor.model.num_action_chunks
-        )
+        self.n_eval_chunk_steps = 0
+        if self.enable_eval:
+            self.n_eval_chunk_steps = (
+                cfg.env.eval.max_steps_per_rollout_epoch
+                // self.model_cfg.num_action_chunks
+            )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.version = 0
         self.finished_episodes = None
 
-        weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
-        assert weight_syncer_cfg is not None, (
-            "rollout.weight_syncer config must be provided"
-        )
-        self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
-        self._sync_weight_comm_options = self.weight_syncer.comm_options
+        self.weight_syncer = None
+        self._sync_weight_comm_options = None
+        if not self.only_eval:
+            weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer", default=None)
+            assert weight_syncer_cfg is not None, (
+                "rollout.weight_syncer config must be provided"
+            )
+            self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+            self._sync_weight_comm_options = self.weight_syncer.comm_options
 
     def init_worker(self):
-        rollout_model_config = copy.deepcopy(self.cfg.actor.model)
+        rollout_model_config = copy.deepcopy(self.model_cfg)
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.model_path = self.cfg.rollout.model.model_path
@@ -101,7 +131,7 @@ class MultiStepRolloutWorker(Worker):
             self.hf_model.load_state_dict(model_dict)
 
         if self.cfg.rollout.get("expert_model", None):
-            expert_model_config = copy.deepcopy(self.cfg.actor.model)
+            expert_model_config = copy.deepcopy(self.model_cfg)
             with open_dict(expert_model_config):
                 expert_model_config.precision = self.cfg.rollout.expert_model.precision
                 expert_model_config.model_path = (
@@ -130,7 +160,7 @@ class MultiStepRolloutWorker(Worker):
 
         self.dst_ranks = {}
         self.src_ranks = {}
-        if not self.cfg.runner.only_eval:
+        if self.enable_train:
             self.dst_ranks = {
                 "train": self._setup_dst_ranks(
                     self.total_num_train_envs // self.num_pipeline_stages
@@ -156,42 +186,40 @@ class MultiStepRolloutWorker(Worker):
             self.offload_model()
 
     def setup_sample_params(self):
-        # length parameters for rollout
-        self._length_params = OmegaConf.to_container(
-            self.cfg.algorithm.length_params, resolve=True
-        )
         # sampling parameters for rollout
-        self._sampling_params = OmegaConf.to_container(
-            self.cfg.algorithm.sampling_params, resolve=True
-        )
-        self._train_sampling_params = {
-            "do_sample": self._sampling_params["do_sample"],
-            "temperature": self._sampling_params["temperature_train"]
-            if self._sampling_params["do_sample"]
-            else 1.0,
-            "top_k": self._sampling_params["top_k"],
-            "top_p": self._sampling_params["top_p"],
-            "max_new_tokens": self._length_params["max_new_token"],
-        }
-
-        self._eval_sampling_params = {
-            "do_sample": True
-            if self._sampling_params.get("temperature_eval", -1) > 0
-            else False,
-            "temperature": self._sampling_params["temperature_eval"],
-            "top_k": self._sampling_params["top_k"],
-            "top_p": self._sampling_params["top_p"],
-            "max_new_tokens": self._length_params["max_new_token"],
-        }
+        sampling_params = self.cfg.rollout.get("sampling_params", None)
+        if sampling_params is not None:
+            sampling_params = OmegaConf.to_container(sampling_params, resolve=True)
+            self._train_sampling_params = {
+                "do_sample": sampling_params["do_sample"],
+                "temperature": sampling_params["temperature_train"]
+                if sampling_params["do_sample"]
+                else 1.0,
+                "top_k": sampling_params["top_k"],
+                "top_p": sampling_params["top_p"],
+                "max_new_tokens": sampling_params["max_new_tokens"],
+            }
+            self._eval_sampling_params = {
+                "do_sample": True
+                if sampling_params.get("temperature_eval", -1) > 0
+                else False,
+                "temperature": sampling_params["temperature_eval"],
+                "top_k": sampling_params["top_k"],
+                "top_p": sampling_params["top_p"],
+                "max_new_tokens": sampling_params["max_new_tokens"],
+            }
+        else:
+            self._train_sampling_params = {}
+            self._eval_sampling_params = {}
 
         if self.expert_model is not None:
             self._dagger_sampling_params = {
-                "beta": self.cfg.algorithm.get("dagger", {}).get("init_beta", 0.5),
-                "beta_schedule": self.cfg.algorithm.get("dagger", {}).get(
+                "beta": self.algorithm_cfg.get("dagger", {}).get("init_beta", 0.5),
+                "beta_schedule": self.algorithm_cfg.get("dagger", {}).get(
                     "beta_schedule", "exponential"
                 ),
-                "beta_min": self.cfg.algorithm.get("dagger", {}).get("beta_min", 0.05),
-                "beta_decay": self.cfg.algorithm.get("dagger", {}).get(
+                "beta_min": self.algorithm_cfg.get("dagger", {}).get("beta_min", 0.05),
+                "beta_decay": self.algorithm_cfg.get("dagger", {}).get(
                     "beta_decay", 0.99
                 ),
             }
@@ -255,28 +283,31 @@ class MultiStepRolloutWorker(Worker):
             else self._eval_sampling_params
         )
 
-        if SupportedModel(self.cfg.actor.model.model_type) in [
+        if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.OPENPI,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
+            SupportedModel.GR00T_N1D6,
+            SupportedModel.GR00T_N1D7,
             SupportedModel.ABOT_M0,
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
         ]:
-            if self.cfg.algorithm.loss_type == "embodied_dagger":
+            loss_type = self.algorithm_cfg.get("loss_type", "actor")
+            if loss_type == "embodied_dagger":
                 kwargs = {"mode": "eval"}
             else:
                 kwargs = {"mode": mode}
 
-        if SupportedModel(self.cfg.actor.model.model_type) in [
+        if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
             SupportedModel.MLP_POLICY,
         ]:
             kwargs["return_obs"] = not hasattr(self.hf_model, "q_head")
 
-        only_save_expert = self.cfg.algorithm.get("dagger", {}).get(
+        only_save_expert = self.algorithm_cfg.get("dagger", {}).get(
             "only_save_expert", True
         )
 
@@ -401,7 +432,7 @@ class MultiStepRolloutWorker(Worker):
                 save_flags = None
                 if result.get("expert_label_flag", False):
                     save_flags = torch.full(
-                        (actions.shape[0], self.cfg.actor.model.num_action_chunks),
+                        (actions.shape[0], self.model_cfg.num_action_chunks),
                         True,
                         dtype=torch.bool,
                         device=actions.device,
@@ -439,6 +470,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
 
+    @Worker.timer("rollout/generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -461,7 +493,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.reload_model()
         for _ in tqdm(
-            range(self.cfg.algorithm.eval_rollout_epoch),
+            range(self.eval_rollout_epoch),
             desc="Evaluating Rollout Epochs",
             disable=(self._rank != 0),
         ):
@@ -488,6 +520,7 @@ class MultiStepRolloutWorker(Worker):
                 eval_batch_size=self.eval_batch_size,
             )
 
+    @Worker.timer("rollout/recv_obs")
     async def recv_env_output(
         self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
     ) -> dict[str, Any]:
@@ -588,6 +621,7 @@ class MultiStepRolloutWorker(Worker):
 
         return {"obs": merged_obs, "final_obs": merged_final_obs}
 
+    @Worker.timer("rollout/send_actions")
     def send_chunk_actions(
         self,
         output_channel: Channel,
@@ -661,6 +695,7 @@ class MultiStepRolloutWorker(Worker):
             for idx in range(len(sizes))
         ]
 
+    @Worker.timer("rollout/send_traj")
     def send_rollout_result(
         self,
         output_channel: Channel,

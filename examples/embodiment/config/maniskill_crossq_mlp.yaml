@@ -43,8 +43,6 @@ algorithm:
   group_size: 1
   agg_q: min
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -76,25 +74,11 @@ algorithm:
 
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: True
     ignore_terminations: True
@@ -103,6 +87,7 @@ env:
     max_steps_per_rollout_epoch: 2
   
   eval:
+    rollout_epoch: 1
     total_num_envs: 16
     auto_reset: True
     ignore_terminations: True
@@ -148,7 +133,6 @@ actor:
     add_q_head: True
 
     q_head_type: "crossq"
-
 
   optim:
     clip_grad: 10.0

@@ -15,15 +15,114 @@
 # Override of Ray's AMDGPUAcceleratorManager
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/amd_gpu.py
 
+import logging
 import os
-from typing import TYPE_CHECKING, Optional
+import shlex
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 from ray._private.accelerators.amd_gpu import AMDGPUAcceleratorManager
 
-from .accelerator import AcceleratorManager, AcceleratorType
+from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Module-level profiling state — toggled by the runner around gated steps.
+# Workers read this via AMDGPUManager.is_profiling_active().
+# ---------------------------------------------------------------------------
+
+_amd_profiling_active: bool = False
+
+
+# ---------------------------------------------------------------------------
+# RocprofSysConfig — ROCm Systems Profiler profiling configuration
+# ---------------------------------------------------------------------------
+
+# Sensible defaults that mirror Ray's ROCPROFSYS_DEFAULT_CONFIG:
+# https://github.com/ray-project/ray/blob/master/python/ray/_private/runtime_env/rocprof_sys.py
+_ROCPROFSYS_DEFAULT_ENV: dict[str, str] = {
+    "ROCPROFSYS_TIME_OUTPUT": "false",
+}
+
+
+@AcceleratorManager.register_profiling_config(AcceleratorType.AMD_GPU)
+@dataclass
+class RocprofSysConfig(ProfileConfig):
+    """Configuration for profiling AMD GPU workers with ROCm Systems Profiler.
+
+    Wraps each matching worker's Python interpreter with
+    ``rocprof-sys-python [flags] -- <python_interpreter>``.  The scheduler
+    automatically sets ``ROCPROFSYS_OUTPUT_PATH`` and
+    ``ROCPROFSYS_OUTPUT_PREFIX`` from the configured profiling output
+    directory; values provided in ``env`` override these defaults.
+
+    Set ``cluster.profiling.backend: rocprof_sys`` to activate this backend.
+    """
+
+    BACKEND_TYPE: ClassVar[str] = "rocprof_sys"
+
+    backend: str = "rocprof_sys"
+    """Profiling backend identifier — always ``"rocprof_sys"`` for this class."""
+
+    args: Optional[dict[str, str]] = None
+    """CLI flags forwarded to ``rocprof-sys-python``.
+
+    Single-character keys become ``-x val``; multi-character keys become
+    ``--key=val``.  This mirrors the flag convention used by
+    ``rocprof-sys-python`` and Ray's ``_rocprof_sys`` runtime-env plugin.
+    """
+
+    env: Optional[dict[str, str]] = None
+    """Extra environment variables to inject into the profiled worker.
+
+    Merged on top of the scheduler-derived output-path variables, so
+    explicit values here take precedence over the automatic defaults.
+    """
+
+    def __post_init__(self) -> None:
+        """Normalize args and env dicts after parsing from YAML."""
+        super().__post_init__()
+
+        if self.args is not None:
+            assert hasattr(self.args, "keys"), (
+                "RocprofSys args must be a dictionary in cluster profiling config. "
+                f"But got {type(self.args)}: {self.args}"
+            )
+            self.args = {str(k): str(v) for k, v in self.args.items()}
+
+        if self.env is not None:
+            assert hasattr(self.env, "keys"), (
+                "RocprofSys env must be a dictionary in cluster profiling config. "
+                f"But got {type(self.env)}: {self.env}"
+            )
+            self.env = {str(k): str(v) for k, v in self.env.items()}
+
+    def check(self) -> bool:
+        """Return ``True`` if the ``rocprof-sys-python`` executable is available on PATH."""
+        import shutil
+
+        return shutil.which("rocprof-sys-python") is not None
+
+    def to_cli_tokens(self) -> list[str]:
+        """Render the ``rocprof-sys-python`` prefix tokens.
+
+        Returns the token list up to and including the ``--`` separator;
+        the caller appends the Python interpreter path as the final token.
+        """
+        tokens = ["rocprof-sys-python"]
+        for key, val in (self.args or {}).items():
+            if len(key) == 1:
+                tokens.extend([f"-{key}", val])
+            else:
+                tokens.append(f"--{key}={val}")
+        tokens.append("--")
+        return tokens
 
 
 @AcceleratorManager.register_manager(AcceleratorType.AMD_GPU)
@@ -137,7 +236,95 @@ class AMDGPUManager(AcceleratorManager):
                 f"min_ctas must be between 1 and 32, but got {config.min_ctas}"
             )
             assert config.max_ctas >= config.min_ctas, (
-                f"max_ctas must be greater than or equal to min_ctas, but got {config.max_ctas} and {config.min_ctas}"
+                f"max_ctas must be greater than or equal to min_ctas, got {config.max_ctas} and {config.min_ctas}"
             )
 
             return pg_options
+
+    # ------------------------------------------------------------------
+    # Profiling API — ROCm Systems Profiler implementation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def modify_profiling_context(
+        py_executable: str,
+        profiling_cfg: "RocprofSysConfig",
+        output_prefix: str,
+    ) -> str:
+        """Wrap ``py_executable`` with ``rocprof-sys-python`` using the given config."""
+        tokens = profiling_cfg.to_cli_tokens()
+        tokens.append(py_executable)
+        return " ".join(shlex.quote(t) for t in tokens)
+
+    @staticmethod
+    def start_profiling(step_idx: Optional[int] = None) -> None:
+        """Open a rocprof capture window via the CUDA profiler API."""
+        global _amd_profiling_active
+        if _amd_profiling_active:
+            return
+        import torch
+
+        _amd_profiling_active = True
+        torch.cuda.profiler.start()
+        if step_idx is not None:
+            logger.info("ROCm profiler window opened at step %d", step_idx)
+
+    @staticmethod
+    def stop_profiling() -> None:
+        """Close the current rocprof capture window."""
+        global _amd_profiling_active
+        if not _amd_profiling_active:
+            return
+        import torch
+
+        torch.cuda.profiler.stop()
+        _amd_profiling_active = False
+
+    @staticmethod
+    def is_profiling_active() -> bool:
+        """Check if the AMD GPU is profiling."""
+        return _amd_profiling_active
+
+    @staticmethod
+    @contextmanager
+    def profiling_range(
+        label: str,
+        color: Optional[str] = None,
+        domain: Optional[str] = None,
+    ):
+        """Emit an NVTX range around the enclosed block when profiling is active."""
+        if not _amd_profiling_active:
+            yield
+            return
+        import torch
+
+        torch.cuda.nvtx.range_push(label)
+        try:
+            yield
+        finally:
+            torch.cuda.nvtx.range_pop()
+
+    @staticmethod
+    def get_profiling_env_vars(
+        profiling_cfg: "RocprofSysConfig",
+        output_prefix: str,
+    ) -> dict[str, str]:
+        """Return the env vars required to direct rocprof-sys output.
+
+        Starts from ``_ROCPROFSYS_DEFAULT_ENV`` defaults, then derives
+        ``ROCPROFSYS_OUTPUT_PATH`` / ``ROCPROFSYS_OUTPUT_PREFIX`` from
+        ``output_prefix``, and finally overlays any explicit values from
+        ``profiling_cfg.env`` (user values win).
+        """
+        env_vars: dict[str, str] = dict(_ROCPROFSYS_DEFAULT_ENV)
+
+        if output_prefix:
+            env_vars.setdefault(
+                "ROCPROFSYS_OUTPUT_PATH", os.path.dirname(output_prefix)
+            )
+            env_vars.setdefault(
+                "ROCPROFSYS_OUTPUT_PREFIX", os.path.basename(output_prefix)
+            )
+
+        env_vars.update(profiling_cfg.env or {})
+        return env_vars

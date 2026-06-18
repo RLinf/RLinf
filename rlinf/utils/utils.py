@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import numpy as np
 import torch
@@ -29,6 +29,7 @@ from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
 from rlinf.scheduler import Worker
+from rlinf.utils.metric_utils import compute_loss_mask
 
 
 def clear_memory(sync=True):
@@ -614,3 +615,134 @@ def set_rng_state(rng_state: dict) -> None:
     random.setstate(rng_state["random"])
     if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
+
+
+PIPELINE_BATCH_KEY_SEPARATOR = "::"
+
+
+def pack_batch(batch: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    packed_batch: dict[str, Any] = {}
+    for key, value in batch.items():
+        packed_key = (
+            key if not prefix else f"{prefix}{PIPELINE_BATCH_KEY_SEPARATOR}{key}"
+        )
+        if value is None:
+            continue
+        if isinstance(value, torch.Tensor):
+            packed_batch[packed_key] = value
+        elif isinstance(value, dict):
+            packed_batch.update(pack_batch(value, prefix=packed_key))
+        else:
+            raise ValueError(
+                f"Unsupported value type in batch: {type(value)} for key: {key}"
+            )
+    return packed_batch
+
+
+def unpack_batch(batch: dict[str, Any]) -> dict[str, Any]:
+    unpack_batch_dict: dict[str, Any] = {}
+    for packed_key, value in batch.items():
+        cursor = unpack_batch_dict
+        key_parts = packed_key.split(PIPELINE_BATCH_KEY_SEPARATOR)
+        for key_part in key_parts[:-1]:
+            cursor = cursor.setdefault(key_part, {})
+        cursor[key_parts[-1]] = value
+    return unpack_batch_dict
+
+
+def flatten_embodied_batch(
+    batch: dict[str, Any], shuffle_id: torch.Tensor
+) -> dict[str, Any]:
+    # here to flatten the batch for embodied data, which is originally
+    # in shape [T, B, ...] to [T*B, ...], and also shuffle the batch according to shuffle_id
+    ret_dict: dict[str, Any] = {}
+    for key, value in batch.items():
+        if key in ["dones", "terminations", "truncations", "prev_values"]:
+            value = value[:-1]
+        if "env_info" in key:
+            raise NotImplementedError
+        if value is None:
+            # could we just ignore it?
+            ret_dict[key] = None
+        elif isinstance(value, torch.Tensor):
+            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+        elif isinstance(value, dict):
+            ret_dict[key] = flatten_embodied_batch(value, shuffle_id)
+    return ret_dict
+
+
+def merge_rollout_epochs(batch: dict[str, Any], rollout_epoch: int) -> dict[str, Any]:
+    ret_dict: dict[str, Any] = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            # here to merge the batch for embodied data
+            # which is originally in shape [rollout_epoch, B, ...] to [rollout_epoch*B, ...]
+            new_value = value.reshape(rollout_epoch, -1, *value.shape[1:]).transpose(
+                0, 1
+            )
+            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
+            ret_dict[key] = new_value
+        elif isinstance(value, dict):
+            ret_dict[key] = merge_rollout_epochs(value, rollout_epoch)
+        else:
+            raise ValueError(
+                f"Unsupported value type in batch: {type(value)} for key: {key}"
+            )
+    return ret_dict
+
+
+def preprocess_embodied_batch(
+    batch: dict[str, Any],
+    *,
+    rollout_epoch: int,
+    auto_reset: bool,
+    ignore_terminations: bool,
+    reward_type: str,
+    filter_rewards: bool,
+    group_size: int,
+    rewards_lower_bound: float | None = None,
+    rewards_upper_bound: float | None = None,
+) -> dict[str, torch.Tensor]:
+    batch = merge_rollout_epochs(batch, rollout_epoch)
+
+    if not auto_reset and not ignore_terminations:
+        dones = batch["dones"]
+        loss_mask, loss_mask_sum = compute_loss_mask(dones)
+
+        if reward_type == "chunk_level":
+            loss_mask = loss_mask.any(dim=-1, keepdim=True)
+            loss_mask_sum = loss_mask_sum[..., -1:]
+
+        batch["loss_mask"] = loss_mask
+        batch["loss_mask_sum"] = loss_mask_sum
+
+    if filter_rewards:
+        rewards = batch["rewards"]
+        if batch.get("loss_mask", None) is not None:
+            rewards = rewards * batch["loss_mask"]
+        n_chunk_step, batch_size, _ = rewards.shape
+
+        assert batch_size % group_size == 0, (
+            f"batch {batch_size} not divisible by group_size {group_size}"
+        )
+        n_prompts = batch_size // group_size
+
+        rewards = rewards.transpose(0, 1).reshape(rewards.shape[1], -1)
+        reward_matrix = rewards.reshape(n_prompts, group_size, rewards.shape[-1])
+        reward_matrix = reward_matrix.sum(dim=-1)
+        mean_reward_in_group = reward_matrix.mean(dim=1)
+
+        reward_filter_mask = (mean_reward_in_group >= rewards_lower_bound) & (
+            mean_reward_in_group <= rewards_upper_bound
+        )
+        reward_filter_mask = reward_filter_mask.repeat_interleave(group_size)
+        reward_filter_mask = (
+            reward_filter_mask.unsqueeze(0).expand(n_chunk_step, -1).unsqueeze(-1)
+        )
+
+        if batch.get("loss_mask", None) is not None:
+            batch["loss_mask"] = reward_filter_mask & batch["loss_mask"]
+        else:
+            batch["loss_mask"] = reward_filter_mask
+
+    return batch

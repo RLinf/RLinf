@@ -1,0 +1,36 @@
+model_type: "gr00t_n1d7"
+
+# Model precision and loading settings
+precision: "bf16"
+trust_remote_code: True
+is_lora: false
+
+# Action and policy settings
+action_dim: 7
+# Match the validated Isaac-GR00T LIBERO rollout, which executes the first 8
+# actions from each predicted chunk during evaluation.
+num_action_chunks: 16
+denoising_steps: 4
+
+obs_converter_type: "libero"
+embodiment_tag: libero_sim # N1.7 change this value from libero_panda to libero_sim
+add_value_head: True
+
+rl_head_config:
+  joint_logprob: False
+  noise_method: "flow_sde"
+  ignore_last: False
+  safe_get_logprob: False
+  noise_anneal: False
+  noise_params: [0.7, 0.3, 400]
+  noise_level: 0.5
+  action_noise_scale: 0.1
+  add_value_head: ${actor.model.add_value_head}
+  chunk_critic_input: False
+  detach_critic_input: True
+  disable_dropout: True
+  use_vlm_value: False
+  value_vlm_mode: "mean_token"
+  padding_value: 570
+
+num_steps: 4

@@ -1,0 +1,85 @@
+defaults:
+  - env/realworld_bin_relocation@env.eval
+  - model/pi0@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0 # Local robot rank in the franka node group (n for the n+1 th robot)
+    rollout:
+      node_group: "4090"
+      placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+  node_groups:
+    - label: "4090" # GPU node group
+      node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
+    - label: franka
+      node_ranks: 1 # Change this if your robot node is not rank 1
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
+            node_rank: 1
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "realworld-eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+  val_check_interval: -1
+
+  ckpt_path: "/path/to/ckpt.pt"
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+  eval:
+    rollout_epoch: 20
+    ignore_terminations: False
+    no_gripper: False
+    total_num_envs: 1
+    use_spacemouse: False
+
+    max_steps_per_rollout_epoch: 200
+    max_episode_steps: 200
+
+    override_cfg:
+      target_ee_pose: TARGET_EE_POSE
+      camera_serials: ["SERIAL1", "SERIAL2"]
+      task_description: null  # e.g. "pick up the object and place it into the container"
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/model"
+    num_action_chunks: 10
+    state_dim: 19
+    action_dim: 7
+    add_value_head: False
+
+    openpi:
+      config_name: "pi0_realworld"
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${rollout.model.num_action_chunks}

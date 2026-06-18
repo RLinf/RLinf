@@ -1,23 +1,46 @@
 Search-R1的强化学习训练
-=======================
+========================================
 
-结合工具调用的Multi-turn
-RL被证明能够将大语言模型（LLM）的交互边界扩展到真实世界。本文档介绍了如何在
-RLinf 框架下复现论文\ `Search-R1: Training LLMs to Reason and Leverage
-Search Engines with Reinforcement
-Learning <https://arxiv.org/abs/2503.09516>`__\ 中的实验，使用强化学习（RL）来训练大语言模型（LLM）通过调用搜索工具回答问题。
+使用本配方复现 `Search-R1: Training LLMs to Reason and Leverage Search Engines with Reinforcement Learning <https://arxiv.org/abs/2503.09516>`__ 的搜索增强推理实验，通过强化学习训练大语言模型调用搜索工具回答问题。
+
+概述
+----------------------------------------
+
+使用本配方结合本地 wiki 检索服务训练搜索增强推理模型。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      Qwen2.5-3B-Instruct
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      带搜索工具调用的多轮强化学习
+
+   .. grid-item-card:: 工具
+      :text-align: center
+
+      FAISS 或 Qdrant 本地 wiki server
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      参考运行使用 8×H100
 
 环境
-----
+----------------------------------------
 
 RLinf环境
-~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 环境配置参照 `RLinf
-Installation <https://rlinf.readthedocs.io/en/latest/rst_source/start/installation.html>`__
+RLinf 环境配置参照 :doc:`RLinf Installation </rst_source/start/installation>`。
 
 Local Wiki Server运行环境
-~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们使用search-R1示例中的local retrieve
 server，通过conda安装faiss，详细文档见\ `SearchR1 <https://raw.githubusercontent.com/PeterGriffinJin/Search-R1/refs/heads/main/docs/retriever.md>`__\ ，安装过程参考\ `Search-R1 &
@@ -37,7 +60,7 @@ veRL-SGLang <https://github.com/zhaochenyang20/Awesome-ML-SYS-Tutorial/blob/main
    pip install uvicorn fastapi
 
 Wiki配置文件
-~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们使用Asearcher提供的本地检索文件，下载文件大约 50~60GB
 
@@ -81,7 +104,7 @@ Wiki配置文件
 运行launch_local_server.sh启动Local Wiki Server，等待直至输出server ip等信息，代表server启动完成
 
 (Optional) 使用Qdrant作为Wiki Server
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们也支持使用 qdrant 作为 wiki 服务器。如果你不打算使用 qdrant，可以直接跳到 训练 部分。
 
@@ -121,7 +144,7 @@ Wiki配置文件
 Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参考 `Qdrant 文档 <https://qdrant.tech/documentation/guides/optimize/>`__。
 
 在8*H100上训练
---------------
+----------------------------------------
 
 从huggingface上下载\ `训练集 <https://huggingface.co/datasets/RLinf/Search-R1-Data>`__
 ，并将路径写入 `examples/agent/searchr1/config/train_qwen2.5.yaml`:
@@ -152,7 +175,7 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
       ……
       distributed_executor_backend: mp   # ray or mp
       disable_log_stats: False
-      detokenize: True  
+      detokenize: True
 
 由于 Search-R1 会re-tokenize模型输出， `recompute_logprobs` 应当设置为True
 
@@ -165,8 +188,8 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
 
 运行 `bash examples/agent/searchr1/run_train.sh` 启动训练。
 
-测试
-----
+评测
+----------------------------------------
 
 运行以下命令将 Megatron checkpoint 转换为 HuggingFace model
 
@@ -219,8 +242,8 @@ model路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
 运行 `bash examples/agent/searchr1/run_eval.sh` 启动测试。
 
-训练曲线
---------
+可视化与结果
+----------------------------------------
 
 下面展示 reward 曲线和训练时间曲线。
 
@@ -228,7 +251,7 @@ model路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/searchr1.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1.png" style="width: 100%;"/>
        <p><em>Qwen2.5-3B-Instruct in RLinf</em></p>
      </div>
    </div>
@@ -239,7 +262,7 @@ model路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/searchr1_orig_impl_time.png" style="width: 35%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/searchr1_orig_impl_time.png" style="width: 35%;"/>
        <p><em>Qwen2.5-3B-Instruct in original implementation at PeterGriffinJin/Search-R1</em></p>
      </div>
    </div>

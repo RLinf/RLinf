@@ -1,319 +1,86 @@
 Installation
 ============
 
-RLinf supports multiple backend engines for both training and inference. As of now, the following configurations are available:
+Install RLinf in one of two ways: **Option 1 (UV)** builds a local virtual
+environment matched to your machine, while **Option 2 (Docker)** gives the most
+reproducible setup.
 
-- **Megatron** and **SGLang/vLLM** for training LLMs on MATH tasks.
-- **FSDP** and **Huggingface** for training VLAs on LIBERO and ManiSkill3.
+Option 1: UV
+------------
 
-Backend Engines
----------------
-
-1. **Training Engines**
-
-   - **FSDP**: A simple and efficient training engine that is beginner-friendly, widely compatible, easy to use, and supports native PyTorch modules.
-
-   - **Megatron**: Designed for experienced developers seeking maximum performance. It supports a variety of parallel configurations and offers SOTA training speed and scalability.
-
-2. **Inference Engines**
-
-   - **SGLang/vLLM**: A mature and widely adopted inference engine that offers many advanced features and optimizations.
-
-   - **Huggingface**: Easy to use, with native APIs provided by the Huggingface ecosystem.
-
-Hardware Requirements
-~~~~~~~~~~~~~~~~~~~~~~~
-
-The following hardware configuration has been extensively tested:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Component
-     - Configuration
-   * - GPU
-     - 8xH100 per node
-   * - CPU
-     - 192 cores per node
-   * - Memory
-     - 1.8TB per node
-   * - Network
-     - NVLink + RoCE / IB 3.2 Tbps 
-   * - Storage
-     - | 1TB local storage for single-node experiments
-       | 10TB shared storage (NAS) for distributed experiments
-
-
-Software Requirements
-~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Component
-     - Version
-   * - Operating System
-     - Ubuntu 22.04
-   * - NVIDIA Driver
-     - 535.183.06
-   * - CUDA
-     - 12.4 
-   * - Docker
-     - 26.0.0
-   * - NVIDIA Container Toolkit
-     - 1.17.8
-
-Installation Methods
---------------------
-
-RLinf provides two installation options. We **recommend using Docker**, as it provides the fastest and most reproducible environment.
-However, if your system is incompatible with the Docker image, you can also install RLinf manually in a Python environment.
-
-
-Installation Method 1: Docker Image
---------------------------------------------------
-
-We provide Docker images for different experiments:
-
-- **Embodied:**
-
-  - ``rlinf/rlinf:agentic-rlinf0.2-maniskill_libero`` for the Libero or ManiSkill benchmarks. For other embodied experiments, please refer to the corresponding sections in :doc:`../examples/index`
-
-- **Math reasoning:** 
-
-  - ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1`` (used for enhancing LLM reasoning on MATH tasks)
-
-
-Once you've identified the appropriate image for your setup, pull the Docker image:
+Build a UV virtual environment with ``install.sh``. Pass an install target
+(``embodied``, ``agentic``, or ``docs``) plus any target-specific flags:
 
 .. code-block:: bash
 
-   # For mainland China users, you can use the following for better download speed:
-   # docker.1ms.run/rlinf/rlinf:CHOSEN_IMAGE
-   docker pull rlinf/rlinf:CHOSEN_IMAGE
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+   bash requirements/install.sh embodied --model openvla --env maniskill_libero
+   source .venv/bin/activate
 
-Then, start the container using the pulled image:
-
-.. warning::
-
-  1. Ensure the docker is started with `-e NVIDIA_DRIVER_CAPABILITIES=all` to enable GPU support, especially the `graphics` capability for rendering in embodied experiments.
-
-  2. Do not override the `/root` and `/opt` directories in the container (with `-v` or `--volume` of `docker run`), as they contain important asset files and environments. If your platform requires mounting `/root`, run `link_assets` in the container after starting it to restore the asset links in the `/root` directory.
-
-  3. Avoid changing the `$HOME` environment variable (e.g., `docker run -e HOME=/new_home`), which should be `/root` by default. ManiSkill and other tools rely on this path to find the assets. If `$HOME` is changed before running scripts in the docker image, make sure to relink the assets to the new `$HOME` by executing `link_assets`.
+More targets and combinations:
 
 .. code-block:: bash
 
+   bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
+   bash requirements/install.sh embodied --model openpi --env libero
+   bash requirements/install.sh agentic
+   bash requirements/install.sh docs
+
+Run ``bash requirements/install.sh --help`` for the complete model and
+environment list.
+
+- Use ``--venv <dir>`` to choose the virtual environment directory.
+- Use ``--use-mirror`` for faster downloads from mainland China.
+- Use ``--python <version>`` only when a package requires it. The default is
+  Python 3.11.14; some environments such as ``behavior`` and ``d4rl`` require
+  Python 3.10.
+- Use ``--torch <version>`` only when you need a different PyTorch wheel.
+- Use ``--platform amd`` or ``--platform ascend`` for experimental non-NVIDIA
+  installs. See :doc:`../guides/amd_rocm` and :doc:`../guides/ascend_cann`.
+
+Option 2: Docker
+----------------
+
+Each image bundles a ready-to-run stack (for example,
+``agentic-rlinf0.2-maniskill_libero``). Pull and run it, then select the model
+environment inside the container:
+
+.. code-block:: bash
+
+   docker pull rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:CHOSEN_IMAGE /bin/bash
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero /bin/bash
 
-Inside the container, clone the RLinf repository:
-
-.. code-block:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
+   source switch_env openvla
 
-The embodied image contains multiple Python virtual environments (venv) located in the `/opt/venv` directory for different models, namely ``openvla``, ``openvla-oft``, and ``openpi``.
-The default environment is set to ``openvla``.
-To switch to the desired venv, use the built-in script `switch_env`:
+- Keep ``-e NVIDIA_DRIVER_CAPABILITIES=all`` for GPU rendering.
+- Do not mount over ``/root`` or ``/opt``; those directories contain assets and
+  virtual environments in the image.
+- If your platform changes ``$HOME`` or remounts ``/root``, run ``link_assets``
+  inside the container before launching an example.
+- Switch model environments with ``source switch_env openvla``,
+  ``source switch_env openvla-oft``, or ``source switch_env openpi``.
+
+Verify
+------
+
+After activation, verify that RLinf and Ray are visible in the environment:
 
 .. code-block:: bash
 
-   source switch_env <env_name>
-   # source switch_env openvla
-   # source switch_env openvla-oft
-   # source switch_env openpi
+   python -c "import rlinf; print(rlinf.__file__)"
+   ray --version
 
-.. note::
+Next Steps
+----------
 
-  Both the `link_assets` and `switch_env` scripts are built-in utilities in the Docker image provided by us. You can find them in `/usr/local/bin`.
-
-Installation Method 2: UV Custom Environment
---------------------------------------------------------------
-**If you have already used the Docker image, you can skip the following steps.**
-
-You can install the dependencies for the target experiments using the `install.sh` script under the `requirements/` folder.
-The script is organized by *targets* and *models*:
-
-- ``embodied`` target (for embodied agents) with different models specified via `--model`, e.g., ``openvla``, ``openvla-oft`` or ``openpi``.
-
-  Each embodied model also requires an ``--env`` argument to specify the environment, e.g. ``maniskill_libero``, ``behavior`` or ``metaworld``.
-
-- ``reason`` target (for reasoning / Megatron stack).
-- ``docs`` target (for building the documentation).
-
-For example, to install the dependencies for the OpenVLA + ManiSkill LIBERO experiment, run:
-
-.. code-block:: shell
-  
-  cd <path_to_RLinf_repository>
-  # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-  bash requirements/install.sh embodied --model openvla --env maniskill_libero
-
-This will create a virtual environment under the current path named `.venv`.
-
-To activate the virtual environment, you can use the following command:
-
-.. code-block:: shell
-  
-  source .venv/bin/activate
-
-To deactivate the virtual environment, simply run:
-
-.. code-block:: shell
-
-  deactivate
-
-To install the reasoning (Megatron + SGLang/vLLM) stack instead, run:
-
-.. code-block:: shell
-
-  bash requirements/install.sh agentic
-
-You can override the default virtual environment directory using ``--venv``. For example:
-
-.. code-block:: shell
-
-  bash requirements/install.sh embodied --model openpi --env maniskill_libero --venv openpi-venv
-  source openpi-venv/bin/activate
-
-Install Script Options
-~~~~~~~~~~~~~~~~~~~~~~
-
-Selecting a Python Version
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The script defaults to Python **3.11.14**. Use ``--python`` to request a different version
-(e.g. ``3.12.0`` for newer packages, or ``3.10.15`` for stricter compatibility). The version
-must be ``>=3.10``.
-
-.. note::
-
-   The ``behavior`` and ``d4rl`` environments internally require Python 3.10 and will override
-   ``--python`` regardless of what you pass.
-
-.. note::
-
-   Critical dependencies such as PyTorch may only provide wheels for newer Python versions in
-   their latest releases. If you specify a newer Python version (e.g. 3.13), you may also need
-   to pass ``--torch`` with a compatible version, otherwise the install may fail to find a
-   matching wheel.
-
-.. code-block:: shell
-
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero --python 3.12.0
-
-   # Newer Python may require a newer torch
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero --python 3.13.0 --torch 2.7.0
-
-Selecting a PyTorch Version
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-The default PyTorch version is pinned in ``pyproject.toml`` (currently **2.6.0**). Use
-``--torch`` to install a different version. ``torchvision`` and ``torchaudio`` are derived
-automatically (``torchvision=0.<minor+15>.<patch>``, ``torchaudio=<torch>``). The
-``pyproject.toml`` is patched in place for the duration of the install and restored afterward.
-
-.. code-block:: shell
-
-   bash requirements/install.sh agentic --torch 2.7.0
-
-.. note::
-
-   On AMD (``--platform amd``), ``--torch`` defaults to the lowest torch version with a matching
-   ROCm wheel on the PyTorch index. It should usually be left unset on that platform.
-
-Selecting a Hardware Platform
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Three platforms are supported via ``--platform``:
-
-- ``nvidia`` (default): uses standard PyPI CUDA wheels; prebuilt flash-attn wheels are available.
-- ``amd``: ROCm-based. ``torch``, ``torchvision``, and ``torchaudio`` are fetched from the
-  PyTorch ROCm wheel index. flash-attn is built from source. Use ``--rocm <version>`` to pin
-  the ROCm version; it is auto-detected from the system if omitted.
-- ``ascend``: Huawei NPU. Uses CPU torch from PyPI plus ``torch-npu``. flash-attn is skipped entirely.
-
-.. code-block:: shell
-
-   # AMD ROCm (auto-detect ROCm version)
-   bash requirements/install.sh agentic --platform amd
-
-   # AMD ROCm (pin ROCm version)
-   bash requirements/install.sh agentic --platform amd --rocm 6.3
-
-   # Ascend NPU
-   bash requirements/install.sh embodied --model openvla --env maniskill_libero --platform ascend
-
-You can also export ``UV_TORCH_BACKEND`` before running the script to bypass automatic backend
-selection (e.g. ``export UV_TORCH_BACKEND=cu124``).
-
-Full Argument Reference
-^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 72
-
-   * - Argument
-     - Description
-   * - ``<target>``
-     - Installation target. One of ``embodied`` (default), ``agentic``, or ``docs``.
-   * - ``--model <name>``
-     - Embodied model to install (``target=embodied`` only).
-       Supported: ``openvla``, ``openvla-oft``, ``openpi``, ``gr00t``, ``dexbotic``, ``starvla``,
-       ``lingbotvla``, ``dreamzero``, ``qwen3_vl``.
-       Omit to install an environment without a model.
-   * - ``--env <name>``
-     - Environment to install alongside the model. Required for most embodied models.
-       Supported: ``behavior``, ``maniskill_libero``, ``libero``, ``metaworld``, ``calvin``,
-       ``isaaclab``, ``robocasa``, ``franka``, ``franka-dexhand``, ``frankasim``, ``robotwin``,
-       ``habitat``, ``opensora``, ``wan``, ``xsquare_turtle2``, ``liberopro``, ``liberoplus``,
-       ``roboverse``, ``embodichain``, ``d4rl``, ``dosw1``, ``gim_arm``, ``dummy``.
-   * - ``--venv <dir>``
-     - Virtual environment directory name. Default: ``.venv``.
-   * - ``--python <version>``
-     - Python version for the venv. Default: ``3.11.14``. Must be ``>=3.10``.
-   * - ``--torch <version>``
-     - Override the PyTorch version, e.g. ``2.7.0``.
-   * - ``--platform <name>``
-     - Hardware platform: ``nvidia`` (default), ``amd``, or ``ascend``.
-   * - ``--rocm <version>``
-     - ROCm version for ``--platform amd``, e.g. ``6.3``. Auto-detected when omitted.
-   * - ``--use-mirror``
-     - Route downloads through mirror sites. Recommended for mainland China users.
-   * - ``--no-root``
-     - Skip system-level dependency installation.
-   * - ``--no-flash-attn``
-     - Skip flash-attn installation.
-   * - ``--install-rlinf``
-     - Also install the ``rlinf`` package itself into the venv.
-   * - ``-h``, ``--help``
-     - Print the help message and exit.
-
-.. _install-as-library:
-
-Installation as a Library
---------------------------------------------------
-
-.. warning::
-  The `rlinf` package does not manage env and model dependencies, but only those of RLinf core system.
-
-  So you need to additionally install the dependencies for the target experiments yourself.
-
-  It is not intended to be directly used for RL experiments, but rather as a third-party library for other systems.
-
-RLinf is now available on PyPI for installation via pip as a library. 
-
-- Use `pip install rlinf[embodied]` for embodied RL.
-- Use `pip install rlinf[agentic-sglang]` for agentic RL with SGLang.
-- Use `pip install rlinf[agentic-vllm]` for agentic RL with vLLM.
+- :doc:`Run the VLA quickstart <vla>`.
+- :doc:`Scale beyond one machine <../guides/launch-scale/index>`.
+- :doc:`Open the cheat sheet <cheat_sheet>` when you only need commands.

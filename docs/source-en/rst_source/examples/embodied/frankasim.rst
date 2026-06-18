@@ -1,278 +1,201 @@
 RL with Franka-Sim Benchmark
-======================================================
+============================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+.. figure:: https://raw.githubusercontent.com/RLinf/serl/refs/heads/RLinf/franka-sim/franka_sim/franka_sim/envs/xmls/robotiq_2f85/2f85.png
+   :align: center
+   :width: 70%
 
-This document provides a complete guide to launching and managing
-**Vision-Language-Action Models (VLAs)** training tasks in the **RLinf** framework.
-It also explains how to fine-tune a VLA model in the **Franka-Sim** simulation environment
-to perform robotic manipulation tasks.
+   Franka-Sim assets from the RLinf SERL fork.
 
-The main goal is to enable the model to acquire the following capabilities:
+Franka-Sim is a lightweight Franka Panda simulation environment built from the
+`SERL <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`__ stack.
+You'll use RLinf to train either an MLP policy with PPO on state observations or a
+CNN policy with asynchronous SAC on RGB observations.
 
-1. **Visual understanding**: process RGB images captured from robot cameras;
-2. **Language understanding**: interpret natural language task descriptions;
-3. **Action generation**: produce accurate robot actions (position, rotation, gripper control);
-4. **Reinforcement learning**: optimize policies with PPO using environment feedback.
+Overview
+--------
 
-Environment
------------
+Train a Franka pick-cube policy with either state-only or vision observations.
 
-The Franka-Sim environments are built on top of the
-`serl <https://rail-berkeley.github.io/serl/docs/sim_quick_start.html>`_ project.
-Two minimal Franka-Sim simulation tasks are provided:
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- ``PandaPickCube-v0``
-- ``PandaPickCubeVision-v0``
+   .. grid-item-card:: Models
+      :text-align: center
 
-Task Definition
-~~~~~~~~~~~~~~~
+      MLP · CNN
 
-- **Task**: control a Franka Panda robot arm to pick up a cube and move it to a target position;
-- **Observation**:
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-  - ``PandaPickCube-v0``: proprioceptive states + target position;
-  - ``PandaPickCubeVision-v0``: multi-view RGB images (third-person + wrist camera) + proprioceptive states;
+      PPO · SAC
 
-- **Action Space**: 4D continuous actions
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-  - 3D end-effector position control (x, y, z)
-  - gripper control (open/close)
+      PickCube state · vision
 
-Data Structure
-~~~~~~~~~~~~~~
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-``PandaPickCube-v0``
+      1 node · 1 GPU
 
-- **States**: proprioceptive states and target location
+| **You'll do:** install → optionally download ResNet → launch training → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Franka-Sim assets from the install step.
 
-  - end-effector 3D position
-  - end-effector 3D velocity
-  - gripper open/close state (1D)
-  - cube 3D position
+Tasks
+~~~~~
 
-``PandaPickCubeVision-v0``
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-- **Images**: RGB tensors from a third-person view and a wrist camera view
-- **States**: proprioceptive states
+   * - Task
+     - Description
+   * - ``PandaPickCube-v0``
+     - State-observation pick-cube task for the MLP + PPO recipe.
+   * - ``PandaPickCubeVision-v0``
+     - RGB-observation pick-cube task for the CNN + asynchronous SAC recipe.
 
-  - end-effector 3D position
-  - end-effector 3D velocity
-  - gripper open/close state (1D)
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
-- **Task Descriptions**: natural language instructions
-- **Actions**: normalized continuous action values
-- **Rewards**: dense rewards based on task progress
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-Algorithms
-----------
+   * - Field
+     - Specification
+   * - Observation
+     - ``PandaPickCube-v0`` uses proprioceptive state and target position; ``PandaPickCubeVision-v0`` uses RGB images plus state.
+   * - Action
+     - 4-dim continuous action: 3D end-effector position delta plus gripper control.
+   * - Reward
+     - Dense task-progress reward.
+   * - Prompt
+     - Not used by the state MLP recipe; vision policies consume task-conditioned observations from the env wrapper.
 
-The core algorithm components include:
+Installation
+------------
 
-1. **PPO (Proximal Policy Optimization)**
+.. include:: _setup_common.rst
 
-   - use GAE (Generalized Advantage Estimation) for advantage estimation;
-   - policy clipping with ratio constraints;
-   - value function clipping;
-   - entropy regularization.
+**Docker image**
 
-2. **SAC (Soft Actor-Critic)**
-
-   - Learning Q-values by Bellman backups and entropy regularization.
-
-   - Learning policy to maximize entropy-regularized Q.
-
-   - Learning temperature parameter for exploration-exploitation trade-off.
-
-Dependency Installation
--------------------------
-
-1. Clone the RLinf repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   # For faster downloads in mainland China (optional):
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
-
-Option 1: Docker image
-^^^^^^^^^^^^^^^^^^^^^^
-
-Run experiments using the official Docker image:
-
-.. code-block:: bash
+.. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-frankasim
-      # For faster Docker pulls in mainland China (optional):
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
 
-Option 2: Custom environment
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   # For mainland China users:
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
 
-.. code-block:: bash
-
-   # To accelerate dependency downloads in China, append --use-mirror to install.sh
-   bash requirements/install.sh embodied --model openvla --env frankasim
-   source .venv/bin/activate
-
-Model Download
---------------
-
-If you are training the CNN policy (skip this section for the MLP policy), you need to first download the ResNet checkpoint we provided.
-
-**ResNet Checkpoint Download**
+Switch to the virtual environment inside the image:
 
 .. code:: bash
 
-   # Download the ResNet checkpoint (choose either method)
-   # Method 1: Using git clone
+   source switch_env openvla
+
+**Custom environment**
+
+Install Franka-Sim dependencies:
+
+.. code:: bash
+
+   # Mainland China users can add --use-mirror.
+   bash requirements/install.sh embodied --model openvla --env frankasim
+   source .venv/bin/activate
+
+Download the Model
+------------------
+
+Skip this section for the MLP + PPO recipe. For the CNN + SAC recipe, download the
+ResNet checkpoint:
+
+.. code-block:: bash
+
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
+   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
-After downloading, make sure the `model_path` in the config yaml points to this directory. 
-Update ``actor.model.model_path`` and ``rollout.model.model_path`` to the path of the model directory as follows.
+Then set the same checkpoint path for rollout and actor in
+``examples/embodiment/config/frankasim_sac_cnn_async.yaml``:
 
 .. code-block:: yaml
 
    rollout:
       model:
-         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+         model_path: /path/to/RLinf-ResNet10-pretrained
    actor:
       model:
-         model_path: Pathto/RLinf/RLinf-ResNet10-pretrained
+         model_path: /path/to/RLinf-ResNet10-pretrained
 
-Running the Script
--------------------
+Run It
+------
 
-1. Key configuration parameters
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Pick one recipe and launch training:
 
-Example 1: Pipeline overlap (recommended)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 20 18
 
-.. code-block:: yaml
+   * - Recipe
+     - Config
+     - Entrypoint
+     - Command suffix
+   * - MLP + PPO
+     - ``examples/embodiment/config/frankasim_ppo_mlp.yaml``
+     - ``run_embodiment.sh``
+     - ``frankasim_ppo_mlp``
+   * - CNN + SAC
+     - ``examples/embodiment/config/frankasim_sac_cnn_async.yaml``
+     - ``run_async.sh``
+     - ``frankasim_sac_cnn_async``
 
-   cluster:
-     num_nodes: 2
-     component_placement:
-       env: 0-7
-       rollout: 8-15
-       actor: 0-15
+.. code:: bash
 
-   rollout:
-     pipeline_stage_num: 2
-
-This configuration enables pipeline overlap between **rollout** and **env** to increase throughput.
-
-Example 2: Fully shared (env / rollout / actor share all GPUs)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 1
-     component_placement:
-       env,rollout,actor: all
-
-Example 3: Fully separated (no interference, usually no offload needed)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: yaml
-
-   cluster:
-     num_nodes: 2
-     component_placement:
-       env: 0-3
-       rollout: 4-7
-       actor: 8-15
-
-This configuration isolates env, rollout, and actor on different GPU groups, so offload is usually unnecessary.
-
-2. Launch command
-~~~~~~~~~~~~~~~~~
-
-After selecting a configuration, start training in root directory:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-Supports training an MLP policy using PPO or training a CNN policy using SAC in the Franka-Sim environment:
-
-.. code-block:: bash
-
+   # State-observation PPO recipe
    bash examples/embodiment/run_embodiment.sh frankasim_ppo_mlp
+
+   # Vision SAC recipe
    bash examples/embodiment/run_async.sh frankasim_sac_cnn_async
+
+What this does:
+
+1. Starts the selected embodied training entrypoint.
+2. Creates Ray workers for the actor, rollout, and Franka-Sim env components.
+3. Runs rollouts, computes task rewards, and updates the selected policy.
+
+.. note::
+
+   Both reference configs run on GPU ``0``. Tune ``cluster.component_placement``,
+   ``env.train.total_num_envs``, and batch sizes if you move to a larger machine.
 
 Visualization and Results
 -------------------------
 
-1. TensorBoard logs
-~~~~~~~~~~~~~~~~~~~
+Launch TensorBoard from the RLinf repo root:
 
-.. code-block:: bash
+.. code:: bash
 
-   tensorboard --logdir ./logs --port 6006
+   tensorboard --logdir ../results --port 6006
 
-2. Key metrics to monitor
-~~~~~~~~~~~~~~~~~~~~~~~~~
+The key signal is ``env/success_once``. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
 
-Training metrics
-^^^^^^^^^^^^^^^^
+Enable video when you want rollout videos:
 
-- ``train/actor/approx_kl``: approximate KL divergence, used to monitor policy update magnitude
-- ``train/actor/clip_fraction``: fraction of samples affected by PPO clipping
-- ``train/actor/clipped_ratio``: mean clipped probability ratio
-- ``train/actor/grad_norm``: gradient norm
-- ``train/actor/lr``: learning rate
-- ``train/actor/policy_loss``: policy loss
-- ``train/critic/value_loss``: value function loss
-- ``train/critic/value_clip_ratio``: fraction of samples affected by value clipping
-- ``train/critic/explained_variance``: value fit quality, closer to 1 is better
-- ``train/entropy_loss``: policy entropy
-- ``train/loss``: total loss (actor + critic + entropy regularization)
-
-Rollout metrics
-^^^^^^^^^^^^^^^
-
-- ``rollout/advantages_max``: maximum advantage
-- ``rollout/advantages_mean``: mean advantage
-- ``rollout/advantages_min``: minimum advantage
-- ``rollout/rewards``: reward statistics per chunk
-
-Environment metrics
-^^^^^^^^^^^^^^^^^^^
-
-- ``env/episode_len``: episode length (steps)
-- ``env/return``: total episode return (less informative for sparse rewards)
-- ``env/reward``: step-level reward
-- ``env/success_once``: recommended metric, reflects unnormalized success rate
-
-3. Video generation
-~~~~~~~~~~~~~~~~~~~
-
-Video generation is currently supported only in ``PandaPickCubeVision-v0``:
-
-.. code-block:: yaml
+.. code:: yaml
 
    env:
      eval:
@@ -280,26 +203,17 @@ Video generation is currently supported only in ``PandaPickCubeVision-v0``:
          save_video: True
          video_base_dir: ${runner.logger.log_path}/video/eval
 
-4. Logging backend integration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-.. code-block:: yaml
+   * - Recipe
+     - Reported Behavior
+   * - CNN + asynchronous SAC
+     - Learns a stable grasping strategy within about one hour in the simulation setup used for the original run.
 
-   runner:
-     task_type: embodied
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "maniskill_ppo_openvla"
-       logger_backends: ["tensorboard"]  # wandb, swanlab
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/frankasim_curve.png
+   :align: center
+   :width: 90%
 
-Simulation Results
-~~~~~~~~~~~~~~~~~~~
-The following presents the training curves of asynchronous SAC+CNN in the simulation environment. Within one hour, the grasping strategy could be successfully learned and remained stable thereafter.
-
-.. raw:: html
-
-  <div style="flex: 0.8; text-align: center;">
-      <img src="https://github.com/RLinf/misc/raw/main/pic/frankasim_curve.png" style="width: 100%;"/>
-      <p><em>Success rate curve</em></p>
-    </div>
+   Franka-Sim asynchronous SAC + CNN success-rate curve.

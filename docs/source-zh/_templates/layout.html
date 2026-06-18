@@ -41,9 +41,11 @@ window.SPHINX_AI_CONFIG = {
   }
 })();
 </script>
-{%- endblock %} 
+{%- endblock %}
 
-{%- block navbar_end %}
-  {{ super() }}
-  {%- include "askai.html" -%}
+{%- block docs_navbar %}
+<button class="pst-navbar-icon sidebar-toggle primary-toggle rlinf-sidebar-toggle d-print-none" aria-label="{{ _('Site navigation') }}">
+  <span class="fa-solid fa-bars"></span>
+</button>
+{% include "askai.html" %}
 {%- endblock %}

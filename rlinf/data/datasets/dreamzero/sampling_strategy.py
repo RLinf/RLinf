@@ -14,9 +14,9 @@
 
 """Temporal index sampling for DreamZero LeRobot SFT datasets.
 
-Two modes (relative frame offsets before adding ``frame_in_ep``):
+Two modes with different index contracts:
 
-**fixed_window** — one contiguous span from the dataset index (legacy RLinf).
+**fixed_window** — relative frame offsets before adding ``frame_in_ep`` (legacy RLinf).
 
 Config: ``num_frames``, ``max_chunk_size`` (macro blocks), ``action_horizon``.
 
@@ -31,8 +31,7 @@ Config: ``num_frames``, ``max_chunk_size`` (macro blocks), ``action_horizon``.
     chunk0  [0 .. H-1]   chunk1  [H .. 2H-1]   ...   chunk_{K-1}
             |<- H act ->|       |<- H act ->|
 
-**multi_anchor** — expand along the episode within the same language label
-(Groot ``lerobot_sharded`` semantics).
+**multi_anchor** — episode-local absolute frame indices.
 
 Config: ``max_chunk_size``, ``macro_stride`` (default 24), per-anchor micro
 offsets (video: 0,3,...,21; action: 0..H-1).
@@ -83,7 +82,11 @@ class MultiAnchorTemporalConfig:
 
 @dataclass(frozen=True)
 class TemporalIndices:
-    """Relative frame indices within an episode (before adding ``frame_in_ep``)."""
+    """Temporal frame indices for one sample.
+
+    ``fixed_window``: offsets relative to ``frame_in_ep``.
+    ``multi_anchor``: episode-local absolute frame indices.
+    """
 
     video: np.ndarray
     state: np.ndarray
