@@ -36,9 +36,9 @@ mounted into the container:
       -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
       -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
-      swr.cn-north-9.myhuaweicloud.com/rlinf/rlinf_npu:v1.0.1-910b
-      # above is 910b image，for 910c(a3) image please use below image:
-      # swr.cn-north-9.myhuaweicloud.com/rlinf/rlinf_npu:v1.0.1-a3
+      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      # For mainland China users, you can use the following for better download speed:
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
 
 If you don't want to use privileged flag, then you need to add serval devices, and manually add NPU:
 
@@ -48,7 +48,13 @@ If you don't want to use privileged flag, then you need to add serval devices, a
       --device=/dev/davinci_manager \
       --device=/dev/devmm_svm \
       --device=/dev/hisi_hdc \
-      --device=dev/davinci0 # first npu
+      --device=/dev/davinci0 # first npu for example
+
+Inside the container, switch to the OpenVLA-OFT environment:
+
+.. code-block:: bash
+
+   source switch_env openvla-oft
 
 If you build the Docker image yourself, pass the Ascend platform and CANN image
 version explicitly. ``CANN_VER`` includes the hardware tag used by the base
@@ -58,7 +64,7 @@ image:
 
    docker build \
       --build-arg PLATFORM=ascend \
-      --build-arg CANN_VER=8.5.0-910b \
+      --build-arg CANN_VER=9.0.0-910b \
       --build-arg UBUNTU_VER=22.04 \
       --build-arg BUILD_TARGET=embodied-libero \
       -t rlinf-libero-cann9 .
@@ -68,6 +74,22 @@ The Dockerfile uses the CANN base image:
 .. code-block:: text
 
    swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
+
+Option 2: Native Installation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Install dependencies with ``install.sh`` and pass ``--platform ascend``:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
+   source .venv/bin/activate
+
+For faster downloads in mainland China, add ``--use-mirror``:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --use-mirror --platform ascend embodied --model openvla-oft --env libero
 
 LIBERO CPU Rendering
 --------------------
@@ -96,7 +118,7 @@ enabled:
    MUJOCO_GL=osmesa \
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
-   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh libero_10_grpo_openvlaoft
 
 For PPO, use the PPO config from the original LIBERO page:
 
@@ -105,7 +127,7 @@ For PPO, use the PPO config from the original LIBERO page:
    MUJOCO_GL=osmesa \
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
-   bash examples/embodiment/run_embodiment.sh ibero_10_ppo_openpi_pi05
+   bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
 What Stays the Same
 -------------------
