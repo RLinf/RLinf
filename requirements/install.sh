@@ -1176,6 +1176,14 @@ install_openpi_model() {
             install_polaris_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             ;;
+        so101)
+            # SO101 SFT only needs openpi + lerobot. No simulator env clone.
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv sync --extra so101 --inexact --active $NO_INSTALL_RLINF_CMD
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
