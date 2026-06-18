@@ -608,6 +608,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          export PYTHONPATH=${REPO_PATH}/.venv/lib/python3.11/site-packages:${PYTHONPATH:-}
           bash tests/e2e_tests/embodied/run.sh isaaclab_ppo_openpi_pi05
 
       - name: Clean up
