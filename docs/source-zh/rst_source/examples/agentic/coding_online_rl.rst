@@ -1,32 +1,64 @@
 代码补全在线强化学习
-====================
+========================================
 
-代码补全在线强化学习（Online Coding RL）是 RLinf 框架中的一个重要应用场景。
-通过与 Continue 等代码编辑器的集成，获取用户对代码补全的偏好反馈，可以实现近乎实时的代码生成和反馈学习，快速提高代码补全的质量，和对齐用户的偏好。
-本示例展示了如何使用 RLinf 框架训练一个能够进行在线代码补全任务的模型。
+使用本配方将 Continue 接入 RLinf，收集代码补全的接受 / 拒绝反馈，并在线更新 Qwen coder 模型。
 
-相关阅读：:doc:`智能体落地“最后一公里”初探之Cursor在线强化学习 <../../blog/build_a_coding_online_rl_case>`。
+相关阅读：:doc:`智能体落地“最后一公里”初探之Cursor在线强化学习 <../../resources/blog/build_a_coding_online_rl_case>`。
 
 概述
---------
+----------------------------------------
 
-代码补全在线强化学习系统通过以下方式工作：
+使用本配方将 Continue 连接到 RLinf 训练服务，并根据用户反馈更新代码补全模型。
 
-1. **实时交互**：系统接收来自 Continue 等编辑器的代码补全请求
-2. **模型推理**：使用训练好的模型生成代码补全建议
-3. **用户反馈**：收集用户对生成代码的接受/拒绝反馈
-4. **在线学习**：基于用户反馈实时更新模型参数
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-这种实时学习机制使得模型能够快速适应用户的编程习惯和偏好。
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      Qwen2.5-Coder-1.5B
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      PPO 在线强化学习或 GRPO 离线验证
+
+   .. grid-item-card:: 反馈
+      :text-align: center
+
+      Continue 接受 / 拒绝事件或 LLM-as-judge 标签
+
+   .. grid-item-card:: 服务
+      :text-align: center
+
+      ``8081`` 推理服务与 ``8082`` 反馈接收服务
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38 38
+
+   * - 步骤
+     - 组件
+     - 产出
+   * - 实时交互
+     - Continue 扩展
+     - 向 RLinf 发送代码补全请求
+   * - 模型推理
+     - RLinf 推理服务
+     - 返回代码补全建议
+   * - 用户反馈
+     - Continue tracking callback
+     - 记录接受或拒绝的补全
+   * - 在线学习
+     - RLinf 训练服务
+     - 根据反馈更新策略
 
 我们同时提供了针对在线强化学习及离线验证的示例。其中离线验证示例使用大模型模拟人类偏好进行打分，不需要也不支持部署 Continue 在线使用。
 
-运行脚本
---------------
+安装
+----------------------------------------
 
-**环境准备**
-
-首先确保您已经安装了 RLinf 框架及其依赖：
+先安装 RLinf，再补充本配方使用的轻量 HTTP 客户端依赖：
 
 .. code-block:: bash
 
@@ -40,10 +72,14 @@
    # 安装额外依赖
    modelscope download --dataset "paxionfruit/code-fim-v2-python-filtered" --local_dir code-fim-v2-python-filtered
 
-**配置 Continue 集成**
+运行
+----------------------------------------
+
+配置 Continue 集成
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **安装 Continue 扩展**
-   
+
    由于当前 Continue 未支持上传用户对代码补全的偏好反馈，因此我们修改了 Continue 的源码，支持上传用户对代码补全的偏好反馈。
    用户可从 `这里 <https://github.com/RLinf/continue/releases>`_ 获取编译好的修改后的 Continue 插件，或自行构建。
 
@@ -90,11 +126,12 @@
 
    修改并保存完成后，从左侧面板打开 Continue 扩展，点击右上角的 "设置" 齿轮按钮，在 "Models" 页面确保 "Autocomplete 模型" 选用 my-autocomplete。
 
-**启动训练服务**
+启动训练服务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **准备模型和配置**
 
-   确保您有预训练的模型权重，并修改配置文件，匹配模型路径、需要使用的端口等
+   准备预训练模型权重，并修改配置文件以匹配模型路径和端口。通用路径、runner、rollout 和 cluster 字段见 :doc:`训练配置 <../../reference/configuration>`。
 
    - 对于在线强化学习，修改并使用 examples/agent/coding_online_rl/config/qwen2.5-1.5b-ppo.yaml 文件:
       .. code-block:: yaml
@@ -133,10 +170,10 @@
 
    - 对于在线强化学习：
       .. code-block:: bash
-      
+
          # 进入项目目录
-         cd /path/to/rlinf_online_rl
-         
+         cd /path/to/RLinf
+
          # 启动训练服务
          bash examples/agent/coding_online_rl/run_main_coding_online_rl.sh
 
@@ -147,80 +184,84 @@
 
    - 对于离线验证：
       .. code-block:: bash
-      
+
          # 进入项目目录
-         cd /path/to/rlinf_online_rl
-         
+         cd /path/to/RLinf
+
          # 启动训练服务
          bash examples/agent/coding_online_rl/run_main_coding_rl_llm_judge.sh
 
-**与 Continue 联动**
+使用 Continue
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. **启动 Continue**
-   
+
    在 VS Code 中启动 Continue 扩展，确保它连接到正确的 API 端点。
 
 2. **开始编程**
-   
+
    在 Continue 中开始编写代码，系统将：
    - 自动发送代码补全请求到推理服务
    - 接收模型生成的代码建议
    - 收集您对建议的接受/拒绝反馈
 
 3. **实时学习**
-   
+
    系统会实时处理您的反馈：
    - 接受的建议被标记为正面反馈
    - 拒绝的建议被标记为负面反馈
    - 模型参数根据反馈进行在线更新
 
-**监控训练过程**
+可视化与结果
+----------------------------------------
 
-您可以通过以下方式监控训练过程：
+查看日志、TensorBoard 和 checkpoint。通用指标含义见 :doc:`训练指标 <../../reference/metrics>`。
 
 1. **查看日志输出**
-   
+
    .. code-block:: bash
 
       # 查看训练日志
       tail -f results/ppo-1.5b/train.log
 
 2. **使用 TensorBoard**
-   
+
    .. code-block:: bash
 
       # 启动 TensorBoard
       tensorboard --logdir results/grpo-1.5b
 
 3. **检查模型检查点**
-   
+
    训练过程中会定期保存模型检查点到 `results/grpo-1.5b/checkpoints/` 目录。
 
-**测试客户端**
+验证客户端
+----------------------------------------
 
-您可以使用提供的测试客户端来验证系统功能：
+使用提供的测试客户端验证系统功能：
 
 .. code-block:: bash
 
    # 运行测试客户端
-   python examples/agent/coding_online_rl/simple_test_client.py
+   python examples/agent/coding_online_rl/simple_online_coding_client.py
 
 测试客户端会模拟 Continue 的行为，发送代码补全请求并提交反馈数据。
 
-**故障排除**
+故障排查
+----------------------------------------
 
 常见问题及解决方案：
 
 1. **端口冲突**
-   
+
    如果端口 8081 或 8082 被占用，请修改配置文件中的端口设置。
 
 2. **模型加载失败**
-   
+
    检查模型路径是否正确，确保模型文件存在且可访问。
 
 3. **Continue 连接失败**
-   
-   确保 Continue 配置中的 API 端点地址正确，检查网络连接。还可使用 simple_test_client 测试是否能正常收到反馈数据。
 
-通过以上步骤，您就可以成功运行代码补全在线强化学习系统，并实现与 Continue 编辑器的无缝集成。
+   确保 Continue 配置中的 API 端点地址正确，检查网络连接。还可使用 ``simple_online_coding_client.py`` 测试是否能正常收到反馈数据。
+
+该流程形成在线闭环：Continue 发送请求，RLinf 收集反馈，训练服务更新策略。

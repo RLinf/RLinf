@@ -371,7 +371,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 SupportedModel.OPENVLA_OFT,
             ]:
                 kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
             if use_dsrl:
                 kwargs["train"] = True
@@ -483,7 +483,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         curr_obs = batch["curr_obs"]
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
-            kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
+            kwargs["temperature"] = self.cfg.rollout.sampling_params.temperature_train
         if self.use_dsrl:
             kwargs["train"] = True
         pi, log_pi, shared_feature = self.model(
@@ -533,7 +533,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             kwargs = {}
             if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
                 kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
             if self.use_dsrl:
                 kwargs["train"] = True

@@ -892,6 +892,9 @@ class FrankaEnv(gym.Env):
                 state["gripper_position"] = np.array(
                     [self._franka_state.gripper_position]
                 )
+            state = {
+                key: np.asarray(value, dtype=np.float32) for key, value in state.items()
+            }
             observation = {
                 "state": state,
                 "frames": frames,

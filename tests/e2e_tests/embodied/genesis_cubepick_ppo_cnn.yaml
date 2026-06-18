@@ -43,9 +43,6 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -66,24 +63,11 @@ algorithm:
   gae_lambda: 0.95
 
   reward_coef: 1.0
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 1
-    max_length: 1
-    min_length: 1
-
 env:
   group_name: EnvGroup
 
   train:
+    rollout_epoch: 1
     total_num_envs: 128
     group_size: ${algorithm.group_size}
     max_episode_steps: 50
@@ -97,6 +81,7 @@ env:
       info_on_video: True
       video_base_dir: ${runner.logger.log_path}/video/train
   eval:
+    rollout_epoch: 1
     total_num_envs: 32
     group_size: ${algorithm.group_size}
 

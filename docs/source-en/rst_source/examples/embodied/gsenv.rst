@@ -1,246 +1,209 @@
 RL with Real2Sim2Real GSEnv
-==========================================================
+===========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-This example describes the full workflow for reinforcement learning fine-tuning in the **GSEnv (ManiSkill-GS)** environment using the **RLinf** framework. GSEnv combines **ManiSkill** robot simulation with **3D Gaussian Splatting (3DGS)** rendering and supports Real-to-Sim-to-Real transfer; see the `pi_RL paper <https://arxiv.org/pdf/2510.25889>`_.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif
+   :align: center
+   :width: 90%
 
-The main goals are to equip the model with:
+   GSEnv / ManiSkill-GS.
 
-1. **Visual understanding**: Process RGB images from 3DGS rendering (aligned with real-world appearance).
-2. **Language understanding**: Understand natural-language task descriptions.
-3. **Action generation**: Produce precise robot actions (end-effector pose, gripper control).
-4. **Reinforcement learning**: Use PPO with environment feedback to optimize the policy.
+GSEnv, also known as ManiSkill-GS, combines ManiSkill physics with 3D Gaussian
+Splatting rendering for Real2Sim2Real manipulation. You'll use RLinf to
+PPO-fine-tune OpenPI π₀.₅ on ``GSEnv-PutCubeOnPlate-v0``.
 
-Environment
------------
+Overview
+--------
 
-**GSEnv (ManiSkill-GS) Environment**
+Fine-tune OpenPI π₀.₅ on a ManiSkill-compatible GSEnv task.
 
-- **Environment**: ManiSkill-based physics simulation + 3D Gaussian Splatting rendering, with the same interface as ManiSkill.
-- **Task**: Currently supports **PutCubeOnPlate-v0**: pick a cube and place it on a designated plate.
-- **Observation**: Supports state (proprioception) or rgb (e.g. third-person camera); task instruction is natural language, e.g. “pick up the cube and put it on the plate”.
-- **Action Space**: Continuous actions driven by PD end-effector control (e.g. pd_ee_target_delta_pose) for Franka arm and gripper.
-- **Robot**: my_franka (Franka FR3).
-- **Reward**: Sparse; evaluate() returns success (cube stably on the plate).
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**Data Structures**
+   .. grid-item-card:: Models
+      :text-align: center
 
-- **Images**: RGB tensors from 3DGS or sim camera rendering.
-- **Task Descriptions**: Natural-language instructions.
-- **Actions**: Normalized continuous values (denormalized and executed by the policy).
-- **Rewards**: 0/1 reward based on task success (configurable, e.g. only at episode end).
+      π₀.₅
 
-Algorithm
------------
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-**Core Components**
+      PPO
 
-1. **PPO (Proximal Policy Optimization)**
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-   - GAE (Generalized Advantage Estimation) for advantage estimation
-   - Ratio-based policy clipping
-   - Value function clipping
-   - Entropy regularization
+      PutCubeOnPlate
 
-2. **Vision-Language-Action models (e.g. OpenPI π\ :sub:`0`\ /π\ :sub:`0.5`\ )**
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-   - Vision + language input, action token output
-   - Compatible with GSEnv state/rgb observations and language instructions
+      1 node · 8 GPUs
 
-Dependencies and Setup
-----------------------
+| **You'll do:** install → add ManiSkill-GS assets → download model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · ManiSkill-GS checkout · GSEnv assets · an SFT checkpoint.
 
-1. Clone RLinf
-~~~~~~~~~~~~~~~~~~~~
+Tasks
+~~~~~
 
-.. code:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-   # For faster clone in some regions you can use:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   * - Task
+     - Description
+   * - ``GSEnv-PutCubeOnPlate-v0``
+     - Pick up the cube and put it on the plate.
 
-2. Install RLinf
-~~~~~~~~~~~~~~~~
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
-**Option 1: Docker image**
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-Run experiments with the Docker image.
+   * - Field
+     - Specification
+   * - Observation
+     - ManiSkill-compatible observation with 3DGS rendering enabled through ``gs_kwargs.render_interface: "gs_rlinf"``.
+   * - Action
+     - Continuous end-effector delta-position control for ``policy_setup: "panda-ee-target-dpos"``.
+   * - Reward
+     - Sparse success reward with ``reward_mode: only_success``.
+   * - Prompt
+     - The task instruction from the GSEnv wrapper.
+
+.. note::
+
+   GSEnv is wired through ``env_type: maniskill`` in
+   ``examples/embodiment/config/env/gsenv_put_cube_on_plate.yaml``. The task id
+   selects the ManiSkill-GS environment.
+
+Installation
+------------
+
+.. include:: _setup_common.rst
+
+**Docker image**
 
 .. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # For mirror in some regions:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-Switch to the correct virtual environment with the image’s ``switch_env`` tool:
+   # For mainland China users:
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+
+Switch to the OpenPI virtual environment inside the image:
 
 .. code:: bash
 
    source switch_env openpi
 
-**Option 2: Custom environment**
+**Custom environment**
+
+Install the ManiSkill/LIBERO environment with OpenPI dependencies:
 
 .. code:: bash
 
-   # Add `--use-mirror` to install.sh for faster install in some regions
-
+   # Mainland China users can add --use-mirror.
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-3. Install GSEnv
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-GSEnv comes from the separate repo `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`_; install it before using it with RLinf:
+Install ManiSkill-GS and its assets:
 
 .. code:: bash
 
-   # Clone ManiSkill-GS
    git clone -b v01 https://github.com/chenkang455/ManiSkill-GS.git
    cd ManiSkill-GS
    uv pip install -e .
 
-
-4. Download GSEnv assets
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-GSEnv needs asset files (robot URDFs, 3DGS PLY, object models, etc.). Download `RLinf/gsenv-assets-v0 <https://huggingface.co/datasets/RLinf/gsenv-assets-v0>`_ from HuggingFace into the ManiSkill-GS project ``assets/`` directory:
-
-.. code:: bash
-
-   # Run from ManiSkill-GS project root
-   export HF_ENDPOINT=https://hf-mirror.com
+   # Download assets into the ManiSkill-GS project.
+   # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/gsenv-assets-v0 --repo-type dataset --local-dir ./assets
 
-✨ After installation, run ``python scripts/test_rlinf_interface.py`` in the ManiSkill-GS project to verify the RLinf interface. Note: the first run may take a while while gsplat compiles; please be patient.
-
-Model download
---------------
-
-Before training, download the desired pretrained model (e.g. OpenPI π\ :sub:`0.5`\ SFT on GSEnv-PutCubeOnPlate):
+Verify the RLinf interface from the ManiSkill-GS project root:
 
 .. code:: bash
 
-   # Download model (choose one method)
-   # Method 1: git clone
+   python scripts/test_rlinf_interface.py
+
+.. note::
+
+   The first run can take time because ``gsplat`` may compile kernels.
+
+Download the Model
+------------------
+
+Download the OpenPI π₀.₅ SFT checkpoint:
+
+.. code-block:: bash
+
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
-   # Method 2: huggingface-hub
-   # Set HF_ENDPOINT for mirror if needed:
+   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT --local-dir RLinf-Pi05-GSEnv-PutCubeOnPlate-V0-SFT
 
+.. include:: _model_path.rst
 
-After download, set the model path correctly in your yaml config.
+Run It
+------
 
-Running the scripts
--------------------
+Launch the GSEnv recipe:
 
-**1. Cluster configuration**
+.. list-table::
+   :header-rows: 1
+   :widths: 28 46 26
 
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
-
-   rollout:
-      pipeline_stage_num: 2
-
-You can configure GPU usage for env, rollout, and actor. Setting ``pipeline_stage_num = 2`` enables pipeline overlap between rollout and env for higher throughput.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can also use a fully shared layout where env, rollout, and actor share all GPUs.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
-
-Or a fully separated layout where each component uses its own GPUs without offload.
-
-
-**2. Config files**
-
-GSEnv PutCubeOnPlate training config:
-
-- π\ :sub:`0.5`\ + PPO:
-  ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``
-
-
-**3. Launch command**
-
-To start training with your chosen config:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-Example: to train the π\ :sub:`0.5`\ model with PPO on GSEnv PutCubeOnPlate:
+   * - Recipe
+     - Config
+     - Command suffix
+   * - OpenPI π₀.₅ + PPO
+     - ``examples/embodiment/config/gsenv_ppo_openpi_pi05.yaml``
+     - ``gsenv_ppo_openpi_pi05``
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh gsenv_ppo_openpi_pi05
 
+What this does:
 
-Visualization and results
+1. Starts the embodied training entrypoint with the GSEnv Hydra config.
+2. Creates Ray workers for the actor, rollout, and ManiSkill-backed env components.
+3. Runs PPO rollouts with OpenPI action chunks and sparse GSEnv success rewards.
+
+.. note::
+
+   The default config uses ``actor,env,rollout: all``. Tune
+   ``cluster.component_placement``, ``env.train.total_num_envs``, and
+   ``actor.global_batch_size`` for your GPU memory budget.
+
+Visualization and Results
 -------------------------
 
-**1. TensorBoard**
+Launch TensorBoard from the RLinf repo root:
 
 .. code:: bash
 
-   # Start TensorBoard
-   tensorboard --logdir ./logs --port 6006
+   tensorboard --logdir ../results --port 6006
 
-**2. Key metrics**
+The key signal is ``env/success_once``. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
 
--  **Training**
-
-   -  ``actor/loss``: Policy loss
-   -  ``actor/value_loss``: Value loss (PPO)
-   -  ``actor/grad_norm``: Gradient norm
-   -  ``actor/approx_kl``: Approx KL between old and new policy
-   -  ``actor/pg_clipfrac``: Policy clip fraction
-   -  ``actor/value_clip_ratio``: Value clip ratio (PPO)
-
--  **Rollout**
-
-   -  ``rollout/returns_mean``: Mean episode return
-   -  ``rollout/advantages_mean``: Mean advantage
-
--  **Environment**
-
-   -  ``env/episode_len``: Mean episode length
-   -  ``env/success_once``: Task success rate
-
-**3. Video**
-
-Enable video in env config to record 3DGS renders (requires ``gs_kwargs.render_interface: "gs_rlinf"`` etc.):
+Enable video in the env config when you want 3DGS rollout videos:
 
 .. code:: yaml
 
@@ -249,31 +212,22 @@ Enable video in env config to record 3DGS renders (requires ``gs_kwargs.render_i
      info_on_video: True
      video_base_dir: ${runner.logger.log_path}/video/train
 
-**4. WandB**
+Enable W&B or SwanLab by adding logger backends:
 
 .. code:: yaml
 
    runner:
-     task_type: embodied
      logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "gsenv_ppo_openpi_pi05"
-       logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
+       logger_backends: ["tensorboard", "wandb"]  # or swanlab
 
-GSEnv results
--------------------------
-
-On **PutCubeOnPlate-v0**, training OpenPI π\ :sub:`0.5`\ with PPO in RLinf, monitor ``env/success_once`` and related metrics for convergence. Actual numbers depend on seed, steps, hyperparameters, and SFT checkpoint.
-
-.. image:: https://github.com/user-attachments/assets/54a22c98-df04-42bd-beef-2630f69da8be
-   :width: 600px
+.. figure:: https://github.com/user-attachments/assets/54a22c98-df04-42bd-beef-2630f69da8be
    :align: center
-   :alt: GSEnv training results (success rate, returns, etc.)
+   :width: 90%
+
+   Example GSEnv training curves.
 
 References
------------
+----------
 
-- **ManiSkill-GS repo**: GSEnv implementation and 3DGS rendering (`ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`_).
-- **pi_RL paper**: `pi_RL: Online RL Fine-tuning for Flow-based Vision-Language-Action Models <https://arxiv.org/pdf/2510.25889>`_.
-- **RLinf ManiSkill docs**: Understanding ManiSkill interface and config helps when using GSEnv.
+- `ManiSkill-GS <https://github.com/chenkang455/ManiSkill-GS>`__
+- `pi_RL paper <https://arxiv.org/pdf/2510.25889>`__

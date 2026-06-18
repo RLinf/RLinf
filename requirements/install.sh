@@ -74,9 +74,8 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
-
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -741,6 +740,7 @@ install_uv() {
 
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
+        export USE_MIRRORS
         export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
@@ -943,7 +943,10 @@ EOF
 
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
-    # - If ENV_VAR_NAME is set, verify it points to an existing directory and reuse it (no pull).
+    # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
+    #   already exists (no pull), otherwise clone GIT_URL into it. This lets a single
+    #   path be shared across multiple venvs/models — clone once, reuse everywhere
+    #   (e.g. set LIBERO_PATH so every model in an env image reuses one LIBERO clone).
     # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
     # If env var is not set and the directory already exists as a git repo, check if it is intact and re-clone it if not.
     # The resolved directory path is printed to stdout.
@@ -958,11 +961,13 @@ clone_or_reuse_repo() {
 
     local target_dir
     if [ -n "$env_value" ]; then
-        if [ ! -d "$env_value" ]; then
-            echo "$env_var_name is set to '$env_value' but the directory does not exist." >&2
-            exit 1
-        fi
         target_dir="$env_value"
+        if [ ! -d "$target_dir" ]; then
+            echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
+            git clone "$@" "$git_url" "$target_dir" >&2
+        else
+            echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
+        fi
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
@@ -1154,6 +1159,17 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
+        franka-franky)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv sync --extra franka --inexact --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1165,6 +1181,10 @@ install_openpi_model() {
             exit 1
             ;;
     esac
+
+    # Enforce RLinf-compatible runtime pins to avoid known breakages.
+    # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
 
     # Replace transformers models with OpenPI's modified versions
     local py_major_minor
@@ -1268,6 +1288,29 @@ install_gr00t_n1d6_model() {
     uv pip uninstall pynvml || true
 }
 
+install_gr00t_n1d7_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t N1.7." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip uninstall pynvml || true
+}
+
 install_dexbotic_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1356,7 +1399,7 @@ install_abot_m0_model() {
 
     uv pip uninstall pynvml || true
 }
-    
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1428,6 +1471,13 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
+        franka-franky)
+            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
@@ -1467,7 +1517,8 @@ install_dummy_env() {
 }
 
 install_libero_env() {
-    # Prefer an existing checkout if LIBERO_PATH is provided; otherwise clone into the venv.
+    # Use LIBERO_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local libero_dir
     libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
@@ -1568,7 +1619,8 @@ install_liberoplus_env() {
 }
 
 install_behavior_env() {
-    # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
+    # Use BEHAVIOR_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local behavior_dir
     behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
 
@@ -1698,6 +1750,23 @@ install_franka_env() {
     echo "export CMAKE_PREFIX_PATH=$ROS_CATKIN_PATH/libfranka/build:\$CMAKE_PREFIX_PATH" >> "$VENV_DIR/bin/activate"
     echo "source /opt/ros/noetic/setup.bash" >> "$VENV_DIR/bin/activate"
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
+}
+
+install_franka_franky_env() {
+    # Prebuilt franky-control wheel (libfranka bundled), published per
+    # libfranka version by the Brunch-Life/franky fork.  LIBFRANKA_VERSION
+    # must match your Franka firmware (compatibility matrix:
+    # https://frankarobotics.github.io/docs/compatibility.html); defaults
+    # to 0.19.0.  Override FRANKY_WHEEL (URL / local path / PyPI spec) when
+    # the host cannot reach github.com.
+    local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
+    local PYTAG
+    PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+    local FRANKY_WHEEL="${FRANKY_WHEEL:-https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
+    echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
+    # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
+    # re-resolve them breaks Ray pickling across nodes.
+    uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
 }
 
 install_franka_dexhand_deps() {
@@ -1854,7 +1923,7 @@ install_opensora_world_model() {
     opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
     
     uv pip install -e "$opensora_dir"
-
+    
     # xformers 0.0.29.post2 only has wheels for torch<=2.5, but we pin
     # torch==2.6.0. UV_TORCH_BACKEND=auto rejects mismatched torch-version
     # labels, so unset UV_TORCH_BACKEND entirely for this install so uv
@@ -1897,7 +1966,8 @@ install_agentic() {
     uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
 
     # Megatron-LM
-    # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
+    # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0)
 
@@ -1968,6 +2038,9 @@ main() {
                     ;;
                 gr00t_n1d6)
                     install_gr00t_n1d6_model
+                    ;;
+                gr00t_n1d7)
+                    install_gr00t_n1d7_model
                     ;;
                 dexbotic)
                     install_dexbotic_model

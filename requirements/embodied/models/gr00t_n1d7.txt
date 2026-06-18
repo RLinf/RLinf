@@ -1,0 +1,15 @@
+## gr00t_n1d7 is the RLinf entrypoint for Isaac-GR00T N1.7.
+## av 16.1.0 conflicts with lerobot==0.4.4 (<16), so we pin av 15.0.0 here.
+diffusers==0.35.1
+av==15.0.0
+pydantic==2.12.5
+albumentations==1.4.18
+pyzmq==27.0.1
+pyopengl==3.1.10
+mujoco==3.6.0
+transformers==4.57.3
+lerobot==0.4.4
+peft==0.17.1
+lmdb==1.7.5
+dm-tree
+tyro==0.9.17
