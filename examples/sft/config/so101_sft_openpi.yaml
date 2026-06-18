@@ -29,11 +29,17 @@ runner:
   save_interval: 100
 
 data:
-  # Path to a single merged LeRobot dataset directory. The collected SO101 data
-  # is split across rank_0/run_<timestamp>/ subdirectories; merge them with
-  # ``python toolkits/lerobot/merge_lerobot_datasets.py --source-dir /path/to/so101_data --output-dir /path/to/so101_data_merged``
-  # before launching SFT.
-  train_data_paths: "/path/to/so101_data_merged"
+  # LeRobot dataset path or HF repo id.  The SO101 collection writes one
+  # ``run_<timestamp>/`` subdir per session; merge them into a single
+  # dataset first with::
+  #
+  #     python toolkits/lerobot/merge_lerobot_datasets.py \
+  #         --source-dir /path/to/so101_data --output-dir /path/to/so101_data_merged
+  #
+  # Then either pass the merged path directly, or symlink it into
+  # ``$HF_LEROBOT_HOME/so101_data`` and set ``train_data_paths: so101_data``
+  # so the runtime asset_id matches the pi0_so101 norm_stats lookup path.
+  train_data_paths: "so101_data"
 
 actor:
   group_name: "ActorGroup"

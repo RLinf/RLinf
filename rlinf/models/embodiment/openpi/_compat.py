@@ -173,3 +173,106 @@ def install_compat_shims() -> None:
     """
     _install_lerobot_common_shim()
     _install_openpi_pandas_tasks_patch()
+
+
+# ---------------------------------------------------------------------------
+# Persistent (on-disk) variant
+# ---------------------------------------------------------------------------
+
+_PERSISTENT_PTH_NAME = "rlinf_openpi_compat.pth"
+_PERSISTENT_PTH_BODY = (
+    "import rlinf.models.embodiment.openpi._compat as _c; "
+    "_c.install_compat_shims()\n"
+)
+
+
+def install_persistent_shims(site_packages_dir: str | None = None) -> str | None:
+    """Drop a ``.pth`` file in *site_packages_dir* that runs both shims at site
+    init, so they fire even in freshly-spawned subprocesses (e.g. torch
+    DataLoader workers under ``multiprocessing.get_start_method() == "spawn"``).
+
+    The in-process :func:`install_compat_shims` is sufficient for the parent
+    process, but ``multiprocessing.spawn`` workers start fresh Python
+    interpreters and re-import OpenPI before our setup code gets a chance to
+    run.  Python processes ``.pth`` files inside ``site-packages/`` during
+    :mod:`site` initialisation; any line starting with ``import`` is exec'd
+    on the spot, so this is the earliest hook into a worker's lifecycle.
+
+    Args:
+        site_packages_dir: Directory to write the ``.pth`` file into.  When
+            ``None``, the first writable ``site-packages`` directory on
+            :data:`sys.path` is picked.
+
+    Returns:
+        Path to the written ``.pth`` file, or ``None`` if no suitable site
+        directory could be found.
+    """
+    import os
+    import site
+
+    if site_packages_dir is None:
+        candidates = []
+        try:
+            candidates.extend(site.getsitepackages())
+        except Exception:
+            pass
+        user_site = site.getusersitepackages()
+        if user_site:
+            candidates.append(user_site)
+        site_packages_dir = next(
+            (c for c in candidates if c and os.path.isdir(c) and os.access(c, os.W_OK)),
+            None,
+        )
+    if site_packages_dir is None:
+        _logger.warning(
+            "Cannot install persistent openpi compat shim — no writable "
+            "site-packages directory found on sys.path."
+        )
+        return None
+
+    pth_path = os.path.join(site_packages_dir, _PERSISTENT_PTH_NAME)
+    # Idempotent — leave existing content alone if it already matches.
+    try:
+        with open(pth_path) as f:
+            existing = f.read()
+    except OSError:
+        existing = None
+    if existing != _PERSISTENT_PTH_BODY:
+        with open(pth_path, "w") as f:
+            f.write(_PERSISTENT_PTH_BODY)
+        _logger.info("Installed persistent openpi compat shim at %s", pth_path)
+    return pth_path
+
+
+def _main_cli() -> None:
+    """Entry point: ``python -m rlinf.models.embodiment.openpi._compat install``.
+
+    Used by ``requirements/install.sh`` after OpenPI is installed.
+    """
+    import argparse
+
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "action",
+        choices=["install"],
+        help="`install` writes the .pth file that triggers the shims in "
+        "every Python process started in this venv.",
+    )
+    p.add_argument(
+        "--site-packages",
+        default=None,
+        help="Override site-packages directory (defaults to the first writable "
+        "entry on sys.path).",
+    )
+    args = p.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.action == "install":
+        pth = install_persistent_shims(site_packages_dir=args.site_packages)
+        if pth is None:
+            raise SystemExit(2)
+        print(pth)
+
+
+if __name__ == "__main__":
+    _main_cli()

@@ -1205,7 +1205,14 @@ EOF
 )
     cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
-    
+
+    # Install the RLinf-side OpenPI compat shims (.pth in site-packages) so
+    # they fire in every Python process, including DataLoader workers under
+    # multiprocessing.spawn.  See rlinf/models/embodiment/openpi/_compat.py.
+    "$VENV_DIR/bin/python" -m rlinf.models.embodiment.openpi._compat install \
+        --site-packages "$VENV_DIR/lib/python${py_major_minor}/site-packages" \
+        || echo "[install.sh] WARNING: openpi compat .pth install failed; in-process shim still works."
+
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     uv pip uninstall pynvml || true
 }
