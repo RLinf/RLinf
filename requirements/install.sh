@@ -1183,6 +1183,10 @@ install_openpi_model() {
             ;;
     esac
 
+    # Enforce RLinf-compatible runtime pins to avoid known breakages.
+    # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+
     # Replace transformers models with OpenPI's modified versions
     local py_major_minor
     py_major_minor=$(python - <<'EOF'
