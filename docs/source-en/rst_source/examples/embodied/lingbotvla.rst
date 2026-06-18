@@ -2,6 +2,9 @@ RL on Lingbot-VLA Models
 =========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png
    :align: center
