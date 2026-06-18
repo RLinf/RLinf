@@ -1,6 +1,6 @@
 ---
 name: add-publication-docs
-description: Adds a new publication page to the RLinf Sphinx docs (EN + ZH) and wires it into the Publications index/toctree and navbar. Use when the user asks to add a publication/paper page, convert a paper README/markdown into docs, or update the publications listing.
+description: Adds a new publication page to the RLinf Sphinx docs (EN + ZH) and wires it into the Publications index/toctree. Use when the user asks to add a publication/paper page, convert a paper README/markdown into docs, or update the publications listing.
 ---
 
 # Add a Publication to RLinf Docs
@@ -9,11 +9,11 @@ This skill adds **one new publication** (paper/tech report/system note) into the
 
 ## What to create
 
-- **EN page**: `docs/source-en/rst_source/publications/<slug>.rst`
-- **ZH page**: `docs/source-zh/rst_source/publications/<slug>.rst`
+- **EN page**: `docs/source-en/rst_source/resources/publications/<slug>.rst`
+- **ZH page**: `docs/source-zh/rst_source/resources/publications/<slug>.rst`
 - **Index wiring**:
-  - `docs/source-en/rst_source/publications/index.rst`
-  - `docs/source-zh/rst_source/publications/index.rst`
+  - `docs/source-en/rst_source/resources/publications/index.rst`
+  - `docs/source-zh/rst_source/resources/publications/index.rst`
 
 Where `<slug>` is lowercase with underscores (match current style, e.g. `rlinf_vla`, `rlinf_user`).
 
@@ -35,9 +35,9 @@ For both EN and ZH pages, keep the same section order as existing publication pa
 
 - **Do not re-iterate full instructions** in publication pages.
 - **Quickstart must contain exactly one link** and it must point to the **corresponding existing example page** (no extra links).
-  - Embodied: `:doc:\`../examples/embodied/<benchmark_or_platform>\``
-  - Agentic/reasoning: `:doc:\`../examples/agentic/<task>\``
-  - Real-world: `:doc:\`../examples/embodied/franka\``
+  - Embodied: `:doc:\`../../examples/embodied/<benchmark_or_platform>\``
+  - Agentic/reasoning: `:doc:\`../../examples/agentic/<task>\``
+  - Real-world: `:doc:\`../../examples/embodied/franka\``
 - If there is no suitable example page yet, create that example page first; do not add installation / generic guides to Quickstart.
 
 ## Tables & figures rules
@@ -101,7 +101,7 @@ Results
 Quickstart
 ----------
 
-- :doc:`../examples/embodied/<benchmark_or_platform>`
+- :doc:`../../examples/embodied/<benchmark_or_platform>`
 
 Citation
 --------

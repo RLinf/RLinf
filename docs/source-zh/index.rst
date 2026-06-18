@@ -1,153 +1,97 @@
-RLinf 文档
-==========
+.. _home:
 
-.. image:: _static/svg/logo_white.svg
-   :width: 500px
-   :align: center
-   :class: logo-svg
+欢迎使用 RLinf
+==============
 
 .. raw:: html
 
-   <h1 style="text-align: center;">欢迎来到 <b>RLinf</b>！</h1>
+   <div class="rlinf-hero">
+     <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
+     <h1 class="rlinf-hero-title">欢迎使用 RLinf</h1>
+     <p class="rlinf-hero-subtitle">面向基础模型与具身智能体的可扩展强化学习后训练框架</p>
+   </div>
 
-RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学习对基础模型进行后训练而设计。名称中的 "inf" 代表 Infrastructure（基础架构），强调其作为新一代训练强大支撑系统的角色；同时也代表 Infinite（无限），象征该系统支持开放式学习、持续泛化和智能发展的无限可能性。
+RLinf 是一个灵活且可扩展的开源基础架构，专为通过强化学习对基础模型进行后训练而设计。名称中的 "inf" 既代表 Infrastructure（基础架构）——新一代训练的强大支撑，也代表 Infinite（无限）——象征开放式学习与持续泛化。
 
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 快速开始
+      :link: rst_source/start/index
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: 安装
+      :link: rst_source/start/installation
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: 示例
+      :link: rst_source/examples/index
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: 评测
+      :link: rst_source/evaluations/index
+      :link-type: doc
+      :text-align: center
+
+选择你的路径
+------------
+
+.. grid:: 1 2 2 2
+   :gutter: 3
+
+   .. grid-item-card:: 🤖 具身智能 RL
+      :link: rst_source/start/vla
+      :link-type: doc
+
+      使用 PPO 或 GRPO，在 LIBERO、ManiSkill、RoboTwin 等环境上微调 VLA 模型。
+
+   .. grid-item-card:: 🧠 智能体 / 推理 RL
+      :link: rst_source/examples/agentic/index
+      :link-type: doc
+
+      浏览 Qwen / DeepSeek 模型的智能体与推理配方。
+
+   .. grid-item-card:: 🧩 自定义扩展
+      :link: rst_source/extending/index
+      :link-type: doc
+
+      添加新的模型、环境或算法，并将其接入 RLinf。
+
+   .. grid-item-card:: 🚀 扩展到集群
+      :link: rst_source/guides/launch-scale/index
+      :link-type: doc
+
+      跨多 GPU 与多节点的共享式、分离式与混合式部署。
+
+为什么选择 RLinf
 ----------------
 
-.. image:: _static/svg/overview.svg
-   :width: 1000px
-   :align: center
-   :class: overview-svg
+.. list-table::
+   :header-rows: 1
 
-----------------
-
-**RLinf 的独特之处在于：**
-
-- 宏观到微观流程（Macro-to-Micro Flow）：一种新范式 M2Flow，通过微观级的执行流程完成宏观级的逻辑流程，**解耦逻辑工作流构建（可编程）与物理通信调度（高效执行）**。
-
-- 灵活的执行模式
-
-  - **共享式**：所有任务共享全部 GPU。
-  - **分离式**：支持细粒度流水线。
-  - **混合式**：可定制的混合部署，结合了共享式和分离式两种模式。
-
-- 自动调度策略
-
-  - **动态调度**：动态调度资源分配,最大化资源利用率。
-  - **静态调度**：根据训练任务自动选择最合适的执行模式，无需手动资源分配。
-
-- 具身智能支持
-
-  - 快速适配主流 VLA 模型：`OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
-  - 通过标准化 RL 接口支持主流基于 CPU 和 GPU 的模拟器：`ManiSkill3`_、`LIBERO`_、`IsaacLab`_
-  - 支持 π₀ 模型族首次基于 flow-matching 动作专家进行的强化学习微调。
-
-**RLinf 拥有出色的训练速度：**
-
-- 结合细粒度流水线的混合式：相比其他框架，**吞吐率提升超过 120%**。
-- 自动在线扩缩策略：训练资源动态扩展，GPU 切换只需数秒，**进一步提高效率 20–40%**，同时保持 RL 算法的 on-policy 特性。
-
-**RLinf 同时兼具灵活性与易用性：**
-
-- 多种后端集成支持
-
-  - 统一接口可驱动两种互补的后端，无需修改代码即可无缝切换。
-  - **FSDP + Hugging Face**：快速适配新模型与算法，适合初学者与快速原型开发。
-  - **Megatron + SGLang**：优化大规模训练效率，适用于对性能要求极高的专家用户。
-
-- 通过异步通信通道实现自适应通信
-
-- 内建对多种主流强化学习方法的支持，包括 `PPO`_、`GRPO`_、`DAPO`_、`Reinforce++`_ 等。
-
-.. _PPO: https://arxiv.org/abs/1707.06347
-.. _GRPO: https://arxiv.org/abs/2402.03300
-.. _DAPO: https://arxiv.org/abs/2503.14476
-.. _Reinforce++: https://arxiv.org/abs/2501.03262
-
-
-
-.. _OpenVLA: https://github.com/openvla/openvla
-.. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _ManiSkill3: https://github.com/haosulab/ManiSkill
-.. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _π₀: https://github.com/Physical-Intelligence/openpi
-.. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
-.. _SGLang: https://github.com/sgl-project/sglang
-.. _vLLM: https://github.com/vllm-project/vllm
-.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
-
-
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/start/index
-
---------------------------------------------
+   * - 优势
+     - 你将获得
+   * - 快
+     - 结合细粒度流水线的混合式相比同类框架实现 120%+ 的吞吐率提升，并支持自动在线扩缩。
+   * - 灵活
+     - 在 FSDP + Hugging Face（快速原型）与 Megatron + SGLang（大规模训练）之间切换，无需修改代码。
+   * - 可靠
+     - 内建 PPO、GRPO、DAPO、Reinforce++，并为具身与推理任务提供 SOTA 配方。
 
 .. toctree::
   :maxdepth: 3
   :includehidden:
   :titlesonly:
+  :hidden:
 
-  rst_source/tutorials/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/examples/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 3
-  :includehidden:
-  :titlesonly:
-
-  rst_source/evaluations/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/blog/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/publications/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/apis/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 1
-  :includehidden:
-  :titlesonly:
-
-  rst_source/faq
+  快速开始 <rst_source/start/index>
+  示例 <rst_source/examples/index>
+  评测 <rst_source/evaluations/index>
+  指南 <rst_source/guides/index>
+  概念 <rst_source/concepts/index>
+  参考 <rst_source/reference/index>
+  扩展 <rst_source/extending/index>
+  资源 <rst_source/resources/index>

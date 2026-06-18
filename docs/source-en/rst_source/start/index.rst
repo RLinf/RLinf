@@ -1,33 +1,89 @@
-Quickstart
-==========
+Get Started
+===========
 
-Welcome to the RLinf Quickstart Guide. This section will walk you through launching RLinf for the first time. 
-We present three concise examples to demonstrate the framework's workflow and help you get started quickly.
+Welcome to RLinf. This guide takes you from install to your first training run,
+then points you to what comes next.
 
+.. grid:: 1 2 2 4
+   :gutter: 2
 
-- **Installation:** Two installation methods for RLinf are supported: using a Docker image or a custom user environment (see :doc:`installation`).
+   .. grid-item-card:: Install
+      :link: installation
+      :link-type: doc
 
-- **Embodied training:** Training in the ManiSkill3 environment with the OpenVLA and OpenVLA-OFT models using the PPO algorithm (see :doc:`vla`).
+      Install the embodied stack with Docker or a custom environment.
 
-- **Agentic training:** Training on the boba dataset with the DeepSeek-R1-Distill-Qwen-1.5B model using the GRPO algorithm (see :doc:`llm`).
+   .. grid-item-card:: Requirements
+      :link: requirements
+      :link-type: doc
 
-- **Distributed training:** Multi-node training for embodied/agentic tasks (see :doc:`distribute`).
+      The tested hardware and software configuration.
 
+   .. grid-item-card:: Quick Start
+      :link: vla
+      :link-type: doc
 
-SOTA RL Training Reproduction
-=====================================
+      Train OpenVLA on ManiSkill3 with PPO.
 
-RLinf provides end-to-end recipes that reproduce or match **state-of-the-art (SOTA) RL results** out of the box—users can directly run our configs and scripts to obtain published numbers without custom engineering.
+   .. grid-item-card:: Launch & Scale
+      :link: ../guides/launch-scale/index
+      :link-type: doc
 
-For embodied tasks, RLinf reaches or matches SOTA success rates on benchmarks such as **LIBERO**, **ManiSkill**, **RoboTwin**, and more with OpenVLA, OpenVLA-OFT, π₀/π₀.₅, GR00T and other VLAs (see the :doc:`../examples/index` gallery and :doc:`../tutorials/rlalg/index` for algorithm details).
+      Move from a single machine to multi-node or real-world runs.
 
-For agentic tasks (including math reasoning), RLinf achieves SOTA performance on **AIME24/AIME25/GPQA-diamond** benchmarks with DeepSeek-R1-Distill-Qwen models, and supports single-agent and multi-agent training tasks such as Search-R1 and Coding-Online-RL (see :doc:`../examples/agentic/index`).
+What's Next
+-----------
+
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: Examples
+      :link: ../examples/index
+      :link-type: doc
+
+      Browse end-to-end recipes in the example gallery.
+
+   .. grid-item-card:: Evaluation
+      :link: ../evaluations/index
+      :link-type: doc
+
+      Measure success rates on benchmarks.
+
+   .. grid-item-card:: Concepts
+      :link: ../concepts/index
+      :link-type: doc
+
+      Understand the execution model.
+
+   .. grid-item-card:: Guides
+      :link: ../guides/index
+      :link-type: doc
+
+      Configure launches, logging, checkpoints, and clusters.
+
+   .. grid-item-card:: Why RLinf
+      :link: ../resources/why_rlinf
+      :link-type: doc
+
+      The design, performance, and SOTA results behind RLinf.
+
+Command Reference
+-----------------
+
+.. grid:: 1 1 1 1
+   :gutter: 2
+
+   .. grid-item-card:: Cheat Sheet
+      :link: cheat_sheet
+      :link-type: doc
+
+      Jump to the most-used commands after you know the workflow.
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
    installation
+   requirements
    vla
-   llm
-   distribute
+   cheat_sheet

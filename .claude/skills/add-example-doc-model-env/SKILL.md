@@ -34,7 +34,7 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
    **Note:** The top-level `examples/index.rst` only links to the category indexes and usually does not need to be changed when adding a single example.
 
 3. **If it is an embodied evaluation environment**  
-   In `docs/source-en/rst_source/start/vla-eval.rst`, add a line in the “List of currently supported evaluation environments”:
+   In `docs/source-en/rst_source/evaluations/index.rst` or the relevant evaluation guide, add the new evaluation flow:
    - For embodied examples: `:doc:\`Display Name <../examples/embodied/<name>\``
    - For other categories, follow the existing pattern in that file and mirror the relative path used there.
 
@@ -47,7 +47,7 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
    Edit the matching Chinese index file — for embodied, the same five split indexes under `docs/source-zh/rst_source/examples/` (`simulators_index.rst`, `real_world_index.rst`, `vla_wam_index.rst`, `sft_index.rst`, `methods_index.rst`); for agentic/system, `docs/source-zh/rst_source/examples/<category>/index.rst`:  
    - Add the same `<name>` entry to the hidden `.. toctree::`.  
    - If you added a gallery card in the English index, add a matching Chinese gallery card here, following existing HTML patterns.  
-   If the Chinese docs have a vla-eval or start page that lists environments, add the new example using the same relative path pattern as in English (typically `../examples/embodied/<name>` for embodied.
+   If the Chinese evaluation docs list the same benchmark or environment, add the new example using the same relative path pattern as in English.
 
 6. **Update README.md**  
    In the "What's NEW!" section at the top, add a new dated bullet, with the documentation link pointing to the correct **category** path, e.g.:  
@@ -78,9 +78,9 @@ Use existing examples in the same category (e.g. `embodied/libero.rst`, `embodie
 
 - [ ] English RST created: `docs/source-en/rst_source/examples/<category>/<name>.rst`.
 - [ ] English category index updated: `docs/source-en/rst_source/examples/<category>/index.rst` (toctree; optional gallery card).
-- [ ] If embodied eval env: `docs/source-en/rst_source/start/vla-eval.rst` updated with `../examples/embodied/<name>`.
+- [ ] If embodied eval env: `docs/source-en/rst_source/evaluations/index.rst` or the relevant evaluation guide updated with the new flow.
 - [ ] Chinese RST created: `docs/source-zh/rst_source/examples/<category>/<name>.rst`.
 - [ ] Chinese category index updated: `docs/source-zh/rst_source/examples/<category>/index.rst` (toctree; gallery card if added for EN).
-- [ ] If embodied eval env: Chinese vla-eval/start page updated if it lists environments (use the same relative path pattern as EN).
+- [ ] If embodied eval env: Chinese evaluation page updated if it lists environments (use the same relative path pattern as EN).
 - [ ] README.md updated: new bullet in "What's NEW!" and, if applicable, entry in Key Features table (using the correct category path).
 - [ ] README.zh-CN.md updated: new bullet in "最新动态" and, if applicable, entry in 核心特性 table (using the correct category path).

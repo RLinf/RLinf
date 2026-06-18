@@ -1,34 +1,88 @@
 快速开始
 ==========
 
-欢迎使用 RLinf 快速上手指南。本节将带你一步步运行 RLinf，帮助你快速了解整个框架的使用流程。
+欢迎使用 RLinf。本指南带你从安装到第一次训练运行，并指引接下来的步骤。
 
-我们提供了三个简洁示例，展示 RLinf 的基本工作流程，帮助你快速开始使用：
+.. grid:: 1 2 2 4
+   :gutter: 2
 
-- **安装方式：** RLinf 支持两种安装方法：使用 Docker 镜像，或自定义用户环境（详见 :doc:`installation`）。
+   .. grid-item-card:: 安装
+      :link: installation
+      :link-type: doc
 
-- **具身智能训练：** 在 ManiSkill3 环境中，使用 PPO 算法对 OpenVLA 和 OpenVLA-OFT 模型进行训练（详见 :doc:`vla`）。
+      使用 Docker 或自定义环境安装具身智能栈。
 
-- **智能体任务训练：** 使用 GRPO 算法，在 boba 数据集上训练 DeepSeek-R1-Distill-Qwen-1.5B 模型（详见 :doc:`llm`）。
+   .. grid-item-card:: 环境要求
+      :link: requirements
+      :link-type: doc
 
-- **分布式训练：** 支持多节点具身智能/智能体任务训练（详见 :doc:`distribute`）。
+      经过测试的硬件与软件配置。
 
+   .. grid-item-card:: 快速上手
+      :link: vla
+      :link-type: doc
 
-SOTA 强化学习复现
-==========================
+      在 ManiSkill3 上使用 PPO 训练 OpenVLA。
 
-RLinf 提供了一整套**可复现的 SOTA 强化学习配置**，用户无需额外工程改造，只需直接运行官方脚本和配置文件，即可复现论文级或业界领先的训练效果。
+   .. grid-item-card:: 启动与扩展
+      :link: ../guides/launch-scale/index
+      :link-type: doc
 
-在具身智能任务上，RLinf 在 **LIBERO**、**ManiSkill**、**RoboTwin** 等多个基准中达到了或接近当前最优的成功率，支持 OpenVLA、OpenVLA-OFT、π₀/π₀.₅、GR00T 等多种 VLA 模型（详见 :doc:`../examples/index` 中的示例库与 :doc:`../tutorials/rlalg/index` 中的算法教程）。
+      从单机扩展到多节点或真实机器人运行。
 
-在智能体任务（包含数学推理）上，RLinf 基于 DeepSeek-R1-Distill-Qwen 系列模型，在 **AIME24 / AIME25 / GPQA-diamond** 等基准上达到 SOTA 表现，同时支持诸如Search-R1与在线代码补全等单智能体与多智能体训练任务（详见 :doc:`../examples/agentic/reasoning` ）。
+接下来
+------
 
+.. grid:: 1 2 2 2
+   :gutter: 2
+
+   .. grid-item-card:: 示例
+      :link: ../examples/index
+      :link-type: doc
+
+      在示例库中浏览端到端配方。
+
+   .. grid-item-card:: 评测
+      :link: ../evaluations/index
+      :link-type: doc
+
+      在基准上评测成功率。
+
+   .. grid-item-card:: 概念
+      :link: ../concepts/index
+      :link-type: doc
+
+      理解 RLinf 的执行模型。
+
+   .. grid-item-card:: 指南
+      :link: ../guides/index
+      :link-type: doc
+
+      配置启动、日志、检查点与集群。
+
+   .. grid-item-card:: 为什么选择 RLinf
+      :link: ../resources/why_rlinf
+      :link-type: doc
+
+      RLinf 背后的设计理念、性能与 SOTA 结果。
+
+命令参考
+--------
+
+.. grid:: 1 1 1 1
+   :gutter: 2
+
+   .. grid-item-card:: 速查表
+      :link: cheat_sheet
+      :link-type: doc
+
+      熟悉流程后，直接查找最常用命令。
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
    installation
+   requirements
    vla
-   llm
-   distribute
+   cheat_sheet

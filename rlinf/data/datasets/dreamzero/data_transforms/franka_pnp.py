@@ -41,8 +41,6 @@ from rlinf.data.datasets.dreamzero.data_transforms.libero_sim import (
     LiberoSimDataTransform,
 )
 
-_DEFAULT_VIDEO_HEIGHT = 176
-_DEFAULT_VIDEO_WIDTH = 320
 # Match ``8 * max_chunk_size + 1``; use 17 when ``max_chunk_size=2`` (short ~75f episodes).
 _NUM_VIDEO_FRAMES = 17
 
@@ -118,8 +116,6 @@ class FrankaPnpDataTransform(LiberoSimDataTransform):
                 cfg.get("always_use_default_instruction", False)
             ),
             embodiment_tag_mapping=dict(embodiment_tag_mapping),
-            video_height=int(cfg.get("target_video_height", _DEFAULT_VIDEO_HEIGHT)),
-            video_width=int(cfg.get("target_video_width", _DEFAULT_VIDEO_WIDTH)),
             transform_on_gpu=transform_on_gpu,
         )
 
@@ -135,8 +131,8 @@ class FrankaPnpDataTransform(LiberoSimDataTransform):
         language_dropout_prob: float,
         always_use_default_instruction: bool,
         embodiment_tag_mapping: dict[str, int],
-        video_height: int,
-        video_width: int,
+        video_height: int = 256,
+        video_width: int = 256,
         transform_on_gpu: bool = False,
     ) -> ComposedModalityTransform:
         vk = list(_VIDEO_KEYS)

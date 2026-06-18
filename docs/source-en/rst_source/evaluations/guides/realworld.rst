@@ -55,7 +55,7 @@ Real-robot evaluation typically uses a **1 GPU node + 1 Franka control node** he
 
 ``realworld_pnp_eval.yaml`` and ``realworld_pnp_eval_dreamzero.yaml`` use this two-node layout; ``realworld_eval.yaml`` (custom tasks) is a **single-node** layout with both ``env`` and ``rollout`` on the Franka node.
 
-For full Ray cluster setup, firmware versions, and libfranka compatibility, see :doc:`../../examples/embodied/franka` and :doc:`../../tutorials/embodied/realworld_robot`.
+For full Ray cluster setup, firmware versions, and libfranka compatibility, see :doc:`../../examples/embodied/franka` and :doc:`../../guides/realworld_robot`.
 
 Example Configs
 ---------------
@@ -80,6 +80,7 @@ The following examples live under ``evaluations/realworld/``:
      - π₀
 
 If ``evaluations/realworld/<config>.yaml`` is missing, ``run_eval.sh`` falls back to the same name under ``examples/embodiment/config/`` (set ``runner.task_type: embodied_eval`` and ``runner.only_eval: True``). See :doc:`../reference/cli`.
+Dual Franka deployment currently uses this fallback path with ``realworld_eval_dual_franka``.
 
 Pre-flight Checks
 -----------------
@@ -330,6 +331,25 @@ Replace ``ROBOT_IP`` and ``MODEL_PATH``, then run:
 
 For data collection, SFT training, and deployment on custom tasks, see :doc:`../../examples/embodied/franka_pi0_sft_deploy`.
 
+Dual Franka Deployment
+----------------------
+
+Dual Franka SFT deployment reuses the unified evaluation launcher with the
+fallback config ``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
+Set ``rollout.model.model_path`` to the staged checkpoint directory and
+``actor.model.openpi_data.repo_id`` to the repo id that contains
+``norm_stats.json``.
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_eval_dual_franka \
+       rollout.model.model_path=/path/to/deploy/global_step_<N> \
+       actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
+       env.eval.override_cfg.task_description="handover the object"
+
+For the full collection, SFT, checkpoint staging, and pedal-control workflow,
+see :doc:`../../examples/embodied/dual_franka`.
+
 Viewing Results
 ---------------
 
@@ -343,7 +363,7 @@ FAQ
 ---
 
 - **Safety:** Verify workspace limits and emergency stop before evaluation; use a small ``rollout_epoch`` on the first run.
-- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP uses two nodes; custom-task eval uses one.
+- **Node topology:** ``env`` workers must run on nodes with direct Franka access; ``node_ranks`` must match ``RLINF_NODE_RANK``. PnP and Dual Franka use two nodes; custom-task eval uses one.
 - **Cameras not found:** Run ``python -m toolkits.realworld_check.test_franka_camera`` on the control node and verify ``camera_serials``.
 - **Abnormal actions:** Check that ``norm_stats.json`` is under ``model_path/<repo_id>/`` and that ``openpi.config_name`` matches training.
 - **Ray shows only one node:** Check firewall rules, ``RLINF_COMM_NET_DEVICES``, and that the head IP is reachable from other nodes.

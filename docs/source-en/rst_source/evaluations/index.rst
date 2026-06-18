@@ -40,37 +40,78 @@ The table below lists benchmarks that have example configs under ``evaluations/`
 Get Started
 -----------
 
-- :doc:`get_started/overview` — Evaluation architecture and ``evaluations/`` layout
-- :doc:`get_started/installation` — Environment setup and benchmark-specific variables
-- :doc:`get_started/quick_tour` — Run your first LIBERO Spatial evaluation in ~5 minutes
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Page
+     - What you get
+   * - :doc:`Overview <get_started/overview>`
+     - Evaluation architecture and the ``evaluations/`` layout.
+   * - :doc:`Installation <get_started/installation>`
+     - Environment setup and benchmark-specific variables.
+   * - :doc:`Quick Tour <get_started/quick_tour>`
+     - Run your first LIBERO Spatial evaluation in ~5 minutes.
 
 Guides
 ------
 
 End-to-end evaluation workflows per benchmark (setup → config → launch → results):
 
-- :doc:`guides/realworld` — Franka real-robot evaluation and deployment
-- :doc:`guides/behavior` — BEHAVIOR-1K
-- :doc:`guides/libero` — LIBERO / LIBERO-PRO / LIBERO-PLUS
-- :doc:`guides/maniskill_ood` — ManiSkill out-of-distribution evaluation
-- :doc:`guides/polaris` — PolaRiS tabletop manipulation
-- :doc:`guides/robotwin` — RoboTwin bimanual manipulation
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Benchmark
+     - Workflow
+   * - :doc:`RealWorld <guides/realworld>`
+     - Franka real-robot evaluation and deployment.
+   * - :doc:`BEHAVIOR-1K <guides/behavior>`
+     - BEHAVIOR-1K evaluation.
+   * - :doc:`LIBERO <guides/libero>`
+     - LIBERO / LIBERO-PRO / LIBERO-PLUS.
+   * - :doc:`ManiSkill OOD <guides/maniskill_ood>`
+     - ManiSkill out-of-distribution evaluation.
+   * - :doc:`PolaRiS <guides/polaris>`
+     - PolaRiS tabletop manipulation.
+   * - :doc:`RoboTwin <guides/robotwin>`
+     - RoboTwin bimanual manipulation.
 
 Reference
 ---------
 
-- :doc:`reference/configuration` — Hydra YAML structure and required fields
-- :doc:`reference/cli` — ``run_eval.sh`` usage and Hydra overrides
-- :doc:`reference/models` — Supported models and example configs
-- :doc:`reference/results` — Logs, metrics, and video output
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Page
+     - What you get
+   * - :doc:`Configuration <reference/configuration>`
+     - Hydra YAML structure and required fields.
+   * - :doc:`CLI <reference/cli>`
+     - ``run_eval.sh`` usage and Hydra overrides.
+   * - :doc:`Models <reference/models>`
+     - Supported models and example configs.
+   * - :doc:`Results <reference/results>`
+     - Logs, metrics, and video output.
 
 Related Documentation
 ---------------------
 
-- Per-benchmark setup and training examples: :doc:`../examples/simulators_index`
-- Installation details: :doc:`../start/installation`
-- Math reasoning LLM evaluation (non-embodied): see `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_
-- Model-specific standalone eval scripts (outside the unified entry): ``toolkits/standalone_eval_scripts/``
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Resource
+     - Where
+   * - Per-benchmark setup and training examples
+     - :doc:`../examples/simulators_index`
+   * - Installation details
+     - :doc:`../start/installation`
+   * - Math reasoning LLM evaluation (non-embodied)
+     - `LLMEvalKit <https://github.com/RLinf/LLMEvalKit>`_
+   * - Model-specific standalone eval scripts (outside the unified entry)
+     - ``toolkits/standalone_eval_scripts/``
 
 .. toctree::
    :hidden:

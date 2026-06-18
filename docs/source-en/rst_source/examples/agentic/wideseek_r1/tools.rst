@@ -11,6 +11,34 @@ WideSeek-R1 provides two search backends:
 In the standard workflow, offline tools are typically used for training and
 standard QA evaluation, while online tools are used for WideSearch evaluation.
 
+Overview
+--------
+
+Configure one tool backend before launching WideSeek-R1 training or evaluation.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Online
+      :text-align: center
+
+      Serper search and Jina webpage access
+
+   .. grid-item-card:: Offline
+      :text-align: center
+
+      Local Qdrant retrieval over Wiki-2018
+
+   .. grid-item-card:: Config
+      :text-align: center
+
+      ``tools.online``, ``use_jina``, and cache settings
+
+   .. grid-item-card:: Test
+      :text-align: center
+
+      ``rlinf/agents/wideseek_r1/tools.py``
+
 .. contents::
    :depth: 2
    :local:

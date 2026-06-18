@@ -1,53 +1,81 @@
 Real-World RL with GimArm
-============================
+=========================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
+   :align: center
+   :width: 80%
 
-This document covers the hardware setup, dependency installation, and experiment
-configuration for the GimArm 6-DOF robotic arm within the RLinf framework.
+   GimArm 6-DoF arm used for SocketCAN control, motor calibration, and peg-insertion training.
 
-Environment
------------
+Run RLinf on a GimArm 6-DoF arm over SocketCAN. You will install the CAN control SDK, calibrate motors, set a target end-effector pose, collect demonstrations, and launch real-world training.
 
-**Real World Environment**
+Overview
+--------
 
-- **Environment**: Real world setup.
+Train a real-world peg-insertion policy on GimArm with CAN-based control.
 
-  - GimArm 6-DOF robotic arm (``gim_arm`` or ``gim_arm_xl`` variant)
-  - Damiao servo motors (DM4340 / DM6248P for J1-3, DM4310 for J4-6)
-  - CAN-USB adapter with SocketCAN interface
-  - Intel RealSense cameras (default) or Stereolabs ZED cameras
-  - Optional gripper (parallel or single-side, built-in Damiao motor)
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- **Task**: Currently supports the peg-insertion task (``GimArmPegInsertionEnv-v1``).
-- **Observation**:
+   .. grid-item-card:: Models
+      :text-align: center
 
-  - RGB images (128x128) from wrist camera(s).
-  - State dict containing: ``tcp_pose`` (7,), ``tcp_vel`` (6,), ``arm_joint_position`` (6,), ``gripper_position`` (1,), ``tcp_force`` (3,), ``tcp_torque`` (3,).
+      CNN policy
 
-- **Action Space**: 7-dimensional continuous actions:
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-  - 6 absolute joint positions in radians, bounded by the configured joint limits.
-  - 1 binary gripper command in ``[-1, 1]`` (open/close).
+      SAC · RLPD
 
-- **Reward**: Computed in Cartesian space by comparing FK-based TCP pose to ``target_ee_pose``. Sparse (0/1) by default with optional dense exponential falloff.
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-Peg Insertion Task
-~~~~~~~~~~~~~~~~~~~~
+      Peg insertion
 
-The peg-insertion task (``GimArmPegInsertionEnv``, registered as ``GimArmPegInsertionEnv-v1``) is implemented
-in ``rlinf/envs/realworld/gim_arm/tasks/peg_insertion.py``. It extends ``GimArmEnv`` with task-specific
-reset and reward logic:
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-- **Reset**: The gripper closes on the peg, the arm retracts to ``safe_retract_qpos`` to clear the hole,
-  then moves to ``reset_joint_qpos``. When ``enable_random_reset`` is enabled (default), small
-  joint-space perturbations (controlled by ``random_joint_noise``, default 0.02 rad) are applied
-  to the reset configuration for diversity.
+      GimArm · CAN FD · gripper
 
-- **Reward**: Computed in Cartesian space by comparing the FK-derived TCP pose against
-  ``target_ee_pose``. Success is determined per-axis using ``reward_threshold``
-  (default: 1 cm on XYZ position). The ``reward_threshold`` config accepts a
-  6-element ``[x, y, z, rx, ry, rz]`` array for Franka-API parity, but only
-  the XYZ entries are currently consulted; orientation entries are reserved
-  for future use.
+| **You'll do:** install gim_arm_control → initialize CAN → calibrate zero → set target pose → train.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · GimArm hardware · CAN adapter · ``gim_arm_control`` SDK.
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24 24
+
+   * - Task
+     - Config / entry point
+     - Description
+   * - Hardware check
+     - ``test_gim_arm_env.py``
+     - Verify controller launch, state reads, motion, reset, and gripper commands.
+   * - Data collection
+     - ``gim_arm_teleop``
+     - Collect VR teleoperation demonstrations.
+   * - Training
+     - GimArm real-world config
+     - Train on the peg-insertion task with target-pose reward.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - Field
+     - Description
+   * - Observation
+     - Camera frames plus GimArm joint/TCP state.
+   * - Action
+     - 6-DoF arm control with gripper command, depending on config.
+   * - Reward
+     - Sparse or dense FK distance to ``target_ee_pose``.
+   * - Prompt
+     - Peg-insertion task text in the env config.
 
 Hardware Setup
 ----------------
@@ -62,8 +90,8 @@ Hardware Setup
    Unlike the Franka setup, GimArm does **not** require a real-time kernel or ROS.
    Communication uses the Linux SocketCAN interface directly.
 
-Dependency Installation
--------------------------
+Installation
+------------
 
 The controller node and the training/rollout node(s) should be set up with different software dependencies.
 
@@ -178,8 +206,8 @@ From the ``gim_arm_control`` repository:
   Incorrect calibration can cause the arm to move unexpectedly.
   Requires ``can-utils`` (install with ``sudo apt install can-utils``).
 
-Training/Rollout Nodes
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+Training / Rollout Nodes
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Clone the RLinf repository (same as above), then install dependencies.
 
@@ -216,8 +244,8 @@ Install dependencies directly in your environment by running the following comma
    # bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 
-Running the Experiment
------------------------
+Run It
+------
 
 Prerequisites
 ~~~~~~~~~~~~~~~

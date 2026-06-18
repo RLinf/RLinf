@@ -119,10 +119,10 @@ Use the current year/month for the date. Match the tone of existing bullets (e.g
 
 Place the new `<li>...</li>` above the "More..." / "更多..." item when present.
 
-## vla-eval.rst environment list entry
+## Evaluation section entry
 
 ```rst
-:doc:`Display Name <../examples/<name>>`
+:doc:`Display Name <../examples/<category>/<name>>`
 ```
 
 ## Chinese documentation (required)
@@ -131,7 +131,7 @@ Add a matching RST and index entry for Chinese:
 
 - **RST**: `docs/source-zh/rst_source/examples/<name>.rst` — same structure as the English file; mirror sections and adapt links (e.g. `/en/` → `/zh/` in doc URLs if applicable).
 - **Index**: `docs/source-zh/rst_source/examples/index.rst` — add `<name>` to the toctree; add a gallery card in the same category if one was added for English.
-- **Start/vla-eval**: If the example is an embodied eval environment, check `docs/source-zh/rst_source/start/` for a vla-eval or equivalent page and add the new example to the list.
+- **Evaluation**: If the example is an embodied eval environment, update the matching Chinese page under `docs/source-zh/rst_source/evaluations/`.
 
 Use existing en/zh pairs (e.g. `docs/source-en/rst_source/examples/libero.rst` and `docs/source-zh/rst_source/examples/libero.rst`) as reference.
 

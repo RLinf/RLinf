@@ -2,11 +2,15 @@
 html[data-theme="light"] {
   --pst-color-primary: #673ab7;
   --pst-color-secondary: #ab47bc;
+  --rlinf-nav-active-bg: rgba(103, 58, 183, 0.1);
+  --rlinf-nav-hover-bg: rgba(103, 58, 183, 0.06);
 }
 
 html[data-theme="dark"] {
   --pst-color-primary: #BB86FC;
   --pst-color-secondary: #CF9BFF;
+  --rlinf-nav-active-bg: rgba(187, 134, 252, 0.18);
+  --rlinf-nav-hover-bg: rgba(187, 134, 252, 0.1);
 }
 
 a.reference,
@@ -24,9 +28,426 @@ img.logo-img {
 .red { color: red; font-weight: bold; }
 .green { color: green; }
 
+/* --- Home hero ----------------------------------------------------------
+   Logo on top of a centered "Welcome to RLinf", Ray-style. The rst section
+   title is hidden (kept only for the page <title>); the visible hero lives in
+   .rlinf-hero. */
+#home + h1 {
+  display: none;
+}
+
+.rlinf-hero {
+  margin: 0.5rem 0 2rem;
+  text-align: center;
+}
+
+.rlinf-hero-logo {
+  background-color: transparent !important; /* override the theme's dark-mode white image bg */
+  display: block;
+  margin: 0 auto;
+  max-width: 360px;
+  width: 100%;
+}
+
+.rlinf-hero-title {
+  margin-bottom: 0.5rem;
+  margin-top: 2rem;
+}
+
+.rlinf-hero-subtitle {
+  color: var(--pst-color-text-muted);
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin: 0;
+}
+
 /* if you want also to remove underline on hover
 a.reference:hover,
 a.reference.external:hover,
 a.reference.internal:hover {
   text-decoration: none !important;
 } */
+
+/* --- Wider content area -------------------------------------------------
+   pydata-sphinx-theme caps the article column at 60em and the page at 88rem,
+   which leaves large empty gutters and a cramped content column on wide
+   screens. Widen both and slim the side navigations a touch so the content
+   gets more horizontal room. */
+.bd-page-width {
+  max-width: 100rem;            /* was 88rem (~1408px) */
+}
+.bd-main .bd-content .bd-article-container {
+  max-width: 84rem;            /* was 60em (~960px) — let prose, cards and tables breathe */
+}
+.bd-sidebar-primary {
+  max-width: 18rem;            /* compact global docs sidebar */
+}
+.bd-sidebar-secondary {
+  max-width: 15rem;            /* slimmer right "On this page" */
+}
+
+/* --- Sidebar-only docs chrome ------------------------------------------
+   Match the compact LeRobot/Hugging Face docs pattern: logo, search, utility
+   controls, then a single global navigation tree. */
+/* Collapse the empty top navbar (sidebar-only model). The theme reserves a 4rem
+   header band above the sidebar; with no navbar items it is just blank space.
+   The Ask AI button is position:fixed, so it stays visible even with a
+   zero-height header. */
+:root {
+  --pst-header-height: 0rem;
+}
+
+.bd-header {
+  box-shadow: none !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+}
+
+.bd-header .bd-header__inner {
+  min-height: 0 !important;
+}
+
+.bd-header .sidebar-toggle {
+  display: none !important;
+}
+
+/* Condense the sidebar header chrome. The theme uses padding:2rem 1rem 1rem,
+   gap:1rem, and .5rem padding on every item, which spreads the logo / search /
+   version rows far apart — tighten all of it. */
+.bd-sidebar-primary {
+  gap: 0.3rem;
+  padding-top: 0.6rem;
+}
+
+.bd-sidebar-primary .sidebar-primary-items__start {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.bd-sidebar-primary .sidebar-header-items {
+  display: none;
+}
+
+/* 3-class selector to beat the theme's .sidebar-primary-items__start
+   .sidebar-primary-item { padding: .5rem 0 }. */
+.bd-sidebar-primary .sidebar-primary-items__start .sidebar-primary-item {
+  margin: 0;
+  padding: 0.15rem 0;
+}
+
+.rlinf-sidebar-brand {
+  align-items: center;
+  color: var(--pst-color-text-base) !important;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  text-decoration: none !important;
+}
+
+.rlinf-sidebar-brand__mark {
+  display: block;
+  height: 1.6rem;
+  width: 1.6rem;
+}
+
+.rlinf-sidebar-brand__text {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.bd-sidebar-primary .bd-search {
+  margin: 0 0.75rem;
+}
+
+/* Keep the theme's search "pill" (border + absolutely-positioned magnifier on
+   .bd-search); only shrink the inner input so the field is compact. */
+.bd-sidebar-primary .bd-search input.form-control {
+  font-size: 0.85rem;
+  min-height: 1.85rem;
+}
+
+/* Tools row: version switcher grows, repository/icon links sit beside it —
+   one compact line like the LeRobot docs, instead of a stacked block. */
+.rlinf-sidebar-tools {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+}
+
+.rlinf-sidebar-tools__version {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rlinf-sidebar-tools .version-switcher__button {
+  font-size: 0.8rem;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  width: 100%;
+}
+
+.rlinf-sidebar-tools .navbar-icon-links {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.25rem;
+  margin: 0;
+}
+
+/* Live GitHub star count rendered beside the repository icon (js/github-stars.js). */
+.rlinf-sidebar-tools a.rlinf-gh-link {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.rlinf-sidebar-tools .rlinf-gh-stars {
+  color: var(--pst-color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.bd-sidebar-primary .bd-docs-nav {
+  border-top: 1px solid var(--pst-color-border);
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+}
+
+/* Floating "Ask AI" button — pinned to the bottom-right corner of the viewport,
+   matching the LeRobot docs chat affordance. */
+.rlinf-ask-ai-fab {
+  align-items: center;
+  background-color: var(--pst-color-primary);
+  border: none;
+  border-radius: 50px;
+  bottom: 1.25rem;
+  box-shadow: 0 6px 20px rgba(50, 0, 65, 0.28);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.875rem;
+  font-weight: 600;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  position: fixed;
+  right: 1.25rem;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  z-index: 1050;
+}
+
+.rlinf-ask-ai-fab:hover {
+  box-shadow: 0 8px 26px rgba(50, 0, 65, 0.42);
+  transform: translateY(-2px);
+}
+
+.rlinf-ask-ai-fab__icon {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.bd-sidebar-primary .bd-sidenav {
+  padding: 0 0.25rem;
+}
+
+/* Compact, LeRobot-style nav rows: smaller text, tighter line height and less
+   vertical padding so more of the tree is visible without scrolling. */
+.bd-sidebar-primary .bd-sidenav li {
+  margin: 0;
+}
+
+.bd-sidebar-primary .bd-sidenav details,
+.bd-sidebar-primary .bd-sidenav summary,
+.bd-sidebar-primary .bd-sidenav ul {
+  margin: 0;
+}
+
+.bd-sidebar-primary .bd-sidenav li > a,
+.bd-sidebar-primary .bd-sidenav li > .reference {
+  border-radius: 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  padding-bottom: 0.34rem;
+  padding-top: 0.34rem;
+}
+
+/* Top-level sections: a touch larger + bold for hierarchy, but far smaller
+   than the theme default (.toctree-l1 > a is 1.3em out of the box). */
+.bd-sidebar-primary .bd-sidenav .toctree-l1 > a {
+  font-size: 0.98rem;
+  font-weight: 700;
+}
+
+/* Clean rounded-pill hover + active state (LeRobot style), replacing the
+   theme's underline-on-hover and the inset left-border bar on the current
+   page. */
+.bd-sidebar-primary .bd-sidenav li > a:hover {
+  background-color: var(--rlinf-nav-hover-bg);
+  color: var(--pst-color-text-base);
+  text-decoration: none !important;
+}
+
+/* The theme tags every breadcrumb ancestor <li> with .current, so neutralise
+   the highlight on the ancestor links first... */
+.bd-sidebar-primary .bd-sidenav li.current > a {
+  background-color: transparent;
+  box-shadow: none !important;
+  color: var(--pst-color-text-muted);
+}
+
+/* ...then apply the pill only to the current page itself: its <a> (not just the
+   <li>) carries the .current class, which the ancestor links do not. */
+.bd-sidebar-primary .bd-sidenav li.current > a.current,
+.bd-sidebar-primary .bd-sidenav li.current > a.current:hover {
+  background-color: var(--rlinf-nav-active-bg);
+  color: var(--pst-color-primary);
+  font-weight: 600;
+}
+
+/* Shrink the collapse chevron to match the rows. */
+.bd-sidebar-primary .bd-sidenav .toctree-toggle {
+  padding: 0.3rem 0.4rem;
+}
+
+.bd-sidebar-primary .bd-sidenav .toctree-toggle .fa-chevron-down {
+  font-size: 0.8rem;
+}
+
+.rlinf-sidebar-toggle {
+  display: none !important;
+}
+
+@media (max-width: 959.98px) {
+  .rlinf-sidebar-toggle {
+    align-items: center !important;
+    border-radius: 4px !important;
+    display: inline-flex !important;
+    height: 2.25rem !important;
+    justify-content: center !important;
+    left: 0.75rem !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    position: fixed !important;
+    top: 0.75rem !important;
+    width: 2.25rem !important;
+    z-index: 1040 !important;
+  }
+}
+
+/* --- Ray-style cards ----------------------------------------------------
+   Ray's docs use compact PyData cards with a clean surface, subtle shadow,
+   small radius, and stronger hover affordance. Apply that treatment globally
+   to sphinx-design overview cards and the raw-HTML example gallery cards. */
+:root {
+  --rlinf-card-radius: 4px;
+  --rlinf-card-gap: 1em;
+  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.08);
+  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.12);
+}
+
+html[data-theme="dark"] {
+  --rlinf-card-shadow: 0px 4px 10px 0px rgba(0, 0, 0, 0.32);
+  --rlinf-card-shadow-hover: 0px 6px 30px 5px rgba(0, 0, 0, 0.42);
+}
+
+.sd-card {
+  background: var(--pst-color-surface, var(--pst-color-background)) !important;
+  border: 0 !important;
+  border-radius: var(--rlinf-card-radius) !important;
+  box-shadow: var(--rlinf-card-shadow) !important;
+  color: var(--pst-color-text-base) !important;
+  overflow: hidden;
+  transition: border-color 160ms ease, box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.sd-card:hover {
+  box-shadow: var(--rlinf-card-shadow-hover) !important;
+  transform: translateY(-2px);
+}
+
+.sd-card .sd-card-title {
+  color: var(--pst-color-text-base) !important;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.sd-card .sd-card-body {
+  padding: 1rem;
+}
+
+.sd-card .sd-card-body p:last-child {
+  margin-bottom: 0;
+}
+
+.bd-article div[style*="display: grid"][style*="grid-template-columns"],
+.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] {
+  gap: var(--rlinf-card-gap) !important;
+  justify-items: stretch !important;
+}
+
+.bd-article div[style*="display: grid"][style*="grid-template-columns"] > div[style*="max-width: 300px"],
+.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"] {
+  align-self: stretch;
+  background: var(--pst-color-surface, var(--pst-color-background)) !important;
+  border: 1px solid var(--pst-color-border) !important;
+  border-radius: var(--rlinf-card-radius) !important;
+  box-shadow: var(--rlinf-card-shadow) !important;
+  display: flex !important;
+  flex-direction: column;
+  max-width: 300px !important;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left !important;
+  transition: border-color 160ms ease, box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.bd-article div[style*="display: grid"][style*="grid-template-columns"] > div[style*="max-width: 300px"]:hover,
+.bd-article div[style*="display: flex"][style*="justify-content: center"][style*="flex-wrap: wrap"] > div[style*="max-width: 300px"]:hover {
+  border-color: var(--pst-color-primary) !important;
+  box-shadow: var(--rlinf-card-shadow-hover) !important;
+  transform: translateY(-2px);
+}
+
+.bd-article div[style*="max-width: 300px"] > img,
+.bd-article div[style*="max-width: 300px"] > video {
+  border-radius: var(--rlinf-card-radius) var(--rlinf-card-radius) 0 0 !important;
+  box-shadow: none !important;
+  display: block;
+}
+
+.bd-article div[style*="max-width: 300px"] > p {
+  color: var(--pst-color-text-muted);
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  margin: 0 !important;
+  padding: 1rem;
+}
+
+.bd-article div[style*="max-width: 300px"] > p a.reference,
+.bd-article div[style*="max-width: 300px"] > p a {
+  color: var(--pst-color-text-base) !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+}
+
+.bd-article div[style*="max-width: 300px"] > p a:hover {
+  color: var(--pst-color-primary) !important;
+}
+
+@media (max-width: 768px) {
+  .bd-article div[style*="display: grid"][style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  .bd-article div[style*="max-width: 300px"] {
+    max-width: 100% !important;
+  }
+}

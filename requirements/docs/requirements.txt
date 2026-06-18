@@ -32,6 +32,7 @@ soupsieve==2.7
 Sphinx==8.1.3
 sphinx-autobuild==2024.10.3
 sphinx-copybutton==0.5.2
+sphinx-design==0.7.0
 sphinx-last-updated-by-git==0.3.8
 sphinx-markdown-tables==0.0.17
 sphinx-rtd-theme==3.0.2
