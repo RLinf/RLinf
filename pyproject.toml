@@ -126,7 +126,7 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"，
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5",
     "pyzmq"
 ]
 xsquare_turtle2 = [
