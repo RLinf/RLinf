@@ -24,6 +24,7 @@ from ..hardware import (
     HardwareResource,
     NodeHardwareConfig,
 )
+from .auto_config import RobotAutoConfig
 
 
 @dataclass
@@ -59,6 +60,16 @@ class GimArmRobot(Hardware):
         for config in configs:
             if isinstance(config, GimArmConfig) and config.node_rank == node_rank:
                 robot_configs.append(config)
+
+        # Fill unset fields from env vars (e.g. ``CAN_INTERFACE``), one value per
+        # config when several robots share this node. With no configs given,
+        # create one per comma-separated ``CAN_INTERFACE``.
+        robot_configs = RobotAutoConfig.resolve(
+            robot_configs,
+            config_cls=GimArmConfig,
+            node_rank=node_rank,
+            count_fields=("can_interface",),
+        )
 
         if robot_configs:
             gim_arm_infos = []

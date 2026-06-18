@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.scheduler import Channel, Worker
+from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import compute_rollout_metrics
 from rlinf.utils.utils import unpack_batch
@@ -41,7 +42,7 @@ class PipelineEmbodiedFSDPActor(EmbodiedFSDPActor):
             total_num_envs=self.cfg.env.train.total_num_envs,
             actor_world_size=self._world_size,
             micro_batch_size=self.cfg.actor.micro_batch_size,
-            rollout_epoch=self.cfg.algorithm.rollout_epoch,
+            rollout_epoch=self.cfg.env.train.rollout_epoch,
             n_train_chunk_steps=self.cfg.env.train.max_steps_per_rollout_epoch
             // self.cfg.actor.model.num_action_chunks,
         )
@@ -58,13 +59,19 @@ class PipelineEmbodiedFSDPActor(EmbodiedFSDPActor):
         input_channel: Channel,
     ) -> dict[str, torch.Tensor] | None:
         try:
-            packed_batch = input_channel.get_nowait()
+            packed_batch = input_channel.get_nowait(
+                key=CommMapper.build_channel_key(
+                    self._rank, self._rank, "pipeline_actor"
+                )
+            )
             return unpack_batch(packed_batch)
         except asyncio.QueueEmpty:
             return None
 
     def recv_micro_batch(self, input_channel: Channel) -> dict[str, torch.Tensor]:
-        packed_batch = input_channel.get()
+        packed_batch = input_channel.get(
+            key=CommMapper.build_channel_key(self._rank, self._rank, "pipeline_actor")
+        )
         return unpack_batch(packed_batch)
 
     def select_global_batch(

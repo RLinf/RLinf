@@ -1,7 +1,7 @@
 .. _wideseek-r1-tools:
 
 工具配置
-========
+========================================
 
 WideSeek-R1 提供两种搜索后端：
 
@@ -10,6 +10,34 @@ WideSeek-R1 提供两种搜索后端：
 
 在标准工作流中，离线工具通常用于训练和标准 QA 评测，而在线工具用于 WideSearch 评测。
 
+概述
+----------------------------------------
+
+启动 WideSeek-R1 训练或评测前，先配置一个工具后端。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 在线
+      :text-align: center
+
+      Serper 搜索与 Jina 网页访问
+
+   .. grid-item-card:: 离线
+      :text-align: center
+
+      基于 Wiki-2018 的本地 Qdrant 检索
+
+   .. grid-item-card:: 配置
+      :text-align: center
+
+      ``tools.online``、``use_jina`` 与 cache 设置
+
+   .. grid-item-card:: 测试
+      :text-align: center
+
+      ``rlinf/agents/wideseek_r1/tools.py``
+
 .. contents::
    :depth: 2
    :local:
@@ -17,12 +45,12 @@ WideSeek-R1 提供两种搜索后端：
 .. _wideseek-r1-online-tools:
 
 在线模式
---------
+----------------------------------------
 
 在线模式使用 `Serper <https://serper.dev>`__ 进行网页搜索，并使用 `Jina AI <https://jina.ai>`__ 进行网页访问。
 
 API 密钥
-~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在运行训练或评测之前，请先导出所需的 API 密钥：
 
@@ -32,7 +60,7 @@ API 密钥
    export JINA_API_KEY=your_jina_api_key
 
 配置
-~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 ``examples/agent/wideseek_r1/config`` 下的 YAML 配置中设置：
 
@@ -47,12 +75,12 @@ API 密钥
 .. _wideseek-r1-offline-tools:
 
 离线模式
---------
+----------------------------------------
 
 离线模式使用本地 Qdrant 检索服务，并配合本地语料库与网页存储。
 
 前置条件
-~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 完成 :doc:`安装指南 <../../../start/installation>` 中的基础环境配置后，安装 Qdrant 客户端：
 
@@ -61,7 +89,7 @@ API 密钥
    uv pip install qdrant-client==1.16.2
 
 下载语料库与检索器
-~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 准备以下资源：
 
@@ -75,7 +103,7 @@ API 密钥
 - ``qdrant/``，其中包含 Qdrant collection 文件。
 
 启动检索服务
-~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. 在语料目录中启动 Qdrant：
 
@@ -98,7 +126,7 @@ API 密钥
    - ``retriever_path``： ``/PATH/TO/e5-model``
    - ``qdrant_url``：例如 ``http://<host_ip>:6333``
    - ``qdrant_collection_name``：设置为 ``wiki_collection_m32_cef512``.
-   - ``qdrant_search_param``：设置为 ``{"hnsw_ef":256}``.   
+   - ``qdrant_search_param``：设置为 ``{"hnsw_ef":256}``.
 
 4. 启动检索服务：
 
@@ -116,7 +144,7 @@ API 密钥
 由于 Qdrant 检索运行在 CPU 上，服务启动后只有 E5 检索模型会占用 GPU 显存。
 
 配置
-~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 YAML 配置中设置：
 
@@ -136,7 +164,7 @@ API 密钥
 .. _wideseek-r1-tool-test:
 
 测试工具
---------
+----------------------------------------
 
 你可以直接测试 WideSeek-R1 的工具 worker。
 

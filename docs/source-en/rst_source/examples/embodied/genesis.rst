@@ -1,136 +1,198 @@
 RL with Genesis Benchmark
-================================================================
+=========================
 
-This document provides a guide for launching **MLP Policy** training tasks using the Genesis simulation environment within the RLinf framework.
+.. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
+   :align: center
+   :width: 90%
 
-Genesis is a physics-realistic multi-physics simulation platform that supports high-performance GPU parallel computing for precise contact dynamics, making it ideal for complex robotic manipulation tasks.
+   Genesis (image: `Genesis <https://genesis-world.readthedocs.io/>`__).
 
-Environment
------------
+`Genesis <https://genesis-world.readthedocs.io/>`__ is a GPU-accelerated
+multi-physics simulator for robotics. You'll use RLinf to train MLP or CNN
+policies with PPO on a Franka cube-pick task.
 
-**Genesis Environment**
+Overview
+--------
 
-- **Environment**: Genesis Simulation Platform
-- **Task**: Controlling a Franka Panda robotic arm to pick up a cube.
-- **Observation**:
-  - **Images**: Third-person view RGB images (256×256).
-  - **States**: 16-dimensional vector (7-dim end-effector pose + 2-dim gripper + 7-dim cube pose).
-- **Action Space**: 9-dimensional continuous action space.
-  - 7-DOF arm joint position control.
-  - 2-DOF gripper position control.
+Train a Franka Panda policy to pick up a cube in Genesis.
 
-Dependency Installation
------------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-1. Clone the RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: Models
+      :text-align: center
+
+      MLP · CNN
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      PPO
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      CubePick
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      1 node · 1 GPU
+
+| **You'll do:** install → optionally download ResNet → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · Genesis dependencies from the install step.
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Task
+     - Description
+   * - ``cube_pick``
+     - Control a Franka Panda arm to grasp and lift a cube.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - Field
+     - Specification
+   * - Observation
+     - 16-dim state for MLP; 256×256 RGB plus 16-dim state for CNN.
+   * - Action
+     - 9-dim continuous action: 7 Franka arm joint positions plus 2 gripper positions.
+   * - Reward
+     - Dense approach reward plus grasp-success bonus.
+   * - Prompt
+     - Not used; this is a low-dimensional/CNN policy-control recipe.
+
+Installation
+------------
+
+.. include:: _setup_common.rst
+
+**Docker image**
 
 .. code:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   docker run -it --rm --gpus all \
+      --shm-size 32g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-genesis
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
+   # For mainland China users:
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-genesis
+
+**Custom environment**
+
+Install Genesis dependencies:
 
 .. code:: bash
 
-   # Use install.sh to install Genesis-related dependencies
+   # Mainland China users can add --use-mirror.
    bash requirements/install.sh embodied --env genesis
    source .venv/bin/activate
 
-Running Scripts
----------------
+Download the Model
+------------------
 
-**1. Configuration Files**
-
-- State-only baseline: ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
-- Image experiment: ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
-
-**2. Launch Commands**
+Skip this section for the MLP + PPO recipe. For the CNN + PPO recipe, download the
+ResNet checkpoint:
 
 .. code-block:: bash
 
-   # A) State-only baseline (MLP policy)
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
+   cd /path/to/save/model
 
-   # B) Image experiment (CNN policy)
-   # Note: actor.model.model_path must contain resnet10_pretrained.pt
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-**Get ``resnet10_pretrained.pt`` and set ``actor.model.model_path``**
-
-.. code:: bash
-
-   # Method 1: git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
-   # Method 2: huggingface-hub (mainland China: export HF_ENDPOINT=https://hf-mirror.com)
+   # Or use huggingface-hub:
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
-Point ``actor.model.model_path`` and ``rollout.model.model_path`` in the YAML
-at the downloaded directory.
+Then set the same checkpoint path for rollout and actor in
+``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``:
+
+.. code-block:: yaml
+
+   rollout:
+      model:
+         model_path: /path/to/RLinf-ResNet10-pretrained
+   actor:
+      model:
+         model_path: /path/to/RLinf-ResNet10-pretrained
+
+Run It
+------
+
+Pick one recipe and launch training:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 48 26
+
+   * - Recipe
+     - Config
+     - Command suffix
+   * - MLP + PPO
+     - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+     - ``genesis_cubepick_ppo_mlp``
+   * - CNN + PPO
+     - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
+     - ``genesis_cubepick_ppo_cnn``
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
+   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
+
+What this does:
+
+1. Starts the embodied training entrypoint with the selected Hydra config.
+2. Creates Ray workers for the actor, rollout, and Genesis env components.
+3. Runs PPO rollouts, computes cube-pick rewards, and updates the selected policy.
+
+.. note::
+
+   Both configs run on GPU ``0`` by default. Tune ``cluster.component_placement``,
+   ``env.train.total_num_envs``, and batch sizes for your hardware.
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logs**
+Launch TensorBoard from the RLinf repo root:
 
-.. code-block:: bash
+.. code:: bash
 
-   # Launch TensorBoard
-   tensorboard --logdir ./logs
+   tensorboard --logdir ../results --port 6006
 
-**2. Key Monitoring Metrics**
+The key signal is ``env/success_once``. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
 
-- **Training Metrics**:
+Enable video in the env config when needed:
 
-  - ``train/actor/policy_loss``: PPO policy loss.
-  - ``train/actor/clip_fraction``: Fraction of samples triggering PPO clipping, reflecting the difference between new and old policies.
-  - ``train/actor/approx_kl``: Approximate KL divergence. Monitors the magnitude of policy updates to prevent instability.
-  - ``train/actor/grad_norm``: Gradient norm. Used to monitor training stability; typically increases as the model converges.
-  - ``train/critic/value_loss``: Value function loss. Measures the accuracy of the Critic's state-value estimation.
-  - ``train/critic/explained_variance``: Measures the fit of the value function. The closer to 1, the better.
-  - ``train/actor/total_loss``: Total loss (sum of actor loss, critic loss, and entropy regularization).
-
-- **Rollout Metrics**:
-
-  - ``rollout/returns_mean``: Mean of the return during rollout.
-  - ``rollout/advantages_max/mean/min``: Maximum, mean, and minimum values of the advantage function.
-  - ``rollout/rewards``: Rewards obtained per action chunk.
-
-- **Environment Metrics**:
-
-  - ``env/success_once``: **Core metric**. Indicates whether the cube was successfully picked up and lifted within an episode. Success rate is expected to reach over 90% within 400 epochs.
-  - ``env/episode_len``: Actual environment steps taken per episode.
-  - ``env/return``: Total cumulative return per episode.
-  - ``env/reward``: Step-level mean reward.
-
-**3. Video Generation**
-
-.. code-block:: yaml
+.. code:: yaml
 
    env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+     eval:
+       video_cfg:
+         save_video: True
+         video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. Logger Integration**
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-.. code-block:: yaml
-
-    runner:
-        task_type: embodied
-        logger:
-            log_path: "../results"
-            project_name: rlinf
-            experiment_name: "genesis_cubepick_ppo_mlp"
-            logger_backends: ["tensorboard"]
-
-Genesis Results
-~~~~~~~~~~~~~~~
-
-When training with the default parameters in ``/examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``, the ``env/success_once`` metric can reach approximately **80%**.
+   * - Recipe
+     - Reported Behavior
+   * - MLP + PPO
+     - With the default ``genesis_cubepick_ppo_mlp`` parameters, ``env/success_once`` reaches about 80%.
