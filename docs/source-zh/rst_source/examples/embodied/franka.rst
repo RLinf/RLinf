@@ -421,56 +421,6 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
 
 整体流程与空间鼠标采集相同：使用 GELLO 设备操控机器人完成任务，脚本会自动保存成功的 episode。
 
-使用 VR / PICO 进行数据采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-除空间鼠标和 GELLO 外，RLinf 还支持使用 VR 头显与手柄进行遥操作数据采集。
-VR 数据由外部 publisher 通过 ZeroMQ 发布，RLinf 中的 ``PicoIntervention`` 订阅该数据流，
-并在按住 deadman 按键时将 PICO 手柄运动转换为 Franka 末端动作。
-
-**前置条件**
-
-- 安装并启动 PICO / XRoboToolkit 相关服务。
-- 启动 VR 数据 publisher，并确认 ZeroMQ 地址可从 Franka 控制节点访问。
-- 使用 ``bash requirements/install.sh embodied --env franka-vr`` 安装运行
-  ``PicoIntervention`` 的 RLinf 环境。
-- 详细安装、网络与操作说明请参考 :doc:`franka_vr`。
-
-**配置**
-
-使用配置文件 ``examples/embodiment/config/realworld_collect_data_pico.yaml``。
-与空间鼠标配置的关键区别如下：
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       use_spacemouse: False
-       use_pico: True
-       pico:
-         zmq_addr: "tcp://<vr_publisher_ip>:<port>"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         calibration:
-           button: "trigger"
-
-当前 PICO 操作语义：
-
-.. code-block:: text
-
-   trigger -> base calibration
-   grip    -> deadman control
-   A       -> close gripper
-   B       -> open gripper
-
-**运行**
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_collect_data_pico
-
-整体流程与空间鼠标采集相同：使用 VR 手柄操控机器人完成任务，脚本会自动保存成功的 episode。
-
 集群设置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

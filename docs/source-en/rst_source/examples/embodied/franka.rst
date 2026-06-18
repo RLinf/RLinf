@@ -416,62 +416,6 @@ The key differences from the SpaceMouse config are:
 
 The workflow is the same as SpaceMouse collection: use the GELLO device to demonstrate the task, and the script will automatically save successful episodes.
 
-Data Collection with VR / PICO
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-In addition to SpaceMouse and GELLO, RLinf also supports using a VR
-headset and controller for teleoperation data collection. VR data is published
-by an external publisher over ZeroMQ. ``PicoIntervention`` subscribes to this
-stream and converts PICO controller motion into Franka end-effector actions
-while the deadman control is held.
-
-**Prerequisites**
-
-- Install and start the PICO / XRoboToolkit services.
-- Start the VR data publisher and confirm that its ZeroMQ address is reachable
-  from the Franka controller node.
-- Install the RLinf environment that runs ``PicoIntervention`` with
-  ``bash requirements/install.sh embodied --env franka-vr``.
-- See :doc:`franka_vr` for detailed installation, network, and operation
-  instructions.
-
-**Configuration**
-
-Use the config file ``examples/embodiment/config/realworld_collect_data_pico.yaml``.
-The key differences from the SpaceMouse config are:
-
-.. code-block:: yaml
-
-   env:
-     eval:
-       use_spacemouse: False
-       use_pico: True
-       pico:
-         zmq_addr: "tcp://<vr_publisher_ip>:<port>"
-         position_scale: 1.0
-         rotation_scale: 1.0
-         calibration:
-           button: "trigger"
-
-Current PICO control semantics:
-
-.. code-block:: text
-
-   trigger -> base calibration
-   grip    -> deadman control
-   A       -> close gripper
-   B       -> open gripper
-
-**Running**
-
-.. code-block:: bash
-
-   bash examples/embodiment/collect_data.sh realworld_collect_data_pico
-
-The workflow is the same as SpaceMouse collection: use the VR controller to
-demonstrate the task, and the script will automatically save successful
-episodes.
-
 Cluster Setup
 ~~~~~~~~~~~~~~~~~
 
