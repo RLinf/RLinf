@@ -42,8 +42,6 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -88,24 +86,12 @@ algorithm:
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
 
   train:
+    rollout_epoch: 1
     total_num_envs: 16
     auto_reset: False
     use_rel_reward: False
@@ -115,6 +101,7 @@ env:
     specific_reset_id: 0
     use_ordered_reset_state_ids: True
   eval:
+    rollout_epoch: 1
     total_num_envs: 500
     auto_reset: True
     use_rel_reward: False

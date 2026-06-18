@@ -1,5 +1,5 @@
-快速上手 1：在 Maniskill3 上使用 PPO 训练 VLA 模型
-==================================================================================================
+快速上手
+========
 
 本快速教程将带你使用 **RLinf** 框架，在  
 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ 环境中训练视觉-语言-动作模型（VLA），包括  
@@ -14,7 +14,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 该基准涵盖多个领域，包括机械臂、移动操作器、人形机器人以及灵巧手，  
 支持抓取、组装、绘图、移动等多种任务。
 
-我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../tutorials/usage/execution_modes`）。
+我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../concepts/execution_modes`）。
 
 启动训练
 --------------------------
@@ -155,7 +155,7 @@ actor 侧重新组装和处理 batch 的额外开销。尤其当 env worker 和 
    ``cluster.component_placement``。
 
    根据实际资源将该项设置为 **0-3** 或 **0-7** 来使用 4/8 张 GPU。
-   查看 :doc:`../tutorials/configuration/basic_config` 以获取有关 Placement 配置的更详细说明。
+   查看 :doc:`../guides/basic_config` 以获取有关 Placement 配置的更详细说明。
 
    .. code-block:: yaml
 

@@ -44,8 +44,6 @@ algorithm:
   normalize_advantages: true
   kl_penalty: kl
   group_size: 1
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -62,24 +60,13 @@ algorithm:
   huber_delta: 10.0
   gamma: 0.99
   gae_lambda: 0.9
-  sampling_params:
-    do_sample: true
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 data:
   rollout_batch_size: 32
 
 env:
   group_name: "EnvGroup"
   train:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: true
     ignore_terminations: false
@@ -106,6 +93,7 @@ env:
       render_mode: all
     use_3rd_view_as_extra: true
   eval:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: true
     ignore_terminations: true

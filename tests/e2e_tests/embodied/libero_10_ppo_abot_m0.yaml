@@ -41,8 +41,6 @@ algorithm:
   kl_penalty: kl
   group_size: 1
   reward_coef: 1.0
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -66,24 +64,10 @@ algorithm:
   filter_rewards: false
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
-
-  sampling_params:
-    do_sample: true
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: false
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
   train:
+    rollout_epoch: 1
     total_num_envs: 8
     max_episode_steps: 100
     max_steps_per_rollout_epoch: 100
@@ -95,6 +79,7 @@ env:
       info_on_video: false
       video_base_dir: ${runner.logger.log_path}/video/train
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
     auto_reset: true
     max_episode_steps: 10
