@@ -119,7 +119,7 @@ def main() -> int:
     try:
         import zmq
     except ImportError:
-        print("[ERROR] pyzmq is not installed. Install the franka-vr env first.")
+        print("[ERROR] pyzmq is not installed. Install the franka env first.")
         return 1
 
     context = zmq.Context()

@@ -61,6 +61,9 @@ publisher:
 - On the machine that sends and receives PICO data, install a compatible PC
   Service from
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_.
+  The PC Service packages currently provided on the release page only cover
+  Ubuntu 22.04 and Ubuntu 24.04, so install it on one of those OS versions;
+  other OS versions require local adaptation.
 - Ensure that the publisher machine is on the same network as the Franka
   controller node, or that it runs on the same machine as the RLinf env worker.
 
@@ -143,12 +146,12 @@ Then start the VR data publisher on the same machine with that config file:
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Install the RLinf environment that runs the PICO intervention with the
-``franka-vr`` env. It includes the base ``franka`` real-world dependencies
-and additionally installs ``pyzmq`` for the VR / PICO pipeline:
+``franka`` env. It includes the base Franka real-world dependencies and
+``pyzmq`` for the VR / PICO pipeline:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka-vr
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
 If you use Ray, install it and source the corresponding environment **before**
@@ -287,7 +290,7 @@ Startup Order
 
 1. On the Franka controller node, configure ROS, the catkin workspace, the
    RLinf virtual environment, and ``PYTHONPATH``.
-2. Confirm that the ``franka-vr`` environment is installed and sourced before
+2. Confirm that the ``franka`` environment is installed and sourced before
    starting Ray.
 3. Start the Ray cluster. Single-node and multi-node startup follow the same
    steps as :doc:`franka`.

@@ -55,7 +55,8 @@ VR 数据发布进程不直接由 RLinf 启动。它需要先从 PICO / XRoboToo
   选择与头显和 XRoboToolkit 版本适配的 APK 并安装。
 - 在负责收发 PICO 数据的机器上，从
   `XRoboToolkit-PC-Service releases <https://github.com/XR-Robotics/XRoboToolkit-PC-Service/releases>`_
-  选择适配版本并安装 PC Service。
+  选择适配版本并安装 PC Service。当前 release 页面提供的 PC Service 安装包仅覆盖
+  Ubuntu 22.04 和 Ubuntu 24.04，请使用这两个系统版本之一进行安装；其他系统版本需要自行适配。
 - 确认 publisher 机器与 Franka 控制节点在同一网络中，或者与 RLinf env worker 在同一台机器上。
 
 在 PICO 头显连接前，先在收发数据的机器上启动 XRoboToolkit PC Service：
@@ -131,12 +132,12 @@ publisher 侧的 ZeroMQ 地址。
 2. 安装 RLinf 侧依赖
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-运行 PICO intervention 的 RLinf 环境请直接使用 ``franka-vr`` env 安装。
-该 env 包含基础 ``franka`` 真机依赖，并额外安装 VR / PICO 链路所需的 ``pyzmq``：
+运行 PICO intervention 的 RLinf 环境请直接使用 ``franka`` env 安装。
+该 env 包含基础 Franka 真机依赖，以及 VR / PICO 链路所需的 ``pyzmq``：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env franka-vr
+   bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
 如果使用 Ray，请在 ``ray start`` **之前** 完成安装并 source 对应环境。
@@ -255,7 +256,7 @@ consumer 连接地址。
 ---------------------
 
 1. 在 Franka 控制节点上完成 ROS、catkin workspace、RLinf venv 和 ``PYTHONPATH`` 配置。
-2. 在启动 Ray 前确认已经安装并 source ``franka-vr`` 环境。
+2. 在启动 Ray 前确认已经安装并 source ``franka`` 环境。
 3. 启动 Ray 集群。单节点或多节点步骤与 :doc:`franka` 相同。
 4. 启动 PICO / XRoboToolkit PC Service，并确认头显和手柄已连接。
 5. 启动 VR 数据 publisher。
