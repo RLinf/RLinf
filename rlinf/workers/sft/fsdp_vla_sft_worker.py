@@ -38,6 +38,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                     "dataset path or LeRobot repo id."
                 )
 
+            # Activate OpenPI / LeRobot compat shims (lerobot.common alias +
+            # DataFrame-tasks patch) before importing openpi.training.*.  See
+            # rlinf/models/embodiment/openpi/_compat.py for the rationale.
+            from rlinf.models.embodiment.openpi._compat import install_compat_shims
+
+            install_compat_shims()
+
             import openpi.training.data_loader as openpi_data_loader
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config

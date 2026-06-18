@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Install OpenPI / LeRobot compat shims before importing openpi.* — see
+# rlinf/models/embodiment/openpi/_compat.py for the rationale.  These have
+# to run before the openpi.training.data_loader import below, since that
+# module reaches for ``lerobot.common.datasets`` at import time.
+from rlinf.models.embodiment.openpi._compat import install_compat_shims
+
+install_compat_shims()
+
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize

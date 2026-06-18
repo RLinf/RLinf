@@ -18,6 +18,14 @@ import os
 import torch
 from omegaconf import DictConfig
 
+# Install upstream-OpenPI compatibility shims before anything in this
+# package (or downstream code) touches OpenPI.  The shims paper over two
+# version-skew issues with modern LeRobot releases — see
+# rlinf/models/embodiment/openpi/_compat.py for details.
+from rlinf.models.embodiment.openpi._compat import install_compat_shims
+
+install_compat_shims()
+
 
 def get_model(cfg: DictConfig, torch_dtype=None):
     import glob
