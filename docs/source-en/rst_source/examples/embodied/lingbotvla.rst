@@ -171,6 +171,15 @@ Before starting training, download the Lingbot-VLA base weights, the RoboTwin SF
 
 Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the configuration to your local model path (for example, ``/path/to/model/lingbot-vla-4b`` for base weights or ``/path/to/model/lingbot-vla-4b-posttrain-robotwin`` for the pinned RoboTwin SFT checkpoint), and **be sure to** set the corresponding ``tokenizer_path`` to the downloaded Tokenizer path (e.g., ``/path/to/model/Qwen2.5-VL-3B-Instruct``). Otherwise, the Rollout node will throw an error when parsing text instructions.
 
+In addition, RLinf provides an optional RoboTwin Click Bell GRPO post-training checkpoint, which can be used to reproduce the post-RL evaluation result in this document or as an initialization checkpoint for follow-up RL experiments. This checkpoint is not required for RL training.
+
+.. code-block:: bash
+
+    huggingface-cli download RLinf/RLinf-lingbotvla-click-bell-grpo \
+        --local-dir RLinf-lingbotvla-click-bell-grpo
+
+When evaluating or continuing training from this RL checkpoint, ``actor.model.model_path`` and ``rollout.model.model_path`` should still point to the Lingbot-VLA base weights downloaded above or to the pinned RoboTwin SFT checkpoint. To reproduce the result corresponding to this checkpoint, we recommend using the pinned RoboTwin SFT checkpoint. Load the RL weights through ``runner.ckpt_path=/path/to/RLinf-lingbotvla-click-bell-grpo/actor/model_state_dict/full_weights.pt``.
+
 Run It
 ------
 

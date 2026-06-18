@@ -169,6 +169,15 @@ RoboTwin Assets 是 RoboTwin 环境运行所需的资源文件，需要从 Huggi
 
 然后在配置中将 ``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地模型路径（如基础权重 ``/path/to/model/lingbot-vla-4b``，或固定 revision 的 RoboTwin SFT 权重 ``/path/to/model/lingbot-vla-4b-posttrain-robotwin``），并务必将对应的 ``tokenizer_path`` 设为下载的 Tokenizer 路径（如 ``/path/to/model/Qwen2.5-VL-3B-Instruct``），否则 Rollout 节点在解析文本指令时会报错。
 
+此外，RLinf 还提供了一个可选的 RoboTwin Click Bell GRPO 后训练权重，可用于复现本文中的 RL 评测结果，或作为后续 RL 实验的初始化权重。该权重不是进行 RL 训练的必需输入。
+
+.. code-block:: bash
+
+    huggingface-cli download RLinf/RLinf-lingbotvla-click-bell-grpo \
+        --local-dir RLinf-lingbotvla-click-bell-grpo
+
+评测或从该 RL 权重继续训练时，``actor.model.model_path`` 和 ``rollout.model.model_path`` 仍应指向上文下载的 Lingbot-VLA 基础权重或固定 revision 的 RoboTwin SFT 权重；复现该权重对应结果时，建议使用固定 revision 的 RoboTwin SFT 权重。RL 权重通过 ``runner.ckpt_path=/path/to/RLinf-lingbotvla-click-bell-grpo/actor/model_state_dict/full_weights.pt`` 加载。
+
 运行
 ----------------------------------------
 
