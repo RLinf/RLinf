@@ -37,69 +37,70 @@ if [ "$VENV_BASE_DIR" = "/path/to/venvs" ]; then
     exit 1
 fi
 # 2. Task list
-#    Format: ENV_NAME MODEL_NAME YAML_ARG T_NODES d T_SAVE
+#    Format: ENV_NAME MODEL_NAME VENV_NAME YAML_ARG T_NODES T_STEPS T_SAVE
 #    ENV_NAME: Environment name (maniskill_libero, behavior, isaaclab, metaworld, calvin, etc.)
 #    MODEL_NAME: Model name (openvla, openvla-oft, openpi, gr00t, mlp, etc.)
+#    VENV_NAME: Virtual environment name (defaults to MODEL_NAME; override per-task when needed)
 #    YAML_ARG: Configuration file name
 TASKS=(
-    "maniskill_libero openvla-oft maniskill_ppo_openvlaoft 1 100 -1"
-    "maniskill_libero openpi libero_goal_ppo_openpi 1 100 -1"
-    "maniskill_libero openpi libero_goal_ppo_openpi_pi05 1 100 -1"
-    "maniskill_libero openpi maniskill_ppo_mlp 1 100 -1"
-    "maniskill_libero openpi maniskill_ppo_openpi 1 100 -1"  
-    "maniskill_libero openpi maniskill_ppo_openpi_pi05 1 100 -1"   
+    "maniskill_libero openvla-oft openvla-oft maniskill_ppo_openvlaoft 1 100 -1"
+    "maniskill_libero openpi openpi libero_goal_ppo_openpi 1 100 -1"
+    "maniskill_libero openpi openpi libero_goal_ppo_openpi_pi05 1 100 -1"
+    "maniskill_libero openpi openpi maniskill_ppo_mlp 1 100 -1"
+    "maniskill_libero openpi openpi maniskill_ppo_openpi 1 100 -1"
+    "maniskill_libero openpi openpi maniskill_ppo_openpi_pi05 1 100 -1"
 
-    # "maniskill_libero openvla maniskill_ppo_openvla 1 120 -1"
-    # "maniskill_libero gr00t libero_10_ppo_gr00t 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_ppo_openvla 1 120 -1"
+    # "maniskill_libero gr00t gr00t libero_10_ppo_gr00t 1 120 -1"
 
-    # "maniskill_libero openpi gsenv_ppo_openpi_pi05 1 120 -1"   
-    # "maniskill_libero openpi maniskill_async_ppo_openpi 1 120 -1"   
-    # "maniskill_libero openpi maniskill_async_ppo_openpi_pi05 1 120 -1"   
-    # "maniskill_libero openvla maniskill_async_ppo_openvla 1 120 -1"   
-    # "maniskill_libero openvla-oft maniskill_async_ppo_openvlaoft 1 120 -1"   
-    # "maniskill_libero openpi libero_spatial_async_ppo_openpi 1 120 -1"   
-    # "maniskill_libero openpi libero_object_async_ppo_openpi_pi05 1 120 -1"   
-    # "maniskill_libero openvla maniskill_grpo_openvla 1 120 -1"
-    # "maniskill_libero openvla-oft maniskill_grpo_openvlaoft 1 120 -1"
-    # "maniskill_libero openpi libero_10_grpo_openpi 1 120 -1"
-    # "maniskill_libero openpi libero_spatial_grpo_openpi_pi05 1 120 -1"
-    # "maniskill_libero openpi libero_spatial_0_grpo_mlp 1 1000 -1"
-    # "maniskill_libero openpi maniskill_sac_mlp 1 1000 -1"   
+    # "maniskill_libero openpi openpi gsenv_ppo_openpi_pi05 1 120 -1"
+    # "maniskill_libero openpi openpi maniskill_async_ppo_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi maniskill_async_ppo_openpi_pi05 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_async_ppo_openvla 1 120 -1"
+    # "maniskill_libero openvla-oft openvla-oft maniskill_async_ppo_openvlaoft 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_async_ppo_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi libero_object_async_ppo_openpi_pi05 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_grpo_openvla 1 120 -1"
+    # "maniskill_libero openvla-oft openvla-oft maniskill_grpo_openvlaoft 1 120 -1"
+    # "maniskill_libero openpi openpi libero_10_grpo_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_grpo_openpi_pi05 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_0_grpo_mlp 1 1000 -1"
+    # "maniskill_libero openpi openpi maniskill_sac_mlp 1 1000 -1"
 
-    # "behavior openpi behavior_ppo_openpi 1 120 -1"   
-    # "calvin openpi calvin_abc_d_ppo_openpi 1 120 -1"   
-    # "calvin openpi calvin_abcd_d_ppo_openpi_pi05 1 120 -1"   
-    # "robotwin openvla-oft robotwin_place_empty_cup_ppo_openvlaoft 1 120 -1"   
-    # "isaaclab gr00t isaaclab_franka_stack_cube_ppo_gr00t 1 120 -1"   
-    # "frankasim mlp frankasim_ppo_mlp 1 1000 -1"   
+    # "behavior openpi openpi behavior_ppo_openpi 1 120 -1"
+    # "calvin openpi openpi calvin_abc_d_ppo_openpi 1 120 -1"
+    # "calvin openpi openpi calvin_abcd_d_ppo_openpi_pi05 1 120 -1"
+    # "robotwin openvla-oft openvla-oft robotwin_place_empty_cup_ppo_openvlaoft 1 120 -1"
+    # "isaaclab gr00t gr00t isaaclab_franka_stack_cube_ppo_gr00t 1 120 -1"
+    # "frankasim mlp mlp frankasim_ppo_mlp 1 1000 -1"
 
-    # "robotwin openvla-oft robotwin_beat_block_hammer_grpo_openvlaoft 1 120 -1"   
-    # "wan openvla-oft wan_libero_goal_grpo_openvlaoft 1 120 -1"   
+    # "robotwin openvla-oft openvla-oft robotwin_beat_block_hammer_grpo_openvlaoft 1 120 -1"
+    # "wan openvla-oft openvla-oft wan_libero_goal_grpo_openvlaoft 1 120 -1"
 
-    # "frankasim mlp frankasim_sac_cnn_async 1 120 -1"   
-    
+    # "frankasim mlp mlp frankasim_sac_cnn_async 1 120 -1"
+
     # Tasks supplemented from workflow
-    # "maniskill_libero openvla maniskill_sac_mlp 1 120 -1"
-    # "maniskill_libero openvla maniskill_sac_mlp_async 1 120 -1"
-    # "maniskill_libero openvla maniskill_sac_flow_state 1 120 -1"
-    # "maniskill_libero openvla realworld_dummy_sac_cnn 1 120 -1"
-    # "frankasim openvla frankasim_ppo_mlp 1 120 -1"
-    # "frankasim openvla frankasim_sac_cnn_async 1 120 -1"
-    # "maniskill_libero openvla-oft libero_goal_grpo_openvlaoft 1 120 -1"
-    # "behavior openvla-oft behavior_ppo_openvlaoft 1 120 -1"
-    # "robotwin openvla-oft robotwin_grpo_openvlaoft 1 120 -1"
-    # "maniskill_libero gr00t libero_spatial_ppo_gr00t 1 120 -1"
-    # "isaaclab gr00t isaaclab_ppo_gr00t 1 120 -1"
-    # "maniskill_libero openpi maniskill_ppo_openpi05 1 120 -1"
-    # "maniskill_libero openpi libero_spatial_ppo_openpi 1 120 -1"
-    # "maniskill_libero openpi libero_spatial_ppo_openpi05 1 120 -1"
-    # "maniskill_libero openpi libero_spatial_dsrl_openpi 1 120 -1"
-    # "maniskill_libero openpi maniskill_ppo_co_training_openpi_pi05 1 120 -1"
-    # "metaworld openpi metaworld_50_ppo_openpi 1 120 -1"
-    # "calvin openpi calvin_ppo_openpi 1 120 -1"
-    # "maniskill_libero openpi robocasa_grpo_openpi 1 120 -1"
-    # "maniskill_libero openvla-oft opensora_libero_spatial_grpo_openvlaoft 1 120 -1"
-    # "maniskill_libero openvla-oft wan_libero_spatial_grpo_openvlaoft 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_sac_mlp 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_sac_mlp_async 1 120 -1"
+    # "maniskill_libero openvla openvla maniskill_sac_flow_state 1 120 -1"
+    # "maniskill_libero openvla openvla realworld_dummy_sac_cnn 1 120 -1"
+    # "frankasim openvla openvla frankasim_ppo_mlp 1 120 -1"
+    # "frankasim openvla openvla frankasim_sac_cnn_async 1 120 -1"
+    # "maniskill_libero openvla-oft openvla-oft libero_goal_grpo_openvlaoft 1 120 -1"
+    # "behavior openvla-oft openvla-oft behavior_ppo_openvlaoft 1 120 -1"
+    # "robotwin openvla-oft openvla-oft robotwin_grpo_openvlaoft 1 120 -1"
+    # "maniskill_libero gr00t gr00t libero_spatial_ppo_gr00t 1 120 -1"
+    # "isaaclab gr00t gr00t isaaclab_ppo_gr00t 1 120 -1"
+    # "maniskill_libero openpi openpi maniskill_ppo_openpi05 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_ppo_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_ppo_openpi05 1 120 -1"
+    # "maniskill_libero openpi openpi libero_spatial_dsrl_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi maniskill_ppo_co_training_openpi_pi05 1 120 -1"
+    # "metaworld openpi openpi metaworld_50_ppo_openpi 1 120 -1"
+    # "calvin openpi openpi calvin_ppo_openpi 1 120 -1"
+    # "maniskill_libero openpi openpi robocasa_grpo_openpi 1 120 -1"
+    # "maniskill_libero openvla-oft openvla-oft opensora_libero_spatial_grpo_openvlaoft 1 120 -1"
+    # "maniskill_libero openvla-oft openvla-oft wan_libero_spatial_grpo_openvlaoft 1 120 -1"
 )
 
 export RANK=${RANK:-0}
@@ -145,7 +146,7 @@ if [ "$RANK" -eq 0 ]; then
     FAILED_COUNT=0
 
     for TASK_STR in "${TASKS[@]}"; do
-        read -r ENV_NAME MODEL_NAME YAML_ARG T_NODES T_STEPS T_SAVE <<< "$TASK_STR"
+        read -r ENV_NAME MODEL_NAME VENV_NAME YAML_ARG T_NODES T_STEPS T_SAVE <<< "$TASK_STR"
         
         CURRENT_TASK_INDEX=$((CURRENT_TASK_INDEX + 1))
         
@@ -188,10 +189,8 @@ if [ "$RANK" -eq 0 ]; then
         rm -f "$SYNC_FLAG_FILE"
         sleep 5 # Give time for shared filesystem sync
 
-        # 2. Determine virtual environment path (format: ENV_NAME_MODEL_NAME)
+        # 2. Determine virtual environment path (VENV_NAME comes from task list)
         cd "$REPO_PATH" || exit
-        VENV_NAME="${ENV_NAME}_${MODEL_NAME}"
-        # VENV_NAME="${MODEL_NAME}"
         VENV_PATH="${VENV_BASE_DIR}/${VENV_NAME}"
         
         echo "Building environment: model=$MODEL_NAME, env=$ENV_NAME"
@@ -249,11 +248,11 @@ if [ "$RANK" -eq 0 ]; then
         esac
         
         # 4. Activate environment
-        switch_to_env "${ENV_NAME}_${MODEL_NAME}"
-        echo "Activated virtual environment: ${ENV_NAME}_${MODEL_NAME}"
+        switch_to_env "$VENV_NAME"
+        echo "Activated virtual environment: $VENV_NAME"
 
         # 5. Write new signal and start Ray Head
-        echo "$ENV_NAME" > "$SYNC_FLAG_FILE"
+        echo "$VENV_NAME" > "$SYNC_FLAG_FILE"
         echo "Head: Signal sent. Starting Ray Head..."
         
         export NODES=$T_NODES
@@ -383,7 +382,7 @@ else
         
         # 1. Switch environment and sync cleanup
         cd "$REPO_PATH" || exit
-        # Extract ENV_NAME and MODEL_NAME from CURRENT_ENV (format: ENV_NAME_MODEL_NAME)
+        # CURRENT_ENV is the VENV_NAME written by the head node
         switch_to_env "$CURRENT_ENV"
         cleanup
         
