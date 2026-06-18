@@ -321,5 +321,5 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 
 .. note::
 
-   Lingbot-VLA 结果使用 RoboTwin random setting。SFT 结果链接指向固定 revision 的官方 RoboTwin SFT 权重。
+   Lingbot-VLA 结果使用 ``demo_randomized`` 设置。SFT 结果链接指向固定 revision 的官方 RoboTwin SFT 权重。
    任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。

@@ -321,5 +321,7 @@ Videos are saved through the env video config:
 
 .. note::
 
-   Lingbot-VLA results use the RoboTwin random setting. SFT result links point to the pinned official RoboTwin SFT checkpoint revision.
-   Task-level simulation options are described in the `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__.
+   Lingbot-VLA results use the ``demo_randomized`` setting. SFT result links point
+   to the pinned official RoboTwin SFT checkpoint revision. For task-level simulator
+   options, see the
+   `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__.
