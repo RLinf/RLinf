@@ -43,6 +43,7 @@ extensions = [
     "sphinx.ext.napoleon",  # Google & NumPy style docstrings
     "sphinx_sitemap",  # Sitemap generation
     "sphinxcontrib.video",
+    "sphinx_design",  # grids/cards for "At a glance" boxes
     # "sphinx.ext.viewcode", # Source code links (optional)
 ]
 
@@ -53,7 +54,9 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = []
+exclude_patterns = [
+    "**/_*.rst"
+]  # underscore-prefixed files are reusable includes, not standalone pages
 default_role = "code"
 autosummary_generate = True
 autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
@@ -94,9 +97,20 @@ html_js_files = [
     "js/ai-chat-service.js",
     "js/mode-badge.js",
     "js/mode-panel.js",
+    "js/github-stars.js",
+    "js/sidebar-nav.js",
+    "js/lang-switcher.js",
+    "js/theme-toggle.js",
     "sphinx-modal-widget.js",
 ]
-html_sidebars = {"**": ["sidebar-nav-bs.html"]}
+html_sidebars = {
+    "**": [
+        "sidebar-brand",
+        "search-field",
+        "sidebar-tools",
+        "global-sidebar-nav",
+    ]
+}
 
 
 # -- Theme Options -------------------------------------------------------------
@@ -113,17 +127,18 @@ def render_svg_logo(path, width="4rem", height="auto"):
 
 html_theme_options = {
     "logo": {"svg": render_svg_logo("_static/svg/logo.svg")},
-    "navbar_start": ["navbar-logo"],
-    "navbar_center": ["navbar-nav"],
-    "navbar_end": ["version-switcher", "navbar-icon-links", "askai"],
+    "search_bar_text": "搜索文档…",
+    "navbar_start": [],
+    "navbar_center": [],
+    "navbar_end": [],
     "navbar_align": "left",
     "secondary_sidebar_items": {
         "**": ["page-toc"],
         "index": [],
     },
-    "collapse_navigation": True,
-    "show_nav_level": 2,
-    "navigation_depth": 4,
+    "collapse_navigation": False,
+    "show_nav_level": 1,
+    "navigation_depth": 5,
     "header_links_before_dropdown": 10,
     "icon_links": [
         {

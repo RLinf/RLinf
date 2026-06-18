@@ -1,0 +1,69 @@
+defaults:
+  - env/behavior_r1pro@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,env: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "behavior_ppo_openpi05_eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+
+  max_epochs: 1000
+  max_steps: 1
+
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 2
+    total_num_envs: 8
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/model/pi05"
+    add_value_head: True
+    num_images_in_input: 3
+    proprio_dim: 32
+    action_dim: 23
+    num_action_chunks: 32
+    openpi:
+      config_name: "pi05_behavior"
+      detach_critic_input: True
+      joint_logprob: False
+      noise_level: 0.0
+      action_env_dim: ${rollout.model.action_dim}
+      noise_method: "flow_sde"

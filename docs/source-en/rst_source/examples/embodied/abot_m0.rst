@@ -1,51 +1,103 @@
 RL on ABot-M0
 ==============
 
-This example describes how to run evaluation and PPO training for
-`ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ in RLinf. The
-provided configuration files cover standard **LIBERO** and **LIBERO-Plus**.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png
+   :align: center
+   :width: 80%
 
-The integration uses the Hugging Face rollout backend and FSDP actor training.
-During rollout, ABot-M0 generates action chunks for LIBERO environments. During
-actor updates, RLinf recomputes log probabilities and value estimates from the
-stored rollout inputs.
+   ABot-M0: a VGGT-grounded VLA policy.
 
-Algorithm
----------
+Run evaluation and **PPO** training for
+`ABot-M0 <https://github.com/amap-cvlab/ABot-Manipulation>`__ in RLinf, on
+standard **LIBERO** and **LIBERO-Plus**. The integration uses the HuggingFace
+rollout backend and FSDP actor training: ABot-M0 generates action chunks during
+rollout, and RLinf recomputes log-probabilities and value estimates from the
+stored rollout inputs during actor updates.
 
-The example uses PPO with an actor-critic loss:
+Overview
+--------
 
-* GAE for advantage and return estimation.
-* PPO ratio clipping for policy updates.
-* Value-function clipping for the value head.
-* Optional entropy regularization.
+Fine-tune ABot-M0 on LIBERO-10 / LIBERO-Plus with PPO (actor-critic).
 
-ABot-M0 is used as the VLA policy. The RLinf wrapper keeps pretrained
-perception components frozen, trains the action model through the RL objective,
-and adds a value head for actor-critic training.
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-Dependency Installation
------------------------
+   .. grid-item-card:: Environments
+      :text-align: center
 
-Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as
-RLinf.
+      LIBERO · LIBERO-Plus
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-.. code:: bash
+      PPO
 
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~
+      LIBERO-10
 
-**Option 1: Docker Image**
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-Use Docker image for the experiment.
+      1 node · GPUs
+
+| **You'll do:** install → download the ABot-M0 checkpoint + backbones → set ``model_path`` → evaluate → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · an ABot-M0 LIBERO checkpoint and its backbone weights (steps below).
+
+ABot-M0 is the VLA policy: the RLinf wrapper keeps pretrained perception
+components frozen, trains the action model through the RL objective, and adds a
+value head for actor-critic PPO (GAE advantages/returns, ratio clipping, value
+clipping, optional entropy regularization).
+
+Tasks
+~~~~~
+
+Select the model page by matching the environment, task family, and config or checkpoint artifact.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 24 30 24
+
+   * - Environment
+     - Task / Suite
+     - Config / Weights
+     - Focus
+   * - LIBERO
+     - LIBERO-10
+     - ``libero_10_ppo_abot_m0``
+     - PPO fine-tuning for the ABot-M0 release checkpoint.
+   * - LIBERO
+     - LIBERO-10+
+     - ``libero_10_plus_ppo_abot_m0``
+     - Long-horizon LIBERO-10+ training with ABot-M0.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38
+
+   * - Field
+     - Description
+   * - Observation
+     - LIBERO RGB observations and robot state expected by ABot-M0.
+   * - Action
+     - Continuous robot actions decoded from ABot-M0 policy outputs.
+   * - Reward
+     - LIBERO success signal or task reward used by PPO.
+   * - Prompt
+     - Natural-language instruction associated with each LIBERO task.
+
+Installation
+------------
+
+Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as RLinf.
+
+.. include:: _setup_common.rst
+
+**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
 
 .. code:: bash
 
@@ -55,20 +107,14 @@ Use Docker image for the experiment.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-Please switch to the corresponding virtual environment via the built-in
-``switch_env`` utility in the image:
-
-.. code:: bash
-
+   # Inside the container, switch to the ABot-M0 virtual environment:
    source switch_env abot_m0
 
-**Option 2: Custom Environment**
-
-The installer clones ABot-M0 and VGGT automatically. If you already have local
-checkouts, set ``ABOT_PATH`` and ``VGGT_PATH`` before running the installer.
+**Option 2: Custom environment** — install bundle ``--env maniskill_libero``. The
+installer clones ABot-M0 and VGGT automatically; set ``ABOT_PATH`` / ``VGGT_PATH``
+first to reuse local checkouts:
 
 .. code:: bash
 
@@ -76,7 +122,7 @@ checkouts, set ``ABOT_PATH`` and ``VGGT_PATH`` before running the installer.
    # export ABOT_PATH=<path_to_ABot-Manipulation>
    # export VGGT_PATH=<path_to_vggt>
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
    source .venv/bin/activate
 
@@ -89,8 +135,8 @@ the same environment:
    bash requirements/install.sh embodied --model abot_m0 --env liberoplus
    source .venv/bin/activate
 
-LIBERO-Plus Assets Download
----------------------------
+Download the LIBERO-Plus Assets
+-------------------------------
 
 LIBERO-Plus requires hundreds of new objects, textures, and other assets to
 function correctly. Download the ``assets.zip`` archive from the Hugging Face
@@ -166,8 +212,8 @@ After extraction, the directory should look like:
 
 See the :ref:`LIBERO-Pro & LIBERO-Plus section <liberopro-plus-benchmark>` of the LIBERO benchmarks page for full LIBERO-Plus details.
 
-Model Download
---------------
+Download the Model
+------------------
 
 Before training, download the ABot-M0 checkpoint and the required backbone
 weights:
@@ -222,8 +268,10 @@ Example local override:
 
    self.spatial_model = spatial_model = VGGT.from_pretrained('/workspace/models/VGGT-1B')
 
-Configure ``model_path``
-------------------------
+Configure Further
+-----------------
+
+For common Hydra sections and path fields, see :doc:`Training configuration <../../reference/configuration>`.
 
 Two configs are provided, one per benchmark:
 
@@ -255,66 +303,34 @@ Import Sanity Check
 
 If the command prints ``IMPORT_OK``, the package-level dependency wiring is valid.
 
-Evaluation
-----------
+Standalone Evaluation
+---------------------
 
-Use standalone evaluation before training to verify the checkpoint, rollout
-pipeline, and environment assets.
+Use the unified Evaluation section to verify ABot-M0 checkpoints before training.
+Start from the :doc:`LIBERO evaluation guide <../../evaluations/guides/libero>` and
+set the ABot-M0 checkpoint in both ``actor.model.model_path`` and
+``rollout.model.model_path``.
 
-The eval entrypoint is ``examples/embodiment/eval_embodied_agent.py``. Both
-benchmarks share the same launch flow; the only differences are
-``LIBERO_TYPE`` and the config name.
+.. list-table::
+   :header-rows: 1
+   :widths: 28 36 36
 
-Common environment setup:
+   * - Suite
+     - Config source
+     - What to change
+   * - LIBERO-10
+     - ``libero_10_ppo_abot_m0`` via the Evaluation config fallback
+     - Set ``LIBERO_TYPE=standard`` and point both model paths at the ABot-M0 checkpoint.
+   * - LIBERO-10+
+     - ``libero_10_plus_ppo_abot_m0`` via the Evaluation config fallback
+     - Set ``LIBERO_TYPE=plus`` and point both model paths at the ABot-M0 checkpoint.
 
-.. code-block:: bash
+For CLI usage, Hydra overrides, logs, and video output, use the
+:doc:`Evaluation CLI reference <../../evaluations/reference/cli>` and
+:doc:`Evaluation results reference <../../evaluations/reference/results>`.
 
-   source .venv/bin/activate
-
-   export REPO_PATH=$(pwd)
-   export EMBODIED_PATH=$(pwd)/examples/embodiment
-   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
-   export MUJOCO_GL=egl
-   export PYOPENGL_PLATFORM=egl
-   export ROBOT_PLATFORM=LIBERO
-
-   ray stop || true
-   ray start --head --port=6379
-
-**LIBERO:**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=standard
-
-   python examples/embodiment/eval_embodied_agent.py \
-     --config-name libero_10_ppo_abot_m0 \
-     actor.model.model_path=<path_to_abot_m0_ckpt> \
-     rollout.model.model_path=<path_to_abot_m0_ckpt> \
-     runner.only_eval=True \
-     env.eval.total_num_envs=8 \
-     env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
-     runner.logger.experiment_name=abot_m0_libero10_eval
-
-**LIBERO-Plus:**
-
-.. code-block:: bash
-
-   export LIBERO_TYPE=plus
-
-   python examples/embodiment/eval_embodied_agent.py \
-     --config-name libero_10_plus_ppo_abot_m0 \
-     actor.model.model_path=<path_to_abot_m0_ckpt> \
-     rollout.model.model_path=<path_to_abot_m0_ckpt> \
-     runner.only_eval=True \
-     env.eval.total_num_envs=8 \
-     env.eval.video_cfg.save_video=true \
-     algorithm.eval_rollout_epoch=1 \
-     runner.logger.experiment_name=abot_m0_liberoplus_eval
-
-Training
---------
+Run It
+------
 
 PPO training uses the same launch flow as evaluation. Select the target suite
 with ``LIBERO_TYPE`` and launch the corresponding config.
@@ -348,8 +364,11 @@ Common environment setup:
    export LIBERO_TYPE=plus
    bash examples/embodiment/run_embodiment.sh libero_10_plus_ppo_abot_m0
 
-Visualization
--------------
+Visualization and Results
+-------------------------
+
+Watch ``env/success_once`` for the task success rate. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
 
 .. code-block:: bash
 

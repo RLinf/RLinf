@@ -1,14 +1,51 @@
 RECAP: Offline Advantage-Based Policy Optimization
 =====================================================
 
-This document provides a complete guide to the **RECAP (RL with Experience and Corrections via Advantage-conditioned Policies)** pipeline in the RLinf framework.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
+   :align: center
+   :width: 80%
+
+   The RECAP offline pipeline.
+
+Run the **RECAP (RL with Experience and Corrections via Advantage-conditioned Policies)** pipeline in RLinf.
 RECAP is an offline policy optimization method that requires no online environment interaction. It computes returns from existing datasets,
 trains a value model, estimates advantages, and finally uses **Classifier-Free Guidance (CFG) training** to optimize the policy.
 
 This pipeline is especially suited for real-robot scenarios where large-scale online sampling is impractical.
 
-Pipeline Overview
---------------------
+Overview
+--------
+
+Improve a π₀.₅ policy offline (no new rollouts) by scoring existing data with a value model and steering with classifier-free guidance.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      RECAP (CFG)
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      π₀.₅
+
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      LeRobot datasets
+
+   .. grid-item-card:: Training
+      :text-align: center
+
+      Offline · 4 stages
+
+| **You'll do:** compute returns → SFT a value model → compute advantages → CFG-train the policy → evaluate.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SigLIP2 + Gemma3 + π₀.₅ checkpoints · LeRobot-format datasets (steps below).
+
+Pipeline
+--------
 
 RECAP consists of four sequential stages:
 
@@ -33,8 +70,8 @@ RECAP consists of four sequential stages:
 
 4. **CFG Training**: Train the policy model using advantage labels — positive (high-advantage) samples serve as conditional inputs and negative (low-advantage) samples as unconditional inputs, enabling classifier-free guidance for policy optimization.
 
-Algorithm
------------
+How RECAP Works
+---------------
 
 **RECAP Core Components**
 
@@ -63,8 +100,8 @@ Algorithm
    - Positive samples are randomly dropped to unconditional with probability ``unconditional_prob`` (default :math:`0.1`) for dropout regularization
    - At inference time, ``cfgrl_guidance_scale`` controls the guidance strength
 
-Dependency Installation
---------------------------
+Installation
+------------
 
 1. Clone RLinf Repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,8 +145,8 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
    source .venv/bin/activate
 
 
-Model Download
------------------
+Download the Model
+------------------
 
 The RECAP pipeline requires the following pretrained models:
 
@@ -631,8 +668,16 @@ Visualize specific episodes:
 - ``episode_{N}_summary.png``: Key frames + value/advantage time series for each episode (frames above threshold highlighted with green border)
 - ``episode_{N}.mp4``: Per-frame replay video with advantage annotations
 
+Run It
+------
+
+Follow the numbered RECAP stages above to generate returns, train the value model, compute advantages, and train the CFG policy.
+
 Visualization and Results
-----------------------------
+-------------------------
+
+For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
+
 
 **TensorBoard Logging**
 
@@ -687,7 +732,7 @@ After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate 
 
    <div style="display: flex; justify-content: center; margin: 20px 0;">
      <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
        <p><em>RECAP results on LIBERO-10 Task 0</em></p>
      </div>
    </div>

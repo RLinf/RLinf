@@ -1,99 +1,86 @@
-Real-World Dual-Franka: GELLO Collection, π₀.₅ SFT, Deployment
-================================================================
+Using Dual Franka
+=================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+   :align: center
+   :width: 80%
 
-This example describes the minimum supported workflow for the RLinf
-dual-arm Franka setup: start a two-node real-world cluster, collect
-dual-arm demonstrations with two GELLO leaders, fine-tune π₀.₅ on the
-converted tcp_rot6d dataset, and deploy the trained policy back to the
-robots with foot-pedal control.
+   Franka arm hardware used as the basis for the dual-Franka GELLO collection and π₀.₅ deployment workflow.
 
-This page covers the hardware layout, dependency installation, required
-configuration placeholders, hardware checks, data collection, tcp_rot6d
-backfill and SFT, deployment, and common troubleshooting notes.
-
-Read these pages first if you are setting up the hardware for the first
-time:
-
-* :doc:`franka` for single-arm Franka basics, Ray cluster setup, FCI, and
-  ``RLINF_NODE_RANK``.
-* :doc:`franka_gello` for GELLO installation, Dynamixel permissions, and
-  ``gello-teleop``.
-
+Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the robot nodes.
 
 Overview
 --------
 
-The workflow has five stages:
+Build a dual-arm dataset, train π₀.₅, and deploy on a two-node Franka rig.
 
-1. Install ``franka-franky`` dependencies on the two robot nodes.
-2. Start Ray with ``RLINF_NODE_RANK=0`` on the head and
-   ``RLINF_NODE_RANK=1`` on the worker.
-3. Collect joint-space demonstrations with
-   ``realworld_collect_data_gello_joint_dual_franka``.
-4. Convert the dataset to tcp_rot6d and run π₀.₅ SFT with
-   ``realworld_sft_openpi_dual_franka_tcp_rot6d``.
-5. Deploy with ``realworld_eval_dual_franka``.
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-The repository-provided configs already select the corresponding environments.
-Typically, replace only the hardware paths, task text, dataset IDs, and model
-checkpoints.
+   .. grid-item-card:: Models
+      :text-align: center
 
+      OpenPI π₀.₅
 
-Environment
------------
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-Hardware layout
-~~~~~~~~~~~~~~~
+      SFT · eval-only deployment
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      Dual-arm manipulation
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      2× Franka · 2 robot nodes · GELLO
+
+| **You'll do:** install franky deps → collect GELLO demos → convert rot6d data → run SFT → deploy eval config.
+| **Prerequisites:** :doc:`franka` · :doc:`franka_gello` · two Franka arms · OpenPI assets.
+
+Tasks
+~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 35 45
+   :widths: 24 24 24
 
-   * - Node
-     - Role
-     - Hardware
-   * - ``node 0`` (head)
-     - Ray head, env worker, left Franka controller, cameras, GELLO input,
-       collection/deployment entrypoint
-     - GPU machine; left Franka FR3; left Robotiq gripper; base camera;
-       left and right wrist cameras; both GELLO leaders; PCsensor foot pedal
-   * - ``node 1`` (worker)
-     - Ray worker and right Franka controller
-     - Right Franka FR3; right Robotiq gripper; GPU optional
+   * - Task
+     - Config / entry point
+     - Description
+   * - Collection
+     - ``realworld_collect_data_gello_joint_dual_franka``
+     - Collect dual-arm joint trajectories.
+   * - SFT
+     - ``realworld_sft_openpi_dual_franka_tcp_rot6d``
+     - Fine-tune π₀.₅ on tcp_rot6d actions.
+   * - Deployment
+     - ``realworld_eval_dual_franka``
+     - Run eval-only deployment on the robot nodes.
 
-Both Franka arms are usually wired to their local control node through a
-dedicated NIC. All cameras, both GELLO leaders, and the foot pedal are
-connected to ``node 0``.
-
-Data and action spaces
+Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 22 20 34
+   :widths: 24 24
 
-   * - Stage
-     - Environment
-     - Shape
-     - Use
-   * - Collection
-     - ``DualFrankaJointEnv-v1``
-     - ``state=[68]``, ``actions=[16]``
-     - GELLO joint-space demonstrations
-   * - SFT / deployment
-     - ``DualFrankaTCPEnv-v1``
-     - ``state=[20]``, ``actions=[20]``
-     - π₀.₅ tcp_rot6d policy
+   * - Field
+     - Description
+   * - Observation
+     - Wrist/global camera views plus dual-arm robot state.
+   * - Action
+     - Dual-arm tcp_rot6d: ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
+   * - Reward
+     - Evaluation success signal or operator-gated deployment outcome.
+   * - Prompt
+     - Task text in the OpenPI data/config metadata.
 
-The tcp_rot6d action is ``[xyz(3), rot6d(6), gripper(1)]`` for each arm.
-The main image key is ``left_wrist_0_rgb``; extra views are ordered as
-``base_0_rgb`` and ``right_wrist_0_rgb``.
+Installation
+------------
 
-
-Dependency Installation
------------------------
-
-Robot nodes
+Robot Nodes
 ~~~~~~~~~~~
 
 Run the robot-node installation on both ``node 0`` and ``node 1``.
@@ -150,7 +137,7 @@ before starting Ray. Replace ``<FRANKA_NIC>`` with the dedicated robot NIC and
 ``ulimit -r`` should report ``99`` or ``unlimited``; ``ulimit -l`` should report
 ``unlimited``. Re-apply the per-boot tuning after every workstation reboot.
 
-Training node
+Training Node
 ~~~~~~~~~~~~~
 
 Install OpenPI dependencies on the remote GPU training cluster that will
@@ -295,8 +282,8 @@ Run the same two commands for the second leader by changing
 ``GELLO_PORT``.
 
 
-Quick Start
------------
+Run It
+------
 
 Start Ray
 ~~~~~~~~~
@@ -460,25 +447,9 @@ Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and
 Launch deployment
 ~~~~~~~~~~~~~~~~~
 
-Reuse the Ray cluster from collection, or restart it with the same
-environment variables. Then execute on ``node 0``:
-
-.. code-block:: bash
-
-   cd /path/to/RLinf
-   source .venv/bin/activate
-   export PYTHONPATH=$PWD:${PYTHONPATH:-}
-
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka
-
-Hydra override example:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval_dual_franka \
-       rollout.model.model_path=/path/to/deploy/global_step_<N> \
-       actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
-       env.eval.override_cfg.task_description="handover the object"
+Reuse the Ray cluster from collection, or restart it with the same environment
+variables. Launch the policy through the :doc:`real-world evaluation guide
+<../../evaluations/guides/realworld>` with ``realworld_eval_dual_franka``.
 
 Deployment pedal controls:
 

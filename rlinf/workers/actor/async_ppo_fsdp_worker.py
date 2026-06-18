@@ -239,9 +239,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 SupportedModel.OPENVLA_OFT,
             ]:
                 model_kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
-                model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
+                model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
             elif SupportedModel(self.cfg.actor.model.model_type) in [
                 SupportedModel.GR00T,
                 SupportedModel.ABOT_M0,
@@ -373,9 +373,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         SupportedModel.OPENVLA_OFT,
                     ]:
                         model_kwargs["temperature"] = (
-                            self.cfg.algorithm.sampling_params.temperature_train
+                            self.cfg.rollout.sampling_params.temperature_train
                         )
-                        model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
+                        model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
                     elif SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
                         SupportedModel.ABOT_M0,

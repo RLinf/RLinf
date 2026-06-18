@@ -1,5 +1,5 @@
-Quickstart 1: PPO Training of VLAs on Maniskill3
-=================================================
+Quick Start
+===========
 
 This quick-start walks you through training the Visual-Language-Action model, including
 `OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
@@ -13,7 +13,7 @@ focusing on complex contact manipulation and embodied intelligence tasks.
 The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
 supporting various tasks such as grasping, assembling, drawing, and locomotion.
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/execution_modes`).
+We have also implemented system-level optimizations for the GPU simulator (see :doc:`../concepts/execution_modes`).
 
 Launch Training
 --------------------------
@@ -159,7 +159,7 @@ It is recommended to focus on the following metrics:
    ``cluster.component_placement`` in the configuration file.
 
    Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/configuration/basic_config` for more detailed instructions on Placement configuration.
+   See :doc:`../guides/basic_config` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 

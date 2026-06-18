@@ -28,7 +28,7 @@ rl_head_config:
   noise_anneal: False
   noise_params: [0.7, 0.3, 400]
   noise_level: 0.5
-  add_value_head: ${actor.model.add_value_head}
+  add_value_head: ${..add_value_head}
   chunk_critic_input: False
   detach_critic_input: True
   disable_dropout: True
