@@ -24,7 +24,6 @@ More targets and combinations:
 
    bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
    bash requirements/install.sh embodied --model openpi --env libero
-   bash requirements/install.sh embodied --env franka-vr
    bash requirements/install.sh agentic
    bash requirements/install.sh docs
 
