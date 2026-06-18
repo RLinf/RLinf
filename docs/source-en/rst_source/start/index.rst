@@ -7,17 +7,17 @@ then points you to what comes next.
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: Install
-      :link: installation
-      :link-type: doc
-
-      Install the embodied stack with Docker or a custom environment.
-
    .. grid-item-card:: Requirements
       :link: requirements
       :link-type: doc
 
       The tested hardware and software configuration.
+
+   .. grid-item-card:: Install
+      :link: installation
+      :link-type: doc
+
+      Install the embodied stack with Docker or a custom environment.
 
    .. grid-item-card:: Quick Start
       :link: vla
@@ -83,7 +83,7 @@ Command Reference
    :hidden:
    :maxdepth: 1
 
-   installation
    requirements
+   installation
    vla
    cheat_sheet

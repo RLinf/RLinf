@@ -14,6 +14,56 @@ Real-World RL with Franka
 
 Use RLinf to train and evaluate real-world policies on a Franka Emika Panda arm. You'll set up the controller and training nodes, collect demonstrations, run SAC/RLPD or PPO-style training, and monitor safe online updates on physical hardware.
 
+Related Franka Setups
+---------------------
+
+Explore alternative Franka hardware, sensors, and training recipes.
+
+.. grid:: 1 2 2 3
+   :gutter: 2
+
+   .. grid-item-card:: Reward Model
+      :link: franka_reward_model
+      :link-type: doc
+
+      Train Franka with a learned reward model.
+
+   .. grid-item-card:: ZED + Robotiq
+      :link: franka_zed_robotiq
+      :link-type: doc
+
+      Use ZED cameras and Robotiq grippers.
+
+   .. grid-item-card:: GELLO
+      :link: franka_gello
+      :link-type: doc
+
+      Joint-level teleoperation data collection with GELLO.
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      Run a two-arm Franka setup.
+
+   .. grid-item-card:: Dexterous Hand
+      :link: franka_dexhand
+      :link-type: doc
+
+      Drive a Franka with a dexterous hand end-effector.
+
+   .. grid-item-card:: Pi0 SFT
+      :link: franka_pi0_sft_deploy
+      :link-type: doc
+
+      Deploy a π₀ SFT policy on Franka.
+
+   .. grid-item-card:: HG-DAgger
+      :link: hg-dagger
+      :link-type: doc
+
+      Human-gated DAgger interactive training.
+
 Overview
 --------
 

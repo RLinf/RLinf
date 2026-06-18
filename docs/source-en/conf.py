@@ -99,6 +99,8 @@ html_js_files = [
     "js/mode-panel.js",
     "js/github-stars.js",
     "js/sidebar-nav.js",
+    "js/lang-switcher.js",
+    "js/theme-toggle.js",
     "sphinx-modal-widget.js",
 ]
 html_sidebars = {
@@ -125,6 +127,7 @@ def render_svg_logo(path, width="4rem", height="auto"):
 
 html_theme_options = {
     "logo": {"svg": render_svg_logo("_static/svg/logo.svg")},
+    "search_bar_text": "Search docs…",
     "navbar_start": [],
     "navbar_center": [],
     "navbar_end": [],
