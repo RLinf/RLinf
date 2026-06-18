@@ -71,6 +71,16 @@ actor:
 
   fsdp_config:
     strategy: "fsdp2"
+    # Whole-model FSDP2 wrap (no per-submodule sharding). The MoT performs manual
+    # cross-expert attention by reaching into the video/action DiT-block internals
+    # rather than calling block.forward, which is incompatible with per-block
+    # FSDP2 auto-wrap (sharded block params would not be all-gathered when the MoT
+    # accesses them). An empty wrap target leaves only the root module sharded, so
+    # all params are resident during the manual attention. Without this, FSDP2
+    # auto-wrap has no target and setup crashes (FastWAMPolicy defines no
+    # `_no_split_modules`).
+    wrap_policy:
+      no_split_names: ["__none__"]
     use_orig_params: True
     gradient_checkpointing: True
     gradient_checkpointing_use_reentrant: True
