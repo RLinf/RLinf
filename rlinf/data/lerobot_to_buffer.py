@@ -18,22 +18,15 @@ Reads data written by :class:`~rlinf.envs.wrappers.collect_episode.CollectEpisod
 (in LeRobot format via :class:`~rlinf.data.lerobot_writer.LeRobotDatasetWriter`)
 and converts each episode into a :class:`~rlinf.data.embodied_io_struct.Trajectory`
 that is appended to a :class:`~rlinf.data.replay_buffer.TrajectoryReplayBuffer`.
-
-The default codepath reads parquet via pandas and does **not** require the
-LeRobot package to be installed — it works on any machine with pandas and
-pyarrow.  If LeRobot IS available, its :class:`~lerobot.datasets.lerobot_dataset.LeRobotDataset`
-is used as a fallback for legacy dataset formats.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import pandas as pd
 import torch
 
 from rlinf.data.embodied_io_struct import Trajectory
@@ -42,61 +35,57 @@ from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 logger = logging.getLogger(__name__)
 
 
-def _read_parquet_direct(root: Path):
-    """Read a LeRobot dataset via plain pandas — no LeRobot import needed.
+def _import_lerobot_dataset():
+    """Import :class:`LeRobotDataset` from whichever path the installed lerobot exposes.
 
-    Returns (df, info_dict) where *df* contains the full frame table with an
-    ``episode_index`` column, and *info* is the parsed ``meta/info.json``.
-    """
-    pq_path = root / "data" / "chunk-000" / "file-000.parquet"
-    info_path = root / "meta" / "info.json"
-
-    if not pq_path.exists():
-        raise FileNotFoundError(f"No parquet at {pq_path}")
-
-    df = pd.read_parquet(pq_path)
-    info = json.loads(info_path.read_text())
-    return df, info
-
-
-def _decode_image_column(col) -> np.ndarray | None:
-    """Decode a single parquet cell from an ``dtype: image`` column.
-
-    LeRobot stores images as ``{"bytes": <png bytes>, "path": <str>}`` dicts
-    inside the parquet.  Returns the decoded (H, W, 3) uint8 array, or
-    ``None`` if the column is empty / unreadable.
+    LeRobot moved the package layout from ``lerobot.common.datasets`` (legacy)
+    to ``lerobot.datasets`` (>= ccfd609e / SO-arms refactor). We support both
+    so the bridge works regardless of which lerobot pin the user installed.
     """
     try:
-        import cv2
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
+
+        return LeRobotDataset
     except ImportError:
-        return None
+        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset  # type: ignore
 
-    # Take the first non-None entry to infer whether the column stores images.
-    item = None
-    for v in col:
-        if v is not None:
-            item = v
-            break
-    if item is None:
-        return None
+        return LeRobotDataset
 
-    frames = []
-    for v in col:
-        if v is None:
-            frames.append(None)
-            continue
-        if isinstance(v, dict) and "bytes" in v:
-            buf = np.frombuffer(v["bytes"], np.uint8)
-        elif isinstance(v, bytes):
-            buf = np.frombuffer(v, np.uint8)
-        else:
-            frames.append(None)
-            continue
-        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-        if img is not None:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        frames.append(img)
-    return np.stack(frames) if all(f is not None for f in frames) else None
+
+def _open_lerobot_dataset(dataset_path: str, episodes: Optional[list[int]]):
+    """Open a local LeRobot dataset by directory path.
+
+    Picks a placeholder ``repo_id`` so the loader does not attempt a Hub
+    lookup; the real metadata comes from ``{dataset_path}/meta/info.json``.
+    """
+    LeRobotDataset = _import_lerobot_dataset()
+    root = Path(dataset_path)
+    if not (root / "meta" / "info.json").exists():
+        raise FileNotFoundError(
+            f"{root}/meta/info.json is missing — pass a directory written by "
+            "LeRobotDatasetWriter / CollectEpisode."
+        )
+    repo_id = f"local/{root.name}"
+    try:
+        return LeRobotDataset(repo_id, root=root, episodes=episodes)
+    except TypeError:
+        # Fallback for legacy lerobot where the constructor accepts a path
+        # as the first positional argument.
+        return LeRobotDataset(str(root), episodes=episodes)
+
+
+def _episode_indices(dataset, ep_idx: int):
+    """Return the row indices (inside ``hf_dataset``) that belong to ``ep_idx``.
+
+    Handles both the legacy ``episode_data_index["from"/"to"]`` API and the
+    v0.5.x API where episode boundaries are derived from the ``episode_index``
+    column.
+    """
+    legacy = getattr(dataset, "episode_data_index", None)
+    if legacy is not None and "from" in legacy and "to" in legacy:
+        return range(int(legacy["from"][ep_idx]), int(legacy["to"][ep_idx]))
+    column = np.asarray(dataset.hf_dataset["episode_index"])
+    return np.flatnonzero(column == ep_idx).tolist()
 
 
 def load_lerobot_dataset_to_demo_buffer(
@@ -117,96 +106,73 @@ def load_lerobot_dataset_to_demo_buffer(
     Returns:
         Total number of frames added across all loaded episodes.
     """
-    root = Path(dataset_path)
-
-    # If the path is a parent directory containing multiple run_* subdirs
-    # (each a standalone LeRobot dataset), load them all.
-    if not (root / "meta" / "info.json").exists():
-        run_dirs = sorted(
-            d for d in root.iterdir()
-            if d.is_dir() and d.name.startswith("run_") and (d / "meta" / "info.json").exists()
-        )
-        if not run_dirs:
-            raise FileNotFoundError(
-                f"{root}/meta/info.json is missing and no run_* subdirectories "
-                "with meta/info.json were found — pass a directory written by "
-                "LeRobotDatasetWriter / CollectEpisode."
-            )
-        total = 0
-        for run_dir in run_dirs:
-            total += load_lerobot_dataset_to_demo_buffer(
-                str(run_dir), demo_buffer, state_dim, action_dim,
-                episodes=episodes, max_episode_length=max_episode_length,
-            )
-        return total
-
-    # Try the native LeRobot loader first; fall back to direct pandas.
-    try:
-        from lerobot.datasets.lerobot_dataset import LeRobotDataset
-
-        dataset = LeRobotDataset(str(root), root=root, episodes=episodes)
-        df = pd.DataFrame(dataset.hf_dataset[:])  # type: ignore[arg-type]
-    except Exception:
-        df, _ = _read_parquet_direct(root)
-
-    if "episode_index" not in df.columns:
-        logger.warning("No episode_index column in %s — treating as single episode.", root)
-        df["episode_index"] = 0
-
-    ep_ids = sorted(set(int(e) for e in df["episode_index"]))
-    if episodes is not None:
-        ep_ids = [e for e in ep_ids if e in episodes]
+    dataset = _open_lerobot_dataset(dataset_path, episodes)
+    if dataset.num_episodes == 0:
+        logger.warning("LeRobot dataset at %s has 0 episodes.", dataset_path)
+        return 0
 
     total_frames = 0
-    has_image_bar = "image" in df.columns
-
-    for ep_id in ep_ids:
-        mask = df["episode_index"] == ep_id
-        ep_df = df[mask]
-        if len(ep_df) == 0:
+    for ep_idx in range(dataset.num_episodes):
+        rows = _episode_indices(dataset, ep_idx)
+        if not rows:
             continue
+        ep_hf = dataset.hf_dataset.select(list(rows))
 
-        states_list, actions_list, dones_list, interventions_list = [], [], [], []
-        for _, row in ep_df.iterrows():
-            s = row.get("state")
-            a = row.get("actions")
+        states, actions, images, dones, interventions = [], [], [], [], []
+        has_image = False
+
+        for frame in ep_hf:
+            s = frame.get("state")
+            a = frame.get("actions")
             if s is None or a is None:
                 continue
-            states_list.append(np.asarray(s, dtype=np.float32).reshape(-1))
-            actions_list.append(np.asarray(a, dtype=np.float32).reshape(-1))
-            d = row.get("done")
-            dones_list.append(False if d is None else bool(np.asarray(d).flat[0]))
-            iflag = row.get("intervene_flag")
-            interventions_list.append(
-                True if iflag is None else bool(np.asarray(iflag).flat[0])
+            s = np.asarray(s, dtype=np.float32)
+            a = np.asarray(a, dtype=np.float32).reshape(-1)
+            if s.shape[-1] != state_dim:
+                raise ValueError(
+                    f"Expected state_dim={state_dim}, got {s.shape[-1]} "
+                    f"in episode {ep_idx} of {dataset_path}"
+                )
+            if a.shape[-1] != action_dim:
+                raise ValueError(
+                    f"Expected action_dim={action_dim}, got {a.shape[-1]} "
+                    f"in episode {ep_idx} of {dataset_path}"
+                )
+            states.append(s)
+            actions.append(a)
+
+            img = frame.get("image")
+            if img is not None:
+                has_image = True
+                img = np.asarray(img, dtype=np.uint8)
+            images.append(img)
+
+            done = frame.get("done")
+            dones.append(False if done is None else bool(np.asarray(done).reshape(-1)[0]))
+
+            iflag = frame.get("intervene_flag")
+            interventions.append(
+                True if iflag is None else bool(np.asarray(iflag).reshape(-1)[0])
             )
 
-        if not states_list:
+        if not states:
             continue
 
-        T = len(states_list)
-        states_t = torch.from_numpy(np.stack(states_list))
-        actions_t = torch.from_numpy(np.stack(actions_list))
-        dones_t = torch.tensor(dones_list, dtype=torch.bool)
+        T = len(states)
+        states_t = torch.from_numpy(np.stack(states, axis=0))
+        actions_t = torch.from_numpy(np.stack(actions, axis=0))
+        dones_t = torch.tensor(dones, dtype=torch.bool)
         dones_t[-1] = True
-        intervene_t = torch.tensor(interventions_list, dtype=torch.bool)
+        intervene_t = torch.tensor(interventions, dtype=torch.bool)
 
         curr_obs: dict = {"states": states_t}
         next_obs: dict = {"states": states_t.clone()}
-
-        if has_image_bar:
-            images = _decode_image_column(ep_df["image"])
-            if images is not None and len(images) == T:
-                images_t = torch.from_numpy(images)
+        if has_image:
+            valid = [img for img in images if img is not None]
+            if len(valid) == T:
+                images_t = torch.from_numpy(np.stack(valid, axis=0))
                 curr_obs["main_images"] = images_t
                 next_obs["main_images"] = images_t.clone()
-
-        fwd_inputs = {
-            "action": actions_t,
-            "states": curr_obs["states"],
-        }
-        if "main_images" in curr_obs:
-            fwd_inputs["main_images"] = curr_obs["main_images"]
 
         trajectory = Trajectory(
             max_episode_length=max_episode_length,
@@ -218,15 +184,18 @@ def load_lerobot_dataset_to_demo_buffer(
             intervene_flags=intervene_t,
             prev_logprobs=torch.zeros(T, 1, action_dim, dtype=torch.float32),
             prev_values=torch.zeros(T, 1, 1, dtype=torch.float32),
-            forward_inputs=fwd_inputs,
+            forward_inputs={"action": actions_t},
             curr_obs=curr_obs,
             next_obs=next_obs,
         )
+
         demo_buffer.add_trajectories([trajectory])
         total_frames += T
 
     logger.info(
         "Loaded %d frames across %d episodes from %s",
-        total_frames, len(ep_ids), dataset_path,
+        total_frames,
+        dataset.num_episodes,
+        dataset_path,
     )
     return total_frames
