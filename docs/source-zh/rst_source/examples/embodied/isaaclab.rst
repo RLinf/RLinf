@@ -1,246 +1,87 @@
 基于 IsaacLab 的强化学习训练
-====================================
+========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-本示例提供了在 `IsaacLab <https://developer.nvidia.com/isaac/lab>`_ 环境中使用 **RLinf** 框架的完整指南，
-介绍如何通过强化学习对 gr00t n1.5 算法进行微调。内容覆盖从环境搭建、核心算法设计到训练配置、评估与可视化的全过程，
-并提供可复现的命令与配置片段。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png
+   :align: center
+   :width: 90%
 
-下文也包含了对 openpi π0.5 算法进行微调的相应流程。
+   IsaacLab（图片来源：`IsaacLab <https://developer.nvidia.com/isaac/lab>`__）。
 
-本示例的主要目标是训练一个具备机器人操作能力的模型：
+`IsaacLab <https://developer.nvidia.com/isaac/lab>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
+你将使用 RLinf 在自定义 Franka 方块堆叠任务上，通过 PPO 微调 GR00T N1.5 或 OpenPI π₀.₅。
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像。
-2. **语言理解**：理解自然语言形式的任务描述。
-3. **动作生成**：输出精确的机器人动作（位置、旋转、夹爪控制）。
-4. **强化学习**：通过环境反馈，使用 PPO 优化策略。
+概览
+----------------------------------------
 
-环境
-----
+先使用 SFT 检查点，再通过 PPO 在 IsaacLab Franka stack-cube 任务上微调 VLA。
 
-**IsaacLab 环境**
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-IsaacLab 是一个高度可定制的仿真平台，允许用户创建自定义环境与任务。
-本示例使用 RLinf 自定义环境 `Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0` 进行强化学习训练。
-如需使用该自定义环境，请按照 **依赖安装** 章节完成环境配置；该环境已默认集成在 RLinf 源码对应的 IsaacLab 库中。
+   .. grid-item-card:: 模型
+      :text-align: center
 
-- **环境**：IsaacLab 仿真平台
-- **任务**：控制 Franka 机械臂按蓝、红、绿顺序（自下而上）堆叠方块
-- **观测**：第三人称相机与机械臂腕部相机的 RGB 图像
-- **动作空间**：7 维连续动作
+      GR00T N1.5 · π₀.₅
 
-  - 3D 位置控制（x, y, z）
-  - 3D 旋转控制（roll, pitch, yaw）
-  - 夹爪控制（开/合）
+   .. grid-item-card:: 算法
+      :text-align: center
 
-**任务描述**
+      PPO
 
-.. code-block:: text
+   .. grid-item-card:: 任务
+      :text-align: center
 
-   Stack the red block on the blue block, then stack the green block on the red block.
+      Franka stack-cube
 
-**数据结构**
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-- **图像**：来自主视角与腕部视角的 RGB 张量 ``[batch_size, H, W, 3]``（``H`` 与 ``W`` 由环境配置中的相机分辨率决定，例如 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 中的 ``256x256``）
-- **任务描述**：自然语言指令
-- **状态**：末端执行器的位置、姿态与夹爪状态
-- **奖励**：0-1 的稀疏成功/失败奖励
+      1 节点 · 8 GPUs
 
-**添加自定义任务**
+| **你将完成：** 安装 → 下载 Isaac Sim + SFT 模型 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · Isaac Sim · SFT 检查点（见下文）。
 
-如需添加自定义任务，通常需要以下三步：
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **自定义 IsaacLab 环境**：可参考 `IsaacLab-Examples <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/environments.html>`__ 中的可用环境；自定义环境项目可参考 `IsaacLab-Quickstart <https://isaac-sim.github.io/IsaacLab/v2.3.0/source/overview/own-project/index.html>`__。
-2. **在 RLinf 中配置训练环境**：参考 ``rlinf/envs/isaaclab/tasks/stack_cube.py``，将自定义脚本放到 ``rlinf/envs/isaaclab/tasks``，并在 ``rlinf/envs/isaaclab/__init__.py`` 中添加相关代码。
-3. **配置任务 ID**：参考 ``examples/embodiment/config/env/isaaclab_stack_cube.yaml``，修改 ``init_params.id`` 为自定义 IsaacLab 任务 ID，并确保 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml`` 文件开头的 ``defaults`` 引用了正确的环境配置。
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-算法
-----
+   * - 任务
+     - 描述
+   * - ``Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0``
+     - 将红色方块堆到蓝色方块上，再将绿色方块堆到红色方块上。
 
-**核心算法组件**
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. **PPO（Proximal Policy Optimization，默认）**
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-   - 使用 GAE（Generalized Advantage Estimation）进行优势估计
-   - 策略裁剪（ratio limits）
-   - 价值函数裁剪
-   - 熵正则化
+   * - 字段
+     - 规格
+   * - 观测
+     - 第三人称相机和腕部相机 RGB（默认 256×256），以及机器人本体状态。
+   * - 动作
+     - 7 维连续动作：3D 位置（x, y, z）+ 3D 旋转（roll, pitch, yaw）+ 夹爪。
+   * - 奖励
+     - 稀疏 0/1 成功奖励。
+   * - 提示词
+     - ``Stack the red block on the blue block, then stack the green block on the red block.``
 
-2. **GRPO（Group Relative Policy Optimization，未测试）**
+安装
+----------------------------------------
 
-   - 对每个状态/提示，策略生成 *G* 个独立动作
-   - 通过减去组内平均奖励来计算每个动作的优势
+.. include:: _setup_common.rst
 
-Gr00t n1.5 依赖安装
--------------------
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # 国内用户可使用以下地址提高下载速度：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像运行实验。
-
-.. code:: bash
-
-   docker run -it --rm --gpus all \
-      --shm-size 20g \
-      --network host \
-      --name rlinf \
-      -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-isaaclab
-      # 国内用户如需镜像加速，可使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
-
-**选项 2：自定义环境**
-
-直接在本地环境中安装依赖：
-
-.. code:: bash
-
-   # 国内用户可在 install.sh 中添加 --use-mirror 以加速依赖下载
-
-   bash requirements/install.sh embodied --model gr00t --env isaaclab
-   source .venv/bin/activate
-
-3. Isaac Sim 下载
-~~~~~~~~~~~~~~~~~
-
-使用 IsaacLab 前需要先下载并配置 Isaac Sim：
-
-.. code-block:: bash
-
-   mkdir -p isaac_sim
-   cd isaac_sim
-   wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
-   rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-
-下载完成后，通过以下方式设置环境变量：
-
-.. code-block:: bash
-
-   source ./setup_conda_env.sh
-
-.. warning::
-
-   每次打开新终端并使用 Isaac Sim 时都需要执行该步骤。
-
-Gr00t n1.5 模型下载
--------------------
-
-.. code-block:: bash
-
-   cd /path/to/save/model
-   # 下载 IsaacLab stack_cube few-shot SFT 模型
-   # 方法 1：使用 git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
-
-   # 方法 2：使用 huggingface-hub
-   # 国内用户可设置：
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
-
-为了使模型能够通过强化学习进一步提升性能，我们在 IsaacLab 环境中采集了 ``stack cube`` 任务的人类演示数据，并以 `GR00T N1.5 <https://github.com/NVIDIA/Isaac-GR00T/tree/n1.5-release>`__ 作为基础模型进行了监督微调，从而获得了具备基础成功率的起始模型。
-
-数据集已开源到 HuggingFace：`IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__
-
-Gr00t N1.5 运行脚本
--------------------
-
-本示例默认配置文件为 ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``。
-你可以修改该配置文件以调整训练设置，例如 GPU 分配、训练超参数与日志记录选项。
-
-**1. 关键集群配置**
-
-你可以灵活配置 env、rollout 与 actor 组件使用的 GPU 数量。
-此外，通过在配置中设置 ``pipeline_stage_num = 2``，可以实现 rollout 与 env 之间的流水线重叠，提高 rollout 效率。
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
-
-   rollout:
-      pipeline_stage_num: 2
-
-也可以重新配置布局为完全共享，即 env、rollout、actor 全部共享所有 GPU。
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-也可以重新配置为完全分离，即各组件使用独立 GPU、互不干扰，从而无需使用 offload 功能。
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
-
-**2. 配置模型路径**
-
-请在配置文件中更新 ``model_path``，将其指向模型下载目录。
-
-**3. 启动命令**
-
-在 IsaacLab 环境中使用 PPO 训练 gr00t n1.5：
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
-
-在 IsaacLab 环境中评估 gr00t n1.5：
-
-.. code:: bash
-
-   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_gr00t
-
-Openpi π0.5 依赖安装
---------------------
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # 国内用户可使用以下地址提高下载速度：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像运行实验。
+**Docker 镜像**
 
 .. code:: bash
 
@@ -250,30 +91,40 @@ Openpi π0.5 依赖安装
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-isaaclab
-      # 国内用户如需镜像加速，可使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
 
-请通过镜像内置的 switch_env 工具切换到对应的虚拟环境：
+   # 国内用户可使用：
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
 
-.. code:: bash
-
-   source switch_env openpi
-
-**选项 2：自定义环境**
-
-直接在本地环境中安装依赖：
+在镜像中切换到对应的虚拟环境：
 
 .. code:: bash
 
-   # 国内用户可在 install.sh 中添加 --use-mirror 以加速依赖下载
+   # GR00T N1.5
+   source switch_env gr00t
 
-   bash requirements/install.sh embodied --model openpi --env isaaclab
+   # OpenPI π₀.₅
+   # source switch_env openpi
+
+**自定义环境**
+
+为你要运行的模型安装环境：
+
+.. code:: bash
+
+   # 国内用户可添加 --use-mirror。
+
+   # GR00T N1.5
+   bash requirements/install.sh embodied --model gr00t --env isaaclab
    source .venv/bin/activate
 
-3. Isaac Sim 下载
-~~~~~~~~~~~~~~~~~
+   # OpenPI π₀.₅
+   # bash requirements/install.sh embodied --model openpi --env isaaclab
+   # source .venv/bin/activate
 
-使用 IsaacLab 前需要先下载并配置 Isaac Sim：
+下载 Isaac Sim
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+下载 Isaac Sim 5.1.0 并初始化其 shell 环境：
 
 .. code-block:: bash
 
@@ -282,110 +133,115 @@ Openpi π0.5 依赖安装
    wget https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-5.1.0-linux-x86_64.zip
    unzip isaac-sim-standalone-5.1.0-linux-x86_64.zip
    rm isaac-sim-standalone-5.1.0-linux-x86_64.zip
-
-下载完成后，通过以下方式设置环境变量：
-
-.. code-block:: bash
-
    source ./setup_conda_env.sh
 
 .. warning::
 
-   每次打开新终端并使用 Isaac Sim 时都需要执行该步骤。
+   每次在新终端中启动 IsaacLab 前，都需要运行 ``source ./setup_conda_env.sh``。
 
-Openpi π0.5 模型下载
---------------------
+下载模型
+----------------------------------------
+
+下载你要微调的模型检查点。
+
+**GR00T N1.5**
 
 .. code-block:: bash
 
    cd /path/to/save/model
-   # 下载 IsaacLab stack_cube few-shot SFT 模型
-   # 方法 1：使用 git clone
+
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
+
+   # 或使用 huggingface-hub：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Gr00t-SFT-Stack-cube --local-dir RLinf-Gr00t-SFT-Stack-cube
+
+**OpenPI π₀.₅**
+
+.. code-block:: bash
+
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/YifWRobotics/RLinf-pi05-SFT-Stack-cube
 
-   # 方法 2：使用 huggingface-hub
-   # 国内用户可设置：
+   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download YifWRobotics/RLinf-pi05-SFT-Stack-cube --local-dir RLinf-pi05-SFT-Stack-cube
 
-为了使模型能够通过强化学习进一步提升性能，我们在 IsaacLab 环境中采集了 ``stack cube`` 任务的人类演示数据，并以 `openpi π0.5 <https://github.com/Physical-Intelligence/openpi>`__ 作为基础模型进行了监督微调，从而获得了具备基础成功率的起始模型。
+.. include:: _model_path.rst
 
-数据集已开源到 HuggingFace：`IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__
+这些 SFT 检查点来自 IsaacLab stack-cube 任务的人类演示数据。
+数据集已发布在 |huggingface|
+`IsaacLab-Stack-Cube-Data <https://huggingface.co/datasets/RLinf/IsaacLab-Stack-Cube-Data>`__。
 
-Openpi π0.5 运行脚本
---------------------
+运行
+----------------------------------------
 
-**1. 关键集群配置**
+选择一个配置并启动训练：
 
-与 gr00t n1.5 对应部分相同。
+.. list-table::
+   :header-rows: 1
+   :widths: 26 46 28
 
-**2. 配置模型路径**
-
-请在配置文件中更新 ``model_path``，将其指向模型下载目录。
-
-**3. 启动命令**
-
-在 IsaacLab 环境中使用 PPO 训练 openpi π0.5：
+   * - 模型
+     - 配置
+     - 命令后缀
+   * - GR00T N1.5
+     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_gr00t.yaml``
+     - ``isaaclab_franka_stack_cube_ppo_gr00t``
+   * - OpenPI π₀.₅
+     - ``examples/embodiment/config/isaaclab_franka_stack_cube_ppo_openpi_pi05.yaml``
+     - ``isaaclab_franka_stack_cube_ppo_openpi_pi05``
 
 .. code:: bash
 
+   # GR00T N1.5
+   bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_gr00t
+
+   # OpenPI π₀.₅
    bash examples/embodiment/run_embodiment.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
 
-在 IsaacLab 环境中评估 openpi π0.5：
+这条命令会：
 
-.. code:: bash
+1. 使用选定的 Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 IsaacLab env 组件创建 Ray worker。
+3. 运行 PPO rollout，计算稀疏任务奖励，并更新 VLA 策略。
 
-   bash evaluations/run_eval.sh isaaclab_franka_stack_cube_ppo_openpi_pi05
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
+通过配置回退机制复用相同后缀：``isaaclab_franka_stack_cube_ppo_gr00t`` 和
+``isaaclab_franka_stack_cube_ppo_openpi_pi05``。
+
+.. note::
+
+   GR00T 默认配置会分离 env、rollout 和 actor placement。OpenPI 默认配置使用
+   ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
+   ``cluster.component_placement``、``rollout.pipeline_stage_num`` 和
+   ``actor.enable_offload``。
+
+.. note::
+
+   如需添加自定义 IsaacLab 任务，请在 ``rlinf/envs/isaaclab/tasks/`` 下实现任务，
+   在 ``rlinf/envs/isaaclab/__init__.py`` 中注册任务，然后在
+   ``examples/embodiment/config/env/isaaclab_stack_cube.yaml`` 等环境配置中，将
+   ``init_params.id`` 指向新的 task id。
 
 可视化与结果
-------------
+----------------------------------------
 
-**1. TensorBoard 日志**
+在 RLinf 仓库根目录启动 TensorBoard：
 
 .. code:: bash
 
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs --port 6006
+   tensorboard --logdir ../results --port 6006
 
-**2. 关键监控指标**
+关键指标是 ``env/success_once``。完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
 
--  **训练指标**
-
-   -  ``train/actor/approx_kl``：近似 KL 散度
-   -  ``train/actor/clip_fraction``：裁剪比例
-   -  ``train/actor/clipped_ratio``：裁剪后的比率
-   -  ``train/actor/dual_cliped_ratio``：双裁剪比率
-   -  ``train/actor/entropy_loss``：熵损失
-   -  ``train/actor/grad_norm``：梯度范数
-   -  ``train/actor/lr``：学习率
-   -  ``train/actor/policy_loss``：策略损失
-   -  ``train/actor/total_loss``：总损失
-   -  ``train/critic/explained_variance``：解释方差
-   -  ``train/critic/lr``：学习率
-   -  ``train/critic/value_clip_ratio``：价值裁剪比率
-   -  ``train/critic/value_loss``：价值损失
-
--  **Rollout 指标**
-
-   -  ``rollout/advantages_max``：最大优势值
-   -  ``rollout/advantages_mean``：平均优势值
-   -  ``rollout/advantages_min``：最小优势值
-   -  ``rollout/returns_max``：最大回合回报
-   -  ``rollout/returns_mean``：平均回合回报
-   -  ``rollout/returns_min``：最小回合回报
-   -  ``rollout/rewards``：奖励
-
--  **环境指标**
-
-   -  ``env/episode_len``：平均回合长度
-   -  ``env/num_trajectories``：轨迹数量
-   -  ``env/return``：平均回合回报
-   -  ``env/reward``：平均步奖励
-   -  ``env/success_once``：任务成功率
-
-**3. 视频生成**
+如需保存 rollout 视频，请在环境配置中启用 video：
 
 .. code:: yaml
 
@@ -394,40 +250,34 @@ Openpi π0.5 运行脚本
      info_on_video: True
      video_base_dir: ${runner.logger.log_path}/video/train
 
-**4. WandB 集成**
+如需启用 W&B 或 SwanLab，请添加 logger backend：
 
 .. code:: yaml
 
    runner:
-     task_type: embodied
      logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "isaaclab_franka_stack_cube_ppo_gr00t" # "isaaclab_franka_stack_cube_ppo_openpi_pi05"
-       logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
-
-强化学习结果
-------------
-
-下表汇总了不同训练阶段的任务成功率提升：
+       logger_backends: ["tensorboard", "wandb"]  # or swanlab
 
 .. list-table::
    :header-rows: 1
+   :widths: 70 30
 
    * - 模型阶段
      - 成功率
-   * - Gr00t n1.5 基础模型（无 SFT）
-     - 0.0
-   * - Gr00t n1.5 SFT 模型
+   * - GR00T N1.5 基础模型（无 SFT）
+     - 0.000
+   * - GR00T N1.5 SFT 模型
      - 0.654
-   * - Gr00t n1.5 RL 微调模型（SFT + RL）
+   * - GR00T N1.5 RL 微调模型（SFT + RL）
      - 0.897
-   * - Openpi π0.5 SFT 模型
+   * - OpenPI π₀.₅ SFT 模型
      - 0.859
-   * - Openpi π0.5 RL 微调模型（SFT + RL）
+   * - OpenPI π₀.₅ RL 微调模型（SFT + RL）
      - 0.953
 
 致谢
-----
-感谢 `许明辉 <https://github.com/smallcracker>`_ 和 `杨楠 <https://github.com/AquaSage18>`_ 对 gr00t n1.5 示例的贡献与支持！
-感谢 `Yifan Wu <https://github.com/YifWRobotics>`_ 对 openpi π0.5 示例的贡献与支持！
+----------------------------------------
+
+感谢 `许明辉 <https://github.com/smallcracker>`__ 和
+`杨楠 <https://github.com/AquaSage18>`__ 对 GR00T N1.5 示例的贡献与支持，也感谢
+`Yifan Wu <https://github.com/YifWRobotics>`__ 对 OpenPI π₀.₅ 示例的贡献与支持。

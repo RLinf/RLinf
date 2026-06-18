@@ -55,7 +55,7 @@ DreamZero 真机评测还需在 GPU 节点安装 DreamZero 依赖，详见 :doc:
 
 ``realworld_pnp_eval.yaml`` 与 ``realworld_pnp_eval_dreamzero.yaml`` 使用上述双节点布局；``realworld_eval.yaml`` （自定义任务）为 **单机** 布局，``env`` 与 ``rollout`` 均部署在同一 Franka 节点。
 
-Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../examples/embodied/franka` 与 :doc:`../../tutorials/embodied/realworld_robot`。
+Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../examples/embodied/franka` 与 :doc:`../../guides/realworld_robot`。
 
 示例配置
 --------
@@ -80,6 +80,7 @@ Ray 集群的完整搭建、固件版本与 libfranka 兼容性见 :doc:`../../e
      - π₀
 
 若 ``evaluations/realworld/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.task_type: embodied_eval`` 与 ``runner.only_eval: True``）。详见 :doc:`../reference/cli`。
+Dual Franka 部署目前通过该回退路径使用 ``realworld_eval_dual_franka``。
 
 启动前检查
 ----------
@@ -330,6 +331,23 @@ RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_desc
 
 自定义任务的采集、训练与部署流程见 :doc:`../../examples/embodied/franka_pi0_sft_deploy`。
 
+Dual Franka 部署
+----------------
+
+Dual Franka SFT 部署复用统一评测启动器，并通过配置回退使用
+``examples/embodiment/config/realworld_eval_dual_franka.yaml``。
+将 ``rollout.model.model_path`` 设为已同步的 checkpoint 目录，将
+``actor.model.openpi_data.repo_id`` 设为包含 ``norm_stats.json`` 的 repo id。
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_eval_dual_franka \
+       rollout.model.model_path=/path/to/deploy/global_step_<N> \
+       actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
+       env.eval.override_cfg.task_description="handover the object"
+
+完整采集、SFT、checkpoint 同步与脚踏按键流程见 :doc:`../../examples/embodied/dual_franka`。
+
 查看结果
 --------
 
@@ -343,7 +361,7 @@ RLinf 提供通用真机环境 ``FrankaEnv-v1``：在 YAML 中配置 ``task_desc
 --------
 
 - **安全：** 评测前确认工作空间限位与急停功能正常；首次评测降低 ``rollout_epoch``。
-- **节点拓扑：** ``env`` worker 必须部署在可直连 Franka 的节点；``node_ranks`` 须与 ``RLINF_NODE_RANK`` 一致。PnP 为双节点，自定义任务评测为单机。
+- **节点拓扑：** ``env`` worker 必须部署在可直连 Franka 的节点；``node_ranks`` 须与 ``RLINF_NODE_RANK`` 一致。PnP 与 Dual Franka 为双节点，自定义任务评测为单机。
 - **相机未找到：** 在控制节点运行 ``python -m toolkits.realworld_check.test_franka_camera``，核对 ``camera_serials``。
 - **动作异常：** 检查 ``norm_stats.json`` 是否位于 ``model_path/<repo_id>/``，以及 ``openpi.config_name`` 是否与训练一致。
 - **Ray 只见一个节点：** 检查防火墙、``RLINF_COMM_NET_DEVICES`` 与 head IP 是否可被其他节点访问。

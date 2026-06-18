@@ -6,32 +6,67 @@ showcasing how the framework can be applied across different scenarios and
 demonstrating its efficiency in practice.
 This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
 
-Embodied intelligence is RLinf's primary focus, and the embodied gallery is split into five entry points so you can pick the one that matches your starting question:
+Embodied intelligence is RLinf's primary focus. The embodied gallery is split into five
+entry points — pick the one that matches your starting question:
 
-- :doc:`simulators_index` — pick this when the simulator / benchmark (LIBERO, ManiSkill, RoboTwin, IsaacLab, …) is your starting point.
+.. grid:: 1 2 3 3
+   :gutter: 3
 
-- :doc:`real_world_index` — pick this when you have access to physical hardware (Franka, dexterous hands, mobile dual-arm platforms, …).
+   .. grid-item-card:: Simulators
+      :link: simulators_index
+      :link-type: doc
 
-- :doc:`vla_wam_index` — pick this when you want to RL-fine-tune a specific model family (π₀, GR00T, Lingbot-VLA, OpenSora, Wan, …).
+      Start from a benchmark — LIBERO, ManiSkill, RoboTwin, IsaacLab, and more.
 
-- :doc:`sft_index` — supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
+   .. grid-item-card:: Robots
+      :link: real_world_index
+      :link-type: doc
 
-- :doc:`methods_index` — algorithm-centric examples (DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP/SAC-Flow policies, …).
+      Run on physical robot hardware — the Franka family plus GimArm, XSquare Turtle2, and DOS-W1.
+
+   .. grid-item-card:: Models
+      :link: vla_wam_index
+      :link-type: doc
+
+      RL-fine-tune a specific model family — π₀, GR00T, Lingbot-VLA, OpenSora, Wan, and more.
+
+   .. grid-item-card:: SFT
+      :link: sft_index
+      :link-type: doc
+
+      Supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
+
+   .. grid-item-card:: Algorithms
+      :link: methods_index
+      :link-type: doc
+
+      Algorithm-centric examples — DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP / SAC-Flow.
 
 Beyond embodiment:
 
-- :doc:`agentic/index` — math reasoning and agentic AI workflows, including both single-agent and multi-agent settings.
+.. grid:: 1 2 2 2
+   :gutter: 3
 
-- :doc:`system/index` — flexible and dynamic scheduling of computing resources and assignment to the most suitable hardware devices.
+   .. grid-item-card:: Agents
+      :link: agentic/index
+      :link-type: doc
+
+      Math reasoning and agentic AI workflows, in both single-agent and multi-agent settings.
+
+   .. grid-item-card:: Systems
+      :link: system/index
+      :link-type: doc
+
+      Flexible, dynamic scheduling of compute resources across the most suitable hardware devices.
 
 .. toctree::
    :hidden:
    :maxdepth: 2
 
-   simulators_index
-   real_world_index
-   vla_wam_index
-   sft_index
-   methods_index
-   agentic/index
-   system/index
+   Simulators <simulators_index>
+   Robots <real_world_index>
+   Models <vla_wam_index>
+   SFT <sft_index>
+   Algorithms <methods_index>
+   Agents <agentic/index>
+   Systems <system/index>
