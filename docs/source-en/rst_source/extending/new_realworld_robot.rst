@@ -23,7 +23,7 @@ Prerequisites
   <https://huggingface.co/docs/lerobot/so101>`_. Calibrate the arm with
   LeRobot's calibration tool (``lerobot-calibrate``) before using it with RLinf.
 
-* **Working RLinf installation**: See :doc:`../../start/installation`.
+* **Working RLinf installation**: See :doc:`/rst_source/start/installation`.
   The ``so101`` extra installs LeRobot and camera dependencies:
 
   .. code-block:: bash
@@ -31,7 +31,8 @@ Prerequisites
      bash requirements/install.sh embodied --env so101
 
 * **Familiarity with RLinf concepts**: configs, envs, cluster, hardware; skim
-  :doc:`../usage/placement` and :doc:`../configuration/hetero` if needed.
+  :doc:`/rst_source/concepts/placement` and :doc:`/rst_source/guides/hetero`
+  if needed.
 
 Understanding the Integration Architecture
 -------------------------------------------

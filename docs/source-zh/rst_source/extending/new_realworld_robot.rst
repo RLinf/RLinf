@@ -19,7 +19,7 @@
   <https://huggingface.co/docs/lerobot/so101>`_ 完成组装。在使用 RLinf 之前，
   请使用 LeRobot 的校准工具（``lerobot-calibrate``）对机械臂进行校准。
 
-* **RLinf 已安装**：参见 :doc:`../../start/installation`。
+* **RLinf 已安装**：参见 :doc:`/rst_source/start/installation`。
   ``so101`` 扩展会安装 LeRobot 和相机依赖：
 
   .. code-block:: bash
@@ -27,7 +27,7 @@
      bash requirements/install.sh embodied --env so101
 
 * **熟悉 RLinf 基本概念**：配置、环境、集群、硬件；建议先浏览
-  :doc:`../usage/placement` 和 :doc:`../configuration/hetero`。
+  :doc:`/rst_source/concepts/placement` 和 :doc:`/rst_source/guides/hetero`。
 
 理解集成架构
 --------------
