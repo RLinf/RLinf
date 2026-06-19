@@ -247,11 +247,40 @@ the realworld Franka recipe.  Bump ``cluster.component_placement.actor`` to
 the GPU range you have (e.g. ``0-7``) and switch ``fsdp_config.sharding_strategy``
 back to ``full_shard`` to use multiple GPUs.
 
+.. _so101-sft-launch:
+
 Launch
 ~~~~~~
 
-The convenience launcher exports the right ``EMBODIED_PATH``, forces
-``HF_HUB_OFFLINE=1``, and accepts overrides via env vars:
+Standard launcher
+^^^^^^^^^^^^^^^^^
+
+Like every other OpenPI SFT recipe, the standard ``run_vla_sft.sh`` works for
+SO101:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh so101_sft_openpi
+
+This picks up ``EMBODIED_PATH`` from the script directory, resolves the config
+from ``examples/sft/config/so101_sft_openpi.yaml``, timestamps the log
+directory automatically, and forwards any Hydra overrides you append.
+Override ``model_path`` and ``train_data_paths`` on the command line or in a
+permanent copy of the YAML:
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh so101_sft_openpi \
+       actor.model.model_path=/path/to/pi0_base_so101 \
+       data.train_data_paths=so101_data
+
+Smoke-test launcher (offline-friendly)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The convenience launcher ``run_so101_sft_smoke.sh`` wraps the same call but
+**forces ``HF_HUB_OFFLINE=1``** (for GPU hosts without internet), exposes the
+four most common knobs as env vars, and defaults to a 20-step smoke run so a
+new install can be validated without editing any YAML:
 
 .. code-block:: bash
 
@@ -265,10 +294,6 @@ The convenience launcher exports the right ``EMBODIED_PATH``, forces
    SO101_MAX_STEPS=2000 \
    SO101_LOG_DIR=/abs/path/to/results \
        bash examples/sft/run_so101_sft_smoke.sh
-
-The launcher resolves to ``python examples/sft/train_vla_sft.py
---config-name so101_sft_openpi …``, so any further Hydra overrides can be
-appended on the command line.
 
 Smoke test (1×A800)
 ~~~~~~~~~~~~~~~~~~~

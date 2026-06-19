@@ -245,8 +245,34 @@ realworld Franka 配方保持一致。如果有多 GPU，可把
 启动
 ~~~~
 
-封装好的启动器会自动设置 ``EMBODIED_PATH``、强制 ``HF_HUB_OFFLINE=1``\ ，
-并通过环境变量接收覆盖：
+标准启动器
+^^^^^^^^^^
+
+与其他 OpenPI SFT 配方一致，标准的 ``run_vla_sft.sh`` 同样适用
+SO101：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh so101_sft_openpi
+
+该脚本从自身所在目录获取 ``EMBODIED_PATH``\ ，默认从
+``examples/sft/config/so101_sft_openpi.yaml`` 解析配置、自动为日志
+目录附加时间戳，并支持在命令行追加 Hydra override。通过命令行或
+YAML 复本覆盖 ``model_path`` 和 ``train_data_paths`` 即可：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh so101_sft_openpi \
+       actor.model.model_path=/path/to/pi0_base_so101 \
+       data.train_data_paths=so101_data
+
+冒烟测试启动器（离线友好）
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+便捷脚本 ``run_so101_sft_smoke.sh`` 封装了同一条命令，但 **强制
+``HF_HUB_OFFLINE=1``**\ （适用于没有公网连接的 GPU 主机），并将四个
+最常用的参数暴露为环境变量，默认跑 20 个步的冒烟测试，方便无需编辑
+YAML 即可快速验证环境：
 
 .. code-block:: bash
 
@@ -261,10 +287,6 @@ realworld Franka 配方保持一致。如果有多 GPU，可把
    SO101_MAX_STEPS=2000 \
    SO101_LOG_DIR=/abs/path/to/results \
        bash examples/sft/run_so101_sft_smoke.sh
-
-启动器最终展开为 ``python examples/sft/train_vla_sft.py
---config-name so101_sft_openpi …``\ ，因此后续的 Hydra override 可以
-直接追加在命令行。
 
 冒烟测试（1×A800）
 ~~~~~~~~~~~~~~~~~~
