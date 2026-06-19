@@ -29,7 +29,7 @@ Environment
   - ``state/gripper_position``: 1-D gripper opening (degrees).
   - ``frames/camera_0``: placeholder 128×128 RGB frame. Real camera support
     is provided by the LeRobot ``camera_serials`` / ``camera_type`` config
-    fields (see :doc:`/rst_source/tutorials/extend/new_realworld_robot`).
+    fields (see :doc:`/rst_source/extending/new_realworld_robot`).
 
 - **Action Space**: 6-dimensional continuous — 5 absolute joint positions +
   1 gripper position, all in degrees.
@@ -55,8 +55,9 @@ via USB serial.
 
 .. note::
 
-   SFT (behavior cloning) and RL training are planned but not yet tested.
-   This section will be expanded once those workflows are validated.
+   Once data collection is complete, see :doc:`so101_sft_openpi` for the π₀
+   supervised-fine-tuning recipe that consumes the resulting LeRobot-format
+   dataset.  RL training on SO101 is planned but not yet validated.
 
 
 Cameras

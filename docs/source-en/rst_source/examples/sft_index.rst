@@ -43,6 +43,18 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <!-- TODO(thumbnail): replace placeholder cover image URL for so101_sft_openpi -->
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/so101_sft_openpi.html" style="text-decoration: underline; color: blue;">
+           <b>SO101 Pi0 Supervised Fine-Tuning</b>
+         </a><br>
+         Run π₀ SFT on real-world SO101 teleoperation data
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -52,3 +64,4 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    OpenPI <embodied/sft_openpi>
    DreamZero <embodied/sft_dreamzero>
    VLM <embodied/sft_vlm>
+   SO101 Pi0 <embodied/so101_sft_openpi>

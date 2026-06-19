@@ -25,7 +25,7 @@ SO101 机械臂真机数据采集
   - ``state/gripper_position``: 1 维夹爪开合（度）。
   - ``frames/camera_0``: 占位 128×128 RGB 图像。通过 LeRobot 的
     ``camera_serials`` / ``camera_type`` 配置字段可以接入真实相机（参见
-    :doc:`/rst_source/tutorials/extend/new_realworld_robot`）。
+    :doc:`/rst_source/extending/new_realworld_robot`）。
 
 - **动作空间**: 6 维连续动作 — 5 个绝对关节位置 + 1 个夹爪位置，单位均为度。
 - **奖励**: 基于关节 L2 误差的指数衰减稠密奖励，在可配置阈值内饱和至 1.0。
@@ -47,7 +47,8 @@ SO101 机械臂真机数据采集
 
 .. note::
 
-   SFT（行为克隆）和 RL 训练已在代码中预留但尚未测试。本节将在对应流程验证后补充。
+   数据采集完成后，参见 :doc:`so101_sft_openpi` 了解如何在所得 LeRobot 格式
+   数据集上运行 π₀ 监督微调。SO101 上的 RL 训练已在代码中预留但尚未验证。
 
 相机
 ~~~~
