@@ -45,11 +45,10 @@ def main(cfg) -> None:
     actor_placement = component_placement.get_strategy("actor")
     use_training_pipeline = bool(cfg.runner.get("use_training_pipeline", False))
 
-    if cfg.algorithm.loss_type in ("embodied_sac", "embodied_sft"):
+    if cfg.algorithm.loss_type == "embodied_sac":
         if use_training_pipeline:
             raise ValueError(
-                "runner.use_training_pipeline=True is not supported for "
-                f"{cfg.algorithm.loss_type}."
+                "runner.use_training_pipeline=True is not supported for embodied_sac."
             )
         from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
 

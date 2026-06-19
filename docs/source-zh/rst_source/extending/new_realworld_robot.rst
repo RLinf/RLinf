@@ -445,16 +445,14 @@ SO101 数据采集使用**双边遥操作**：人类物理移动 leader 臂，fo
 SFT 训练（行为克隆）
 -----------------------
 
-采集演示数据后，通过监督微调训练策略：
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name realworld_so101_sft \
-       algorithm.demo_buffer.dataset_path=/path/to/collected_data
-
-SFT 配置使用 ``is_dummy: True``（训练是离线的），并设置
-``adv_type: embodied_sft`` / ``loss_type: embodied_sft``。
+采集演示数据后，建议在所得 LeRobot 数据集上对 OpenPI π₀ 进行微调。
+RLinf 的 SFT 不走 ``train_embodied_agent.py``\ ——后者是 SAC actor
+在线 RL 的入口；正确做法是使用基于
+``examples/sft/train_vla_sft.py`` 的专用配方。\ :doc:`/rst_source/examples/embodied/so101_sft_openpi`
+页面端到端介绍了"合并多次采集 → 计算归一化统计量 → 启动训练"的流程，
+也是接入新机械臂时的良好模板：拷贝 ``so101_dataconfig.py`` /
+``so101_policy.py`` / ``so101_sft_openpi.yaml``\ ，并根据需要调整
+``state_dim``\ 、\ ``action_dim``\ 、相机命名以及 ``pi0_<arm>`` 配置名即可。
 
 RL 训练
 ----------

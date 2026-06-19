@@ -461,16 +461,16 @@ Collected episodes are saved in LeRobot format under the configured ``save_dir``
 SFT Training (Behavior Cloning)
 --------------------------------
 
-After collecting demonstrations, train a policy with supervised fine-tuning:
-
-.. code-block:: bash
-
-   python examples/embodiment/train_embodied_agent.py \
-       --config-name realworld_so101_sft \
-       algorithm.demo_buffer.dataset_path=/path/to/collected_data
-
-The SFT config uses ``is_dummy: True`` for the env (training is offline) and
-sets ``adv_type: embodied_sft`` / ``loss_type: embodied_sft``.
+After collecting demonstrations, fine-tune OpenPI π₀ on the resulting
+LeRobot-format dataset.  RLinf does not run SFT through
+``train_embodied_agent.py`` — that entry point hosts the SAC actor for
+online RL — so a dedicated recipe based on
+``examples/sft/train_vla_sft.py`` is the right tool here.  The
+:doc:`/rst_source/examples/embodied/so101_sft_openpi` page walks through
+the merge → norm-stats → launch sequence end to end and is a good template
+when bringing up a new arm: copy ``so101_dataconfig.py`` /
+``so101_policy.py`` / ``so101_sft_openpi.yaml`` and adjust ``state_dim``,
+``action_dim``, the camera names, and the ``pi0_<arm>`` config name.
 
 RL Training
 ------------

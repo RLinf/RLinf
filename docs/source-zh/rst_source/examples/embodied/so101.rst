@@ -242,9 +242,8 @@ SO101 机械臂通过 LeRobot 进行舵机通信。所有依赖打包在 ``so101
 
 同一批示教数据有两份等价副本：
 
-- ``collected_data/`` — LeRobot 格式数据集，可通过
-  ``rlinf.data.lerobot_to_buffer.load_lerobot_dataset_to_demo_buffer``
-  加载给 SFT 训练流水线。
+- ``collected_data/`` — LeRobot 格式数据集。如何把多次采集合并并作为 π₀
+  SFT 输入，参见 :doc:`so101_sft_openpi`。
 - ``demos/`` — RLinf ``TrajectoryReplayBuffer`` 自动保存（PyTorch 张量），
   便于调试。
 
