@@ -37,6 +37,13 @@ to RLinf.
 
       Plug a new model into the SFT training flow.
 
+   .. grid-item-card:: New Real-World Robot
+      :link: new_realworld_robot
+      :link-type: doc
+
+      Add support for a new physical robot, walked through end-to-end on
+      the LeRobot SO101 arm.
+
    .. grid-item-card:: Advanced Integrations
       :link: advanced-integrations/index
       :link-type: doc
@@ -51,4 +58,5 @@ to RLinf.
    New Model with FSDP <new_model_fsdp>
    New Model with Megatron <new_model_megatron>
    New SFT Model <new_model_sft>
+   New Real-World Robot <new_realworld_robot>
    Advanced Integrations <advanced-integrations/index>

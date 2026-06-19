@@ -49,6 +49,17 @@ Each section gives the setup path for teleoperation, data collection, sim-to-rea
          Train a flow-matching + SAC pick task on the Dexmal DOS-W1 dual-arm robot
        </p>
      </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <!-- TODO(thumbnail): replace placeholder cover image URL for so101 -->
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/so101.html" style="text-decoration: underline; color: blue;">
+           <b>SO101</b>
+         </a><br>
+         Bilateral teleoperation data collection on the LeRobot SO101 6-DOF arm, plus the π₀ SFT recipe for the resulting dataset
+       </p>
+     </div>
 
    </div>
 
@@ -60,3 +71,4 @@ Each section gives the setup path for teleoperation, data collection, sim-to-rea
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>
    DOS-W1 <embodied/dosw1>
+   SO101 <embodied/so101>
