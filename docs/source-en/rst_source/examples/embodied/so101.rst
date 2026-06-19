@@ -298,8 +298,13 @@ Troubleshooting
    * - Problem
      - Solution
    * - ``ImportError: No module named 'lerobot.robots.so_follower'``
-     - Install the ``so101`` extra: ``bash requirements/install.sh embodied --env so101``
-       or install LeRobot >= v0.5.1 (the first tag containing the SO101 API).
+     - Install ``lerobot >= v0.4.3`` on the robot host — the
+       :class:`~lerobot.robots.so_follower.SO101Follower` /
+       :class:`~lerobot.teleoperators.so_leader.SO101Leader` API was
+       consolidated in commit ``ccfd609e`` and first shipped in **v0.4.3**.
+       v0.4.x supports Python 3.10+; v0.5.x is also fine but additionally
+       requires Python 3.12. See the ``so101`` extra comment in
+       ``pyproject.toml`` for the recommended install command.
    * - ``Serial port '/dev/ttyACM0' not found``
      - Check ``ls /dev/ttyACM*``. On Linux, ensure the user is in the
        ``dialout`` group.

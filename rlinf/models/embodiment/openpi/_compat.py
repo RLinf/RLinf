@@ -19,24 +19,30 @@ Two specific gaps are bridged:
 1. **``lerobot.common.datasets`` import path.**  Upstream OpenPI's
    ``training/data_loader.py`` imports
    ``lerobot.common.datasets.lerobot_dataset``, the layout used by
-   ``lerobot < 0.4``.  Modern releases (>= 0.4) moved the package to the flat
-   ``lerobot.datasets.lerobot_dataset`` path and dropped the ``common``
-   intermediate.  We expose the modern modules under the legacy import path
-   by registering aliases in :mod:`sys.modules` so OpenPI can keep working
-   with no source changes.
+   pre-``src/``-layout LeRobot.  Modern releases (every tag from v0.3.2
+   onward) live under ``src/lerobot/datasets/`` and the ``common``
+   intermediate is gone.  We expose the modern modules under the legacy
+   import path by registering aliases in :mod:`sys.modules` so OpenPI can
+   keep working with no source changes.
 
 2. **``meta.tasks`` shape change.**  ``LeRobotDatasetMetadata.tasks`` used to
    be a ``dict[int, str]`` mapping ``task_index → task name``.  In recent
-   LeRobot releases it became a ``pandas.DataFrame`` indexed by task name with
-   a ``task_index`` column.  OpenPI's ``PromptFromLeRobotTask`` transform
-   still expects the dict shape, so a per-frame ``task_index=0`` lookup
-   raises ``ValueError: task_index=0 not found in task mapping`` against the
-   DataFrame.  We patch the transform in place so it normalises a DataFrame
-   to the dict shape during construction.
+   LeRobot releases (observed from at least v0.4.4 onward) it became a
+   ``pandas.DataFrame`` indexed by task name with a ``task_index`` column.
+   OpenPI's ``PromptFromLeRobotTask`` transform still expects the dict
+   shape, so a per-frame ``task_index=0`` lookup raises
+   ``ValueError: task_index=0 not found in task mapping`` against the
+   DataFrame.  We patch the transform in place so it normalises a
+   DataFrame to the dict shape during construction.
 
 Both shims are **idempotent** — calling ``install_compat_shims`` multiple
 times is safe — and **no-op when not needed** (e.g. when OpenPI's upstream
 catches up, or when the legacy LeRobot layout is already importable).
+
+These shims are needed against any post-``src/``-layout LeRobot, not just
+the v0.5.x line that the SO101 SFT bring-up validated against.  The same
+shims apply at v0.4.3 / v0.4.4 (the earliest tags with the consolidated
+:class:`SO101Follower` API).
 
 Until upstream OpenPI lands the equivalent fixes, importing the
 :mod:`rlinf.models.embodiment.openpi` package automatically installs both

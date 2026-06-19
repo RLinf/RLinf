@@ -209,10 +209,14 @@ class LeRobotDatasetWriter:
             return
 
         # Clean up internal resources without triggering property getters.
-        # LeRobotDataset in v0.5.x exposes attributes like `image_writer`,
-        # `episode_buffer`, and `hf_dataset` as @property — hasattr/test
-        # on those would invoke them, triggering expensive I/O or errors.
-        # We check the .__dict__ directly.
+        # ``hf_dataset`` became a ``@property`` in lerobot v0.5.1 (it was a
+        # plain attribute in v0.4.4 / v0.5.0).  Probing it via
+        # ``hasattr(self.dataset, "hf_dataset")`` would invoke the getter,
+        # which loads parquet metadata / opens file handles, and assigning
+        # ``self.dataset.hf_dataset = None`` would error because no setter
+        # is defined.  ``image_writer`` and ``episode_buffer`` are still
+        # plain attributes today, but we go through ``__dict__`` for them
+        # too so this code keeps working if they're property-fied later.
         _d = self.dataset.__dict__
         iw = _d.get("image_writer")
         if iw is not None:

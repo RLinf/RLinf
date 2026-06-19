@@ -1178,9 +1178,10 @@ install_openpi_model() {
             ;;
         so101)
             # SO101 SFT only needs openpi. lerobot is pulled in transitively by
-            # openpi. Hardware deps (lerobot>=v0.5.1, evdev, opencv-python) are
-            # installed separately on the robot controller node — see the so101
-            # extra in pyproject.toml for the recommended commands.
+            # openpi. Hardware deps (lerobot >= v0.4.3 for the SOFollower /
+            # SOLeader API, evdev, opencv-python) are installed separately on
+            # the robot controller node — see the so101 extra in
+            # pyproject.toml for the recommended commands.
             create_and_sync_venv
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi

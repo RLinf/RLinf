@@ -277,8 +277,13 @@ SO101 机械臂通过 LeRobot 进行舵机通信。所有依赖打包在 ``so101
    * - 问题
      - 解决方法
    * - ``ImportError: No module named 'lerobot.robots.so_follower'``
-     - 安装 ``so101`` extra：``bash requirements/install.sh embodied --env so101``，
-       或安装 LeRobot >= v0.5.1（首个包含 SO101 API 的 tag）。
+     - 在机器人主机上安装 ``lerobot >= v0.4.3``\ ——\
+       :class:`~lerobot.robots.so_follower.SO101Follower` /
+       :class:`~lerobot.teleoperators.so_leader.SO101Leader` API 在
+       ``ccfd609e``（"consolidate SO arms implementation"）合入，
+       并随 **v0.4.3** 首次发布。\ v0.4.x 支持 Python 3.10+；v0.5.x 同样可以，
+       但额外要求 Python 3.12。具体安装命令见 ``pyproject.toml`` 中的
+       ``so101`` extra 注释。
    * - ``串口 '/dev/ttyACM0' 未找到``
      - 执行 ``ls /dev/ttyACM*`` 检查。在 Linux 上确保用户属于 ``dialout`` 组。
    * - 执行 ``send_action`` 后机器人不动
