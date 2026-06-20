@@ -5,6 +5,9 @@
 # Action space  : [q1..q5, gripper] in degrees (6-D continuous).
 # Observation   : 5 arm joint positions + 1 gripper position (state_dim=6).
 #
+# Reward is end-effector-space by default (target_ee_pose in metres).
+# Set target_ee_pose: null to fall back to joint-angle reward.
+#
 # Usage (dummy validation):
 #   python examples/embodiment/train_embodied_agent.py \
 #       --config-name realworld_so101_rl

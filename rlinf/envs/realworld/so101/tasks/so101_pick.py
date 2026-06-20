@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SO101 pick-and-place task — reach a target joint configuration.
+"""SO101 reaching task — reach a target end-effector position.
 
-The simplest possible real-world SO101 task. Serves as a template for more
-complex tasks built on top of :class:`~rlinf.envs.realworld.so101.SO101Env`.
+The default task uses **end-effector space**: ``target_ee_pose`` is a ``(x, y, z)``
+tuple in metres, and forward kinematics computes the current gripper position
+from the arm's joint angles each step.  Set ``target_ee_pose`` to ``null`` (None)
+in YAML to fall back to joint-angle-based reward via ``target_joint_qpos``.
 """
 
 import time
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 
@@ -31,15 +34,29 @@ from ..so101_env import (
 )
 
 
+_DEFAULT_EE_TARGET = (0.35, 0.00, 0.00)
+"""Default EE target — about 35 cm forward from the base at table height."""
+
+
 @dataclass
 class SO101PickConfig(SO101RobotConfig):
-    """Task config — overrides defaults for a simple reaching task."""
+    """Task config — reach an end-effector position (or joint angles)."""
 
-    target_joint_qpos: np.ndarray = field(
-        default_factory=lambda: np.array(
-            [30.0, -60.0, 120.0, 0.0, 30.0, 60.0], dtype=np.float64
-        )
+    # --- EE-space target (preferred) ---
+    target_ee_pose: Optional[tuple[float, ...]] = field(
+        default_factory=lambda: _DEFAULT_EE_TARGET
     )
+    """End-effector target ``(x, y, z)`` in **metres**.  ``None`` falls
+    back to ``target_joint_qpos`` for joint-space reward."""
+
+    reward_threshold_m: float = 0.03
+    """Success radius in **metres** (3 cm default)."""
+
+    # --- Joint-space fallback (used only when target_ee_pose is None) ---
+    target_joint_qpos: Optional[np.ndarray] = None
+    """Fallback joint-angle target ``[q1..q5, gripper]`` in degrees."""
+
+    # --- Common ---
     reset_joint_qpos: list[float] = field(
         default_factory=lambda: [0.0, -45.0, 90.0, 0.0, 0.0, 45.0]
     )
@@ -51,15 +68,21 @@ class SO101PickConfig(SO101RobotConfig):
     random_joint_noise_deg: float = 10.0
 
     success_hold_steps: int = 3
-    """Consecutive steps within ``reward_threshold_deg`` required for success."""
+    """Consecutive steps within the threshold required for success."""
 
 
 class SO101PickEnv(SO101Env):
-    """SO101 reaching task.
+    """SO101 reaching task (EE‑space by default).
 
-    The agent must move the arm from ``reset_joint_qpos`` to
-    ``target_joint_qpos``. Reward is dense (exponential falloff) and saturates
-    at 1.0 when the arm holds within tolerance for ``success_hold_steps``.
+    The agent must move the arm from the reset configuration so that its
+    end-effector reaches within ``reward_threshold_m`` of
+    ``target_ee_pose``.  Reward is dense (exponential falloff) and
+    saturates at 1.0 when the arm holds within tolerance for
+    ``success_hold_steps``.
+
+    When ``target_ee_pose`` is ``None`` the environment falls back to the
+    joint-angle reward defined by ``target_joint_qpos`` and
+    ``reward_threshold_deg``.
     """
 
     def __init__(
@@ -70,19 +93,63 @@ class SO101PickEnv(SO101Env):
         env_idx=0,
         env_cfg=None,
     ):
-        # ``env_cfg`` is the parent ``RealWorldEnv`` config that gym.make
-        # threads through unconditionally. SO101 doesn't currently need it
-        # (no extra wrappers), so we accept and ignore it.
         del env_cfg
         config = SO101PickConfig(**override_cfg)
         super().__init__(config, worker_info, hardware_info, env_idx)
         self._base_reset_joint_qpos = list(self.config.reset_joint_qpos)
         self._perturbed_reset_qpos = None
         self._success_hold_counter = 0
+        self._kinematics = None
+        self._task_is_ee: bool = self.config.target_ee_pose is not None
+        self._target_ee = np.asarray(
+            self.config.target_ee_pose, dtype=np.float64
+        ) if self._task_is_ee else np.zeros(3)
 
     @property
     def task_description(self):
+        if self._task_is_ee:
+            return (
+                f"reach target ee pose (x={self._target_ee[0]:.3f}, "
+                f"y={self._target_ee[1]:.3f}, z={self._target_ee[2]:.3f})"
+            )
         return "reach target joint configuration"
+
+    def _init_kinematics(self) -> None:
+        """Lazily create the forward-kinematics solver.
+
+        Called once on the first real-hardware step that needs FK.
+        Skipped entirely in dummy mode and during data collection.
+        """
+        if self._kinematics is not None or self.config.is_dummy:
+            return
+
+        from lerobot.model.kinematics import RobotKinematics
+
+        if self.config.urdf_path is not None:
+            urdf_path = self.config.urdf_path
+        else:
+            urdf_path = "pack://lerobot/robots/so_follower/so101.urdf"
+
+        self._kinematics = RobotKinematics(
+            urdf_path=str(urdf_path),
+            target_frame_name="gripper_frame_link",
+        )
+
+    def _ee_position(self) -> np.ndarray:
+        """Return the current end-effector ``(x, y, z)`` in metres.
+
+        Falls back to ``np.zeros(3)`` when kinematics is unavailable
+        (dummy mode / data collection).
+        """
+        self._init_kinematics()
+        if self._kinematics is None:
+            return np.zeros(3, dtype=np.float64)
+
+        joint_deg = np.asarray(
+            self._state.joint_position, dtype=np.float64
+        )
+        T = self._kinematics.forward_kinematics(joint_deg)
+        return T[:3, 3]
 
     def go_to_rest(self, joint_reset: bool = False):
         """Move to the rest configuration.
@@ -145,7 +212,23 @@ class SO101PickEnv(SO101Env):
         return self._get_observation(), {}
 
     def _calc_step_reward(self, observation: dict) -> float:
-        if self.config.is_dummy or self.config.target_joint_qpos is None:
+        if self.config.is_dummy:
+            return 0.0
+
+        # --- EE-space reward (primary path) ---
+        if self._task_is_ee:
+            ee = self._ee_position()
+            error = float(np.linalg.norm(ee - self._target_ee))
+            if error < self.config.reward_threshold_m:
+                self._success_hold_counter += 1
+                if self._success_hold_counter >= self.config.success_hold_steps:
+                    return 1.0
+                return 0.5
+            self._success_hold_counter = 0
+            return float(np.exp(-error / self.config.reward_threshold_m))
+
+        # --- Joint-angle reward (fallback) ---
+        if self.config.target_joint_qpos is None:
             return 0.0
 
         arm_pos = observation["state"]["joint_position"]

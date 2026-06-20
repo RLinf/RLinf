@@ -253,8 +253,9 @@ with Gymnasium so RLinf can create it by ID.
 
    @dataclass
    class SO101PickConfig(SO101RobotConfig):
-       target_joint_qpos = np.array([30.0, -60.0, 120.0, 0.0, 30.0, 60.0])
-       reward_threshold_deg: float = 8.0
+       # End-effector target in metres (3-D); set to None for joint-angle fallback.
+       target_ee_pose: tuple = (0.35, 0.0, 0.0)
+       reward_threshold_m: float = 0.03       # 3 cm tolerance
 
 .. code-block:: python
    :caption: rlinf/envs/realworld/so101/tasks/__init__.py

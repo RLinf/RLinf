@@ -33,8 +33,9 @@ Environment
 
 - **Action Space**: 6-dimensional continuous — 5 absolute joint positions +
   1 gripper position, all in degrees.
-- **Reward**: Exponential falloff on L2 joint error, saturating at 1.0 within
-  a configurable threshold.
+- **Reward**: End-effector-space by default (exponential falloff on L2
+  distance to ``target_ee_pose``, saturating at 1.0 within ``reward_threshold_m``).
+  Falls back to joint-angle L2 error when ``target_ee_pose`` is ``None``.
 
 Data Collection
 ~~~~~~~~~~~~~~~

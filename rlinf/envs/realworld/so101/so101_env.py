@@ -152,7 +152,26 @@ class SO101RobotConfig:
     """Reset configuration ``[q1..q5, gripper]`` in degrees."""
 
     target_joint_qpos: Optional[np.ndarray] = None
-    """Target ``[q1..q5, gripper]`` for reward; ``None`` returns 0 reward."""
+    """Fallback joint-angle target ``[q1..q5, gripper]`` in degrees.
+    Only used when ``target_ee_pose`` is ``None``.  Prefer
+    ``target_ee_pose`` for real tasks — it matches how a human reasons
+    about the arm (\"gripper to position X in the workspace\")."""
+
+    target_ee_pose: tuple[float, ...] | None = None
+    """End-effector target ``(x, y, z)`` in **metres**.  When set, the
+    per-step reward is computed from the gripper's 3‑D Euclidean distance
+    to the target (via forward kinematics), replacing the joint-angle
+    path entirely.  ``None`` falls back to ``target_joint_qpos``."""
+
+    urdf_path: str | None = None
+    """Path to the SO101 URDF file for forward kinematics.  ``None``
+    (the default) picks up the calibration URDF bundled with lerobot.
+    Only needed when ``target_ee_pose`` is set and the env is not
+    running in dummy mode."""
+
+    reward_threshold_m: float = 0.03
+    """EE-space success radius in **metres**.  When the gripper is within
+    this Euclidean distance of ``target_ee_pose`` the reward saturates."""
 
     reward_threshold_deg: float = 5.0
     binary_gripper_threshold: float = 45.0
@@ -203,6 +222,17 @@ class SO101RobotConfig:
                     f"target_joint_qpos must have shape ({len(_SO101_MOTOR_NAMES)},); "
                     f"got {self.target_joint_qpos.shape}"
                 )
+        if self.target_ee_pose is not None:
+            self.target_ee_pose = tuple(float(v) for v in self.target_ee_pose)
+            if len(self.target_ee_pose) != 3:
+                raise ValueError(
+                    f"target_ee_pose must have 3 elements (x, y, z); "
+                    f"got {len(self.target_ee_pose)}"
+                )
+        if self.reward_threshold_m <= 0:
+            raise ValueError(
+                f"reward_threshold_m must be > 0; got {self.reward_threshold_m}"
+            )
 
 
 class SO101Env(gym.Env):
