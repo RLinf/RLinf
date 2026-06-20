@@ -174,6 +174,11 @@ class SO101RobotConfig:
     this Euclidean distance of ``target_ee_pose`` the reward saturates."""
 
     reward_threshold_deg: float = 5.0
+
+    success_hold_steps: int = 3
+    """Consecutive steps within the threshold required for success.
+    Prevents transient noise from triggering a false-positive success."""
+
     binary_gripper_threshold: float = 45.0
 
     is_dummy: bool = False
@@ -269,6 +274,7 @@ class SO101Env(gym.Env):
 
         self._state = SO101RobotState()
         self._num_steps = 0
+        self._success_hold_counter = 0
         self._robot = None
         self._leader = None
         self._camera_frames: dict = {}
@@ -610,6 +616,7 @@ class SO101Env(gym.Env):
     def reset(self, seed=None, options=None):
         """Reset the environment to ``reset_joint_qpos`` and clear counters."""
         self._num_steps = 0
+        self._success_hold_counter = 0
         for k in self._key_state:
             self._key_state[k] = False
 
@@ -732,14 +739,24 @@ class SO101Env(gym.Env):
         return {"camera_0": blank.copy()}
 
     def _calc_step_reward(self, observation: dict) -> float:
-        """Reward = exp falloff on L2 joint error, saturating at 1.0 within tolerance."""
+        """Joint-angle reward — exponential falloff, saturating at 1.0.
+
+        When the arm is within ``reward_threshold_deg`` for
+        ``success_hold_steps`` consecutive steps, return 1.0
+        (success confirmed).  Otherwise return 0.5 (close) or an
+        exponential-decay scalar.
+        """
         if self.config.is_dummy or self.config.target_joint_qpos is None:
             return 0.0
         arm_pos = observation["state"]["joint_position"]
         target_arm = self.config.target_joint_qpos[:_NUM_ARM_JOINTS]
         error = float(np.linalg.norm(arm_pos - target_arm))
         if error < self.config.reward_threshold_deg:
-            return 1.0
+            self._success_hold_counter += 1
+            if self._success_hold_counter >= self.config.success_hold_steps:
+                return 1.0
+            return 0.5
+        self._success_hold_counter = 0
         return float(np.exp(-error / self.config.reward_threshold_deg))
 
     def _shutdown_arm_safely(self):

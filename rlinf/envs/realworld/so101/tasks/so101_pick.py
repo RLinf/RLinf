@@ -67,9 +67,6 @@ class SO101PickConfig(SO101RobotConfig):
     """Add a small uniform perturbation to the arm reset configuration."""
     random_joint_noise_deg: float = 10.0
 
-    success_hold_steps: int = 3
-    """Consecutive steps within the threshold required for success."""
-
 
 class SO101PickEnv(SO101Env):
     """SO101 reaching task (EE‑space by default).
@@ -98,7 +95,6 @@ class SO101PickEnv(SO101Env):
         super().__init__(config, worker_info, hardware_info, env_idx)
         self._base_reset_joint_qpos = list(self.config.reset_joint_qpos)
         self._perturbed_reset_qpos = None
-        self._success_hold_counter = 0
         self._kinematics = None
         self._task_is_ee: bool = self.config.target_ee_pose is not None
         self._target_ee = np.asarray(
@@ -227,18 +223,5 @@ class SO101PickEnv(SO101Env):
             self._success_hold_counter = 0
             return float(np.exp(-error / self.config.reward_threshold_m))
 
-        # --- Joint-angle reward (fallback) ---
-        if self.config.target_joint_qpos is None:
-            return 0.0
-
-        arm_pos = observation["state"]["joint_position"]
-        target_arm = self.config.target_joint_qpos[:_NUM_ARM_JOINTS]
-        error = float(np.linalg.norm(arm_pos - target_arm))
-
-        if error < self.config.reward_threshold_deg:
-            self._success_hold_counter += 1
-            if self._success_hold_counter >= self.config.success_hold_steps:
-                return 1.0
-            return 0.5
-        self._success_hold_counter = 0
-        return float(np.exp(-error / self.config.reward_threshold_deg))
+        # --- Joint-angle reward (fallback through parent) ---
+        return super()._calc_step_reward(observation)
