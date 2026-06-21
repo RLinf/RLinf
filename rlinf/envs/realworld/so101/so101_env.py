@@ -282,7 +282,8 @@ class SO101Env(gym.Env):
         self._evdev_device = None
         self._key_state_lock = None
         self._key_state: dict[str, bool] = {
-            "episode_success": False,
+            "start_episode": False,
+            "end_episode": False,
             "rerecord_episode": False,
             "stop_recording": False,
         }
@@ -409,12 +410,13 @@ class SO101Env(gym.Env):
         _ev_key_esc = evdev.ecodes.KEY_ESC
 
         code_to_event = {
-            _ev_key_s: "episode_success",
+            _ev_key_s: "start_episode",
             _ev_key_r: "rerecord_episode",
             _ev_key_q: "stop_recording",
-            _ev_key_right: "episode_success",
+            _ev_key_right: "start_episode",
             _ev_key_left: "rerecord_episode",
             _ev_key_esc: "stop_recording",
+            evdev.ecodes.KEY_E: "end_episode",
         }
 
         # Find a keyboard device (has KEY_S and KEY_Q in its capabilities).
@@ -472,7 +474,7 @@ class SO101Env(gym.Env):
         self._evdev_device = device  # keep alive for close()
         self._logger.info(
             f"[SO101Env] Keyboard ready (evdev: {device.name}): "
-            "'s'/→ save, 'r'/← rerecord, 'q'/Esc stop."
+            "'s'/→ start, 'e' end, 'r'/← rerecord, 'q'/Esc stop."
         )
         return True
 
@@ -483,9 +485,10 @@ class SO101Env(gym.Env):
         — no X11 or graphical session needed.
 
         Key bindings:
-          - ``s`` / →   ``episode_success``
-          - ``r`` / ←   ``rerecord_episode``
-          - ``q`` / Esc ``stop_recording``
+          - ``s`` / →     start a NEW episode (begin recording).
+          - ``e``         END an episode (save the current recording).
+          - ``r`` / ←     RE-RECORD (discard the current episode).
+          - ``q`` / Esc   QUIT data collection.
 
         Only started in teleop mode.  If ``evdev`` is not available or no
         readable keyboard device is found, episodes terminate by timeout
@@ -550,6 +553,78 @@ class SO101Env(gym.Env):
         )
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
+    def _handle_teleop_controls(
+        self, robot_action: dict
+    ) -> tuple[bool, dict]:
+        """Snapshot the evdev key state and return termination + info.
+
+        Called once per ``step()`` from the teleop fast-path.  The
+        background evdev thread only ever sets flags to ``True`` so we
+        snapshot-and-clear under the lock to deliver each press exactly
+        once.
+
+        Key bindings (assigned by :meth:`_start_evdev_listener`):
+
+        * ``s`` / →   **start** — begin recording a new episode.  The
+          env stays where the operator placed the arm; no reset.
+        * ``e``       **end**   — save the current episode as success.
+        * ``r`` / ←   **rerecord** — discard the current episode.
+        * ``q`` / Esc **stop**  — exit data collection entirely.
+
+        Returns:
+            ``(terminated, info_dict)``.  The caller merges *info_dict*
+            into the step's ``info`` and forwards *terminated*.
+        """
+        with self._key_state_lock if self._key_state_lock else contextlib.nullcontext():
+            pressed = dict(self._key_state)
+            for k in self._key_state:
+                self._key_state[k] = False
+
+        stop    = bool(pressed.get("stop_recording"))
+        rerec   = bool(pressed.get("rerecord_episode"))
+        start   = bool(pressed.get("start_episode"))
+        end_ep  = bool(pressed.get("end_episode"))
+
+        terminated = False
+        info: dict = {}
+
+        if stop:
+            self._recording = False
+            info.update(keyboard_event="stop", keyboard_phase="pre",
+                        stop_recording=True, rerecord_episode=False,
+                        episode_success=False, record_reset=True)
+            terminated = True
+        elif self._recording and rerec:
+            self._recording = False
+            info.update(keyboard_event="abort", keyboard_phase="pre",
+                        stop_recording=False, rerecord_episode=True,
+                        episode_success=False, record_reset=True)
+            terminated = True
+        elif self._recording and end_ep:
+            self._recording = False
+            info.update(keyboard_event="end_success", keyboard_phase="pre",
+                        stop_recording=False, rerecord_episode=False,
+                        episode_success=True, record_reset=True)
+            terminated = True
+        elif not self._recording and start:
+            self._recording = True
+            info.update(keyboard_event="start", keyboard_phase="rec",
+                        stop_recording=False, rerecord_episode=False,
+                        episode_success=False, record_reset=True)
+        else:
+            phase = "rec" if self._recording else "pre"
+            info.update(keyboard_event=None, keyboard_phase=phase,
+                        stop_recording=False, rerecord_episode=False,
+                        episode_success=False, record_reset=False)
+
+        if self._leader is not None:
+            info["intervene_action"] = np.array(
+                [robot_action.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES],
+                dtype=np.float32,
+            )
+
+        return terminated, info
+
     def step(self, action: np.ndarray):
         """Execute one environment step.
 
@@ -585,58 +660,11 @@ class SO101Env(gym.Env):
         observation = self._get_observation()
         reward = self._calc_step_reward(observation)
 
-        # ── manual episode control via evdev ───────────────────────────
-        is_teleop = bool(self.config.enable_teleop and self.config.manual_episode_control_only)
-        terminated, info = False, {}
-
-        if is_teleop:
-            # Snapshot-and-clear: the background evdev thread only ever
-            # sets flags to True, so this delivers each press exactly once.
-            with self._key_state_lock if self._key_state_lock else contextlib.nullcontext():
-                pressed = dict(self._key_state)
-                for k in self._key_state:
-                    self._key_state[k] = False
-
-            stop_rec  = bool(pressed.get("stop_recording"))
-            rerecord  = bool(pressed.get("rerecord_episode"))
-            ep_succ   = bool(pressed.get("episode_success"))
-
-            if stop_rec:
-                self._recording = False
-                info.update(keyboard_event="stop", keyboard_phase="pre",
-                            stop_recording=True, rerecord_episode=False,
-                            episode_success=False, record_reset=True)
-                terminated = True
-            elif self._recording and rerecord:
-                self._recording = False
-                info.update(keyboard_event="abort", keyboard_phase="pre",
-                            stop_recording=False, rerecord_episode=True,
-                            episode_success=False, record_reset=True)
-                terminated = True
-            elif self._recording and ep_succ:
-                self._recording = False
-                info.update(keyboard_event="end_success", keyboard_phase="pre",
-                            stop_recording=False, rerecord_episode=False,
-                            episode_success=True, record_reset=True)
-                terminated = True
-            elif not self._recording and ep_succ:
-                self._recording = True
-                info.update(keyboard_event="start", keyboard_phase="rec",
-                            stop_recording=False, rerecord_episode=False,
-                            episode_success=False, record_reset=True)
-            else:
-                phase = "rec" if self._recording else "pre"
-                info.update(keyboard_event=None, keyboard_phase=phase,
-                            stop_recording=False, rerecord_episode=False,
-                            episode_success=False, record_reset=False)
-
-            if self._leader is not None:
-                info["intervene_action"] = np.array(
-                    [robot_action.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES],
-                    dtype=np.float32,
-                )
+        if self.config.enable_teleop and self.config.manual_episode_control_only:
+            terminated, info = self._handle_teleop_controls(robot_action)
         else:
             terminated = bool(reward >= 1.0)
+            info = {}
 
         max_steps = (
             self.config.max_episode_steps
