@@ -46,8 +46,8 @@ via USB serial.
 
 - **Leader**: Reads joint positions from the leader arm every control step
   and forwards them to the follower.
-- **Keyboard Control**: Physical keyboard keys ``s`` / → (start recording a
-  new episode), ``e`` (end — save the current episode), ``r`` / ← (rerecord /
+- **Keyboard Control**: Physical keyboard keys ``s`` (start recording a new
+  episode), ``e`` (end — save the current episode), ``r`` (rerecord /
   discard), ``q`` / Esc (stop recording). The keyboard listener uses the
   Linux ``evdev`` input layer — no X11 or graphical session required (read
   access to ``/dev/input/event*`` is needed; add the user to
@@ -218,9 +218,9 @@ Launch
 On the host machine (the physical keyboard must be connected), the script
 listens for the following key presses:
 
-- ``s`` / → — start recording a new episode
+- ``s`` — start recording a new episode
 - ``e`` — end and save the current episode
-- ``r`` / ← — discard the current episode (immediately resets)
+- ``r`` — discard the current episode (immediately resets)
 - ``q`` / Esc — stop the entire collection and exit
 
 .. note::
@@ -235,11 +235,11 @@ Workflow
 
 #. The follower arm moves to its reset pose (``reset_joint_qpos``, default
    ``[0, -45, 90, 0, 0, 45]`` degrees with small random noise on arm joints).
-#. Press ``s`` / → to start recording a new episode.
+#. Press ``s`` to start recording a new episode.
 #. Take the leader arm in your hand and demonstrate the desired motion. The
    follower mirrors in real time.
 #. When the demonstration is done, press ``e`` to save the episode, or
-   ``r`` / ← to discard and re-record.
+   ``r`` to discard and re-record.
 #. Press ``q`` / Esc at any time to stop collection.
 #. After saving, the arm auto-resets to the rest pose.  The reset motion
    runs while ``keyboard_phase="pre"`` and is **not** written to disk.

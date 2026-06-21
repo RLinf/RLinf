@@ -465,7 +465,7 @@ class SO101Env(gym.Env):
         self._evdev_device = device  # keep alive for close()
         self._logger.info(
             f"[SO101Env] Keyboard ready (evdev: {device.name}): "
-            "'s'/→ start, 'e' end, 'r'/← rerecord, 'q'/Esc stop."
+            "'s' start, 'e' end, 'r' rerecord, 'q'/Esc stop."
         )
         return True
 
@@ -476,9 +476,9 @@ class SO101Env(gym.Env):
         — no X11 or graphical session needed.
 
         Key bindings:
-          - ``s`` / →     start a NEW episode (begin recording).
-          - ``e``         END an episode (save the current recording).
-          - ``r`` / ←     RE-RECORD (discard the current episode).
+          - ``s``     start a NEW episode (begin recording).
+          - ``e``     END an episode (save the current recording).
+          - ``r``     RE-RECORD (discard the current episode).
           - ``q`` / Esc   QUIT data collection.
 
         Only started in teleop mode.  If ``evdev`` is not available or no
@@ -556,10 +556,10 @@ class SO101Env(gym.Env):
 
         Key bindings (assigned by :meth:`_start_evdev_listener`):
 
-        * ``s`` / →   **start** — begin recording a new episode.  The
+        * ``s``     **start** — begin recording a new episode.  The
           env stays where the operator placed the arm; no reset.
-        * ``e``       **end**   — save the current episode as success.
-        * ``r`` / ←   **rerecord** — discard the current episode.
+        * ``e``     **end**   — save the current episode as success.
+        * ``r``     **rerecord** — discard the current episode.
         * ``q`` / Esc **stop**  — exit data collection entirely.
 
         Returns:

@@ -1,7 +1,7 @@
 # SO101 teleoperation data collection.
 # Uses LeRobot's leader/follower bilateral teleop. Hold the leader arm to
-# guide the follower; press 's'/→ to save the episode, 'r'/← to discard and
-# rerecord, 'q'/Esc to stop.
+# guide the follower; press 's' to start recording, 'e' to end/save the
+# episode, 'r' to discard and rerecord, 'q'/Esc to stop.
 #
 # Prerequisite: assemble + calibrate both leader and follower SO101 arms
 # (see https://huggingface.co/docs/lerobot/so101).
