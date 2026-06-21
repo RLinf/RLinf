@@ -402,21 +402,12 @@ class SO101Env(gym.Env):
             return False
 
         # Map evdev key codes → SO101 event name.
-        _ev_key_s = evdev.ecodes.KEY_S
-        _ev_key_r = evdev.ecodes.KEY_R
-        _ev_key_q = evdev.ecodes.KEY_Q
-        _ev_key_right = evdev.ecodes.KEY_RIGHT
-        _ev_key_left = evdev.ecodes.KEY_LEFT
-        _ev_key_esc = evdev.ecodes.KEY_ESC
-
         code_to_event = {
-            _ev_key_s: "start_episode",
-            _ev_key_r: "rerecord_episode",
-            _ev_key_q: "stop_recording",
-            _ev_key_right: "start_episode",
-            _ev_key_left: "rerecord_episode",
-            _ev_key_esc: "stop_recording",
+            evdev.ecodes.KEY_S: "start_episode",
             evdev.ecodes.KEY_E: "end_episode",
+            evdev.ecodes.KEY_R: "rerecord_episode",
+            evdev.ecodes.KEY_Q: "stop_recording",
+            evdev.ecodes.KEY_ESC: "stop_recording",
         }
 
         # Find a keyboard device (has KEY_S and KEY_Q in its capabilities).
@@ -437,7 +428,7 @@ class SO101Env(gym.Env):
             try:
                 caps = _dev.capabilities(verbose=False)
                 key_caps = set(caps.get(evdev.ecodes.EV_KEY, []))
-                if _ev_key_s in key_caps and _ev_key_q in key_caps:
+                if evdev.ecodes.KEY_S in key_caps and evdev.ecodes.KEY_Q in key_caps:
                     device = _dev
                     break
             finally:
