@@ -34,9 +34,6 @@ Typical usage (live)
    python toolkits/lerobot/compute_ee_pose.py --port /dev/ttyACM0 \\
        --urdf ~/.cache/huggingface/lerobot/calibration/robots/so_follower/…/so101.urdf
 
-   # Don't re-run calibration on connect (assumes arm is already calibrated)
-   python toolkits/lerobot/compute_ee_pose.py --port /dev/ttyACM0 --no-calibrate
-
 Typical usage (offline)
 -----------------------
 
@@ -87,11 +84,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial port of the follower arm (e.g. /dev/ttyACM0).",
     )
-    live_group.add_argument(
-        "--no-calibrate",
-        action="store_true",
-        help="Skip LeRobot calibration prompt (assumes arm is already calibrated).",
-    )
+    # No --no-calibrate flag.  lerobot's ``connect(calibrate=True)`` only
+    # runs the interactive wizard when no saved calibration exists on disk;
+    # when calibration is already present, it loads silently.  Always
+    # passing ``True`` is the right default for both the pre-calibrated and
+    # first-run cases.
 
     offline_group = p.add_argument_group("offline")
     offline_group.add_argument(
@@ -115,16 +112,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _connect_robot(
-    port: str, *, calibrate: bool
-) -> "tuple[object, list[float]]":
+def _connect_robot(port: str) -> "tuple[object, list[float]]":
     """Connect to the follower arm and return ``(robot, joint_angles_deg)``."""
     from lerobot.robots.so_follower import SO101Follower
     from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
 
     config = SO101FollowerConfig(port=port)
     robot = SO101Follower(config)
-    robot.connect(calibrate=calibrate)
+    # calibrate=True loads the saved calibration JSON if one exists,
+    # or runs the interactive wizard for a first-time setup.  Both are
+    # correct — we need degrees for FK.  No --no-calibrate flag is
+    # exposed because calibrate=False skips JSON loading entirely and
+    # causes `get_observation()` to fail.
+    robot.connect(calibrate=True)
 
     obs = robot.get_observation()
     joints = [
@@ -213,7 +213,7 @@ def main() -> None:
 
     # ---- Live ----
     if is_live:
-        robot, joints = _connect_robot(args.port, calibrate=not args.no_calibrate)
+        robot, joints = _connect_robot(args.port)
         try:
             x, y, z = _run_fk(joints, args.urdf)
         finally:
