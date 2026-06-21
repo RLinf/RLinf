@@ -20,6 +20,7 @@ synchronous Python API is used directly, so no distributed controller worker
 is required.
 """
 
+import contextlib
 import copy
 import time
 from dataclasses import dataclass, field
@@ -285,6 +286,7 @@ class SO101Env(gym.Env):
             "rerecord_episode": False,
             "stop_recording": False,
         }
+        self._recording = False
 
         if not self.config.is_dummy:
             self._setup_hardware()
@@ -583,8 +585,56 @@ class SO101Env(gym.Env):
         observation = self._get_observation()
         reward = self._calc_step_reward(observation)
 
-        if self.config.enable_teleop and self.config.manual_episode_control_only:
-            terminated = any(self._key_state.values())
+        # ── manual episode control via evdev ───────────────────────────
+        is_teleop = bool(self.config.enable_teleop and self.config.manual_episode_control_only)
+        terminated, info = False, {}
+
+        if is_teleop:
+            # Snapshot-and-clear: the background evdev thread only ever
+            # sets flags to True, so this delivers each press exactly once.
+            with self._key_state_lock if self._key_state_lock else contextlib.nullcontext():
+                pressed = dict(self._key_state)
+                for k in self._key_state:
+                    self._key_state[k] = False
+
+            stop_rec  = bool(pressed.get("stop_recording"))
+            rerecord  = bool(pressed.get("rerecord_episode"))
+            ep_succ   = bool(pressed.get("episode_success"))
+
+            if stop_rec:
+                self._recording = False
+                info.update(keyboard_event="stop", keyboard_phase="pre",
+                            stop_recording=True, rerecord_episode=False,
+                            episode_success=False, record_reset=True)
+                terminated = True
+            elif self._recording and rerecord:
+                self._recording = False
+                info.update(keyboard_event="abort", keyboard_phase="pre",
+                            stop_recording=False, rerecord_episode=True,
+                            episode_success=False, record_reset=True)
+                terminated = True
+            elif self._recording and ep_succ:
+                self._recording = False
+                info.update(keyboard_event="end_success", keyboard_phase="pre",
+                            stop_recording=False, rerecord_episode=False,
+                            episode_success=True, record_reset=True)
+                terminated = True
+            elif not self._recording and ep_succ:
+                self._recording = True
+                info.update(keyboard_event="start", keyboard_phase="rec",
+                            stop_recording=False, rerecord_episode=False,
+                            episode_success=False, record_reset=True)
+            else:
+                phase = "rec" if self._recording else "pre"
+                info.update(keyboard_event=None, keyboard_phase=phase,
+                            stop_recording=False, rerecord_episode=False,
+                            episode_success=False, record_reset=False)
+
+            if self._leader is not None:
+                info["intervene_action"] = np.array(
+                    [robot_action.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES],
+                    dtype=np.float32,
+                )
         else:
             terminated = bool(reward >= 1.0)
 
@@ -595,19 +645,6 @@ class SO101Env(gym.Env):
         )
         truncated = self._num_steps >= max_steps
 
-        info: dict = {}
-        if self.config.enable_teleop:
-            if self._leader is not None:
-                intervene_action = np.array(
-                    [robot_action.get(f"{name}.pos", 0.0) for name in _SO101_MOTOR_NAMES],
-                    dtype=np.float32,
-                )
-                info["intervene_action"] = intervene_action
-            info["episode_success"] = self._key_state["episode_success"]
-            info["rerecord_episode"] = self._key_state["rerecord_episode"]
-            info["stop_recording"] = self._key_state["stop_recording"]
-            info["manual_done"] = terminated
-
         step_time = time.time() - start_time
         time.sleep(max(0.0, (1.0 / self.config.step_frequency) - step_time))
 
@@ -617,6 +654,7 @@ class SO101Env(gym.Env):
         """Reset the environment to ``reset_joint_qpos`` and clear counters."""
         self._num_steps = 0
         self._success_hold_counter = 0
+        self._recording = False
         for k in self._key_state:
             self._key_state[k] = False
 
