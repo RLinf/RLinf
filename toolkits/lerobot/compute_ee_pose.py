@@ -84,11 +84,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Serial port of the follower arm (e.g. /dev/ttyACM0).",
     )
-    # No --no-calibrate flag.  lerobot's ``connect(calibrate=True)`` only
-    # runs the interactive wizard when no saved calibration exists on disk;
-    # when calibration is already present, it loads silently.  Always
-    # passing ``True`` is the right default for both the pre-calibrated and
-    # first-run cases.
+    live_group.add_argument(
+        "--calibration-id",
+        default="default",
+        help="Calibration lookup id (matches the id field in "
+        "SO101FollowerConfig; lerobot resolves this to "
+        "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
+        "<id>/calibration.json).  Default: %(default)s.",
+    )
 
     offline_group = p.add_argument_group("offline")
     offline_group.add_argument(
@@ -112,18 +115,18 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _connect_robot(port: str) -> "tuple[object, list[float]]":
+def _connect_robot(port: str, calibration_id: str) -> "tuple[object, list[float]]":
     """Connect to the follower arm and return ``(robot, joint_angles_deg)``."""
     from lerobot.robots.so_follower import SO101Follower
     from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
 
-    config = SO101FollowerConfig(port=port)
+    config = SO101FollowerConfig(port=port, id=calibration_id)
     robot = SO101Follower(config)
-    # calibrate=True loads the saved calibration JSON if one exists,
-    # or runs the interactive wizard for a first-time setup.  Both are
-    # correct — we need degrees for FK.  No --no-calibrate flag is
-    # exposed because calibrate=False skips JSON loading entirely and
-    # causes `get_observation()` to fail.
+    # calibrate=True loads the saved calibration JSON at
+    # ~/.cache/.../calibration/robots/so_follower/<id>/calibration.json
+    # if one exists, or runs the interactive wizard for a first-time
+    # setup.  calibrate=False skips JSON loading entirely and causes
+    # `get_observation()` to fail.
     robot.connect(calibrate=True)
 
     obs = robot.get_observation()
@@ -213,7 +216,7 @@ def main() -> None:
 
     # ---- Live ----
     if is_live:
-        robot, joints = _connect_robot(args.port)
+        robot, joints = _connect_robot(args.port, args.calibration_id)
         try:
             x, y, z = _run_fk(joints, args.urdf)
         finally:
