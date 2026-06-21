@@ -149,8 +149,8 @@ data:
   shuffle: True
   validation_shuffle: False
   seed: 42
-  train_data_paths: ["/patch/to/train.parquet"]
-  val_data_paths: ["/patch/to/test.parquet"]
+  train_data_paths: ["/path/to/train.parquet"]
+  val_data_paths: ["/path/to/test.parquet"]
 
 actor:
   group_name: "ActorGroup"
