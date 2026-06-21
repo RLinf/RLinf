@@ -92,6 +92,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "~/.cache/huggingface/lerobot/calibration/robots/so_follower/"
         "<id>/calibration.json).  Default: %(default)s.",
     )
+    live_group.add_argument(
+        "--calibration-file",
+        default=None,
+        metavar="PATH",
+        help="Absolute path to a calibration JSON file.  Use this when "
+        "the calibration was saved as a flat file rather than the "
+        "standard lerobot <id>/calibration.json directory layout.  "
+        "Takes precedence over --calibration-id.",
+    )
 
     offline_group = p.add_argument_group("offline")
     offline_group.add_argument(
@@ -115,18 +124,36 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _connect_robot(port: str, calibration_id: str) -> "tuple[object, list[float]]":
+def _connect_robot(
+    port: str, calibration_id: str, *, calibration_file: str | None = None
+) -> "tuple[object, list[float]]":
     """Connect to the follower arm and return ``(robot, joint_angles_deg)``."""
+    from pathlib import Path
+    import shutil
+
     from lerobot.robots.so_follower import SO101Follower
     from lerobot.robots.so_follower.config_so_follower import SO101FollowerConfig
 
-    config = SO101FollowerConfig(port=port, id=calibration_id)
+    if calibration_file is not None:
+        # lerobot always looks for
+        #   <calibration_dir>/<id>/calibration.json
+        # If the user has a flat .json file we create the expected
+        # directory layout on the fly.
+        cf = Path(calibration_file).expanduser().resolve()
+        calib_id = cf.stem  # "my_awesome_follower_arm"
+        calib_dir = cf.parent  # the so_follower/ dir
+        target = calib_dir / calib_id / "calibration.json"
+        if not target.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(cf, target)
+            print(f"Staged calibration: {target}")
+        config = SO101FollowerConfig(
+            port=port, id=calib_id, calibration_dir=str(calib_dir),
+        )
+    else:
+        config = SO101FollowerConfig(port=port, id=calibration_id)
+
     robot = SO101Follower(config)
-    # calibrate=True loads the saved calibration JSON at
-    # ~/.cache/.../calibration/robots/so_follower/<id>/calibration.json
-    # if one exists, or runs the interactive wizard for a first-time
-    # setup.  calibrate=False skips JSON loading entirely and causes
-    # `get_observation()` to fail.
     robot.connect(calibrate=True)
 
     obs = robot.get_observation()
@@ -216,7 +243,9 @@ def main() -> None:
 
     # ---- Live ----
     if is_live:
-        robot, joints = _connect_robot(args.port, args.calibration_id)
+        robot, joints = _connect_robot(
+            args.port, args.calibration_id, calibration_file=args.calibration_file,
+        )
         try:
             x, y, z = _run_fk(joints, args.urdf)
         finally:
