@@ -388,6 +388,7 @@ TensorBoard 事件文件位于 ``${SO101_LOG_DIR}/tensorboard/``\ ：
 --------
 
 - :doc:`so101` —— SO101 硬件上的数据采集流程。
-- :doc:`sft_openpi` —— 通用 OpenPI SFT 配方（LIBERO、ManiSkill、Franka 等）。
+- :doc:`sft_openpi` —— 通用 OpenPI SFT 配方。
+- :doc:`/rst_source/evaluations/guides/so101_eval` —— 在真实 SO101 机械臂上评测 SFT 检查点。
 - :doc:`/rst_source/extending/new_realworld_robot` —— 扩展 RLinf 以支持新的真实世界机器人。
 - :doc:`训练指标 <../../reference/metrics>` —— 完整指标命名空间。

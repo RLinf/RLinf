@@ -3,6 +3,8 @@ Real-World Evaluation
 
 RLinf supports evaluating and deploying VLA policies on Franka arms, including Bin-relocation (pick-and-place) tasks and a YAML-configurable generic environment (``FrankaEnv-v1``) for custom tasks.
 
+For SO101 arm evaluation, see :doc:`so101_eval`.
+
 Related training docs: :doc:`../../examples/embodied/franka_pi0_sft_deploy`, :doc:`../../examples/embodied/franka`, :doc:`../../examples/embodied/sft_dreamzero`
 
 Environment Setup

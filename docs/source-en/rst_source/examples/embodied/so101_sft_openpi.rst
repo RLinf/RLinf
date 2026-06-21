@@ -395,8 +395,9 @@ Cross-references
 ----------------
 
 - :doc:`so101` — data collection on the SO101 hardware.
-- :doc:`sft_openpi` — generic OpenPI SFT recipe (LIBERO, ManiSkill, Franka,
-  etc.).
+- :doc:`sft_openpi` — generic OpenPI SFT recipe.
+- :doc:`/rst_source/evaluations/guides/so101_eval` — evaluate the SFT
+  checkpoint on the real SO101 arm.
 - :doc:`/rst_source/extending/new_realworld_robot` — extending RLinf to a
   new real-world robot.
 - :doc:`Training metrics <../../reference/metrics>` — full metric namespace.
