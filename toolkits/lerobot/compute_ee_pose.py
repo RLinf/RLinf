@@ -27,12 +27,15 @@ Typical usage (live)
 
 .. code-block:: bash
 
-   # Calibrated arm with default URDF
-   python toolkits/lerobot/compute_ee_pose.py --port /dev/ttyACM0
-
-   # Custom URDF (e.g. from lerobot-calibrate)
+   # Calibrated arm (download the URDF first — see --urdf help)
    python toolkits/lerobot/compute_ee_pose.py --port /dev/ttyACM0 \\
-       --urdf ~/.cache/huggingface/lerobot/calibration/robots/so_follower/…/so101.urdf
+       --calibration-id my_awesome_follower_arm \\
+       --urdf ~/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
+
+   # Or use --calibration-file with a flat calibration JSON
+   python toolkits/lerobot/compute_ee_pose.py --port /dev/ttyACM0 \\
+       --calibration-file ~/.cache/huggingface/lerobot/calibration/.../my_arm.json \\
+       --urdf ~/SO-ARM100/Simulation/SO101/so101_new_calib.urdf
 
 Typical usage (offline)
 -----------------------
@@ -62,7 +65,7 @@ _SO101_ARM_JOINTS = (
     "wrist_roll",
 )
 _NUM_ARM_JOINTS = len(_SO101_ARM_JOINTS)
-_DEFAULT_URDF = "pack://lerobot/robots/so_follower/so101.urdf"
+_DEFAULT_URDF = "~/.cache/huggingface/lerobot/urdf/so101.urdf"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -114,7 +117,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--urdf",
         default=_DEFAULT_URDF,
-        help="Path or pack:// URI for the SO101 URDF (default: %(default)s).",
+        help="Path to the SO101 URDF file.  The SO101 URDF is not bundled "
+        "with lerobot; download it from the SO-ARM100 repo: "
+        "https://github.com/TheRobotStudio/SO-ARM100/blob/main/"
+        "Simulation/SO101/so101_new_calib.urdf  "
+        "Default: %(default)s.",
     )
     p.add_argument(
         "--no-fk-check",
@@ -183,19 +190,23 @@ def _run_fk(joint_angles_deg: Sequence[float], urdf_path: str) -> "tuple[float, 
 
 
 def _resolve_urdf(urdf_path: str) -> str:
-    """Resolve a ``pack://lerobot/...`` URI to a local path."""
-    if urdf_path.startswith("pack://"):
-        parts = urdf_path[len("pack://"):].split("/", 1)
-        if len(parts) != 2:
-            raise ValueError(f"Invalid pack:// URI: {urdf_path!r}")
-        pkg_name, rel_path = parts
-        from importlib.resources import files
-        return str(files(pkg_name) / rel_path)
-
-    if (p := Path(urdf_path).expanduser()).is_file():
+    """Resolve a URDF path, falling back to directory listing."""
+    p = Path(urdf_path).expanduser()
+    if p.is_file():
         return str(p.resolve())
-
-    raise FileNotFoundError(f"URDF not found: {urdf_path!r}")
+    # placo also accepts a directory containing robot.urdf.
+    if p.is_dir() and (p / "robot.urdf").is_file():
+        return str(p.resolve())
+    raise FileNotFoundError(
+        f"URDF not found at {p}\n"
+        "The SO101 URDF is not bundled with lerobot. Download it:\n"
+        "  - Option 1: git clone https://github.com/TheRobotStudio/SO-ARM100\n"
+        "    then pass --urdf <path>/SO-ARM100/Simulation/SO101/so101_new_calib.urdf\n"
+        "  - Option 2: download just the URDF file:\n"
+        "    curl -L -o so101_new_calib.urdf https://raw.githubusercontent.com/"
+        "TheRobotStudio/SO-ARM100/main/Simulation/SO101/so101_new_calib.urdf\n"
+        "    then pass --urdf ./so101_new_calib.urdf"
+    )
 
 
 def _check_fk_available() -> Optional[str]:
