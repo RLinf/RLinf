@@ -42,7 +42,7 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  # Overridden automatically when env.eval.parallel_eval.enabled=True.
+  # 90 envs / 18 tasks * 10 epochs = 50 episodes per task.
   eval_rollout_epoch: 10
   reward_type: chunk_level
   logprob_type: chunk_level

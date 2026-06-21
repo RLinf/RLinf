@@ -35,8 +35,10 @@ max_episode_steps: 300
 use_fixed_reset_state_ids: False
 use_ordered_reset_state_ids: False
 
-# Optional exact per-task evaluation scheduler. When enabled under env.eval,
-# total_num_envs must be a multiple of the selected task count.
+# Optional exact per-task evaluation validator. When enabled under env.eval,
+# total_num_envs must be a multiple of the selected task count. The total
+# episodes per task are:
+#   total_num_envs / num_tasks * algorithm.eval_rollout_epoch
 parallel_eval:
   enabled: False
   episodes_per_task: 50

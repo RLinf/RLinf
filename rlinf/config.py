@@ -74,7 +74,8 @@ def _configure_robocasa365_parallel_eval(cfg: DictConfig) -> None:
     schedule = resolve_robocasa365_eval_schedule(
         num_tasks=len(task_specs),
         total_num_envs=int(eval_cfg.total_num_envs),
-        episodes_per_task=episodes_per_task,
+        eval_rollout_epoch=int(cfg.algorithm.eval_rollout_epoch),
+        expected_episodes_per_task=episodes_per_task,
     )
 
     seed_strategy = str(eval_cfg.get("seed_strategy", "worker_offset"))
@@ -87,7 +88,6 @@ def _configure_robocasa365_parallel_eval(cfg: DictConfig) -> None:
         )
 
     with open_dict(cfg):
-        cfg.algorithm.eval_rollout_epoch = schedule.eval_rollout_epoch
         eval_cfg.auto_reset = False
         eval_cfg.ignore_terminations = False
         eval_cfg.is_eval = True
@@ -102,12 +102,12 @@ def _configure_robocasa365_parallel_eval(cfg: DictConfig) -> None:
 
     logging.info(
         "RoboCasa365 parallel eval: %d tasks, %d total envs, %d envs/task, "
-        "%d episodes/task, %d rollout epochs.",
+        "%d configured rollout epochs, %d total episodes/task.",
         schedule.num_tasks,
         schedule.total_num_envs,
         schedule.envs_per_task,
-        schedule.episodes_per_task,
         schedule.eval_rollout_epoch,
+        schedule.episodes_per_task,
     )
 
 

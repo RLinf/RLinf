@@ -418,6 +418,7 @@ def _make_env(
     seed_offset: int = 0,
     seed_strategy: str | None = None,
     task_filter: Any = None,
+    mock_num_tasks: int | None = None,
 ) -> ProbeRobocasa365Env:
     cfg = _load_cfg(args, num_envs=num_envs, group_size=group_size)
     cfg.seed = args.seed if seed is None else seed
@@ -433,7 +434,7 @@ def _make_env(
     return ProbeRobocasa365Env(
         cfg,
         num_envs,
-        mock_num_tasks=args.num_tasks,
+        mock_num_tasks=(args.num_tasks if mock_num_tasks is None else mock_num_tasks),
         seed_offset=seed_offset,
         total_num_processes=total_num_processes,
     )
@@ -898,17 +899,19 @@ def _check_parallel_eval_episode_schedule(
 ) -> None:
     print("\n[每个任务 50 个 episode 的并行评估调度]")
     scenarios = [
-        ("18 个任务、18 个 env", 18, 18, 50),
-        ("18 个任务、90 个 env", 18, 90, 10),
-        ("18 个任务、180 个 env", 18, 180, 5),
-        ("18 个任务、900 个 env", 18, 900, 1),
+        ("2 个任务、100 个 env、1 个 epoch", 2, 100, 1),
+        ("18 个任务、18 个 env、50 个 epoch", 18, 18, 50),
+        ("18 个任务、90 个 env、10 个 epoch", 18, 90, 10),
+        ("18 个任务、180 个 env、5 个 epoch", 18, 180, 5),
+        ("18 个任务、900 个 env、1 个 epoch", 18, 900, 1),
     ]
 
-    for label, num_tasks, total_num_envs, expected_epochs in scenarios:
+    for label, num_tasks, total_num_envs, configured_epochs in scenarios:
         schedule = resolve_robocasa365_eval_schedule(
             num_tasks=num_tasks,
             total_num_envs=total_num_envs,
-            episodes_per_task=50,
+            eval_rollout_epoch=configured_epochs,
+            expected_episodes_per_task=50,
         )
         env = _make_env(
             args,
@@ -917,6 +920,7 @@ def _check_parallel_eval_episode_schedule(
             fixed_flag=True,
             rotate_on_auto_reset=False,
             is_eval=True,
+            mock_num_tasks=num_tasks,
         )
         episode_counts = np.zeros(num_tasks, dtype=np.int32)
         initial_task_ids = env.task_ids.copy()
@@ -928,9 +932,9 @@ def _check_parallel_eval_episode_schedule(
             env.update_reset_state_ids()
 
         suite.check(
-            f"{label}：自动计算正确的 eval_rollout_epoch",
-            schedule.eval_rollout_epoch == expected_epochs,
-            (f"实际={schedule.eval_rollout_epoch}，期望={expected_epochs}"),
+            f"{label}：保留显式配置的 eval_rollout_epoch",
+            schedule.eval_rollout_epoch == configured_epochs,
+            f"实际={schedule.eval_rollout_epoch}，配置={configured_epochs}",
         )
         suite.check(
             f"{label}：每轮每个任务获得相同数量的并行 env",
@@ -968,14 +972,15 @@ def _check_parallel_eval_episode_schedule(
     filtered_schedule = resolve_robocasa365_eval_schedule(
         num_tasks=len(filtered_env.task_specs),
         total_num_envs=filtered_env.num_envs,
-        episodes_per_task=50,
+        eval_rollout_epoch=5,
+        expected_episodes_per_task=50,
     )
     filtered_episode_count = 0
     for _ in range(filtered_schedule.eval_rollout_epoch):
         filtered_episode_count += filtered_env.num_envs
         filtered_env.update_reset_state_ids()
     suite.check(
-        "单任务 task_filter、10 个 env：自动使用 5 轮完成 50 个 episode",
+        "单任务 task_filter、10 个 env、显式 5 个 epoch：完成 50 个 episode",
         filtered_schedule.eval_rollout_epoch == 5
         and filtered_episode_count == 50
         and set(_task_names(filtered_env)) == {"MockTask03"},
@@ -1019,16 +1024,22 @@ def _check_parallel_eval_episode_schedule(
         )
 
     invalid_cases = [
-        (18, 20, 50),
-        (18, 72, 50),
-        (1, 100, 50),
+        (18, 20, 10, 50),
+        (18, 72, 10, 50),
+        (1, 100, 1, 50),
     ]
-    for num_tasks, total_num_envs, episodes_per_task in invalid_cases:
+    for (
+        num_tasks,
+        total_num_envs,
+        eval_rollout_epoch,
+        expected_episodes_per_task,
+    ) in invalid_cases:
         try:
             resolve_robocasa365_eval_schedule(
                 num_tasks=num_tasks,
                 total_num_envs=total_num_envs,
-                episodes_per_task=episodes_per_task,
+                eval_rollout_epoch=eval_rollout_epoch,
+                expected_episodes_per_task=expected_episodes_per_task,
             )
         except ValueError:
             rejected = True
@@ -1037,7 +1048,8 @@ def _check_parallel_eval_episode_schedule(
         suite.check(
             (
                 f"非法调度会被拒绝：tasks={num_tasks}, "
-                f"envs={total_num_envs}, episodes/task={episodes_per_task}"
+                f"envs={total_num_envs}, epochs={eval_rollout_epoch}, "
+                f"expected episodes/task={expected_episodes_per_task}"
             ),
             rejected,
         )
@@ -1104,7 +1116,10 @@ def _check_yaml_group_size_consistency(
             schedule = resolve_robocasa365_eval_schedule(
                 num_tasks=args.num_tasks,
                 total_num_envs=int(eval_env.get("total_num_envs", 0)),
-                episodes_per_task=int(parallel_eval.get("episodes_per_task", 0)),
+                eval_rollout_epoch=int(algorithm.get("eval_rollout_epoch", 0)),
+                expected_episodes_per_task=int(
+                    parallel_eval.get("episodes_per_task", 0)
+                ),
             )
             suite.check(
                 f"{label} 配置开启每任务 50 个 episode 的并行评估",
@@ -1113,11 +1128,11 @@ def _check_yaml_group_size_consistency(
                 f"parallel_eval={parallel_eval}",
             )
             suite.check(
-                f"{label} 配置的 total_num_envs 与 eval_rollout_epoch 匹配",
+                f"{label} 配置显式保留 eval_rollout_epoch",
                 schedule.eval_rollout_epoch
                 == int(algorithm.get("eval_rollout_epoch", -1)),
                 (
-                    f"自动计算轮数={schedule.eval_rollout_epoch}，"
+                    f"调度轮数={schedule.eval_rollout_epoch}，"
                     f"配置轮数={algorithm.get('eval_rollout_epoch')}"
                 ),
             )
