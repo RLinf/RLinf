@@ -48,6 +48,7 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
+from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -278,7 +279,17 @@ class MAMegatronActor(MegatronActor):
 
                 for k in sorted(metrics_data.keys()):
                     v = metrics_data[k]
-                    if v is not None:
+                    if v is None:
+                        continue
+                    if k in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                        v = v.detach().clone()
+                        torch.distributed.all_reduce(
+                            v,
+                            op=torch.distributed.ReduceOp.SUM,
+                            group=parallel_state.get_data_parallel_group(),
+                        )
+                        metrics_data[k] = v
+                    else:
                         metrics_data[k] = average_losses_across_data_parallel_group([v])
 
                 return loss, metrics_data

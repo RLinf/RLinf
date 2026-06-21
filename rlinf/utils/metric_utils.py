@@ -22,9 +22,113 @@ import torch.distributed
 
 from rlinf.scheduler import Worker
 
+CRITIC_EXPLAINED_VARIANCE_KEY = "critic/explained_variance"
+CRITIC_EXPLAINED_VARIANCE_COUNT_KEY = "_critic_explained_variance/count"
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY = "_critic_explained_variance/returns_sum"
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY = (
+    "_critic_explained_variance/returns_sq_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY = "_critic_explained_variance/errors_sum"
+CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY = (
+    "_critic_explained_variance/errors_sq_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
+    CRITIC_EXPLAINED_VARIANCE_COUNT_KEY,
+    CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY,
+)
+
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
+
+
+def compute_critic_explained_variance_stats(
+    returns: torch.Tensor,
+    values: torch.Tensor,
+    loss_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Compute sufficient statistics for critic explained variance."""
+    returns = returns.detach().float()
+    values = values.detach().float()
+    if loss_mask is not None:
+        mask = loss_mask.to(device=returns.device, dtype=torch.bool)
+        if mask.shape != returns.shape:
+            mask = torch.broadcast_to(mask, returns.shape)
+        returns = returns[mask]
+        values = values[mask]
+    else:
+        returns = returns.reshape(-1)
+        values = values.reshape(-1)
+
+    errors = returns - values
+    count = torch.tensor(float(returns.numel()), device=returns.device)
+    return {
+        CRITIC_EXPLAINED_VARIANCE_COUNT_KEY: count,
+        CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY: returns.sum(),
+        CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY: (returns * returns).sum(),
+        CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY: errors.sum(),
+        CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY: (errors * errors).sum(),
+    }
+
+
+def compute_critic_explained_variance_from_stats(
+    stats: dict[str, float | torch.Tensor],
+) -> torch.Tensor:
+    """Compute critic explained variance from summed sufficient statistics."""
+    tensor_value = next((v for v in stats.values() if isinstance(v, torch.Tensor)), None)
+    device = tensor_value.device if tensor_value is not None else torch.device("cpu")
+
+    def as_tensor(key: str) -> torch.Tensor:
+        return torch.as_tensor(stats[key], dtype=torch.float32, device=device)
+
+    count = as_tensor(CRITIC_EXPLAINED_VARIANCE_COUNT_KEY)
+    returns_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY)
+    returns_sq_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY)
+    errors_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY)
+    errors_sq_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY)
+
+    nan = torch.tensor(float("nan"), device=device)
+    if count < 2:
+        return nan
+
+    returns_centered_sq_sum = returns_sq_sum - returns_sum * returns_sum / count
+    if torch.isnan(returns_centered_sq_sum) or returns_centered_sq_sum == 0:
+        return nan
+
+    errors_centered_sq_sum = errors_sq_sum - errors_sum * errors_sum / count
+    if torch.isnan(errors_centered_sq_sum):
+        return nan
+    return 1 - errors_centered_sq_sum / returns_centered_sq_sum
+
+
+def pop_critic_explained_variance_stats(
+    metrics: dict[str, object],
+) -> dict[str, torch.Tensor]:
+    """Pop hidden critic explained-variance stats and sum list values."""
+
+    def sum_metric_values(value: object) -> torch.Tensor:
+        if isinstance(value, list):
+            if not value:
+                return torch.tensor(0.0)
+            tensors = [
+                item.detach() if isinstance(item, torch.Tensor) else torch.as_tensor(item)
+                for item in value
+            ]
+            return torch.stack([tensor.float() for tensor in tensors]).sum()
+        if isinstance(value, torch.Tensor):
+            return value.detach().float()
+        return torch.as_tensor(value, dtype=torch.float32)
+
+    stats = {}
+    for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+        if key in metrics:
+            stats[key] = sum_metric_values(metrics.pop(key))
+    if stats:
+        metrics.pop(CRITIC_EXPLAINED_VARIANCE_KEY, None)
+    return stats
 
 
 def _normalize_metric_shard(shard: object) -> torch.Tensor:

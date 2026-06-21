@@ -18,6 +18,11 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
+    compute_critic_explained_variance_from_stats,
+    compute_critic_explained_variance_stats,
+)
 from rlinf.utils.utils import masked_mean, masked_mean_ratio
 
 
@@ -360,30 +365,24 @@ def compute_ppo_critic_loss(
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
 
-    # explained variance
-    if loss_mask is not None:
-        masked_returns = returns[loss_mask]
-        masked_values = values[loss_mask]
-    else:
-        masked_returns = returns
-        masked_values = values
-
-    var_returns = torch.var(masked_returns)
-    if torch.isnan(var_returns) or var_returns == 0:
-        explained_variance = torch.tensor(float("nan"), device=returns.device)
-    else:
-        var_diff = torch.var(masked_returns - masked_values)
-        if torch.isnan(var_diff):
-            explained_variance = torch.tensor(float("nan"), device=returns.device)
-        else:
-            explained_variance = 1 - var_diff / var_returns
+    explained_variance_stats = compute_critic_explained_variance_stats(
+        returns=returns,
+        values=values,
+        loss_mask=loss_mask,
+    )
+    explained_variance = compute_critic_explained_variance_from_stats(
+        explained_variance_stats
+    )
 
     # Compile metrics for logging
     metrics_data = {
         "critic/value_loss": value_loss.detach(),
         "critic/value_clip_ratio": value_clip_ratio.detach(),
-        "critic/explained_variance": explained_variance.detach(),
+        CRITIC_EXPLAINED_VARIANCE_KEY: explained_variance.detach(),
     }
+    metrics_data.update(
+        {key: value.detach() for key, value in explained_variance_stats.items()}
+    )
     return value_loss, metrics_data
 
 
