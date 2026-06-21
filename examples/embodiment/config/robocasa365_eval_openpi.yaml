@@ -42,7 +42,8 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  eval_rollout_epoch: 30
+  # Overridden automatically when env.eval.parallel_eval.enabled=True.
+  eval_rollout_epoch: 10
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
@@ -93,12 +94,14 @@ env:
     reward_coef: 1.0
     group_size: 1
   eval:
-    total_num_envs: 18 #Atomic-Seen has 18 tasks，Composite-Seen has 16 tasks, Composite-Unseen has 16 tasks
+    # atomic_seen has 18 tasks. 90 envs gives 5 envs/task and 10 rollout epochs.
+    total_num_envs: 90
     seed: 7
-    seed_strategy: openpi
+    seed_strategy: global_unique
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
+    task_filter: []
     task_sampling_strategy: ordered
     auto_reset: False
     ignore_terminations: False
@@ -106,6 +109,9 @@ env:
     max_steps_per_rollout_epoch: 700
     group_size: 1
     is_eval: True
+    parallel_eval:
+      enabled: True
+      episodes_per_task: 50
     video_cfg:
       save_video: True
       info_on_video: True

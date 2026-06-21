@@ -40,6 +40,77 @@ if TYPE_CHECKING:
 logging.getLogger().setLevel(logging.INFO)
 
 
+def _configure_robocasa365_parallel_eval(cfg: DictConfig) -> None:
+    """Resolve RoboCasa365 per-task parallel evaluation dimensions."""
+
+    eval_cfg = cfg.env.eval
+    if SupportedEnvType(eval_cfg.env_type) != SupportedEnvType.ROBOCASA365:
+        return
+
+    parallel_eval_cfg = eval_cfg.get("parallel_eval", {})
+    if isinstance(parallel_eval_cfg, bool):
+        enabled = parallel_eval_cfg
+        episodes_per_task = 50
+    else:
+        enabled = bool(parallel_eval_cfg.get("enabled", False))
+        episodes_per_task = int(parallel_eval_cfg.get("episodes_per_task", 50))
+    if not enabled:
+        return
+
+    if int(eval_cfg.group_size) != 1:
+        raise ValueError(
+            "RoboCasa365 parallel eval requires env.eval.group_size=1 so each "
+            "environment contributes one independent episode."
+        )
+
+    from rlinf.envs.robocasa365.eval_schedule import (
+        resolve_robocasa365_eval_schedule,
+    )
+    from rlinf.envs.robocasa365.robocasa365_env import (
+        load_robocasa365_task_specs,
+    )
+
+    task_specs = load_robocasa365_task_specs(eval_cfg)
+    schedule = resolve_robocasa365_eval_schedule(
+        num_tasks=len(task_specs),
+        total_num_envs=int(eval_cfg.total_num_envs),
+        episodes_per_task=episodes_per_task,
+    )
+
+    seed_strategy = str(eval_cfg.get("seed_strategy", "worker_offset"))
+    if schedule.envs_per_task > 1 and seed_strategy in ("same", "openpi"):
+        raise ValueError(
+            "RoboCasa365 parallel eval with multiple environments per task "
+            "requires distinct environment seeds. Set "
+            "env.eval.seed_strategy=global_unique or worker_offset instead of "
+            f"{seed_strategy!r}."
+        )
+
+    with open_dict(cfg):
+        cfg.algorithm.eval_rollout_epoch = schedule.eval_rollout_epoch
+        eval_cfg.auto_reset = False
+        eval_cfg.ignore_terminations = False
+        eval_cfg.is_eval = True
+        eval_cfg.task_sampling_strategy = "ordered"
+        eval_cfg.rotate_tasks_on_auto_reset = False
+        eval_cfg.use_fixed_reset_state_ids = True
+        if not isinstance(parallel_eval_cfg, bool):
+            eval_cfg.parallel_eval.num_tasks = schedule.num_tasks
+            eval_cfg.parallel_eval.envs_per_task = schedule.envs_per_task
+            eval_cfg.parallel_eval.eval_rollout_epoch = schedule.eval_rollout_epoch
+            eval_cfg.parallel_eval.total_episodes = schedule.total_episodes
+
+    logging.info(
+        "RoboCasa365 parallel eval: %d tasks, %d total envs, %d envs/task, "
+        "%d episodes/task, %d rollout epochs.",
+        schedule.num_tasks,
+        schedule.total_num_envs,
+        schedule.envs_per_task,
+        schedule.episodes_per_task,
+        schedule.eval_rollout_epoch,
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class SupportedModel:
     value: str
@@ -815,6 +886,7 @@ def validate_embodied_cfg(cfg):
     env_world_size = component_placement.get_world_size("env")
 
     if cfg.runner.val_check_interval > 0 or cfg.runner.only_eval:
+        _configure_robocasa365_parallel_eval(cfg)
         assert cfg.env.eval.total_num_envs > 0, (
             "Total number of parallel environments for evaluation must be greater than 0"
         )

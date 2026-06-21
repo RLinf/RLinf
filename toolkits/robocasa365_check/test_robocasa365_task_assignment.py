@@ -43,7 +43,6 @@ import numpy as np
 import torch
 import yaml
 
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -157,6 +156,7 @@ def _install_gym_stub(module_name: str) -> None:
 try:
     from omegaconf import OmegaConf
 except ModuleNotFoundError:
+
     class _OmegaConfFallback:
         @staticmethod
         def load(path: Any) -> AttrDict:
@@ -187,7 +187,10 @@ except ModuleNotFoundError:
 _install_gym_stub("gymnasium")
 
 
-from rlinf.envs.robocasa365.robocasa365_env import (
+from rlinf.envs.robocasa365.eval_schedule import (  # noqa: E402
+    resolve_robocasa365_eval_schedule,
+)
+from rlinf.envs.robocasa365.robocasa365_env import (  # noqa: E402
     Robocasa365Env,
     _task_matches_filter,
 )
@@ -258,7 +261,9 @@ class FakeVectorEnv:
             },
         }
 
-    def reset(self, id: Any) -> tuple[list[dict[str, np.ndarray]], list[dict[str, Any]]]:
+    def reset(
+        self, id: Any
+    ) -> tuple[list[dict[str, np.ndarray]], list[dict[str, Any]]]:
         env_ids = np.asarray(id, dtype=np.int32).reshape(-1)
         obs = [self._obs_for_env(int(env_id)) for env_id in env_ids]
         infos = [self._info_for_env(int(env_id)) for env_id in env_ids]
@@ -410,6 +415,8 @@ def _make_env(
     seed: int | None = None,
     is_eval: bool = False,
     total_num_processes: int = 1,
+    seed_offset: int = 0,
+    seed_strategy: str | None = None,
     task_filter: Any = None,
 ) -> ProbeRobocasa365Env:
     cfg = _load_cfg(args, num_envs=num_envs, group_size=group_size)
@@ -419,12 +426,15 @@ def _make_env(
     cfg.use_fixed_reset_state_ids = fixed_flag
     cfg.rotate_tasks_on_auto_reset = rotate_on_auto_reset
     cfg.is_eval = is_eval
+    if seed_strategy is not None:
+        cfg.seed_strategy = seed_strategy
     if task_filter is not None:
         cfg.task_filter = task_filter
     return ProbeRobocasa365Env(
         cfg,
         num_envs,
         mock_num_tasks=args.num_tasks,
+        seed_offset=seed_offset,
         total_num_processes=total_num_processes,
     )
 
@@ -437,7 +447,7 @@ def _expected_ordered_ids(
     start: int = 0,
 ) -> np.ndarray:
     num_groups = num_envs // group_size
-    group_ids = (np.arange(start, start + num_groups, dtype=np.int32) % num_tasks)
+    group_ids = np.arange(start, start + num_groups, dtype=np.int32) % num_tasks
     return np.repeat(group_ids, group_size).astype(np.int32)
 
 
@@ -445,9 +455,7 @@ def _noop_actions(num_envs: int) -> np.ndarray:
     return np.zeros((num_envs, 12), dtype=np.float32)
 
 
-def _run_success_step(
-    env: ProbeRobocasa365Env, success_mask: np.ndarray
-) -> np.ndarray:
+def _run_success_step(env: ProbeRobocasa365Env, success_mask: np.ndarray) -> np.ndarray:
     env.reset()
     env.env.next_success_mask = np.asarray(success_mask, dtype=bool)
     env.step(_noop_actions(env.num_envs), auto_reset=True)
@@ -654,9 +662,7 @@ def _check_unfiltered_reset_parameter_matrix(
             rotate_on_auto_reset=True,
         )
         ordered_before = ordered_rotate.task_ids.copy()
-        ordered_after = _run_success_step(
-            ordered_rotate, np.ones(num_envs, dtype=bool)
-        )
+        ordered_after = _run_success_step(ordered_rotate, np.ones(num_envs, dtype=bool))
         ordered_expected_after = _expected_ordered_ids(
             num_envs,
             1,
@@ -707,7 +713,9 @@ def _check_unfiltered_reset_parameter_matrix(
                 f"{num_envs} 个 env，random+use_ordered_reset_state_ids："
                 "reset 行为等价于 ordered"
             ),
-            np.array_equal(ordered_flag_before, _expected_ordered_ids(num_envs, 1, args.num_tasks))
+            np.array_equal(
+                ordered_flag_before, _expected_ordered_ids(num_envs, 1, args.num_tasks)
+            )
             and np.array_equal(ordered_flag_after, ordered_expected_after),
             (
                 f"reset 前={ordered_flag_before.tolist()}，"
@@ -724,12 +732,8 @@ def _check_unfiltered_reset_parameter_matrix(
             seed=777 + num_envs,
         )
         random_before = random_rotate.task_ids.copy()
-        random_after = _run_success_step(
-            random_rotate, np.ones(num_envs, dtype=bool)
-        )
-        in_range = bool(
-            np.all((0 <= random_after) & (random_after < args.num_tasks))
-        )
+        random_after = _run_success_step(random_rotate, np.ones(num_envs, dtype=bool))
+        in_range = bool(np.all((0 <= random_after) & (random_after < args.num_tasks)))
         suite.check(
             f"{num_envs} 个 env，random+rotate：reset 采样到合法 task id",
             in_range,
@@ -742,9 +746,7 @@ def _check_unfiltered_reset_parameter_matrix(
         )
 
 
-def _check_fixed_reset_state_ids(
-    suite: CheckSuite, args: argparse.Namespace
-) -> None:
+def _check_fixed_reset_state_ids(suite: CheckSuite, args: argparse.Namespace) -> None:
     print("\n[固定 reset state id]")
     env = _make_env(
         args,
@@ -769,9 +771,7 @@ def _check_fixed_reset_state_ids(
         suite.warn("use_fixed_reset_state_ids 应保持 task id 固定", condition, detail)
 
 
-def _check_env_count_distribution(
-    suite: CheckSuite, args: argparse.Namespace
-) -> None:
+def _check_env_count_distribution(suite: CheckSuite, args: argparse.Namespace) -> None:
     print("\n[不同 env 数量下的任务分布]")
     for num_envs in args.env_counts:
         env = _make_env(
@@ -889,11 +889,158 @@ def _check_ppo_grpo_group_semantics(
         "GRPO 风格 update_reset_state_ids 会按完整 group 轮换任务",
         np.array_equal(grpo_after_update, grpo_expected_update)
         and _groups_are_uniform(grpo_after_update, 8),
+        (f"更新后={grpo_after_update.tolist()}，期望={grpo_expected_update.tolist()}"),
+    )
+
+
+def _check_parallel_eval_episode_schedule(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[每个任务 50 个 episode 的并行评估调度]")
+    scenarios = [
+        ("18 个任务、18 个 env", 18, 18, 50),
+        ("18 个任务、90 个 env", 18, 90, 10),
+        ("18 个任务、180 个 env", 18, 180, 5),
+        ("18 个任务、900 个 env", 18, 900, 1),
+    ]
+
+    for label, num_tasks, total_num_envs, expected_epochs in scenarios:
+        schedule = resolve_robocasa365_eval_schedule(
+            num_tasks=num_tasks,
+            total_num_envs=total_num_envs,
+            episodes_per_task=50,
+        )
+        env = _make_env(
+            args,
+            num_envs=total_num_envs,
+            strategy="ordered",
+            fixed_flag=True,
+            rotate_on_auto_reset=False,
+            is_eval=True,
+        )
+        episode_counts = np.zeros(num_tasks, dtype=np.int32)
+        initial_task_ids = env.task_ids.copy()
+        for _ in range(schedule.eval_rollout_epoch):
+            episode_counts += np.bincount(
+                env.task_ids.astype(np.int64),
+                minlength=num_tasks,
+            )
+            env.update_reset_state_ids()
+
+        suite.check(
+            f"{label}：自动计算正确的 eval_rollout_epoch",
+            schedule.eval_rollout_epoch == expected_epochs,
+            (f"实际={schedule.eval_rollout_epoch}，期望={expected_epochs}"),
+        )
+        suite.check(
+            f"{label}：每轮每个任务获得相同数量的并行 env",
+            bool(
+                np.all(
+                    np.bincount(initial_task_ids, minlength=num_tasks)
+                    == schedule.envs_per_task
+                )
+            ),
+            (
+                f"每任务 env 数="
+                f"{np.bincount(initial_task_ids, minlength=num_tasks).tolist()}"
+            ),
+        )
+        suite.check(
+            f"{label}：所有轮次结束后每个任务恰好有 50 个 episode",
+            bool(np.all(episode_counts == 50)),
+            f"每任务 episode 数={episode_counts.tolist()}",
+        )
+        suite.check(
+            f"{label}：固定任务模式下各 env 的任务不会跨轮次改变",
+            np.array_equal(env.task_ids, initial_task_ids),
+            (f"初始={initial_task_ids.tolist()}，最终={env.task_ids.tolist()}"),
+        )
+
+    filtered_env = _make_env(
+        args,
+        num_envs=10,
+        strategy="ordered",
+        fixed_flag=True,
+        rotate_on_auto_reset=False,
+        is_eval=True,
+        task_filter={"include": ["MockTask03"], "exclude": []},
+    )
+    filtered_schedule = resolve_robocasa365_eval_schedule(
+        num_tasks=len(filtered_env.task_specs),
+        total_num_envs=filtered_env.num_envs,
+        episodes_per_task=50,
+    )
+    filtered_episode_count = 0
+    for _ in range(filtered_schedule.eval_rollout_epoch):
+        filtered_episode_count += filtered_env.num_envs
+        filtered_env.update_reset_state_ids()
+    suite.check(
+        "单任务 task_filter、10 个 env：自动使用 5 轮完成 50 个 episode",
+        filtered_schedule.eval_rollout_epoch == 5
+        and filtered_episode_count == 50
+        and set(_task_names(filtered_env)) == {"MockTask03"},
         (
-            f"更新后={grpo_after_update.tolist()}，"
-            f"期望={grpo_expected_update.tolist()}"
+            f"轮数={filtered_schedule.eval_rollout_epoch}，"
+            f"episode 数={filtered_episode_count}，"
+            f"任务={sorted(set(_task_names(filtered_env)))}"
         ),
     )
+
+    for num_processes in (2, 5):
+        local_num_envs = 90 // num_processes
+        process_envs = [
+            _make_env(
+                args,
+                num_envs=local_num_envs,
+                strategy="ordered",
+                fixed_flag=True,
+                rotate_on_auto_reset=False,
+                is_eval=True,
+                total_num_processes=num_processes,
+                seed_offset=process_id,
+                seed_strategy="global_unique",
+            )
+            for process_id in range(num_processes)
+        ]
+        global_task_ids = np.concatenate([env.task_ids for env in process_envs])
+        global_seeds = [seed for env in process_envs for seed in env.env_seeds]
+        suite.check(
+            f"90 个 env 分布到 {num_processes} 个进程后仍是每任务 5 个 env",
+            bool(np.all(np.bincount(global_task_ids, minlength=args.num_tasks) == 5)),
+            (
+                f"全局每任务 env 数="
+                f"{np.bincount(global_task_ids, minlength=args.num_tasks).tolist()}"
+            ),
+        )
+        suite.check(
+            f"{num_processes} 个进程使用 global_unique 时 env seed 全局不重复",
+            len(global_seeds) == len(set(global_seeds)),
+            f"seed 数={len(global_seeds)}，去重后={len(set(global_seeds))}",
+        )
+
+    invalid_cases = [
+        (18, 20, 50),
+        (18, 72, 50),
+        (1, 100, 50),
+    ]
+    for num_tasks, total_num_envs, episodes_per_task in invalid_cases:
+        try:
+            resolve_robocasa365_eval_schedule(
+                num_tasks=num_tasks,
+                total_num_envs=total_num_envs,
+                episodes_per_task=episodes_per_task,
+            )
+        except ValueError:
+            rejected = True
+        else:
+            rejected = False
+        suite.check(
+            (
+                f"非法调度会被拒绝：tasks={num_tasks}, "
+                f"envs={total_num_envs}, episodes/task={episodes_per_task}"
+            ),
+            rejected,
+        )
 
 
 def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
@@ -953,6 +1100,27 @@ def _check_yaml_group_size_consistency(
                     f"env.train.group_size={train_group_size}"
                 ),
             )
+            parallel_eval = eval_env.get("parallel_eval", {})
+            schedule = resolve_robocasa365_eval_schedule(
+                num_tasks=args.num_tasks,
+                total_num_envs=int(eval_env.get("total_num_envs", 0)),
+                episodes_per_task=int(parallel_eval.get("episodes_per_task", 0)),
+            )
+            suite.check(
+                f"{label} 配置开启每任务 50 个 episode 的并行评估",
+                bool(parallel_eval.get("enabled", False))
+                and schedule.episodes_per_task == 50,
+                f"parallel_eval={parallel_eval}",
+            )
+            suite.check(
+                f"{label} 配置的 total_num_envs 与 eval_rollout_epoch 匹配",
+                schedule.eval_rollout_epoch
+                == int(algorithm.get("eval_rollout_epoch", -1)),
+                (
+                    f"自动计算轮数={schedule.eval_rollout_epoch}，"
+                    f"配置轮数={algorithm.get('eval_rollout_epoch')}"
+                ),
+            )
 
 
 def parse_args() -> argparse.Namespace:
@@ -962,7 +1130,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=pathlib.Path,
-        default=REPO_ROOT / "examples" / "embodiment" / "config" / "env" / "robocasa365.yaml",
+        default=REPO_ROOT
+        / "examples"
+        / "embodiment"
+        / "config"
+        / "env"
+        / "robocasa365.yaml",
         help="基础 RoboCasa365 env 配置。",
     )
     parser.add_argument("--seed", type=int, default=0)
@@ -990,13 +1163,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--grpo-config",
         type=pathlib.Path,
-        default=REPO_ROOT / "examples" / "embodiment" / "config" / "robocasa365_grpo_openpi.yaml",
+        default=REPO_ROOT
+        / "examples"
+        / "embodiment"
+        / "config"
+        / "robocasa365_grpo_openpi.yaml",
         help="用于检查 group_size 一致性的 RoboCasa365 GRPO 顶层配置。",
     )
     parser.add_argument(
         "--ppo-config",
         type=pathlib.Path,
-        default=REPO_ROOT / "examples" / "embodiment" / "config" / "robocasa365_eval_openpi.yaml",
+        default=REPO_ROOT
+        / "examples"
+        / "embodiment"
+        / "config"
+        / "robocasa365_eval_openpi.yaml",
         help="用于检查 group_size 的 RoboCasa365 PPO/GAE 风格顶层配置。",
     )
     return parser.parse_args()
@@ -1021,6 +1202,7 @@ def main() -> None:
     _check_env_count_distribution(suite, args)
     _check_unfiltered_reset_parameter_matrix(suite, args)
     _check_ppo_grpo_group_semantics(suite, args)
+    _check_parallel_eval_episode_schedule(suite, args)
     _check_yaml_group_size_consistency(suite, args)
     suite.summary()
 

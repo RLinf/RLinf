@@ -227,6 +227,122 @@ def _get_task_horizon(task_name: str, fallback_horizon: int) -> int:
         return fallback_horizon
 
 
+def load_robocasa365_task_specs(cfg: Any) -> list[dict[str, Any]]:
+    """Load and filter RoboCasa365 task specs from an environment config."""
+
+    task_source = str(cfg.get("task_source", "dataset_registry"))
+    if task_source != "dataset_registry":
+        raise ValueError(
+            "RoboCasa365 task loading currently requires "
+            f"task_source='dataset_registry', got {task_source!r}."
+        )
+
+    dataset_source = cfg.get("dataset_source", None)
+    if dataset_source is not None:
+        dataset_source = str(dataset_source)
+    split = cfg.get("split", None)
+    if split is not None:
+        split = str(split)
+    task_soups = [
+        str(soup) for soup in _ensure_list(_cfg_to_python(cfg.get("task_soup", None)))
+    ]
+    task_mode = cfg.get("task_mode", None)
+    if task_mode is not None:
+        task_mode = str(task_mode)
+    task_filter = _normalize_task_filter(_cfg_to_python(cfg.get("task_filter", None)))
+    benchmark_selection = cfg.get(
+        "benchmark_selection",
+        _build_benchmark_selection(
+            task_source=task_source,
+            split=split,
+            task_soups=task_soups,
+            dataset_source=dataset_source,
+        ),
+    )
+
+    try:
+        from robocasa.utils.dataset_registry_utils import get_ds_meta, get_ds_soup
+    except ImportError as exc:
+        raise ImportError(
+            "RoboCasa365 benchmark selection requires "
+            "robocasa.utils.dataset_registry_utils. Install a RoboCasa version "
+            "that includes the benchmark dataset registry."
+        ) from exc
+
+    task_names: list[str] = []
+    if task_soups:
+        if split is None:
+            raise ValueError(
+                "split must be provided when task_soup is set for RoboCasa365."
+            )
+        for task_soup in task_soups:
+            entries = get_ds_soup(
+                task_set=task_soup,
+                split=split,
+                source=dataset_source or "human",
+            )
+            task_names.extend(str(task_entry["task"]) for task_entry in entries)
+    else:
+        task_names = [
+            str(task)
+            for task in _ensure_list(_cfg_to_python(cfg.get("task_names", None)))
+        ]
+
+    fallback_horizon = int(cfg.get("max_episode_steps", 300))
+    task_specs = []
+    for task_name in _dedupe_preserve_order(task_names):
+        try:
+            metadata = (
+                get_ds_meta(
+                    task_name,
+                    split=split,
+                    source=dataset_source or "human",
+                )
+                or {}
+            )
+        except Exception:
+            metadata = {}
+
+        task_label = task_name.split("/", 1)[-1]
+        task_soup = metadata.get("task_soup")
+        if not task_soup and task_soups:
+            task_soup = task_soups[0] if len(task_soups) == 1 else "+".join(task_soups)
+        selected_task_mode = _guess_task_mode(task_label, task_soup, metadata)
+        metadata_view = {
+            "task_name": task_label,
+            "env_name": f"robocasa/{task_label}",
+            "task_source": "dataset_registry",
+            "dataset_source": dataset_source or "human",
+            "split": split,
+            "task_soup": task_soup,
+            "benchmark_selection": benchmark_selection,
+            "task_mode": selected_task_mode,
+        }
+        task_spec = {
+            "task_name": task_label,
+            "env_name": f"robocasa/{task_label}",
+            "task_description": _split_camel_case(task_label),
+            "horizon": _get_task_horizon(task_label, fallback_horizon),
+            "metadata_view": {
+                key: value for key, value in metadata_view.items() if value is not None
+            },
+            "task_mode": selected_task_mode,
+            "benchmark_selection": benchmark_selection,
+        }
+        if task_mode and selected_task_mode and selected_task_mode != task_mode:
+            continue
+        if not _task_matches_filter(task_spec, task_filter):
+            continue
+        task_specs.append(task_spec)
+
+    if not task_specs:
+        raise ValueError(
+            "No RoboCasa365 tasks were selected. "
+            "Check split/task_soup/task_filter/task_mode."
+        )
+    return task_specs
+
+
 class Robocasa365Env(gym.Env):
     """Vectorized RLinf wrapper for the RoboCasa365 benchmark.
 
@@ -455,104 +571,7 @@ class Robocasa365Env(gym.Env):
         return payload
 
     def _load_task_specs(self) -> list[dict[str, Any]]:
-        task_specs = self._load_dataset_registry_task_specs()
-        task_specs = [
-            task_spec
-            for task_spec in task_specs
-            if self._task_mode_matches(task_spec)
-            and _task_matches_filter(task_spec, self.task_filter)
-        ]
-
-        if not task_specs:
-            raise ValueError(
-                "No RoboCasa365 tasks were selected. Check split/task_soup/task_filter/task_mode."
-            )
-        return task_specs
-
-    def _load_dataset_registry_task_specs(self) -> list[dict[str, Any]]:
-        try:
-            from robocasa.utils.dataset_registry_utils import get_ds_meta, get_ds_soup
-        except ImportError as exc:
-            raise ImportError(
-                "RoboCasa365 benchmark selection requires robocasa.utils.dataset_registry_utils. "
-                "Install a RoboCasa version that includes the benchmark dataset registry."
-            ) from exc
-
-        task_names: list[str] = []
-        if self.task_soups:
-            if self.split is None:
-                raise ValueError(
-                    "split must be provided when task_soup is set for RoboCasa365."
-                )
-            for task_soup in self.task_soups:
-                entries = get_ds_soup(
-                    task_set=task_soup,
-                    split=self.split,
-                    source=self.dataset_source or "human",
-                )
-
-                for task_entry in entries:
-                    task_names.append(str(task_entry["task"]))
-        else:
-            task_names = [
-                str(task)
-                for task in _ensure_list(
-                    _cfg_to_python(self.cfg.get("task_names", None))
-                )
-            ]
-
-        task_specs = []
-        fallback_horizon = int(self.cfg.get("max_episode_steps", 300))
-        for task_name in _dedupe_preserve_order(task_names):
-            try:
-                metadata = (
-                    get_ds_meta(
-                        task_name,
-                        split=self.split,
-                        source=self.dataset_source or "human",
-                    )
-                    or {}
-                )
-            except Exception:
-                metadata = {}
-
-            task_label = task_name.split("/", 1)[-1]
-            prompt = _split_camel_case(task_label)
-
-            task_soup = metadata.get("task_soup")
-            if not task_soup and self.task_soups:
-                task_soup = (
-                    self.task_soups[0]
-                    if len(self.task_soups) == 1
-                    else "+".join(self.task_soups)
-                )
-
-            task_mode = _guess_task_mode(task_label, task_soup, metadata)
-            metadata_view = {
-                "task_name": task_label,
-                "env_name": f"robocasa/{task_label}",
-                "task_source": "dataset_registry",
-                "dataset_source": self.dataset_source or "human",
-                "split": self.split,
-                "task_soup": task_soup,
-                "benchmark_selection": self.benchmark_selection,
-                "task_mode": task_mode,
-            }
-            task_specs.append(
-                {
-                    "task_name": task_label,
-                    "env_name": f"robocasa/{task_label}",
-                    "task_description": prompt,
-                    "horizon": _get_task_horizon(task_label, fallback_horizon),
-                    "metadata_view": {
-                        k: v for k, v in metadata_view.items() if v is not None
-                    },
-                    "task_mode": task_mode,
-                    "benchmark_selection": self.benchmark_selection,
-                }
-            )
-
-        return task_specs
+        return load_robocasa365_task_specs(self.cfg)
 
     def _task_mode_matches(self, task_spec: dict[str, Any]) -> bool:
         if not self.task_mode:
@@ -632,6 +651,17 @@ class Robocasa365Env(gym.Env):
         if env_idx.size == 0:
             return env_idx
 
+        if self.use_fixed_reset_state_ids and hasattr(self, "task_ids"):
+            self._debug_log_event(
+                "task_ids_update_skipped",
+                {
+                    "requested_env_idx": env_idx.tolist(),
+                    "reason": "use_fixed_reset_state_ids",
+                    "task_ids": self.task_ids.tolist(),
+                },
+            )
+            return np.empty(0, dtype=np.int32)
+
         group_ids = np.unique(env_idx // self.group_size)
         group_task_ids = self._sample_task_ids(len(group_ids))
         affected_env_ids = []
@@ -705,9 +735,7 @@ class Robocasa365Env(gym.Env):
         camera_names = _ensure_list(_cfg_to_python(self.cfg.camera_names))
         return [str(camera_name) for camera_name in camera_names]
 
-    def get_env_fns(
-        self, env_idx: Optional[Union[list[int], np.ndarray]] = None
-    ):
+    def get_env_fns(self, env_idx: Optional[Union[list[int], np.ndarray]] = None):
         env_fns = []
 
         if env_idx is None:
