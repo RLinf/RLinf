@@ -148,7 +148,7 @@ def _connect_robot(
             shutil.copy2(cf, target)
             print(f"Staged calibration: {target}")
         config = SO101FollowerConfig(
-            port=port, id=calib_id, calibration_dir=str(calib_dir),
+            port=port, id=calib_id, calibration_dir=calib_dir,
         )
     else:
         config = SO101FollowerConfig(port=port, id=calibration_id)
