@@ -183,6 +183,7 @@ def _run_fk(joint_angles_deg: Sequence[float], urdf_path: str) -> "tuple[float, 
     fk = RobotKinematics(
         urdf_path=resolved,
         target_frame_name="gripper_frame_link",
+        joint_names=list(_SO101_ARM_JOINTS),
     )
     T = fk.forward_kinematics(np.asarray(joint_angles_deg, dtype=np.float64))
     x, y, z = float(T[0, 3]), float(T[1, 3]), float(T[2, 3])
