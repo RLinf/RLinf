@@ -105,10 +105,10 @@ class SO101PickEnv(SO101Env):
     def task_description(self):
         if self._task_is_ee:
             return (
-                f"reach target ee pose (x={self._target_ee[0]:.3f}, "
+                f"Pick up a small yellow duck from a round grey plate and reach target ee pose (x={self._target_ee[0]:.3f}, "
                 f"y={self._target_ee[1]:.3f}, z={self._target_ee[2]:.3f})"
             )
-        return "reach target joint configuration"
+        return "Pick up a small yellow duck from a round grey plate and reach target joint configuration"
 
     def _init_kinematics(self) -> None:
         """Lazily create the forward-kinematics solver.

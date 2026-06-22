@@ -79,7 +79,7 @@ env:
     override_cfg:
       is_dummy: False
       auto_calibrate: False
-      # target_ee_pose: [0.35, 0.0, 0.15]    # ← set your task target here
+      target_ee_pose: [0.299, -0.126, 0.150]    # ← set your task target here
       reward_threshold_m: 0.03
       enable_random_reset: True
       random_joint_noise_deg: 5.0
