@@ -15,7 +15,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import torch
@@ -40,7 +40,6 @@ from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
-    split_dict,
     split_dict_to_chunk,
     update_nested_cfg,
 )
@@ -123,10 +122,12 @@ class EnvWorker(Worker):
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
+            self.train_batch_size = self.cfg.env.train.total_num_envs // self.stage_num
         if self.enable_eval:
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
+            self.eval_batch_size = self.cfg.env.eval.total_num_envs // self.stage_num
         self.n_train_chunk_steps = 0
         if self.enable_train:
             self.n_train_chunk_steps = (
@@ -155,14 +156,19 @@ class EnvWorker(Worker):
                 torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
+        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+
+        if self.env_decoupled_mode:
+            # Init the batch_router for env decoupled mode
+            # The batch_router is a dictionary that maps the tag to the list of batch_index.
+            self.batch_router = {}
+            assert self._component_placement.get_world_size(
+                "env"
+            ) >= self._component_placement.get_world_size("rollout"), (
+                "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
+            )
 
     def init_worker(self):
-        self.dst_rank_map = self._setup_dst_rank_map()
-        self.src_rank_map = self._setup_src_rank_map()
-
-        self.log_info(f"Env worker initialized with dst_rank_map: {self.dst_rank_map}")
-        self.log_info(f"Env worker initialized with src_rank_map: {self.src_rank_map}")
-
         # This is a barrier to ensure all envs' initial setup upon import is done
         # Essential for RealWorld env to ensure initial ROS node setup is done
         self.broadcast(
@@ -364,110 +370,6 @@ class EnvWorker(Worker):
                 )
             env_list.append(env)
         return env_list
-
-    def _setup_dst_rank_map(self) -> dict[str, list[tuple[int, int]]]:
-        """Compute destination rank map for this env worker.
-
-        This mapping supports both one-to-many and many-to-one env/rollout/reward layouts.
-        The returned ranks are used as communication counterparts for both sending
-        env outputs and receiving results from rollout and reward workers.
-
-        Returns:
-            Destination rank map for this env worker.
-            The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (dst_rank, batch_size).
-        """
-        dst_rank_map = {}
-        if self.enable_train:
-            dst_rank_map = {
-                "rollout_train": CommMapper.get_dst_ranks(
-                    batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                    src_world_size=self._component_placement.get_world_size("env"),
-                    dst_world_size=self._component_placement.get_world_size("rollout"),
-                    src_rank=self._rank,
-                ),
-            }
-            if self.cfg.get("reward", {}).get("use_reward_model", False):
-                dst_rank_map.update(
-                    {
-                        "reward_train": CommMapper.get_dst_ranks(
-                            batch_size=self.cfg.env.train.total_num_envs
-                            // self.stage_num,
-                            src_world_size=self._component_placement.get_world_size(
-                                "env"
-                            ),
-                            dst_world_size=self._component_placement.get_world_size(
-                                "reward"
-                            ),
-                            src_rank=self._rank,
-                        ),
-                    }
-                )
-
-        if self.enable_eval:
-            dst_rank_map.update(
-                {
-                    "rollout_eval": CommMapper.get_dst_ranks(
-                        batch_size=self.cfg.env.eval.total_num_envs // self.stage_num,
-                        src_world_size=self._component_placement.get_world_size("env"),
-                        dst_world_size=self._component_placement.get_world_size(
-                            "rollout"
-                        ),
-                        src_rank=self._rank,
-                    ),
-                }
-            )
-        return dst_rank_map
-
-    def _setup_src_rank_map(self) -> dict[str, list[tuple[int, int]]]:
-        """Compute source rank map for this env worker.
-
-        This mapping supports both one-to-many and many-to-one env/rollout/reward layouts.
-        The returned ranks are used as communication counterparts for both receiving results from rollout and reward workers and sending action chunks.
-
-        Returns:
-            Source rank map for this env worker.
-            The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (src_rank, batch_size).
-        """
-        src_rank_map = {}
-        if self.enable_train:
-            src_rank_map = {
-                "rollout_train": CommMapper.get_src_ranks(
-                    batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
-                    src_world_size=self._component_placement.get_world_size("rollout"),
-                    dst_world_size=self._component_placement.get_world_size("env"),
-                    dst_rank=self._rank,
-                ),
-            }
-            if self.cfg.get("reward", {}).get("use_reward_model", False):
-                src_rank_map.update(
-                    {
-                        "reward_train": CommMapper.get_src_ranks(
-                            batch_size=self.cfg.env.train.total_num_envs
-                            // self.stage_num,
-                            src_world_size=self._component_placement.get_world_size(
-                                "reward"
-                            ),
-                            dst_world_size=self._component_placement.get_world_size(
-                                "env"
-                            ),
-                            dst_rank=self._rank,
-                        ),
-                    }
-                )
-        if self.enable_eval:
-            src_rank_map.update(
-                {
-                    "rollout_eval": CommMapper.get_src_ranks(
-                        batch_size=self.cfg.env.eval.total_num_envs // self.stage_num,
-                        src_world_size=self._component_placement.get_world_size(
-                            "rollout"
-                        ),
-                        dst_world_size=self._component_placement.get_world_size("env"),
-                        dst_rank=self._rank,
-                    ),
-                }
-            )
-        return src_rank_map
 
     def _init_env(self):
         for i in range(self.stage_num):
@@ -680,55 +582,18 @@ class EnvWorker(Worker):
 
         return merged_final_obs
 
-    @Worker.timer("env/recv_actions")
-    def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
-        """Receive and merge chunked actions for the current env worker.
+    @staticmethod
+    def _infer_rollout_batch_size(data: Any) -> int:
+        """Infer batch dim for routed shards; supports RolloutResult and plain tensor payloads.
 
-        The method fetches one action shard from each mapped rollout source rank
-        under a deterministic channel key pattern and concatenates them on the
-        batch dimension.
-
-        Args:
-            input_channel: Channel carrying rollout->env action chunks.
-            mode: Rollout mode, either ``"train"`` or ``"eval"``.
-
-        Returns:
-            Concatenated action chunk array with shape ``[num_envs_per_stage, ...]``.
+        When the channel carries a non-``RolloutResult`` shard (e.g. reward tensor or eval
+        actions) into a rollout recv, avoid assuming dataclass fields and delegate or use
+        the leading dimension of dense arrays.
         """
-        assert mode in ["train", "eval"], f"{mode=} is not supported"
-        src_ranks_and_sizes = self.src_rank_map[f"rollout_{mode}"]
-        chunk_action = []
-        for src_rank, expected_size in src_ranks_and_sizes:
-            action_i = input_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra=f"{mode}_actions"
-                ),
-            )
-            if isinstance(action_i, torch.Tensor):
-                action_i = action_i.detach().cpu().numpy()
-            else:
-                action_i = np.asarray(action_i)
-            assert action_i.shape[0] == expected_size, (
-                f"Expected action shard size {expected_size} from rollout rank {src_rank}, "
-                f"got shape {action_i.shape}."
-            )
-            chunk_action.append(action_i)
-        chunk_action = np.concatenate(chunk_action, axis=0)
-        expected_total_size = sum(size for _, size in src_ranks_and_sizes)
-        assert chunk_action.shape[0] == expected_total_size, (
-            f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
-        )
-        return chunk_action
 
-    @Worker.timer("recv_rollout_results")
-    def recv_rollout_results(
-        self, input_channel: Channel, mode="train"
-    ) -> RolloutResult:
-        assert mode in ["train", "eval"], f"{mode=} is not supported"
-        src_ranks_and_sizes = self.src_rank_map[f"rollout_{mode}"]
-        rollout_results: list[RolloutResult] = []
-
-        def _infer_rollout_batch_size(rollout_result: RolloutResult) -> int:
+        if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
+            return int(data.shape[0])
+        if isinstance(data, RolloutResult):
             for field_name in (
                 "actions",
                 "prev_logprobs",
@@ -736,31 +601,18 @@ class EnvWorker(Worker):
                 "bootstrap_values",
                 "versions",
             ):
-                value = getattr(rollout_result, field_name, None)
+                value = getattr(data, field_name, None)
                 if isinstance(value, torch.Tensor):
-                    return value.shape[0]
-            if rollout_result.forward_inputs:
-                first_tensor = next(iter(rollout_result.forward_inputs.values()))
+                    return int(value.shape[0])
+            forward_inputs = getattr(data, "forward_inputs", None)
+            if forward_inputs:
+                first_tensor = next(iter(forward_inputs.values()))
                 if isinstance(first_tensor, torch.Tensor):
-                    return first_tensor.shape[0]
+                    return int(first_tensor.shape[0])
             raise ValueError("Cannot infer batch size from rollout result.")
+        from rlinf.scheduler.worker.routing import infer_batch_size
 
-        for src_rank, expected_size in src_ranks_and_sizes:
-            rollout_result = input_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra=f"{mode}_rollout_results"
-                ),
-            )
-
-            actual_size = _infer_rollout_batch_size(rollout_result)
-            assert actual_size == expected_size, (
-                f"Expected rollout result size {expected_size} from rollout rank {src_rank}, "
-                f"got batch size {actual_size}."
-            )
-
-            rollout_results.append(rollout_result)
-
-        return RolloutResult.merge_rollout_results(rollout_results)
+        return infer_batch_size(data)
 
     @Worker.timer("compute_bootstrap_rewards")
     def compute_bootstrap_rewards(
@@ -822,71 +674,6 @@ class EnvWorker(Worker):
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
-    @Worker.timer("env/send_obs")
-    def send_env_batch(
-        self,
-        rollout_channel: Channel,
-        env_batch: dict[str, Any],
-        mode: Literal["train", "eval"] = "train",
-    ) -> None:
-        """Send split env batches to mapped rollout ranks.
-
-        Each destination rank receives one split batch via a stable key built from
-        ``src_rank``, ``dst_rank`` and ``mode``.
-
-        Args:
-            rollout_channel: Channel carrying env->rollout outputs.
-            env_batch: Env output dictionary for one pipeline stage.
-            mode: Rollout mode, either ``"train"`` or ``"eval"``.
-        """
-        assert mode in ["train", "eval"], f"{mode=} is not supported"
-        dst_ranks_and_sizes = self.dst_rank_map[f"rollout_{mode}"]
-        split_sizes = [size for _, size in dst_ranks_and_sizes]
-        env_batches = split_dict(env_batch, split_sizes)
-        for (rank, _), env_batch_i in zip(dst_ranks_and_sizes, env_batches):
-            rollout_channel.put(
-                item=env_batch_i,
-                key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_obs"),
-            )
-
-    def send_reward_input(
-        self,
-        send_channel: Channel,
-        reward_input: dict[str, Any],
-        mode: Literal["train", "eval"] = "train",
-    ):
-        dst_ranks_and_sizes = self.dst_rank_map[f"reward_{mode}"]
-        split_sizes = [size for _, size in dst_ranks_and_sizes]
-        reward_input_batches = split_dict(reward_input, split_sizes)
-        for (rank, _), reward_input_i in zip(dst_ranks_and_sizes, reward_input_batches):
-            send_channel.put(
-                item=reward_input_i,
-                key=CommMapper.build_channel_key(
-                    self._rank, rank, extra=f"{mode}_reward_input"
-                ),
-                async_op=True,
-            )
-
-    @Worker.timer("recv_reward_results")
-    def recv_reward_results(self, recv_channel: Channel) -> torch.Tensor:
-        reward_results: list[torch.Tensor] = []
-        src_ranks_and_sizes = self.src_rank_map["reward_train"]
-        for src_rank, expected_size in src_ranks_and_sizes:
-            rewards = recv_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra="reward_output"
-                ),
-            )
-            if rewards is None:
-                rewards = torch.zeros(expected_size, dtype=torch.float32)
-            actual_size = rewards.shape[0]
-            assert actual_size == expected_size, (
-                f"Expected reward result size {expected_size} from reward rank {src_rank}, "
-                f"got batch size {actual_size}."
-            )
-            reward_results.append(rewards)
-        return torch.cat(reward_results, dim=0)
-
     @Worker.timer("get_reward_model_output")
     def get_reward_model_output(
         self,
@@ -936,8 +723,21 @@ class EnvWorker(Worker):
                     )
                 }
             )
-        self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
-        reward_output = self.recv_reward_results(recv_channel=recv_channel)
+        self.send_to(
+            group_name=self.cfg.reward.group_name,
+            channel=send_channel,
+            data=reward_input,
+            tag="train_reward_obs",
+            async_op=True,
+            env_decoupled_mode=self.env_decoupled_mode,
+        )
+        reward_output = self.recv_from(
+            group_name=self.cfg.reward.group_name,
+            channel=recv_channel,
+            tag="train_reward_obs",
+            batch_size=self.train_batch_size,
+            env_decoupled_mode=self.env_decoupled_mode,
+        )
         if self.reward_mode != "terminal" or reward_output is None:
             return reward_output
         return self._scatter_terminal_reward_output(
@@ -1051,12 +851,16 @@ class EnvWorker(Worker):
         for stage_id in range(self.stage_num):
             env_output: EnvOutput = env_outputs[stage_id]
             env_batch = env_output.to_dict()
-            self.send_env_batch(
-                rollout_channel,
-                {
+            self.send_to(
+                group_name=self.cfg.rollout.group_name,
+                channel=rollout_channel,
+                data={
                     "obs": env_batch["obs"],
                     "final_obs": env_batch["final_obs"],
                 },
+                mode="train",
+                tag="rollout_results",
+                env_decoupled_mode=self.env_decoupled_mode,
             )
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
@@ -1122,11 +926,13 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
-            if epoch == 0 and self._prefetched_train_bootstrap is not None:
-                env_outputs = self._prefetched_train_bootstrap
-                self._prefetched_train_bootstrap = None
-            else:
-                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+            env_outputs = self.bootstrap_step()
+            for stage_id in range(self.stage_num):
+                if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                    env_outputs = self._prefetched_train_bootstrap
+                    self._prefetched_train_bootstrap = None
+                else:
+                    env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1154,8 +960,14 @@ class EnvWorker(Worker):
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
 
-                    rollout_result = self.recv_rollout_results(
-                        input_channel, mode="train"
+                    rollout_result = self.recv_from(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=input_channel,
+                        tag="train_rollout_results",
+                        batch_size=self.train_batch_size,
+                        merge_fn=RolloutResult.merge_rollout_results,
+                        infer_batch_size_fn=self._infer_rollout_batch_size,
+                        env_decoupled_mode=self.env_decoupled_mode,
                     )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, rollout_result.bootstrap_values, reward_model_output
@@ -1195,12 +1007,16 @@ class EnvWorker(Worker):
                         rollout_result.actions, stage_id
                     )
                     env_batch = env_output.to_dict()
-                    self.send_env_batch(
-                        rollout_channel,
-                        {
+                    self.send_to(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=rollout_channel,
+                        data={
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
                         },
+                        mode="train",
+                        tag="rollout_results",
+                        env_decoupled_mode=self.env_decoupled_mode,
                     )
                     if self.collect_transitions:
                         next_obs = (
@@ -1242,7 +1058,15 @@ class EnvWorker(Worker):
                         env_metrics["reward_model_output"].append(
                             reward_model_output.detach().float().reshape(-1).cpu()
                         )
-                rollout_result = self.recv_rollout_results(input_channel, mode="train")
+                rollout_result = self.recv_from(
+                    group_name=self.cfg.rollout.group_name,
+                    channel=input_channel,
+                    tag="train_rollout_results",
+                    batch_size=self.train_batch_size,
+                    merge_fn=RolloutResult.merge_rollout_results,
+                    infer_batch_size_fn=self._infer_rollout_batch_size,
+                    env_decoupled_mode=self.env_decoupled_mode,
+                )
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
@@ -1333,20 +1157,39 @@ class EnvWorker(Worker):
                         ),
                     )
                     env_batch = env_output.to_dict()
-                    self.send_env_batch(
-                        rollout_channel,
-                        {
+                    self.send_to(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=rollout_channel,
+                        data={
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
                         },
                         mode="eval",
+                        tag="rollout_results",
+                        env_decoupled_mode=self.env_decoupled_mode,
                     )
 
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    raw_chunk_actions = self.recv_chunk_actions(
-                        input_channel, mode="eval"
+                    rollout_results = self.recv_from(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=input_channel,
+                        tag="eval_rollout_results",
+                        batch_size=self.eval_batch_size,
+                        infer_batch_size_fn=self._infer_rollout_batch_size
+                        if self.env_decoupled_mode
+                        else None,
+                        env_decoupled_mode=self.env_decoupled_mode,
                     )
+                    raw_chunk_actions = (
+                        rollout_results.actions
+                        if hasattr(rollout_results, "actions")
+                        else rollout_results
+                    )
+                    if isinstance(raw_chunk_actions, torch.Tensor):
+                        raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
+                    else:
+                        raw_chunk_actions = np.asarray(raw_chunk_actions)
                     env_output, env_info = self.env_evaluate_step(
                         raw_chunk_actions, stage_id
                     )
@@ -1364,13 +1207,16 @@ class EnvWorker(Worker):
                         if eval_step == self.n_eval_chunk_steps - 1:
                             continue
                     env_batch = env_output.to_dict()
-                    self.send_env_batch(
-                        rollout_channel,
-                        {
+                    self.send_to(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=rollout_channel,
+                        data={
                             "obs": env_batch["obs"],
                             "final_obs": env_batch["final_obs"],
                         },
                         mode="eval",
+                        tag="rollout_results",
+                        env_decoupled_mode=self.env_decoupled_mode,
                     )
 
             self.finish_rollout(mode="eval")

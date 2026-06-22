@@ -301,7 +301,7 @@ Model and Training Settings
    * - Field
      - Meaning and role
    * - ``target_video_height`` / ``target_video_width``
-     - WAN policy head target resolution (5B preset e.g. 176×320; override in YAML). Avoid hard-coded sizes in transform code for WAN2.1/WAN2.2 compatibility.
+     - WAN policy head target resolution **after multi-view concat** (5B preset e.g. 176×320; Libero often 160×320). Model-internal resize only; **do not** use for per-view data transform resize.
    * - ``droid_view_height`` / ``droid_view_width``
      - (Optional) per-view resize overrides for DROID.
    * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
@@ -593,7 +593,7 @@ Step 5: Validate with a Short Run
 - Dataset action length is ``action_horizon × max_chunk_size``; do not change only one.
 - Multi-view **concat order** must match **prompt text** or training signal is wrong.
 - Do not change ``DEFAULT_TAG_MAPPING`` integer IDs arbitrarily when fine-tuning official weights.
-- Prefer ``target_video_height/width`` or transform-chain resize over hard-coded sizes for WAN2.1/2.2.
+- Per-view ``VideoResize`` lives in each embodiment's ``data_transforms`` module (e.g. ``libero_sim`` and ``franka_pnp`` both use 256×256); ``target_video_height/width`` is for WAN resize **after** multi-view concat only—do not mix the two. **Mix dataset training** requires identical post-concat ``images`` spatial shape (H×W) from ``DreamTransform`` across sub-datasets, or collate will fail; align ``VideoResize`` in the corresponding transform modules when concat layouts differ (e.g. ``oxe_droid`` uses a 2×2 grid) or per-view defaults differ.
 - Inference/eval: set ``embodiment_tag`` correctly in DreamZero eval configs under ``examples/embodiment/config/``.
 
 For inference only (no RLinf code changes) when upstream Groot/DreamZero already supports the tag, ``metadata.json`` and eval config may suffice; **SFT on new data** requires the enum member, registry entry, and transform module above (``get_model`` patches Groot ``EmbodimentTag`` automatically).
@@ -625,7 +625,7 @@ Common Issues
 
 5. **DROID video size errors**
 
-   - Do not hard-code resolution in code; use ``target_video_height/width`` or ``droid_view_*``
+   - Do not use ``target_video_height/width`` for per-view data transform resize; adjust DROID view sizes in the ``oxe_droid`` transform code
 
 6. **multi_anchor requires lazy_load**
 

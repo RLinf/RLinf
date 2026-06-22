@@ -37,6 +37,12 @@ to RLinf.
 
       Plug a new model into the SFT training flow.
 
+   .. grid-item-card:: Env Decoupled Mode
+      :link: env_decoupled_mode
+      :link-type: doc
+
+      Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
+
    .. grid-item-card:: Advanced Integrations
       :link: advanced-integrations/index
       :link-type: doc
@@ -51,4 +57,5 @@ to RLinf.
    New Model with FSDP <new_model_fsdp>
    New Model with Megatron <new_model_megatron>
    New SFT Model <new_model_sft>
+   Env Decoupled Mode <env_decoupled_mode>
    Advanced Integrations <advanced-integrations/index>

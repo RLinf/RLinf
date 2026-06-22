@@ -14,6 +14,56 @@ Franka 真机强化学习
 
 使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
 
+相关 Franka 配置
+----------------
+
+探索其他 Franka 硬件、传感器与训练配方。
+
+.. grid:: 1 2 2 3
+   :gutter: 2
+
+   .. grid-item-card:: Reward Model
+      :link: franka_reward_model
+      :link-type: doc
+
+      使用学习到的奖励模型训练 Franka。
+
+   .. grid-item-card:: ZED + Robotiq
+      :link: franka_zed_robotiq
+      :link-type: doc
+
+      使用 ZED 相机与 Robotiq 夹爪。
+
+   .. grid-item-card:: GELLO
+      :link: franka_gello
+      :link-type: doc
+
+      使用 GELLO 进行关节级遥操作数据采集。
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      运行双臂 Franka 配置。
+
+   .. grid-item-card:: Dexterous Hand
+      :link: franka_dexhand
+      :link-type: doc
+
+      为 Franka 配置灵巧手末端执行器。
+
+   .. grid-item-card:: Pi0 SFT
+      :link: franka_pi0_sft_deploy
+      :link-type: doc
+
+      在 Franka 上部署 π₀ SFT 策略。
+
+   .. grid-item-card:: HG-DAgger
+      :link: hg-dagger
+      :link-type: doc
+
+      人类介入的 DAgger 交互式训练。
+
 概览
 ----------------------------------------
 

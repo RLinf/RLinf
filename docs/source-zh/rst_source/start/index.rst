@@ -6,17 +6,17 @@
 .. grid:: 1 2 2 4
    :gutter: 2
 
-   .. grid-item-card:: 安装
-      :link: installation
-      :link-type: doc
-
-      使用 Docker 或自定义环境安装具身智能栈。
-
    .. grid-item-card:: 环境要求
       :link: requirements
       :link-type: doc
 
       经过测试的硬件与软件配置。
+
+   .. grid-item-card:: 安装
+      :link: installation
+      :link-type: doc
+
+      使用 Docker 或自定义环境安装具身智能栈。
 
    .. grid-item-card:: 快速上手
       :link: vla
@@ -82,7 +82,7 @@
    :hidden:
    :maxdepth: 1
 
-   installation
    requirements
+   installation
    vla
    cheat_sheet
