@@ -580,22 +580,29 @@ class SO101Env(gym.Env):
         info: dict = {}
 
         if stop:
+            # Stop the whole collection.  We've already saved any in-progress
+            # episode via a prior 'e' press, so drop the buffer here.
             self._recording = False
             info.update(keyboard_event="stop", keyboard_phase="pre",
                         stop_recording=True, rerecord_episode=False,
                         episode_success=False, record_reset=True)
             terminated = True
         elif self._recording and rerec:
+            # Abort: drop the in-progress buffer, don't save.
             self._recording = False
             info.update(keyboard_event="abort", keyboard_phase="pre",
                         stop_recording=False, rerecord_episode=True,
                         episode_success=False, record_reset=True)
             terminated = True
         elif self._recording and end_ep:
-            self._recording = False
-            info.update(keyboard_event="end_success", keyboard_phase="pre",
+            # End: save the episode.  KEEP _recording=True and
+            # record_reset=False so CollectEpisode appends this terminating
+            # frame to the buffer (with episode_success=True) and the
+            # auto-reset path flushes the buffer to disk.  We flip
+            # _recording=False only after the env's reset() runs.
+            info.update(keyboard_event="end_success", keyboard_phase="rec",
                         stop_recording=False, rerecord_episode=False,
-                        episode_success=True, record_reset=True)
+                        episode_success=True, record_reset=False)
             terminated = True
         elif not self._recording and start:
             self._recording = True
