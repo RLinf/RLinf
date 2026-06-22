@@ -71,6 +71,7 @@ class LeRobotDatasetWriter:
         extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
         has_segment_id: bool = False,
+        root: str | None = None,
     ) -> None:
         """
         Create a new LeRobot dataset.
@@ -158,10 +159,12 @@ class LeRobotDatasetWriter:
                         }
 
         self.logger.info(
-            f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
+            f"Creating LeRobot dataset: repo_id={repo_id}, root={root}, "
+            f"robot_type={robot_type}, fps={fps}"
         )
         self.dataset = LeRobotDataset.create(
             repo_id=repo_id,
+            root=root,
             robot_type=robot_type,
             fps=fps,
             features=features,

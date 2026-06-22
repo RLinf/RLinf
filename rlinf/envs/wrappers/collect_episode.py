@@ -574,25 +574,28 @@ class CollectEpisode(gym.Wrapper):
 
         if self._lerobot_writer is None:
             self._lerobot_writer = LeRobotDatasetWriter()
-        shard_id = self._next_shard_id
 
         if self._lerobot_writer.dataset is None:
-            # Each data-collection run gets a fresh, timestamped subdirectory
-            # so we never accidentally append to (or collide with) a prior run.
-            import time
-            run_id = time.strftime("%Y%m%d_%H%M%S")
-            repo_id = os.path.abspath(os.path.join(
-                self.save_dir,
-                f"rank_{self.rank}",
-                f"run_{run_id}",
-            ))
+            # Pick the next free shard id every time the writer is (re-)created
+            # so we never collide with previously-finalized shards.  When
+            # ``resume`` mode is enabled, ``_next_shard_id`` was already
+            # seeded at construction; otherwise rescan now so successive
+            # runs (with the same save_dir) get unique id_<N> folders.
+            _, scanned_next = _scan_existing_lerobot_shards(self.save_dir, self.rank)
+            shard_id = max(self._next_shard_id, scanned_next)
+
+            # Use an absolute root so LeRobot doesn't prepend HF_LEROBOT_HOME
+            # (which would give us a path like ~/.cache/.../../results/…).
+            shard_dir = os.path.abspath(
+                os.path.join(self.save_dir, f"rank_{self.rank}", f"id_{shard_id}")
+            )
+            repo_id = f"rank_{self.rank}/id_{shard_id}"
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
-                repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{shard_id}"
-                ),
+                repo_id=repo_id,
+                root=shard_dir,
                 robot_type=self.robot_type,
                 fps=self.fps,
                 image_shape=first["image"].shape if "image" in first else None,
