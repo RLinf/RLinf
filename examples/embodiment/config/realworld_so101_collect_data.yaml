@@ -79,6 +79,11 @@ env:
       max_episode_steps: ${env.eval.max_episode_steps}
       image_width: 128
       image_height: 128
+      # Set to the EE pose of your task target (via compute_ee_pose.py).
+      # Not used for reward during data collection (is_dummy skips it),
+      # but stamped into every frame's 'task' column so the SFT model
+      # learns the correct prompt→trajectory mapping.
+      target_ee_pose: [0.299, -0.126, 0.150]   # ← replace with your target
 
     data_collection:
       enabled: True
