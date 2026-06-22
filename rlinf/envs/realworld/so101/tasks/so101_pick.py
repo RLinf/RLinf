@@ -28,6 +28,7 @@ import numpy as np
 
 from ..so101_env import (
     _NUM_ARM_JOINTS,
+    _SO101_ARM_JOINTS,
     SO101Env,
     SO101RobotConfig,
     _to_lerobot_action,
@@ -119,16 +120,29 @@ class SO101PickEnv(SO101Env):
         if self._kinematics is not None or self.config.is_dummy:
             return
 
+        from pathlib import Path
+
         from lerobot.model.kinematics import RobotKinematics
 
-        if self.config.urdf_path is not None:
-            urdf_path = self.config.urdf_path
-        else:
-            urdf_path = "pack://lerobot/robots/so_follower/so101.urdf"
+        urdf_path = (
+            self.config.urdf_path
+            or str(Path("~/.cache/huggingface/lerobot/urdf/so101.urdf").expanduser())
+        )
+        if not Path(urdf_path).is_file():
+            raise FileNotFoundError(
+                f"SO101 URDF not found at {urdf_path}.  Download it:\n"
+                "  git clone https://github.com/TheRobotStudio/SO-ARM100\n"
+                "  mkdir -p ~/.cache/huggingface/lerobot/urdf\n"
+                "  cp SO-ARM100/Simulation/SO101/so101_new_calib.urdf "
+                "~/.cache/huggingface/lerobot/urdf/so101.urdf\n"
+                "  cp -r SO-ARM100/Simulation/SO101/assets "
+                "~/.cache/huggingface/lerobot/urdf/"
+            )
 
         self._kinematics = RobotKinematics(
-            urdf_path=str(urdf_path),
+            urdf_path=urdf_path,
             target_frame_name="gripper_frame_link",
+            joint_names=list(_SO101_ARM_JOINTS),
         )
 
     def _ee_position(self) -> np.ndarray:

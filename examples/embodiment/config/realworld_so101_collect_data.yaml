@@ -72,6 +72,7 @@ env:
     max_episode_steps: 10000
     main_image_key: front     # the "front" camera is recorded as the main view
     override_cfg:
+      is_dummy: True             # no reward computation during data collection
       enable_teleop: True
       manual_episode_control_only: True
       auto_calibrate: False
