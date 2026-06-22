@@ -510,6 +510,7 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
+          export LD_LIBRARY_PATH=.venv/lib/python3.11/site-packages/nvidia/cuda_runtime/lib/:$LD_LIBRARY_PATH
           bash tests/e2e_tests/reasoning/run.sh qwen3-vl-2b-grpo-collocated-fsdp-sgl
 
       - name: Clean up
