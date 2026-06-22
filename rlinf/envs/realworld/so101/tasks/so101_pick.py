@@ -225,6 +225,12 @@ class SO101PickEnv(SO101Env):
         if self.config.is_dummy:
             return 0.0
 
+        # During teleop data collection, episode boundaries come from the
+        # keyboard — the reward is never read.  Skip the FK computation
+        # so we don't need a URDF / placo install on the robot host.
+        if self.config.enable_teleop and self.config.manual_episode_control_only:
+            return 0.0
+
         # --- EE-space reward (primary path) ---
         if self._task_is_ee:
             ee = self._ee_position()
