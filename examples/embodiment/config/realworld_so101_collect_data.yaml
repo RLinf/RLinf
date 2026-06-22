@@ -39,20 +39,19 @@ cluster:
             calibration_id: my_awesome_follower_arm
             leader_calibration_id: my_awesome_leader_arm
             node_rank: 0
-            camera_cfgs:
-              front:
-                type: intelrealsense
-                serial_number_or_name: "409122274720"
-                width: 640
-                height: 480
-                fps: 30
-                use_depth: true
-              handeye:
-                type: opencv
-                index_or_path: /dev/video2
-                width: 640
-                height: 480
-                fps: 30
+            # camera_cfgs:
+            #   front:
+            #     type: intelrealsense
+            #     serial_number_or_name: "409122274720"
+            #     width: 640
+            #     height: 480
+            #     fps: 30
+            #   handeye:
+            #     type: opencv
+            #     index_or_path: /dev/video2
+            #     width: 640
+            #     height: 480
+            #     fps: 30
 runner:
   task_type: embodied
   logger:
@@ -70,7 +69,7 @@ env:
     auto_reset: False
     use_spacemouse: False
     max_episode_steps: 10000
-    main_image_key: front     # the "front" camera is recorded as the main view
+    main_image_key: camera_0     # blank placeholder; change to 'front' when cameras are configured
     override_cfg:
       is_dummy: True             # no reward computation during data collection
       enable_teleop: True
