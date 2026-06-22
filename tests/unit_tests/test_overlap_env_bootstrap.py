@@ -64,6 +64,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
                     }
                 },
                 "rollout": {
+                    "group_name": "RolloutGroup",
                     "pipeline_stage_num": 1,
                     "collect_transitions": False,
                 },
@@ -111,13 +112,20 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         # Initialize last_obs_list for auto_reset=True
         self.worker.last_obs_list = [{"main_images": torch.zeros(2, 3, 224, 224)}]
         self.worker.last_intervened_info_list = [(None, None)]
+        self.worker.only_eval = False
+        self.worker.model_cfg = self.cfg.actor.model
+        self.worker.train_batch_size = (
+            self.cfg.env.train.total_num_envs // self.worker.stage_num
+        )
+        self.worker.env_decoupled_mode = False
+        self.worker.send_to = MagicMock()
 
     def test_prefetch_consumption(self):
         """Test that prefetched bootstrap is correctly consumed in interact()."""
         rollout_channel = MagicMock()
         input_channel = MagicMock()
 
-        # Mock recv_rollout_results to return a dummy RolloutResult
+        # Mock recv_from to return a dummy RolloutResult
         mock_rollout_result = MagicMock()
         mock_rollout_result.actions = torch.zeros(2, 28)
         mock_rollout_result.bootstrap_values = None
@@ -126,7 +134,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_rollout_result.save_flags = None
 
         # Patch methods on the instance
-        self.worker.recv_rollout_results = MagicMock(return_value=mock_rollout_result)
+        self.worker.recv_from = MagicMock(return_value=mock_rollout_result)
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
@@ -218,6 +226,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         """Non-auto-reset training should record episode metrics only once per rollout epoch."""
         self.worker.cfg.env.train.auto_reset = False
         self.worker.cfg.env.train.ignore_terminations = False
+        self.worker.env_list[0].reset.return_value = (
+            {"main_images": torch.zeros(2, 3, 224, 224)},
+            {},
+        )
         self.worker.record_env_metrics = MagicMock()
 
         rollout_channel = MagicMock()
@@ -230,7 +242,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         mock_rollout_result.versions = torch.zeros(2, 1)
         mock_rollout_result.save_flags = None
 
-        self.worker.recv_rollout_results = MagicMock(return_value=mock_rollout_result)
+        self.worker.recv_from = MagicMock(return_value=mock_rollout_result)
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(

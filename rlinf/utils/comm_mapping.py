@@ -25,6 +25,56 @@ class CommMapper:
         return f"{src_rank}_{dst_rank}_{extra}"
 
     @staticmethod
+    def decoupled_get_batch_size(
+        batch_size: int,
+        src_world_size: int,
+        dst_world_size: int,
+        queue_size: int = 0,
+    ) -> list[int]:
+        """Compute destination ranks and transfer sizes for one source rank."""
+        # in decoupled mode, the src_world_size and dst_world_size are the world size of the source and destination workers.
+        # the batch_size is the total batch size of the source workers.
+        # the return value is a list of batch sizes for this rank destination to send batch split size.
+        # the queue_size is the size of the queue to be split.
+        # split_size will be the larger of src_world_size and dst_world_size.
+        # The queue length for workers with a larger quantity is 1,
+        # while workers with a smaller quantity will aggregate the sent data for batch computation.
+        # The queue length can be set by queue_size
+        split_size = max(src_world_size, dst_world_size)
+
+        assert batch_size % split_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by split_size ({split_size})."
+        )
+
+        if src_world_size >= dst_world_size:
+            # the src_world_size >= dst_world_size
+            # for example, src_world_size = 4, dst_world_size = 2, split_size = 4, batch_size = 32
+            # the rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+            return [batch_size // split_size]
+        else:
+            assert dst_world_size > src_world_size, (
+                f"dst_world_size ({dst_world_size}) must more than src_world_size ({src_world_size})."
+            )
+            # the src_world_size < dst_world_size
+            # for example, src_world_size = 2, dst_world_size = 8, split_size = 8, batch_size = 32
+            # the rank 0 [4, 4, 4, 4] rank1 [4, 4, 4, 4]
+            if queue_size <= 0:
+                return [
+                    batch_size // split_size
+                    for _ in range(dst_world_size // src_world_size)
+                ]
+            else:
+                # special case for queue_size == 1
+                # for example, rollout_worker_nums = 2, env_worker_nums = 4, batch_size = 32
+                # The rollout worker should have been [8, 8], but after setting queue_size, the length will be limited to queue_size.
+                # The rollout worker will be [8] if the queue_size is 1.
+                # the env worker rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+                assert queue_size <= (dst_world_size // src_world_size), (
+                    f"queue_size {queue_size} should be less than (dst_world_size {dst_world_size} // src_world_size {src_world_size})"
+                )
+                return [batch_size // split_size for _ in range(queue_size)]
+
+    @staticmethod
     def get_dst_ranks(
         batch_size: int, src_world_size: int, dst_world_size: int, src_rank: int
     ) -> list[tuple[int, int]]:

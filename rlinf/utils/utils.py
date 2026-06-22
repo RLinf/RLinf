@@ -28,11 +28,12 @@ import torch.nn.functional as F
 from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 
-from rlinf.scheduler import Worker
 from rlinf.utils.metric_utils import compute_loss_mask
 
 
 def clear_memory(sync=True):
+    from rlinf.scheduler.worker.worker import Worker
+
     if sync:
         Worker.torch_platform.synchronize()
     gc.collect()
@@ -85,6 +86,8 @@ def normalize_dtype(dtype: torch.dtype | str) -> torch.dtype:
 def normalize_device(device: torch.device | str | None) -> torch.device:
     """Convert a device string into torch.device, defaulting to the worker device."""
     if device is None:
+        from rlinf.scheduler.worker.worker import Worker
+
         device = Worker.torch_device_type
     return device if isinstance(device, torch.device) else torch.device(device)
 
@@ -122,6 +125,8 @@ def synchronize_pending_accel_copies(copy_devices: set[torch.device]) -> None:
 
     events: list[torch.Event] = []
     for device in copy_devices:
+        from rlinf.scheduler.worker.worker import Worker
+
         event = Worker.torch_platform.Event()
         event.record(Worker.torch_platform.current_stream(device))
         events.append(event)
@@ -164,6 +169,7 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
+    from rlinf.scheduler.worker.worker import Worker
 
     Worker.torch_platform.synchronize()
     return offloaded_buffer
@@ -594,6 +600,8 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
+    from rlinf.scheduler.worker.worker import Worker
+
     if Worker.torch_platform.is_available():
         rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
@@ -613,8 +621,52 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
+    from rlinf.scheduler.worker.worker import Worker
+
     if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
+
+
+def _build_channel_message(
+    send_rank: int,
+    batch_idx: int,
+    mode: str,
+    tag: str,
+) -> str:
+    """
+    Construct a channel message key that matches the expected communication schema.
+
+    Schema:
+        {send_rank}_{batch_idx}_{tag}
+
+    Args:
+        send_rank: Send worker rank.
+        batch_idx: Batch index within the worker.
+        mode: The message mode.
+        tag: Type of message (e.g., "train_obs", "rollout_results").
+
+    Returns:
+        A formatted channel message string.
+    """
+
+    return f"{send_rank}_{batch_idx}_{mode}_{tag}"
+
+
+def _split_channel_message(channel_message: str) -> tuple[int, int, str, str]:
+    """
+    This function is used to get the rollout worker and env worker communication without the rankmap,
+    To get the send_rank, batch_idx, tag from the communication.
+    channel_message: {send_rank}_{batch_idx}_{mode}_{tag}
+    This func split the channel_message into send_rank, batch_idx, mode, tag
+    Args:
+        channel_message: The batch index string.
+    Returns:
+        A tuple of send_rank, batch_idx, mode, tag.
+    """
+    send_rank, batch_idx, mode, tag = channel_message.split("_", 3)
+    send_rank = int(send_rank)
+    batch_idx = int(batch_idx)
+    return send_rank, batch_idx, mode, tag
 
 
 PIPELINE_BATCH_KEY_SEPARATOR = "::"
