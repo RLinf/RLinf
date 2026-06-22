@@ -49,7 +49,7 @@ cluster:
                 use_depth: true
               handeye:
                 type: opencv
-                index_or_path: /dev/video2
+                index_or_path: /dev/video0
                 width: 640
                 height: 480
                 fps: 30
