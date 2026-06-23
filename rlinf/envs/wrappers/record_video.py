@@ -436,7 +436,16 @@ class RecordVideo(gym.Wrapper):
         return result
 
     def flush_video(self, video_sub_dir: Optional[str] = None):
-        """Write buffered frames to an MP4 file (async)."""
+        """Write buffered frames to an MP4 file.
+
+        The encode happens on the background thread pool, but we wait for the
+        just-submitted write to complete before returning. The wait is required
+        so the MP4 has a finalized ``moov`` atom on disk: ``imageio`` only writes
+        it during ``writer.close()``, and the pool's worker threads are daemon
+        threads that get killed mid-task at interpreter exit (no ``atexit``
+        handler is run under Ray actor shutdown either). Without this wait,
+        eval videos end at ``mdat`` and no player can open them.
+        """
         if not self.render_images:
             return
 
@@ -451,13 +460,17 @@ class RecordVideo(gym.Wrapper):
         frames = list(self.render_images)
         self.render_images = []
         self.video_cnt += 1
-        self._submit_save(frames, mp4_path)
+        future = self._submit_save(frames, mp4_path)
+        # Block until the encode + writer.close() returns so the MP4 is valid
+        # on disk before the rollout loop continues (or the process exits).
+        future.result()
 
-    def _submit_save(self, frames: list[np.ndarray], mp4_path: str) -> None:
-        """Submit a background job to save the video."""
+    def _submit_save(self, frames: list[np.ndarray], mp4_path: str) -> Future:
+        """Submit a background job to save the video, return its Future."""
         self._prune_futures()
         future = self._executor.submit(self._save_video, frames, mp4_path)
         self._save_futures.append(future)
+        return future
 
     def _save_video(self, frames: list[np.ndarray], mp4_path: str) -> None:
         """Save frames to disk (runs in background)."""
