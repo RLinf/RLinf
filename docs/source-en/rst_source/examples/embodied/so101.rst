@@ -211,6 +211,9 @@ Launch
    # Start Ray (single-machine)
    ray start --head --port=6379 --node-ip-address=127.0.0.1 --disable-usage-stats
 
+   # Hydra's searchpath references EMBODIED_PATH; the config won't load without it.
+   export EMBODIED_PATH=$(pwd)/examples/embodiment
+
    # Launch data collection
    python examples/embodiment/collect_real_data.py \
        --config-name realworld_so101_collect_data

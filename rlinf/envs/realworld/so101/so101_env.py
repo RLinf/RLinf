@@ -595,12 +595,16 @@ class SO101Env(gym.Env):
                         episode_success=False, record_reset=True)
             terminated = True
         elif self._recording and end_ep:
-            # End: save the episode.  KEEP _recording=True and
-            # record_reset=False so CollectEpisode appends this terminating
-            # frame to the buffer (with episode_success=True) and the
-            # auto-reset path flushes the buffer to disk.  We flip
-            # _recording=False only after the env's reset() runs.
-            info.update(keyboard_event="end_success", keyboard_phase="rec",
+            # End: save the episode.  Flip ``_recording=False`` immediately so
+            # subsequent idle frames (the reset motion + the wait before the
+            # next 's' press) are tagged ``pre_record=True`` and skipped by
+            # CollectEpisode.  The terminating frame itself carries
+            # ``keyboard_phase="pre"`` (the user just left the rec phase, so
+            # the legacy ``current_rollout`` skips it), but keeps
+            # ``record_reset=False`` (and no ``pre_record``) so CollectEpisode
+            # still appends it to the buffer and flushes via terminated=True.
+            self._recording = False
+            info.update(keyboard_event="end_success", keyboard_phase="pre",
                         stop_recording=False, rerecord_episode=False,
                         episode_success=True, record_reset=False)
             terminated = True
@@ -614,6 +618,8 @@ class SO101Env(gym.Env):
             info.update(keyboard_event=None, keyboard_phase=phase,
                         stop_recording=False, rerecord_episode=False,
                         episode_success=False, record_reset=False)
+            if not self._recording:
+                info["pre_record"] = True
 
         if self._leader is not None:
             info["intervene_action"] = np.array(

@@ -198,6 +198,9 @@ SO101 机械臂通过 LeRobot 进行舵机通信。所有依赖打包在 ``so101
    # 启动 Ray（单机）
    ray start --head --port=6379 --node-ip-address=127.0.0.1 --disable-usage-stats
 
+   # Hydra 的 searchpath 引用 EMBODIED_PATH，不设置则配置无法加载。
+   export EMBODIED_PATH=$(pwd)/examples/embodiment
+
    # 启动数据采集
    python examples/embodiment/collect_real_data.py \
        --config-name realworld_so101_collect_data
