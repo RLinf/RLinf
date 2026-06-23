@@ -1,14 +1,47 @@
 RECAP：基于离线优势估计的策略优化
 ==========================================
 
-本文档介绍 RLinf 框架中 **RECAP（RL with Experience and Corrections via Advantage-conditioned Policies）** 流程的完整使用指南。
-RECAP 是一种离线策略优化方法——不需要在线环境交互，通过对已有数据集离线计算回报（return）、训练价值模型（value model）、
-估计优势（advantage），最终利用 **Classifier-Free Guidance（CFG）训练** 对策略进行优化。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
+   :align: center
+   :width: 80%
 
-该流程特别适用于真实机器人等无法进行大规模在线采样的场景。
+   The RECAP offline pipeline.
 
-流程概览
------------
+使用 **RECAP（RL with Experience and Corrections via Advantage-conditioned Policies）** 在离线数据上优化策略。RECAP 不需要在线环境交互：先离线计算 return、训练 value model、估计 advantage，再通过 **Classifier-Free Guidance（CFG）训练** 优化策略，适合真实机器人等难以大规模在线采样的场景。
+
+概览
+----------------------------------------
+
+离线提升 π₀.₅ 策略（无需新采样）：用价值模型为已有数据打分，再以无分类器引导（CFG）进行优化。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      RECAP (CFG)
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      π₀.₅
+
+   .. grid-item-card:: 环境 / 数据
+      :text-align: center
+
+      LeRobot 数据集
+
+   .. grid-item-card:: 训练
+      :text-align: center
+
+      离线 · 4 阶段
+
+| **你将完成：** 计算回报 → SFT 价值模型 → 计算优势 → CFG 训练策略 → 评测。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · SigLIP2 + Gemma3 + π₀.₅ 检查点 · LeRobot 格式数据集（见下文步骤）。
+
+流程
+----------------------------------------
 
 RECAP 包含四个顺序执行的阶段：
 
@@ -29,8 +62,8 @@ RECAP 包含四个顺序执行的阶段：
 
 4. **CFG Training**：使用优势标签训练策略模型——正样本（高优势）作为条件输入，负样本（低优势）作为无条件输入，实现 classifier-free guidance 策略优化。
 
-算法
----------
+RECAP 工作原理
+----------------------------------------
 
 **RECAP 核心组件**
 
@@ -59,11 +92,11 @@ RECAP 包含四个顺序执行的阶段：
    - 正样本以 ``unconditional_prob`` 概率随机转为无条件（默认 :math:`0.1`），实现 dropout 正则化
    - 推理时通过 ``cfgrl_guidance_scale`` 控制引导强度
 
-依赖安装
------------
+安装
+----------------------------------------
 
 1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
@@ -73,7 +106,7 @@ RECAP 包含四个顺序执行的阶段：
    cd RLinf
 
 2. 安装依赖
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **方式一：Docker 镜像**
 
@@ -104,8 +137,8 @@ RECAP 包含四个顺序执行的阶段：
    source .venv/bin/activate
 
 
-模型下载
------------
+下载模型
+----------------------------------------
 
 RECAP 流程需要以下预训练模型：
 
@@ -148,7 +181,7 @@ RECAP 流程需要以下预训练模型：
 
 
 数据准备
------------
+----------------------------------------
 
 RECAP 流程使用 LeRobot 格式的数据集。数据集分为两类：
 
@@ -174,7 +207,7 @@ RECAP 流程使用 LeRobot 格式的数据集。数据集分为两类：
    所有 step 中的 ``train_data_paths`` 应保持一致，确保回报、价值和优势的计算基于同一批数据。
 
 Pipeline Tag 机制
-~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 RECAP 通过 **tag** 实现各步骤之间的数据传递和版本管理：
 
@@ -205,7 +238,7 @@ RECAP 通过 **tag** 实现各步骤之间的数据传递和版本管理：
 
 
 Step 1：计算回报（Compute Returns）
----------------------------------------
+----------------------------------------
 
 本步骤对数据集中每条轨迹逆序计算折扣累积回报，结果以 sidecar 文件形式保存，不修改原始数据。
 
@@ -468,7 +501,7 @@ Step 3：计算优势（Compute Advantages）
 
 
 Step 4：CFG Training
------------------------
+----------------------------------------
 
 使用 Step 3 计算的优势标签，对 OpenPI 策略模型进行 classifier-free guidance 训练。
 
@@ -552,7 +585,7 @@ Step 4：CFG Training
 - ``train/actor/grad_norm``：梯度范数
 
 可视化优势分布
--------------------------
+----------------------------------------
 
 Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dataset.py`` 对优势分布进行可视化分析，
 包括优势直方图、价值预测分布、逐 episode 正样本率等统计图，以及带优势标注的 episode 回放视频。
@@ -626,8 +659,16 @@ Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dat
 - ``episode_{N}_summary.png``：每个 episode 的关键帧 + 价值/优势时序图（高于阈值的帧用绿色边框标注）
 - ``episode_{N}.mp4``：带优势标注的逐帧回放视频
 
+运行
+----------------------------------------
+
+按照上面的 RECAP 阶段依次计算 return、训练价值模型、计算 advantage，并训练 CFG policy。
+
 可视化与结果
--------------------------
+----------------------------------------
+
+指标含义见 :doc:`训练指标 <../../reference/metrics>`。
+
 
 **TensorBoard 日志**
 
@@ -652,7 +693,7 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
        logger_backends: ["tensorboard"]   # 也支持 wandb, swanlab
 
 数据集
----------
+----------------------------------------
 
 我们在 `LIBERO-10 <https://github.com/Lifelong-Robot-Learning/LIBERO>`_ 基准（Task 0）上提供了可复现的实验，演示完整的 RECAP 流程。
 
@@ -662,7 +703,7 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
 
 .. note::
 
-   本教程有意使用初始成功率适中的 few-shot π\ :sub:`0.5` 策略，以便在紧凑的
+   本页有意使用初始成功率适中的 few-shot π\ :sub:`0.5` 策略，以便在紧凑的
    Task 0 示例中观察 RECAP 的离线提升。下方 baseline 仅对应该可复现实验设置，
    不代表 π\ :sub:`0.5` SFT 在完整 LIBERO benchmark 上的通用表现。
 
@@ -671,24 +712,24 @@ RECAP 流程会在 ``logs/`` 目录下生成两个子目录：
 
 
 RECAP 实验结果
------------------
+----------------------------------------
 
-在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （本教程设置下的 few-shot SFT baseline）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
+在 LIBERO-10 Task 0 上执行一轮 RECAP 迭代后，成功率从 **48.8%**\ （本页设置下的 few-shot SFT baseline）提升至 **66.5%**\ （RECAP），绝对提升 **17.7%**。
 
 .. raw:: html
 
    <div style="display: flex; justify-content: center; margin: 20px 0;">
      <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
        <p><em>LIBERO-10 Task 0 上的 RECAP 实验结果</em></p>
      </div>
    </div>
 
 高级用法
------------
+----------------------------------------
 
 优势阈值重标
-~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 如果需要修改分位数阈值（如从 30% 调整为 20%），无需重新运行完整的 Step 3。
 可以使用 ``recompute_advantages_from_value_reward.py`` 仅重标阈值：
@@ -714,7 +755,7 @@ RECAP 实验结果
 该脚本会读取已有的连续优势值（``advantage_continuous``），仅更新阈值和布尔标签，避免重复的 GPU 推理。
 
 迭代优化
-~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，然后从 Step 1 重新开始。
 每一轮可以使用不同的 tag 来区分不同迭代的结果：
@@ -725,7 +766,7 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
    Iter 2: tag="fail300_iter2"    → 训练 Value Model → tag="fail300_iter2_N10_ckpt6000_q20" → CFG Training
 
 文件结构
-~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: text
 

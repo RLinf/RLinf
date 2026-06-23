@@ -1,9 +1,9 @@
 基于模拟器的具身强化学习
-========================
+========================================
 
 本类示例以 **模拟器（基准）** 为主线，展示如何在某个仿真平台上运行 RLinf —— 包括环境安装、资产路径、观测/动作空间，以及一个参考 RL 训练配方（通常为 PPO 或 GRPO + VLA 策略）。
 
-如果你的出发点是 "我想在基准 *X* 上训练"，那这里就是合适的入口。若以模型为主线（pi₀、GR00T 等）请参考 :doc:`vla_wam_index`\ ，真机部署请参考 :doc:`real_world_index`\ 。如需在 AMD ROCm 或 Ascend CANN 加速器上运行 LIBERO，请参阅 :doc:`支持的加速器 <../tutorials/accelerators/index>` 教程章节。
+如果你的出发点是 "我想在基准 *X* 上训练"，那这里就是合适的入口。若以模型为主线（pi₀、GR00T 等）请参考 :doc:`vla_wam_index`\ ；包括 Franka 在内的真机部署请参考 :doc:`real_world_index`\ 。如需在 AMD ROCm 或 Ascend CANN 加速器上运行 LIBERO，请参阅 :doc:`支持的加速器 <../guides/index>` 教程章节。
 
 .. raw:: html
 
@@ -11,7 +11,7 @@
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <video controls autoplay loop muted playsinline preload="metadata" style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);">
-         <source src="https://github.com/RLinf/misc/raw/main/pic/embody.mp4" type="video/mp4">
+         <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
          Your browser does not support the video tag.
        </video>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -23,7 +23,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/libero_numbers.jpeg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/libero_numbers.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/libero.html" style="text-decoration: underline; color: blue;">
@@ -34,18 +34,18 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/behavior.jpg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/behavior.html" style="text-decoration: underline; color: blue;">
            <b>基于Behavior的强化学习</b>
          </a><br>
-         支持Behavior+OpenVLA-OFT+PPO/GRPO训练
+         支持 BEHAVIOR + OpenVLA-OFT / π₀ / π₀.₅ + PPO 训练
        </p>
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/metaworld.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/metaworld.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/metaworld.html" style="text-decoration: underline; color: blue;">
@@ -56,7 +56,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/IsaacLab.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/IsaacLab.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/isaaclab.html" style="text-decoration: underline; color: blue;">
@@ -67,7 +67,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/calvin.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/calvin.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
             data-target="animated-image.originalImage">
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -79,7 +79,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/robocasa.jpeg"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/robocasa.html" style="text-decoration: underline; color: blue;">
@@ -126,7 +126,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/embodichain.gif"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embodichain.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/embodichain.html" style="text-decoration: underline; color: blue;">
@@ -137,7 +137,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/polaris.png"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/polaris.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/polaris.html" style="text-decoration: underline; color: blue;">
@@ -148,7 +148,7 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/gsenv.gif"
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gsenv.gif"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/gsenv.html" style="text-decoration: underline; color: blue;">
@@ -175,17 +175,17 @@
    :hidden:
    :maxdepth: 2
 
-   ManiSkill 评测平台 <embodied/maniskill>
+   ManiSkill <embodied/maniskill>
    LIBERO <embodied/libero>
-   Behavior 评测平台 <embodied/behavior>
-   MetaWorld 评测平台 <embodied/metaworld>
+   Behavior <embodied/behavior>
+   MetaWorld <embodied/metaworld>
    IsaacLab <embodied/isaaclab>
-   CALVIN 评测平台 <embodied/calvin>
-   RoboCasa 评测平台 <embodied/robocasa>
-   RoboTwin 评测平台 <embodied/robotwin>
-   RoboVerse 评测平台 <embodied/roboverse>
-   Franka-Sim 评测平台 <embodied/frankasim>
+   CALVIN <embodied/calvin>
+   RoboCasa <embodied/robocasa>
+   RoboTwin <embodied/robotwin>
+   RoboVerse <embodied/roboverse>
+   Franka-Sim <embodied/frankasim>
    EmbodiChain <embodied/embodichain>
-   PolaRiS 仿真平台 <embodied/polaris>
-   Real2Sim2Real GSEnv <embodied/gsenv>
-   Genesis 仿真平台 <embodied/genesis>
+   PolaRiS <embodied/polaris>
+   GSEnv <embodied/gsenv>
+   Genesis <embodied/genesis>

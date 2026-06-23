@@ -36,6 +36,22 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async
 
+      - name: ManiSkill Async SAC test with env decoupled mode
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled
+      
+      - name: ManiSkill Async SAC eval test with env decoupled mode
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh maniskill_sac_mlp_async_decoupled_eval 
+
       - name: ManiSkill SAC Flow State test
         timeout-minutes: 20
         run: |
@@ -473,6 +489,17 @@ jobs:
           export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
           export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
           bash tests/e2e_tests/embodied/run.sh robotwin_grpo_openvlaoft
+
+      - name: RoboTwin-OpenVLA-OFT eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          bash tests/e2e_tests/evaluations/run.sh robotwin_place_empty_cup_openvlaoft_eval
 
       - name: Clean up
         run: |
@@ -1347,7 +1374,7 @@ jobs:
           export POLARIS_PATH=/workspace/dataset/polaris
           bash requirements/install.sh embodied --model openpi --env polaris
 
-      - name: PolaRiS PPO OpenPI test
+      - name: PolaRiS PPO OpenPI Pi05 test
         timeout-minutes: 30
         run: |
           unset PYTHONPATH
@@ -1355,7 +1382,7 @@ jobs:
           source .venv/bin/activate
           export POLARIS_DATA_PATH=/workspace/dataset/PolaRiS-Hub
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
-          bash tests/e2e_tests/embodied/run.sh polaris_ppo_openpi
+          bash tests/e2e_tests/embodied/run.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
       - name: Clean up
         run: |

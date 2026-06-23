@@ -31,7 +31,7 @@ lingbotvla:
   joint_logprob: False
   
   # Interpolation pointers to global actor settings (Hydra magic)
-  action_chunk: ${actor.model.num_action_chunks}
-  action_env_dim: ${actor.model.action_dim}
-  num_steps: ${actor.model.num_steps}
-  add_value_head: ${actor.model.add_value_head}
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  num_steps: ${..num_steps}
+  add_value_head: ${..add_value_head}

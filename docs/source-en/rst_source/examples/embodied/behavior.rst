@@ -1,100 +1,96 @@
 RL with Behavior Benchmark
 ==========================
 
-This example provides a complete guide to fine-tuning Behavior policies with reinforcement learning in the `Behavior <https://behavior.stanford.edu/index.html>`_ environment
-using the **RLinf** framework. It covers the entire process—from
-environment setup and core algorithm design to training configuration,
-evaluation, and visualization—along with reproducible commands and
-configuration snippets.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/behavior.jpg
+   :align: center
+   :width: 90%
 
-The primary objective is to develop a model capable of performing
-robotic manipulation by:
+   The BEHAVIOR benchmark (image: `BEHAVIOR <https://behavior.stanford.edu>`__).
 
-1. **Visual Understanding**: Processing RGB images from the robot's
-   camera.
-2. **Language Comprehension**: Interpreting natural-language task
-   descriptions.
-3. **Action Generation**: Producing precise robotic actions (position,
-   rotation, gripper control).
-4. **Reinforcement Learning**: Optimizing the policy via the PPO with
-   environment feedback.
+`BEHAVIOR <https://behavior.stanford.edu>`__ is a benchmark of everyday household
+activities built on NVIDIA IsaacSim / OmniGibson. A dual-arm R1 Pro robot performs
+long-horizon manipulation; RLinf uses it to RL-fine-tune vision-language-action (VLA)
+policies.
 
---------------
+Overview
+--------
 
-Environment
------------
+RL-finetune a VLA on BEHAVIOR household tasks with PPO.
 
-**Behavior Environment**
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- **Environment**: Behavior simulation benchmark built on top of *IsaacSim*.
-- **Task**: Command a dual-arm R1 Pro robot to perform a variety of household manipulation skills (pick-and-place, stacking, opening drawers, spatial rearrangement).
-- **Observation**: Multi-camera RGB images captured by robot-mounted sensors:
-   - **Head Camera**: provides 720×720 RGB images for global scene understanding
-   - **Wrist Cameras**: left and right RealSense cameras provide 480×480 RGB images for precise manipulation
-- **Action Space**: 23-dimensional continuous actions (a 3-DOF (x,y,rz) set of joints, 4-DOF torso, x2 7-DOF arm, and x2 1-DOF parallel jaw grippers.)
+   .. grid-item-card:: Models
+      :text-align: center
 
-**Data Structure**
+      OpenVLA-OFT · π₀ / π₀.₅
 
-- **Task descriptions**: select from `behavior-1k` tasks
-- **Images**: Multi-camera RGB tensors
-   - Head images: ``[batch_size, 720, 720, 3]``
-   - Wrist images: ``[batch_size, 2, 480, 480, 3]`` (left and right cameras)
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      PPO
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      50 BEHAVIOR-1K tasks
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      1 node · ray-tracing GPUs
+
+| **You'll do:** install IsaacSim deps → download assets + base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · IsaacSim 4.5 + BEHAVIOR-1K assets (>30 GB) · a base checkpoint (steps below).
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - Field
+     - Detail
+   * - Tasks
+     - 50 household manipulation tasks from BEHAVIOR-1K (select via ``task_idx`` 0–49).
+   * - Robot
+     - Dual-arm R1 Pro on IsaacSim / OmniGibson.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - Field
+     - Specification
+   * - Observation
+     - Head-camera RGB (720×720) plus left/right wrist RealSense RGB (480×480).
+   * - Action
+     - 23-dim continuous: 3-DOF base (x, y, rz), 4-DOF torso, 2×7-DOF arms, and 2×1-DOF parallel-jaw grippers.
 
 
-Algorithm
----------
-
-**Core Algorithm Components**
-
-1. **PPO (Proximal Policy Optimization)**
-
-   - Advantage estimation using GAE (Generalized Advantage Estimation)
-
-   - Policy clipping with ratio limits
-
-   - Value function clipping
-
-   - Entropy regularization
-
-2. **GRPO (Group Relative Policy Optimization)**
-
-   - For every state / prompt the policy generates *G* independent actions
-
-   - Compute the advantage of each action by subtracting the group’s mean reward.
-
-Dependency Installation
-------------------------
+Installation
+------------
 
 .. warning::
 
-   Please refer to the following ISAAC-SIM software and hardware dependency documentation to ensure your environment meets the requirements.
+   Check the IsaacSim software and hardware requirements before installing:
 
-   https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html
+   - https://docs.isaacsim.omniverse.nvidia.com/4.5.0/installation/requirements.html
+   - https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
 
-   https://docs.omniverse.nvidia.com/dev-guide/latest/common/technical-requirements.html
+   Hopper-generation GPUs need NVIDIA driver 570 or newer. GPUs without ray tracing
+   support, such as A100 or H100, can render BEHAVIOR scenes with severe artifacts.
+   Prefer RTX 30/40 series or newer GPUs for visual quality and training stability.
 
-   In particular, if your GPU is of Hopper architecture or above, please follow the instructions for NVIDIA driver version 570 or above.
+.. include:: _setup_common.rst
 
-   Additionally, if your GPU lacks Ray Tracing capabilities (e.g., A100, H100), the rendering quality of BEHAVIOR will be very poor, and the visuals may suffer from severe mosaic artifacts or blur. We therefore recommend GPUs with Ray Tracing support (such as RTX 30 series, RTX 40 series, or newer) for the best visual quality and training experience.
+**Option 1: Docker image** — image tag ``agentic-rlinf0.2-behavior``:
 
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
-
-.. code:: bash
+.. code-block:: bash
 
    docker run -it --rm --gpus all \
       --shm-size 20g \
@@ -102,370 +98,131 @@ Use Docker image for the experiment.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-behavior
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
 
-**Option 2: Custom Environment**
+   # Inside the container, switch to the model's virtual environment:
+   source switch_env openvla-oft        # or: source switch_env openpi
 
-Install dependencies directly in your environment by running the following command:
+**Option 2: Custom environment** — install bundle ``--env behavior``:
 
-.. code:: bash
+.. code-block:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-   # Install openvla-oft environment
+   # Add --use-mirror for faster downloads in mainland China.
    bash requirements/install.sh embodied --model openvla-oft --env behavior
+   # Or install the OpenPI environment:
+   # bash requirements/install.sh embodied --model openpi --env behavior
    source .venv/bin/activate
 
-   # Install openpi environment
-   bash requirements/install.sh embodied --model openpi --env behavior
-   source .venv/bin/activate
 
-Assets Download
------------------
+Download the Assets
+-------------------
 
-* ISAAC-SIM 4.5 Download
+Download IsaacSim 4.5 and set ``ISAAC_PATH`` before every run:
 
-.. warning::
-
-   The `ISAAC_PATH` environment variable must be set every time you run the experiment.
-
-.. code:: bash
+.. code-block:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    mkdir -p $ISAAC_PATH && cd $ISAAC_PATH
    curl https://download.isaacsim.omniverse.nvidia.com/isaac-sim-standalone-4.5.0-linux-x86_64.zip -o isaac-sim.zip
    unzip isaac-sim.zip && rm isaac-sim.zip
 
-* BEHAVIOR Datasets and Assets Download
+Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
 
-.. warning::
+.. code-block:: bash
 
-   The `OMNIGIBSON_DATA_PATH` environment variable must be set every time you run the experiment.
-
-.. code:: bash
-
-   # Change to the directory you wish to put the assets and datasets
-   # Beware, the datasets occupy more than 30GB of space
+   # The datasets require more than 30 GB.
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    mkdir -p $OMNIGIBSON_DATA_PATH
 
-   # Make sure you are inside the correct Python virtual environment (venv) before running below commands
-   # For our Docker image, you need to switch to the `openvla-oft` venv via `source switch_env openvla-oft`
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
+   # Run these inside the active venv. Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
-   python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)" 
+   python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
 
+**What this does:**
 
-Model Download
----------------
+1. Downloads the IsaacSim runtime that OmniGibson uses.
+2. Downloads the BEHAVIOR robot assets, task assets, and 2025 challenge instances.
+3. Creates the two environment variables that the training and evaluation scripts need.
 
-Before starting training, you need to download the corresponding pretrained models. Based on the algorithm type you want to use, we provide different model options:
+Download the Model
+------------------
 
-**OpenVLA-OFT Model Download**
+Download the checkpoint for your model family (either method works):
 
-OpenVLA-OFT provides a unified model that is suitable for all task types in the Behavior environment.
+.. code-block:: bash
 
-.. code:: bash
-
-   # Download the model (choose either method)
-   # Method 1: Using git clone
+   # Method 1: git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-OpenVLAOFT-Behavior
+   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
+   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-OpenVLAOFT-Behavior --local-dir RLinf-OpenVLAOFT-Behavior
-
-**OpenPI Model Download**
-
-.. code:: bash
-
-   # Download the model (choose either method)
-   # Method 1: Using git clone
-   git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Pi0-Behavior
-
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
-   pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-Behavior --local-dir RLinf-Pi0-Behavior
 
+.. include:: _model_path.rst
 
-After downloading, please make sure to specify the model path correctly in your configuration yaml file.
-
-Running Scripts
----------------
-
-**1. Key Cluster Configuration**
+Run It
+------
 
 .. warning::
 
-   Beware, due to the special behavior of ISAAC-SIM, please try to place the env on GPUs starting from 0.
-   Otherwise, ISAAC-SIM may get stuck on certain GPUs.
+   Place BEHAVIOR env workers on GPUs starting from 0. IsaacSim can hang when env
+   workers start on later GPU ranks.
 
-.. code:: yaml
+Each recipe is a YAML config under ``examples/embodiment/config/``:
 
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 0-7
+.. list-table::
+   :header-rows: 1
+   :widths: 34 26 40
 
-   env:
-      num_env_subprocess: 2
-      train:
-         total_num_envs: 8
+   * - Model / purpose
+     - Algorithm
+     - Config
+   * - OpenVLA-OFT
+     - PPO
+     - ``behavior_ppo_openvlaoft.yaml``
+   * - π₀
+     - PPO
+     - ``behavior_ppo_openpi.yaml``
+   * - π₀.₅
+     - PPO
+     - ``behavior_ppo_openpi_pi05.yaml``
 
-   rollout:
-      pipeline_stage_num: 2
+Launch a config with ``run_embodiment.sh``:
 
-You can flexibly configure the GPU count for env, rollout, and actor
-components. Because Behavior environment stepping is very slow, it is
-usually recommended to allocate more GPUs to env to improve throughput,
-though this also increases VRAM usage. One Behavior environment takes
-roughly 10 GiB of VRAM. You can therefore tune the number of environment
-processes per GPU according to your GPU memory budget. For example, on an
-RTX 4090 24G, you can set ``num_env_subprocess: 2`` so each GPU
-hosts two environment processes.
-
-Behavior also supports multiple vectorized environments inside a single
-process, so ``total_num_envs`` can be any multiple of the total number of
-Behavior processes (that is, env GPU count multiplied by
-``num_env_subprocess``). For example, if the env GPU count is 4 and
-``num_env_subprocess`` is 2, valid ``total_num_envs`` values include 8,
-16, 32, and so on. If ``pipeline_stage_num == 2``, then
-``total_num_envs`` should be at least twice the total process count (16
-in this example).
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can also reconfigure the placement to achieve complete sharing,
-where env, rollout, and actor components all share all GPUs.
-
-.. code:: yaml
-
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env: 0-1
-         rollout: 2-5
-         actor: 6-7
-
-You can also reconfigure the placement to achieve complete separation,
-where env, rollout, and actor components each use their own GPUs without
-interference, eliminating the need for offload functionality.
-
---------------
-
-**2. Configuration Files**
-
-Using behavior as an example:
-
-- OpenVLA-OFT + PPO:
-  ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml``
-- OpenVLA-OFT + GRPO:
-  ``examples/embodiment/config/behavior_grpo_openvlaoft.yaml``
-- OpenPI (Pi0) + PPO:
-  ``examples/embodiment/config/behavior_ppo_openpi.yaml``
-- OpenPI (Pi0.5) + PPO:
-  ``examples/embodiment/config/behavior_ppo_openpi_pi05_eval.yaml``
-  ``examples/embodiment/config/behavior_ppo_openpi_pi05.yaml``
-
-.. warning::
-
-   Known issue: under the current Behavior setup, training success rate
-   (``env/success_once``) may stay at 0 for ``OpenVLA-OFT`` / ``OpenPI (Pi0)``.
-   This issue will be fixed in a later release.
-
-.. note::
-
-   The Behavior configs above all load
-   ``examples/embodiment/config/env/behavior_r1pro.yaml`` via ``defaults``
-   (for both ``env.train`` and ``env.eval``). This file defines the base R1 Pro
-   environment settings, including ``task_idx``, ``max_episode_steps``,
-   ``max_steps_per_rollout_epoch``, ``num_env_subprocess``, camera resolution,
-   and ``omni_config``.
-   You can override these defaults in each concrete config under
-   ``env.train`` / ``env.eval``.
-
-**Key Settings in behavior_r1pro.yaml**
-
-- ``base_config_name: r1pro_behavior``:
-  RLinf first loads OmniGibson's base ``r1pro_behavior.yaml`` and then applies
-  overrides from ``omni_config`` (see ``setup_omni_cfg`` in
-  ``rlinf/envs/behavior/utils.py``).
-- ``omni_config.task.type: BehaviorTask`` and
-  ``omni_config.scene.type: InteractiveTraversableScene``:
-  RLinf now uses OmniGibson's upstream BEHAVIOR task and scene classes
-  directly. Keep these explicit type entries in
-  ``examples/embodiment/config/env/behavior_r1pro.yaml`` when using RLinf's
-  BEHAVIOR setup so the intended OmniGibson classes are selected after
-  ``setup_omni_cfg`` applies overrides.
-- ``task_idx``:
-  Current task id (0-49). RLinf maps it to the concrete task name and writes it
-  into ``task.activity_name`` (see ``rlinf/envs/behavior/behavior_env.py``).
-- ``omni_config.task.instance_resample_mode``:
-  Controls reset-time instance switching. Supported modes are
-  ``disabled``, ``offline``, and ``online``.
-  In ``offline`` mode, RLinf scans ``omni_config.task.activity_instance_dir``
-  once at startup, parses cached instance ids from
-  filenames in that directory, and samples one cached offline instance before
-  each ``env.reset()``. ``*_template.json`` files are treated as full cached
-  templates and are reloaded through the heavier scene-reload path, while
-  ``*_template-tro_state.json`` files are treated as task-relevant-only cached
-  states and are applied through the lighter in-place path. This is useful
-  when you want more reset-time diversity than a fixed
-  ``activity_instance_id`` but lower overhead than ``online_object_sampling``.
-  In ``online`` mode, RLinf reuses the online task-resampling path and requires
-  ``online_object_sampling: True`` plus ``use_presampled_robot_pose: False``.
-  In ``disabled`` mode, if ``activity_instance_dir`` is set RLinf loads the
-  configured ``activity_instance_id`` from that directory before each reset.
-- ``omni_config.task.activity_instance_dir``:
-  Optional directory containing cached task instance JSON files. RLinf
-  recognizes official ``*_template.json`` instances and
-  ``*_template-tro_state.json`` files. Used by
-  ``instance_resample_mode: offline`` and by fixed ``activity_instance_id``
-  loading when the mode is ``disabled``.
-- ``omni_config.task.instance_file_format``:
-  Optional cached-instance format selector. Supported values are ``template``
-  and ``tro_state``. Use ``template`` to force full cached-template reloads, or
-  ``tro_state`` to force light-weight task-relevant-only reloads. RLinf also
-  accepts official ``tro_state`` files that do not include ``robot_poses``; in
-  that case, RLinf clears any stale cached robot-pose metadata and the
-  subsequent reset uses the task's default robot reset pose instead of a
-  presampled pose override. When converting from
-  ``template.json``, omitting ``robot_poses`` is usually safer than writing the
-  current simulator robot pose into the cache.
-- ``omni_config.scene.partial_scene_load``:
-  When ``true``, RLinf automatically fills ``scene.load_room_types`` with rooms relevant to
-  ``task.activity_name`` in ``scene.scene_model``, which usually reduces startup time
-  and memory versus loading the full layout. Requires both ``activity_name`` and
-  ``scene_model``. When ``false`` or omitted, RLinf does not auto-override
-  ``load_room_types``; set ``load_room_types`` explicitly if you need a custom
-  room subset.
-- Generating cached instances with RLinf's generator:
-  RLinf provides ``rlinf/envs/behavior/instance_generator.py`` to
-  generate ``*_template.json`` and ``*_template-tro_state.json`` files directly
-  from ``examples/embodiment/config/env/behavior_r1pro.yaml``.
-  The script reads ``omni_config.scene.scene_model``,
-  ``omni_config.task.activity_name``,
-  ``omni_config.task.activity_definition_id``, the robot config, and room
-  loading settings from the yaml, then temporarily switches the task to online
-  object sampling for cached-instance generation.
-  It writes into ``omni_config.task.activity_instance_dir`` when that field is
-  set; otherwise it falls back to ``OMNIGIBSON_DATA_PATH``'s default
-  ``2025-challenge-task-instances`` directory. Use ``--output-dir`` to override
-  either behavior.
-
-  .. code-block:: bash
-
-     cd /path/to/RLinf
-
-     python rlinf/envs/behavior/instance_generator.py \
-       --config examples/embodiment/config/env/behavior_r1pro.yaml \
-       --output-format template \
-       --start-idx 1 \
-       --end-idx 50
-
-     python rlinf/envs/behavior/instance_generator.py \
-       --config examples/embodiment/config/env/behavior_r1pro.yaml \
-       --output-format tro_state \
-       --start-idx 1 \
-       --end-idx 50
-
-  The generated filenames follow
-  ``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``.
-  ``--start-idx`` and ``--end-idx`` therefore control the generated
-  ``activity_instance_id`` range. ``tro_state`` outputs include top-level
-  ``robot_poses`` when the task metadata provides them; otherwise the key is
-  omitted so RLinf reset falls back to the task's default robot reset pose.
-  BEHAVIOR-1K's upstream
-  ``OmniGibson/omnigibson/sampling/multiply_b1k_tasks.py`` is still usable, but
-  RLinf's generator is the recommended path because it reads the RLinf yaml
-  directly and preserves ``activity_definition_id`` from that config.
-- ``camera.head_resolution`` / ``camera.wrist_resolution``:
-  Head / wrist camera resolutions. RLinf overrides default values in
-  ``omnigibson.learning.utils.eval_utils`` (default 720x720 and 480x480), then
-  applies them through the environment wrapper to R1Pro sensors (if
-  ``env_wrapper`` is not ``None``).
-- ``omni_config.env.action_frequency / rendering_frequency / physics_frequency``:
-  Controls action stepping, rendering, and physics frequency respectively
-  (common default: 30 / 30 / 120). Higher frequencies are usually slower.
-- ``omni_config.env.automatic_reset: False``:
-  Do not auto-reset when an episode ends; reset is explicitly controlled by the
-  RLinf training / evaluation loop.
-- ``omni_config.env.flatten_obs_space: False`` and ``flatten_action_space: False``:
-  Keep structured observation / action spaces instead of flattening to 1D.
-- ``omni_config.macro.use_gpu_dynamics: False``:
-  Disables GPU dynamics and usually improves performance; enable it only when
-  advanced features like particles / fluids are required.
-- ``omni_config.macro.enable_flatcache: True``:
-  Enables flatcache, which generally improves performance for large scenes.
-- ``omni_config.macro.enable_object_states: True``:
-  BehaviorTask depends on object states, so this should stay enabled.
-- ``omni_config.macro.enable_transition_rules: True``:
-  Enables transition-rule-based state changes (e.g., slicing, cooking-related
-  transitions).
-- ``omni_config.macro.use_numpy_controller_backend: True``:
-  Uses the numpy controller backend, which is usually faster in single-process
-  or moderate-parallel settings.
-- ``skip_intermediate_obs_in_chunk``:
-  RLinf executes chunked BEHAVIOR actions by stepping several low-level robot
-  actions before returning control to the policy. When this flag is ``True``,
-  RLinf skips collecting intermediate observations inside that chunk and only
-  keeps the observations the policy actually consumes. This usually gives a
-  large environment-speed improvement because fewer camera observations are
-  wrapped, transferred, and recorded. One visible consequence is that saved
-  videos no longer include every low-level robot action frame; instead they only
-  show the frames the robot actually observes at chunk boundaries.
-- ``num_env_subprocess``:
-  Within one env-worker process, splits parallel env count ``num_envs`` across multiple
-  **child processes**, each hosting its own Isaac/OmniGibson simulation (see
-  ``BehaviorProcess`` in ``behavior_env.py``). Default ``1`` keeps the legacy
-  single-subprocess behavior. When greater than ``1``, each subprocess runs
-  ``num_envs / num_env_subprocess`` parallel envs; IPC uses parallel receives to reduce
-  pipe backpressure.
-  **Constraint**: ``num_envs`` must be divisible by ``num_env_subprocess`` (asserted).
-  Increasing this value can reduce env-step bottlenecks on multi-core/GPU hosts but also
-  multiplies simulator processes and memory pressure—tune for your hardware.
-
---------------
-
-**3. Launch Command**
-
-To start training with a chosen configuration, run the following
-command:
-
-.. code:: bash
-
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-For example, to train the OpenVLA-OFT model using the PPO algorithm in
-the Behavior environment, run:
-
-.. code:: bash
+.. code-block:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
    bash examples/embodiment/run_embodiment.sh behavior_ppo_openvlaoft
 
---------------
+**What this command does:**
 
-**4. Evaluate with behavior_ppo_openpi_pi05_eval.yaml**
+1. Loads ``examples/embodiment/config/behavior_ppo_openvlaoft.yaml`` and its shared env config ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+2. Starts Ray workers for the actor, rollout, and BEHAVIOR env placement.
+3. Runs PPO training and writes logs/checkpoints under ``runner.logger.log_path``.
+
+.. admonition:: Configure further
+   :class: note
+
+   - BEHAVIOR throughput → increase env GPU count first, then tune ``env.num_env_subprocess`` and ``env.train.total_num_envs``.
+   - Each BEHAVIOR process can use roughly 10 GiB of VRAM; tune subprocess count for your GPU memory.
+   - Cached task instances → generate them with ``rlinf/envs/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+   - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+   - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
+
+.. warning::
+
+   Known issue: under the current BEHAVIOR setup, training success rate
+   (``env/success_once``) may stay at 0 for OpenVLA-OFT / π₀.
+   This issue will be fixed in a later release.
+
+Standalone Evaluation
+~~~~~~~~~~~~~~~~~~~~~
 
 In principle, any ``pi05`` checkpoint that has non-zero success rate on
 Behavior and has been converted to PyTorch format can be used for evaluation
@@ -481,13 +238,13 @@ PyTorch format:
 Thanks to the OpenPI-Comet authors for open-sourcing the model and tools, which
 helps reproducibility and evaluation in RLinf.
 
-After conversion, update ``behavior_ppo_openpi_pi05_eval.yaml`` as follows:
+After conversion, update ``behavior_openpi_pi05_eval.yaml`` as follows:
 
 1. Set ``actor.model.model_path`` and ``rollout.model.model_path`` to the converted model directory.
 2. Increase ``max_episode_steps`` and ``max_steps_per_rollout_epoch`` in both
    ``env.train`` and ``env.eval`` (for example, ``4096``).
 
-.. code:: yaml
+.. code-block:: yaml
 
    env:
      train:
@@ -497,13 +254,108 @@ After conversion, update ``behavior_ppo_openpi_pi05_eval.yaml`` as follows:
        max_episode_steps: 4096
        max_steps_per_rollout_epoch: 4096
 
-Run evaluation with:
+Run standalone evaluation through the :doc:`BEHAVIOR-1K evaluation guide <../../evaluations/guides/behavior>`.
+It owns the required ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` setup, the
+``behavior_openpi_pi05_eval`` launch command, and result interpretation.
 
-.. code:: bash
 
-   export ISAAC_PATH=/path/to/isaac-sim
-   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05_eval
+Configure Further
+-----------------
+
+The BEHAVIOR env is driven by ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+RLinf first loads OmniGibson's base config (``base_config_name``) and then applies the
+``omni_config`` overrides (see ``setup_omni_cfg`` in ``rlinf/envs/behavior/utils.py``).
+The fields below control reset behavior, scene loading, simulator frequencies, and
+throughput — most have sensible defaults and only need tuning for custom tasks or
+performance.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Key
+     - Meaning
+   * - ``base_config_name``
+     - Base OmniGibson config (e.g. ``r1pro_behavior``) loaded before ``omni_config`` overrides.
+   * - ``omni_config.task.type`` / ``omni_config.scene.type``
+     - Keep ``BehaviorTask`` / ``InteractiveTraversableScene`` explicit so the intended
+       upstream OmniGibson classes are selected after overrides are applied.
+   * - ``task_idx``
+     - Current task id (0–49). RLinf maps it to ``task.activity_name`` (see ``behavior_env.py``).
+   * - ``omni_config.task.instance_resample_mode``
+     - Reset-time instance switching: ``disabled`` (load the fixed ``activity_instance_id``),
+       ``offline`` (scan ``activity_instance_dir`` once and sample a cached instance per reset —
+       ``*_template.json`` use the heavy scene-reload path, ``*_template-tro_state.json`` the
+       lighter in-place path), or ``online`` (requires ``online_object_sampling: True`` and
+       ``use_presampled_robot_pose: False``).
+   * - ``omni_config.task.activity_instance_dir``
+     - Directory of cached instance JSONs (``*_template.json`` / ``*_template-tro_state.json``),
+       used by ``offline`` mode and by fixed-id loading when the mode is ``disabled``.
+   * - ``omni_config.task.instance_file_format``
+     - Cached-instance format: ``template`` (full reload) or ``tro_state`` (light, task-relevant
+       only). RLinf accepts ``tro_state`` files without ``robot_poses``; it then clears stale
+       cached robot-pose metadata and the reset falls back to the task's default robot pose.
+   * - ``omni_config.scene.partial_scene_load``
+     - When ``true``, auto-fills ``scene.load_room_types`` with rooms relevant to
+       ``activity_name`` (reduces startup time and memory). Requires ``activity_name`` and
+       ``scene_model``. Set ``load_room_types`` explicitly when ``false``/omitted.
+   * - ``camera.head_resolution`` / ``camera.wrist_resolution``
+     - Head / wrist camera resolutions (defaults 720×720 / 480×480, applied to R1Pro sensors).
+   * - ``omni_config.env.action_frequency`` / ``rendering_frequency`` / ``physics_frequency``
+     - Action / render / physics stepping frequency (common default 30 / 30 / 120). Higher is slower.
+   * - ``omni_config.env.automatic_reset``
+     - Keep ``False`` — reset is controlled explicitly by the RLinf train/eval loop.
+   * - ``omni_config.env.flatten_obs_space`` / ``flatten_action_space``
+     - Keep ``False`` to preserve structured observation / action spaces.
+   * - ``omni_config.macro.use_gpu_dynamics``
+     - ``False`` usually improves performance; enable only for particles / fluids.
+   * - ``omni_config.macro.enable_flatcache``
+     - ``True`` generally improves performance on large scenes.
+   * - ``omni_config.macro.enable_object_states``
+     - Keep ``True`` — ``BehaviorTask`` depends on object states.
+   * - ``omni_config.macro.enable_transition_rules``
+     - ``True`` enables transition-rule state changes (e.g. slicing, cooking).
+   * - ``omni_config.macro.use_numpy_controller_backend``
+     - ``True`` uses the numpy controller backend, usually faster in single-/moderate-parallel runs.
+   * - ``skip_intermediate_obs_in_chunk``
+     - When ``True``, skips collecting intermediate observations inside an action chunk (large
+       env-speed gain). Saved videos then show only the frames the policy observes at chunk boundaries.
+   * - ``num_env_subprocess``
+     - Splits ``num_envs`` across child processes, each hosting its own Isaac/OmniGibson sim
+       (see ``BehaviorProcess``). Default ``1``. **Constraint:** ``num_envs`` must be divisible by
+       ``num_env_subprocess``. Higher values cut env-step bottlenecks but multiply processes and memory.
+
+Generating cached task instances
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``rlinf/envs/behavior/instance_generator.py`` generates ``*_template.json`` and
+``*_template-tro_state.json`` files directly from ``behavior_r1pro.yaml`` (it reads
+``scene_model``, ``activity_name``, ``activity_definition_id``, the robot config, and
+room-loading settings, then temporarily switches to online object sampling). It writes to
+``activity_instance_dir`` if set, otherwise to ``OMNIGIBSON_DATA_PATH``'s default
+``2025-challenge-task-instances`` directory; use ``--output-dir`` to override.
+
+.. code-block:: bash
+
+   cd /path/to/RLinf
+
+   python rlinf/envs/behavior/instance_generator.py \
+     --config examples/embodiment/config/env/behavior_r1pro.yaml \
+     --output-format template \
+     --start-idx 1 --end-idx 50
+
+   python rlinf/envs/behavior/instance_generator.py \
+     --config examples/embodiment/config/env/behavior_r1pro.yaml \
+     --output-format tro_state \
+     --start-idx 1 --end-idx 50
+
+Generated filenames follow
+``<scene_model>_task_<activity_name>_<activity_definition_id>_<activity_instance_id>_template(.json|-tro_state.json)``,
+so ``--start-idx`` / ``--end-idx`` set the ``activity_instance_id`` range. ``tro_state``
+outputs include top-level ``robot_poses`` only when the task metadata provides them; otherwise
+the key is omitted and reset falls back to the task's default robot pose. BEHAVIOR-1K's upstream
+``multiply_b1k_tasks.py`` still works, but RLinf's generator is recommended because it reads the
+RLinf YAML directly and preserves ``activity_definition_id``.
 
 --------------
 
@@ -543,62 +395,26 @@ paths directly in the config as ``/path/to/...`` placeholders:
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logging**
+Launch TensorBoard to watch training live:
 
-.. code:: bash
+.. code-block:: bash
 
-   # Launch TensorBoard
    tensorboard --logdir ./logs --port 6006
 
---------------
+The key signal to watch is **``env/success_once``** — the task success rate. For every
+logged metric, see :doc:`Training metrics <../../reference/metrics>`.
 
-**2. Key Monitoring Metrics**
+To save evaluation videos, enable them in the config:
 
--  **Training Metrics**
+.. code-block:: yaml
 
-   -  ``actor/loss``: Policy loss
-   -  ``actor/value_loss``: Value function loss (PPO)
-   -  ``actor/grad_norm``: Gradient norm
-   -  ``actor/approx_kl``: KL divergence between old and new policies
-   -  ``actor/pg_clipfrac``: Policy clipping ratio
-   -  ``actor/value_clip_ratio``: Value loss clipping ratio (PPO)
-
--  **Rollout Metrics**
-
-   -  ``rollout/returns_mean``: Average episode return
-   -  ``rollout/advantages_mean``: Mean advantage value
-
--  **Environment Metrics**
-
-   -  ``env/episode_len``: Average episode length
-   -  ``env/success_once``: Task success rate
-
---------------
-
-**3. Video Generation**
-
-.. code:: yaml
-
-   video_cfg:
-     save_video: True
-     info_on_video: True
-     video_base_dir: ${runner.logger.log_path}/video/train
-
---------------
-
-**4. WandB Integration**
-
-.. code:: yaml
-
-   runner:
-     task_type: embodied
-     logger:
-       log_path: "../results"
-       project_name: rlinf
-       experiment_name: "behavior_ppo_openvlaoft"
-       logger_backends: ["tensorboard", "wandb"] # tensorboard, wandb, swanlab
+   env:
+      eval:
+         video_cfg:
+            save_video: True
+            video_base_dir: ${runner.logger.log_path}/video/eval
 
 
-For the Behavior experiment, we were inspired by 
-`Behavior-1K baselines <https://github.com/StanfordVL/b1k-baselines.git>`_, 
+For the Behavior experiment, we were inspired by
+`Behavior-1K baselines <https://github.com/StanfordVL/b1k-baselines.git>`_,
 with only minor modifications. We thank the authors for releasing their open-source code.

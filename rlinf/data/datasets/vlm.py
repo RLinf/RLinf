@@ -17,9 +17,11 @@ import json
 import logging
 import os
 import pickle
+import re
 from io import BytesIO
 from typing import Any, Callable, Optional, Union
 
+import numpy as np
 import pandas as pd
 import torch
 from omegaconf import DictConfig
@@ -32,6 +34,37 @@ from rlinf.data.datasets.item import DatasetItem, SftDatasetItem
 from rlinf.data.utils import batch_pad_to_fixed_len
 
 
+class VLMDatasetRegistry:
+    registry: dict[str, Callable[..., "VLMBaseDataset"]] = {}
+
+    @classmethod
+    def register(
+        cls, name: str
+    ) -> Callable[[Callable[..., "VLMBaseDataset"]], Callable[..., "VLMBaseDataset"]]:
+        def decorator(klass: Callable[..., "VLMBaseDataset"]):
+            cls.registry[name] = klass
+            return klass
+
+        return decorator
+
+    @classmethod
+    def create(
+        cls,
+        dataset_name: Optional[str],
+        *,
+        data_paths: Union[list[str], str],
+        config: DictConfig,
+        tokenizer: AutoTokenizer,
+        **kwargs,
+    ) -> "VLMBaseDataset":
+        key = dataset_name.lower()
+        dataset_class = cls.registry.get(key)
+        return dataset_class(
+            data_paths=data_paths, config=config, tokenizer=tokenizer, **kwargs
+        )
+
+
+@VLMDatasetRegistry.register("base")
 class VLMBaseDataset(Dataset):
     def __init__(
         self,
@@ -86,7 +119,7 @@ class VLMBaseDataset(Dataset):
     def __getstate__(self):
         state = self.__dict__.copy()
         # Drop heavy/unpicklable caches; they will be rebuilt on-demand in workers
-        for k in ("_parquet_cache", "_parquet_df_cache"):
+        for k in ("_parquet_cache", "_parquet_df_cache", "_parquet_rg_bounds"):
             if k in state:
                 state[k] = {}
         return state
@@ -96,6 +129,7 @@ class VLMBaseDataset(Dataset):
         self.__dict__.update(state)
         self._parquet_cache = getattr(self, "_parquet_cache", {})
         self._parquet_df_cache = getattr(self, "_parquet_df_cache", {})
+        self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
 
     def get_image_list(self, dataitem: dict[str, Any]) -> list[Union[bytes, str, None]]:
         images: list[Union[bytes, str, None]] = []
@@ -107,6 +141,9 @@ class VLMBaseDataset(Dataset):
                 images.append(v)
             elif isinstance(v, dict) and "bytes" in v:
                 images.append(v["bytes"])
+            elif isinstance(v, np.ndarray) and "bytes" in v[0]:
+                for p in v:
+                    images.append(p["bytes"])
             else:
                 images.append(v)  # path or url
         if not images:
@@ -148,9 +185,21 @@ class VLMBaseDataset(Dataset):
             )
 
         content: list[dict[str, Any]] = []
-        for _ in range(max(0, len(images))):
-            content.append({"type": "image"})
-        content.append({"type": "text", "text": prompt_text})
+
+        # Parse prompt_text for image placeholders and interleave text segments with images
+        parts = re.split(r"<image>", prompt_text)
+        if len(parts) == 1:
+            # No placeholder found, fall back to original logic
+            for _ in range(max(0, len(images))):
+                content.append({"type": "image"})
+            content.append({"type": "text", "text": prompt_text})
+        else:
+            for i, part in enumerate(parts):
+                if part:
+                    content.append({"type": "text", "text": part})
+                if i < len(parts) - 1:
+                    content.append({"type": "image"})
+
         messages.append({"role": "user", "content": content})
 
         if use_chat_template:
@@ -167,6 +216,12 @@ class VLMBaseDataset(Dataset):
                 image_obj = image.convert("RGB")
             if isinstance(image, (bytes, bytearray)):
                 image_obj = Image.open(BytesIO(image)).convert("RGB")
+            if image_obj is None:
+                raise ValueError(
+                    f"Unsupported image type: {type(image).__name__}. "
+                    f"Expected PIL.Image.Image, bytes, or bytearray."
+                )
+
             images_inputs.append(image_obj)
 
         inputs = processor(
@@ -186,6 +241,7 @@ class VLMBaseDataset(Dataset):
                 self._processor = AutoProcessor.from_pretrained(
                     self.cfg.actor.model.model_path
                 )
+
             rendered, inputs = self.process_inputs(
                 processor=self._processor,
                 system_prompt=self.system_prompt,
@@ -195,6 +251,7 @@ class VLMBaseDataset(Dataset):
             )
 
             inputs.pop("attention_mask", None)
+
             if self.cfg.rollout.rollout_backend == "sglang":
                 ids = inputs.pop("input_ids")
             elif self.cfg.rollout.rollout_backend == "vllm":
@@ -268,6 +325,18 @@ class VLMBaseDataset(Dataset):
         # Build indices for consistency
         self._indices = [("", "eager", i) for i in range(len(self._records))]
 
+    def _build_parquet_rg_bounds(self, pf, path: str) -> list[tuple[int, int, int]]:
+        """Build and cache row-group boundaries for a parquet file."""
+        self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
+        bounds = []
+        offset = 0
+        for g in range(pf.metadata.num_row_groups):
+            rg_rows = pf.metadata.row_group(g).num_rows
+            bounds.append((offset, offset + rg_rows, g))
+            offset += rg_rows
+        self._parquet_rg_bounds[path] = bounds
+        return bounds
+
     def _build_lazy_indices(self) -> None:
         self._indices.clear()
         for path in tqdm(self.data_paths, desc="Loading dataset files", unit="file"):
@@ -303,6 +372,8 @@ class VLMBaseDataset(Dataset):
                     # file handle cache
                     self._parquet_cache = getattr(self, "_parquet_cache", {})
                     self._parquet_cache[path] = pf
+                    # Cache row group boundaries for correct lazy indexing
+                    self._build_parquet_rg_bounds(pf, path)
                     self._indices.extend((path, "parquet", i) for i in range(num_rows))
                 except Exception:
                     df = pd.read_parquet(path)
@@ -342,13 +413,23 @@ class VLMBaseDataset(Dataset):
                         df = pd.read_parquet(path)
                         self._parquet_df_cache[path] = df
                     return df.iloc[int(key)].to_dict()
-            table = pf.read_row_group(key // max(1, pf.metadata.num_rows), columns=None)
-            try:
-                df = table.to_pandas()
-                return df.iloc[int(key) % len(df)].to_dict()
-            except Exception:
-                df_all = pf.read().to_pandas()
-                return df_all.iloc[int(key)].to_dict()
+            # Find the row group that contains the requested row
+            self._parquet_rg_bounds = getattr(self, "_parquet_rg_bounds", {})
+            bounds = self._parquet_rg_bounds.get(path)
+            if bounds is None:
+                # Rebuild bounds if cache was cleared (e.g. after unpickling)
+                bounds = self._build_parquet_rg_bounds(pf, path)
+            row = int(key)
+            target_rg = 0
+            local_idx = row
+            for start, end, rg_idx in bounds:
+                if start <= row < end:
+                    target_rg = rg_idx
+                    local_idx = row - start
+                    break
+            table = pf.read_row_group(target_rg, columns=None)
+            df = table.to_pandas()
+            return df.iloc[local_idx].to_dict()
         if fmt == "parquet_pd":
             self._parquet_df_cache = getattr(self, "_parquet_df_cache", {})
             df = self._parquet_df_cache.get(path)
@@ -386,36 +467,6 @@ class VLMBaseDataset(Dataset):
             multi_modal_inputs=multi_modal_inputs,
         )
         return self.postprocess_dataset_item(item, raw)
-
-
-class VLMDatasetRegistry:
-    registry: dict[str, Callable[..., VLMBaseDataset]] = {}
-
-    @classmethod
-    def register(
-        cls, name: str
-    ) -> Callable[[Callable[..., VLMBaseDataset]], Callable[..., VLMBaseDataset]]:
-        def decorator(klass: Callable[..., VLMBaseDataset]):
-            cls.registry[name] = klass
-            return klass
-
-        return decorator
-
-    @classmethod
-    def create(
-        cls,
-        dataset_name: Optional[str],
-        *,
-        data_paths: Union[list[str], str],
-        config: DictConfig,
-        tokenizer: AutoTokenizer,
-        **kwargs,
-    ) -> VLMBaseDataset:
-        key = dataset_name.lower()
-        dataset_class = cls.registry.get(key)
-        return dataset_class(
-            data_paths=data_paths, config=config, tokenizer=tokenizer, **kwargs
-        )
 
 
 @VLMDatasetRegistry.register("robo2vlm")

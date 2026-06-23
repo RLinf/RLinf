@@ -688,6 +688,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         batch = RolloutResult.merge_batches(batches)
         rollout_result = RolloutResult.merge_result_list(rollout_results)
 
+        assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         # Compute advantages and returns
         if "advantages" not in batch:
             batch = self.compute_advantages_and_returns(batch)
@@ -1264,9 +1265,11 @@ class MegatronWorker(MegatronModelManager, Worker):
                     0, dtype=torch.float32, device=batch["rewards"].device
                 )
             prev_values = batch["values"].cuda() if "values" in batch else None
-            prev_logprobs = (
-                batch["prev_logprobs"].cuda() if "prev_logprobs" in batch else None
-            )
+            # Prefer recomputed_logprobs, fallback to rollout_logprobs
+            logprob = batch.get("recomputed_logprobs")
+            if logprob is None:
+                logprob = batch.get("rollout_logprobs")
+            logprobs = logprob.cuda()
             ref_logprobs = (
                 batch["ref_logprobs"].cuda() if "ref_logprobs" in batch else None
             )
@@ -1285,7 +1288,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     else self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=prev_logprobs,
+                    logprob=logprobs,
                     ref_logprob=ref_logprobs,
                     use_reinpp_baseline=self.cfg.algorithm.get(
                         "use_reinpp_baseline", False
