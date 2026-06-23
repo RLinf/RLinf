@@ -145,6 +145,7 @@ Franka 真机强化学习
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
 - **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
+- **VR / PICO（可选）**：通过 PICO 头显和手柄进行 6D 末端遥操作，可替代空间鼠标进行数据采集。
 
 .. warning::
 
@@ -156,6 +157,9 @@ Franka 真机强化学习
    **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
    :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
    YAML 配置字段以及数据采集。
+
+   **使用 VR / PICO 遥操作？** 请参考 :doc:`franka_vr`，了解
+   XRoboToolkit、ZeroMQ、PICO wrapper 配置以及操作步骤。
 
 安装
 ----------------------------------------
@@ -718,6 +722,7 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
    Reward Model <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
    GELLO <franka_gello>
+   VR / PICO <franka_vr>
    Dual-Arm <dual_franka>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>
