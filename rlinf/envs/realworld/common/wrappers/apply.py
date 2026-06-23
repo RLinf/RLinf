@@ -162,8 +162,9 @@ def apply_dual_franka_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gy
     use_gello_joint = cfg.get("use_gello_joint", False)
     if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
         raise ValueError(
-            "Dual-arm franky envs only support GELLO-joint teleop "
-            "(set use_gello_joint=True)."
+            "Dual-arm Franka envs do not support use_spacemouse=True or "
+            "use_gello=True. Use use_gello_joint=True for GELLO-joint teleop "
+            "or use_pico=True for dual-arm PICO teleop."
         )
     _validate_teleop_mode(use_gello_joint=use_gello_joint, use_pico=use_pico)
 
