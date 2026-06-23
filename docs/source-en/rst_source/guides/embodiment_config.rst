@@ -41,6 +41,7 @@ runner
     only_eval: False
     max_prompt_length: 30
     overlap_env_bootstrap: False
+    enable_decoupled_mode: False
 
 ``runner.only_eval``: Run evaluation only without training.
 
@@ -51,6 +52,14 @@ Overlap environment bootstrap (reset) with actor training to hide reset latency.
 This is particularly useful when environment reset is slow.
 **Note:** This is only effective when ``env.train.enable_offload`` is False.
 Enabling this may increase GPU memory pressure if the environment and actor share the same accelerator.
+
+``runner.enable_decoupled_mode``:
+Decouple Env Workers from Rollout Workers. When enabled, an Env Worker is no
+longer bound to a fixed Rollout Worker rank: Env Workers push observations to a
+shared Channel and idle Rollout Workers fetch batches dynamically. This helps
+when Env step time varies (long-tail latency) or there are more Env Workers than
+Rollout Workers. Requires ``env_world_size >= rollout_world_size`` and is not
+compatible with ``enable_p2p``. See :doc:`env_decoupled_mode` for details.
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -145,6 +154,7 @@ rollout
     backend: "huggingface"
     enable_offload: True
     pipeline_stage_num: 2
+    rollout_queue_size: 0
 
     model:
       model_path: "/path/to/hf_model"
@@ -171,6 +181,12 @@ Continuous policies (MLP, CNN, OpenPI, GR00T, etc.) do not use ``rollout.samplin
 ``rollout.enable_offload``: Enable rollout model offloading to reduce GPU memory usage.
 
 ``rollout.pipeline_stage_num``: Number of pipeline stages for rollout.
+
+``rollout.rollout_queue_size``: Only used when ``runner.enable_decoupled_mode`` is
+True. Caps how many Env shards a single Rollout Worker aggregates at once. ``0``
+uses the default ``ceil(env_world_size // rollout_world_size)``; a smaller value
+reduces waiting time, a larger value improves inference batch utilization. See
+:doc:`env_decoupled_mode`.
 
 ``rollout.model.model_path``: Model checkpoint path used by rollout (may match actor).
 

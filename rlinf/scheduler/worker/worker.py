@@ -31,7 +31,6 @@ import ray.util.state
 import torch
 from omegaconf import OmegaConf
 
-from ...utils.utils import _split_channel_message
 from ..cluster import (
     Cluster,
     ClusterEnvVar,
@@ -40,6 +39,7 @@ from ..cluster import (
 )
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
+from .routing import split_channel_message
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -855,7 +855,7 @@ class Worker(metaclass=WorkerMeta):
         split_fn: Optional[Callable[[Any, list[int]], list[Any]]] = None,
         enable_p2p: bool = False,
         options: Optional["CollectiveGroupOptions"] = None,
-        env_decoupled_mode: bool = False,
+        decoupled_mode: bool = False,
         send_queue_size: int = 0,
     ):
         """Send a payload to another worker group according to a routing plan.
@@ -865,7 +865,7 @@ class Worker(metaclass=WorkerMeta):
         through the collective ``send`` API.
 
         In normal mode, the routing plan is built from the current worker rank and the
-        destination group size. In env-decoupled mode, each shard is wrapped with route
+        destination group size. In decoupled mode, each shard is wrapped with route
         metadata:
 
             {
@@ -885,12 +885,12 @@ class Worker(metaclass=WorkerMeta):
                 is True.
             data: Payload to split and send.
             route_key: Optional key used to separate independent routed streams.
-            mode: Optional phase name used only in env-decoupled routing. It is encoded in
+            mode: Optional phase name used only in decoupled routing. It is encoded in
             ``batch_index`` so the response path can distinguish streams that share the
             same base ``tag``. For example, ``mode="train"`` and
             ``tag="rollout_results"`` make the return message use
             ``"train_rollout_results"``.
-            tag: Optional routing tag used to build channel keys and env-decoupled
+            tag: Optional routing tag used to build channel keys and decoupled
                 batch indices.
             async_op: If True, return an ``AsyncRouteWork`` wrapping async send/put
                 operations.
@@ -899,12 +899,12 @@ class Worker(metaclass=WorkerMeta):
             split_fn: Optional custom function for splitting ``data`` by planned shard
                 sizes. If omitted, ``split_batch`` is used.
             enable_p2p: If True, send shards with collective ``send`` instead of
-                ``channel.put``. Not supported with ``env_decoupled_mode``.
+                ``channel.put``. Not supported with ``decoupled_mode``.
             options: Optional collective options forwarded to ``send``.
-            env_decoupled_mode: If True, use env-decoupled routing and wrap each shard
+            decoupled_mode: If True, use decoupled routing and wrap each shard
                 with ``batch_index`` metadata.
             send_queue_size: Number of send queue entries used when building the
-                env-decoupled send plan.
+                decoupled send plan.
 
         Returns:
             ``AsyncRouteWork`` if ``async_op`` is True; otherwise ``None``.
@@ -912,18 +912,18 @@ class Worker(metaclass=WorkerMeta):
         from ..collective import AsyncRouteWork
         from .routing import (
             build_send_plan,
-            env_decoupled_build_send_plan,
+            decoupled_build_send_plan,
             get_group_world_size,
             infer_batch_size,
             split_batch,
         )
 
-        if env_decoupled_mode:
+        if decoupled_mode:
             assert not enable_p2p, (
-                "Now, enable_p2p dpn't support when env_decoupled_mode is True."
+                "Now, enable_p2p dpn't support when decoupled_mode is True."
             )
             assert getattr(self, "batch_router", None) is not None, (
-                "batch_router must be provided when env_decoupled_mode is True."
+                "batch_router must be provided when decoupled_mode is True."
             )
 
         if not enable_p2p and channel is None:
@@ -933,7 +933,7 @@ class Worker(metaclass=WorkerMeta):
         if batch_size is None:
             batch_size = infer_batch_size(data) * self._world_size
 
-        if not env_decoupled_mode:
+        if not decoupled_mode:
             plan = build_send_plan(
                 src_group_name=self.worker_address.root_group_name,
                 dst_group_name=group_name,
@@ -964,7 +964,7 @@ class Worker(metaclass=WorkerMeta):
                 tag_batch_router = None
                 src_rank = self._rank
 
-            plan = env_decoupled_build_send_plan(
+            plan = decoupled_build_send_plan(
                 src_group_name=self.worker_address.root_group_name,
                 dst_group_name=group_name,
                 src_rank=src_rank,
@@ -990,8 +990,8 @@ class Worker(metaclass=WorkerMeta):
 
         works = []
         for entry, payload in zip(plan.entries, payloads):
-            if env_decoupled_mode:
-                # After enabling env_decoupled_mode, the data sending format is as follows:
+            if decoupled_mode:
+                # After enabling decoupled_mode, the data sending format is as follows:
                 # {
                 #     "batch_index": batch_index,
                 #     "batch": batch,
@@ -1045,7 +1045,7 @@ class Worker(metaclass=WorkerMeta):
         infer_batch_size_fn: Optional[Callable[[Any], int]] = None,
         enable_p2p: bool = False,
         options: Optional["CollectiveGroupOptions"] = None,
-        env_decoupled_mode: bool = False,
+        decoupled_mode: bool = False,
         recv_queue_size: int = 0,
     ):
         """Receive routed payload shards from another worker group.
@@ -1055,7 +1055,7 @@ class Worker(metaclass=WorkerMeta):
         be received through ``channel.get`` or, when ``enable_p2p`` is True, through the
         collective ``recv`` API.
 
-        In env-decoupled mode, each channel item is expected to have the form:
+        In decoupled mode, each channel item is expected to have the form:
 
             {
                 "batch_index": <route metadata>,
@@ -1072,7 +1072,7 @@ class Worker(metaclass=WorkerMeta):
             channel: Channel used for routed transfer. Required unless ``enable_p2p``
                 is True.
             route_key: Optional key used to separate independent routed streams.
-            tag: Optional routing tag used to build channel keys and env-decoupled
+            tag: Optional routing tag used to build channel keys and decoupled
                 batch indices.
             async_op: If True, return an ``AsyncRouteWork`` that finalizes the received
                 shards after all async receive operations complete.
@@ -1082,30 +1082,30 @@ class Worker(metaclass=WorkerMeta):
             infer_batch_size_fn: Optional function used to infer shard batch size during
                 validation.
             enable_p2p: If True, receive shards with collective ``recv`` instead of
-                ``channel.get``. Not supported with ``env_decoupled_mode``.
+                ``channel.get``. Not supported with ``decoupled_mode``.
             options: Optional collective options forwarded to ``recv``.
-            env_decoupled_mode: If True, use env-decoupled routing and unwrap
+            decoupled_mode: If True, use decoupled routing and unwrap
                 ``batch_index`` metadata from channel items.
             recv_queue_size: Number of receive queue entries used when building the
-                env-decoupled receive plan.
+                decoupled receive plan.
 
         Returns:
             If ``async_op`` is True, an ``AsyncRouteWork``. Otherwise, returns ``None``
             when no items are received, a single payload when one shard is received, or
             the merged payload when multiple shards are received.
         """
-        if env_decoupled_mode:
+        if decoupled_mode:
             assert not enable_p2p, (
-                "Now, enable_p2p dpn't support when env_decoupled_mode is True."
+                "Now, enable_p2p dpn't support when decoupled_mode is True."
             )
             assert getattr(self, "batch_router", None) is not None, (
-                "batch_router must be provided when env_decoupled_mode is True."
+                "batch_router must be provided when decoupled_mode is True."
             )
 
         from ..collective import AsyncRouteWork
         from .routing import (
             build_recv_plan,
-            env_decoupled_build_recv_plan,
+            decoupled_build_recv_plan,
             get_group_world_size,
             merge_batches,
             validate_batch_size,
@@ -1116,7 +1116,7 @@ class Worker(metaclass=WorkerMeta):
 
         world_size = get_group_world_size(self._manager_proxy, group_name)
 
-        if not env_decoupled_mode:
+        if not decoupled_mode:
             plan = build_recv_plan(
                 src_group_name=group_name,
                 dst_group_name=self.worker_address.root_group_name,
@@ -1145,7 +1145,7 @@ class Worker(metaclass=WorkerMeta):
                 # Send the data to the worker that originally sent it by the batch_index.
                 # In this recv_from, the processed data will be received, so recv_rank needs to be set to the current worker rank
                 recv_rank = self._rank
-            plan = env_decoupled_build_recv_plan(
+            plan = decoupled_build_recv_plan(
                 src_group_name=group_name,
                 dst_group_name=self.worker_address.root_group_name,
                 recv_rank=recv_rank,
@@ -1160,9 +1160,9 @@ class Worker(metaclass=WorkerMeta):
         def _finalize(received_items: list[Any]):
             if not received_items:
                 return None
-            if env_decoupled_mode:
+            if decoupled_mode:
                 # get the tag from the received_items
-                _, _, _, tag = _split_channel_message(received_items[0]["batch_index"])
+                _, _, _, tag = split_channel_message(received_items[0]["batch_index"])
                 if tag in self.batch_router:
                     # If the batch_router is provided,
                     # Save the batch_index to the batch_router.
@@ -1183,7 +1183,7 @@ class Worker(metaclass=WorkerMeta):
                         received_item = item["batch"]
                         # divide the batch_index into send_rank, batch_idx and tag
                         # batch_index: {send_rank}_{batch_idx}_{mode}_{tag}
-                        _, batch_idx, _, _ = _split_channel_message(batch_index)
+                        _, batch_idx, _, _ = split_channel_message(batch_index)
                         sorted_received_items.append((batch_idx, received_item))
                     sorted_received_items.sort(key=lambda x: x[0])
                     received_items = [x[1] for x in sorted_received_items]

@@ -190,9 +190,9 @@ class TeleopWorker(Worker):
                     )
                     if image_np.ndim == 3:
                         image_np = np.expand_dims(image_np, axis=0)
-                    result = self._reward_worker.compute_image_rewards(image_np).wait()[
-                        0
-                    ]
+                    result = self._reward_worker.compute_image_rewards(
+                        {"main_images": image_np}
+                    ).wait()[0]
                     if hasattr(result, "numpy"):
                         result = result.numpy()
                     rm_reward = int(np.asarray(result).reshape(-1)[0])

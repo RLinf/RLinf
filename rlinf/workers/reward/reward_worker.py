@@ -297,9 +297,9 @@ class EmbodiedRewardWorker(Worker):
             ).async_wait()
             last_run = merged_data.get("last_run", None)
             last_run_count = int(last_run.sum().item()) if last_run is not None else 0
-            rewards = self.compute_image_rewards(obeservations=merged_data)
+            rewards = self.compute_image_rewards(observations=merged_data)
             if isinstance(rewards, torch.Tensor):
-                rewards = rewards.cpu().contiguous()
+                rewards = rewards.contiguous()
             self.send_to(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
@@ -316,10 +316,23 @@ class EmbodiedRewardWorker(Worker):
 
     @Worker.timer("compute_image_rewards")
     def compute_image_rewards(
-        self, obeservations: dict[str, Any]
+        self, observations: dict[str, Any]
     ) -> torch.Tensor | np.ndarray:
-        """Run one-shot reward inference and return CPU results."""
-        rewards = self.model.compute_reward(obeservations)
+        """Compute reward scores from observation input.
+
+        Interface:
+            - Input: ``observations`` (batched observation payload passed to
+              ``self.model.compute_reward``).
+            - Output: ``torch.Tensor`` or ``np.ndarray`` reward results. Tensor
+              outputs are detached to CPU, and 1-D tensors are reshaped to ``(N, 1)``.
+
+        Called from:
+            - ``RewardWorker.compute_rewards`` (in-process)
+            - ``RewardWorker._compute_rewards`` (in-process)
+            - ``FrankaEnv._compute_reward_model`` via worker RPC
+            - ``RealworldTeleopEvaluator._teleop_loop`` via worker RPC
+        """
+        rewards = self.model.compute_reward(observations)
         if rewards is not None and rewards.dim() == 1:
             rewards = rewards.unsqueeze(-1)
         if isinstance(rewards, torch.Tensor):
@@ -363,18 +376,18 @@ class EmbodiedRewardWorker(Worker):
                 tag="train_reward_obs",
                 async_op=True,
                 batch_size=self.train_batch_size,
-                env_decoupled_mode=self.env_decoupled_mode,
+                decoupled_mode=self.env_decoupled_mode,
             ).async_wait()
-            rewards = self.compute_image_rewards(obeservations=merged_data)
+            rewards = self.compute_image_rewards(observations=merged_data)
             if isinstance(rewards, torch.Tensor):
-                rewards = rewards.cpu().contiguous()
+                rewards = rewards.contiguous()
             self.send_to(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
                 data=rewards,
                 tag="train_reward_obs",
                 async_op=True,
-                env_decoupled_mode=self.env_decoupled_mode,
+                decoupled_mode=self.env_decoupled_mode,
             )
 
     async def stop(self):

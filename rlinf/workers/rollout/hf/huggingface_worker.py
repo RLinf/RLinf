@@ -30,9 +30,8 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
-from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.utils import _split_channel_message
 
 
 class MultiStepRolloutWorker(Worker):
@@ -278,15 +277,15 @@ class MultiStepRolloutWorker(Worker):
             A merged payload and its split sizes. If only one shard is received, the
             current implementation returns that shard directly.
         """
-        from rlinf.scheduler.worker.routing import (
-            env_decoupled_build_recv_plan,
+        from rlinf.scheduler import (
+            decoupled_build_recv_plan,
             get_batch_size,
             get_group_world_size,
             merge_batches,
         )
 
         world_size = get_group_world_size(self._manager_proxy, group_name)
-        plan = env_decoupled_build_recv_plan(
+        plan = decoupled_build_recv_plan(
             src_group_name=group_name,
             dst_group_name=self.worker_address.root_group_name,
             recv_rank=None,
@@ -303,7 +302,7 @@ class MultiStepRolloutWorker(Worker):
                 assert False, "received_items is empty"
 
             # get the tag from the received_items
-            _, _, _, tag = _split_channel_message(received_items[0]["batch_index"])
+            _, _, _, tag = split_channel_message(received_items[0]["batch_index"])
 
             assert tag in self.batch_router, (
                 f"{tag=} need to be already in the batch_router"
@@ -397,8 +396,8 @@ class MultiStepRolloutWorker(Worker):
 
             AsyncRouteWork wrapping the async channel put operations.
         """
+        from rlinf.scheduler import build_send_key, split_batch
         from rlinf.scheduler.collective import AsyncRouteWork
-        from rlinf.scheduler.worker.routing import build_send_key, split_batch
 
         assert tag in self.batch_router, (
             f"{tag=} need to be already in the batch_router"
@@ -418,7 +417,7 @@ class MultiStepRolloutWorker(Worker):
         works = []
         for i, payload in enumerate(payloads):
             batch_index = self.batch_router[tag][i]
-            send_rank, _, mode, _ = _split_channel_message(batch_index)
+            send_rank, _, mode, _ = split_channel_message(batch_index)
             # After enabling env_decoupled_mode, the data sending format is as follows:
             # {
             #     "batch_index": batch_index,
