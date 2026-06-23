@@ -483,6 +483,7 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
             new_action = action_flat.copy()
 
         replaced_any = False
+        replaced_by_side: dict[str, bool] = {}
         pico_info: dict[str, Any] = {}
         for side, expert in self.experts.items():
             arm_idx = self._arm_index(side)
@@ -506,6 +507,8 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
             for key, value in side_info.items():
                 pico_info[f"{side}_{key}"] = value
 
+            replaced_by_side[side] = bool(replaced)
+            pico_info[f"{side}_pico_replaced"] = bool(replaced)
             if replaced:
                 new_action[action_slice] = self._expert_delta_to_tcp_action(
                     expert_action,
@@ -518,6 +521,10 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
         pico_info["pico_ready"] = bool(
             pico_info.get("left_pico_ready", False)
             or pico_info.get("right_pico_ready", False)
+        )
+        pico_info["pico_replaced"] = replaced_any
+        pico_info["pico_dual_replaced"] = bool(
+            replaced_by_side.get("left", False) and replaced_by_side.get("right", False)
         )
 
         new_action = np.clip(
