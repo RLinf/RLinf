@@ -194,12 +194,8 @@ def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict)
         rr.rollout_logprobs = _apply_mask_to_list(rr.rollout_logprobs, idx_mask)
     if rr.ref_logprobs is not None:
         rr.ref_logprobs = _apply_mask_to_tensor(rr.ref_logprobs, idx_mask)
-    if rr.prev_logprobs is not None:
-        rr.prev_logprobs = _apply_mask_to_tensor(rr.prev_logprobs, idx_mask)
-    if rr.recompute_prev_logprobs is not None:
-        rr.recompute_prev_logprobs = _apply_mask_to_tensor(
-            rr.recompute_prev_logprobs, idx_mask
-        )
+    if rr.recomputed_logprobs is not None:
+        rr.recomputed_logprobs = _apply_mask_to_tensor(rr.recomputed_logprobs, idx_mask)
 
     _dsn = int(down_sampling_config.get("down_sample_to_n", -1))
     if _dsn > 0:
