@@ -14,7 +14,7 @@
 
 """Eval-processor registry for the ``openpi_pytorch`` model.
 
-:func:`get_eval_processer` maps an environment name to its
+:func:`get_eval_processor` maps an environment name to its
 :class:`EvalProcessor` subclass, mirroring ``get_openpi_config`` in
 ``rlinf.models.embodiment.openpi.dataconfig``. The registry values are lazy
 loaders (thunks) so that importing this package stays cheap: the heavy
@@ -43,7 +43,7 @@ _EVAL_PROCESSORS = {
 }
 
 
-def get_eval_processer(
+def get_eval_processor(
     env_type,
     norm_stats,
     tokenizer,
@@ -78,4 +78,4 @@ def get_eval_processer(
     )
 
 
-__all__ = ["EvalProcessor", "get_eval_processer"]
+__all__ = ["EvalProcessor", "get_eval_processor"]

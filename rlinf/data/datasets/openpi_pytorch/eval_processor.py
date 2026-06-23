@@ -18,7 +18,7 @@ An :class:`EvalProcessor` turns raw env observations into a model
 ``Observation`` and maps sampled model actions back into env actions. Each
 environment provides a concrete subclass (e.g. ``BehaviorEvalProcessor``); the
 model factory selects one by env name via
-:func:`rlinf.data.datasets.openpi_pytorch.get_eval_processer`, so the factory is
+:func:`rlinf.data.datasets.openpi_pytorch.get_eval_processor`, so the factory is
 not coupled to any single environment.
 
 This module is intentionally dependency-free (no torch / model imports) so it can

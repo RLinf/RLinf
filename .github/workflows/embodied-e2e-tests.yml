@@ -564,7 +564,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/embodied/run.sh behavior_openpi_pytorch_eval
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_pytorch_eval
 
       - name: Clean up
         run: |

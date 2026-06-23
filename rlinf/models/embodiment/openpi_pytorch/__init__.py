@@ -59,7 +59,7 @@ def get_model(cfg, torch_dtype=None):
     """
     import safetensors.torch
 
-    from rlinf.data.datasets.openpi_pytorch import get_eval_processer
+    from rlinf.data.datasets.openpi_pytorch import get_eval_processor
     from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
         OpenPiPytorchActionModel,
     )
@@ -118,7 +118,7 @@ def get_model(cfg, torch_dtype=None):
     # single environment; ``openpi.env`` defaults to "behavior" (the only env
     # registered today) when absent.
     env_type = model_cfg.get("env", "behavior")
-    processor = get_eval_processer(
+    processor = get_eval_processor(
         env_type,
         norm_stats,
         tokenizer,

@@ -365,25 +365,24 @@ BEHAVIOR evaluation is also supported with the new **self-contained PyTorch
 OpenPI** code (model ``model_type: openpi_pytorch``; see
 :doc:`sft_openpi_pytorch` for the matching SFT flow). The eval config is:
 
-- ``examples/embodiment/config/behavior_ppo_openpi_pi05_pytorch_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
 
 This config runs in eval-only mode (``runner.only_eval: True``) and consumes a
 **new-format** PyTorch checkpoint, i.e. one produced by the OpenPI checkpoint
 convertor (``ckpt_convertor.openpi`` ``old2new`` / ``sft2new``). Set the model
 paths directly in the config as ``/path/to/...`` placeholders:
 
-- ``rollout.model.model_path`` / ``actor.model.model_path``: the new-format eval
-  checkpoint (the latter references the former).
-- ``actor.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
+- ``rollout.model.model_path``: the new-format eval checkpoint.
+- ``rollout.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
   Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``.
-- ``actor.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
+- ``rollout.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
   tokenizer model.
 
 .. code:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash examples/embodiment/eval_embodiment.sh behavior_ppo_openpi_pi05_pytorch_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
 
 .. note::
 

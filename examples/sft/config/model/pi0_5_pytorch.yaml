@@ -35,7 +35,7 @@ openpi:
   action_chunk: ${actor.model.num_action_chunks}
   action_env_dim: ${actor.model.action_dim}
   # Selects the per-env eval processor
-  # (rlinf.data.datasets.openpi_pytorch.get_eval_processer). SFT builds the
+  # (rlinf.data.datasets.openpi_pytorch.get_eval_processor). SFT builds the
   # processor but does not use it for eval.
   env: behavior
   # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.

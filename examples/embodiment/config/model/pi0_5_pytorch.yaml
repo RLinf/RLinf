@@ -2,7 +2,7 @@ model_type: "openpi_pytorch"
 
 # Model-shape template only. The real filesystem paths (model_path and the
 # openpi.assets_dir / openpi.asset_id / openpi.paligemma_tokenizer below) are set
-# in the eval experiment config (behavior_ppo_openpi_pi05_pytorch_eval.yaml); the
+# in the eval experiment config (behavior_openpi_pi05_pytorch_eval.yaml); the
 # values here are placeholders so this template stays path-free and reusable.
 
 # Weight dtype for eval: bf16. (SFT keeps an fp32 master; see the SFT template.)
@@ -31,11 +31,11 @@ add_value_head: False
 # the eval experiment config.
 openpi:
   num_images_in_input: 3
-  action_chunk: ${actor.model.num_action_chunks}
-  num_steps: ${actor.model.num_steps}
-  action_env_dim: ${actor.model.action_dim}
+  action_chunk: ${rollout.model.num_action_chunks}
+  num_steps: ${rollout.model.num_steps}
+  action_env_dim: ${rollout.model.action_dim}
   # Selects the per-env eval processor
-  # (rlinf.data.datasets.openpi_pytorch.get_eval_processer).
+  # (rlinf.data.datasets.openpi_pytorch.get_eval_processor).
   env: behavior
   # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
   model_action_dim: 32

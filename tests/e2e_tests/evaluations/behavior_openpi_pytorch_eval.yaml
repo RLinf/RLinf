@@ -1,0 +1,70 @@
+defaults:
+  - env/behavior_r1pro@env.eval
+  - model/pi0_5_pytorch@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,env: 0-1
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results/behavior_openpi_pytorch_eval"
+    project_name: rlinf
+    experiment_name: "test_openpi_pytorch_eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+
+  max_epochs: 1
+  max_steps: 1
+
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 2
+    max_episode_steps: 512
+    max_steps_per_rollout_epoch: 512
+    video_cfg:
+      save_video: False
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: null
+
+  model:
+    # Minimal CI fixture: the new-format eval checkpoint staged under /workspace.
+    model_path: /workspace/ci_behavior/model
+    add_value_head: False
+    openpi:
+      assets_dir: /workspace/ci_behavior/model
+      asset_id: physical-intelligence/behavior
+      paligemma_tokenizer: /workspace/ci_behavior/paligemma_tokenizer/paligemma_tokenizer.model
