@@ -46,6 +46,12 @@ Franka 真机强化学习
 
       运行双臂 Franka 配置。
 
+   .. grid-item-card:: Dual PICO DAgger
+      :link: dual_franka_pico_dagger
+      :link-type: doc
+
+      使用 PICO 采集双臂数据并运行 HG-DAgger。
+
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
       :link-type: doc
@@ -724,6 +730,7 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
    GELLO <franka_gello>
    VR / PICO <franka_vr>
    Dual-Arm <dual_franka>
+   Dual PICO DAgger <dual_franka_pico_dagger>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>

@@ -46,6 +46,12 @@ Explore alternative Franka hardware, sensors, and training recipes.
 
       Run a two-arm Franka setup.
 
+   .. grid-item-card:: Dual PICO DAgger
+      :link: dual_franka_pico_dagger
+      :link-type: doc
+
+      Collect dual-arm PICO data and run HG-DAgger.
+
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
       :link-type: doc
@@ -713,6 +719,7 @@ Here we provide demo videos and training curves for the task peg-insertion and c
    GELLO <franka_gello>
    VR / PICO <franka_vr>
    Dual-Arm <dual_franka>
+   Dual PICO DAgger <dual_franka_pico_dagger>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
