@@ -16,7 +16,7 @@ Each section gives the setup path for teleoperation, data collection, sim-to-rea
          <a href="embodied/franka.html" style="text-decoration: underline; color: blue;">
            <b>Franka</b>
          </a><br>
-         Use the Franka section for base real-world RL, reward models, ZED + Robotiq, GELLO, dual-arm rigs, dexterous hands, Pi0 SFT, and HG-DAgger
+         Use the Franka section for base real-world RL, reward models, ZED + Robotiq, GELLO, VR / PICO, dual-arm rigs, dexterous hands, Pi0 SFT, and HG-DAgger
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
