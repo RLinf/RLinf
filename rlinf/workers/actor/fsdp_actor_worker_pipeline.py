@@ -21,8 +21,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from rlinf.scheduler import Channel, Worker
-from rlinf.utils.comm_mapping import CommMapper
+from rlinf.scheduler import Channel, CommMapper, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import compute_rollout_metrics
 from rlinf.utils.utils import unpack_batch

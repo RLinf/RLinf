@@ -81,6 +81,7 @@ class SupportedModel:
 SupportedModel.QWEN2_5 = SupportedModel.register("qwen2.5", force=True)
 SupportedModel.QWEN2_5_VL = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3 = SupportedModel.register("qwen3", force=True)
+SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
@@ -1180,11 +1181,6 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     assert cfg.algorithm.recompute_logprobs or cfg.rollout.return_logprobs, (
         "One of `algorithm.recompute_logprobs` or `rollout.return_logprobs` must be True to compute `prev_logprobs`."
     )
-
-    if cfg.algorithm.recompute_logprobs and cfg.rollout.return_logprobs:
-        assert cfg.algorithm.get("importance_sampling_fix", False), (
-            "Importance sampling fix must be enabled if both `algorithm.recompute_logprobs` and `rollout.return_logprobs` are True."
-        )
 
     with open_dict(cfg):
         cfg.algorithm.training_batch_size_per_gpu = cfg.algorithm.get(

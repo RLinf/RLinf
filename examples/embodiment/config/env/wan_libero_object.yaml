@@ -37,12 +37,12 @@ enable_offload: False
 
 wan_wm_hf_ckpt_path: null
 
-VAE_path: ${env.train.wan_wm_hf_ckpt_path}/Wan2.2_VAE.pth
-model_path: ${env.train.wan_wm_hf_ckpt_path}/model-00001.safetensors
+VAE_path: ${.wan_wm_hf_ckpt_path}/Wan2.2_VAE.pth
+model_path: ${.wan_wm_hf_ckpt_path}/model-00001.safetensors
 
 # enable KIR Trick
 enable_kir: True # keyframe-int rollout
-initial_image_path: ${env.train.wan_wm_hf_ckpt_path}/dataset/
+initial_image_path: ${.wan_wm_hf_ckpt_path}/dataset/
 
 chunk: 8                     # should be same as chunk in VLA
 condition_frame_length: 5    # condition frame length of world model
@@ -51,4 +51,4 @@ num_frames: 13               # total number of frames to encode = condition_fram
 
 reward_model:
   type: ResnetRewModel
-  from_pretrained: ${env.train.wan_wm_hf_ckpt_path}/resnet_rm.pth
+  from_pretrained: ${..wan_wm_hf_ckpt_path}/resnet_rm.pth

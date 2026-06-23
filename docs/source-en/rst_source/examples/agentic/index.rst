@@ -92,6 +92,16 @@ The following examples include math reasoning RL and agentic AI workflows, such 
            Math reasoning RL training using the PPO algorithm
        </p>
      </div>
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
+          <b>Qwen3-VL GRPO for VQA</b>
+         </a><br>
+         GRPO training for vision-language reasoning on geometric problem solving (Geo3K)
+       </p>
+     </div>
    </div>
 
 .. toctree::
@@ -105,3 +115,4 @@ The following examples include math reasoning RL and agentic AI workflows, such 
    rStar2 <rstar2>
    Math GRPO <reasoning>
    Math PPO <reasoning_ppo>
+   Qwen3 VL GRPO <qwen3_vl_geo3k>

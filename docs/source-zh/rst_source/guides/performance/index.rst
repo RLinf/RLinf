@@ -19,6 +19,8 @@
      - 为大模型配置 5D 并行。
    * - :doc:`LoRA <../lora>`
      - 使用 LoRA adapter 训练。
+   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
+     - 解耦 Env Worker 与 Rollout Worker，用于具身任务中的动态 rollout 调度。
 
 .. toctree::
    :hidden:
@@ -28,3 +30,4 @@
    Profiling <../profile>
    5D 并行 <../5D>
    LoRA <../lora>
+   Env Decoupled Mode <../env_decoupled_mode>
