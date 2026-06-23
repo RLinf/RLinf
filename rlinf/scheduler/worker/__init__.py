@@ -12,10 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .routing import (
+    RouteEntry,
+    RoutePlan,
+    build_recv_plan,
+    build_route_channel_key,
+    build_send_plan,
+    infer_batch_size,
+    merge_batches,
+    split_batch,
+)
 from .worker import Worker, WorkerAddress
 from .worker_group import WorkerGroup, WorkerGroupFunc, WorkerGroupFuncResult
 
 __all__ = [
+    "RouteEntry",
+    "RoutePlan",
+    "build_recv_plan",
+    "build_route_channel_key",
+    "build_send_plan",
+    "infer_batch_size",
+    "merge_batches",
+    "split_batch",
     "Worker",
     "WorkerAddress",
     "WorkerGroup",
