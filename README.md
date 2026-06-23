@@ -251,7 +251,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             </a> ✅
           </li>
           <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">
+            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_vr.html">
               PICO VR
             </a> ✅
           </li>          
