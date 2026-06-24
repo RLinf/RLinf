@@ -489,6 +489,35 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  qwen3-vl-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MEGATRON_PATH=/workspace/dataset/Megatron-LM
+          bash requirements/install.sh agentic --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1 --no-apex
+
+      - name: FSDP SGLang Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export LD_LIBRARY_PATH=.venv/lib/python3.11/site-packages/nvidia/cuda_runtime/lib/:$LD_LIBRARY_PATH
+          bash tests/e2e_tests/reasoning/run.sh qwen3-vl-2b-grpo-collocated-fsdp-sgl
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   qwen-moe-grpo-test:
     runs-on: reason
     steps:

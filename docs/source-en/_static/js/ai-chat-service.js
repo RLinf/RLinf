@@ -117,7 +117,7 @@ class SphinxAIChatService {
     const searchParameters = {
       q: message,
       prefix: false,
-      query_by: 'embedding',
+      query_by: 'content',
       exclude_fields: 'embedding',
       conversation_model_id: modeConfig.model,
       conversation: true,
@@ -163,7 +163,7 @@ class SphinxAIChatService {
     const searchParameters = {
       q: message,
       prefix: false,
-      query_by: 'embedding',
+      query_by: 'content',
       exclude_fields: 'embedding',
       conversation_model_id: modeConfig.model,
       conversation: true,

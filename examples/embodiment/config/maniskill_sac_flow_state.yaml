@@ -44,9 +44,6 @@ algorithm:
   critic_subsample_size: 2 # number of Q-heads to subsample for critic update, used only in RLPD (num_q_heads=10)
   enable_drq: False
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # same as maniskill_sac_mlp.yaml
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -83,25 +80,11 @@ algorithm:
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: True
     ignore_terminations: True
@@ -110,6 +93,7 @@ env:
     max_steps_per_rollout_epoch: 2
   
   eval:
+    rollout_epoch: 1
     total_num_envs: 16
     auto_reset: True
     ignore_terminations: True

@@ -36,17 +36,17 @@ enable_offload: False
 ###  ------------------Opensora params define here ------------------
 
 opensora_wm_hf_ckpt_path: null
-initial_image_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset/
+initial_image_path: ${.opensora_wm_hf_ckpt_path}/dataset/
 
 world_model_cfg:
   # Dataset settings
-  stats_path: ${env.train.opensora_wm_hf_ckpt_path}/dataset_statistics.json
+  stats_path: ${..opensora_wm_hf_ckpt_path}/dataset_statistics.json
   dtype: bf16
 
   # Model settings
   model:
     type: "STDiT3-XL/2"
-    from_pretrained: ${env.train.opensora_wm_hf_ckpt_path}/model-00001.safetensors
+    from_pretrained: ${...opensora_wm_hf_ckpt_path}/model-00001.safetensors
     qk_norm: true
     enable_flash_attn: true
     enable_layernorm_kernel: true
@@ -55,13 +55,13 @@ world_model_cfg:
 
   vae:
     type: SDXL
-    from_pretrained: ${env.train.opensora_wm_hf_ckpt_path}/vae
+    from_pretrained: ${...opensora_wm_hf_ckpt_path}/vae
     micro_frame_size: 8   # had better not to be changed
     micro_batch_size: 64  # had better not to be changed
 
   reward_model:
     type: ResnetRM
-    from_pretrained: ${env.train.opensora_wm_hf_ckpt_path}/resnet_rm.pth
+    from_pretrained: ${...opensora_wm_hf_ckpt_path}/resnet_rm.pth
 
   scheduler:
     type: rflow

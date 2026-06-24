@@ -127,7 +127,8 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5",
+    "pyzmq"
 ]
 xsquare_turtle2 = [
     "pyyaml",
@@ -179,6 +180,9 @@ override-dependencies = [
     "tensorflow-addons==0.23.0 ; platform_machine == 'x86_64'",
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
+    "pywin32==306; sys_platform == 'win32'",
+    "sympy>=1.13.1",
+    "tensorflow-metadata<=1.17.3",
 ]
 
 [tool.setuptools]

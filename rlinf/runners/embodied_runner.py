@@ -147,13 +147,24 @@ class EmbodiedRunner:
     ):
         """Async version that puts table printing in queue."""
         self.log_queue.put(
-            (print_metrics_table, (step, total_steps, start_time, metrics, start_step))
+            (
+                print_metrics_table,
+                (
+                    step,
+                    total_steps,
+                    start_time,
+                    metrics,
+                    start_step,
+                    self.metric_logger.log_path,
+                ),
+            )
         )
 
     def init_workers(self):
         # create worker in order to decrease the maximum memory usage
         rollout_handle = self.rollout.init_worker()
         env_handle = self.env.init_worker()
+
         if self.reward is not None:
             self.reward.init_worker().wait()
 

@@ -36,6 +36,22 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async
 
+      - name: ManiSkill Async SAC test with env decoupled mode
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled
+      
+      - name: ManiSkill Async SAC eval test with env decoupled mode
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/evaluations/run.sh maniskill_sac_mlp_async_decoupled_eval 
+
       - name: ManiSkill SAC Flow State test
         timeout-minutes: 20
         run: |
@@ -371,6 +387,7 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft osmesa
+          ray stop
 
       - name: Clean up
         run: |
@@ -472,6 +489,17 @@ jobs:
           export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
           export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
           bash tests/e2e_tests/embodied/run.sh robotwin_grpo_openvlaoft
+
+      - name: RoboTwin-OpenVLA-OFT eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=ALOHA
+          export ROBOTWIN_PATH="/workspace/dataset/RoboTwin"
+          export PYTHONPATH=${ROBOTWIN_PATH}:$PYTHONPATH
+          bash tests/e2e_tests/evaluations/run.sh robotwin_place_empty_cup_openvlaoft_eval
 
       - name: Clean up
         run: |
@@ -667,6 +695,14 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
+
+      - name: Libero-Spatial PPO Pi05 torch compile test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05 +rollout.enable_torch_compile=true +rollout.torch_compile_mode=max-autotune
 
       - name: ManiSkill Async PPO test
         timeout-minutes: 20
@@ -1253,6 +1289,67 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d6
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-gr00t_n1d7-maniskill-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.7/
+          bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t_n1d7
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-polaris-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export POLARIS_PATH=/workspace/dataset/polaris
+          bash requirements/install.sh embodied --model openpi --env polaris
+
+      - name: PolaRiS PPO OpenPI Pi05 test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export POLARIS_DATA_PATH=/workspace/dataset/PolaRiS-Hub
+          source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
+          bash tests/e2e_tests/embodied/run.sh polaris_tapeintocontainer_ppo_openpi_pi05
 
       - name: Clean up
         run: |

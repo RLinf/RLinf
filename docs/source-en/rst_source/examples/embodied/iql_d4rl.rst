@@ -1,6 +1,12 @@
 RL with D4RL Benchmark
 ======================
 
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/d4rl.png
+   :align: center
+   :width: 70%
+
+   Offline RL on the D4RL benchmark.
+
 This document explains how to run **D4RL-based offline RL training** with IQL (Implicit Q-Learning) in RLinf. It is intended for users who want to train policies directly from offline datasets without online environment interaction.
 
 The primary objective is to train a policy that:
@@ -9,21 +15,61 @@ The primary objective is to train a policy that:
 2. **Follows IQL**: Value function via expectile regression, actor via AWR-style weighting, twin Q-networks with TD targets.
 3. **Fits RLinf's stack**: the IQL actor owns offline data loading; EnvWorker, RolloutWorker, and OfflineRunner handle eval; PyTorch + FSDP supported.
 
-Environment
------------
+Overview
+--------
 
-**D4RL (Datasets for Deep Data-Driven Reinforcement Learning)**
+Train a policy from D4RL offline datasets with IQL — no online environment interaction.
 
-RLinf uses the D4RL benchmark suite. Configs are provided for:
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- **MuJoCo locomotion**: e.g. ``halfcheetah-medium-v2``, ``hopper-medium-replay-v2`` — continuous control, state-based.
-- **AntMaze**: e.g. ``antmaze-large-play-v0`` — goal-conditioned navigation, sparse rewards.
-- **Kitchen / Adroit**: manipulation and dexterous hand tasks — high-dimensional state and action.
+   .. grid-item-card:: Algorithm
+      :text-align: center
 
-Observation and action spaces are defined per task in D4RL.
+      IQL
 
-Algorithm
----------
+   .. grid-item-card:: Models
+      :text-align: center
+
+      MLP
+
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      D4RL
+
+   .. grid-item-card:: Training
+      :text-align: center
+
+      Offline
+
+| **You'll do:** install with D4RL → pick a config → run ``run_offline_rl.sh`` → watch ``eval/return``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · D4RL datasets (downloaded on first run).
+
+Tasks
+~~~~~
+
+RLinf ships IQL configs for three D4RL task families; observation and action spaces are defined per task in D4RL.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 34 40
+
+   * - Family
+     - Example task
+     - Config
+   * - MuJoCo locomotion
+     - ``halfcheetah-medium-v2``
+     - ``d4rl_iql_mujoco.yaml``
+   * - AntMaze
+     - ``antmaze-large-play-v0``
+     - ``d4rl_iql_antmaze.yaml``
+   * - Kitchen / Adroit
+     - manipulation / dexterous hand
+     - ``d4rl_iql_kitchen_adroit.yaml``
+
+How IQL Works
+-------------
 
 **Core Algorithm Components**
 
@@ -38,8 +84,8 @@ Algorithm
 
    Each update step: the actor fetches one batch from its rank-local ``DataLoader`` (built in ``EmbodiedIQLFSDPPolicy.build_offline_dataloader``), then runs IQL in the current implementation order: update Value → update Actor → update Critic → soft-update target critic.
 
-Installation & Dependencies
-----------------------------
+Installation
+------------
 
 Install the embodied stack with D4RL support:
 
@@ -50,8 +96,8 @@ Install the embodied stack with D4RL support:
 
 The launch script sets ``MUJOCO_GL=egl`` and ``PYOPENGL_PLATFORM=egl`` by default for headless runs.
 
-Running the Script
-----------------------------
+Run It
+------
 
 **1. Configuration Files**
 
@@ -165,6 +211,8 @@ Visualization and Results
    tensorboard --logdir ./logs --port 6006
 
 **2. Key Metrics Tracked**
+
+For metric definitions, see :doc:`Training metrics <../../reference/metrics>`. IQL-relevant metrics:
 
 - **Training Metrics**:
 

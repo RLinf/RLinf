@@ -1,41 +1,84 @@
-Franka 真机使用 GELLO 遥操作设备
-====================================
+在 Franka 上使用 GELLO
+================================================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gello.jpeg
+   :align: center
+   :width: 80%
 
-本指南介绍如何在 RLinf 的 Franka 真实世界环境中配置和使用 **GELLO** 遥操作设备。
-本文是基础 :doc:`franka` 文档的扩展，仅涵盖 GELLO 硬件所需的 **额外** 步骤。
+   用于采集 Franka 示教数据的 GELLO 关节级遥操作设备。
 
-.. note::
+使用 GELLO 作为 Franka 数据采集的关节级遥操作设备。你将安装 ``gello_teleop``，验证串口设备，更新采集配置，并监控保存的 episode。
 
-   如果你还没有阅读过基础的 Franka 指南，请先参考 :doc:`franka`。
-   本页仅涉及 GELLO 硬件相关的额外配置。
+概览
+----------------------------------------
 
+用关节级 GELLO 控制替代 SpaceMouse 采集 Franka 示教。
 
-硬件架构概览
------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-`GELLO <https://github.com/wuphilipp/gello_software>`_ 是一种关节级遥操作设备，
-其运动学结构与 Franka 机械臂一致，操控比空间鼠标更直观、精确，并原生支持夹爪控制。
+   .. grid-item-card:: 模型
+      :text-align: center
 
-典型的 GELLO 部署方式是将设备连接到 **控制节点**
-（通常为 NUC 或与机械臂物理连接的机器），通过 USB 串口适配器（FTDI）通信。
+      Downstream CNN/OpenPI policies
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      Teleop collection · SFT/RL downstream
+
+   .. grid-item-card:: 任务
+      :text-align: center
+
+      Franka demonstration collection
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      Franka · GELLO · gripper
+
+| **你将完成:** 安装 GELLO 依赖 → 配置串口权限 → 测试 expert 数据流 → 运行采集.
+| **前置条件:** :doc:`franka` · GELLO hardware · Dynamixel permissions.
+
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 24 24 24
 
-   * - 节点
-     - 角色
-     - 硬件
-   * - **GPU 服务器** (node 0)
-     - Actor、rollout、env worker；相机采集
-     - NVIDIA GPU（如 RTX 4090），RealSense 相机
-   * - **NUC** (node 1)
-     - FrankaController、GELLO 遥操作
-     - Franka 机械臂、GELLO 设备（USB-FTDI）
+   * - 任务
+     - 配置 / 入口
+     - 说明
+   * - GELLO test
+     - ``gello_expert``
+     - 验证实时关节与夹爪读数。
+   * - Collection
+     - ``realworld_collect_data_gello``
+     - 保存 GELLO 遥操作产生的成功示教。
+   * - Monitoring
+     - ``collect_monitor.py``
+     - 从日志跟踪 Ray worker 采集进度。
 
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-GELLO 软件安装
-------------------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - 字段
+     - 说明
+   * - Observation
+     - 与目标 Franka 采集配置相同的相机/状态布局。
+   * - Action
+     - GELLO 关节读数转换为 Franka 目标位姿或关节动作。
+   * - Reward
+     - 采集成功标记或下游任务奖励。
+   * - Prompt
+     - 继承下游 Franka 任务配置。
+
+安装
+----------------------------------------
 
 GELLO 依赖两个软件包，必须 **按顺序** 安装：
 
@@ -45,16 +88,25 @@ GELLO 依赖两个软件包，必须 **按顺序** 安装：
 两个软件包都应安装在运行 GELLO 设备的节点上（通常为 NUC / 控制节点）。
 
 1. 安装 ``gello`` （gello_software）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-选择一个安装目录，然后克隆仓库并初始化其子模块（包含 **Dynamixel SDK**）：
+选择一个安装目录，然后克隆仓库并仅初始化 **Dynamixel SDK** 子模块：
 
 .. code-block:: bash
 
    cd /path/to/install/gello
    git clone https://github.com/wuphilipp/gello_software.git
    cd gello_software
-   git submodule init && git submodule update
+   git submodule update --init third_party/DynamixelSDK
+
+.. note::
+
+   ``gello_software`` 还注册了 ``third_party/mujoco_menagerie``
+   （一个体量较大的机器人 MJCF 资产仓库，仅被上游的 mujoco 演示脚本
+   使用）。RLinf 的 GELLO 遥操作走 ``gello-teleop``，它自带 Franka
+   的 MJCF，并不需要 menagerie 子模块。
+   ``git submodule update --init <path>`` 只会注册并克隆指定的子模块；
+   如果执行裸的 ``git submodule init``，则会把 menagerie 一并排入队列。
 
 安装 ``gello`` 包和 **Dynamixel SDK** （作为第三方子模块）：
 
@@ -81,16 +133,10 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 `gello_software README <https://github.com/wuphilipp/gello_software#readme>`_。
 
 2. 安装 ``gello-teleop``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``gello-teleop`` 封装了 ``gello`` 驱动，并集成了 Franka 正运动学
-（使用 dm_control/MuJoCo）和遥操作代理接口。直接从 GitHub 仓库安装：
-
-.. code-block:: bash
-
-   pip install git+https://github.com/RLinf/gello-teleop.git
-
-或者，如果你希望使用可编辑安装：
+（使用 dm_control/MuJoCo）和遥操作代理接口。使用可编辑安装：
 
 .. code-block:: bash
 
@@ -98,15 +144,9 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
    cd gello-teleop
    pip install -e .
 
-如果需要同时自动安装 ``gello`` 依赖（如果尚未单独安装）：
-
-.. code-block:: bash
-
-   pip install "gello-teleop[gello] @ git+https://github.com/RLinf/gello-teleop.git"
-
 
 3. 配置串口设备
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 将 GELLO 设备通过 USB-FTDI 适配器插入控制节点。识别串口设备：
 
@@ -130,13 +170,14 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
    因为前者在重启和插拔其他 USB 设备后保持不变。
 
 4. 验证 GELLO 设备
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-运行内置测试脚本，确认 GELLO 设备通信正常并能产生有效的关节数据：
+运行 RLinf 内置测试脚本，确认 GELLO 设备通信正常并能产生有效的 TCP 目标数据：
 
 .. code-block:: bash
 
-   python -m gello_teleop.gello_expert \
+   export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   python -m rlinf.envs.realworld.common.gello.gello_expert \
        --port /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0
 
 你应该看到持续更新的输出，类似于：
@@ -148,8 +189,8 @@ Dynamixel SDK 用于与 GELLO 设备内部的 Dynamixel 舵机通信。
 如果在移动 GELLO 设备时输出数据持续更新，则说明安装成功。
 
 
-YAML 配置说明
--------------------
+配置文件
+----------------------------------------
 
 要使用 GELLO 进行数据采集，请使用配置文件
 ``examples/embodiment/config/realworld_collect_data_gello.yaml``。
@@ -184,8 +225,31 @@ YAML 配置说明
 **使用 GELLO 进行数据采集** 章节。
 
 
+运行
+----------------------------------------
+
+采集脚本以 Ray Worker 运行，stdout 会被 Ray 的 log monitor 批量缓冲，
+``tqdm`` 的 ``\r`` 原位刷新因此失效。要拿到实时进度条，请在
+**另一个终端** 运行 ``toolkits/realworld_check/collect_monitor.py``：
+它通过 tail 采集日志渲染一个 ``tqdm`` 进度条，显示成功计数、最近的
+脚踏事件以及被丢弃的 episode。
+
+.. code-block:: bash
+
+   # 终端 1 —— 启动采集（stdout tee 到日志文件）
+   bash examples/embodiment/collect_data.sh \
+       realworld_collect_data_gello_joint_dual_franka 2>&1 \
+       | tee logs/collect.log
+
+   # 终端 2 —— 实时进度条（日志文件未出现时会等待）
+   python toolkits/realworld_check/collect_monitor.py logs/collect.log
+
+启动时 monitor 会回放已有日志，使进度条初始位置对齐到此前已保存的
+episode 数；若希望直接从 EOF 开始 tail，请加 ``--no-replay``。
+
+
 集群配置注意事项
----------------------
+----------------------------------------
 
 集群配置步骤与 :doc:`franka` 中描述的相同，主要额外要求如下：
 
@@ -200,7 +264,7 @@ YAML 配置说明
 
 
 故障排查
-----------------
+----------------------------------------
 
 **GELLO 设备未检测到**
 

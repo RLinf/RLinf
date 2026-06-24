@@ -1,5 +1,5 @@
-Quickstart 1: PPO Training of VLAs on Maniskill3
-=================================================
+Quick Start
+===========
 
 This quick-start walks you through training the Visual-Language-Action model, including
 `OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
@@ -13,7 +13,7 @@ focusing on complex contact manipulation and embodied intelligence tasks.
 The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
 supporting various tasks such as grasping, assembling, drawing, and locomotion.
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/execution_modes`).
+We have also implemented system-level optimizations for the GPU simulator (see :doc:`../concepts/execution_modes`).
 
 Launch Training
 --------------------------
@@ -118,13 +118,16 @@ Example:
      use_training_pipeline: True
 
    algorithm:
-     normalize_advantages: False
+     adv_type: gae
+     normalize_advantages: True
 
-Current limitations:
+Notes and limitations:
 
-- ``algorithm.normalize_advantages`` must be ``False`` because the pipeline path
-  computes advantages on the environment worker and streams actor micro-batches
-  without rebuilding the full rollout batch on the actor for normalization.
+- ``algorithm.normalize_advantages`` is supported. The pipeline path computes raw
+  advantages on the environment worker, aggregates masked advantage statistics
+  across the environment workers that feed each actor rank, and normalizes before
+  streaming actor micro-batches.
+- ``algorithm.adv_type`` currently supports only ``gae`` in this mode.
 - This mode is intended for embodied FSDP actor training with PPO/GRPO-style
   actor losses. It is not supported for ``embodied_sac``, ``embodied_dagger``,
   or ``embodied_nft``.
@@ -156,7 +159,7 @@ It is recommended to focus on the following metrics:
    ``cluster.component_placement`` in the configuration file.
 
    Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/configuration/basic_config` for more detailed instructions on Placement configuration.
+   See :doc:`../guides/basic_config` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 
