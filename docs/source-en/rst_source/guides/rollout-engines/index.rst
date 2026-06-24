@@ -17,9 +17,12 @@ training run, plus the client used to call them.
    * - :doc:`Calling SGLang with InferenceHTTPClient <../inference_http_client>`
      - Send sync and async ``/generate`` / ``/v1/chat/completions`` requests to
        a router (or a single server) from your own code.
+   * - :doc:`SGLang Version Switching <../version>`
+     - Switch between SGLang versions for the rollout engine.
 
 .. toctree::
    :hidden:
 
    SGLang Server & Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
+   SGLang Version Switching <../version>

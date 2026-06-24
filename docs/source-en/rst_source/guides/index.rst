@@ -38,7 +38,7 @@ Choose a Workflow
       :link: hardware/index
       :link-type: doc
 
-      Run RLinf on AMD ROCm, Ascend CANN, or alternate SGLang versions.
+      Run RLinf on AMD ROCm or Ascend CANN.
 
    .. grid-item-card:: Agent Workflows
       :link: agent-workflows/index

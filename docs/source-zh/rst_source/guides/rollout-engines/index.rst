@@ -15,9 +15,12 @@ Rollout 引擎
    * - :doc:`使用 InferenceHTTPClient 调用 SGLang <../inference_http_client>`
      - 在自己的代码里向 router（或单个 server）发送同步/异步的
        ``/generate`` / ``/v1/chat/completions`` 请求。
+   * - :doc:`SGLang 版本切换 <../version>`
+     - 在不同 SGLang 版本之间切换 rollout 引擎。
 
 .. toctree::
    :hidden:
 
    SGLang Server 与 Router <../sglang_server>
    InferenceHTTPClient <../inference_http_client>
+   SGLang 版本切换 <../version>

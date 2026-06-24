@@ -37,7 +37,7 @@
       :link: hardware/index
       :link-type: doc
 
-      在 AMD ROCm、Ascend CANN 或不同 SGLang 版本上运行 RLinf。
+      在 AMD ROCm 或 Ascend CANN 上运行 RLinf。
 
    .. grid-item-card:: 智能体工作流
       :link: agent-workflows/index
