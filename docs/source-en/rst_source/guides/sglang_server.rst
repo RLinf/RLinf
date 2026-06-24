@@ -271,7 +271,7 @@ variable in the driver. The ``node_group`` label (``rollout_gpu`` here) and the
 entries under ``node_groups`` are independent — those are the cluster's own
 vocabulary.
 
-You can also pass a **list** of labels (``node_group: [a800, 4090]``) when the
+You can also pass a **list** of labels when the
 engines should span multiple groups; the launcher forwards the list verbatim
 to the placement strategy.
 

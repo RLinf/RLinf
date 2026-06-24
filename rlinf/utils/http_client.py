@@ -28,20 +28,6 @@ class InferenceHTTPClient:
     single lazily-created :class:`aiohttp.ClientSession`, so call
     :meth:`aclose` (or use ``async with``) to release sockets.
 
-    Concurrency notes
-    -----------------
-    aiohttp's default ``TCPConnector(limit=100, limit_per_host=0)`` caps
-    real in-flight requests at 100, regardless of how many
-    ``async_generate`` tasks you schedule. For RL-style fan-out (1k+
-    concurrent prompts) bump ``max_connections`` accordingly and make
-    sure ``ulimit -n`` covers that many sockets. Tasks above the cap
-    don't fail — aiohttp queues them inside the connector — but you
-    won't see more parallelism than the limit allows.
-
-    For tighter control of *logical* concurrency (e.g. one permit per
-    rollout sample, coordinated with abort/dp-rank state), wrap calls
-    in an ``asyncio.Semaphore`` on the caller side. ``max_connections``
-    is only a hard ceiling on socket count.
 
     Example::
 

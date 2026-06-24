@@ -253,7 +253,7 @@ YAML key 和驱动里的 ``component_name`` 变量。``node_group`` 标签
 （这里是 ``rollout_gpu``）和 ``node_groups`` 下的条目是独立的——
 那是集群本身的命名空间。
 
-也可以传入 **标签列表**（``node_group: [a800, 4090]``），让引擎横跨多个
+也可以传入 **标签列表**，让引擎横跨多个
 group；launcher 会原样把列表交给 placement strategy。
 
 完整的 ``node_groups`` / ``env_configs`` / ``hardware`` schema——

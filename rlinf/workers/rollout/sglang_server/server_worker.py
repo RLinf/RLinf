@@ -121,11 +121,12 @@ class SGLangServerWorker(Worker):
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
+        On failure the subprocess is torn down via ``shutdown`` before
+        ``RuntimeError`` is re-raised, so the caller can retry or fail fast
+        without leaking a zombie sglang process.
+
         Raises:
-            RuntimeError: if the server fails to become healthy. The
-                subprocess is torn down via :meth:`shutdown` before the
-                exception is re-raised, so the caller can retry / fail
-                fast without leaking a zombie sglang process.
+            RuntimeError: if the server fails to become healthy.
         """
         assert self._server_proc is None, "sglang server already initialized."
 

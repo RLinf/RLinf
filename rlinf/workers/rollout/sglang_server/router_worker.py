@@ -135,16 +135,14 @@ class SGLangRouterWorker(Worker):
     def init_router(self) -> None:
         """Spawn the router subprocess with NO workers attached.
 
-        Returns:
-            The router's advertised URL. Attach workers with
-            :meth:`register_server`.
+        Attach workers afterwards with :meth:`register_server`. On failure
+        the subprocess is torn down via ``shutdown`` before ``RuntimeError``
+        is re-raised, so the caller can retry or fail fast without leaking
+        a zombie router process.
 
         Raises:
             RuntimeError: if the router subprocess exits before becoming
                 healthy or fails the ``/health`` probe within the timeout.
-                The subprocess is torn down via :meth:`shutdown` before the
-                exception is re-raised, so the caller can retry / fail
-                fast without leaking a zombie router process.
         """
         assert self._proc is None, "router subprocess already started."
 

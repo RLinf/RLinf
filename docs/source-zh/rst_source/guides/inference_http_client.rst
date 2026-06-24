@@ -106,11 +106,6 @@ OpenAI 风格 chat 同理：
 - ``connect_timeout``（默认 ``10.0`` 秒）只约束 TCP 连接阶段；**读** 端故意
   不设上限——生成请求可能耗时很久。如需请求级别的截止时间，请在外层用
   ``asyncio.wait_for`` 包裹。
-- ``max_connections``（默认 ``16384``）约束 aiohttp ``TCPConnector``。超过上限
-  的 task 不会失败——aiohttp 会在 connector 内排队——但并发度不会超过这个上限。
-  RL 风格的大扇出场景，记得把 ``ulimit -n`` 调到足够大。
-- 如果要更细粒度地控制 *逻辑* 并发（例如每个 rollout 样本一个许可），在调用方
-  用 ``asyncio.Semaphore`` 包裹即可。``max_connections`` 只是 socket 数量的硬上限。
 
 直接连后端 server
 -----------------

@@ -108,13 +108,6 @@ Concurrency and Timeouts
   the **read** side is uncapped on purpose — generation can take arbitrarily
   long. Wrap calls in your own ``asyncio.wait_for`` if you need a request-level
   deadline.
-- ``max_connections`` (default ``16384``) caps the aiohttp ``TCPConnector``.
-  Tasks scheduled above the cap don't fail — aiohttp queues them inside the
-  connector — but you won't see more parallelism than the limit allows. For
-  RL-style fan-out, make sure ``ulimit -n`` covers that many sockets.
-- For tighter control of *logical* concurrency (e.g. one permit per rollout
-  sample), wrap calls in an ``asyncio.Semaphore`` on the caller side.
-  ``max_connections`` is only a hard ceiling on socket count.
 
 Pointing the Client Elsewhere
 -----------------------------
