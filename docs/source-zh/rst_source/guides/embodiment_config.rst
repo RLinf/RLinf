@@ -39,6 +39,7 @@ runner
     only_eval: False
     max_prompt_length: 30
     overlap_env_bootstrap: False
+    enable_decoupled_mode: False
 
 ``runner.only_eval``：只运行评估，不进行训练。
 
@@ -49,6 +50,13 @@ runner
 当环境重置较慢时，此功能非常有用。
 **注意：** 仅在 ``env.train.enable_offload`` 为 False 时生效。
 如果环境和 Actor 共享同一个加速器，开启此功能可能会增加重合期间的 GPU 显存压力。
+
+``runner.enable_decoupled_mode``：
+解耦 Env Worker 与 Rollout Worker。开启后，Env Worker 不再绑定到固定的 Rollout
+Worker rank：Env Worker 将观测推送到共享 Channel，空闲的 Rollout Worker 动态拉取
+batch 进行推理。当 Env 单步耗时差异较大（长尾延迟）或 Env Worker 数量多于 Rollout
+Worker 时尤为有用。要求 ``env_world_size >= rollout_world_size``，且不兼容
+``enable_p2p``。详见 :doc:`env_decoupled_mode`。
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -143,6 +151,7 @@ rollout
     backend: "huggingface"
     enable_offload: True
     pipeline_stage_num: 2
+    rollout_queue_size: 0
 
     model:
       model_path: "/path/to/hf_model"
@@ -169,6 +178,11 @@ rollout
 ``rollout.enable_offload``：启用 rollout 模型下放以降低显存占用。
 
 ``rollout.pipeline_stage_num``：rollout 的流水线阶段数。
+
+``rollout.rollout_queue_size``：仅在 ``runner.enable_decoupled_mode`` 为 True 时生效。
+限制单个 Rollout Worker 一次聚合的 Env shard 数量。``0`` 表示使用默认值
+``ceil(env_world_size // rollout_world_size)``；较小的值可减少等待时间，较大的值可
+提升推理 batch 利用率。详见 :doc:`env_decoupled_mode`。
 
 ``rollout.model.model_path``：rollout 使用的模型权重路径（可与 actor 共享）。
 

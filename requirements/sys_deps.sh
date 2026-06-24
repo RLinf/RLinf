@@ -128,6 +128,7 @@ install_deps_apt() {
         libmagickwand-dev \
         libvulkan1 \
         vulkan-tools \
+        libnuma1 \
         mesa-vulkan-drivers || {
             echo "apt-get install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -173,6 +174,7 @@ install_deps_dnf() {
         expat \
         fontconfig \
         python3-devel \
+        numactl-libs-devel \
         ImageMagick-devel || {
             echo "dnf install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -215,6 +217,7 @@ install_deps_yum() {
         expat \
         fontconfig \
         python3-devel \
+        numactl-libs-devel \
         ImageMagick-devel || {
             echo "yum install failed. Please check your repositories or install dependencies manually." >&2
             exit 1
@@ -254,6 +257,7 @@ install_deps_pacman() {
         libgomp \
         expat \
         fontconfig \
+        numactl \
         imagemagick || {
             echo "pacman install failed. Please check your repositories or install dependencies manually." >&2
             exit 1

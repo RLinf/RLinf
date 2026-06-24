@@ -627,48 +627,6 @@ def set_rng_state(rng_state: dict) -> None:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 
 
-def _build_channel_message(
-    send_rank: int,
-    batch_idx: int,
-    mode: str,
-    tag: str,
-) -> str:
-    """
-    Construct a channel message key that matches the expected communication schema.
-
-    Schema:
-        {send_rank}_{batch_idx}_{tag}
-
-    Args:
-        send_rank: Send worker rank.
-        batch_idx: Batch index within the worker.
-        mode: The message mode.
-        tag: Type of message (e.g., "train_obs", "rollout_results").
-
-    Returns:
-        A formatted channel message string.
-    """
-
-    return f"{send_rank}_{batch_idx}_{mode}_{tag}"
-
-
-def _split_channel_message(channel_message: str) -> tuple[int, int, str, str]:
-    """
-    This function is used to get the rollout worker and env worker communication without the rankmap,
-    To get the send_rank, batch_idx, tag from the communication.
-    channel_message: {send_rank}_{batch_idx}_{mode}_{tag}
-    This func split the channel_message into send_rank, batch_idx, mode, tag
-    Args:
-        channel_message: The batch index string.
-    Returns:
-        A tuple of send_rank, batch_idx, mode, tag.
-    """
-    send_rank, batch_idx, mode, tag = channel_message.split("_", 3)
-    send_rank = int(send_rank)
-    batch_idx = int(batch_idx)
-    return send_rank, batch_idx, mode, tag
-
-
 PIPELINE_BATCH_KEY_SEPARATOR = "::"
 
 

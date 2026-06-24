@@ -36,12 +36,6 @@
 
       将新模型接入 SFT 训练流程。
 
-   .. grid-item-card:: Env Decoupled Mode
-      :link: env_decoupled_mode
-      :link-type: doc
-
-      解耦 Env Worker 与 Rollout Worker，用于具身任务中的动态 rollout 调度。
-
    .. grid-item-card:: 高级集成
       :link: advanced-integrations/index
       :link-type: doc
@@ -56,5 +50,4 @@
    FSDP 新模型 <new_model_fsdp>
    Megatron 新模型 <new_model_megatron>
    新 SFT 模型 <new_model_sft>
-   Env Decoupled Mode <env_decoupled_mode>
    高级集成 <advanced-integrations/index>

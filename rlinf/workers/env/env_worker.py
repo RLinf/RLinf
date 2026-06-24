@@ -33,8 +33,7 @@ from rlinf.data.embodied_io_struct import (
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.wrappers import RecordVideo
-from rlinf.scheduler import Channel, Cluster, Worker
-from rlinf.utils.comm_mapping import CommMapper
+from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
@@ -610,7 +609,7 @@ class EnvWorker(Worker):
                 if isinstance(first_tensor, torch.Tensor):
                     return int(first_tensor.shape[0])
             raise ValueError("Cannot infer batch size from rollout result.")
-        from rlinf.scheduler.worker.routing import infer_batch_size
+        from rlinf.scheduler import infer_batch_size
 
         return infer_batch_size(data)
 
@@ -729,14 +728,14 @@ class EnvWorker(Worker):
             data=reward_input,
             tag="train_reward_obs",
             async_op=True,
-            env_decoupled_mode=self.env_decoupled_mode,
+            decoupled_mode=self.env_decoupled_mode,
         )
         reward_output = self.recv_from(
             group_name=self.cfg.reward.group_name,
             channel=recv_channel,
             tag="train_reward_obs",
             batch_size=self.train_batch_size,
-            env_decoupled_mode=self.env_decoupled_mode,
+            decoupled_mode=self.env_decoupled_mode,
         )
         if self.reward_mode != "terminal" or reward_output is None:
             return reward_output
@@ -860,7 +859,7 @@ class EnvWorker(Worker):
                 },
                 mode="train",
                 tag="rollout_results",
-                env_decoupled_mode=self.env_decoupled_mode,
+                decoupled_mode=self.env_decoupled_mode,
             )
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
@@ -967,7 +966,7 @@ class EnvWorker(Worker):
                         batch_size=self.train_batch_size,
                         merge_fn=RolloutResult.merge_rollout_results,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
-                        env_decoupled_mode=self.env_decoupled_mode,
+                        decoupled_mode=self.env_decoupled_mode,
                     )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, rollout_result.bootstrap_values, reward_model_output
@@ -1016,7 +1015,7 @@ class EnvWorker(Worker):
                         },
                         mode="train",
                         tag="rollout_results",
-                        env_decoupled_mode=self.env_decoupled_mode,
+                        decoupled_mode=self.env_decoupled_mode,
                     )
                     if self.collect_transitions:
                         next_obs = (
@@ -1065,7 +1064,7 @@ class EnvWorker(Worker):
                     batch_size=self.train_batch_size,
                     merge_fn=RolloutResult.merge_rollout_results,
                     infer_batch_size_fn=self._infer_rollout_batch_size,
-                    env_decoupled_mode=self.env_decoupled_mode,
+                    decoupled_mode=self.env_decoupled_mode,
                 )
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
@@ -1166,7 +1165,7 @@ class EnvWorker(Worker):
                         },
                         mode="eval",
                         tag="rollout_results",
-                        env_decoupled_mode=self.env_decoupled_mode,
+                        decoupled_mode=self.env_decoupled_mode,
                     )
 
             for eval_step in range(self.n_eval_chunk_steps):
@@ -1179,7 +1178,7 @@ class EnvWorker(Worker):
                         infer_batch_size_fn=self._infer_rollout_batch_size
                         if self.env_decoupled_mode
                         else None,
-                        env_decoupled_mode=self.env_decoupled_mode,
+                        decoupled_mode=self.env_decoupled_mode,
                     )
                     raw_chunk_actions = (
                         rollout_results.actions
@@ -1216,7 +1215,7 @@ class EnvWorker(Worker):
                         },
                         mode="eval",
                         tag="rollout_results",
-                        env_decoupled_mode=self.env_decoupled_mode,
+                        decoupled_mode=self.env_decoupled_mode,
                     )
 
             self.finish_rollout(mode="eval")

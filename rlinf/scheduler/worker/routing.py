@@ -21,11 +21,178 @@ import numpy as np
 import torch
 
 from rlinf.scheduler.manager import WorkerAddress, WorkerInfo
-from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.utils import _build_channel_message, _split_channel_message
 
 ROUTING_KEY_PREFIX = "scheduler_route"
 ROUTING_DEFAULT_TAG = "default"
+
+
+def _build_channel_message(
+    send_rank: int,
+    batch_idx: int,
+    mode: str,
+    tag: str,
+) -> str:
+    """Construct a channel message key that matches the expected communication schema.
+
+    Schema:
+        {send_rank}_{batch_idx}_{mode}_{tag}
+
+    Args:
+        send_rank: Send worker rank.
+        batch_idx: Batch index within the worker.
+        mode: The message mode.
+        tag: Type of message (e.g., "train_obs", "rollout_results").
+
+    Returns:
+        A formatted channel message string.
+    """
+    return f"{send_rank}_{batch_idx}_{mode}_{tag}"
+
+
+def split_channel_message(channel_message: str) -> tuple[int, int, str, str]:
+    """Split a channel message into its components.
+
+    This is used to route rollout worker and env worker communication without a
+    rankmap, recovering the send_rank, batch_idx, mode and tag from the message.
+
+    Args:
+        channel_message: The batch index string ``{send_rank}_{batch_idx}_{mode}_{tag}``.
+
+    Returns:
+        A tuple of send_rank, batch_idx, mode, tag.
+    """
+    send_rank, batch_idx, mode, tag = channel_message.split("_", 3)
+    send_rank = int(send_rank)
+    batch_idx = int(batch_idx)
+    return send_rank, batch_idx, mode, tag
+
+
+class CommMapper:
+    """Communication mapping helpers with batch sharding among two worker groups that require fixed rank pairing in communications.
+
+    For example, env and rollout should always use the same rank pair for communications.
+    """
+
+    @staticmethod
+    def build_channel_key(src_rank: int, dst_rank: int, extra: str) -> str:
+        """Build a canonical point-to-point channel key."""
+        return f"{src_rank}_{dst_rank}_{extra}"
+
+    @staticmethod
+    def decoupled_get_batch_size(
+        batch_size: int,
+        src_world_size: int,
+        dst_world_size: int,
+        queue_size: int = 0,
+    ) -> list[int]:
+        """Compute destination ranks and transfer sizes for one source rank."""
+        # in decoupled mode, the src_world_size and dst_world_size are the world size of the source and destination workers.
+        # the batch_size is the total batch size of the source workers.
+        # the return value is a list of batch sizes for this rank destination to send batch split size.
+        # the queue_size is the size of the queue to be split.
+        # split_size will be the larger of src_world_size and dst_world_size.
+        # The queue length for workers with a larger quantity is 1,
+        # while workers with a smaller quantity will aggregate the sent data for batch computation.
+        # The queue length can be set by queue_size
+        split_size = max(src_world_size, dst_world_size)
+
+        assert batch_size % split_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by split_size ({split_size})."
+        )
+
+        if src_world_size >= dst_world_size:
+            # the src_world_size >= dst_world_size
+            # for example, src_world_size = 4, dst_world_size = 2, split_size = 4, batch_size = 32
+            # the rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+            return [batch_size // split_size]
+        else:
+            assert dst_world_size > src_world_size, (
+                f"dst_world_size ({dst_world_size}) must more than src_world_size ({src_world_size})."
+            )
+            # the src_world_size < dst_world_size
+            # for example, src_world_size = 2, dst_world_size = 8, split_size = 8, batch_size = 32
+            # the rank 0 [4, 4, 4, 4] rank1 [4, 4, 4, 4]
+            if queue_size <= 0:
+                return [
+                    batch_size // split_size
+                    for _ in range(dst_world_size // src_world_size)
+                ]
+            else:
+                # special case for queue_size == 1
+                # for example, rollout_worker_nums = 2, env_worker_nums = 4, batch_size = 32
+                # The rollout worker should have been [8, 8], but after setting queue_size, the length will be limited to queue_size.
+                # The rollout worker will be [8] if the queue_size is 1.
+                # the env worker rank 0 [8] rank1 [8] rank2 [8] rank3 [8]
+                assert queue_size <= (dst_world_size // src_world_size), (
+                    f"queue_size {queue_size} should be less than (dst_world_size {dst_world_size} // src_world_size {src_world_size})"
+                )
+                return [batch_size // split_size for _ in range(queue_size)]
+
+    @staticmethod
+    def get_dst_ranks(
+        batch_size: int, src_world_size: int, dst_world_size: int, src_rank: int
+    ) -> list[tuple[int, int]]:
+        """Compute destination ranks and transfer sizes for one source rank."""
+        assert batch_size % src_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by src_world_size ({src_world_size})."
+        )
+        assert batch_size % dst_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by dst_world_size ({dst_world_size})."
+        )
+        assert 0 <= src_rank < src_world_size, (
+            f"src_rank ({src_rank}) must be in [0, {src_world_size})."
+        )
+
+        batch_size_per_src_rank = batch_size // src_world_size
+        batch_size_per_dst_rank = batch_size // dst_world_size
+
+        dst_ranks_and_sizes: list[tuple[int, int]] = []
+        batch_begin = src_rank * batch_size_per_src_rank
+        batch_end = (src_rank + 1) * batch_size_per_src_rank
+        while batch_begin < batch_end:
+            dst_rank = batch_begin // batch_size_per_dst_rank
+            dst_batch_begin = dst_rank * batch_size_per_dst_rank
+            dst_remaining = batch_size_per_dst_rank - (batch_begin - dst_batch_begin)
+            src_remaining = batch_end - batch_begin
+            dst_size = min(dst_remaining, src_remaining)
+            dst_ranks_and_sizes.append((dst_rank, dst_size))
+            batch_begin += dst_size
+        return dst_ranks_and_sizes
+
+    @staticmethod
+    def get_src_ranks(
+        batch_size: int, src_world_size: int, dst_world_size: int, dst_rank: int
+    ) -> list[tuple[int, int]]:
+        """Compute source ranks/sizes for one destination rank."""
+        assert batch_size % src_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by src_world_size ({src_world_size})."
+        )
+        assert batch_size % dst_world_size == 0, (
+            f"batch_size ({batch_size}) must be divisible by dst_world_size ({dst_world_size})."
+        )
+        assert 0 <= dst_rank < dst_world_size, (
+            f"dst_rank ({dst_rank}) must be in [0, {dst_world_size})."
+        )
+
+        src_ranks_and_sizes: list[tuple[int, int]] = []
+        for src_rank in range(src_world_size):
+            dst_ranks_and_sizes = CommMapper.get_dst_ranks(
+                batch_size=batch_size,
+                src_world_size=src_world_size,
+                dst_world_size=dst_world_size,
+                src_rank=src_rank,
+            )
+            for mapped_dst_rank, size in dst_ranks_and_sizes:
+                if mapped_dst_rank == dst_rank:
+                    src_ranks_and_sizes.append((src_rank, size))
+
+        expected_size = batch_size // dst_world_size
+        actual_size = sum(size for _, size in src_ranks_and_sizes)
+        assert actual_size == expected_size, (
+            f"Expected receive size {expected_size} for destination rank {dst_rank}, "
+            f"got {actual_size} from mappings {src_ranks_and_sizes}."
+        )
+        return src_ranks_and_sizes
 
 
 @dataclass(frozen=True)
@@ -39,7 +206,7 @@ class RouteEntry:
 
 @dataclass(frozen=True)
 class DecoupledRouteEntry:
-    """One routed shard in Decoupled Env mode."""
+    """One routed shard in decoupled mode."""
 
     batch_size: int | None
     key: Any
@@ -206,7 +373,7 @@ def build_send_key(
     )
 
 
-def env_decoupled_build_send_plan(
+def decoupled_build_send_plan(
     *,
     src_group_name: str,
     dst_group_name: str,
@@ -236,7 +403,7 @@ def env_decoupled_build_send_plan(
             # if the tag_batch_router is provided, use the tag_batch_router to get the batch_index
             batch_index = tag_batch_router[index]
             # get the send_rank from the batch_index
-            send_rank, _, _, tag = _split_channel_message(batch_index)
+            send_rank, _, _, tag = split_channel_message(batch_index)
         else:
             # Otherwise, use src_rank, index and tag to construct batch_index.
             batch_index = _build_channel_message(
@@ -324,7 +491,7 @@ def build_recv_plan(
     )
 
 
-def env_decoupled_build_recv_plan(
+def decoupled_build_recv_plan(
     *,
     src_group_name: str,
     dst_group_name: str,
@@ -356,7 +523,7 @@ def env_decoupled_build_recv_plan(
                     tag=tag,
                     route_key=route_key,
                 ),
-                # In the env decoupled mode, the batch_index is not needed to be provided.
+                # In decoupled mode, the batch_index is not needed to be provided.
                 # None of the recv_from calls will set batch_index,
                 # Because that data will be overwritten by the received data.
                 batch_index=None,

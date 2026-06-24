@@ -26,4 +26,4 @@ init_params:
   task_description: "Put the tape into the container"
   usd_file: ${oc.decode:${oc.env:POLARIS_DATA_PATH}}/tape_into_container/scene.usda
   dataset_path: ${oc.decode:${oc.env:POLARIS_DATA_PATH}}
-  open_loop_horizon: ${actor.model.num_action_chunks}
+  open_loop_horizon: ${oc.select:actor.model.num_action_chunks,rollout.model.num_action_chunks}

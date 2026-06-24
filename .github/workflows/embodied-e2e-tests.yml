@@ -50,7 +50,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run_eval.sh maniskill_sac_mlp_async_decoupled_eval 
+          bash tests/e2e_tests/evaluations/run.sh maniskill_sac_mlp_async_decoupled_eval 
 
       - name: ManiSkill SAC Flow State test
         timeout-minutes: 20

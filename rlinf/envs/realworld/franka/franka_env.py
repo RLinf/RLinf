@@ -464,7 +464,9 @@ class FrankaEnv(gym.Env):
             )
 
         image_batch = np.expand_dims(frames[image_key], axis=0)
-        reward_output = self._reward_worker.compute_image_rewards(image_batch).wait()[0]
+        reward_output = self._reward_worker.compute_image_rewards(
+            {"main_images": image_batch}
+        ).wait()[0]
         if hasattr(reward_output, "detach"):
             reward_output = reward_output.detach().cpu().numpy()
         reward_array = np.asarray(reward_output).reshape(-1)
