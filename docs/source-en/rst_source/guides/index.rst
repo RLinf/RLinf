@@ -46,6 +46,12 @@ Choose a Workflow
 
       Operate agentic and reasoning workloads.
 
+   .. grid-item-card:: Rollout Engines
+      :link: rollout-engines/index
+      :link-type: doc
+
+      Launch sglang servers and routers behind a single inference endpoint.
+
 .. toctree::
    :hidden:
 
@@ -55,3 +61,4 @@ Choose a Workflow
    Performance <performance/index>
    Hardware Backends <hardware/index>
    Agent Workflows <agent-workflows/index>
+   Rollout Engines <rollout-engines/index>
