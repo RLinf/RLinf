@@ -285,23 +285,31 @@ class LiberoEnv(gym.Env):
 
             elif variant == "plus":
                 plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
-                if plus_suffix is not None:
-                    markers = [
-                        "_view",
-                        "_initstate",
-                        "_noise",
-                        "_sample",
-                        "_light",
-                        "_table",
-                        "_add_1",
-                        "_lan",
-                        "_language",
-                        "_copy",
-                        "_level",
-                        "_tb",
-                    ]
+
+                valid_perts = [
+                    "_light",
+                    "_language",
+                    "_table",
+                    "_add",
+                    "_tb",
+                    "_sample",
+                    "_level",
+                ]
+                if plus_suffix == "all":
+                    filter_perts = valid_perts
+                elif plus_suffix is not None:
+                    normalized = (
+                        f"_{plus_suffix}"
+                        if not plus_suffix.startswith("_")
+                        else plus_suffix
+                    )
+                    filter_perts = [normalized] if normalized in valid_perts else []
+                else:
+                    filter_perts = []
+
+                if filter_perts:
                     clean_name = file_name.replace(".bddl", "")
-                    for marker in markers:
+                    for marker in valid_perts:
                         if marker in clean_name:
                             clean_name = clean_name.split(marker)[0]
                             break
@@ -327,22 +335,11 @@ class LiberoEnv(gym.Env):
                             f
                             for f in glob.glob(os.path.join(target_dir, "*.bddl"))
                             if clean_name in os.path.basename(f)
+                            and any(
+                                pert in os.path.basename(f) for pert in filter_perts
+                            )
                         ]
                         all_candidates.extend(matches)
-
-                    # Restrict to one perturbation type when a concrete suffix
-                    # (e.g. "language") is requested; "all" keeps every type.
-                    if plus_suffix != "all":
-                        normalized = (
-                            plus_suffix
-                            if plus_suffix.startswith("_")
-                            else f"_{plus_suffix}"
-                        )
-                        all_candidates = [
-                            f
-                            for f in all_candidates
-                            if normalized in os.path.basename(f)
-                        ]
 
                     if all_candidates:
                         all_candidates.sort()
