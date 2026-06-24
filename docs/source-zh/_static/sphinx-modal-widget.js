@@ -7,6 +7,9 @@
   let modeBadge, modePanel;
   let currentMode = 'quick';
   let isInitialized = false;
+  let requestControl = null;
+  let isChatBusy = false;
+  let lastFocusedTrigger = null;
   
   // IME state variables
   let isComposing = false;
@@ -20,7 +23,8 @@
         typeof SphinxMessageManager === 'undefined' ||
         typeof SphinxAIChatService === 'undefined' ||
         typeof SphinxModeBadge === 'undefined' ||
-        typeof SphinxModePanel === 'undefined') {
+        typeof SphinxModePanel === 'undefined' ||
+        typeof RLinfAssistantUtils === 'undefined') {
       // Retry after a short delay
       setTimeout(initializeServices, 100);
       return;
@@ -30,6 +34,7 @@
       typesenseClient = new SphinxTypesenseClient(SphinxAIConfig.typesense);
       messageManager = new SphinxMessageManager();
       aiChatService = new SphinxAIChatService(typesenseClient, SphinxAIConfig);
+      requestControl = RLinfAssistantUtils.createSearchRequestControl();
       
       // Load previous messages
       messageManager.loadFromStorage();
@@ -58,266 +63,25 @@
     };
   }
 
-  // Add basic modal styles (detailed styles are in external CSS file)
-  function injectModalStyles() {
-    const style = document.createElement('style');
-    style.textContent = `
-      .sphinx-modal-overlay {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5) ;
-        z-index: 1001;
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity 0.3s ease, visibility 0.3s ease;
-        backdrop-filter: blur(3px);
-      }
-      
-      .sphinx-modal-overlay.show {
-        opacity: 1;
-        visibility: visible;
-      }
-      
-      .sphinx-modal {
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%) scale(0.9);
-        background: white;
-        border-radius: 12px;
-        width: 800px;
-        max-width: 95vw;
-        max-height: 85vh;
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-        z-index: 1002;
-        opacity: 0;
-        visibility: hidden;
-        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        display: flex;
-        flex-direction: column;
-        overflow: hidden;
-      }
-      
-      .sphinx-modal.show {
-        opacity: 1;
-        visibility: visible;
-        transform: translate(-50%, -50%) scale(1);
-      }
-      
-      .sphinx-modal-header {
-        background: rgba(171, 71, 188, 0.1);
-        color: #673ab7;
-        padding: 24px 30px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid rgba(171, 71, 188, 0.2);
-      }
-      
-      .sphinx-modal-header-content {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        flex: 1;
-        min-width: 0;
-      }
-      
-      .sphinx-modal-logo {
-        width: 24px;
-        height: 20px;
-        flex-shrink: 0;
-      }
-      
-      .sphinx-modal-logo path {
-        fill: #673ab7;
-      }
-      
-      .sphinx-modal-title {
-        margin: 0;
-        font-size: 20px;
-        font-weight: 600;
-        color: #000000ff;
-      }
-      
-      .sphinx-modal-close {
-        background: transparent;
-        border: none;
-        color: #673ab7;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        cursor: pointer;
-        font-size: 20px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.2s ease;
-      }
-      
-      .sphinx-modal-close:hover {
-        background: rgba(171, 71, 188, 0.1);
-        color: #673ab7;
-        transform: rotate(90deg);
-      }
-      
-      .sphinx-modal-body {
-        padding: 0;
-        flex: 1;
-        overflow: hidden; /* Prevent modal body from scrolling */
-        background-color: white;
-        display: flex;
-        flex-direction: column;
-      }
-      
-
-      .sphinx-modal-footer {
-        padding: 8px 30px;
-        background: rgba(171, 71, 188, 0.05);
-        border-top: 1px solid #f0e2ebff;
-        text-align: center;
-        font-size: 13px;
-        color: #673ab7;
-        line-height: 1.4;
-        position: relative;
-      }
-      
-      .sphinx-input-container {
-        display: flex;
-        gap: 12px;
-        align-items: center;
-        position: relative;
-      }
-      
-      .sphinx-input-left-controls {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-shrink: 0;
-      }
-      
-      .sphinx-mode-selector-wrapper {
-        position: relative;
-        display: flex;
-        align-items: center;
-      }
-      
-      .sphinx-input-container textarea {
-        flex: 1;
-        min-height: 44px;
-        max-height: 120px;
-        padding: 12px 16px;
-        border: 2px solid #673ab7;
-        border-radius: 8px;
-        resize: none;
-        font-family: inherit;
-        font-size: 14px;
-        line-height: 1.5;
-        background: white;
-        color: #4c1a52ff;
-        transition: all 0.2s ease;
-        overflow-y: auto;
-      }
-      
-      .sphinx-input-container textarea:focus {
-        outline: none;
-        outline-offset: -2px;
-        border-color: #673ab7;
-        box-shadow: 0 0 0 3px rgba(103, 58, 183, 0.1);
-      }
-      
-      .sphinx-submit-btn {
-        padding: 12px 20px;
-        background: #673ab7;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 14px;
-        font-weight: 600;
-        transition: all 0.2s ease;
-        white-space: nowrap;
-        min-width: 80px;
-        height: 44px;
-      }
-      
-      .sphinx-submit-btn:hover:not(:disabled) {
-        background: #512da8;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(103, 58, 183, 0.2);
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  // Enhanced modal creation with AI chat focus
   function createModal() {
-    // const base   = window.location.origin + window.location.pathname;
-    // const logoUrl = new URL("_static/svg/logo.svg", base).href;
-    const urlRoot = (window.DOCUMENTATION_OPTIONS && DOCUMENTATION_OPTIONS.URL_ROOT) || '/';
-    const logoUrl = urlRoot + '_static/svg/logo.svg';
-    const homeUrl = urlRoot; 
-
     const modal = document.createElement('div');
-    
-    // WITH LOGO(BUGS)
 
-    // modal.innerHTML = `
-    //   <div class="sphinx-modal-overlay">
-    //     <div class="sphinx-modal">
-    //       <div class="sphinx-modal-header">
-    //         <div class="sphinx-modal-header-content">
-    //           <a href="${homeUrl}" class="navbar-brand">
-    //             <img src="${logoUrl}" class="sphinx-modal-logo" alt="logo">
-    //           </a>
-    //           <h3 class="sphinx-modal-title">Your AI Assistant</h3>
-    //         </div>
-    //         <button class="sphinx-modal-close">×</button>
-    //       </div>
-          
-    //       <div class="sphinx-modal-body">
-    //         <div class="sphinx-ai-chat">
-    //           <div class="sphinx-chat-messages"></div>
-    //           <div class="sphinx-chat-input">
-    //             <div class="sphinx-input-container">
-    //               <div class="sphinx-input-left-controls">
-    //                 <div class="sphinx-mode-selector-wrapper">
-    //                   <!-- Mode badge and panel will be inserted here -->
-    //                 </div>
-    //               </div>
-    //               <textarea 
-    //                 placeholder="Ask me any question about the RLinf..."
-    //                 rows="1"
-    //               ></textarea>
-    //               <button class="sphinx-submit-btn">Ask AI</button>
-    //             </div>
-    //           </div>
-    //         </div>
-    //       </div>
-          
-    //     <div class="sphinx-modal-footer">
-    //       💡 Powered by Infini AI Assistant | ⚠️ Content generated by AI — please verify carefully.
-    //     </div>
-    //     </div>
-    //   </div>
-    // `;
-    
     modal.innerHTML = `
       <div class="sphinx-modal-overlay">
-        <div class="sphinx-modal">
+        <div class="sphinx-modal" role="dialog" aria-modal="true" aria-labelledby="sphinx-modal-title" tabindex="-1">
           <div class="sphinx-modal-header">
             <div class="sphinx-modal-header-content">
-              <h3 class="sphinx-modal-title">RLinf AI Assistant</h3>
+              <h3 class="sphinx-modal-title" id="sphinx-modal-title">RLinf AI Assistant</h3>
             </div>
-            <button class="sphinx-modal-close">×</button>
+            <div class="sphinx-modal-actions">
+              <button class="sphinx-modal-reset" type="button" aria-label="Start a new chat">New chat</button>
+              <button class="sphinx-modal-close" type="button" aria-label="Close">&times;</button>
+            </div>
           </div>
           
           <div class="sphinx-modal-body">
             <div class="sphinx-ai-chat">
-              <div class="sphinx-chat-messages"></div>
+              <div class="sphinx-chat-messages" aria-live="polite" aria-relevant="additions text"></div>
               <div class="sphinx-chat-input">
                 <div class="sphinx-input-container">
                   <div class="sphinx-input-left-controls">
@@ -326,18 +90,16 @@
                     </div>
                   </div>
                   <textarea 
-                    placeholder="Ask me any question about the RLinf..."
+                    placeholder="Ask RLinf docs..."
                     rows="1"
                   ></textarea>
-                  <button class="sphinx-submit-btn">Ask AI</button>
+                  <button class="sphinx-submit-btn" type="button">Ask AI</button>
                 </div>
               </div>
             </div>
           </div>
           
-        <div class="sphinx-modal-footer">
-          💡 Powered by RLinf AI Assistant | ⚠️ Content generated by AI — please verify carefully.
-        </div>
+          <div class="sphinx-modal-footer">AI-generated. Verify with cited sources.</div>
         </div>
       </div>
     `;
@@ -345,67 +107,88 @@
     return modal;
   }
 
-  function bindNavTrigger() {
+  function getModalElements(modalRoot) {
+    return {
+      overlay: modalRoot?.querySelector('.sphinx-modal-overlay'),
+      modalBox: modalRoot?.querySelector('.sphinx-modal')
+    };
+  }
+
+  function openModal(modalRoot, trigger = null) {
+    const { overlay, modalBox } = getModalElements(modalRoot);
+    if (!overlay || !modalBox) return;
+
+    lastFocusedTrigger = trigger || document.activeElement;
+    document.body.classList.add('rlinf-ai-modal-open');
+    overlay.classList.add('show');
+    modalBox.classList.add('show');
+    setTimeout(() => modalBox.querySelector('textarea')?.focus(), 80);
+  }
+
+  function closeModal(modalRoot) {
+    const { overlay, modalBox } = getModalElements(modalRoot);
+    if (!overlay || !modalBox) return;
+
+    overlay.classList.remove('show');
+    modalBox.classList.remove('show');
+    document.body.classList.remove('rlinf-ai-modal-open');
+
+    if (
+      lastFocusedTrigger &&
+      typeof lastFocusedTrigger.focus === 'function' &&
+      document.contains(lastFocusedTrigger)
+    ) {
+      lastFocusedTrigger.focus({ preventScroll: true });
+    }
+    lastFocusedTrigger = null;
+  }
+
+  function trapModalFocus(event, modalBox) {
+    if (event.key !== 'Tab' || !modalBox?.classList.contains('show')) return;
+
+    const focusable = Array.from(modalBox.querySelectorAll([
+      'a[href]',
+      'button:not([disabled])',
+      'textarea:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      '[tabindex]:not([tabindex="-1"])'
+    ].join(','))).filter(element => element.offsetParent !== null || element === document.activeElement);
+
+    if (!focusable.length) {
+      event.preventDefault();
+      modalBox.focus({ preventScroll: true });
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function bindNavTrigger(modalRoot) {
     // 模板里按钮的 ID
     const trigger = document.getElementById('ask-ai-trigger');
     if (!trigger) return;
     
     trigger.addEventListener('click', () => {
-      const overlay = document.querySelector('.sphinx-modal-overlay');
-      const modal   = document.querySelector('.sphinx-modal');
-      overlay.classList.add('show');
-      modal.classList.add('show');
-      // 聚焦输入框
-      setTimeout(() => modal.querySelector('textarea')?.focus(), 100);
+      openModal(modalRoot, trigger);
     });
   }
-
-  // // creater trigger button
-  // function createTrigger() {
-  //   const trigger = document.createElement('button');
-  //   trigger.className = 'sphinx-modal-trigger';
-  //   trigger.innerHTML = 'Ask AI';
-  //   trigger.style.cssText = `
-  //     position: fixed;
-  //     bottom: 100px;
-  //     right: 100px;
-  //     background-color: #673ab7;
-  //     color: white;
-  //     border: none;
-  //     border-radius: 50px;
-  //     padding: 12px 20px;
-  //     cursor: pointer;
-  //     font-family: var(--sphinx-font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-  //     font-size: 14px;
-  //     font-weight: 500;
-  //     box-shadow: 0 4px 15px rgba(31, 13, 45, 0.7);
-  //     z-index: 1000;
-  //     transition: all 0.2s ease;
-  //     display: flex;
-  //     align-items: center;
-  //     gap: 8px;
-  //   `;
-    
-  //   // Hover effects
-  //   trigger.addEventListener('mouseenter', () => {
-  //     trigger.style.transform = 'translateY(-2px)';
-  //     trigger.style.boxShadow = '0 6px 20px rgba(50, 0, 65, 0.4)';
-  //   });
-    
-  //   trigger.addEventListener('mouseleave', () => {
-  //     trigger.style.transform = 'translateY(0)';
-  //     trigger.style.boxShadow = '0 4px 15px rgba(77, 0, 61, 0.3)';
-  //   });
-    
-  //   document.body.appendChild(trigger);
-  //   return trigger;
-  // }
 
   // Enhanced chat functionality
   function initChat(modal) {
     const messagesContainer = modal.querySelector('.sphinx-chat-messages');
     const textarea = modal.querySelector('textarea');
     const submitBtn = modal.querySelector('.sphinx-submit-btn');
+    const resetBtn = modal.querySelector('.sphinx-modal-reset');
     const modeSelectorWrapper = modal.querySelector('.sphinx-mode-selector-wrapper');
     
     // Initialize mode selection components
@@ -448,6 +231,15 @@
       }
       sendMessage(content, currentMode, messagesContainer, textarea);
     });
+
+    resetBtn?.addEventListener('click', () => {
+      requestControl?.dispose();
+      setChatBusy(false, modal.querySelector('.sphinx-modal'));
+      clearChatHistory(messagesContainer);
+      textarea.value = '';
+      textarea.style.height = '';
+      textarea.focus();
+    });
     
     // Enter key handling
     textarea.addEventListener('keydown', (e) => {
@@ -465,7 +257,7 @@
     // Auto-resize textarea
     const autoResize = () => {
       requestAnimationFrame(() => {
-        const minHeight = 44;
+        const minHeight = Number.parseFloat(window.getComputedStyle(textarea).minHeight) || 40;
         const maxHeight = 120;
         const prevOverflow = textarea.style.overflowY;
         textarea.style.overflowY = 'hidden';
@@ -544,13 +336,13 @@
   function showEmptyState(container) {
     container.innerHTML = `
     <div class="sphinx-chat-empty">
-      <h3>👋 Hello! I'm your AI Documentation Assistant</h3>
-      <p>I can help you understand the content of this document and answer your questions.</p>
+      <h3>Ask RLinf docs</h3>
+      <p>Answers are grounded in indexed documentation and cited sources.</p>
       <div class="sphinx-suggested-prompts">
-        <div class="sphinx-suggested-prompt" data-prompt="What is RLinf about?">What is RLinf about?</div>
-        <div class="sphinx-suggested-prompt" data-prompt="How do I get started quickly?">How do I get started quickly?</div>
-        <div class="sphinx-suggested-prompt" data-prompt="Where can I find examples?">Where can I find examples?</div>
-        <div class="sphinx-suggested-prompt" data-prompt="Are there any important notes?">Are there any important notes?</div>
+        <button class="sphinx-suggested-prompt" type="button" data-prompt="What is RLinf about?">What is RLinf about?</button>
+        <button class="sphinx-suggested-prompt" type="button" data-prompt="How do I get started quickly?">How do I get started quickly?</button>
+        <button class="sphinx-suggested-prompt" type="button" data-prompt="Where can I find examples?">Where can I find examples?</button>
+        <button class="sphinx-suggested-prompt" type="button" data-prompt="How does RLinf run distributed training?">How does distributed training work?</button>
       </div>
     </div>
     `;
@@ -563,6 +355,7 @@
         if (textarea) {
           textarea.value = text;
           textarea.focus();
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
         }
       });
     });
@@ -581,17 +374,36 @@
     }
   }
   
+  function setChatBusy(isBusy, modalRoot) {
+    isChatBusy = isBusy;
+    const submitBtn = modalRoot?.querySelector('.sphinx-submit-btn') || document.querySelector('.sphinx-submit-btn');
+    const input = modalRoot?.querySelector('textarea') || document.querySelector('.sphinx-ai-chat textarea');
+    if (submitBtn) {
+      submitBtn.disabled = isBusy;
+      submitBtn.textContent = isBusy ? 'Asking' : 'Ask AI';
+    }
+    if (input) {
+      input.disabled = isBusy;
+    }
+  }
+
   async function sendMessage(content, mode, container, textarea) {
-    if (!content || !isInitialized) {
+    if (!content || !isInitialized || isChatBusy) {
       if (!content) {
         textarea.focus();
       }
       return;
     }
+
+    const queryPlan = RLinfAssistantUtils.createQueryPlan({ message: content });
+    const conversationId = queryPlan.resetConversation ? null : messageManager.getConversationId();
+    if (queryPlan.resetConversation) {
+      messageManager.setConversationId(null);
+    }
     
     // Clear textarea
     textarea.value = '';
-    textarea.style.height = '44px'; // Reset to minimum height
+    textarea.style.height = '';
     
     // Remove empty state if present
     const emptyState = container.querySelector('.sphinx-chat-empty');
@@ -604,27 +416,47 @@
     addMessageToUI(container, userMessage);
     
     // Add AI message placeholder
-    const aiMessage = messageManager.addMessage('ai', '', { isLoading: true });
+    const aiMessage = messageManager.addMessage('ai', '', {
+      isLoading: true,
+      queryPlan
+    });
     addMessageToUI(container, aiMessage);
     
     scrollToBottom(container);
+    setChatBusy(true, container.closest('.sphinx-modal'));
     
     try {
-      // Send to AI service with streaming
-      await aiChatService.sendMessageStreaming(
-        content,
-        messageManager.getConversationId(),
-        {
-          onChunk: (chunk) => {
-            updateAIMessage(aiMessage.id, chunk, container, true);
+      let activeRequestId = null;
+      const result = await requestControl.runNow(async ({ requestId }) => {
+        activeRequestId = requestId;
+        return await aiChatService.sendMessageStreaming(
+          content,
+          conversationId,
+          {
+            onChunk: (chunk) => {
+              if (!requestControl.isLatest(requestId)) return;
+              updateAIMessage(aiMessage.id, chunk, container, true);
+            },
+            onComplete: (sources, response = {}) => {
+              if (!requestControl.isLatest(requestId)) return;
+              finalizeAIMessage(aiMessage.id, container, sources, response.queryPlan || queryPlan);
+              if (response.conversationId) {
+                messageManager.setConversationId(response.conversationId);
+              }
+              messageManager.saveToStorage();
+            },
+            onError: (error) => {
+              if (!requestControl.isLatest(requestId)) return;
+              updateAIMessage(aiMessage.id, String(error || 'Request failed'), container, false);
+            }
           },
-          onComplete: () => {
-            finalizeAIMessage(aiMessage.id, container);
-            messageManager.saveToStorage();
-          }
-        },
-        { mode }
-      );
+          { mode, queryPlan }
+        );
+      });
+
+      if (activeRequestId && requestControl.isLatest(activeRequestId) && result?.conversationId) {
+        messageManager.setConversationId(result.conversationId);
+      }
       
     } catch (error) {
       const errorMessage = 'Sorry, an error occurred. Please try again.';
@@ -635,6 +467,9 @@
       });
       
       console.error('Message sending failed:', error);
+    } finally {
+      setChatBusy(false, container.closest('.sphinx-modal'));
+      textarea.focus();
     }
   }
   
@@ -647,11 +482,18 @@
       messageEl.classList.add('loading');
     }
     
-    const avatar = message.sender === 'user' ? '👤' : '🤖';
+    const messageHeader = message.sender === 'ai'
+      ? `
+        <div class="sphinx-message-header">
+          <span class="sphinx-message-label">Answer</span>
+          ${message.queryPlan ? createQueryPlanHTML(message.queryPlan) : ''}
+        </div>
+      `
+      : '';
     let content;
     
     if (message.isLoading) {
-      content = 'thinking...';
+      content = 'Searching docs...';
     } else if (message.sender === 'ai') {
       // Render markdown for AI messages
       content = renderMarkdown(message.content);
@@ -661,8 +503,8 @@
     }
     
     messageEl.innerHTML = `
-      <div class="sphinx-message-avatar">${avatar}</div>
       <div class="sphinx-message-content">
+        ${messageHeader}
         <div class="sphinx-message-text">${content}</div>
         ${message.sources && message.sources.length > 0 ? createSourcesHTML(message.sources) : ''}
       </div>
@@ -698,7 +540,7 @@
     }
   }
   
-  function finalizeAIMessage(messageId, container) {
+  function finalizeAIMessage(messageId, container, sources = [], queryPlan = null) {
     const messageEl = container.querySelector(`[data-message-id="${messageId}"]`);
     if (messageEl) {
       messageEl.classList.remove('loading');
@@ -711,29 +553,36 @@
           textEl.innerHTML = renderMarkdown(message.content);
         }
       }
+
+      const oldSources = messageEl.querySelector('.sphinx-sources');
+      if (oldSources) oldSources.remove();
+      if (sources && sources.length) {
+        messageEl.querySelector('.sphinx-message-content')?.insertAdjacentHTML('beforeend', createSourcesHTML(sources));
+      }
     }
     
     messageManager.updateMessage(messageId, { 
       isLoading: false,
-      isStreaming: false 
+      isStreaming: false,
+      sources,
+      queryPlan: queryPlan || undefined
     });
   }
   
   function createSourcesHTML(sources) {
-    if (!sources.length) return '';
-    
-    const sourcesHTML = sources.map(source => `
-      <div class="sphinx-source">
-        <a href="${source.document.url}" target="_blank">
-          ${source.document.title || source.document.hierarchy.lvl0}
-        </a>
-      </div>
-    `).join('');
-    
+    return RLinfAssistantUtils.createSourcesHTML(sources);
+  }
+
+  function createQueryPlanHTML(plan) {
+    const display = plan.display || {};
+    const label = [
+      display.sourceScope || 'Documentation',
+      plan.analysis?.queryType || ''
+    ].filter(Boolean).join(' · ');
+
     return `
-      <div class="sphinx-sources">
-        <h4>reference</h4>
-        ${sourcesHTML}
+      <div class="sphinx-query-plan" title="Search plan">
+        ${RLinfAssistantUtils.escapeHtml(label)}
       </div>
     `;
   }
@@ -767,79 +616,12 @@
   
   // Enhanced markdown renderer based on VitePress implementation
   function renderMarkdown(markdown) {
-    if (!markdown) return '';
-    
-    // First, protect code content with placeholders to prevent interference
-    let result = markdown;
-    const codeBlocks = [];
-    const inlineCodes = [];
-    
-    // Extract and protect code blocks first
-    result = result.replace(/```([\s\S]*?)```/g, (match, content) => {
-      const index = codeBlocks.length;
-      codeBlocks.push(`<pre><code>${escapeHtml(content.trim())}</code></pre>`);
-      return `XCODEBLOCKREPLACEMENTX${index}XCODEBLOCKREPLACEMENTX`;
-    });
-    
-    // Extract and protect inline code
-    result = result.replace(/`([^`]+)`/g, (match, content) => {
-      const index = inlineCodes.length;
-      inlineCodes.push(`<code>${escapeHtml(content)}</code>`);
-      return `XINLINECODEREPLACEMENTX${index}XINLINECODEREPLACEMENTX`;
-    });
-    
-    // Now apply other formatting (safe from code interference)
-    result = result
-      // Headers with proper hierarchy
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      
-      // Bold
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/__(.*?)__/g, '<strong>$1</strong>')
-      
-      // Italic
-      .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/_(.*?)_/g, '<em>$1</em>')
-      
-      // Links
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      
-      // Normalize multiple line breaks
-      .replace(/\n\n\n+/g, '\n\n')
-      // Handle paragraphs and line breaks
-      .replace(/\n\n/g, '</p><p>')
-      .replace(/\n/g, '<br>');
-    
-    // Wrap content in paragraphs
-    if (result && !result.includes('<h1>') && !result.includes('<h2>') && !result.includes('<h3>') && 
-        !result.includes('<pre>')) {
-      result = '<p>' + result + '</p>';
-    }
-    
-    // Restore protected code blocks
-    codeBlocks.forEach((codeBlock, index) => {
-      result = result.replace(`XCODEBLOCKREPLACEMENTX${index}XCODEBLOCKREPLACEMENTX`, codeBlock);
-    });
-    
-    // Restore protected inline code
-    inlineCodes.forEach((inlineCode, index) => {
-      result = result.replace(`XINLINECODEREPLACEMENTX${index}XINLINECODEREPLACEMENTX`, inlineCode);
-    });
-    
-    return result;
+    return RLinfAssistantUtils.renderMarkdown(markdown);
   }
   
   // Safely escape HTML for user content
   function escapeHtml(text) {
-    if (!text) return '';
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    return RLinfAssistantUtils.escapeHtml(text);
   }
 
   // Initialize when DOM is ready
@@ -852,14 +634,11 @@
     // Initialize services first
     initializeServices();
     
-    // Inject basic modal styles
-    injectModalStyles();
-    
     // Create UI components
     // const trigger = createTrigger();
     const modal = createModal();
 
-    bindNavTrigger();
+    bindNavTrigger(modal);
     
     // Initialize chat functionality
     initChat(modal);
@@ -870,10 +649,7 @@
     const closeBtn = modal.querySelector('.sphinx-modal-close');
 
     function handleModalClose() {
-      overlay.classList.remove('show');
-      modalBox.classList.remove('show');
-      const messagesContainer = modal.querySelector('.sphinx-chat-messages');
-      clearChatHistory(messagesContainer);
+      closeModal(modal);
     }
 
     closeBtn.addEventListener('click', handleModalClose);
@@ -888,6 +664,8 @@
       }
     });
     document.addEventListener('keydown', (e) => {
+      trapModalFocus(e, modalBox);
+
       if (e.key === 'Escape' && overlay.classList.contains('show')) {
         if (isComposing || justFinishedComposition || document.activeElement === modal.querySelector('textarea')) {
           return;
