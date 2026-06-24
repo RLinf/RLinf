@@ -4,6 +4,7 @@
   
   // Initialize services
   let typesenseClient, messageManager, aiChatService;
+  let runtimeConfig = null;
   let modeBadge, modePanel;
   let currentMode = 'quick';
   let isInitialized = false;
@@ -17,8 +18,22 @@
   const JUST_FINISHED_MS = 80;
 
   // Initialize services when dependencies are loaded
+  function getRuntimeConfig() {
+    if (typeof window.SphinxAIConfig === 'undefined') {
+      return null;
+    }
+
+    const config = window.SphinxAIConfig;
+    if (!config || !config.typesense || !config.chat) {
+      return null;
+    }
+
+    return config;
+  }
+
   function initializeServices() {
-    if (typeof SphinxAIConfig === 'undefined' ||
+    if (typeof window.SPHINX_AI_CONFIG === 'undefined' ||
+        typeof window.SphinxAIConfig === 'undefined' ||
         typeof SphinxTypesenseClient === 'undefined' ||
         typeof SphinxMessageManager === 'undefined' ||
         typeof SphinxAIChatService === 'undefined' ||
@@ -29,11 +44,18 @@
       setTimeout(initializeServices, 100);
       return;
     }
+
+    const config = getRuntimeConfig();
+    if (!config) {
+      setTimeout(initializeServices, 100);
+      return;
+    }
     
     try {
-      typesenseClient = new SphinxTypesenseClient(SphinxAIConfig.typesense);
+      runtimeConfig = config;
+      typesenseClient = new SphinxTypesenseClient(config.typesense);
       messageManager = new SphinxMessageManager();
-      aiChatService = new SphinxAIChatService(typesenseClient, SphinxAIConfig);
+      aiChatService = new SphinxAIChatService(typesenseClient, config);
       requestControl = RLinfAssistantUtils.createSearchRequestControl();
       
       // Load previous messages
@@ -41,7 +63,7 @@
       
       isInitialized = true;
       
-      if (SphinxAIConfig.debug) {
+      if (config.debug) {
         console.log('Sphinx AI services initialized successfully');
       }
     } catch (error) {
@@ -277,14 +299,15 @@
   
   // Initialize mode selection components
   function initModeSelection(container) {
-    if (!container || !isInitialized) return;
+    const config = runtimeConfig || getRuntimeConfig();
+    if (!container || !isInitialized || !config) return;
     
     // Create mode panel
-    modePanel = new SphinxModePanel(SphinxAIConfig, (selectedMode) => {
+    modePanel = new SphinxModePanel(config, (selectedMode) => {
       currentMode = selectedMode;
       modeBadge.setMode(selectedMode);
       
-      if (SphinxAIConfig.debug) {
+      if (config.debug) {
         console.log('Chat mode changed to:', selectedMode);
       }
     }, () => {
@@ -293,7 +316,7 @@
     });
     
     // Create mode badge
-    modeBadge = new SphinxModeBadge(SphinxAIConfig, (isOpen) => {
+    modeBadge = new SphinxModeBadge(config, (isOpen) => {
       if (isOpen) {
         modePanel.show();
       } else {
@@ -309,7 +332,7 @@
     container.appendChild(panelElement);
     
     // Set initial mode
-    currentMode = SphinxAIConfig.chat.defaultMode || 'quick';
+    currentMode = config.chat.defaultMode || 'quick';
     modeBadge.setMode(currentMode);
     modePanel.setCurrentMode(currentMode);
     
@@ -608,7 +631,8 @@
         showEmptyState(container);
       }
       
-      if (SphinxAIConfig.debug) {
+      const config = runtimeConfig || getRuntimeConfig();
+      if (config?.debug) {
         console.log('Chat history cleared on modal close');
       }
     }

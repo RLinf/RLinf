@@ -11,7 +11,8 @@ const syncedFiles = [
   '_static/js/message-manager.js',
   '_static/js/ai-chat-service.js',
   '_static/sphinx-modal-widget.js',
-  '_static/css/sphinx-modal.css'
+  '_static/css/sphinx-modal.css',
+  '_static/css/mode-selection.css'
 ];
 
 for (const relativePath of syncedFiles) {

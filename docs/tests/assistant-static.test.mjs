@@ -21,6 +21,27 @@ test('assistant runtime files stay synced across Sphinx locale trees', () => {
   }
 });
 
+test('assistant sync script includes every synced runtime file', () => {
+  const syncScript = fs.readFileSync('docs/assistant/sync-static.mjs', 'utf8');
+
+  for (const relativePath of syncedFiles) {
+    assert.match(syncScript, new RegExp(`'${relativePath.replaceAll('/', '\\/')}'`));
+  }
+});
+
+test('widget initializes services through the window config getter', () => {
+  const widget = fs.readFileSync('docs/source-en/_static/sphinx-modal-widget.js', 'utf8');
+  const initializeServices = widget.match(
+    /function initializeServices\(\) \{[\s\S]*?\n  \}/
+  )?.[0] || '';
+
+  assert.match(widget, /const config = window\.SphinxAIConfig/);
+  assert.match(initializeServices, /const config = getRuntimeConfig\(\)/);
+  assert.match(initializeServices, /new SphinxTypesenseClient\(config\.typesense\)/);
+  assert.match(initializeServices, /new SphinxAIChatService\(typesenseClient, config\)/);
+  assert.doesNotMatch(initializeServices, /SphinxAIConfig\.typesense/);
+});
+
 test('Sphinx Typesense search key is runtime-configured', () => {
   for (const confPath of ['docs/source-en/conf.py', 'docs/source-zh/conf.py']) {
     const conf = fs.readFileSync(confPath, 'utf8');
