@@ -129,6 +129,14 @@ env:
     keyboard_reward_wrapper: eval_control
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: True
+      robot_type: "dual_FR3"
+      fps: 10
+      finalize_interval: 1
     pico:
       zmq_addr: "ipc:///tmp/vr_data.ipc"
       hand: "dual"
