@@ -31,6 +31,8 @@ launch script short. The function:
 
 from __future__ import annotations
 
+from typing import Sequence
+
 from omegaconf import DictConfig
 
 from rlinf.scheduler import (
@@ -38,6 +40,7 @@ from rlinf.scheduler import (
     NodePlacementStrategy,
     PackedPlacementStrategy,
 )
+from rlinf.scheduler.placement import PlacementStrategy
 
 from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
@@ -46,9 +49,11 @@ from .server_worker import SGLangServerWorker
 def launch_sglang_router_and_server(
     config: DictConfig,
     cluster: Cluster,
-    rollout_hardware_ranks: list[int],
+    rollout_hardware_ranks: list[int] | None,
     router_server_args: DictConfig,
     *,
+    rollout_node_group: str | Sequence[str] | None = None,
+    placement_strategy: PlacementStrategy | None = None,
     router_node_rank: int = 0,
 ) -> tuple["object | None", "object | None"]:
     """Launch the sglang server group and a single router worker.
@@ -63,12 +68,32 @@ def launch_sglang_router_and_server(
             launcher repacks them into engines and asserts the ranks form a
             contiguous range (the prerequisite for a
             ``PackedPlacementStrategy``). Ignored when
-            ``launch_server`` is ``False``.
+            ``placement_strategy`` is provided or when ``launch_server``
+            is ``False``.
         router_server_args: ``DictConfig`` carrying the
             ``{tensor_parallel_size, pipeline_parallel_size, server,
             router, group_name, router_group_name, launch_server,
             launch_router}`` keys the launcher consumes directly
             (typically ``config.rollout``).
+        rollout_node_group: Optional node-group label(s) to forward to
+            the repacked ``PackedPlacementStrategy``. Lets the caller
+            preserve the node-group selection (e.g. when the rollout
+            component is pinned to a non-default node group in
+            ``cluster.component_placement``). Pass the same value
+            originally given to ``component_placement[<name>].node_group``,
+            e.g.  ``"rollout_gpu"`` or ``["a800", "4090"]``. Ignored when
+            ``placement_strategy`` is provided.
+        placement_strategy: A fully-built placement strategy to use as-is
+            for the sglang server group — typically
+            ``ComponentPlacement.get_strategy("<name>")``. When provided,
+            this short-circuits the repacking path: it preserves the
+            original node-group selection, process-to-resource mapping,
+            and non-contiguous rank layouts (e.g. a
+            ``FlexiblePlacementStrategy`` produced from a fancy
+            ``placement: 0-1:0-3,3-5`` config). The caller is responsible
+            for ensuring the strategy already encodes
+            ``tensor_parallel_size * pipeline_parallel_size`` accelerators
+            per process.
         router_node_rank: Cluster-global node rank on which to place the
             router. Defaults to node 0 (the head).
 
@@ -82,20 +107,28 @@ def launch_sglang_router_and_server(
 
     server_group = None
     if launch_server:
-        num_accelerators_per_engine = int(
-            router_server_args.tensor_parallel_size
-        ) * int(router_server_args.pipeline_parallel_size)
-        ranks = sorted(int(r) for r in rollout_hardware_ranks)
-        assert ranks, "rollout_hardware_ranks must not be empty."
-        assert ranks == list(range(ranks[0], ranks[-1] + 1)), (
-            f"rollout_hardware_ranks must be contiguous to repack as a "
-            f"PackedPlacementStrategy; got {ranks}."
-        )
-        rollout_placement = PackedPlacementStrategy(
-            start_hardware_rank=ranks[0],
-            end_hardware_rank=ranks[-1],
-            num_hardware_per_process=num_accelerators_per_engine,
-        )
+        if placement_strategy is not None:
+            server_ps = placement_strategy
+        else:
+            assert rollout_hardware_ranks is not None, (
+                "rollout_hardware_ranks must be provided when "
+                "placement_strategy is not."
+            )
+            num_accelerators_per_engine = int(
+                router_server_args.tensor_parallel_size
+            ) * int(router_server_args.pipeline_parallel_size)
+            ranks = sorted(int(r) for r in rollout_hardware_ranks)
+            assert ranks, "rollout_hardware_ranks must not be empty."
+            assert ranks == list(range(ranks[0], ranks[-1] + 1)), (
+                f"rollout_hardware_ranks must be contiguous to repack as a "
+                f"PackedPlacementStrategy; got {ranks}."
+            )
+            server_ps = PackedPlacementStrategy(
+                start_hardware_rank=ranks[0],
+                end_hardware_rank=ranks[-1],
+                num_hardware_per_process=num_accelerators_per_engine,
+                node_group=rollout_node_group,
+            )
 
         server_group = SGLangServerWorker.create_group(
             config=config,
@@ -103,7 +136,7 @@ def launch_sglang_router_and_server(
         ).launch(
             cluster=cluster,
             name=router_server_args.group_name,
-            placement_strategy=rollout_placement,
+            placement_strategy=server_ps,
         )
 
     # Bring up the router subprocess first WITHOUT any workers, then
@@ -112,14 +145,14 @@ def launch_sglang_router_and_server(
     # register each server as soon as its /health goes 200.
     router_group = None
     if launch_router:
-        router_placement = NodePlacementStrategy(node_ranks=[router_node_rank])
+        router_ps = NodePlacementStrategy(node_ranks=[router_node_rank])
         router_group = SGLangRouterWorker.create_group(
             config=config,
             router_cfg=router_server_args.router,
         ).launch(
             cluster=cluster,
             name=router_server_args.router_group_name,
-            placement_strategy=router_placement,
+            placement_strategy=router_ps,
         )
 
     router_handle = router_group.init_router() if router_group is not None else None

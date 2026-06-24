@@ -7,13 +7,20 @@ hydra:
   output_subdir: null
 
 cluster:
-  num_nodes: 1
+  num_nodes: 2
   component_placement:
-    server: all
+    server:
+      node_group: rollout_gpu
+      placement: all
+  node_groups:
+    - label: rollout_gpu
+      node_ranks: 1
+    - label: test
+      node_ranks: 0
 
 router_server_args:
   model_path: /mnt/public/hf_models/qwen2.5-VL-3B/
-  tensor_parallel_size: 2
+  tensor_parallel_size: 1
   pipeline_parallel_size: 1
 
   return_logprobs: False
@@ -22,7 +29,7 @@ router_server_args:
   rollout_backend: sglang
 
   group_name: SGLangServerGroup
-  launch_server: True   # set False to skip the sglang server group
+  launch_server: True
   server:
     model_path: ${..model_path}
     tp_size: ${..tensor_parallel_size}
@@ -42,7 +49,7 @@ router_server_args:
     tool_call_parser: null
 
   router_group_name: SGLangRouterGroup
-  launch_router: True   # set False to skip the sglang router
+  launch_router: True
   router:
     policy: cache_aware
     log_level: warn

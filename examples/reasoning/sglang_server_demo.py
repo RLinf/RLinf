@@ -123,13 +123,21 @@ def main(cfg: DictConfig) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     placement = ComponentPlacement(cfg, cluster)
-    router_server_args = cfg.rollout
+    router_server_args = cfg.router_server_args
+
+    llm_cfg = cfg.cluster.component_placement.server
+    rollout_node_group = (
+        llm_cfg.get("node_group", None)
+        if isinstance(llm_cfg, DictConfig)
+        else None
+    )
 
     server_group, router_group = launch_sglang_router_and_server(
         cfg,
         cluster,
-        rollout_hardware_ranks=placement.get_hardware_ranks("llm"),
+        rollout_hardware_ranks=placement.get_hardware_ranks("server"),
         router_server_args=router_server_args,
+        rollout_node_group=rollout_node_group,
     )
     logger.info("launch_sglang_router_and_server returned")
 
