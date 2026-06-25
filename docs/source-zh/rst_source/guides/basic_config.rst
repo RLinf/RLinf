@@ -8,10 +8,6 @@
 本节涵盖具身智能与智能体训练共用的基础 GPU 和集群配置。
 任务专用配置请参见 :doc:`embodiment_config` 和 :doc:`agentic_config`。
 
-.. contents::
-   :depth: 1
-   :local:
-
 hydra
 ~~~~~~
 
@@ -22,10 +18,16 @@ hydra
       dir: .
     output_subdir: null
 
-``hydra.run.dir``：Hydra 运行的工作目录。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-``hydra.output_subdir``：输出子目录（设为 null 则不创建子目录）。
-
+   * - 参数
+     - 说明
+   * - ``hydra.run.dir``
+     - Hydra 运行的工作目录。
+   * - ``hydra.output_subdir``
+     - 输出子目录（设为 ``null`` 则不创建子目录）。
 
 cluster
 ~~~~~~~~~~~~~~~
@@ -37,20 +39,37 @@ cluster
     component_placement:
       actor,inference,rollout: all
 
-``cluster.num_nodes``：用于训练的物理节点数量。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-``cluster.component_placement``：
-各组件（进程）的 *放置策略*。
+   * - 参数
+     - 说明
+   * - ``cluster.num_nodes``
+     - 用于训练的物理节点数量。
+   * - ``cluster.component_placement``
+     - 各组件（进程）的放置策略。每一行是一个 ``component_names: resource_ranks``
+       映射：键是一个或多个组件名称（例如 ``rollout`` 或
+       ``rollout,inference,actor``），值是分配给它们的硬件（如 GPU）Rank。
 
-在上面运行于GPU节点的简单示例中：
+Rank 取值支持以下形式：
 
-- 键 (key) 是组件的名称，例如 ``rollout``，或 ``rollout,inference,actor``
-- 值 (value) 是分配给这些组件的全局 GPU Rank，可以是：
-   - "all"：使用集群中的所有 GPU
-   - 单个整数，例如 "3"：使用 GPU 3
-   - 逗号分隔的整数列表，例如 "0,2,3"：使用 GPU 0、2 和 3
-   - 连字符分隔的整数范围，例如 "0-3"：使用 GPU 0、1、2 和 3
-   - 上述两种方式的组合，例如 "0-3,5,7"：使用 GPU 0、1、2、3、5 和 7
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - 取值
+     - 含义
+   * - ``all``
+     - 使用集群中的所有 GPU。
+   * - ``3``
+     - 单个整数：使用 GPU 3。
+   * - ``0,2,3``
+     - 逗号分隔的列表：使用 GPU 0、2 和 3。
+   * - ``0-3``
+     - 连字符范围：使用 GPU 0、1、2 和 3。
+   * - ``0-3,5,7``
+     - 组合形式：使用 GPU 0、1、2、3、5 和 7。
 
 而对于更高级的组件放置用法（例如，异构集群中使用不同型号的 GPU、机器人硬件或仅 CPU 节点）以及代码中的自定义，请参见 :doc:`../concepts/placement`。
 
@@ -79,29 +98,32 @@ runner
     experiment_name: grpo-1.5b
     output_dir: ../results
 
-``runner.task_type``：任务类型标识（math 或 embodied）。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-**logger：**
-
-``runner.logger.log_path``：日志输出的根目录。
-
-``runner.logger.project_name``：实验跟踪的项目名。
-
-``runner.logger.experiment_name``：实验名称。
-
-``runner.logger.logger_backends``：日志后端（tensorboard、wandb、swanlab）。
-
-关于日志后端详见 :doc:`logger`。
-
-``runner.max_epochs``：最大训练 epoch 数。
-
-``runner.max_steps``：最大全局步数；为 -1 时，依据 ``runner.max_epochs`` 自动确定。
-
-``runner.val_check_interval``：验证 rollout 的触发频率（-1 关闭）。
-
-``runner.save_interval``：保存 checkpoint 的步数间隔。
-
-``runner.seq_length``：输入到模型的总序列长度（提示 + 生成）。
+   * - 参数
+     - 说明
+   * - ``runner.task_type``
+     - 任务类型标识（``math`` 或 ``embodied``）。
+   * - ``runner.logger.log_path``
+     - 日志输出的根目录。
+   * - ``runner.logger.project_name``
+     - 实验跟踪的项目名。
+   * - ``runner.logger.experiment_name``
+     - 实验名称。
+   * - ``runner.logger.logger_backends``
+     - 日志后端（``tensorboard``、``wandb``、``swanlab``）。详见 :doc:`logger`。
+   * - ``runner.max_epochs``
+     - 最大训练 epoch 数。
+   * - ``runner.max_steps``
+     - 最大全局步数；为 ``-1`` 时，依据 ``runner.max_epochs`` 自动确定。
+   * - ``runner.val_check_interval``
+     - 验证 rollout 的触发频率（``-1`` 关闭）。
+   * - ``runner.save_interval``
+     - 保存 checkpoint 的步数间隔。
+   * - ``runner.seq_length``
+     - 输入到模型的总序列长度（提示 + 生成）。
 
 algorithm
 ~~~~~~~~~~~~~~~
@@ -136,45 +158,52 @@ algorithm
       top_p: 1.0
       repetition_penalty: 1.0
 
-``algorithm.group_size``：每个提示采样的响应个数（>1 时启用组基线）。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-``algorithm.logprob_forward_micro_batch_size``：log-prob 前向的微批大小。
-
-``algorithm.val_rollout_batch_size_per_gpu``：验证阶段每 GPU 的 rollout 微批大小。
-
-``algorithm.loss_type``：策略损失类型（如 ppo）。
-
-``algorithm.loss_agg_func``：token 损失的聚合方式（如 token-mean）。
-
-``algorithm.kl_beta``：加入到奖励中的 KL 权重。
-
-``algorithm.kl_penalty_type``：KL 形态（如 low_var_kl）。
-
-``algorithm.ratio_clip_eps``：PPO 比率裁剪阈值。
-
-``algorithm.entropy_bonus``：熵奖励系数。
-
-``algorithm.calculate_entropy``：是否计算/记录熵项。
-
-``algorithm.adv_type``：优势函数估计类型（如 grpo）。
-
-``algorithm.normalize_advantages``：是否对优势进行归一化。
-
-``algorithm.early_stop_imp_ratio``：当重要性比超出阈值时提前终止本次更新。
-
-``algorithm.use_valid_token_scale``：是否按有效 token 掩码缩放损失/优势。
-
-**sampling_params：**
-
-``algorithm.sampling_params.do_sample``：False 时使用贪心解码。
-
-``algorithm.sampling_params.temperature``：采样温度。
-
-``algorithm.sampling_params.top_k``：top-k 截断（设很大值等于禁用）。
-
-``algorithm.sampling_params.top_p``：nucleus 采样阈值。
-
-``algorithm.sampling_params.repetition_penalty``：重复惩罚系数。
+   * - 参数
+     - 说明
+   * - ``algorithm.group_size``
+     - 每个提示采样的响应个数（> 1 时启用组基线）。
+   * - ``algorithm.logprob_forward_micro_batch_size``
+     - log-prob 前向的微批大小。
+   * - ``algorithm.val_rollout_batch_size_per_gpu``
+     - 验证阶段每 GPU 的 rollout 微批大小。
+   * - ``algorithm.loss_type``
+     - 策略损失类型（如 ``ppo``）。
+   * - ``algorithm.loss_agg_func``
+     - token 损失的聚合方式（如 ``token-mean``）。
+   * - ``algorithm.kl_beta``
+     - 加入到奖励中的 KL 权重。
+   * - ``algorithm.kl_penalty_type``
+     - KL 形态（如 ``low_var_kl``）。
+   * - ``algorithm.ratio_clip_eps``
+     - PPO 比率裁剪阈值。
+   * - ``algorithm.entropy_bonus``
+     - 熵奖励系数。
+   * - ``algorithm.calculate_entropy``
+     - 是否计算/记录熵项。
+   * - ``algorithm.clip_ratio_c``
+     - 悲观 PPO 界的 dual-clip 常数（``null`` 表示禁用）。
+   * - ``algorithm.adv_type``
+     - 优势函数估计类型（如 ``grpo``）。
+   * - ``algorithm.normalize_advantages``
+     - 是否对优势进行归一化。
+   * - ``algorithm.early_stop_imp_ratio``
+     - 当重要性比超出阈值时提前终止本次更新。
+   * - ``algorithm.use_valid_token_scale``
+     - 是否按有效 token 掩码缩放损失/优势。
+   * - ``algorithm.sampling_params.do_sample``
+     - False 时使用贪心解码。
+   * - ``algorithm.sampling_params.temperature``
+     - 采样温度。
+   * - ``algorithm.sampling_params.top_k``
+     - top-k 截断（设很大值等于禁用）。
+   * - ``algorithm.sampling_params.top_p``
+     - nucleus 采样阈值。
+   * - ``algorithm.sampling_params.repetition_penalty``
+     - 重复惩罚系数。
 
 rollout
 ~~~~~~~~~~~~~~~
@@ -192,15 +221,22 @@ rollout
 
     recompute_logprobs: True
 
-``rollout.gpu_memory_utilization``：目标 GPU 显存占用比例。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-``rollout.group_name``：rollout / inference worker 的逻辑分组名。
-
-``rollout.model.model_path``：生成后端所用 HF 模型路径。
-
-``rollout.model.model_type``：后端内部使用的模型架构标记（如 qwen2.5）。
-
-``rollout.recompute_logprobs``：是否为采样序列重新计算对数概率。
+   * - 参数
+     - 说明
+   * - ``rollout.group_name``
+     - rollout / inference worker 的逻辑分组名。
+   * - ``rollout.gpu_memory_utilization``
+     - 目标 GPU 显存占用比例。
+   * - ``rollout.model.model_path``
+     - 生成后端所用 HF 模型路径。
+   * - ``rollout.model.model_type``
+     - 后端内部使用的模型架构标记（如 ``qwen2.5``）。
+   * - ``rollout.recompute_logprobs``
+     - 是否为采样序列重新计算对数概率。
 
 actor
 ~~~~~~~~~~~~~~~
@@ -215,13 +251,18 @@ actor
 
     seed: 1234
 
-**顶层：**
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
 
-``actor.group_name``：训练（actor）worker 的逻辑分组名。
-
-``actor.model.megatron_checkpoint``：训练前加载的模型 Megatron checkpoint 路径。
-
-``actor.seed``：全局随机种子，便于复现。
+   * - 参数
+     - 说明
+   * - ``actor.group_name``
+     - 训练（actor）worker 的逻辑分组名。
+   * - ``actor.model.megatron_checkpoint``
+     - 训练前加载的模型 Megatron checkpoint 路径。
+   * - ``actor.seed``
+     - 全局随机种子，便于复现。
 
 reward
 ~~~~~~~~~~~~~~~
@@ -231,7 +272,14 @@ reward
   reward:
     use_reward_model: false
 
-``reward.use_reward_model``：是否使用奖励模型。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - 参数
+     - 说明
+   * - ``reward.use_reward_model``
+     - 是否使用奖励模型。
 
 critic
 ~~~~~~~~~~~~~~~
@@ -241,4 +289,11 @@ critic
   critic:
     use_critic_model: false
 
-``critic.use_critic_model``：是否使用价值网络（critic）。
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - 参数
+     - 说明
+   * - ``critic.use_critic_model``
+     - 是否使用价值网络（critic）。
