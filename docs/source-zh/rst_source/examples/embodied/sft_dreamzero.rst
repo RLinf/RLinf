@@ -653,7 +653,7 @@ RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加
 
 **DreamZero-14B**
 
-在 14B 大模型上，由于显存压力巨大，官方基线通常被迫采用 DeepSpeed ZeRO-offload 方案，这导致了严重的计算/通信浪费与 CPU 换入换出开销。我们通过工程优化，以 FSDP2 ``full_shard`` 替代 DeepSpeed ZeRO-offload 方案，并进一步结合了计算图优化（算子融合与 CUDA Graph）。
+在 14B 大模型上，由于显存压力巨大，官方基线通常被迫采用 DeepSpeed ZeRO-offload 方案，这导致了严重的计算/通信浪费与 CPU 换入换出开销。我们通过工程优化，以 FSDP2 full_shard 替代 DeepSpeed ZeRO-offload 方案，并进一步结合了计算图优化（算子融合与 CUDA Graph）。
 
 .. list-table::
    :header-rows: 1
