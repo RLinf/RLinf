@@ -34,6 +34,20 @@ from .placement import (
     PlacementStrategy,
 )
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
+from .worker.routing import (
+    CommMapper,
+    build_recv_plan,
+    build_route_channel_key,
+    build_send_key,
+    build_send_plan,
+    decoupled_build_recv_plan,
+    get_batch_size,
+    get_group_world_size,
+    infer_batch_size,
+    merge_batches,
+    split_batch,
+    split_channel_message,
+)
 
 __all__ = [
     "AcceleratorUtil",
@@ -55,6 +69,18 @@ __all__ = [
     "Worker",
     "WorkerAddress",
     "WorkerGroupFuncResult",
+    "CommMapper",
+    "split_channel_message",
+    "build_send_plan",
+    "build_send_key",
+    "build_recv_plan",
+    "build_route_channel_key",
+    "decoupled_build_recv_plan",
+    "get_batch_size",
+    "get_group_world_size",
+    "infer_batch_size",
+    "split_batch",
+    "merge_batches",
     "WorkerInfo",
     "Channel",
     "ChannelWorker",

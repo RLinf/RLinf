@@ -29,7 +29,7 @@ init_params:
   sim_config:
     sim_freq: 500
     control_freq: 5
-  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  max_episode_steps: ${..max_episode_steps} # max episode steps for truncation
   sensor_configs:
     shader_pack: "default"
   render_mode: rgb_array

@@ -91,6 +91,16 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
         使用 PPO 算法进行数学推理强化学习训练，示例配置基于 Qwen2.5-1.5B
       </p>
     </div>
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
+         <b>使用 GRPO 训练 Qwen3-VL 视觉语言推理</b>
+        </a><br>
+        基于 GRPO 的视觉语言模型强化学习训练，用于几何问题求解（Geo3K）
+      </p>
+    </div>
    </div>
 
 .. toctree::
@@ -104,3 +114,4 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    rStar2 <rstar2>
    Math GRPO <reasoning>
    Math PPO <reasoning_ppo>
+   Qwen3 VL GRPO <qwen3_vl_geo3k>

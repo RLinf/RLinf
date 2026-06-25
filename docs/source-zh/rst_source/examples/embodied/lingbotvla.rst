@@ -1,6 +1,11 @@
 Lingbot-VLA模型强化学习
 ========================================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png
    :align: center
    :width: 90%
@@ -281,17 +286,42 @@ GRPO 顶层文件通过 Hydra 动态组装了环境与模型，并直接在 ``ac
 可视化与结果
 ----------------------------------------
 
-启动 TensorBoard 实时查看训练：
+在 RLinf 仓库根目录启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-    tensorboard --logdir ../results --port 6006
+   tensorboard --logdir ../results --port 6006
 
-最值得关注的指标是 **``env/success_once``** —— 回合成功率。每个日志指标的含义见
+关键指标是 ``env/success_once``。完整指标说明见
 :doc:`训练指标 <../../reference/metrics>`。
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla_success_once.png
-   :width: 95%
-   :align: center
+视频通过 env video 配置保存：
 
-   GRPO 在 RoboTwin Click Bell 任务上提升 ``env/success_once``。
+.. code:: yaml
+
+   video_cfg:
+     save_video: True
+     video_base_dir: ${runner.logger.log_path}/video/eval
+
+.. list-table:: Lingbot-VLA 在 RoboTwin 任务上的评估结果
+   :header-rows: 1
+
+   * - 任务
+     - SFT
+     - RLinf-GRPO
+   * - ``click_bell``
+     - |huggingface| `96.88% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.75% <https://huggingface.co/RLinf/RLinf-lingbotvla-click-bell-grpo>`__
+   * - ``place_shoe``
+     - |huggingface| `93.75% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-lingbotvla-place-shoe-grpo>`__
+   * - Average
+     - 95.31%
+     - **98.60%**
+   * - Δ Avg.
+     - ---
+     - **+3.29%**
+
+.. note::
+
+   Lingbot-VLA 结果使用 ``demo_randomized`` 设置。任务级仿真选项见 `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__。
