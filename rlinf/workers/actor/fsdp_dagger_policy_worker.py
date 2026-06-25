@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import os
 import threading
-import time
 from pathlib import Path
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.dagger import (
+    RollingLeRobotDataset,
+    build_dataloader_from_dataset,
+)
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
-from rlinf.data.rolling_lerobot_dataset import RollingLeRobotDataset
-from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -45,12 +47,17 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.dataset = None
         self._lerobot_loader = None
         self._lerobot_iter = None
-        self.data_source = cfg.actor.get("data_source", "buffer")
+        self.enable_online_lerobot = bool(
+            OmegaConf.select(
+                cfg, "algorithm.dagger.online_lerobot.enabled", default=False
+            )
+        )
         self._data_epoch = 0
-        # Actor-side LeRobot archive state (used when data_collection.defer_write=True).
+        # Actor-side LeRobot archive state for online DAgger training.
         self._next_lerobot_archive_id = 0
         self._pending_archive_path: str | None = None
         self._pending_archive_episodes: list[list[dict]] = []
+        self._pending_archive_lock = threading.Lock()
         self._lerobot_loader_lock = threading.Lock()
         self._lerobot_resume_done = True
         self._lerobot_resume_thread: threading.Thread | None = None
@@ -63,15 +70,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_resume_num_workers = int(lerobot_num_workers)
         if self._lerobot_resume_num_workers < 0:
             raise ValueError("actor.lerobot_num_workers must be non-negative.")
-        lerobot_cfg = self.cfg.actor.get("lerobot", {})
-        in_memory_mode = bool(lerobot_cfg.get("in_memory_mode", False))
-        if not in_memory_mode:
-            raise ValueError(
-                "Online LeRobot DAgger requires actor.lerobot.in_memory_mode=True."
-            )
-        lerobot_fps = int(lerobot_cfg.get("fps", 10))
         self.dataset = RollingLeRobotDataset(
-            root_dir=self.cfg.actor.sft_data_path,
+            root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
             chunk_size=self.cfg.actor.model.num_action_chunks,
             min_frames=self.cfg.actor.get("min_frames", 1),
             wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
@@ -79,12 +79,19 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 "only_save_expert", False
             ),
             window_size=self.cfg.actor.get("rolling_lerobot_window_size", None),
-            in_memory_mode=in_memory_mode,
-            fps=lerobot_fps,
+            in_memory_mode=True,
+            fps=int(
+                OmegaConf.select(
+                    self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
+                )
+            ),
         )
 
     def _discover_lerobot_resume_shards(self) -> list[dict]:
-        rank_dir = Path(self.cfg.actor.sft_data_path) / f"rank_{self._rank}"
+        rank_dir = (
+            Path(self.cfg.algorithm.dagger.online_lerobot.data_path)
+            / f"rank_{self._rank}"
+        )
         if not rank_dir.is_dir():
             self.log_info(
                 f"No LeRobot resume directory found for actor rank {self._rank}: {rank_dir}"
@@ -175,9 +182,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _refresh_lerobot_loader_after_resume(self) -> None:
         with self._lerobot_loader_lock:
+            if not self.dataset.is_ready():
+                return
             if self._lerobot_loader is not None:
                 self._data_epoch += 1
-                self._build_lerobot_data_loader()
+            self._build_lerobot_data_loader()
 
     def _select_lerobot_resume_shards(self, valid_shards: list[dict]) -> list[dict]:
         total_frames = sum(shard["num_frames"] for shard in valid_shards)
@@ -236,7 +245,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def setup_dagger_components(self):
         """Initialize DAgger-specific replay buffer state."""
         seed = self.cfg.actor.get("seed", 1234)
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             auto_save_path = self.cfg.algorithm.replay_buffer.get(
                 "auto_save_path", None
             )
@@ -257,7 +266,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     "trajectory_format", "pt"
                 ),
             )
-        elif self.data_source == "lerobot":
+        else:
             self._build_lerobot_dataset()
             self._resume_lerobot_dataset()
 
@@ -265,7 +274,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         clear_memory(sync=False)
 
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             send_num = self._component_placement.get_world_size("env") * self.stage_num
             recv_num = self._component_placement.get_world_size("actor")
             split_num = compute_split_num(send_num, recv_num)
@@ -276,10 +285,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 ).async_wait()
                 recv_list.append(trajectory)
             return self.recv_buffer_rollout_trajectories(recv_list)
-        elif self.data_source == "lerobot":
-            return self.recv_lerobot_rollout_trajectories(input_channel)
         else:
-            raise ValueError(f"Invalid data source: {self.data_source}")
+            return self.recv_lerobot_rollout_trajectories(input_channel)
 
     def recv_buffer_rollout_trajectories(self, recv_list: list[Trajectory]) -> None:
         intervene_traj_list = []
@@ -291,37 +298,38 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if intervene_traj_list:
             self.replay_buffer.add_trajectories(intervene_traj_list)
 
+    def _recv_lerobot_episodes_from_channel(self, input_channel: Channel) -> bool:
+        """Receive up to one actor-side split from the shared Actor channel.
+
+        Each rank pulls at most ``split_num`` messages per call so multi-actor
+        recv stays balanced like the buffer trajectory path. ``get_nowait`` is
+        used because env ranks with no completed episodes send nothing.
+        """
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+        received_any = False
+        for _ in range(split_num):
+            try:
+                episodes: list[list[dict]] = input_channel.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            received_any = True
+            for ep_frames in episodes:
+                if ep_frames:
+                    self._append_lerobot_episode(ep_frames)
+        return received_any
+
     def recv_lerobot_rollout_trajectories(self, input_channel: Channel) -> None:
         """Receive episodes from EnvWorker and append them to the memory dataset.
-        When ``data_collection.defer_write=True``, EnvWorkers buffer completed
-        episodes in memory and send them here instead of writing directly to
-        disk. The actor indexes each received episode in memory immediately.
-        Archive shards are written separately every
-        ``actor.lerobot.finalize_interval`` episodes.
-        """
-        received_once = False
-        while True:
-            if input_channel is not None and (
-                not received_once or not self.dataset.is_ready()
-            ):
-                self._receive_lerobot_episode_batch(input_channel)
-                received_once = True
-            if self.dataset.is_ready():
-                break
-            time.sleep(1)
-            self.log_info("waiting for lerobot dataset to be ready")
-        self._ensure_lerobot_loader()
 
-    def _receive_lerobot_episode_batch(self, input_channel: Channel) -> None:
-        if input_channel is not None:
-            send_num = self._component_placement.get_world_size("env") * self.stage_num
-            recv_num = self._component_placement.get_world_size("actor")
-            split_num = compute_split_num(send_num, recv_num)
-            for _ in range(split_num):
-                episodes: list[list[dict]] = input_channel.get()
-                for ep_frames in episodes:
-                    if ep_frames:
-                        self._append_lerobot_episode(ep_frames)
+        EnvWorkers collect completed episodes via ``EmbodiedLerobotRolloutResult``
+        and send them here each interact round. Empty batches are not sent by env;
+        if the dataset is still below ``min_frames``, training is skipped later.
+        """
+        self._recv_lerobot_episodes_from_channel(input_channel)
+        if self.dataset.is_ready():
+            self._ensure_lerobot_loader()
 
     @staticmethod
     def _collect_lerobot_image_keys(
@@ -345,7 +353,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def _current_archive_path(self) -> str:
         if self._pending_archive_path is None:
             self._pending_archive_path = os.path.join(
-                self.cfg.actor.sft_data_path,
+                self.cfg.algorithm.dagger.online_lerobot.data_path,
                 f"rank_{self._rank}",
                 f"id_{self._next_lerobot_archive_id}",
             )
@@ -355,7 +363,8 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def _append_lerobot_episode(self, ep_frames: list[dict]) -> None:
         """Append one received episode to memory and queue it for archive output.
         The memory append is the training path. The pending archive buffer is
-        flushed to disk every ``actor.lerobot.finalize_interval`` episodes.
+        flushed to disk every
+        ``algorithm.dagger.online_lerobot.finalize_interval`` episodes.
 
         Args:
             ep_frames: List of per-step frame dicts as produced by
@@ -363,37 +372,51 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         """
         if not ep_frames:
             return
-        archive_path = self._current_archive_path()
+        with self._pending_archive_lock:
+            archive_path = self._current_archive_path()
         self.dataset.append_episode_to_memory(archive_path, ep_frames)
-        self._pending_archive_episodes.append(ep_frames)
-        self._next_lerobot_archive_id += 1
-
-        finalize_interval = self.cfg.actor.get("lerobot", {}).get(
-            "finalize_interval", 8
-        )
-        if finalize_interval > 0 and len(self._pending_archive_episodes) >= int(
-            finalize_interval
-        ):
+        should_archive = False
+        with self._pending_archive_lock:
+            self._pending_archive_episodes.append(ep_frames)
+            self._next_lerobot_archive_id += 1
+            finalize_interval = OmegaConf.select(
+                self.cfg, "algorithm.dagger.online_lerobot.finalize_interval", default=8
+            )
+            if finalize_interval > 0 and len(self._pending_archive_episodes) >= int(
+                finalize_interval
+            ):
+                should_archive = True
+        if should_archive:
             self._archive_pending_lerobot_episodes()
 
     @Worker.timer("archive_lerobot_episodes")
     def _archive_pending_lerobot_episodes(self) -> None:
-        if not self._pending_archive_episodes or self._pending_archive_path is None:
-            return
+        with self._pending_archive_lock:
+            if not self._pending_archive_episodes or self._pending_archive_path is None:
+                return
+            archive_path = self._pending_archive_path
+            pending_episodes = self._pending_archive_episodes
+            self._pending_archive_path = None
+            self._pending_archive_episodes = []
 
         from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
         writer = LeRobotDatasetWriter()
-        first = self._pending_archive_episodes[0][0]
+        first = pending_episodes[0][0]
         wrist_image_keys = self._collect_lerobot_image_keys(first, "wrist_image")
         extra_view_image_keys = self._collect_lerobot_image_keys(
             first, "extra_view_image"
         )
-        lerobot_cfg = self.cfg.actor.get("lerobot", {})
         writer.create(
-            repo_id=self._pending_archive_path,
-            robot_type=lerobot_cfg.get("robot_type", "panda"),
-            fps=lerobot_cfg.get("fps", 10),
+            repo_id=archive_path,
+            robot_type=OmegaConf.select(
+                self.cfg, "algorithm.dagger.online_lerobot.robot_type", default="panda"
+            ),
+            fps=int(
+                OmegaConf.select(
+                    self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
+                )
+            ),
             image_shape=first["image"].shape if "image" in first else None,
             state_dim=int(first["state"].shape[-1]),
             action_dim=int(first["actions"].shape[-1]),
@@ -402,23 +425,18 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             extra_view_image_keys=extra_view_image_keys,
             has_intervene_flag="intervene_flag" in first,
         )
-        for ep_frames in self._pending_archive_episodes:
+        for ep_frames in pending_episodes:
             writer.add_episode(ep_frames)
         writer.finalize()
-        self._pending_archive_path = None
-        self._pending_archive_episodes = []
 
     def _prepare_sft_batch(self, batch):
         """Prepare model-specific DAgger training inputs."""
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             # Replay-buffer samples store model inputs under forward_inputs.
             if "forward_inputs" in batch:
                 batch = batch["forward_inputs"]
             return self.model.prepare_dagger_sft_batch(batch)
-        elif self.data_source == "lerobot":
-            return self.model.prepare_lerobot_sft_batch(batch)
-        else:
-            raise ValueError(f"Invalid data source: {self.data_source}")
+        return self.model.prepare_lerobot_sft_batch(batch)
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
@@ -435,12 +453,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("update_one_epoch")
     def update_one_epoch(self):
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             return self.update_buffer_one_epoch()
-        elif self.data_source == "lerobot":
-            return self.update_lerobot_one_epoch()
-        else:
-            raise ValueError(f"Invalid data source: {self.data_source}")
+        return self.update_lerobot_one_epoch()
 
     def update_buffer_one_epoch(self):
         """Run one replay-buffer update epoch for DAgger."""
@@ -542,14 +557,14 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def process_train_metrics(self, metrics):
         """Aggregate DAgger training and replay-buffer metrics."""
 
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             replay_buffer_stats = self.replay_buffer.get_stats()
             replay_buffer_stats = {
                 f"replay_buffer/{key}": value
                 for key, value in replay_buffer_stats.items()
             }
             append_to_dict(metrics, replay_buffer_stats)
-        elif self.data_source == "lerobot":
+        else:
             lerobot_dataset_stats = self.dataset.get_stats()
             lerobot_dataset_stats = {
                 f"lerobot_dataset/{key}": value
@@ -592,7 +607,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             min_buffer_size = self.cfg.algorithm.replay_buffer.get(
                 "min_buffer_size", 100
             )
@@ -601,6 +616,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
                 )
                 return {}
+        elif not self.dataset.is_ready() or self._lerobot_loader is None:
+            self.log_on_first_rank(
+                f"LeRobot dataset not ready (len={len(self.dataset)}), skipping training"
+            )
+            return {}
         assert (
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
@@ -638,6 +658,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.load_optimizer(self.device)
             self.is_optimizer_offloaded = False
 
+        if self.enable_online_lerobot:
+            self._archive_pending_lerobot_episodes()
+
         self._strategy.save_checkpoint(
             model=self.model,
             optimizers=[self.optimizer],
@@ -647,7 +670,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             if self.cfg.actor.fsdp_config.use_orig_params
             else "dcp",
         )
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             buffer_save_path = os.path.join(
                 save_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
             )
@@ -664,7 +687,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             else "dcp",
         )
 
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             buffer_load_path = os.path.join(
                 load_base_path, f"dagger_components/replay_buffer/rank_{self._rank}"
             )

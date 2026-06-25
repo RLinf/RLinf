@@ -93,13 +93,7 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        if self.cfg.actor.get("data_source", "buffer") == "buffer":
-            self.actor_channel = Channel.create("Actor")
-        elif self.cfg.actor.get("data_source", "buffer") == "lerobot":
-            if self.cfg.env.train.data_collection.get("defer_write", False):
-                self.actor_channel = Channel.create("Actor")
-            else:
-                self.actor_channel = None
+        self.actor_channel = Channel.create("Actor")
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:

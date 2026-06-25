@@ -1,4 +1,4 @@
-# Copyright 2026 The RLinf Authors.
+# Copyright 2025 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,11 +16,8 @@ from __future__ import annotations
 
 import atexit
 import copy
-import json
 import os
 import pickle
-import queue
-import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -32,44 +29,6 @@ import torch
 from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
-
-
-_ID_DIR_RE = re.compile(r"^id_(\d+)$")
-
-
-def _scan_existing_lerobot_shards(save_dir: str, rank: int) -> tuple[int, int]:
-    """Return ``(total_episodes, next_shard_id)`` for resume.
-
-    ``next_shard_id`` is ``max(existing_id_numbers) + 1`` over every
-    ``id_<int>/`` directory (regardless of whether ``meta/info.json`` is
-    finalized) so a crashed session's partial shard is never overwritten.
-    Shards with unparseable ``info.json`` contribute 0 to ``total_episodes``.
-    """
-    rank_dir = os.path.join(save_dir, f"rank_{rank}")
-    if not os.path.isdir(rank_dir):
-        return 0, 0
-
-    total = 0
-    max_id = -1
-    for entry in os.listdir(rank_dir):
-        m = _ID_DIR_RE.match(entry)
-        if m is None:
-            continue
-        if not os.path.isdir(os.path.join(rank_dir, entry)):
-            continue
-        max_id = max(max_id, int(m.group(1)))
-
-        info_path = os.path.join(rank_dir, entry, "meta", "info.json")
-        try:
-            with open(info_path) as f:
-                meta = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            continue
-        count = meta.get("total_episodes")
-        if isinstance(count, int) and count > 0:
-            total += count
-    next_shard_id = max_id + 1 if max_id >= 0 else 0
-    return total, next_shard_id
 
 
 class CollectEpisode(gym.Wrapper):
@@ -99,11 +58,6 @@ class CollectEpisode(gym.Wrapper):
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
-        resume: If True and ``export_format == "lerobot"``, reuse ``save_dir``
-            across sessions — new episodes land in a fresh ``id_{N}`` shard
-            (N = sum of episodes across pre-existing shards) so the in-progress
-            write never touches previously-finalized data. Ignored for pickle.
-            Defaults to False.
     """
 
     def __init__(
@@ -117,11 +71,7 @@ class CollectEpisode(gym.Wrapper):
         robot_type: str = "panda",
         fps: int = 10,
         only_success: bool = False,
-        allow_partial_chunk: bool = False,
-        stats_sample_ratio: float = 0.1,
         finalize_interval: int = 100,
-        defer_write: bool = False,
-        resume: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -143,24 +93,12 @@ class CollectEpisode(gym.Wrapper):
         self.fps = fps
         self.only_success = only_success
         self.finalize_interval = finalize_interval
-        self.defer_write = defer_write
 
-        self._preexisting_episode_count = 0
-        self._next_shard_id = 0
+        # LeRobot writer is created lazily on the first completed episode.
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
-            if resume:
-                (
-                    self._preexisting_episode_count,
-                    self._next_shard_id,
-                ) = _scan_existing_lerobot_shards(save_dir, rank)
-            self._episodes_written = (
-                self._preexisting_episode_count
-            )  # guarded by _lerobot_lock
-            if defer_write:
-                # Thread-safe queue for episodes to be written by the actor worker.
-                self._pending_episodes: queue.SimpleQueue = queue.SimpleQueue()
+            self._episodes_written = 0  # guarded by _lerobot_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -172,7 +110,6 @@ class CollectEpisode(gym.Wrapper):
         # Per-environment episode state.
         self._episode_ids = [0] * num_envs
         self._episode_success = [False] * num_envs
-        self._segment_ids: list[int] = [0] * num_envs
         self._global_step = 0
         # Holds the post-reset obs for auto-reset envs to prepend to next episode.
         self._pending_obs: list[Any] = [None] * num_envs
@@ -186,13 +123,6 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
-
-        self.allow_partial_chunk = allow_partial_chunk
-
-    @property
-    def preexisting_episode_count(self) -> int:
-        """Number of episodes on disk at construction time (resume mode only)."""
-        return self._preexisting_episode_count
 
     @property
     def is_start(self):
@@ -246,38 +176,24 @@ class CollectEpisode(gym.Wrapper):
         self._maybe_flush(terminated, truncated)
         return obs, reward, terminated, truncated, info
 
-    def chunk_step(self, input_actions):
+    def chunk_step(self, chunk_actions):
         """Execute a chunk of actions, recording each sub-step individually.
 
         Both pickle and lerobot formats receive step-level records for maximum
         data fidelity.
 
         Args:
-            input_actions: dict of actions, containing raw_actions, actions,
-            expert_actions, and save_flags
+            chunk_actions: Action chunk, typically a tensor of shape
+                ``[num_envs, chunk_size, action_dim]``.
 
         Returns:
             Tuple of (obs_list, rewards, terminations, truncations, infos_list).
         """
-        if isinstance(input_actions, dict):
-            _input_actions = input_actions["actions"]
-        else:
-            _input_actions = input_actions
         obs_list, rewards, terminations, truncations, infos_list = self.env.chunk_step(
-            _input_actions
+            chunk_actions
         )
 
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
-
-        chunk_actions = input_actions["actions"]
-        if isinstance(chunk_actions, np.ndarray):
-            chunk_actions = torch.from_numpy(chunk_actions)
-
-        save_flags = input_actions["save_flags"]
-        if "expert_actions" in input_actions:
-            expert_actions = input_actions["expert_actions"].reshape_as(chunk_actions)
-        else:
-            expert_actions = None
         for step_idx in range(chunk_size):
             step_action = (
                 chunk_actions[:, step_idx]
@@ -306,47 +222,10 @@ class CollectEpisode(gym.Wrapper):
                 if isinstance(infos_list, (list, tuple))
                 else infos_list
             )
-            if expert_actions is not None and "intervene_action" not in step_info:
-                if "final_info" in step_info:
-                    step_info["final_info"]["intervene_action"] = expert_actions
-                    if save_flags is not None:
-                        step_info["final_info"]["intervene_flag"] = torch.ones(
-                            expert_actions.shape[0],
-                            expert_actions.shape[1],
-                            dtype=torch.bool,
-                        )
-                    else:
-                        step_info["final_info"]["intervene_flag"] = torch.zeros(
-                            expert_actions.shape[0],
-                            expert_actions.shape[1],
-                            dtype=torch.bool,
-                        )
-
-                    step_info["intervene_action"] = expert_actions[:, step_idx]
-                    if save_flags is not None:
-                        step_info["intervene_flag"] = ~(step_trunc | step_term)
-                    else:
-                        step_info["intervene_flag"] = torch.zeros(
-                            expert_actions.shape[0], dtype=torch.bool
-                        )
-                else:
-                    step_info["intervene_action"] = expert_actions[:, step_idx]
-                    if save_flags is not None:
-                        step_info["intervene_flag"] = torch.ones(
-                            expert_actions.shape[0], dtype=torch.bool
-                        )
-                    else:
-                        step_info["intervene_flag"] = torch.zeros(
-                            expert_actions.shape[0], dtype=torch.bool
-                        )
             self._record_step(
                 step_action, step_obs, step_reward, step_term, step_trunc, step_info
             )
-            if self.allow_partial_chunk:
-                self._maybe_flush(step_term, step_trunc)
-
-        if not self.allow_partial_chunk:
-            self._maybe_flush(terminations, truncations)
+            self._maybe_flush(step_term, step_trunc)
 
         return obs_list, rewards, terminations, truncations, infos_list
 
@@ -371,34 +250,18 @@ class CollectEpisode(gym.Wrapper):
             "terminated": [],
             "truncated": [],
             "infos": [],
-            "segment_ids": [],
         }
-
-    def _seed_reset_frame(self, env_idx: int, env_obs: Any) -> None:
-        """Seed a fresh buffer with the post-reset state-aligned entry.
-
-        State-aligned fields (observations / rewards / terminated / truncated /
-        infos) get a leading reset entry; action-aligned fields (actions,
-        segment_ids) stay empty and fill on the first regular step.
-        """
-        buf = self._buffers[env_idx]
-        buf["observations"].append(env_obs)
-        buf["rewards"].append(0.0)
-        buf["terminated"].append(False)
-        buf["truncated"].append(False)
-        buf["infos"].append({})
 
     def _record_reset_obs(self, obs) -> None:
         """Record the initial observation from reset into every env's buffer."""
         for env_idx in range(self.num_envs):
-            self._seed_reset_frame(env_idx, self._slice_copy(obs, env_idx))
-
-    @staticmethod
-    def _bool_from_env_info(env_info: Any, key: str) -> bool:
-        """Read a per-env bool flag (scalar / 0-d / size-1 array all OK)."""
-        if not isinstance(env_info, dict) or env_info.get(key) is None:
-            return False
-        return bool(np.asarray(env_info[key]).any())
+            self._buffers[env_idx]["observations"].append(
+                self._slice_copy(obs, env_idx)
+            )
+            self._buffers[env_idx]["rewards"].append(0.0)
+            self._buffers[env_idx]["terminated"].append(False)
+            self._buffers[env_idx]["truncated"].append(False)
+            self._buffers[env_idx]["infos"].append({})
 
     def _record_step(self, action, obs, reward, terminated, truncated, info) -> None:
         """Record one transition into every env's buffer."""
@@ -425,52 +288,14 @@ class CollectEpisode(gym.Wrapper):
                 self._pending_obs[env_idx] = self._slice_copy(obs, env_idx)
                 self._pending_info[env_idx] = self._slice_copy(info_no_reset, env_idx)
                 if "intervene_action" in env_info:
-                    action_dim = self._slice_data(action, env_idx).shape[-1]
-                    chunk_size = (
-                        env_info["intervene_action"].reshape(-1, action_dim).shape[0]
-                    )
-                    env_info["intervene_action"] = env_info["intervene_action"].reshape(
-                        -1, action_dim
-                    )[-1]
-                    env_info["intervene_flag"] = env_info["intervene_flag"].reshape(
-                        chunk_size, -1
-                    )[-1, 0]
+                    env_info["intervene_action"] = env_info["intervene_action"][-1]
+                    env_info["intervene_flag"] = env_info["intervene_flag"][-1]
             else:
                 env_obs = self._slice_copy(obs, env_idx)
                 env_info = self._slice_copy(info, env_idx)
-                if "intervene_action" in env_info:
-                    action_dim = self._slice_data(action, env_idx).shape[-1]
-                    if env_info["intervene_action"].numel() > action_dim:
-                        chunk_size = (
-                            env_info["intervene_action"]
-                            .reshape(-1, action_dim)
-                            .shape[0]
-                        )
-                        env_info["intervene_action"] = env_info[
-                            "intervene_action"
-                        ].reshape(-1, action_dim)[-1]
-                        env_info["intervene_flag"] = env_info["intervene_flag"].reshape(
-                            chunk_size, -1
-                        )[-1, 0]
                 if "final_observation" in env_info:
                     env_info.pop("final_observation")
                     env_info.pop("final_info")
-
-            record_reset = self._bool_from_env_info(env_info, "record_reset")
-            pre_record = self._bool_from_env_info(env_info, "pre_record")
-
-            if record_reset:
-                self._buffers[env_idx] = self._new_buffer()
-                self._episode_success[env_idx] = False
-                self._segment_ids[env_idx] = 0
-                self._seed_reset_frame(env_idx, env_obs)
-                continue
-
-            if pre_record:
-                continue
-
-            if self._bool_from_env_info(env_info, "segment_advance"):
-                self._segment_ids[env_idx] += 1
 
             buf = self._buffers[env_idx]
             buf["observations"].append(env_obs)
@@ -479,7 +304,6 @@ class CollectEpisode(gym.Wrapper):
             buf["terminated"].append(self._slice_copy(terminated, env_idx))
             buf["truncated"].append(self._slice_copy(truncated, env_idx))
             buf["infos"].append(env_info)
-            buf["segment_ids"].append(int(self._segment_ids[env_idx]))
 
             self._update_success(env_idx, self._slice_data(env_info, env_idx))
 
@@ -488,7 +312,6 @@ class CollectEpisode(gym.Wrapper):
         self._episode_ids[env_idx] += 1
         self._buffers[env_idx] = self._new_buffer()
         self._episode_success[env_idx] = False
-        self._segment_ids[env_idx] = 0
 
         if self._pending_obs[env_idx] is not None:
             self._buffers[env_idx]["observations"].append(self._pending_obs[env_idx])
@@ -515,10 +338,10 @@ class CollectEpisode(gym.Wrapper):
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
                 else:
-                    if done_by_trunc or done_by_term:
+                    if done_by_trunc:
                         self._reset_env_buffer(env_idx)
             else:
-                if done_by_trunc or done_by_term:
+                if done_by_term or done_by_trunc:
                     self._flush_episode(env_idx, is_success)
                     self._reset_env_buffer(env_idx)
 
@@ -532,13 +355,7 @@ class CollectEpisode(gym.Wrapper):
         if self.export_format == "lerobot":
             ep_data = self._buffer_to_lerobot_ep(buf, env_idx, is_success)
             if ep_data is not None:
-                if self.defer_write:
-                    self._pending_episodes.put(ep_data)
-                    self.logger.info(
-                        f"Pending episodes: {self._pending_episodes.qsize()}"
-                    )
-                else:
-                    self._submit(self._write_lerobot_episode, ep_data)
+                self._submit(self._write_lerobot_episode, ep_data)
         else:
             episode_data = self._copy(
                 {
@@ -590,7 +407,6 @@ class CollectEpisode(gym.Wrapper):
         actions = buf["actions"]
         terminated = buf["terminated"]
         obs_steps = buf["observations"]
-        seg_ids = buf.get("segment_ids", [])
         if not actions:
             return None
         if len(obs_steps) > len(actions):
@@ -605,18 +421,10 @@ class CollectEpisode(gym.Wrapper):
             )
             # Overwrite action with intervene action if present.
             np_action = self._to_numpy(action)
-            raw_info = buf["infos"][i + 1]
-            if isinstance(raw_info, dict) and "final_info" in raw_info:
-                # _record_step normally pops final_info before storing; if it
-                # leaked through (e.g. nested wrapper that also auto-resets)
-                # drop the frame instead of crashing the writer.
-                self.logger.warning(
-                    "collect_episode: dropping frame %d because info still "
-                    "carries final_info; check upstream auto-reset wrappers",
-                    i,
-                )
-                continue
-            info_with_intervene = copy.deepcopy(raw_info)
+            assert "final_info" not in buf["infos"][i + 1], (
+                "final_info should not be present in the info"
+            )
+            info_with_intervene = copy.deepcopy(buf["infos"][i + 1])
 
             if (
                 "intervene_flag" in info_with_intervene
@@ -627,7 +435,6 @@ class CollectEpisode(gym.Wrapper):
             if state is None or np_action is None:
                 continue
             intervene_flag = self._intervene_flag_from_info(info_with_intervene)
-            seg_id = int(seg_ids[i]) if i < len(seg_ids) else 0
             frame: dict[str, Any] = {
                 "state": np.asarray(state).astype(np.float32),
                 "actions": np.asarray(np_action).astype(np.float32).flatten(),
@@ -635,7 +442,6 @@ class CollectEpisode(gym.Wrapper):
                 "is_success": np.array([is_success], dtype=bool),
                 "done": np.array([False], dtype=bool),
                 "intervene_flag": np.array([intervene_flag], dtype=bool),
-                "segment_id": np.array([seg_id], dtype=np.uint8),
             }
             if image is not None:
                 frame["image"] = self._to_uint8(np.asarray(image))
@@ -658,20 +464,23 @@ class CollectEpisode(gym.Wrapper):
         return steps
 
     def _ensure_lerobot_writer(self, ep_data: dict):
-        """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``."""
-        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+        """Create the LeRobot writer on first use. Must be called inside the lock.
 
+        ``create()`` is called only when there is no active underlying dataset —
+        either because the writer has never been used, or because a previous
+        batch was flushed by ``finalize()``.
+        """
         if self._lerobot_writer is None:
-            self._lerobot_writer = LeRobotDatasetWriter()
-        shard_id = self._next_shard_id
+            from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
+            self._lerobot_writer = LeRobotDatasetWriter()
         if self._lerobot_writer.dataset is None:
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
                 repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{shard_id}"
+                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
@@ -682,9 +491,7 @@ class CollectEpisode(gym.Wrapper):
                 wrist_image_keys=wrist_image_keys,
                 extra_view_image_keys=extra_view_image_keys,
                 has_intervene_flag="intervene_flag" in first,
-                has_segment_id="segment_id" in first,
             )
-            self._next_shard_id = shard_id + 1
         return self._lerobot_writer
 
     @staticmethod
@@ -710,42 +517,21 @@ class CollectEpisode(gym.Wrapper):
             writer = self._ensure_lerobot_writer(ep_data)
             writer.add_episode(ep_data)
             self._episodes_written += 1
-            count = self._episodes_written
-            if self.finalize_interval > 0 and count % self.finalize_interval == 0:
+            if (
+                self.finalize_interval > 0
+                and self._episodes_written % self.finalize_interval == 0
+            ):
                 writer.finalize()
 
     def _finalize_lerobot(self) -> None:
         """Drain pending futures then write the LeRobot dataset metadata."""
         if self.export_format != "lerobot":
             return
-        if self.defer_write:
-            return
         self._wait_futures()
         with self._lerobot_lock:
             if self._lerobot_writer is not None:
                 self._lerobot_writer.finalize()
                 self._lerobot_writer = None
-
-    def drain_pending_episodes(self) -> list[list[dict]]:
-        """Return all completed episodes buffered since the last drain.
-
-        Only valid when ``defer_write=True`` and ``export_format="lerobot"``.
-        Clears the internal queue and returns every episode as a list of
-        per-step frame dicts (the format expected by
-        ``LeRobotDatasetWriter.add_episode``).
-
-        Returns:
-            List of episodes; each episode is itself a ``list[dict]``.
-        """
-        if not self.defer_write or self.export_format != "lerobot":
-            return []
-        episodes: list[list[dict]] = []
-        while True:
-            try:
-                episodes.append(self._pending_episodes.get_nowait())
-            except queue.Empty:
-                break
-        return episodes
 
     def _write_pickle(self, save_path: str, episode_data: dict) -> None:
         with open(save_path, "wb") as f:

@@ -15,6 +15,7 @@
 import asyncio
 import queue
 import threading
+import time
 
 import torch
 
@@ -27,7 +28,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
     should_stop = False
 
     async def recv_rollout_trajectories(self, input_channel):
-        if self.data_source == "lerobot":
+        if self.enable_online_lerobot:
             if (
                 getattr(self, "_recv_lerobot_thread", None) is None
                 or not self._recv_lerobot_thread.is_alive()
@@ -58,18 +59,15 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
 
         Each received episode is appended to the actor's live in-memory
         LeRobot dataset immediately. Archive writes are flushed separately by
-        ``actor.lerobot.finalize_interval`` and are not part of training
+        ``algorithm.dagger.online_lerobot.finalize_interval`` and are not part of training
         readiness.
         """
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
         while not self.should_stop:
-            for _ in range(split_num):
-                episodes: list[list[dict]] = input_channel.get()
-                for ep_frames in episodes:
-                    if ep_frames:
-                        self._append_lerobot_episode(ep_frames)
+            received_any = self._recv_lerobot_episodes_from_channel(input_channel)
+            if self.dataset.is_ready():
+                self._ensure_lerobot_loader()
+            if not received_any:
+                time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -114,13 +112,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
-    async def _wait_for_lerobot_dataset_ready(self):
-        while True:
-            if self.dataset.is_ready():
-                self._ensure_lerobot_loader()
-                return
-            await asyncio.sleep(1)
-
     @Worker.timer("run_training")
     async def run_training(self):
         """Run async DAgger updates with replay-buffer samples."""
@@ -128,13 +119,16 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)
 
-        if self.data_source == "buffer":
+        if not self.enable_online_lerobot:
             min_buffer_size = self.cfg.algorithm.replay_buffer.get(
                 "min_buffer_size", 100
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
-        elif self.data_source == "lerobot":
-            await self._wait_for_lerobot_dataset_ready()
+        elif not self.dataset.is_ready() or self._lerobot_loader is None:
+            self.log_on_first_rank(
+                f"LeRobot dataset not ready (len={len(self.dataset)}), skipping training"
+            )
+            return {}
 
         torch.distributed.barrier()
         assert (
