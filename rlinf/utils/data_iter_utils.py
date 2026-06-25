@@ -23,9 +23,24 @@ import numpy as np
 import torch
 from torch import distributed as dist
 
+from rlinf.scheduler import Worker
+
 
 def _get_runtime_device(batch: Union[dict, list[torch.Tensor]]) -> torch.device:
     """Infer a suitable device for small sync tensors from the input batch."""
+    if Worker.torch_platform is not None:
+        try:
+            current_device = Worker.torch_platform.current_device()
+        except Exception:
+            current_device = None
+
+        if isinstance(current_device, torch.device):
+            return current_device
+        if isinstance(current_device, str):
+            return torch.device(current_device)
+        if isinstance(current_device, int) and Worker.torch_device_type is not None:
+            return torch.device(f"{Worker.torch_device_type}:{current_device}")
+
     if isinstance(batch, (dict, UserDict)):
         for value in batch.values():
             if isinstance(value, torch.Tensor):
