@@ -14,6 +14,56 @@ Real-World RL with Franka
 
 Use RLinf to train and evaluate real-world policies on a Franka Emika Panda arm. You'll set up the controller and training nodes, collect demonstrations, run SAC/RLPD or PPO-style training, and monitor safe online updates on physical hardware.
 
+Related Franka Setups
+---------------------
+
+Explore alternative Franka hardware, sensors, and training recipes.
+
+.. grid:: 1 2 2 3
+   :gutter: 2
+
+   .. grid-item-card:: Reward Model
+      :link: franka_reward_model
+      :link-type: doc
+
+      Train Franka with a learned reward model.
+
+   .. grid-item-card:: ZED + Robotiq
+      :link: franka_zed_robotiq
+      :link-type: doc
+
+      Use ZED cameras and Robotiq grippers.
+
+   .. grid-item-card:: GELLO
+      :link: franka_gello
+      :link-type: doc
+
+      Joint-level teleoperation data collection with GELLO.
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      Run a two-arm Franka setup.
+
+   .. grid-item-card:: Dexterous Hand
+      :link: franka_dexhand
+      :link-type: doc
+
+      Drive a Franka with a dexterous hand end-effector.
+
+   .. grid-item-card:: Pi0 SFT
+      :link: franka_pi0_sft_deploy
+      :link-type: doc
+
+      Deploy a π₀ SFT policy on Franka.
+
+   .. grid-item-card:: HG-DAgger
+      :link: hg-dagger
+      :link-type: doc
+
+      Human-gated DAgger interactive training.
+
 Overview
 --------
 
@@ -95,6 +145,7 @@ The real-world setup requires the following hardware components:
 - **Robot Controller**: A small computer (does not require GPU) connected with the robotic arm in the same local network
 - **Space Mouse (Optional)**: For teleoperation data collection or human intervention during training.
 - **GELLO (Optional)**: A joint-level teleoperation device as an alternative to SpaceMouse, providing more intuitive control with native gripper support.
+- **VR / PICO (Optional)**: A headset-and-controller teleoperation device for 6D end-effector control, usable as an alternative to SpaceMouse for data collection.
 
 .. warning::
 
@@ -106,6 +157,9 @@ The real-world setup requires the following hardware components:
    **Using ZED cameras or Robotiq grippers?**  See the dedicated guide
    :doc:`franka_zed_robotiq` for SDK installation, serial-device setup,
    YAML configuration fields, and data collection.
+
+   **Using VR / PICO teleoperation?** See :doc:`franka_vr` for
+   XRoboToolkit, ZeroMQ, PICO wrapper configuration, and operation steps.
 
 Installation
 ------------
@@ -657,6 +711,7 @@ Here we provide demo videos and training curves for the task peg-insertion and c
    Reward Model <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
    GELLO <franka_gello>
+   VR / PICO <franka_vr>
    Dual-Arm <dual_franka>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>

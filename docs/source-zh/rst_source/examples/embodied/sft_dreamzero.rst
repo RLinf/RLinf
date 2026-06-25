@@ -298,7 +298,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - 字段
      - 含义与作用
    * - ``target_video_height`` / ``target_video_width``
-     - WAN 策略头目标分辨率（5B 预设如 176×320；可在 YAML 覆盖）。避免在 transform 代码里写死尺寸，以兼容 WAN2.1 / WAN2.2。
+     - WAN 策略头在 **多视角拼接后** 的目标分辨率（5B 预设如 176×320；Libero 常用 160×320）。仅作用于模型内部 resize， **不要** 用于 data transform 的单视角 resize。
    * - ``droid_view_height`` / ``droid_view_width``
      - （可选）DROID 各视角 resize 覆盖。
    * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
@@ -587,7 +587,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 - ``action_horizon`` × ``max_chunk_size`` 决定数据集动作长度；勿只改其一。
 - 多视角拼接顺序与 prompt 文案不一致会导致训练信号错乱。
 - 继续微调官方权重时，随意改 ``DEFAULT_TAG_MAPPING`` 的整数 ID 会导致 projector 对不上。
-- 视频 resize：优先在 transform 链或 ``target_video_height/width`` 配置，避免写死尺寸导致 WAN2.1/2.2 不兼容。
+- 视频 resize：单视角 ``VideoResize`` 写在各 embodiment 的 ``data_transforms`` 代码中（如 ``libero_sim``、``franka_pnp`` 均为 256×256）；``target_video_height/width`` 仅用于 WAN 在多视角拼接 **之后** 的模型内 resize，二者勿混用。 **混合数据集训练** 须保证各子数据集经 ``DreamTransform`` 拼接后输出相同 ``images`` 空间形状（H×W），否则 collate 无法组 batch；若各 embodiment 拼接布局不同（如 ``oxe_droid`` 为 2×2 网格）或单视角默认尺寸不一致，请在对应 transform 模块中手动对齐 ``VideoResize`` 参数。
 - 推理 / 评测：``examples/embodiment/config/`` 下的 DreamZero 评测配置 中同样需要正确的 ``embodiment_tag``。
 
 若仅推理、不改 RLinf 代码，且 Groot/DreamZero 上游已支持该 tag，有时只需准备 ``metadata.json`` 与评测配置；**SFT 新数据** 则须完成上述枚举成员、registry 注册与 transform 实现（``get_model`` 会自动 patch Groot ``EmbodimentTag``）。
@@ -619,7 +619,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 5. **DROID 视频尺寸错误**
 
-   - 勿在代码中写死分辨率；使用 ``target_video_height/width`` 或 ``droid_view_*`` 配置项
+   - 勿将 ``target_video_height/width`` 用于 data transform 的单视角 resize；DROID 视角尺寸在 ``oxe_droid`` transform 代码中调整
 
 6. **multi_anchor 报错要求 lazy_load**
 

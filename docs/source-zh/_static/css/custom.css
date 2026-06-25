@@ -116,7 +116,9 @@ a.reference.internal:hover {
    version rows far apart — tighten all of it. */
 .bd-sidebar-primary {
   gap: 0.3rem;
-  padding-top: 0.6rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  padding-top: 0.25rem;
 }
 
 .bd-sidebar-primary .sidebar-primary-items__start {
@@ -141,7 +143,7 @@ a.reference.internal:hover {
   color: var(--pst-color-text-base) !important;
   display: flex;
   gap: 0.5rem;
-  padding: 0 0.75rem;
+  padding: 0 0.25rem;
   text-decoration: none !important;
 }
 
@@ -158,7 +160,7 @@ a.reference.internal:hover {
 }
 
 .bd-sidebar-primary .bd-search {
-  margin: 0 0.75rem;
+  margin: 0 0.25rem;
 }
 
 /* Keep the theme's search "pill" (border + absolutely-positioned magnifier on
@@ -168,26 +170,90 @@ a.reference.internal:hover {
   min-height: 1.85rem;
 }
 
-/* Tools row: version switcher grows, repository/icon links sit beside it —
-   one compact line like the LeRobot docs, instead of a stacked block. */
+/* Render the Ctrl+K hint as one small pill (LeRobot-style) instead of two
+   separate key boxes. */
+.bd-sidebar-primary .bd-search .search-button__kbd-shortcut {
+  align-items: center;
+  background-color: var(--pst-color-surface);
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.3rem;
+  display: inline-flex;
+  font-size: 0.62rem;
+  margin-inline-end: 0.4rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.bd-sidebar-primary .bd-search .search-button__kbd-shortcut kbd {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  font-size: inherit;
+  padding: 0;
+}
+
+/* Tools: one compact row (LeRobot-style) — version + language switchers on the
+   left, the color-mode toggle and repository icons on the right. */
 .rlinf-sidebar-tools {
   align-items: center;
   display: flex;
-  gap: 0.5rem;
-  padding: 0 0.75rem;
+  flex-wrap: nowrap;
+  gap: 0.3rem;
+  padding: 0 0.25rem;
 }
 
-.rlinf-sidebar-tools__version {
-  flex: 1 1 auto;
-  min-width: 0;
+.rlinf-sidebar-tools__version,
+.rlinf-lang-switcher {
+  flex: 0 0 auto;
 }
 
-.rlinf-sidebar-tools .version-switcher__button {
-  font-size: 0.8rem;
+.rlinf-sidebar-tools__icons {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+/* Version + language dropdown buttons: compact so the whole tools row (both
+   switchers + color toggle + repo icons) fits on a single line without wrapping.
+   Label sits left, caret right. */
+.rlinf-sidebar-tools .version-switcher__button,
+.rlinf-lang-button {
+  font-size: 0.75rem;
   justify-content: space-between;
   margin: 0;
-  padding: 0.25rem 0.6rem;
-  width: 100%;
+  min-width: 0;
+  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
+  width: auto;
+}
+
+/* Match the version switcher's theme-aware colors so the language label stays
+   readable in dark mode (the bootstrap .btn default is near-black). */
+.rlinf-lang-button {
+  background-color: transparent;
+  border: 1px solid var(--pst-color-border);
+  border-radius: 0.25rem;
+  color: var(--pst-color-text-base);
+}
+
+/* Two-state (light/dark) color-mode toggle in the sidebar tools. The icon
+   reflects the active theme: sun in light mode, moon in dark mode. */
+.rlinf-theme-toggle {
+  border: 0;
+  color: var(--pst-color-text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.4rem;
+}
+
+.rlinf-theme-toggle:hover {
+  color: var(--pst-color-primary);
+}
+
+html[data-theme="light"] .rlinf-theme-icon-dark,
+html[data-theme="dark"] .rlinf-theme-icon-light {
+  display: none;
 }
 
 .rlinf-sidebar-tools .navbar-icon-links {
@@ -245,9 +311,24 @@ a.reference.internal:hover {
   transform: translateY(-2px);
 }
 
+.rlinf-ai-modal-open .rlinf-ask-ai-fab {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+}
+
 .rlinf-ask-ai-fab__icon {
-  font-size: 1.05rem;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.62rem;
+  font-weight: 700;
+  height: 1.35rem;
+  justify-content: center;
   line-height: 1;
+  width: 1.35rem;
 }
 
 .bd-sidebar-primary .bd-sidenav {

@@ -1,6 +1,11 @@
 RL on Lingbot-VLA Models
 =========================
 
+.. |huggingface| image:: /_static/svg/hf-logo.svg
+   :width: 16px
+   :height: 16px
+   :class: inline-icon
+
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png
    :align: center
    :width: 90%
@@ -281,17 +286,44 @@ Use the Lingbot-VLA eval configs such as ``robotwin_click_bell_lingbotvla_eval``
 Visualization and Results
 -------------------------
 
-Launch TensorBoard to watch training live:
+Launch TensorBoard from the RLinf repo root:
 
-.. code-block:: bash
+.. code:: bash
 
-    tensorboard --logdir ../results --port 6006
+   tensorboard --logdir ../results --port 6006
 
-The key signal to watch is **``env/success_once``** — the episodic success rate. For every
-logged metric, see :doc:`Training metrics <../../reference/metrics>`.
+The key signal is ``env/success_once``. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla_success_once.png
-   :width: 95%
-   :align: center
+Videos are saved through the env video config:
 
-   GRPO lifts ``env/success_once`` on the RoboTwin Click Bell task.
+.. code:: yaml
+
+   video_cfg:
+     save_video: True
+     video_base_dir: ${runner.logger.log_path}/video/eval
+
+.. list-table:: Lingbot-VLA evaluation results on RoboTwin tasks
+   :header-rows: 1
+
+   * - Task
+     - SFT
+     - RLinf-GRPO
+   * - ``click_bell``
+     - |huggingface| `96.88% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.75% <https://huggingface.co/RLinf/RLinf-lingbotvla-click-bell-grpo>`__
+   * - ``place_shoe``
+     - |huggingface| `93.75% <https://huggingface.co/robbyant/lingbot-vla-4b-posttrain-robotwin/tree/3e0c7c476bde3daaac00f79f3741a292a299f60a>`__
+     - |huggingface| `98.44% <https://huggingface.co/RLinf/RLinf-lingbotvla-place-shoe-grpo>`__
+   * - Average
+     - 95.31%
+     - **98.60%**
+   * - Δ Avg.
+     - ---
+     - **+3.29%**
+
+.. note::
+
+   Lingbot-VLA results use the ``demo_randomized`` setting. For task-level simulator
+   options, see the
+   `RoboTwin configuration documentation <https://robotwin-platform.github.io/doc/usage/configurations.html>`__.

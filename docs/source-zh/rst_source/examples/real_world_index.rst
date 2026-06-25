@@ -16,7 +16,7 @@
          <a href="embodied/franka.html" style="text-decoration: underline; color: blue;">
            <b>Franka</b>
          </a><br>
-         进入 Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
+         进入 Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
        </p>
      </div>
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
