@@ -27,11 +27,26 @@ privileged 模式运行，并挂载宿主机 Ascend 驱动目录：
       --shm-size 20g \
       --network host \
       --name rlinf-ascend-libero \
+      -v /usr/local/dcmi:/usr/local/dcmi \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+      -v /etc/ascend_install.info:/etc/ascend_install.info \
+      -v /var/log/npu:/usr/slog \
+      -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
       # 为提升国内下载速度，可以使用：
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+
+如果不想使用privileged，则需要额外添加设备，并手动添加NPU：
+
+.. code-block:: bash
+
+      # 上述指令中添加下面字段
+      --device=/dev/davinci_manager \
+      --device=/dev/devmm_svm \
+      --device=/dev/hisi_hdc \
+      --device=/dev/davinci0 # 第一个npu为例
 
 进入容器后，切换到 OpenVLA-OFT 环境：
 
