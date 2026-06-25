@@ -154,7 +154,9 @@ class FSDPModelManager:
         model_config = AutoConfig.from_pretrained(
             cfg.model.model_path,
             trust_remote_code=True,
-            attn_implementation="flash_attention_2",
+            attn_implementation=cfg.model.get(
+                "attn_implementation", "flash_attention_2"
+            ),
         )
 
         if use_gptq:
