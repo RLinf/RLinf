@@ -14,6 +14,56 @@ Franka 真机强化学习
 
 使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
 
+相关 Franka 配置
+----------------
+
+探索其他 Franka 硬件、传感器与训练配方。
+
+.. grid:: 1 2 2 3
+   :gutter: 2
+
+   .. grid-item-card:: Reward Model
+      :link: franka_reward_model
+      :link-type: doc
+
+      使用学习到的奖励模型训练 Franka。
+
+   .. grid-item-card:: ZED + Robotiq
+      :link: franka_zed_robotiq
+      :link-type: doc
+
+      使用 ZED 相机与 Robotiq 夹爪。
+
+   .. grid-item-card:: GELLO
+      :link: franka_gello
+      :link-type: doc
+
+      使用 GELLO 进行关节级遥操作数据采集。
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      运行双臂 Franka 配置。
+
+   .. grid-item-card:: Dexterous Hand
+      :link: franka_dexhand
+      :link-type: doc
+
+      为 Franka 配置灵巧手末端执行器。
+
+   .. grid-item-card:: Pi0 SFT
+      :link: franka_pi0_sft_deploy
+      :link-type: doc
+
+      在 Franka 上部署 π₀ SFT 策略。
+
+   .. grid-item-card:: HG-DAgger
+      :link: hg-dagger
+      :link-type: doc
+
+      人类介入的 DAgger 交互式训练。
+
 概览
 ----------------------------------------
 
@@ -95,6 +145,7 @@ Franka 真机强化学习
 - **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
 - **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
+- **VR / PICO（可选）**：通过 PICO 头显和手柄进行 6D 末端遥操作，可替代空间鼠标进行数据采集。
 
 .. warning::
 
@@ -106,6 +157,9 @@ Franka 真机强化学习
    **使用 ZED 相机或 Robotiq 夹爪？** 请参考专门的指南
    :doc:`franka_zed_robotiq`，了解 SDK 安装、串口设备配置、
    YAML 配置字段以及数据采集。
+
+   **使用 VR / PICO 遥操作？** 请参考 :doc:`franka_vr`，了解
+   XRoboToolkit、ZeroMQ、PICO wrapper 配置以及操作步骤。
 
 安装
 ----------------------------------------
@@ -668,6 +722,7 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
    Reward Model <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
    GELLO <franka_gello>
+   VR / PICO <franka_vr>
    Dual-Arm <dual_franka>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>

@@ -8,7 +8,7 @@ Welcome to RLinf
    <div class="rlinf-hero">
      <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
      <h1 class="rlinf-hero-title">Welcome to RLinf</h1>
-     <p class="rlinf-hero-subtitle">Scalable RL post-training for foundation models and embodied agents</p>
+     <p class="rlinf-hero-subtitle">Scalable RL Post-Training for Foundation Models and Embodied Agents</p>
    </div>
 
 RLinf is a flexible, scalable open-source infrastructure for post-training

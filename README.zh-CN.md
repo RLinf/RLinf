@@ -248,7 +248,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             </a> ✅
           </li>
           <li>
-            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gim_arm.html">
+            <a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_vr.html">
               PICO VR
             </a> ✅
           </li>          
