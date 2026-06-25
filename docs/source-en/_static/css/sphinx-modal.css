@@ -1,8 +1,6 @@
-/* Enhanced Sphinx Modal Styles for AI Chat */
+/* RLinf Sphinx AI assistant styles. */
 
-/* Design System Variables - Based on Refactoring UI Principles */
 :root {
-  /* Spacing Scale - Systematic spacing based on 4px increments */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 12px;
@@ -10,756 +8,736 @@
   --space-xl: 20px;
   --space-2xl: 24px;
   --space-3xl: 32px;
-  --space-4xl: 40px;
-  --space-5xl: 48px;
-  
-  /* Typography Scale - Proportional type system */
-  --text-xs: 0.75rem;  /* 12px */
-  --text-sm: 0.875rem; /* 14px */
-  --text-base: 1rem;   /* 16px */
-  --text-lg: 1.125rem; /* 18px */
-  --text-xl: 1.25rem;  /* 20px */
-  
-  /* Line Heights - Inverse relationship to size */
-  --leading-tight: 1.2;
-  --leading-snug: 1.3;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+
+  --leading-tight: 1.25;
   --leading-normal: 1.5;
-  --leading-relaxed: 1.6;
-  
-  /* HSL Color System - Better for manipulation */
-  --sphinx-primary-hue: 267;
-  --sphinx-primary-sat: 92%;
-  
-  /* Primary Color Shades */
-  --sphinx-primary-50: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 97%);
-  --sphinx-primary-100: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 95%);
-  --sphinx-primary-200: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 85%);
-  --sphinx-primary-300: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 75%);
-  --sphinx-primary-400: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 65%);
-  --sphinx-primary-500: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 50%);
-  --sphinx-primary-600: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 45%);
-  --sphinx-primary-700: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 35%);
-  --sphinx-primary-800: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 25%);
-  --sphinx-primary-900: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 15%);
-  
-  /* Warm Greys - Subtle warmth for better feel */
-  --sphinx-grey-50: hsl(30, 20%, 97%);
-  --sphinx-grey-100: hsl(30, 15%, 95%);
-  --sphinx-grey-200: hsl(30, 10%, 85%);
-  --sphinx-grey-300: hsl(30, 8%, 75%);
-  --sphinx-grey-400: hsl(30, 6%, 65%);
-  --sphinx-grey-500: hsl(30, 5%, 50%);
-  --sphinx-grey-600: hsl(30, 6%, 40%);
-  --sphinx-grey-700: hsl(30, 8%, 30%);
-  --sphinx-grey-800: hsl(30, 10%, 20%);
-  --sphinx-grey-900: hsl(30, 15%, 10%);
-  
-  /* Semantic Colors with Better Contrast */
-  --sphinx-error-50: hsl(0, 80%, 97%);
-  --sphinx-error-100: hsl(0, 80%, 95%);
-  --sphinx-error-500: hsl(0, 80%, 50%);
-  --sphinx-error-700: hsl(0, 80%, 35%);
-  --sphinx-error-800: hsl(0, 80%, 25%);
-  
-  --sphinx-success-50: hsl(120, 60%, 97%);
-  --sphinx-success-100: hsl(120, 60%, 95%);
-  --sphinx-success-500: hsl(120, 60%, 50%);
-  --sphinx-success-700: hsl(120, 60%, 35%);
-  
-  /* Shadows for Depth - Emulate light source from top */
-  --shadow-xs: 0 1px 2px hsla(0, 0%, 0%, 0.05);
-  --shadow-sm: 0 1px 3px hsla(0, 0%, 0%, 0.1), 0 1px 2px hsla(0, 0%, 0%, 0.06);
-  --shadow-md: 0 4px 6px hsla(0, 0%, 0%, 0.07), 0 2px 4px hsla(0, 0%, 0%, 0.06);
-  --shadow-lg: 0 10px 15px hsla(0, 0%, 0%, 0.1), 0 4px 6px hsla(0, 0%, 0%, 0.05);
-  --shadow-xl: 0 20px 25px hsla(0, 0%, 0%, 0.1), 0 10px 10px hsla(0, 0%, 0%, 0.04);
-  --shadow-inset: inset 0 2px 4px hsla(0, 0%, 0%, 0.06);
-  
-  /* Border Radius Scale */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
-  --radius-pill: 50px;
-  
-  /* Font Family */
-  --sphinx-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  
-  /* Legacy compatibility - map to new system */
-  --sphinx-primary: var(--sphinx-primary-500);
-  --sphinx-primary-hover: var(--sphinx-primary-600);
-  --sphinx-primary-soft: var(--sphinx-primary-100);
-  --sphinx-primary-light: var(--sphinx-primary-300);
-  --sphinx-background: white;
-  --sphinx-surface: var(--sphinx-grey-50);
-  --sphinx-border: var(--sphinx-grey-200);
-  --sphinx-text-primary: var(--sphinx-grey-900);
-  --sphinx-text-secondary: var(--sphinx-grey-600);
-  --sphinx-text-tertiary: var(--sphinx-grey-400);
-  --sphinx-shadow-color: hsla(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 50%, 0.2);
-  --sphinx-radius-lg: var(--radius-lg);
-  --sphinx-radius-md: var(--radius-md);
-  --sphinx-radius-sm: var(--radius-sm);
-  --sphinx-radius-pill: var(--radius-pill);
+  --leading-relaxed: 1.65;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+
+  --sphinx-primary: var(--pst-color-primary, #673ab7);
+  --sphinx-primary-hover: var(--pst-color-secondary, #512da8);
+  --sphinx-primary-soft: color-mix(in srgb, var(--sphinx-primary) 10%, transparent);
+  --sphinx-background: var(--pst-color-background, #fff);
+  --sphinx-surface: var(--pst-color-surface, var(--pst-color-background, #fff));
+  --sphinx-subtle-surface: var(--pst-color-on-background, #f8f9fb);
+  --sphinx-border: var(--pst-color-border, #d9d9d9);
+  --sphinx-text-primary: var(--pst-color-text-base, #1f1f1f);
+  --sphinx-text-secondary: var(--pst-color-text-muted, #5f6570);
+  --sphinx-text-tertiary: var(--pst-color-text-muted, #6b7280);
+  --sphinx-error: var(--pst-color-danger, #b3261e);
+  --sphinx-error-surface: color-mix(in srgb, var(--sphinx-error) 10%, var(--sphinx-background));
+  --sphinx-focus-ring: color-mix(in srgb, var(--sphinx-primary) 16%, transparent);
+  --sphinx-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+  --sphinx-shadow-subtle: 0 6px 18px rgba(15, 23, 42, 0.08);
+  --sphinx-font-sans: var(--pst-font-family-base-system, var(--pst-font-family-base, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif));
+  --assistant-control-height: 40px;
+  --assistant-control-radius: var(--radius-md);
 }
 
-/* Dark mode theme - Enhanced with new system */
-@media (prefers-color-scheme: dark) {
-  :root {
-    /* Primary colors remain HSL-based but adjusted for dark mode */
-    --sphinx-primary-50: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 10%);
-    --sphinx-primary-100: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 15%);
-    --sphinx-primary-200: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 25%);
-    --sphinx-primary-300: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 35%);
-    --sphinx-primary-400: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 45%);
-    --sphinx-primary-500: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 55%);
-    --sphinx-primary-600: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 65%);
-    --sphinx-primary-700: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 75%);
-    --sphinx-primary-800: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 85%);
-    --sphinx-primary-900: hsl(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 95%);
-    
-    /* Dark greys with blue tint for coolness */
-    --sphinx-grey-50: hsl(220, 20%, 10%);
-    --sphinx-grey-100: hsl(220, 15%, 15%);
-    --sphinx-grey-200: hsl(220, 10%, 25%);
-    --sphinx-grey-300: hsl(220, 8%, 35%);
-    --sphinx-grey-400: hsl(220, 6%, 45%);
-    --sphinx-grey-500: hsl(220, 5%, 55%);
-    --sphinx-grey-600: hsl(220, 6%, 65%);
-    --sphinx-grey-700: hsl(220, 8%, 75%);
-    --sphinx-grey-800: hsl(220, 10%, 85%);
-    --sphinx-grey-900: hsl(220, 15%, 95%);
-    
-    /* Update legacy mappings for dark mode */
-    --sphinx-primary: var(--sphinx-primary-500);
-    --sphinx-primary-hover: var(--sphinx-primary-600);
-    --sphinx-background: var(--sphinx-grey-50);
-    --sphinx-surface: var(--sphinx-grey-100);
-    --sphinx-border: var(--sphinx-grey-200);
-    --sphinx-text-primary: var(--sphinx-grey-900);
-    --sphinx-text-secondary: var(--sphinx-grey-600);
-    --sphinx-text-tertiary: var(--sphinx-grey-400);
-    --sphinx-shadow-color: hsla(var(--sphinx-primary-hue), var(--sphinx-primary-sat), 55%, 0.15);
-  }
+html[data-theme="dark"] {
+  --sphinx-shadow: 0 22px 52px rgba(0, 0, 0, 0.42);
+  --sphinx-shadow-subtle: 0 8px 20px rgba(0, 0, 0, 0.28);
 }
 
-/* Chat-specific styles */
-.sphinx-ai-chat {
+.sphinx-modal,
+.sphinx-modal *,
+.sphinx-modal *::before,
+.sphinx-modal *::after {
+  box-sizing: border-box;
+}
+
+.sphinx-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  z-index: 1001;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.18s ease, visibility 0.18s ease;
+}
+
+.sphinx-modal-overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+
+.sphinx-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
   display: flex;
   flex-direction: column;
-  height: min(500px, calc(100vh - 200px)); /* Responsive height with minimum space for modal chrome */
-  min-height: 200px; /* Ensure minimum usable space */
-  position: relative;
+  width: min(820px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: hidden;
+  background: var(--sphinx-background);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--sphinx-shadow);
+  color: var(--sphinx-text-primary);
+  font-family: var(--sphinx-font-sans);
+  opacity: 0;
+  transform: translate(-50%, -48%) scale(0.985);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  visibility: hidden;
+  z-index: 1002;
+}
+
+.sphinx-modal.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  visibility: visible;
+}
+
+.sphinx-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-xl);
+  background: var(--sphinx-surface);
+  border-bottom: 1px solid var(--sphinx-border);
+}
+
+.sphinx-modal-header-content {
+  min-width: 0;
+}
+
+.sphinx-modal-title {
+  margin: 0;
+  color: var(--sphinx-text-primary);
+  font-size: var(--text-base);
+  font-weight: 650;
+  line-height: var(--leading-tight);
+}
+
+.sphinx-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.sphinx-modal-reset,
+.sphinx-modal-close {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-md);
+  background: var(--sphinx-background);
+  color: var(--sphinx-text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.sphinx-modal-reset {
+  padding: 0 var(--space-md);
+}
+
+.sphinx-modal-close {
+  width: 32px;
+  padding: 0;
+  font-size: var(--text-lg);
+}
+
+.sphinx-modal-reset:hover:not(:disabled),
+.sphinx-modal-close:hover {
+  background: var(--sphinx-primary-soft);
+  border-color: var(--sphinx-primary);
+  color: var(--sphinx-primary);
+}
+
+.sphinx-modal-reset:focus-visible,
+.sphinx-modal-close:focus-visible,
+.sphinx-submit-btn:focus-visible,
+.sphinx-suggested-prompt:focus-visible,
+.sphinx-input-container textarea:focus-visible {
+  outline: 2px solid var(--sphinx-primary);
+  outline-offset: 2px;
+}
+
+.sphinx-modal-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  background: var(--sphinx-background);
+  overflow: hidden;
+}
+
+.sphinx-modal-footer {
+  padding: 0 var(--space-xl) 10px;
+  background: var(--sphinx-surface);
+  border-top: 0;
+  color: var(--sphinx-text-secondary);
+  font-size: 0.72rem;
+  line-height: var(--leading-normal);
+  text-align: center;
+}
+
+.sphinx-ai-chat {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  height: min(560px, calc(100vh - 190px));
+  min-height: 320px;
+  min-width: 0;
 }
 
 .sphinx-chat-messages {
   flex: 1;
-  overflow-y: auto;
   overflow-x: hidden;
-  padding: var(--space-2xl) 30px;
-  padding-bottom: max(100px, 20%); /* Dynamic space for overlapping chat input */
+  overflow-y: auto;
+  padding: var(--space-xl);
   background: var(--sphinx-background);
-  /* Remove max-height to use flex: 1 instead */
+}
+
+.sphinx-chat-messages:has(.sphinx-chat-empty) {
+  display: grid;
+  align-items: center;
 }
 
 .sphinx-message {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-md);
-  margin-bottom: var(--space-xl);
-  opacity: 0;
-  animation: fadeInUp 0.3s ease forwards;
-}
-
-@keyframes fadeInUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  margin-bottom: var(--space-lg);
 }
 
 .sphinx-message.user-message {
-  flex-direction: row-reverse;
-}
-
-.sphinx-message-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  font-size: 18px;
-  background: var(--sphinx-surface);
-  border: 2px solid var(--sphinx-border);
-}
-
-.user-message .sphinx-message-avatar {
-  background: var(--sphinx-primary);
-  color: white;
-  border-color: var(--sphinx-primary);
+  justify-content: flex-end;
 }
 
 .sphinx-message-content {
-  max-width: 75%;
-  padding: var(--space-sm) var(--space-lg);
-  border-radius: var(--radius-2xl);
+  width: 100%;
+  color: var(--sphinx-text-primary);
   font-size: var(--text-sm);
   line-height: var(--leading-relaxed);
-  background: var(--sphinx-surface);
-  color: var(--sphinx-text-primary);
-  border: 1px solid var(--sphinx-border);
-  position: relative;
-  box-shadow: var(--shadow-sm);
-}
-
-.user-message .sphinx-message-content {
-  background: var(--sphinx-primary);
-  color: white;
-  border-color: var(--sphinx-primary);
-  border-bottom-right-radius: var(--radius-sm);
 }
 
 .ai-message .sphinx-message-content {
-  border-bottom-left-radius: var(--radius-sm);
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--sphinx-background);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-lg);
+}
+
+.user-message .sphinx-message-content {
+  width: auto;
+  max-width: min(72%, 620px);
+  padding: 9px var(--space-md);
+  background: var(--sphinx-surface);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-lg);
+}
+
+.sphinx-message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.sphinx-message-label {
+  color: var(--sphinx-text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  line-height: var(--leading-tight);
+}
+
+.sphinx-query-plan {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  background: var(--sphinx-surface);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-sm);
+  color: var(--sphinx-text-secondary);
+  font-size: 0.68rem;
+  line-height: var(--leading-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sphinx-message-text {
   margin: 0;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
-  word-wrap: break-word;
 }
 
-/* Markdown rendering styles for AI messages */
 .ai-message .sphinx-message-text {
-  white-space: normal; /* Allow normal text flow for rendered HTML */
+  white-space: normal;
 }
 
 .sphinx-message-text h1,
 .sphinx-message-text h2,
 .sphinx-message-text h3 {
-  margin: var(--space-lg) 0 var(--space-md) 0;
-  font-weight: 600;
-  line-height: var(--leading-tight);
+  margin: var(--space-lg) 0 var(--space-sm);
   color: var(--sphinx-text-primary);
+  font-weight: 650;
+  line-height: var(--leading-tight);
 }
 
 .sphinx-message-text h1 {
-  font-size: var(--text-xl);
-}
-
-.sphinx-message-text h2 {
   font-size: var(--text-lg);
 }
 
+.sphinx-message-text h2,
 .sphinx-message-text h3 {
   font-size: var(--text-base);
 }
 
 .sphinx-message-text p {
-  margin: var(--space-md) 0;
-  line-height: var(--leading-relaxed);
+  margin: 0 0 var(--space-md);
+}
+
+.sphinx-message-text p:last-child,
+.sphinx-message-text ul:last-child,
+.sphinx-message-text ol:last-child,
+.sphinx-message-text pre:last-child {
+  margin-bottom: 0;
 }
 
 .sphinx-message-text strong {
-  font-weight: 600;
   color: var(--sphinx-text-primary);
-}
-
-.sphinx-message-text em {
-  font-style: italic;
+  font-weight: 650;
 }
 
 .sphinx-message-text code {
-  background: var(--sphinx-grey-100);
+  padding: 1px 5px;
+  background: var(--sphinx-subtle-surface);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-sm);
   color: var(--sphinx-text-primary);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-family: var(--pst-font-family-monospace-system, var(--pst-font-family-monospace, "SFMono-Regular", Consolas, monospace));
   font-size: 0.9em;
 }
 
 .sphinx-message-text pre {
-  background: var(--sphinx-grey-100);
-  border-radius: 6px;
-  padding: var(--space-lg);
   margin: var(--space-md) 0;
+  padding: var(--space-md);
   overflow-x: auto;
+  background: var(--sphinx-subtle-surface);
   border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-md);
 }
 
 .sphinx-message-text pre code {
-  background: none;
   padding: 0;
+  background: transparent;
+  border: 0;
   border-radius: 0;
-  color: var(--sphinx-text-primary);
   font-size: 0.85em;
-  line-height: 1.5;
 }
 
 .sphinx-message-text ul,
 .sphinx-message-text ol {
-  margin: var(--space-md) 0;
+  margin: var(--space-sm) 0 var(--space-md);
   padding-left: var(--space-xl);
 }
 
 .sphinx-message-text li {
-  margin: var(--space-xs) 0;
-  line-height: var(--leading-relaxed);
+  margin: 2px 0;
 }
 
-.sphinx-message-text a {
+.sphinx-message-text a,
+.sphinx-source a {
   color: var(--sphinx-primary);
-  text-decoration: underline;
-  transition: color 0.2s ease;
+  text-decoration: none;
 }
 
 .sphinx-message-text a:hover {
   color: var(--sphinx-primary-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-.sphinx-message-text br {
-  line-height: var(--leading-relaxed);
+.sphinx-source:hover a {
+  color: var(--sphinx-primary-hover);
+  text-decoration: none;
 }
 
-/* Chat input area */
 .sphinx-chat-input {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  border-top: 1px solid var(--sphinx-border);
-  padding: var(--space-2xl) 30px;
+  flex-shrink: 0;
+  padding: var(--space-md) var(--space-xl) 8px;
   background: var(--sphinx-surface);
-  border-radius: 0;
-  z-index: 10;
+  border-top: 1px solid var(--sphinx-border);
 }
 
-/* Mode selector - Legacy styles removed, using new VitePress-style system */
-
-/* Input container - Updated for new mode selection system */
 .sphinx-input-container {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-sm);
+  align-items: end;
+}
+
+.sphinx-input-left-controls {
   display: flex;
-  gap: var(--space-md);
   align-items: center;
+  min-height: var(--assistant-control-height);
+}
+
+.sphinx-mode-selector-wrapper {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .sphinx-input-container textarea {
-  flex: 1;
-  height: 44px;
-  min-height: 44px;
+  appearance: none;
+  width: 100%;
+  height: var(--assistant-control-height);
+  min-height: var(--assistant-control-height);
   max-height: 120px;
-  padding: var(--space-md) var(--space-lg);
-  border: 2px solid var(--sphinx-border);
-  border-radius: var(--sphinx-radius-md);
+  padding: 8px var(--space-md);
   resize: none;
-  font-family: var(--sphinx-font-sans);
+  background: var(--sphinx-background);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--assistant-control-radius);
+  color: var(--sphinx-text-primary);
+  font-family: inherit;
   font-size: var(--text-sm);
   line-height: var(--leading-normal);
-  background: var(--sphinx-background);
-  color: var(--sphinx-text-primary);
-  transition: all 0.2s ease;
-  overflow-y: auto;
-  box-shadow: var(--shadow-inset);
-  box-sizing: border-box;
-  vertical-align: top;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .sphinx-input-container textarea:focus {
+  border-color: var(--sphinx-primary);
+  box-shadow: 0 0 0 2px var(--sphinx-focus-ring);
   outline: none;
-  outline-offset: -2px;
-  border-color: #CF9BFF;
-  box-shadow: 0 0 0 3px rgba(170, 0, 255, 0.1);
 }
 
 .sphinx-input-container textarea::placeholder {
   color: var(--sphinx-text-tertiary);
-  font-weight: 400;
 }
 
 .sphinx-submit-btn {
-  padding: var(--space-md) var(--space-xl);
-  background: var(--sphinx-primary);
-  color: white;
-  border: 2px solid var(--sphinx-primary);
-  border-radius: var(--sphinx-radius-md);
-  cursor: pointer;
-  font-size: var(--text-sm);
-  font-weight: 600;
-  font-family: var(--sphinx-font-sans);
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  min-width: 80px;
-  height: 44px;
-  display: flex;
+  appearance: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-xs);
-  box-shadow: var(--shadow-md);
+  width: 80px;
+  height: var(--assistant-control-height);
+  min-width: 80px;
+  padding: 0 var(--space-md);
+  background: var(--sphinx-primary);
+  border: 1px solid var(--sphinx-primary);
+  border-radius: var(--assistant-control-radius);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1;
+  transition: background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
 }
 
 .sphinx-submit-btn:hover:not(:disabled) {
   background: var(--sphinx-primary-hover);
   border-color: var(--sphinx-primary-hover);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
 }
 
 .sphinx-submit-btn:disabled {
-  opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
-  background: var(--sphinx-text-secondary);
-  border-color: var(--sphinx-text-secondary);
+  opacity: 0.58;
 }
 
-/* Sources display */
 .sphinx-sources {
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: var(--space-lg);
+  padding-top: var(--space-sm);
   border-top: 1px solid var(--sphinx-border);
+  counter-reset: sphinx-source;
 }
 
 .sphinx-sources h4 {
-  margin: 0 0 8px 0;
-  font-size: 12px;
+  margin: 0 0 var(--space-sm);
   color: var(--sphinx-text-secondary);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: var(--text-xs);
+  font-weight: 650;
+  line-height: var(--leading-tight);
 }
 
 .sphinx-source {
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 
 .sphinx-source a {
-  color: var(--sphinx-primary);
-  text-decoration: none;
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 0;
-  transition: all 0.2s ease;
-}
-
-.sphinx-source a:hover {
-  text-decoration: underline;
-  color: var(--sphinx-primary-hover);
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-sm);
+  padding: 5px 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .sphinx-source a::before {
-  content: "🔗";
-  font-size: 10px;
-  opacity: 0.7;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: var(--sphinx-surface);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-sm);
+  color: var(--sphinx-text-secondary);
+  content: counter(sphinx-source);
+  counter-increment: sphinx-source;
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1;
 }
 
-/* Loading states */
+.sphinx-source:hover a::before {
+  color: var(--sphinx-primary-hover);
+  text-decoration: none;
+}
+
+.sphinx-source:hover .sphinx-source-title,
+.sphinx-source:hover .sphinx-source-excerpt {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sphinx-source-title {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: var(--leading-tight);
+  min-width: 0;
+}
+
+.sphinx-source-excerpt {
+  display: block;
+  grid-column: 2;
+  margin-top: 3px;
+  color: var(--sphinx-text-secondary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+}
+
 .sphinx-message.loading .sphinx-message-text {
   display: flex;
   align-items: center;
-  gap: 8px;
-  opacity: 0.8;
-  font-style: italic;
-}
-
-.sphinx-message.loading .sphinx-message-text::before {
-  content: '';
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--sphinx-border);
-  border-top: 2px solid var(--sphinx-primary);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-/* Streaming indicator */
-.sphinx-streaming-indicator {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  background: var(--sphinx-primary);
-  border-radius: 50%;
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0% { opacity: 0.3; }
-  50% { opacity: 1; }
-  100% { opacity: 0.3; }
-}
-
-/* Empty state */
-.sphinx-chat-empty {
-  text-align: center;
-  padding: var(--space-lg) var(--space-md) var(--space-md) var(--space-md);
+  gap: var(--space-sm);
   color: var(--sphinx-text-secondary);
 }
 
+.sphinx-message.loading .sphinx-message-text::before {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--sphinx-border);
+  border-top-color: var(--sphinx-primary);
+  border-radius: 50%;
+  animation: sphinx-spin 0.9s linear infinite;
+  content: "";
+}
+
+@keyframes sphinx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sphinx-streaming-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--sphinx-primary);
+  border-radius: 50%;
+  animation: sphinx-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes sphinx-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+.sphinx-chat-empty {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-md) var(--space-2xl);
+  color: var(--sphinx-text-secondary);
+  text-align: center;
+}
+
 .sphinx-chat-empty h3 {
-  margin: 0 0 var(--space-xs) 0;
-  font-size: var(--text-lg);
-  font-weight: 600;
-  line-height: var(--leading-tight);
+  margin: 0 0 var(--space-xs);
   color: var(--sphinx-text-primary);
+  font-size: var(--text-lg);
+  font-weight: 650;
+  line-height: var(--leading-tight);
 }
 
 .sphinx-chat-empty p {
-  margin: 0 0 var(--space-md) 0;
-  font-size: var(--text-xs);
-  line-height: var(--leading-snug);
-  color: var(--sphinx-text-tertiary);
+  margin: 0 0 var(--space-lg);
+  color: var(--sphinx-text-secondary);
+  font-size: var(--text-sm);
 }
 
 .sphinx-suggested-prompts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-sm);
-  max-width: 400px;
-  margin: 0 auto;
 }
 
 .sphinx-suggested-prompt {
-  padding: var(--space-sm) var(--space-md);
-  background: var(--sphinx-surface);
-  border: 1px solid var(--sphinx-border);
-  border-radius: var(--sphinx-radius-md);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  color: var(--sphinx-text-primary);
-  transition: all 0.2s ease;
-  text-align: center;
-  min-height: 36px;
-  display: flex;
+  appearance: none;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow-xs);
-}
-
-.sphinx-suggested-prompt::before {
-  content: "💡";
-  margin-right: var(--space-xs);
-  font-size: var(--text-sm);
+  min-height: 38px;
+  padding: 7px var(--space-md);
+  background: var(--sphinx-background);
+  border: 1px solid var(--sphinx-border);
+  border-radius: var(--radius-md);
+  color: var(--sphinx-text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 550;
+  line-height: var(--leading-normal);
+  text-align: center;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
 .sphinx-suggested-prompt:hover {
-  background: var(--sphinx-primary);
-  color: white;
+  background: var(--sphinx-primary-soft);
   border-color: var(--sphinx-primary);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
+  color: var(--sphinx-primary);
 }
 
-/* Error states */
 .sphinx-message.error .sphinx-message-content {
-  background: var(--sphinx-error-50);
-  border-color: var(--sphinx-error-100);
-  color: var(--sphinx-error-700);
+  background: var(--sphinx-error-surface);
+  border-color: color-mix(in srgb, var(--sphinx-error) 28%, var(--sphinx-border));
+  color: var(--sphinx-error);
 }
 
 .sphinx-error-icon {
-  color: #e53e3e;
-  margin-right: 6px;
+  color: var(--sphinx-error);
+  margin-right: var(--space-xs);
 }
 
-/* Scrollbar styling */
 .sphinx-chat-messages::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 
 .sphinx-chat-messages::-webkit-scrollbar-track {
   background: transparent;
-  border-radius: 3px;
 }
 
 .sphinx-chat-messages::-webkit-scrollbar-thumb {
   background: var(--sphinx-border);
-  border-radius: 3px;
+  border: 2px solid var(--sphinx-background);
+  border-radius: var(--radius-pill);
 }
 
-.sphinx-chat-messages::-webkit-scrollbar-thumb:hover {
-  background: var(--sphinx-text-secondary);
+@media (prefers-reduced-motion: reduce) {
+  .sphinx-modal-overlay,
+  .sphinx-modal,
+  .sphinx-modal-reset,
+  .sphinx-modal-close,
+  .sphinx-submit-btn,
+  .sphinx-suggested-prompt,
+  .sphinx-input-container textarea,
+  .sphinx-streaming-indicator,
+  .sphinx-message.loading .sphinx-message-text::before {
+    animation: none;
+    transition: none;
+  }
 }
 
-/* Very short viewport heights - ensure modal is usable */
-@media (max-height: 500px) {
+@media (max-height: 560px) {
+  .sphinx-modal {
+    max-height: calc(100vh - 20px);
+  }
+
   .sphinx-ai-chat {
-    height: calc(100vh - 120px); /* Use most of available space */
-    min-height: 120px; /* Absolute minimum */
-  }
-  
-  .sphinx-chat-messages {
-    padding: var(--space-md) 30px;
-    padding-bottom: max(80px, 25%); /* Proportionally larger space for input */
-  }
-  
-  .sphinx-chat-input {
-    padding: var(--space-md) 30px; /* Reduced padding for short screens */
-  }
-  
-  .sphinx-input-container textarea {
-    min-height: 36px; /* Smaller input on short screens */
-    max-height: 80px;
-  }
-}
-
-/* Responsive design */
-@media (max-width: 900px) {
-  .sphinx-ai-chat {
-    height: min(420px, calc(100vh - 180px)); /* Responsive height for medium screens */
-    min-height: 180px;
-  }
-  
-  .sphinx-chat-messages {
-    padding: 18px 30px;
-    padding-bottom: 95px; /* Bottom padding for medium screens */
-    /* Remove min/max-height, use flex: 1 */
-  }
-  
-  .sphinx-message-content {
-    max-width: 82%;
-    padding: 13px 16px;
+    height: calc(100vh - 150px);
+    min-height: 220px;
   }
 }
 
 @media (max-width: 768px) {
+  .sphinx-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .sphinx-modal-header,
+  .sphinx-chat-messages,
+  .sphinx-chat-input,
+  .sphinx-modal-footer {
+    padding-left: var(--space-md);
+    padding-right: var(--space-md);
+  }
+
+  .sphinx-chat-messages:has(.sphinx-chat-empty) {
+    display: block;
+  }
+
   .sphinx-ai-chat {
-    height: min(380px, calc(100vh - 160px)); /* Responsive height for tablets */
-    min-height: 160px;
+    height: min(520px, calc(100vh - 160px));
+    min-height: 280px;
   }
-  
-  .sphinx-chat-messages {
-    padding: 16px 30px;
-    padding-bottom: 90px; /* Bottom padding for tablets */
-    /* Remove min/max-height, use flex: 1 */
-  }
-  
-  .sphinx-message-content {
-    max-width: 85%;
-    padding: 12px 14px;
-  }
-  
-  /* Old mode selector styles removed */
-  
+
   .sphinx-input-container {
-    flex-direction: row;
-    gap: var(--space-sm);
-    align-items: center;
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
-  
-  .sphinx-input-left-controls {
-    height: 40px;
+
+  .user-message .sphinx-message-content {
+    max-width: 86%;
   }
-  
-  .sphinx-mode-selector-wrapper {
-    height: 40px;
-  }
-  
-  .sphinx-mode-badge {
-    height: 40px;
-    padding: var(--space-sm) var(--space-md);
-    font-size: var(--text-xs);
-  }
-  
-  .sphinx-input-container textarea {
-    height: 40px;
-    min-height: 40px;
-  }
-  
-  .sphinx-submit-btn {
-    height: 40px;
-    padding: var(--space-sm) var(--space-md);
-    min-width: 60px;
-    font-size: var(--text-xs);
-  }
-  
+
   .sphinx-suggested-prompts {
-    max-width: 100%;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-  }
-  
-  .sphinx-suggested-prompt {
-    font-size: 11px;
-    padding: 6px 8px;
-    min-height: 32px;
+    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 520px) {
+  .sphinx-modal-title {
+    font-size: var(--text-sm);
+  }
+
+  .sphinx-modal-reset {
+    padding: 0 var(--space-sm);
+  }
+
   .sphinx-ai-chat {
-    height: min(320px, calc(100vh - 140px)); /* Responsive height for mobile */
-    min-height: 140px;
+    height: min(460px, calc(100vh - 142px));
   }
-  
-  .sphinx-chat-input {
-    padding: 16px 20px;
+
+  .sphinx-input-container {
+    grid-template-columns: 1fr auto;
   }
-  
-  .sphinx-chat-messages {
-    padding: 12px 20px;
-    padding-bottom: 80px; /* Smaller bottom padding for mobile */
-    /* Uses flex: 1 for full available height */
-  }
-  
-  .sphinx-message {
-    gap: 8px;
-    margin-bottom: 16px;
-  }
-  
-  .sphinx-message-avatar {
-    width: 32px;
-    height: 32px;
-    font-size: 16px;
-  }
-  
+
   .sphinx-input-left-controls {
-    height: 36px;
+    grid-column: 1 / -1;
+    min-height: 32px;
   }
-  
-  .sphinx-mode-selector-wrapper {
-    height: 36px;
-  }
-  
-  .sphinx-input-container textarea {
-    height: 36px;
-    min-height: 36px;
-    padding: var(--space-sm) var(--space-md);
-    font-size: 11px;
-  }
-  
+
   .sphinx-submit-btn {
-    height: 36px;
-    padding: var(--space-xs) var(--space-sm);
-    min-width: 50px;
-    font-size: 11px;
+    min-width: 72px;
+    width: 72px;
   }
-  
-  .sphinx-chat-empty {
-    padding: 12px 8px 8px 8px;
-  }
-  
-  .sphinx-suggested-prompts {
-    grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    max-width: 100%;
-  }
-  
-  .sphinx-suggested-prompt {
-    font-size: 10px;
-    padding: 4px 6px;
-    min-height: 28px;
-  }
-} 
+}
