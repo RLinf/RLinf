@@ -779,13 +779,13 @@ For the 5B mid-scale model, RLinf's advantage lies in stable large-microbatch ex
 
 5B tested with GBS=256. The FSDP2 Base version cannot open large mbs due to PyTorch limitations, capping throughput; RLinf resolves these issues and achieves substantial throughput growth. Training throughput soars from 1.1 samples/sec/gpu (official) to **4.44 samples/sec/gpu**—a ~**4×** training acceleration.
 
-.. figure:: blob:https://infinigence.feishu.cn/0e03ee59-1d16-4e5f-bef2-c0c1a0165b5c
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
    :align: center
    :width: 90%
 
    Speedup comparison for DreamZero 5B and 14B models.
 
-.. figure:: blob:https://infinigence.feishu.cn/921f4c85-8240-4134-a8a1-febbad6bc0fa
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0accthpt.jpg
    :align: center
    :width: 90%
 
