@@ -27,6 +27,10 @@ import torch
 from omegaconf import OmegaConf
 
 from rlinf.envs.robocasa.venv import RobocasaSubprocEnv
+from rlinf.envs.robocasa365.eval_schedule import (
+    resolve_robocasa365_episode_horizons,
+    validate_robocasa365_eval_horizons,
+)
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 from rlinf.utils.debug_dump import dump_pt
 
@@ -459,6 +463,9 @@ class Robocasa365Env(gym.Env):
                 "task_filter": self.task_filter,
                 "task_sampling_strategy": self.task_sampling_strategy,
                 "rotate_tasks_on_auto_reset": self.rotate_tasks_on_auto_reset,
+                "episode_horizon_source": str(
+                    self.cfg.get("episode_horizon_source", "max_episode_steps")
+                ),
                 "seed_strategy": self.seed_strategy,
                 "is_eval": bool(self.cfg.get("is_eval", False)),
             },
@@ -466,6 +473,32 @@ class Robocasa365Env(gym.Env):
 
         self.task_specs = self._load_task_specs()
         self.num_tasks = len(self.task_specs)
+        self.episode_horizon_source = str(
+            self.cfg.get("episode_horizon_source", "max_episode_steps")
+        )
+        selected_episode_horizons = resolve_robocasa365_episode_horizons(
+            task_horizons=(task_spec["horizon"] for task_spec in self.task_specs),
+            max_episode_steps=int(self.cfg.get("max_episode_steps", 300)),
+            episode_horizon_source=self.episode_horizon_source,
+        )
+        if bool(self.cfg.get("is_eval", False)):
+            max_episode_horizon = validate_robocasa365_eval_horizons(
+                episode_horizons=selected_episode_horizons,
+                max_steps_per_rollout_epoch=int(
+                    self.cfg.get("max_steps_per_rollout_epoch", 300)
+                ),
+            )
+            self._debug_log_event(
+                "eval_horizons_validated",
+                {
+                    "episode_horizon_source": self.episode_horizon_source,
+                    "selected_episode_horizons": list(selected_episode_horizons),
+                    "max_episode_horizon": max_episode_horizon,
+                    "max_steps_per_rollout_epoch": int(
+                        self.cfg.get("max_steps_per_rollout_epoch", 300)
+                    ),
+                },
+            )
         self._debug_log_event(
             "task_specs_loaded",
             {
@@ -723,11 +756,16 @@ class Robocasa365Env(gym.Env):
             for task_id in self.task_ids
         ]
         fallback_horizon = int(self.cfg.get("max_episode_steps", 300))
+        registry_horizons = [
+            int(self.task_specs[task_id].get("horizon", fallback_horizon))
+            for task_id in self.task_ids
+        ]
         self.task_horizons = np.asarray(
-            [
-                int(self.task_specs[task_id].get("horizon", fallback_horizon))
-                for task_id in self.task_ids
-            ],
+            resolve_robocasa365_episode_horizons(
+                task_horizons=registry_horizons,
+                max_episode_steps=fallback_horizon,
+                episode_horizon_source=self.episode_horizon_source,
+            ),
             dtype=np.int32,
         )
 
@@ -1243,7 +1281,11 @@ class Robocasa365Env(gym.Env):
                 past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
-        if self.auto_reset or self.ignore_terminations:
+        if (
+            self.auto_reset
+            or self.ignore_terminations
+            or bool(self.cfg.get("is_eval", False))
+        ):
             chunk_terminations = torch.zeros_like(raw_chunk_terminations)
             chunk_terminations[:, -1] = past_terminations
 

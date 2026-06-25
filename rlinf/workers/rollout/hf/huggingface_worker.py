@@ -115,6 +115,24 @@ class MultiStepRolloutWorker(Worker):
                 self.expert_model.load_state_dict(expert_model_dict)
 
         self.hf_model.eval()
+        
+        ## debug wph
+        from collections import Counter
+
+        param_dtypes = Counter(str(p.dtype) for p in self.hf_model.parameters())
+
+        self.log_info(
+            f"debug wph: "
+            f"[精度调试] rank={self._rank}/{self._world_size}, "
+            f"total_train_envs={self.total_num_train_envs}, "
+            f"total_eval_envs={self.total_num_eval_envs}, "
+            f"train_batch_size={self.train_batch_size}, "
+            f"eval_batch_size={self.eval_batch_size}, "
+            f"pipeline_stages={self.num_pipeline_stages}, "
+            f"parameter_dtypes={dict(param_dtypes)}"
+        )
+        
+        
         if self.expert_model is not None:
             self.expert_model.eval()
 

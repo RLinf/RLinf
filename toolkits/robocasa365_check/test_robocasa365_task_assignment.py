@@ -188,11 +188,15 @@ _install_gym_stub("gymnasium")
 
 
 from rlinf.envs.robocasa365.eval_schedule import (  # noqa: E402
+    resolve_robocasa365_episode_horizons,
     resolve_robocasa365_eval_schedule,
+    resolve_robocasa365_rollout_budget,
+    validate_robocasa365_eval_horizons,
 )
 from rlinf.envs.robocasa365.robocasa365_env import (  # noqa: E402
     Robocasa365Env,
     _task_matches_filter,
+    configure_robocasa365_eval_horizon,
 )
 
 
@@ -238,6 +242,7 @@ class FakeVectorEnv:
 
     def __init__(self, owner: "ProbeRobocasa365Env") -> None:
         self.owner = owner
+        self.workers: list[Any] = []
         self.next_success_mask = np.zeros(owner.num_envs, dtype=bool)
         self.reconfigure_calls: list[dict[str, Any]] = []
 
@@ -308,10 +313,12 @@ class ProbeRobocasa365Env(Robocasa365Env):
         num_envs: int,
         *,
         mock_num_tasks: int,
+        mock_task_horizons: list[int] | None = None,
         seed_offset: int = 0,
         total_num_processes: int = 1,
     ) -> None:
         self._mock_num_tasks = mock_num_tasks
+        self._mock_task_horizons = mock_task_horizons
         super().__init__(
             cfg,
             num_envs,
@@ -321,13 +328,21 @@ class ProbeRobocasa365Env(Robocasa365Env):
         )
 
     def _load_task_specs(self) -> list[dict[str, Any]]:
+        horizons = self._mock_task_horizons or [
+            int(self.cfg.get("max_episode_steps", 8))
+        ] * self._mock_num_tasks
+        if len(horizons) != self._mock_num_tasks:
+            raise ValueError(
+                "mock_task_horizons length must equal mock_num_tasks, got "
+                f"{len(horizons)} and {self._mock_num_tasks}."
+            )
         task_specs = [
             {
                 "task_name": f"MockTask{i:02d}",
                 "task_description": f"mock task {i:02d}",
                 "task_mode": "atomic",
                 "benchmark_selection": "mock",
-                "horizon": int(self.cfg.get("max_episode_steps", 8)),
+                "horizon": int(horizons[i]),
                 "metadata_view": {
                     "task_name": f"MockTask{i:02d}",
                     "task_id": i,
@@ -419,6 +434,10 @@ def _make_env(
     seed_strategy: str | None = None,
     task_filter: Any = None,
     mock_num_tasks: int | None = None,
+    mock_task_horizons: list[int] | None = None,
+    episode_horizon_source: str = "task_horizon",
+    max_episode_steps: int = 8,
+    max_steps_per_rollout_epoch: int | None = None,
 ) -> ProbeRobocasa365Env:
     cfg = _load_cfg(args, num_envs=num_envs, group_size=group_size)
     cfg.seed = args.seed if seed is None else seed
@@ -427,6 +446,13 @@ def _make_env(
     cfg.use_fixed_reset_state_ids = fixed_flag
     cfg.rotate_tasks_on_auto_reset = rotate_on_auto_reset
     cfg.is_eval = is_eval
+    cfg.episode_horizon_source = episode_horizon_source
+    cfg.max_episode_steps = max_episode_steps
+    cfg.max_steps_per_rollout_epoch = (
+        max_episode_steps
+        if max_steps_per_rollout_epoch is None
+        else max_steps_per_rollout_epoch
+    )
     if seed_strategy is not None:
         cfg.seed_strategy = seed_strategy
     if task_filter is not None:
@@ -435,6 +461,7 @@ def _make_env(
         cfg,
         num_envs,
         mock_num_tasks=(args.num_tasks if mock_num_tasks is None else mock_num_tasks),
+        mock_task_horizons=mock_task_horizons,
         seed_offset=seed_offset,
         total_num_processes=total_num_processes,
     )
@@ -1055,12 +1082,177 @@ def _check_parallel_eval_episode_schedule(
         )
 
 
+def _first_truncation_steps(
+    env: ProbeRobocasa365Env, max_steps: int
+) -> np.ndarray:
+    env.reset()
+    first_steps = np.zeros(env.num_envs, dtype=np.int32)
+    seen = np.zeros(env.num_envs, dtype=bool)
+    for step in range(1, max_steps + 1):
+        _, _, _, truncations, _ = env.step(
+            _noop_actions(env.num_envs), auto_reset=False
+        )
+        current = truncations.cpu().numpy().astype(bool)
+        newly_truncated = current & ~seen
+        first_steps[newly_truncated] = step
+        seen |= current
+    return first_steps
+
+
+def _check_episode_horizon_sources(
+    suite: CheckSuite, args: argparse.Namespace
+) -> None:
+    print("\n[episode horizon 来源]")
+    registry_horizons = [3, 5]
+
+    task_env = _make_env(
+        args,
+        num_envs=4,
+        strategy="ordered",
+        is_eval=True,
+        mock_num_tasks=2,
+        mock_task_horizons=registry_horizons,
+        episode_horizon_source="task_horizon",
+        max_episode_steps=4,
+        max_steps_per_rollout_epoch=5,
+    )
+    suite.check(
+        "task_horizon 模式按每个 env 对应任务的 horizon 截断",
+        np.array_equal(task_env.task_horizons, np.asarray([3, 5, 3, 5])),
+        f"task_horizons={task_env.task_horizons.tolist()}",
+    )
+    task_first_steps = _first_truncation_steps(task_env, max_steps=5)
+    suite.check(
+        "task_horizon 模式下多任务失败 episode 在各自 horizon 完成",
+        np.array_equal(task_first_steps, np.asarray([3, 5, 3, 5])),
+        f"first_truncation_steps={task_first_steps.tolist()}",
+    )
+    task_env.reset()
+    task_env.env.next_success_mask = np.asarray([True, False, False, False])
+    _, _, chunk_terminations, _, _ = task_env.chunk_step(
+        np.zeros((task_env.num_envs, 2, 12), dtype=np.float32)
+    )
+    suite.check(
+        "eval action chunk 中间成功会折叠到 chunk 最后一步供统计",
+        bool(chunk_terminations[0, -1])
+        and int(chunk_terminations[0].sum().item()) == 1,
+        f"chunk_terminations={chunk_terminations.tolist()}",
+    )
+
+    fixed_env = _make_env(
+        args,
+        num_envs=4,
+        strategy="ordered",
+        is_eval=True,
+        mock_num_tasks=2,
+        mock_task_horizons=registry_horizons,
+        episode_horizon_source="max_episode_steps",
+        max_episode_steps=4,
+    )
+    suite.check(
+        "max_episode_steps 模式为所有任务使用统一 horizon",
+        np.array_equal(fixed_env.task_horizons, np.asarray([4, 4, 4, 4])),
+        f"task_horizons={fixed_env.task_horizons.tolist()}",
+    )
+    fixed_first_steps = _first_truncation_steps(fixed_env, max_steps=4)
+    suite.check(
+        "max_episode_steps 模式下所有失败 episode 在固定长度完成",
+        np.array_equal(fixed_first_steps, np.asarray([4, 4, 4, 4])),
+        f"first_truncation_steps={fixed_first_steps.tolist()}",
+    )
+
+    resolved = resolve_robocasa365_episode_horizons(
+        task_horizons=registry_horizons,
+        max_episode_steps=4,
+        episode_horizon_source="task_horizon",
+    )
+    suite.check(
+        "task_horizon 模式保留 registry horizon",
+        resolved == (3, 5),
+        f"resolved={resolved}",
+    )
+    suite.check(
+        "共享 rollout budget 自动取最大 horizon 并对齐 action chunk",
+        resolve_robocasa365_rollout_budget(
+            episode_horizons=resolved,
+            num_action_chunks=2,
+        )
+        == 6,
+    )
+
+    auto_cfg = _to_attr_dict(
+        {
+            "episode_horizon_source": "task_horizon",
+            "max_episode_steps": 700,
+            "max_steps_per_rollout_epoch": 700,
+        }
+    )
+    original_loader = configure_robocasa365_eval_horizon.__globals__[
+        "load_robocasa365_task_specs"
+    ]
+    configure_robocasa365_eval_horizon.__globals__[
+        "load_robocasa365_task_specs"
+    ] = lambda cfg: [{"task_name": "MockTask", "horizon": 900}]
+    try:
+        auto_budget = configure_robocasa365_eval_horizon(
+            auto_cfg,
+            num_action_chunks=5,
+        )
+    finally:
+        configure_robocasa365_eval_horizon.__globals__[
+            "load_robocasa365_task_specs"
+        ] = original_loader
+    suite.check(
+        "task_horizon 模式自动覆盖 YAML 中手写的 rollout budget",
+        auto_budget == 900 and auto_cfg.max_steps_per_rollout_epoch == 900,
+        (
+            f"auto_budget={auto_budget}, "
+            f"cfg_budget={auto_cfg.max_steps_per_rollout_epoch}"
+        ),
+    )
+    try:
+        validate_robocasa365_eval_horizons(
+            episode_horizons=resolved,
+            max_steps_per_rollout_epoch=4,
+        )
+    except ValueError:
+        rejected_short_budget = True
+    else:
+        rejected_short_budget = False
+    suite.check(
+        "共享 rollout budget 小于最大任务 horizon 时拒绝启动",
+        rejected_short_budget,
+    )
+
+
 def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
         raise ValueError(f"{path} 没有被解析为 YAML mapping。")
     return data
+
+
+def _selected_task_count_from_yaml(task_filter: Any, default_count: int) -> int:
+    """Infer the selected task count for lightweight YAML consistency checks."""
+
+    if not task_filter:
+        return default_count
+    if isinstance(task_filter, str):
+        return 1
+    if isinstance(task_filter, list):
+        return len(set(str(task) for task in task_filter))
+    if isinstance(task_filter, dict):
+        include = task_filter.get("include", [])
+        exclude = task_filter.get("exclude", [])
+        include = [include] if isinstance(include, str) else list(include or [])
+        exclude = [exclude] if isinstance(exclude, str) else list(exclude or [])
+        include_set = {str(task) for task in include}
+        exclude_set = {str(task) for task in exclude}
+        if include_set:
+            return len(include_set - exclude_set)
+        return default_count - len(exclude_set)
+    raise TypeError(f"Unsupported task_filter type: {type(task_filter)}")
 
 
 def _check_yaml_group_size_consistency(
@@ -1113,29 +1305,45 @@ def _check_yaml_group_size_consistency(
                 ),
             )
             parallel_eval = eval_env.get("parallel_eval", {})
-            schedule = resolve_robocasa365_eval_schedule(
-                num_tasks=args.num_tasks,
-                total_num_envs=int(eval_env.get("total_num_envs", 0)),
-                eval_rollout_epoch=int(algorithm.get("eval_rollout_epoch", 0)),
-                expected_episodes_per_task=int(
-                    parallel_eval.get("episodes_per_task", 0)
-                ),
-            )
-            suite.check(
-                f"{label} 配置开启每任务 50 个 episode 的并行评估",
-                bool(parallel_eval.get("enabled", False))
-                and schedule.episodes_per_task == 50,
-                f"parallel_eval={parallel_eval}",
-            )
-            suite.check(
-                f"{label} 配置显式保留 eval_rollout_epoch",
-                schedule.eval_rollout_epoch
-                == int(algorithm.get("eval_rollout_epoch", -1)),
-                (
-                    f"调度轮数={schedule.eval_rollout_epoch}，"
-                    f"配置轮数={algorithm.get('eval_rollout_epoch')}"
-                ),
-            )
+            if isinstance(parallel_eval, bool):
+                parallel_enabled = parallel_eval
+                episodes_per_task = 50
+            else:
+                parallel_enabled = bool(parallel_eval.get("enabled", False))
+                episodes_per_task = int(parallel_eval.get("episodes_per_task", 50))
+
+            if parallel_enabled:
+                selected_task_count = _selected_task_count_from_yaml(
+                    eval_env.get("task_filter", []),
+                    args.num_tasks,
+                )
+                schedule = resolve_robocasa365_eval_schedule(
+                    num_tasks=selected_task_count,
+                    total_num_envs=int(eval_env.get("total_num_envs", 0)),
+                    eval_rollout_epoch=int(algorithm.get("eval_rollout_epoch", 0)),
+                    expected_episodes_per_task=episodes_per_task,
+                )
+                suite.check(
+                    f"{label} 配置开启每任务 {episodes_per_task} 个 episode 的并行评估",
+                    schedule.episodes_per_task == episodes_per_task,
+                    (
+                        f"parallel_eval={parallel_eval}, "
+                        f"selected_task_count={selected_task_count}"
+                    ),
+                )
+                suite.check(
+                    f"{label} 配置显式保留 eval_rollout_epoch",
+                    schedule.eval_rollout_epoch
+                    == int(algorithm.get("eval_rollout_epoch", -1)),
+                    (
+                        f"调度轮数={schedule.eval_rollout_epoch}，"
+                        f"配置轮数={algorithm.get('eval_rollout_epoch')}"
+                    ),
+                )
+            else:
+                suite.note(
+                    f"{label} 配置未开启 parallel_eval，跳过每任务 episode 调度检查"
+                )
 
 
 def parse_args() -> argparse.Namespace:
@@ -1218,6 +1426,7 @@ def main() -> None:
     _check_unfiltered_reset_parameter_matrix(suite, args)
     _check_ppo_grpo_group_semantics(suite, args)
     _check_parallel_eval_episode_schedule(suite, args)
+    _check_episode_horizon_sources(suite, args)
     _check_yaml_group_size_consistency(suite, args)
     suite.summary()
 

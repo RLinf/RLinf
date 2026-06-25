@@ -252,6 +252,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     ):
         self._input_transform = _transforms.compose(transforms)
         self._output_transform = _transforms.compose(output_transforms)
+        
+        print(f"debug wph: setup_wrappers with input_transforms: {transforms}")
+        print(f"debug wph: setup_wrappers with output_transforms: {output_transforms}")
 
     def input_transform(self, obs: dict, transpose=True):
         dump_pt(
@@ -569,6 +572,24 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=True,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        
+        # debug wph
+        def print_dtype_tree(tag, value):
+            if isinstance(value, torch.Tensor):
+                print(
+                    f"[{tag}] shape={tuple(value.shape)} "
+                    f"dtype={value.dtype} device={value.device}",
+                    flush=True,
+                )
+            elif isinstance(value, np.ndarray):
+                print(f"[{tag}] shape={value.shape} dtype={value.dtype}", flush=True)
+            elif isinstance(value, dict):
+                for key, item in value.items():
+                    print_dtype_tree(f"{tag}.{key}", item)
+            elif isinstance(value, (list, tuple)):
+                for index, item in enumerate(value):
+                    print_dtype_tree(f"{tag}[{index}]", item)
+        
         dump_pt(
             "rlinf_openpi_predict_env_obs",
             {
@@ -578,10 +599,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 "env_obs": env_obs,
             },
         )
-        to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
+        
+        # obs_processor 前
+        print_dtype_tree("01_env_obs", env_obs)
+
+        to_process_obs = self.obs_processor(env_obs) # env obs -> policy input obs
+        print_dtype_tree("02_obs_processor", to_process_obs)
+
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
-        )  # policy input obs -> model input obs
+        ) # policy input obs -> model input obs
+        print_dtype_tree("03_input_transform", processed_obs)
+
+
         dump_pt(
             "rlinf_openpi_predict_after_input_transform",
             {
@@ -593,6 +623,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         processed_obs = self.precision_processor(
             processed_obs
         )  # obs precision processor
+        
+        print_dtype_tree("04_precision_processor", processed_obs)
+        
         dump_pt(
             "rlinf_openpi_predict_after_precision_processor",
             {
@@ -977,9 +1010,21 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             adarms_cond=[None, adarms_cond],
         )
 
-        suffix_out = outputs_embeds[1]
-        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        # suffix_out = outputs_embeds[1]
+        # suffix_out = suffix_out[:, -self.config.action_horizon :]
+        # suffix_out = suffix_out.to(dtype=torch.float32)
+        # return suffix_out
+        suffix_out_raw = outputs_embeds[1]
+        suffix_out = suffix_out_raw[:, -self.config.action_horizon:]
         suffix_out = suffix_out.to(dtype=torch.float32)
+
+        print(
+            f"debug wph: "
+            f"[Action精度] suffix_raw={suffix_out_raw.dtype}, "
+            f"suffix_fp32={suffix_out.dtype}, "
+            f"action_head_weight={self.action_out_proj.weight.dtype}",
+            flush=True,
+        )
         return suffix_out
 
     def get_velocity(self, state, x_t, timestep, prefix_pad_masks, past_key_values):

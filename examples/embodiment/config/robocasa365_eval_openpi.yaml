@@ -16,7 +16,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0
+    actor,env,rollout: all # 0
 
 runner:
   task_type: embodied
@@ -24,7 +24,7 @@ runner:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "robocasa365_eval_openpi"
-    logger_backends: ["tensorboard"]
+    logger_backends: []
 
   max_epochs: 1
   max_steps: -1
@@ -43,7 +43,7 @@ algorithm:
 
   rollout_epoch: 1
   # 90 envs / 18 tasks * 10 epochs = 50 episodes per task.
-  eval_rollout_epoch: 10
+  eval_rollout_epoch: 50 # 1
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
@@ -95,22 +95,24 @@ env:
     group_size: 1
   eval:
     # atomic_seen has 18 tasks. 90 envs gives 5 envs/task and 10 rollout epochs.
-    total_num_envs: 90
+    total_num_envs: 18 # 50 # 90
     seed: 7
-    seed_strategy: global_unique
+    seed_strategy: openpi # global_unique
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
-    task_filter: []
+    # task_filter: ["CloseFridge"]
     task_sampling_strategy: ordered
     auto_reset: False
     ignore_terminations: False
+    use_fixed_reset_state_ids: True
+    episode_horizon_source: task_horizon # max_episode_steps
     max_episode_steps: 700
-    max_steps_per_rollout_epoch: 700
+    max_steps_per_rollout_epoch: 1500 # 700
     group_size: 1
     is_eval: True
     parallel_eval:
-      enabled: True
+      enabled: False # True
       episodes_per_task: 50
     video_cfg:
       save_video: True
@@ -129,7 +131,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/pi0_robocasa365"
+    model_path: /mnt/public2/wph/models/pi0_pretrain_robocasa365
     precision: null
 
 actor:
@@ -141,19 +143,19 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model/pi0_robocasa365"
+    model_path: /mnt/public2/wph/models/pi0_pretrain_robocasa365
     num_action_chunks: 5
     action_dim: 12
     num_steps: 5
     add_value_head: False
     openpi:
-      config_name: "pi0_robocasa365"
-      num_images_in_input: 3
+      config_name: "pi0_robocasa365_pretrain_human300"
+      num_images_in_input: 2 # 3
       num_steps: 5
       detach_critic_input: False
     openpi_data:
       state_space: "16d"
-      image_space: "3views"
+      image_space: "2views" # "3views"
       action_space: "12d"
 
   optim:
