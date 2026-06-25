@@ -710,7 +710,7 @@ To find the sweet spot between decode speed and system resource overhead, the RL
 
 While Decord has a slight edge in raw decode speed, **Torchcodec** achieves comparable performance with significantly more stable CPU utilization. This leaves enough compute headroom for the main training thread and allows more ``num_workers`` for concurrent data processing.
 
-Compared to the native PyAV solution, per-video decode time drops by nearly :strong:`400ms`. In DreamZero's multi-view training (left, right, and wrist camera videos), cumulative decode savings reach ~:strong:`1.2s`—providing ample data "ammunition" to further push GPU compute utilization.
+Compared to the native PyAV solution, per-video decode time drops by nearly :strong:`400ms`. In DreamZero's multi-view training (left, right, and wrist camera videos), cumulative decode savings reach ~1.2s—providing ample data "ammunition" to further push GPU compute utilization.
 
 To enable the Torchcodec back end, configure:
 
@@ -777,7 +777,7 @@ For the 5B mid-scale model, RLinf's advantage lies in stable large-microbatch ex
      - **4.44**
      - **+300% (4.0×)**
 
-5B tested with GBS=256. The FSDP2 Base version cannot open large mbs due to PyTorch limitations, capping throughput; RLinf resolves these issues and achieves substantial throughput growth. Training throughput soars from 1.1 samples/sec/gpu (official) to :strong:`4.44 samples/sec/gpu`—a ~:strong:`4×` training acceleration.
+5B tested with GBS=256. The FSDP2 Base version cannot open large mbs due to PyTorch limitations, capping throughput; RLinf resolves these issues and achieves substantial throughput growth. Training throughput soars from 1.1 samples/sec/gpu (official) to 4.44 samples/sec/gpu—a ~4× training acceleration.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
    :align: center
