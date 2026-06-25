@@ -659,7 +659,7 @@ All tests below use the **Droid dataset** (three views per sample: left, right, 
 
 **DreamZero-14B**
 
-For the 14B model, memory pressure leaves the official baseline little choice but DeepSpeed ZeRO-offload, incurring severe compute/communication waste and CPU swap overhead.
+For the 14B model, memory pressure leaves the official baseline little choice but DeepSpeed ZeRO-offload, incurring severe compute/communication waste and CPU swap overhead. Through engineering optimization, we replaced DeepSpeed ZeRO-offload with FSDP2 ``full_shard``, and further incorporated compute graph optimizations (operator fusion and CUDA Graph).
 
 .. list-table::
    :header-rows: 1
