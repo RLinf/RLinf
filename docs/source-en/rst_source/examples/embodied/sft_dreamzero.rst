@@ -781,12 +781,12 @@ For the 5B mid-scale model, RLinf's advantage lies in stable large-microbatch ex
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
    :align: center
-   :width: 90%
+   :width: 45%
 
    Speedup comparison for DreamZero 5B and 14B models.
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0accthpt.jpg
    :align: center
-   :width: 90%
+   :width: 45%
 
    Throughput improvement for DreamZero 5B and 14B models.
