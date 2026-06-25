@@ -17,6 +17,7 @@ class SphinxMessageManager {
       content: content || '',
       timestamp: Date.now(),
       sources: options.sources || [],
+      queryPlan: options.queryPlan || null,
       isStreaming: options.isStreaming || false,
       isLoading: options.isLoading || false,
       error: options.error || null,
@@ -184,7 +185,7 @@ class SphinxMessageManager {
     
     conversation.messages.forEach((message, index) => {
       const time = new Date(message.timestamp).toLocaleTimeString();
-      const sender = message.sender === 'user' ? '👤 User' : '🤖 AI Assistant';
+      const sender = message.sender === 'user' ? 'User' : 'AI Assistant';
       
       markdown += `## ${sender} (${time})\n\n`;
       markdown += `${message.content}\n\n`;
@@ -192,7 +193,10 @@ class SphinxMessageManager {
       if (message.sources && message.sources.length > 0) {
         markdown += `**Sources:**\n`;
         message.sources.forEach(source => {
-          markdown += `- [${source.document.title}](${source.document.url})\n`;
+          const normalized = window.RLinfAssistantUtils?.normalizeSource
+            ? window.RLinfAssistantUtils.normalizeSource(source)
+            : source;
+          markdown += `- [${normalized.title}](${normalized.url})\n`;
         });
         markdown += `\n`;
       }
@@ -384,4 +388,4 @@ class SphinxMessageManager {
 }
 
 // Export message manager class
-window.SphinxMessageManager = SphinxMessageManager; 
+window.SphinxMessageManager = SphinxMessageManager;
