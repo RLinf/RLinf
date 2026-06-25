@@ -1269,6 +1269,7 @@ def test_weight_syncer_factory_builds_patch_and_bucket():
     )
     patch_syncer = WeightSyncer.create(patch_cfg)
     assert isinstance(patch_syncer, PatchWeightSyncer)
+    assert patch_syncer.comm_options is None
     assert patch_syncer.init_sync_enabled is True
     assert patch_syncer.init_sync_prefixes == ["value_head"]
     assert patch_syncer.init_sync_bucket_size == 4096
@@ -1287,6 +1288,43 @@ def test_weight_syncer_factory_builds_patch_and_bucket():
     )
     bucket_syncer = WeightSyncer.create(bucket_cfg)
     assert isinstance(bucket_syncer, BucketWeightSyncer)
+    assert bucket_syncer.comm_options is None
+
+
+def test_weight_syncer_factory_builds_shared_comm_options():
+    base_patch_cfg = {
+        "type": "patch",
+        "patch": {
+            "snapshot_device": "cpu",
+            "transport_device": "cpu",
+            "delta_encoding": True,
+            "compression": "none",
+        },
+    }
+    base_bucket_cfg = {
+        "type": "bucket",
+        "bucket": {
+            "bucket_size": 128,
+            "bucket_dtype": None,
+            "bucket_device": "cpu",
+        },
+    }
+    shared_options = {
+        "use_ring_sync": True,
+        "nccl_max_ctas": 8,
+        "nccl_min_ctas": 2,
+    }
+
+    for base_cfg in (base_patch_cfg, base_bucket_cfg):
+        cfg = OmegaConf.create({**base_cfg, **shared_options})
+
+        syncer = WeightSyncer.create(cfg)
+
+        comm_options = syncer.comm_options
+        assert comm_options is not None
+        assert comm_options.use_ring_broadcast is True
+        assert comm_options.accel_max_ctas == 8
+        assert comm_options.accel_min_ctas == 2
 
 
 def test_weight_syncer_factory_rejects_unknown_type():
