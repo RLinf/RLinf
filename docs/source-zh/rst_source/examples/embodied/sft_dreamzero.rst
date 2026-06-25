@@ -638,3 +638,149 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 - 全量适配 WAN2.2 可冷启动，但需更大数据与更长训练；改配置后先用 50–200 step 试跑验证 shape 与 loss。
 - 每次更换数据集或 ``embodiment_tag``，务必重新生成或更新 ``metadata.json``。
 - LIBERO 与 DROID 的 ``action_horizon``、 ``embodiment_tag``、多视角拼接逻辑不同，不要混用配置模板。
+
+
+训练加速
+----------------------------------------
+
+RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加速。相比 DreamZero 官方提供的基线训练脚本，RLinf **实现了近 4 倍的训练吞吐加速**，同时保持甚至优化了收敛效果。
+
+以下逐一拆解背后的三项核心优化技术。
+
+
+算子与计算图优化：Torch Compile + CUDA Graph
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Python 层面的算子与调度开销往往是限制 GPU 峰值性能的"隐形杀手"。RLinf 深度融合了 ``torch.compile`` 和 CUDA Graph 技术：
+
+- **Torch Compile**：通过底层编译优化，对算子进行深度融合（Kernel Fusion），包括 WanRMSNorm、adaLN-zero 等 Diffusion 架构中的低效算子。
+- **CUDA Graph**：将计算图固化，消除 GPU kernel launch 的 CPU 调度瓶颈。DreamZero 训练中，CausalWanSelfAttention 部分的 kernel launch 较为密集，CUDA Graph 可对其有效优化。
+
+通过该项优化，DreamZero 5B 和 14B 模型在不改变 ``mbs=1``（每 GPU 微批大小，下同）的配置下，分别获得 **50%**（从 1.8s/step 降到 1.2s/step）和 **34%**（从 9s/step 降到 6.7s/step）的训练加速。
+
+
+FSDP2 并行优化：解锁 mbs 与 Recompute 的全方位调优
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+支持任意 Microbatch Size、FSDP2（Fully Sharded Data Parallel 2）并行策略的参数调优以及 Recompute（激活重计算），是业界训练大模型时必不可少的性能调优手段。然而，在 DreamZero 官方的 baseline 中存在明显的工程局限——默认使用 DeepSpeed 的 zero2 offload 并行方法、image encoder 不拼 batch 逐样本执行等，大大限制了性能调优空间。
+
+RLinf 从底层夯实了工程底座，交付了一套健壮且高度可配的调优矩阵：
+
+**稳定适配 FSDP2**
+  FSDP2 是 PyTorch 官方团队推出的最新 ZeRO 实现，也是 RLinf 面向中等规模大模型的默认并行方案。此前 DreamZero 官方代码使用 DeepSpeed 方案存在局限性：由于 ZeRO3 与 VAE 模块中 causal conv 的上下文维护机制存在兼容性冲突，开发者往往被迫回退至性能较低的 ZeRO2 offload 模式；此外 DeepSpeed 在反向传播阶段的 post backward hook 产生了较高的 CPU 侧开销，制约了整体训练吞吐。通过向 FSDP2 训练后端的迁移，RLinf 彻底解决了上述架构冲突与性能瓶颈。用户可以根据显存配置需求，在不同的分片策略间灵活切换，确保训练过程的高效与稳定。
+
+**灵活的 Microbatch 设置**
+  在 FSDP2 支持 DreamZero 模型训练的初始版本中，Microbatch Size（mbs）、Recompute 与 FSDP2 的策略组合往往会触发复杂的底层计算图冲突，且 image encoder 不拼 batch 会吞掉一部分开大 mbs 的加速收益。RLinf 通过工程上的努力，彻底解决了 mbs > 1 时与上述特性共存的不兼容问题，并使 image encoder 能够高效地拼 batch 执行。这一改进使得用户可以不约束地配置任意 mbs，从而根据硬件资源的显存水位与计算吞吐需求，进行精细化的参数调优。例如，对 DreamZero 5B 模型训练，不开启 Recompute 的情况下，mbs 从 1 开到 2，单步耗时几乎不变（1.2s/step → 1.3s/step），吞吐增加 85%。
+
+**Recompute 机制与加速算子的深度协同**
+  针对 PyTorch 原生框架在复杂并行策略下的兼容性局限，RLinf 通过深度的底层工程优化，实现了 Recompute（激活重计算）与 CUDA Graph、FSDP2 的稳定解耦与协同。这一改进将 Recompute 转化为一个高可靠、可量化的性能调优维度。在显存受限的硬件环境下，系统能够以微小的计算耗时为代价，换取显著的显存空间释放，从而支持更大的 mbs，大幅提升整体训练吞吐。在 DreamZero 5B 训练中，不开启 Recompute 时单卡 mbs 只能开到 2，最佳速度约 1.2s/step（即 1.7 samples/sec/gpu）；开启 Recompute 后单卡 mbs 可开到 32，获得 7.2s/step（即 4.4 samples/sec/gpu），**同等算力下吞吐提升 158%**。
+
+通过以上 FSDP2、mbs、Recompute 的全局参数调优，在 DreamZero 5B 模型训练上，在第一项算子优化的基础上（即 1.2 samples/sec/gpu）将训练性能进一步提升了 **266%**，达到 4.4 samples/sec/gpu。
+
+
+视频数据处理管线：突破 I/O 吞吐瓶颈
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+随着计算密度的显著提升，数据加载效率逐渐成为制约整体训练吞吐的新瓶颈。DreamZero 训练中，视频数据的解码与预处理过程极其消耗 CPU 资源——多视角场景下需同时处理左视角、右视角、腕部视角三个视频流。传统的 PyAV 方案解码性能难以支撑高频吞吐需求，而单纯增加 ``num_workers`` 往往治标不治本（过多数据读取进程会抢占 CPU 资源，反而拖慢 GPU kernel 下发节奏）。
+
+为在"解码速度"与"系统资源开销"之间寻找最优解，RLinf 团队对主流视频处理库进行了深度 Benchmark：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 36 36
+
+   * - 解码方案
+     - 单视频平均解码耗时
+     - 系统资源占用特点
+   * - PyAV
+     - 816 ms
+     - 较高（资源消耗多但速度最慢）
+   * - Decord
+     - 435 ms
+     - 高（瞬时负载波动大）
+   * - Torchcodec
+     - 446 ms
+     - 低（资源消耗曲线平稳）
+
+虽然 Decord 在纯解码速度上略胜一筹，但 **Torchcodec** 在保持同梯队性能的同时，表现出更优的 CPU 占用稳定性。这使得 RLinf 能够预留出足够计算余量给训练主线程，并支持开启更多的 ``num_workers`` 来并发处理数据。
+
+相比原生 PyAV 方案，单个视频的解码时间缩短了近 **400ms**。在 DreamZero 多视角（左视角、右视角、腕部视角三个视频）训练场景下，视频解码时间累计节省约 **1.2s**，为后续进一步压榨 GPU 计算潜力提供了充足的数据"弹药"。
+
+要启用 Torchcodec 后端，在配置中设置：
+
+.. code:: yaml
+
+   data:
+     video_backend: torchcodec
+
+
+端到端性能实测
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+以下所有测试均在 **Droid 数据集**（单样本含左、右、腕部三个视角，视频规格 33 frames × 480 × 640）上，使用 8×H100 GPU 完成。
+
+**DreamZero-14B**
+
+在 14B 大模型上，由于显存压力巨大，官方基线通常被迫采用 DeepSpeed ZeRO-offload 方案，这导致了严重的计算/通信浪费与 CPU 换入换出开销。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本）
+     - 18.0 s
+     - 0.055
+     - 基线
+   * - FSDP2 Base（原生支持）
+     - 9.0 s
+     - 0.111
+     - +100%（2.0x）
+   * - **RLinf 深度优化版**
+     - **6.7 s**
+     - **0.150**
+     - **+170%（2.7x）**
+
+14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
+
+**DreamZero-5B**
+
+对于 5B 中等规模模型，RLinf 的优势在于能够通过高效率的重计算逻辑稳定开启更大的 Microbatch Size，并配合计算图调优，彻底释放 GPU 算力。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本，mbs=32 × 8 GPU）
+     - 30.0 s
+     - 1.10
+     - 基线
+   * - FSDP2 Base（mbs=1 × 8 GPU）
+     - 1.8 s
+     - 0.56
+     - -49%（受限于小 MBS 算子效率低、CPU 开销显著、FSDP2 通信无法掩盖）
+   * - **RLinf 深度优化版（mbs=32 + Recompute × 8 GPU）**
+     - **7.2 s**
+     - **4.44**
+     - **+300%（4.0x）**
+
+5B 模型使用 GBS=256 测试。FSDP2 Base 版本由于 PyTorch 的一些限制不能开大 MBS，导致吞吐受限；RLinf 解决了这些问题并取得了显著的吞吐增长。训练吞吐从官方代码的 1.1 samples/sec/gpu 飙升至 **4.44 samples/sec/gpu**，实现了约 **4 倍**的训练加速。
+
+.. figure:: blob:https://infinigence.feishu.cn/0e03ee59-1d16-4e5f-bef2-c0c1a0165b5c
+   :align: center
+   :width: 90%
+
+   DreamZero 5B 与 14B 模型的加速效果对比。
+
+.. figure:: blob:https://infinigence.feishu.cn/921f4c85-8240-4134-a8a1-febbad6bc0fa
+   :align: center
+   :width: 90%
+
+   DreamZero 5B 与 14B 模型的吞吐提升对比。
