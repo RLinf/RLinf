@@ -102,11 +102,6 @@ def _default_cfg() -> AttrDict:
                 "camera_heights": 1,
                 "camera_widths": 1,
             },
-            "debug_env_init": {
-                "enabled": False,
-                "log_dir": "../results/robocasa365_env_debug",
-                "include_full_ep_meta": True,
-            },
             "video_cfg": {
                 "save_video": False,
                 "info_on_video": True,
@@ -196,7 +191,6 @@ from rlinf.envs.robocasa365.eval_schedule import (  # noqa: E402
 from rlinf.envs.robocasa365.robocasa365_env import (  # noqa: E402
     Robocasa365Env,
     _task_matches_filter,
-    configure_robocasa365_eval_horizon,
 )
 
 
@@ -414,7 +408,6 @@ def _load_cfg(args: argparse.Namespace, *, num_envs: int, group_size: int) -> An
     cfg.reward_coef = 1.0
     cfg.init_params.camera_heights = 1
     cfg.init_params.camera_widths = 1
-    cfg.debug_env_init.enabled = False
     return cfg
 
 
@@ -1180,36 +1173,6 @@ def _check_episode_horizon_sources(
         == 6,
     )
 
-    auto_cfg = _to_attr_dict(
-        {
-            "episode_horizon_source": "task_horizon",
-            "max_episode_steps": 700,
-            "max_steps_per_rollout_epoch": 700,
-        }
-    )
-    original_loader = configure_robocasa365_eval_horizon.__globals__[
-        "load_robocasa365_task_specs"
-    ]
-    configure_robocasa365_eval_horizon.__globals__[
-        "load_robocasa365_task_specs"
-    ] = lambda cfg: [{"task_name": "MockTask", "horizon": 900}]
-    try:
-        auto_budget = configure_robocasa365_eval_horizon(
-            auto_cfg,
-            num_action_chunks=5,
-        )
-    finally:
-        configure_robocasa365_eval_horizon.__globals__[
-            "load_robocasa365_task_specs"
-        ] = original_loader
-    suite.check(
-        "task_horizon 模式自动覆盖 YAML 中手写的 rollout budget",
-        auto_budget == 900 and auto_cfg.max_steps_per_rollout_epoch == 900,
-        (
-            f"auto_budget={auto_budget}, "
-            f"cfg_budget={auto_cfg.max_steps_per_rollout_epoch}"
-        ),
-    )
     try:
         validate_robocasa365_eval_horizons(
             episode_horizons=resolved,
@@ -1241,7 +1204,7 @@ def _selected_task_count_from_yaml(task_filter: Any, default_count: int) -> int:
     if isinstance(task_filter, str):
         return 1
     if isinstance(task_filter, list):
-        return len(set(str(task) for task in task_filter))
+        return len({str(task) for task in task_filter})
     if isinstance(task_filter, dict):
         include = task_filter.get("include", [])
         exclude = task_filter.get("exclude", [])
@@ -1366,7 +1329,7 @@ def parse_args() -> argparse.Namespace:
         "--num-tasks",
         type=int,
         default=18,
-        help="mock 任务数量。常见 debug 设置中 atomic_seen 有 18 个任务。",
+        help="mock 任务数量。atomic_seen 常见配置有 18 个任务。",
     )
     parser.add_argument(
         "--env-counts",

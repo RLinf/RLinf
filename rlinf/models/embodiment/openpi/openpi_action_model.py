@@ -31,7 +31,6 @@ from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.logging import get_logger
-from rlinf.utils.debug_dump import dump_pt
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 from rlinf.utils.pytree import register_pytree_dataclasses
 
@@ -252,19 +251,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     ):
         self._input_transform = _transforms.compose(transforms)
         self._output_transform = _transforms.compose(output_transforms)
-        
-        print(f"debug wph: setup_wrappers with input_transforms: {transforms}")
-        print(f"debug wph: setup_wrappers with output_transforms: {output_transforms}")
 
     def input_transform(self, obs: dict, transpose=True):
-        dump_pt(
-            "rlinf_openpi_input_transform_raw",
-            {
-                "config_name": self.config.config_name,
-                "transpose": transpose,
-                "obs": obs,
-            },
-        )
         inputs = tree_map(lambda x: x, obs)
         # process input
         first_process = "prompt" in inputs.keys()
@@ -305,25 +293,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if not first_process:
             inputs["tokenized_prompt"] = obs["tokenized_prompt"]
             inputs["tokenized_prompt_mask"] = obs["tokenized_prompt_mask"]
-        dump_pt(
-            "rlinf_openpi_input_transform_output",
-            {
-                "config_name": self.config.config_name,
-                "transpose": transpose,
-                "first_process": first_process,
-                "model_input": inputs,
-            },
-        )
         return inputs
 
     def output_transform(self, outputs):
-        dump_pt(
-            "rlinf_openpi_output_transform_raw",
-            {
-                "config_name": self.config.config_name,
-                "outputs": outputs,
-            },
-        )
         # split & transform
         batch_size = outputs["actions"].shape[0]
         transformed_samples = []
@@ -337,13 +309,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             *transformed_samples,
         )
         outputs["actions"] = outputs["actions"][:, : self.config.action_chunk]
-        dump_pt(
-            "rlinf_openpi_output_transform_output",
-            {
-                "config_name": self.config.config_name,
-                "outputs": outputs,
-            },
-        )
         return outputs
 
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
@@ -424,14 +389,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
         # input transform
-        dump_pt(
-            "rlinf_openpi_default_forward_input",
-            {
-                "config_name": self.config.config_name,
-                "forward_inputs": forward_inputs,
-                "compute_values": compute_values,
-            },
-        )
         observation = self.input_transform(forward_inputs, transpose=False)
         observation = _model.Observation.from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
@@ -470,13 +427,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "values": value_t,
             "entropy": entropy,
         }
-        dump_pt(
-            "rlinf_openpi_default_forward_output",
-            {
-                "config_name": self.config.config_name,
-                "result": result,
-            },
-        )
         return result
 
     def nft_forward(
@@ -535,15 +485,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # extra view image observation
         if env_obs["extra_view_images"] is not None:
             processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
-        # store used keys
-        dump_pt(
-            "rlinf_openpi_obs_processor_output",
-            {
-                "config_name": self.config.config_name,
-                "env_obs": env_obs,
-                "policy_input": processed_obs,
-            },
-        )
         return processed_obs
 
     def precision_processor(self, processed_obs):
@@ -572,68 +513,14 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=True,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        
-        # debug wph
-        def print_dtype_tree(tag, value):
-            if isinstance(value, torch.Tensor):
-                print(
-                    f"[{tag}] shape={tuple(value.shape)} "
-                    f"dtype={value.dtype} device={value.device}",
-                    flush=True,
-                )
-            elif isinstance(value, np.ndarray):
-                print(f"[{tag}] shape={value.shape} dtype={value.dtype}", flush=True)
-            elif isinstance(value, dict):
-                for key, item in value.items():
-                    print_dtype_tree(f"{tag}.{key}", item)
-            elif isinstance(value, (list, tuple)):
-                for index, item in enumerate(value):
-                    print_dtype_tree(f"{tag}[{index}]", item)
-        
-        dump_pt(
-            "rlinf_openpi_predict_env_obs",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "compute_values": compute_values,
-                "env_obs": env_obs,
-            },
-        )
-        
-        # obs_processor 前
-        print_dtype_tree("01_env_obs", env_obs)
-
-        to_process_obs = self.obs_processor(env_obs) # env obs -> policy input obs
-        print_dtype_tree("02_obs_processor", to_process_obs)
+        to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
 
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
-        ) # policy input obs -> model input obs
-        print_dtype_tree("03_input_transform", processed_obs)
-
-
-        dump_pt(
-            "rlinf_openpi_predict_after_input_transform",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "processed_obs": processed_obs,
-            },
-        )
+        )  # policy input obs -> model input obs
         processed_obs = self.precision_processor(
             processed_obs
         )  # obs precision processor
-        
-        print_dtype_tree("04_precision_processor", processed_obs)
-        
-        dump_pt(
-            "rlinf_openpi_predict_after_precision_processor",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "processed_obs": processed_obs,
-            },
-        )
         observation = _model.Observation.from_dict(processed_obs)
 
         is_dsrl_active = self.config.use_dsrl
@@ -654,16 +541,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 mode="eval",
                 compute_values=compute_values,
             )
-            dump_pt(
-                "rlinf_openpi_predict_sample_outputs",
-                {
-                    "config_name": self.config.config_name,
-                    "mode": mode,
-                    "outputs": outputs,
-                    "noise_actions": noise_actions,
-                    "noise_logprob": noise_logprob,
-                },
-            )
 
             # Step 3: Extract actual actions for environment interaction
             real_actions = self.output_transform(
@@ -680,14 +557,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             # Non-DSRL or eval mode
             outputs = self.sample_actions(
                 observation, mode=mode, compute_values=compute_values
-            )
-            dump_pt(
-                "rlinf_openpi_predict_sample_outputs",
-                {
-                    "config_name": self.config.config_name,
-                    "mode": mode,
-                    "outputs": outputs,
-                },
             )
             actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
@@ -729,15 +598,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "prev_values": prev_values,
             "forward_inputs": forward_inputs,
         }
-        dump_pt(
-            "rlinf_openpi_predict_result",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "actions": actions,
-                "result": result,
-            },
-        )
         return actions, result
 
     @torch.no_grad()
@@ -761,23 +621,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
-        )
-        dump_pt(
-            "rlinf_openpi_sample_actions_input",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "compute_values": compute_values,
-                "observation": observation,
-                "noise": noise,
-                "preprocessed": {
-                    "images": images,
-                    "img_masks": img_masks,
-                    "lang_tokens": lang_tokens,
-                    "lang_masks": lang_masks,
-                    "state": state,
-                },
-            },
         )
 
         prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
@@ -877,14 +720,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if collect_nft_state:
             result.update(nft_state)
             result["nft_x0"] = x_0.detach()
-        dump_pt(
-            "rlinf_openpi_sample_actions_output",
-            {
-                "config_name": self.config.config_name,
-                "mode": mode,
-                "outputs": result,
-            },
-        )
         return result
 
     def _get_timesteps(self, denoise_steps, device):
@@ -1010,22 +845,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             adarms_cond=[None, adarms_cond],
         )
 
-        # suffix_out = outputs_embeds[1]
-        # suffix_out = suffix_out[:, -self.config.action_horizon :]
-        # suffix_out = suffix_out.to(dtype=torch.float32)
-        # return suffix_out
-        suffix_out_raw = outputs_embeds[1]
-        suffix_out = suffix_out_raw[:, -self.config.action_horizon:]
-        suffix_out = suffix_out.to(dtype=torch.float32)
-
-        print(
-            f"debug wph: "
-            f"[Action精度] suffix_raw={suffix_out_raw.dtype}, "
-            f"suffix_fp32={suffix_out.dtype}, "
-            f"action_head_weight={self.action_out_proj.weight.dtype}",
-            flush=True,
-        )
-        return suffix_out
+        suffix_out = outputs_embeds[1]
+        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        return suffix_out.to(dtype=torch.float32)
 
     def get_velocity(self, state, x_t, timestep, prefix_pad_masks, past_key_values):
         """Compute velocity prediction v_t and raw suffix_out at a given timestep."""

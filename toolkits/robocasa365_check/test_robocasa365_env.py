@@ -41,7 +41,6 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -110,8 +109,6 @@ def _load_cfg(args: argparse.Namespace):
     if args.task_filter:
         cfg.task_filter = {"include": args.task_filter, "exclude": []}
 
-    cfg.debug_env_init.enabled = args.debug_env_init
-    cfg.debug_env_init.log_dir = args.debug_log_dir
     return cfg
 
 
@@ -288,12 +285,6 @@ def main() -> None:
     parser.add_argument("--max-episode-steps", type=int, default=20)
     parser.add_argument("--auto-reset", action="store_true")
     parser.add_argument("--ignore-terminations", action="store_true")
-    parser.add_argument("--debug-env-init", action="store_true")
-    parser.add_argument(
-        "--debug-log-dir",
-        type=str,
-        default="../results/robocasa365_env_debug",
-    )
     parser.add_argument(
         "--mujoco-gl",
         type=str,

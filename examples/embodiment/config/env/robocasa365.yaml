@@ -52,11 +52,6 @@ seed: 0
 group_size: 1
 seed_strategy: worker_offset
 
-debug_env_init:
-  enabled: False
-  log_dir: "../results/robocasa365_env_debug"
-  include_full_ep_meta: True
-
 video_cfg:
   save_video: False
   info_on_video: True

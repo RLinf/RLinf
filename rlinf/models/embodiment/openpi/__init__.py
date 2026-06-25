@@ -100,8 +100,6 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         if data_config.asset_id is None:
             raise ValueError("Asset id is required to load norm stats.")
         norm_stats = _checkpoints.load_norm_stats(checkpoint_dir, data_config.asset_id)
-    print(f"debug wph: load data_config: {data_config}")
-    print(f"Debug wph: loaded norm stats: {norm_stats}")
     # wrappers
     repack_transforms = transforms.Group()
     default_prompt = None

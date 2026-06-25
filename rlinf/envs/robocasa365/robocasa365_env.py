@@ -15,10 +15,7 @@
 """RoboCasa365 environment wrapper for RLinf."""
 
 import copy
-import json
-import os
 import re
-import time
 from typing import Any, Optional, Union
 
 import gymnasium as gym
@@ -32,7 +29,6 @@ from rlinf.envs.robocasa365.eval_schedule import (
     validate_robocasa365_eval_horizons,
 )
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
-from rlinf.utils.debug_dump import dump_pt
 
 _LEGACY_TASK_DESC_MAP = {
     "OpenSingleDoor": "open cabinet or microwave door",
@@ -63,31 +59,6 @@ _LEGACY_TASK_DESC_MAP = {
 
 _OFFICIAL_PROMPT_INFO_KEY = "ep_meta"
 _OFFICIAL_PROMPT_LANG_KEY = "lang"
-
-
-def _debug_jsonable(value: Any) -> Any:
-    if OmegaConf.is_config(value):
-        return _debug_jsonable(OmegaConf.to_container(value, resolve=True))
-    if isinstance(value, np.ndarray):
-        if value.shape == ():
-            return _debug_jsonable(value.item())
-        if value.size <= 128:
-            return value.tolist()
-        return {
-            "type": "ndarray",
-            "shape": list(value.shape),
-            "dtype": str(value.dtype),
-            "preview": value.reshape(-1)[:16].tolist(),
-        }
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, dict):
-        return {str(k): _debug_jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_debug_jsonable(v) for v in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return repr(value)
 
 
 def _cfg_to_python(value: Any) -> Any:
@@ -440,37 +411,6 @@ class Robocasa365Env(gym.Env):
                 dataset_source=self.dataset_source,
             ),
         )
-        self._reset_counts = np.zeros(self.num_envs, dtype=np.int64)
-        self._debug_event_seq = 0
-        self._debug_log_error_reported = False
-        self._debug_log_path = None
-        self._init_debug_logger()
-        self._debug_log_event(
-            "wrapper_init",
-            {
-                "cfg_seed": self.cfg.seed,
-                "seed_offset": self.seed_offset,
-                "wrapper_seed": self.seed,
-                "num_envs": self.num_envs,
-                "group_size": self.group_size,
-                "num_group": self.num_group,
-                "total_num_processes": self.total_num_processes,
-                "split": self.split,
-                "task_source": self.task_source,
-                "dataset_source": self.dataset_source,
-                "task_soup": self.task_soups,
-                "task_mode": self.task_mode,
-                "task_filter": self.task_filter,
-                "task_sampling_strategy": self.task_sampling_strategy,
-                "rotate_tasks_on_auto_reset": self.rotate_tasks_on_auto_reset,
-                "episode_horizon_source": str(
-                    self.cfg.get("episode_horizon_source", "max_episode_steps")
-                ),
-                "seed_strategy": self.seed_strategy,
-                "is_eval": bool(self.cfg.get("is_eval", False)),
-            },
-        )
-
         self.task_specs = self._load_task_specs()
         self.num_tasks = len(self.task_specs)
         self.episode_horizon_source = str(
@@ -482,30 +422,12 @@ class Robocasa365Env(gym.Env):
             episode_horizon_source=self.episode_horizon_source,
         )
         if bool(self.cfg.get("is_eval", False)):
-            max_episode_horizon = validate_robocasa365_eval_horizons(
+            validate_robocasa365_eval_horizons(
                 episode_horizons=selected_episode_horizons,
                 max_steps_per_rollout_epoch=int(
                     self.cfg.get("max_steps_per_rollout_epoch", 300)
                 ),
             )
-            self._debug_log_event(
-                "eval_horizons_validated",
-                {
-                    "episode_horizon_source": self.episode_horizon_source,
-                    "selected_episode_horizons": list(selected_episode_horizons),
-                    "max_episode_horizon": max_episode_horizon,
-                    "max_steps_per_rollout_epoch": int(
-                        self.cfg.get("max_steps_per_rollout_epoch", 300)
-                    ),
-                },
-            )
-        self._debug_log_event(
-            "task_specs_loaded",
-            {
-                "num_tasks": self.num_tasks,
-                "tasks": [task_spec["task_name"] for task_spec in self.task_specs],
-            },
-        )
         self._ordered_task_cursor = (
             (self.seed_offset * self.num_group) % self.num_tasks
             if self.num_tasks
@@ -524,84 +446,6 @@ class Robocasa365Env(gym.Env):
         self.current_info_list = None
 
         self.video_cfg = cfg.video_cfg
-
-    def _worker_debug_value(self, attr: str, default: Any = None) -> Any:
-        if self.worker_info is None:
-            return default
-        return getattr(self.worker_info, attr, default)
-
-    def _init_debug_logger(self) -> None:
-        debug_cfg = _cfg_to_python(self.cfg.get("debug_env_init", {})) or {}
-        if isinstance(debug_cfg, bool):
-            debug_cfg = {"enabled": debug_cfg}
-
-        self._debug_enabled = bool(debug_cfg.get("enabled", False))
-        self._debug_include_full_ep_meta = bool(
-            debug_cfg.get("include_full_ep_meta", True)
-        )
-        if not self._debug_enabled:
-            return
-
-        log_dir = str(debug_cfg.get("log_dir", "../results/robocasa365_env_debug"))
-        os.makedirs(log_dir, exist_ok=True)
-        mode = "eval" if bool(self.cfg.get("is_eval", False)) else "train"
-        rank = self._worker_debug_value("rank", "unknown")
-        node_rank = self._worker_debug_value("cluster_node_rank", "unknown")
-        filename = (
-            f"robocasa365_{mode}_rank{rank}_node{node_rank}_"
-            f"seedoffset{self.seed_offset}_pid{os.getpid()}.jsonl"
-        )
-        self._debug_log_path = os.path.join(log_dir, filename)
-
-    def _debug_log_event(self, event: str, payload: dict[str, Any]) -> None:
-        if not getattr(self, "_debug_enabled", False) or not self._debug_log_path:
-            return
-
-        record = {
-            "event": event,
-            "seq": self._debug_event_seq,
-            "time": time.time(),
-            "pid": os.getpid(),
-            "worker_rank": self._worker_debug_value("rank", None),
-            "worker_world_size": self._worker_debug_value("group_world_size", None),
-            "cluster_node_rank": self._worker_debug_value("cluster_node_rank", None),
-            "seed_offset": self.seed_offset,
-        }
-        record.update(_debug_jsonable(payload))
-        self._debug_event_seq += 1
-
-        try:
-            with open(self._debug_log_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + "\n")
-        except OSError as exc:
-            if not self._debug_log_error_reported:
-                print(
-                    f"[RoboCasa365 debug] failed to write {self._debug_log_path}: {exc}",
-                    flush=True,
-                )
-                self._debug_log_error_reported = True
-
-    def _debug_ep_meta_payload(self, ep_meta: dict[str, Any]) -> dict[str, Any]:
-        payload = {
-            "layout_id": ep_meta.get("layout_id"),
-            "style_id": ep_meta.get("style_id"),
-            "lang": ep_meta.get("lang"),
-            "object_cfg_names": [
-                obj_cfg.get("name")
-                for obj_cfg in ep_meta.get("object_cfgs", [])
-                if isinstance(obj_cfg, dict)
-            ],
-            "fixture_refs": sorted(
-                [
-                    key
-                    for key in ep_meta.keys()
-                    if isinstance(key, str) and key.startswith("fixture_ref")
-                ]
-            ),
-        }
-        if self._debug_include_full_ep_meta:
-            payload["ep_meta"] = ep_meta
-        return payload
 
     def _load_task_specs(self) -> list[dict[str, Any]]:
         return load_robocasa365_task_specs(self.cfg)
@@ -633,14 +477,6 @@ class Robocasa365Env(gym.Env):
                 "{worker_offset, legacy, same, openpi, global_unique}, "
                 f"got {self.seed_strategy!r}."
             )
-        self._debug_log_event(
-            "env_seeds_initialized",
-            {
-                "base_seed": base_seed,
-                "env_seeds": self.env_seeds,
-                "seed_strategy": self.seed_strategy,
-            },
-        )
 
     def update_reset_state_ids(self):
         self._set_next_task_ids()
@@ -685,14 +521,6 @@ class Robocasa365Env(gym.Env):
             return env_idx
 
         if self.use_fixed_reset_state_ids and hasattr(self, "task_ids"):
-            self._debug_log_event(
-                "task_ids_update_skipped",
-                {
-                    "requested_env_idx": env_idx.tolist(),
-                    "reason": "use_fixed_reset_state_ids",
-                    "task_ids": self.task_ids.tolist(),
-                },
-            )
             return np.empty(0, dtype=np.int32)
 
         group_ids = np.unique(env_idx // self.group_size)
@@ -715,21 +543,6 @@ class Robocasa365Env(gym.Env):
         old_task_ids = getattr(self, "task_ids", None)
         self.task_ids = new_task_ids
         self._refresh_task_context()
-        self._debug_log_event(
-            "task_ids_updated",
-            {
-                "requested_env_idx": env_idx.tolist(),
-                "affected_env_ids": affected_env_ids.tolist(),
-                "old_task_ids": old_task_ids.tolist()
-                if old_task_ids is not None
-                else None,
-                "new_task_ids": self.task_ids.tolist(),
-                "task_names": [
-                    self.task_specs[task_id]["task_name"] for task_id in self.task_ids
-                ],
-                "ordered_task_cursor": self._ordered_task_cursor,
-            },
-        )
 
         if old_task_ids is not None and hasattr(self, "env"):
             changed_env_ids = affected_env_ids[
@@ -803,22 +616,6 @@ class Robocasa365Env(gym.Env):
             env_id = int(env_id)
             task_spec = self.task_specs[self.task_ids[env_id]]
             env_seed = self.env_seeds[env_id]
-            self._debug_log_event(
-                "build_env_fn",
-                {
-                    "env_id": env_id,
-                    "task_id": int(self.task_ids[env_id]),
-                    "task_name": task_spec["task_name"],
-                    "seed": env_seed,
-                    "split": env_split,
-                    "camera_names": camera_names,
-                    "camera_widths": camera_widths,
-                    "camera_heights": camera_heights,
-                    "render_camera": render_camera,
-                    "robot": robot_name,
-                    "extra_env_kwargs": env_kwargs,
-                },
-            )
 
             def env_fn(
                 spec=task_spec,
@@ -1050,45 +847,6 @@ class Robocasa365Env(gym.Env):
             env_idx = [env_idx]
 
         raw_obs, info_list = self.env.reset(id=env_idx)
-        dump_pt(
-            "rlinf_robocasa365_env_reset_raw",
-            {
-                "env_idx": [int(i) for i in env_idx],
-                "raw_obs": raw_obs,
-                "info_list": info_list,
-                "task_ids": self.task_ids.copy(),
-                "task_specs": copy.deepcopy(self.task_specs),
-                "env_seeds": self.env_seeds.copy(),
-                "reset_counts": self._reset_counts.copy(),
-            },
-        )
-        reset_debug_records = []
-        debug_enabled = getattr(self, "_debug_enabled", False)
-        for local_i, target_env_id in enumerate(env_idx):
-            target_env_id = int(target_env_id)
-            if debug_enabled:
-                ep_meta = info_list[local_i].get("ep_meta", {})
-                reset_debug_records.append(
-                    {
-                        "env_id": target_env_id,
-                        "reset_count": int(self._reset_counts[target_env_id]),
-                        "task_id": int(self.task_ids[target_env_id]),
-                        "task_name": self.task_specs[self.task_ids[target_env_id]][
-                            "task_name"
-                        ],
-                        "seed": self.env_seeds[target_env_id],
-                        **self._debug_ep_meta_payload(ep_meta),
-                    }
-                )
-            self._reset_counts[target_env_id] += 1
-        if debug_enabled:
-            self._debug_log_event(
-                "reset",
-                {
-                    "env_idx": [int(i) for i in env_idx],
-                    "resets": reset_debug_records,
-                },
-            )
 
         if self.current_raw_obs is None:
             self.current_raw_obs = [None] * self.num_envs
@@ -1101,15 +859,6 @@ class Robocasa365Env(gym.Env):
         obs = self._wrap_obs(self.current_raw_obs, self.current_info_list)
         self._reset_metrics(env_idx)
         infos = {}
-        dump_pt(
-            "rlinf_robocasa365_env_reset_wrapped",
-            {
-                "env_idx": [int(i) for i in env_idx],
-                "obs": obs,
-                "infos": infos,
-                "elapsed_steps": self._elapsed_steps.copy(),
-            },
-        )
         return obs, infos
 
     def step(
@@ -1137,16 +886,6 @@ class Robocasa365Env(gym.Env):
             terminations = np.zeros(self.num_envs, dtype=bool)
             truncations = np.zeros(self.num_envs, dtype=bool)
             rewards = np.zeros(self.num_envs, dtype=np.float32)
-            dump_pt(
-                "rlinf_robocasa365_env_step_initial_reset_output",
-                {
-                    "obs": obs,
-                    "rewards": rewards,
-                    "terminations": terminations,
-                    "truncations": truncations,
-                    "infos": infos,
-                },
-            )
 
             return (
                 obs,
@@ -1159,31 +898,9 @@ class Robocasa365Env(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
-        dump_pt(
-            "rlinf_robocasa365_env_step_input",
-            {
-                "actions": actions,
-                "auto_reset": auto_reset,
-                "elapsed_steps_before": self._elapsed_steps.copy(),
-                "task_ids": self.task_ids.copy(),
-                "task_descriptions": copy.deepcopy(
-                    getattr(self, "task_descriptions", [])
-                ),
-            },
-        )
         self._elapsed_steps += 1
 
         raw_obs, rewards, dones, info_lists = self.env.step(actions)
-        dump_pt(
-            "rlinf_robocasa365_env_step_raw_output",
-            {
-                "raw_obs": raw_obs,
-                "raw_rewards": rewards,
-                "raw_dones": dones,
-                "info_lists": info_lists,
-                "elapsed_steps_after": self._elapsed_steps.copy(),
-            },
-        )
         del rewards, dones
         self.current_raw_obs = raw_obs
         self.current_info_list = info_lists
@@ -1206,18 +923,6 @@ class Robocasa365Env(gym.Env):
         _auto_reset = auto_reset and self.auto_reset
         if done_mask.any() and _auto_reset:
             obs, infos = self._handle_auto_reset(done_mask, obs, infos)
-        dump_pt(
-            "rlinf_robocasa365_env_step_wrapped_output",
-            {
-                "obs": obs,
-                "step_reward": step_reward,
-                "terminations": terminations,
-                "truncations": truncations,
-                "infos": infos,
-                "done_mask": done_mask,
-                "auto_reset_applied": bool(done_mask.any() and _auto_reset),
-            },
-        )
         return (
             obs,
             to_tensor(step_reward),
@@ -1244,10 +949,6 @@ class Robocasa365Env(gym.Env):
         Returns:
             Per-step observations, rewards, terminations, truncations, and infos.
         """
-        dump_pt(
-            "rlinf_robocasa365_env_chunk_step_input",
-            {"chunk_actions": chunk_actions},
-        )
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
@@ -1294,18 +995,6 @@ class Robocasa365Env(gym.Env):
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
-        dump_pt(
-            "rlinf_robocasa365_env_chunk_step_output",
-            {
-                "obs_list": obs_list,
-                "chunk_rewards": chunk_rewards,
-                "chunk_terminations": chunk_terminations,
-                "chunk_truncations": chunk_truncations,
-                "infos_list": infos_list,
-                "raw_chunk_terminations": raw_chunk_terminations,
-                "raw_chunk_truncations": raw_chunk_truncations,
-            },
-        )
         return (
             obs_list,
             chunk_rewards,

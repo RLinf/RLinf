@@ -18,7 +18,6 @@ import einops
 import numpy as np
 from openpi import transforms
 from openpi.models import model as _model
-from rlinf.utils.debug_dump import dump_pt
 from typing_extensions import Dict, List, Union
 
 
@@ -169,16 +168,6 @@ class RobocasaInputs(transforms.DataTransformFn):
     model_type: _model.ModelType
 
     def __call__(self, data: dict) -> dict:
-        dump_pt(
-            "rlinf_openpi_robocasa_inputs_raw",
-            {
-                "state_space": self.state_space,
-                "image_space": self.image_space,
-                "action_space": self.action_space,
-                "model_type": str(self.model_type),
-                "data": data,
-            },
-        )
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference.
         # Keep this for your own dataset, but if your dataset stores the images
@@ -214,16 +203,6 @@ class RobocasaInputs(transforms.DataTransformFn):
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
 
-        dump_pt(
-            "rlinf_openpi_robocasa_inputs_transformed",
-            {
-                "state_space": self.state_space,
-                "image_space": self.image_space,
-                "action_space": self.action_space,
-                "model_type": str(self.model_type),
-                "inputs": inputs,
-            },
-        )
         return inputs
 
 
@@ -239,13 +218,6 @@ class RobocasaOutputs(transforms.DataTransformFn):
     action_space: Union[str, List[str]]
 
     def __call__(self, data: dict) -> dict:
-        dump_pt(
-            "rlinf_openpi_robocasa_outputs_raw",
-            {
-                "action_space": self.action_space,
-                "data": data,
-            },
-        )
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Robocasa, we only return the first N actions defined by the action_space.
@@ -255,11 +227,4 @@ class RobocasaOutputs(transforms.DataTransformFn):
         action_dim = len(action_ids)
 
         outputs = {"actions": np.asarray(data["actions"][:, :action_dim])}
-        dump_pt(
-            "rlinf_openpi_robocasa_outputs_transformed",
-            {
-                "action_space": self.action_space,
-                "outputs": outputs,
-            },
-        )
         return outputs
