@@ -32,7 +32,9 @@ Install the corresponding Python virtual environments and update `VENV_BASE_DIR`
 
 ```bash
 # Install a single model+environment combination
-bash requirements/install.sh embodied --model openvla --env maniskill_libero
+# --venv = <parent_dir>/<venv_name>; the parent dir is the install location
+# and the trailing segment is the venv name (should match MODEL_NAME).
+bash requirements/install.sh embodied --model openvla --env maniskill_libero --venv /workspace/venv/openvla
 
 # Point VENV_BASE_DIR at the directory holding your venvs
 export VENV_BASE_DIR="/path/to/venvs"
@@ -57,6 +59,8 @@ hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmu
 # ManiSkill assets
 hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 ```
+
+> Tip: instead of downloading model weights and LoRA checkpoints by hand, you can ask a coding agent (e.g. Claude Code) to scan every YAML config referenced by `run_all.sh`, collect all `model.*` paths and `lora_path` entries, and download/place them automatically under `/workspace/models/`.
 
 ## Running the Tests
 

@@ -26,7 +26,8 @@ export FORCE_REBUILD=1
 
 # Virtual environment configuration
 # Override via environment: export VENV_BASE_DIR=/your/venvs/path
-export VENV_BASE_DIR="${VENV_BASE_DIR:-/path/to/venvs}"
+# export VENV_BASE_DIR="${VENV_BASE_DIR:-/path/to/venvs}"
+export VENV_BASE_DIR=/mnt/public2/zhouyiming/RLinf_autotest_pr/venv
 
 # Pre-flight check: ensure VENV_BASE_DIR has been configured
 if [ "$VENV_BASE_DIR" = "/path/to/venvs" ]; then
@@ -42,17 +43,19 @@ fi
 #    MODEL_NAME: Model name (openvla, openvla-oft, openpi, gr00t, mlp, etc.)
 #    VENV_NAME: Virtual environment name (defaults to MODEL_NAME; override per-task when needed)
 #    YAML_ARG: Configuration file name
+#    T_NODES / T_STEPS / T_SAVE: forwarded to run_embodiment.sh as Hydra overrides for
+#        cluster.num_nodes / runner.max_steps / runner.save_interval respectively.
+#        Use the sentinel "-2" to skip the override and fall back to the YAML default.
+#        Note: "-1" is a legitimate value (e.g. runner.max_steps=-1 = unlimited) and IS forwarded.
 TASKS=(
-    "maniskill_libero openvla-oft openvla-oft maniskill_ppo_openvlaoft 1 100 -1"
+    # "maniskill_libero openvla-oft openvla-oft maniskill_ppo_openvlaoft 1 100 -1"
+    "maniskill_libero openvla openvla maniskill_ppo_openvla 1 120 -1"
     "maniskill_libero openpi openpi libero_goal_ppo_openpi 1 100 -1"
     "maniskill_libero openpi openpi libero_goal_ppo_openpi_pi05 1 100 -1"
     "maniskill_libero openpi openpi maniskill_ppo_mlp 1 100 -1"
     "maniskill_libero openpi openpi maniskill_ppo_openpi 1 100 -1"
     "maniskill_libero openpi openpi maniskill_ppo_openpi_pi05 1 100 -1"
-
-    # "maniskill_libero openvla openvla maniskill_ppo_openvla 1 120 -1"
-    # "maniskill_libero gr00t gr00t libero_10_ppo_gr00t 1 120 -1"
-
+    "maniskill_libero gr00t gr00t libero_10_ppo_gr00t 1 120 -1"
     # "maniskill_libero openpi openpi gsenv_ppo_openpi_pi05 1 120 -1"
     # "maniskill_libero openpi openpi maniskill_async_ppo_openpi 1 120 -1"
     # "maniskill_libero openpi openpi maniskill_async_ppo_openpi_pi05 1 120 -1"
