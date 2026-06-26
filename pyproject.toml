@@ -129,8 +129,8 @@ franka = [
     "numpy<2",
     # lerobot is installed from a pinned git commit by requirements/install.sh
     # (PyPI forbids direct-URL deps in published packages).
-    "pyzmq"
-    “websockets"
+    "pyzmq",
+    "websockets"
 ]
 xsquare_turtle2 = [
     "pyyaml",
