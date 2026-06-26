@@ -15,7 +15,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Any, Literal, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -32,6 +32,7 @@ from rlinf.data.embodied_io_struct import (
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
@@ -655,36 +656,21 @@ class EnvWorker(Worker):
         adjusted_rewards[:, -1] += self.cfg.algorithm.gamma * final_values
         return adjusted_rewards
 
-    @staticmethod
-    def _find_record_video(env) -> Optional["RecordVideo"]:
-        """Walk the gym wrapper chain to locate the RecordVideo wrapper.
-
-        When data collection is enabled the env is wrapped as
-        ``CollectEpisode(RecordVideo(base_env))``, so the outermost object is
-        not a RecordVideo and ``isinstance(env, RecordVideo)`` would miss it,
-        leaving recorded frames unflushed to disk.
-        """
-        while env is not None:
-            if isinstance(env, RecordVideo):
-                return env
-            env = getattr(env, "env", None)
-        return None
-
     def finish_rollout(self, mode="train"):
         # reset
         if mode == "train":
             for i in range(self.stage_num):
                 if self.cfg.env.train.video_cfg.save_video:
-                    recorder = self._find_record_video(self.env_list[i])
-                    if recorder is not None:
-                        recorder.flush_video()
+                    flush_video = get_env_attr(self.env_list[i], "flush_video")
+                    if callable(flush_video):
+                        flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
                 if self.cfg.env.eval.video_cfg.save_video:
-                    recorder = self._find_record_video(self.eval_env_list[i])
-                    if recorder is not None:
-                        recorder.flush_video()
+                    flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
+                    if callable(flush_video):
+                        flush_video()
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
