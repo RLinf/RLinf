@@ -58,7 +58,9 @@ Go to the example directory:
 
    cd /path/to/RLinf/examples/agent/agentlightning/calc_x
 
-First, edit ``config/qwen2.5-1.5b-enginehttp-trajectory.yaml``:
+Choose the config you want to run, then set the model and dataset paths in the
+same config file. For example, the training command below uses
+``config/qwen2.5-1.5b-enginehttp-multiturn.yaml``:
 
 .. code-block:: yaml
 
@@ -75,6 +77,23 @@ Start training:
 .. code-block:: bash
 
    bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn
+
+You can also keep the config file unchanged and pass Hydra overrides on the
+command line:
+
+.. code-block:: bash
+
+   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-multiturn \
+     rollout.model.model_path=/path/to/Qwen2.5-1.5B-Instruct \
+     data.train_data_paths='["/path/to/train.parquet"]' \
+     data.val_data_paths='["/path/to/test.parquet"]'
+
+To train with trajectory-level advantages instead, use the matching trajectory
+config and set the same paths there or via overrides:
+
+.. code-block:: bash
+
+   bash run_calc_x.sh qwen2.5-1.5b-enginehttp-trajectory
 
 Visualization and Results
 -------------------------

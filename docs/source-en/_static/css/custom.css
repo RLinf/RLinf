@@ -311,9 +311,24 @@ html[data-theme="dark"] .rlinf-theme-icon-light {
   transform: translateY(-2px);
 }
 
+.rlinf-ai-modal-open .rlinf-ask-ai-fab {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+}
+
 .rlinf-ask-ai-fab__icon {
-  font-size: 1.05rem;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.62rem;
+  font-weight: 700;
+  height: 1.35rem;
+  justify-content: center;
   line-height: 1;
+  width: 1.35rem;
 }
 
 .bd-sidebar-primary .bd-sidenav {
