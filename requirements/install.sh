@@ -81,7 +81,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1268,6 +1268,17 @@ install_openpi_model() {
             install_polaris_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             ;;
+        so101)
+            # SO101 SFT only needs openpi. lerobot is pulled in transitively by
+            # openpi. Hardware deps (lerobot >= v0.4.3 for the SOFollower /
+            # SOLeader API, evdev, opencv-python) are installed separately on
+            # the robot controller node — see the so101 extra in
+            # pyproject.toml for the recommended commands.
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
@@ -1287,7 +1298,14 @@ EOF
 )
     cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
-    
+
+    # Install the RLinf-side OpenPI compat shims (.pth in site-packages) so
+    # they fire in every Python process, including DataLoader workers under
+    # multiprocessing.spawn.  See rlinf/models/embodiment/openpi/_compat.py.
+    "$VENV_DIR/bin/python" -m rlinf.models.embodiment.openpi._compat install \
+        --site-packages "$VENV_DIR/lib/python${py_major_minor}/site-packages" \
+        || echo "[install.sh] WARNING: openpi compat .pth install failed; in-process shim still works."
+
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     uv pip uninstall pynvml || true
 }
@@ -1594,6 +1612,9 @@ install_env_only() {
             ;;
         gim_arm)
             uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
+            ;;
+        so101)
+            uv sync --extra so101 --active $NO_INSTALL_RLINF_CMD
             ;;
         dosw1)
             install_dosw1_env

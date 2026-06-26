@@ -3,6 +3,8 @@
 
 RLinf 支持在 Franka 机械臂上评测与部署 VLA 策略，涵盖 Bin-relocation（pick-and-place）任务，以及通过 YAML 配置的通用真机环境（``FrankaEnv-v1``，用于自定义任务）。
 
+SO101 机械臂评测参见 :doc:`so101_eval`\ 。
+
 相关训练文档：:doc:`../../examples/embodied/franka_pi0_sft_deploy`、:doc:`../../examples/embodied/franka`、:doc:`../../examples/embodied/sft_dreamzero`
 
 环境准备

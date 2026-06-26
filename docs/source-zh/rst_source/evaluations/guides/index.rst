@@ -13,6 +13,9 @@ Benchmark 指南
    * - RealWorld
      - Franka 真机评测与部署
      - :doc:`realworld`
+   * - SO101
+     - 在 SO101 六自由度机械臂上评测后 SFT 的 π₀
+     - :doc:`so101_eval`
    * - BEHAVIOR-1K
      - 大规模家居场景仿真
      - :doc:`behavior`
@@ -38,6 +41,7 @@ Benchmark 指南
    :maxdepth: 1
 
    realworld
+   so101_eval
    behavior
    libero
    maniskill_ood

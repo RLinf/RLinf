@@ -5,7 +5,8 @@
 
 你将学习如何：
 
-- 将一个 :doc:`新环境 <new_env>` 集成到 RLinf 的任务系统中  
+- 将一个 :doc:`新环境 <new_env>` 集成到 RLinf 的任务系统中
+- 集成一个 :doc:`新的真实世界机器人 <new_realworld_robot>`（硬件、数据采集、RL）
 - 添加一个使用 FSDP + HuggingFace 后端的 :doc:`新模型 <new_model_fsdp>`  
 - 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
 - 参考一条完整的 :doc:`Reward Model 工作流 <reward_model>` （仿真与真机）

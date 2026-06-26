@@ -28,6 +28,8 @@ from .franka.tasks.dual_franka_tcp_env import (
 from .gim_arm import GimArmEnv, GimArmRobotConfig, GimArmRobotState
 from .gim_arm import tasks as gim_arm_tasks
 from .realworld_env import RealWorldEnv
+from .so101 import SO101Env, SO101RobotConfig, SO101RobotState
+from .so101 import tasks as so101_tasks
 from .xsquare import Turtle2Env, Turtle2RobotConfig, Turtle2RobotState
 from .xsquare import tasks as xsquare_tasks
 
@@ -51,6 +53,10 @@ __all__ = [
     "GimArmRobotConfig",
     "GimArmRobotState",
     "gim_arm_tasks",
+    "SO101Env",
+    "SO101RobotConfig",
+    "SO101RobotState",
+    "so101_tasks",
     "Turtle2Env",
     "Turtle2RobotConfig",
     "Turtle2RobotState",

@@ -1,0 +1,107 @@
+# SO101 real-world evaluation.
+#
+# Evaluates a post-SFT π₀ checkpoint by running it on the real SO101 arm
+# and collecting success metrics (EE distance threshold, returns, etc.).
+#
+# Prerequisites:
+#   * A trained SFT checkpoint at the `rollout.model.model_path` below.
+#   * The SO101 arm assembled, calibrated, and connected via USB.
+#   * evdev keyboard listener with read access to /dev/input/event*.
+#
+# Single-machine usage (GPU + arm on the same host):
+#
+#   export EMBODIED_PATH=$(pwd)/examples/embodiment
+#   python evaluations/eval_embodied_agent.py \
+#       --config-path evaluations/realworld/ \
+#       --config-name realworld_so101_eval \
+#       cluster.node_groups.0.hardware.configs.0.port=/dev/ttyACM0
+#
+# Or via the launcher (which also sets EMBODIED_PATH):
+#
+#   CKPT_PATH=/path/to/checkpoint \
+#   SO101_PORT=/dev/ttyACM0 \
+#       bash evaluations/run_eval.sh realworld realworld_so101_eval \
+#       runner.ckpt_path=$CKPT_PATH
+
+defaults:
+  - env/realworld_so101@env.eval
+  - model/pi0@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+  node_groups:
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - port: /dev/ttyACM0
+            node_rank: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "so101-eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+  val_check_interval: -1
+
+  ckpt_path: "/path/to/checkpoint.pt"
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+  eval:
+    rollout_epoch: 5
+    ignore_terminations: False
+    total_num_envs: 1
+    enable_teleop: False
+    manual_episode_control_only: False
+    auto_reset: True
+
+    max_steps_per_rollout_epoch: 200
+    max_episode_steps: 200
+
+    override_cfg:
+      is_dummy: False
+      auto_calibrate: False
+      target_ee_pose: [0.299, -0.126, 0.150]    # ← set your task target here
+      reward_threshold_m: 0.03
+      enable_random_reset: True
+      random_joint_noise_deg: 5.0
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/so101-sft-checkpoint"
+    num_action_chunks: 10
+    action_dim: 6
+    add_value_head: False
+
+    openpi:
+      config_name: "pi0_so101"
+      train_expert_only: False
+      detach_critic_input: True
+      action_chunk: ${rollout.model.num_action_chunks}
+      num_images_in_input: 2

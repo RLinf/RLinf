@@ -1,0 +1,316 @@
+SO101 机械臂真机数据采集
+==========================
+
+本文档介绍在 RLinf 框架中使用 **SO101** 六自由度机械臂进行遥操作数据采集的硬件配置、依赖安装和实验流程。
+
+.. note::
+
+   SO101 是一款基于 Feetech STS3215 舵机的开源 3D 可打印六自由度机械臂，
+   也是 LeRobot 生态中的参考低成本机械臂。RLinf 直接封装了 LeRobot 的
+   Python API（``SO101Follower``、``SO101Leader``），无需额外的硬件 SDK。
+
+环境
+----
+
+**真实世界环境**
+
+- **机器人**: SO101 六自由度机械臂，Feetech STS3215 舵机，USB 串口通信。
+- **控制**: 关节空间位置控制（度），奖励在末端执行器空间计算。
+  LeRobot 的同步 Python API 直接与舵机总线通信，无需分布式控制器 Worker。
+- **任务**: 末端到达任务（``SO101PickEnv-v1``）。智能体需要将机械臂末端
+  移动到指定的三维目标位置（``target_ee_pose``）；设为 ``null`` 可回退到
+  关节角度目标。
+- **观测**:
+
+  - ``state/joint_position``: 5 维机械臂关节角度（度）。
+  - ``state/gripper_position``: 1 维夹爪开合（度）。
+  - ``frames/camera_0``: 占位 128×128 RGB 图像。通过 LeRobot 的
+    ``camera_serials`` / ``camera_type`` 配置字段可以接入真实相机（参见
+    :doc:`/rst_source/extending/new_realworld_robot`）。
+
+- **动作空间**: 6 维连续动作 — 5 个绝对关节位置 + 1 个夹爪位置，单位均为度。
+- **奖励**: 末端执行器空间（默认），在 ``target_ee_pose`` 的 L2 距离上做指数衰减，
+  在 ``reward_threshold_m`` 内饱和至 1.0；设为 ``null`` 时回退到关节角度 L2
+  误差。
+
+数据采集
+~~~~~~~~
+
+数据采集使用**双侧遥操作**：操作者手持 leader 端机械臂进行示教，follower 端
+机械臂实时镜像运动。两端均通过 USB 串口连接。
+
+- **Leader**: 每个控制步从 leader 端读取关节位置并转发给 follower。
+- **键盘控制**: 物理键盘按键 ``s``（**开始**录制新 episode）、
+  ``e``（**结束**并保存当前 episode）、\ ``r``（丢弃并重新录制）、
+  ``q`` / Esc（停止录制）。键盘监听使用 Linux ``evdev`` 输入层，无需 X11
+  或图形界面（需要 ``/dev/input/event*`` 的读取权限，
+  将用户加入 ``input`` 组或执行
+  ``sudo setfacl -m u:$USER:r /dev/input/event*``）。
+- **输出**: episode 以 LeRobot 数据集格式保存在配置的 ``save_dir`` 中，
+  每次数据采集运行一个带时间戳的独立子目录。
+
+.. note::
+
+   数据采集完成后，参见 :doc:`so101_sft_openpi` 了解如何在所得 LeRobot 格式
+   数据集上运行 π₀ 监督微调。SO101 上的 RL 训练已在代码中预留但尚未验证。
+
+相机
+~~~~
+
+SO101 数据采集支持 LeRobot 的相机系统。在环境 override_cfg 中
+添加 camera_cfgs 字典即可配置最多两台相机。type 键用于选择
+LeRobot 相机后端，其余键直接转发给对应的
+CameraConfig 子类。
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       main_image_key: front      # 将 "front" 记录为主视图
+       override_cfg:
+         camera_cfgs:
+           front:
+             type: intelrealsense
+             serial_number_or_name: "409122274720"
+             width: 848
+             height: 480
+             fps: 30
+             use_depth: true          # 同时读取 "front_depth"
+           handeye:
+             type: opencv
+             index_or_path: /dev/video8
+             width: 640
+             height: 480
+             fps: 30
+
+相机帧由 LeRobot 的 SO101Follower.get_observation() 以配置的名称
+（如 "front"、"handeye"、"front_depth"）存储在观测
+字典中，环境将其直接转发至 frames。当 RealSense 相机设置
+use_depth 时，观测中会额外生成 <name>_depth 键。
+
+未配置相机时，环境会生成一个 128×128 的空白 camera_0 占位图像
+以保持下游封装正常工作。
+
+硬件设置
+--------
+
+.. warning::
+
+   启动脚本前，确保 follower 和 leader 端机械臂均已组装、供电并通过 USB
+   连接。执行 ``ls /dev/ttyACM*`` 确认有两个设备（如
+   ``/dev/ttyACM0`` 和 ``/dev/ttyACM1``）。
+
+   首次使用前必须通过 LeRobot 校准工具对两端机械臂进行校准。
+   校准 JSON 文件保存在
+   ``~/.cache/huggingface/lerobot/calibration/{robots,teleoperators}/so_{follower,leader}/``
+   目录下，并在配置中通过 ``calibration_id`` 和 ``leader_calibration_id``
+   字段引用。
+
+   USB 串口设备属主为 ``root:dialout``。确保运行时用户在 ``dialout``
+   组中，或对设备节点执行 ``chmod a+rw``。
+
+依赖安装
+--------
+
+SO101 机械臂通过 LeRobot 进行舵机通信。所有依赖打包在 ``so101`` extra 中：
+
+.. code-block:: bash
+
+   # 克隆 RLinf
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+   # 安装 so101 extra
+   # 国内用户可以加 --use-mirror 提速。
+   bash requirements/install.sh embodied --env so101
+   source .venv/bin/activate
+
+如果已有安装了 LeRobot 的环境（如共享 conda 环境），可以精简安装：
+
+.. code-block:: bash
+
+   pip install -e . --no-deps
+   pip install ray[default] hydra-core omegaconf evdev imageio[ffmpeg] \
+       sortedcontainers icmplib tensorboard torchdata scipy datasets \
+       accelerate huggingface_hub filelock psutil
+
+运行实验
+--------
+
+配置文件
+~~~~~~~~
+
+数据采集配置文件位于
+``examples/embodiment/config/realworld_so101_collect_data.yaml``。关键部分：
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 1
+     component_placement:
+       env:
+         node_group: so101
+         placement: 0
+     node_groups:
+       - label: so101
+         node_ranks: 0
+         hardware:
+           type: SO101
+           configs:
+             - port: /dev/ttyACM0                    # follower
+               leader_port: /dev/ttyACM1             # leader
+               calibration_id: my_awesome_follower_arm
+               leader_calibration_id: my_awesome_leader_arm
+               node_rank: 0
+
+   runner:
+     task_type: embodied
+     logger:
+       log_path: "../results/so101-collect-data"
+       experiment_name: "so101-collect-data"
+     num_data_episodes: 4               # 收集满此数量后停止
+
+   env:
+     eval:
+       max_episode_steps: 10000          # 软上限（未按键时生效）
+       override_cfg:
+         enable_teleop: True
+         manual_episode_control_only: True
+         auto_calibrate: False           # 跳过 LeRobot 校准提示
+         success_hold_steps: 1
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}/collected_data
+         export_format: "lerobot"
+         robot_type: "so101"
+         fps: 30
+
+根据实际硬件和校准文件调整 ``port``、``leader_port``、``calibration_id``
+和 ``leader_calibration_id``。
+
+启动
+~~~~
+
+.. code-block:: bash
+
+   cd RLinf
+
+   # 启动 Ray（单机）
+   ray start --head --port=6379 --node-ip-address=127.0.0.1 --disable-usage-stats
+
+   # Hydra 的 searchpath 引用 EMBODIED_PATH，不设置则配置无法加载。
+   export EMBODIED_PATH=$(pwd)/examples/embodiment
+
+   # 启动数据采集
+   python examples/embodiment/collect_real_data.py \
+       --config-name realworld_so101_collect_data
+
+在主机物理键盘上，脚本监听以下按键：
+
+- ``s`` — 开始录制新 episode
+- ``e`` — 结束并保存当前 episode
+- ``r`` — 丢弃当前 episode（立即复位）
+- ``q`` / Esc — 停止采集并退出
+
+.. note::
+
+   键盘监听通过 Linux 内核输入事件层（``/dev/input/event*``）实现。
+   确保运行时用户有读取权限——加入 ``input`` 组或使用 ACL：
+   ``sudo setfacl -m u:$USER:r /dev/input/event*``。
+
+操作流程
+~~~~~~~~
+
+#. follower 端机械臂移动到复位构型（``reset_joint_qpos``，默认
+   ``[0, -45, 90, 0, 0, 45]`` 度，机械臂关节带小幅随机扰动）。
+#. 按 ``s`` 开始录制新 episode。
+#. 手持 leader 端机械臂进行示教，follower 端实时镜像运动。
+#. 示教结束后按 ``e`` 保存 episode，或按 ``r`` 丢弃并重录。
+#. 按 ``q`` / Esc 停止采集。
+#. 保存后机械臂自动复位。复位期间 ``keyboard_phase="pre"``\ ，不会被
+   记录到磁盘。
+
+输出结构
+~~~~~~~~
+
+.. code-block::
+
+   <log_path>/
+   ├── collected_data/
+   │   └── rank_0/
+   │       └── run_20260616_191730/            # 每次运行带时间戳
+   │           ├── meta/
+   │           │   ├── info.json                 # 特征规格、fps、episode 数量
+   │           │   └── tasks.parquet
+   │           └── data/
+   │               └── chunk-000/
+   │                   └── file-000.parquet      # 所有帧数据
+   └── demos/                                    # RLinf TrajectoryReplayBuffer
+       ├── metadata.json
+       ├── trajectory_0_*.pt
+       ├── trajectory_1_*.pt
+       └── ...
+
+同一批示教数据有两份等价副本：
+
+- ``collected_data/`` — LeRobot 格式数据集。如何把多次采集合并并作为 π₀
+  SFT 输入，参见 :doc:`so101_sft_openpi`。
+- ``demos/`` — RLinf ``TrajectoryReplayBuffer`` 自动保存（PyTorch 张量），
+  便于调试。
+
+脚本退出后，机械臂停泊在复位构型并保持力矩使能，主动持握直至下次启动。
+
+测试环境（可选）
+~~~~~~~~~~~~~~~~
+
+在 dummy 模式下验证导入和环境是否正常：
+
+.. code-block:: bash
+
+   python -c "
+   from rlinf.envs.realworld.so101.tasks.so101_pick import SO101PickEnv
+   import rlinf.envs.realworld.so101.tasks  # 注册 SO101PickEnv-v1
+   import gymnasium as gym
+   env = gym.make('SO101PickEnv-v1', override_cfg={'is_dummy': True},
+                  worker_info=None, hardware_info=None, env_idx=0)
+   obs, _ = env.reset()
+   print('OK — dummy env works:', list(obs['state'].keys()))
+   env.close()
+   "
+
+常见问题
+--------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - 问题
+     - 解决方法
+   * - ``ImportError: No module named 'lerobot.robots.so_follower'``
+     - 在机器人主机上安装 ``lerobot >= v0.4.3``\ ——\
+       :class:`~lerobot.robots.so_follower.SO101Follower` /
+       :class:`~lerobot.teleoperators.so_leader.SO101Leader` API 在
+       ``ccfd609e``（"consolidate SO arms implementation"）合入，
+       并随 **v0.4.3** 首次发布。\ v0.4.x 支持 Python 3.10+；v0.5.x 同样可以，
+       但额外要求 Python 3.12。具体安装命令见 ``pyproject.toml`` 中的
+       ``so101`` extra 注释。
+   * - ``串口 '/dev/ttyACM0' 未找到``
+     - 执行 ``ls /dev/ttyACM*`` 检查。在 Linux 上确保用户属于 ``dialout`` 组。
+   * - 执行 ``send_action`` 后机器人不动
+     - 先用 LeRobot 校准工具校准机械臂。确认 YAML 中的 ``calibration_id``
+       与已保存的校准 JSON 匹配。
+   * - ``gym.error.UnregisteredEnv``
+     - 必须导入 tasks ``__init__.py``。确认 ``so101_tasks`` 在
+       ``rlinf/envs/realworld/__init__.py`` 中已列出。
+   * - 键盘 ``s/r/q`` 无效
+     - ``evdev`` 无法读取 ``/dev/input/event*``。确保用户属于 ``input`` 组
+       或设备已设置 ACL。加入组后需重新登录；或执行
+       ``sudo setfacl -m u:$USER:r /dev/input/event*``。
+   * - 第二次数据采集运行出现 ``FileExistsError``
+     - 早期版本在已存在目录上重复调用 ``create()`` 导致该问题。
+       已通过时间戳运行目录修复。
+   * - 脚本退出后机械臂"卡住"或"僵硬"
+     - 机械臂停泊在复位构型并保持力矩使能（主动持握），这是正常状态。
+       STS3215 舵机的减速箱即使在断电时也有明显的齿轮摩擦阻力。重新启动脚本即可恢复。
+

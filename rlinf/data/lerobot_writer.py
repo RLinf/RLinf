@@ -71,6 +71,7 @@ class LeRobotDatasetWriter:
         extra_view_image_keys: dict[str, tuple[int, ...]] | None = None,
         has_intervene_flag: bool = True,
         has_segment_id: bool = False,
+        root: str | None = None,
     ) -> None:
         """
         Create a new LeRobot dataset.
@@ -100,7 +101,10 @@ class LeRobotDatasetWriter:
                 in-episode sub-task boundaries set by KeyboardStartEndWrapper.
 
         """
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        try:
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ImportError:
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
         _silence_hf_datasets_progress_bars()
 
@@ -155,10 +159,12 @@ class LeRobotDatasetWriter:
                         }
 
         self.logger.info(
-            f"Creating LeRobot dataset: repo_id={repo_id}, robot_type={robot_type}, fps={fps}"
+            f"Creating LeRobot dataset: repo_id={repo_id}, root={root}, "
+            f"robot_type={robot_type}, fps={fps}"
         )
         self.dataset = LeRobotDataset.create(
             repo_id=repo_id,
+            root=root,
             robot_type=robot_type,
             fps=fps,
             features=features,
@@ -198,28 +204,40 @@ class LeRobotDatasetWriter:
         )
 
     def finalize(self) -> None:
-        """Finalize the dataset and properly clean up all resources."""
+        """Finalize the dataset and properly clean up all resources.
+
+        Idempotent — safe to call multiple times or after a prior finalize.
+        """
         if self.dataset is None:
-            raise RuntimeError("Dataset not created. Call create() first.")
+            return
 
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.wait_until_done()
+        # Clean up internal resources without triggering property getters.
+        # ``hf_dataset`` became a ``@property`` in lerobot v0.5.1 (it was a
+        # plain attribute in v0.4.4 / v0.5.0).  Probing it via
+        # ``hasattr(self.dataset, "hf_dataset")`` would invoke the getter,
+        # which loads parquet metadata / opens file handles, and assigning
+        # ``self.dataset.hf_dataset = None`` would error because no setter
+        # is defined.  ``image_writer`` and ``episode_buffer`` are still
+        # plain attributes today, but we go through ``__dict__`` for them
+        # too so this code keeps working if they're property-fied later.
+        _d = self.dataset.__dict__
+        iw = _d.get("image_writer")
+        if iw is not None:
+            try:
+                iw.wait_until_done()
+            except Exception:
+                pass
+            try:
+                iw.stop()
+            except Exception:
+                pass
+            _d["image_writer"] = None
 
-        if (
-            hasattr(self.dataset, "image_writer")
-            and self.dataset.image_writer is not None
-        ):
-            self.dataset.image_writer.stop()
-            self.dataset.image_writer = None
+        if "episode_buffer" in _d:
+            _d["episode_buffer"] = None
 
-        if hasattr(self.dataset, "episode_buffer"):
-            self.dataset.episode_buffer = None
-
-        if hasattr(self.dataset, "hf_dataset"):
-            self.dataset.hf_dataset = None
+        # Set reader to None (private attribute, not the property).
+        _d["reader"] = None
 
         del self.dataset
         self.dataset = None

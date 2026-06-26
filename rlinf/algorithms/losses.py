@@ -459,3 +459,4 @@ def compute_grpo_actor_loss_fn(**kwargs) -> tuple[torch.Tensor, dict]:
     metrics_data.update(actor_metrics_data)
 
     return actor_loss, metrics_data
+

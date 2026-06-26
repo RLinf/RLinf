@@ -36,6 +36,12 @@
 
       将新模型接入 SFT 训练流程。
 
+   .. grid-item-card:: 接入新真实机器人
+      :link: new_realworld_robot
+      :link-type: doc
+
+      为新的真实世界机器人添加 RLinf 支持，配以 LeRobot SO101 机械臂的端到端示例。
+
    .. grid-item-card:: 高级集成
       :link: advanced-integrations/index
       :link-type: doc
@@ -50,4 +56,5 @@
    FSDP 新模型 <new_model_fsdp>
    Megatron 新模型 <new_model_megatron>
    新 SFT 模型 <new_model_sft>
+   接入新真实机器人 <new_realworld_robot>
    高级集成 <advanced-integrations/index>

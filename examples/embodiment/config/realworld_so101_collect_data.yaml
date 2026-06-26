@@ -1,0 +1,95 @@
+# SO101 teleoperation data collection.
+# Uses LeRobot's leader/follower bilateral teleop. Hold the leader arm to
+# guide the follower; press 's' to start recording, 'e' to end/save the
+# episode, 'r' to discard and rerecord, 'q'/Esc to stop.
+#
+# Prerequisite: assemble + calibrate both leader and follower SO101 arms
+# (see https://huggingface.co/docs/lerobot/so101).
+#
+# Usage:
+#   python examples/embodiment/collect_real_data.py \
+#       --config-name realworld_so101_collect_data \
+#       runner.logger.log_path=/path/to/output
+
+defaults:
+  - env/realworld_so101@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: so101
+      placement: 0
+  node_groups:
+    - label: so101
+      node_ranks: 0
+      hardware:
+        type: SO101
+        configs:
+          - port: /dev/ttyACM1
+            leader_port: /dev/ttyACM0
+            calibration_id: my_awesome_follower_arm
+            leader_calibration_id: my_awesome_leader_arm
+            node_rank: 0
+            camera_cfgs:
+              front:
+                type: intelrealsense
+                serial_number_or_name: "409122274720"
+                width: 640
+                height: 480
+                fps: 30
+                use_depth: true
+              handeye:
+                type: opencv
+                index_or_path: /dev/video0
+                width: 640
+                height: 480
+                fps: 30
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results/so101-collect-data"
+    project_name: rlinf
+    experiment_name: "so101-collect-data"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 4
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    ignore_terminations: False
+    auto_reset: False
+    use_spacemouse: False
+    max_episode_steps: 10000
+    main_image_key: front     # the "front" camera is recorded as the main view
+    override_cfg:
+      enable_teleop: True
+      manual_episode_control_only: True
+      auto_calibrate: False
+      success_hold_steps: 1
+      max_episode_steps: ${env.eval.max_episode_steps}
+      image_width: 128
+      image_height: 128
+      # Set to the EE pose of your task target (via compute_ee_pose.py).
+      # Not used for reward during data collection (is_dummy skips it),
+      # but stamped into every frame's 'task' column so the SFT model
+      # learns the correct prompt→trajectory mapping.
+      target_ee_pose: [0.299, -0.126, 0.150]   # ← replace with your target
+
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "lerobot"
+      only_success: False
+      robot_type: "so101"
+      fps: 30
+      finalize_interval: 1

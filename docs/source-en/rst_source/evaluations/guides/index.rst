@@ -13,6 +13,9 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    * - RealWorld
      - Franka real-robot evaluation and deployment
      - :doc:`realworld`
+   * - SO101
+     - Evaluate post-SFT π₀ on the SO101 6-DOF arm
+     - :doc:`so101_eval`
    * - BEHAVIOR-1K
      - Large-scale household scene simulation
      - :doc:`behavior`
@@ -38,6 +41,7 @@ This section provides end-to-end evaluation workflows organized by benchmark. Ea
    :maxdepth: 1
 
    realworld
+   so101_eval
    behavior
    libero
    maniskill_ood

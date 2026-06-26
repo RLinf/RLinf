@@ -701,7 +701,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("run_training")
     def run_training(self):
-        """SAC training using replay buffer"""
+        """SAC training using replay/demo buffer."""
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
             self.load_optimizer(self.device)

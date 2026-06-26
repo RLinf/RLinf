@@ -68,6 +68,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.so101_dataconfig import (
+    LeRobotSO101DataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -368,6 +371,17 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(action_horizon=10),
         data=LeRobotRealworldDataConfig(
             repo_id="realworld_franka_bin_relocation",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
+            extra_delta_transform=False,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_base",
+    ),
+    TrainConfig(
+        name="pi0_so101",
+        model=pi0_config.Pi0Config(action_horizon=10),
+        data=LeRobotSO101DataConfig(
+            repo_id="so101_data",
             base_config=DataConfig(prompt_from_task=True),
             assets=AssetsConfig(assets_dir="checkpoints/torch/pi0_base/assets"),
             extra_delta_transform=False,

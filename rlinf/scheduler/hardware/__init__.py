@@ -30,6 +30,8 @@ from .robots import (
     GimArmConfig,
     GimArmHWInfo,
     RobotAutoConfig,
+    SO101Config,
+    SO101HWInfo,
     Turtle2Config,
     Turtle2HWInfo,
 )
@@ -53,6 +55,8 @@ __all__ = [
     "GimArmConfig",
     "GimArmHWInfo",
     "RobotAutoConfig",
+    "SO101Config",
+    "SO101HWInfo",
     "Turtle2Config",
     "Turtle2HWInfo",
 ]

@@ -1,0 +1,335 @@
+Real-World Data Collection with SO101 Arm
+=====================================================
+
+This document covers hardware setup, dependency installation, and the
+teleoperation-based data-collection workflow for the **SO101** 6-DOF arm
+within the RLinf framework.
+
+.. note::
+
+   The SO101 is an open-source, 3D-printable 6-DOF manipulator using Feetech
+   STS3215 motors. It is the reference low-cost arm in the LeRobot ecosystem.
+   RLinf wraps LeRobot's existing Python API (``SO101Follower``,
+   ``SO101Leader``) — no separate hardware SDK is needed.
+
+Environment
+-----------
+
+**Real-World Environment**
+
+- **Robot**: SO101 6-DOF arm with Feetech STS3215 servos on a USB serial bus.
+- **Control**: Joint-space position control in degrees. LeRobot's synchronous
+  Python API handles motor communication directly — no distributed controller
+  Worker is required.
+- **Task**: Joint-space reaching (``SO101PickEnv-v1``). The agent must move
+  the arm from a reset configuration to a target joint configuration.
+- **Observation**:
+
+  - ``state/joint_position``: 5-D arm joint angles (degrees).
+  - ``state/gripper_position``: 1-D gripper opening (degrees).
+  - ``frames/camera_0``: placeholder 128×128 RGB frame. Real camera support
+    is provided by the LeRobot ``camera_serials`` / ``camera_type`` config
+    fields (see :doc:`/rst_source/extending/new_realworld_robot`).
+
+- **Action Space**: 6-dimensional continuous — 5 absolute joint positions +
+  1 gripper position, all in degrees.
+- **Reward**: End-effector-space by default (exponential falloff on L2
+  distance to ``target_ee_pose``, saturating at 1.0 within ``reward_threshold_m``).
+  Falls back to joint-angle L2 error when ``target_ee_pose`` is ``None``.
+
+Data Collection
+~~~~~~~~~~~~~~~
+
+Data collection uses **bilateral teleoperation**: a leader arm is physically
+moved by a human, and the follower arm mirrors the motion. Both arms connect
+via USB serial.
+
+- **Leader**: Reads joint positions from the leader arm every control step
+  and forwards them to the follower.
+- **Keyboard Control**: Physical keyboard keys ``s`` (start recording a new
+  episode), ``e`` (end — save the current episode), ``r`` (rerecord /
+  discard), ``q`` / Esc (stop recording). The keyboard listener uses the
+  Linux ``evdev`` input layer — no X11 or graphical session required (read
+  access to ``/dev/input/event*`` is needed; add the user to
+  the ``input`` group or set ``sudo setfacl -m u:$USER:r /dev/input/event*``).
+- **Output**: Episodes are saved in LeRobot dataset format under the
+  configured ``save_dir``, one timestamped directory per data-collection run.
+
+.. note::
+
+   Once data collection is complete, see :doc:`so101_sft_openpi` for the π₀
+   supervised-fine-tuning recipe that consumes the resulting LeRobot-format
+   dataset.  RL training on SO101 is planned but not yet validated.
+
+
+Cameras
+~~~~~~~
+
+SO101 data collection supports LeRobot's camera system. Configure up
+to two cameras by adding a camera_cfgs dict to the environment
+override_cfg.  The type key selects the LeRobot camera backend;
+remaining keys are passed directly to the corresponding
+:class:`~lerobot.cameras.configs.CameraConfig` subclass.
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       main_image_key: front      # record "front" as the primary view
+       override_cfg:
+         camera_cfgs:
+           front:
+             type: intelrealsense
+             serial_number_or_name: "409122274720"
+             width: 848
+             height: 480
+             fps: 30
+             use_depth: true          # also reads "front_depth"
+           handeye:
+             type: opencv
+             index_or_path: /dev/video8
+             width: 640
+             height: 480
+             fps: 30
+
+Camera frames are stored in the observation under their configured
+names ("front", "handeye", "front_depth") by LeRobot's
+SO101Follower.get_observation(). The env forwards them directly
+into frames. When use_depth is set on a RealSense camera, an
+additional <name>_depth key is emitted in the observation.
+
+When *no* cameras are configured, a single blank camera_0 (128×128)
+placeholder is emitted to keep downstream wrappers happy.
+
+Hardware Setup
+--------------
+
+.. warning::
+
+   Ensure both follower and leader arms are assembled, powered, and connected
+   via USB before starting the script. Verify with ``ls /dev/ttyACM*`` — you
+   should see two entries (e.g. ``/dev/ttyACM0`` and ``/dev/ttyACM1``).
+
+   Both arms must be calibrated with LeRobot's calibration tool before use.
+   Calibration JSON files are stored under
+   ``~/.cache/huggingface/lerobot/calibration/{robots,teleoperators}/so_{follower,leader}/``
+   and referenced by the ``calibration_id`` and ``leader_calibration_id``
+   config fields.
+
+   The USB serial devices are owned by ``root:dialout``. Ensure the runtime
+   user is a member of the ``dialout`` group, or set ``chmod a+rw`` on the
+   dev nodes.
+
+Dependency Installation
+-------------------------
+
+The SO101 arm uses LeRobot for motor communication. All dependencies are
+bundled in the ``so101`` extra:
+
+.. code-block:: bash
+
+   # Clone RLinf
+   git clone https://github.com/RLinf/RLinf.git
+   cd RLinf
+
+   # Install with the so101 extra
+   # For mainland China users, add --use-mirror for faster downloads.
+   bash requirements/install.sh embodied --env so101
+   source .venv/bin/activate
+
+For environments where LeRobot is already installed (e.g. a shared conda env),
+you can install RLinf minimally:
+
+.. code-block:: bash
+
+   pip install -e . --no-deps
+   pip install ray[default] hydra-core omegaconf evdev imageio[ffmpeg] \
+       sortedcontainers icmplib tensorboard torchdata scipy datasets \
+       accelerate huggingface_hub filelock psutil
+
+Running the Experiment
+-----------------------
+
+Configuration File
+~~~~~~~~~~~~~~~~~~~
+
+The data-collection config is located at
+``examples/embodiment/config/realworld_so101_collect_data.yaml``. Key sections:
+
+.. code-block:: yaml
+
+   cluster:
+     num_nodes: 1
+     component_placement:
+       env:
+         node_group: so101
+         placement: 0
+     node_groups:
+       - label: so101
+         node_ranks: 0
+         hardware:
+           type: SO101
+           configs:
+             - port: /dev/ttyACM0                    # follower
+               leader_port: /dev/ttyACM1             # leader
+               calibration_id: my_awesome_follower_arm
+               leader_calibration_id: my_awesome_leader_arm
+               node_rank: 0
+
+   runner:
+     task_type: embodied
+     logger:
+       log_path: "../results/so101-collect-data"
+       experiment_name: "so101-collect-data"
+     num_data_episodes: 4               # stop after this many saved episodes
+
+   env:
+     eval:
+       max_episode_steps: 10000          # soft cap if no key is pressed
+       override_cfg:
+         enable_teleop: True
+         manual_episode_control_only: True
+         auto_calibrate: False           # skip the Lerobot calibration prompt
+         success_hold_steps: 1
+       data_collection:
+         enabled: True
+         save_dir: ${runner.logger.log_path}/collected_data
+         export_format: "lerobot"
+         robot_type: "so101"
+         fps: 30
+
+Adjust ``port``, ``leader_port``, ``calibration_id``, and
+``leader_calibration_id`` to match your hardware and saved calibration files.
+
+Launch
+~~~~~~~
+
+.. code-block:: bash
+
+   cd RLinf
+
+   # Start Ray (single-machine)
+   ray start --head --port=6379 --node-ip-address=127.0.0.1 --disable-usage-stats
+
+   # Hydra's searchpath references EMBODIED_PATH; the config won't load without it.
+   export EMBODIED_PATH=$(pwd)/examples/embodiment
+
+   # Launch data collection
+   python examples/embodiment/collect_real_data.py \
+       --config-name realworld_so101_collect_data
+
+On the host machine (the physical keyboard must be connected), the script
+listens for the following key presses:
+
+- ``s`` — start recording a new episode
+- ``e`` — end and save the current episode
+- ``r`` — discard the current episode (immediately resets)
+- ``q`` / Esc — stop the entire collection and exit
+
+.. note::
+
+   The keyboard listener reads from the Linux kernel input event layer
+   (``/dev/input/event*``). Ensure the runtime user has read access — add
+   to the ``input`` group or use an ACL:
+   ``sudo setfacl -m u:$USER:r /dev/input/event*``.
+
+Workflow
+~~~~~~~~
+
+#. The follower arm moves to its reset pose (``reset_joint_qpos``, default
+   ``[0, -45, 90, 0, 0, 45]`` degrees with small random noise on arm joints).
+#. Press ``s`` to start recording a new episode.
+#. Take the leader arm in your hand and demonstrate the desired motion. The
+   follower mirrors in real time.
+#. When the demonstration is done, press ``e`` to save the episode, or
+   ``r`` to discard and re-record.
+#. Press ``q`` / Esc at any time to stop collection.
+#. After saving, the arm auto-resets to the rest pose.  The reset motion
+   runs while ``keyboard_phase="pre"`` and is **not** written to disk.
+
+Output Layout
+~~~~~~~~~~~~~~
+
+.. code-block::
+
+   <log_path>/
+   ├── collected_data/
+   │   └── rank_0/
+   │       └── run_20260616_191730/            # timestamped per-run
+   │           ├── meta/
+   │           │   ├── info.json                 # feature spec, fps, episode counts
+   │           │   └── tasks.parquet
+   │           └── data/
+   │               └── chunk-000/
+   │                   └── file-000.parquet      # all frames
+   └── demos/                                    # RLinf TrajectoryReplayBuffer
+       ├── metadata.json
+       ├── trajectory_0_*.pt
+       ├── trajectory_1_*.pt
+       └── ...
+
+Two equivalent copies of the same demonstrations:
+
+- ``collected_data/`` — LeRobot-format dataset.  See :doc:`so101_sft_openpi`
+  for how to merge multiple runs and use them as π₀ SFT input.
+- ``demos/`` — RLinf ``TrajectoryReplayBuffer`` auto-save (PyTorch tensors),
+  useful for debugging.
+
+On exit, the arm is parked at its rest pose with torque enabled, actively
+holding position until the script is re-launched.
+
+Testing the Setup (Optional)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Verify that the imports and environment work in dummy mode:
+
+.. code-block:: bash
+
+   python -c "
+   from rlinf.envs.realworld.so101.tasks.so101_pick import SO101PickEnv
+   import rlinf.envs.realworld.so101.tasks  # registers SO101PickEnv-v1
+   import gymnasium as gym
+   env = gym.make('SO101PickEnv-v1', override_cfg={'is_dummy': True},
+                  worker_info=None, hardware_info=None, env_idx=0)
+   obs, _ = env.reset()
+   print('OK — dummy env works:', list(obs['state'].keys()))
+   env.close()
+   "
+
+Troubleshooting
+----------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Problem
+     - Solution
+   * - ``ImportError: No module named 'lerobot.robots.so_follower'``
+     - Install ``lerobot >= v0.4.3`` on the robot host — the
+       :class:`~lerobot.robots.so_follower.SO101Follower` /
+       :class:`~lerobot.teleoperators.so_leader.SO101Leader` API was
+       consolidated in commit ``ccfd609e`` and first shipped in **v0.4.3**.
+       v0.4.x supports Python 3.10+; v0.5.x is also fine but additionally
+       requires Python 3.12. See the ``so101`` extra comment in
+       ``pyproject.toml`` for the recommended install command.
+   * - ``Serial port '/dev/ttyACM0' not found``
+     - Check ``ls /dev/ttyACM*``. On Linux, ensure the user is in the
+       ``dialout`` group.
+   * - Robot doesn't move after ``send_action``
+     - Calibrate the arm with LeRobot's calibration tool first. Verify the
+       ``calibration_id`` in the YAML matches a saved calibration JSON.
+   * - ``gym.error.UnregisteredEnv``
+     - The tasks ``__init__.py`` must be imported. Verify ``so101_tasks``
+       is listed in ``rlinf/envs/realworld/__init__.py``.
+   * - Keyboard ``s/r/q`` does nothing
+     - ``evdev`` cannot read ``/dev/input/event*``. Ensure the user is in the
+       ``input`` group or the devices have an ACL. Re-login after group
+       changes; or run ``sudo setfacl -m u:$USER:r /dev/input/event*``.
+   * - ``FileExistsError`` on second data-collection run
+     - This was a bug in earlier versions where ``create()`` was called on
+       an existing directory. Fixed by timestamped run directories.
+   * - Arm feels "frozen" or "stiff" after script exits
+     - The arm is parked at rest with torque enabled (active hold). This is
+       normal — the STS3215 servos have high gear-train friction even when
+       torque-disabled. Re-launching the script restores the live state.
