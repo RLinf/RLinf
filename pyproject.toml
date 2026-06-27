@@ -127,7 +127,8 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5",
+    # lerobot is installed from a pinned git commit by requirements/install.sh
+    # (PyPI forbids direct-URL deps in published packages).
     "pyzmq"
 ]
 xsquare_turtle2 = [
@@ -144,7 +145,8 @@ xsquare_turtle2 = [
     "pyspacemouse>=2.0.0",
     "imageio[ffmpeg]",
     "evdev",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    # lerobot is installed from a pinned git commit by requirements/install.sh
+    # (PyPI forbids direct-URL deps in published packages).
 ]
 gim_arm = [
     # gim_arm_control SDK: install separately via

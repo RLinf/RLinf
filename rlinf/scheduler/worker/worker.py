@@ -1369,13 +1369,10 @@ class Worker(metaclass=WorkerMeta):
         try:
             with without_http_proxies():
                 actors = ray.util.state.list_actors(
-                    filters=[("NAME", "=", worker_name)]
+                    filters=[("NAME", "=", worker_name), ("STATE", "!=", "DEAD")]
                 )
 
-            if len(actors) == 0:
-                return False
-            actor_info = actors[0]
-            return actor_info.state != "DEAD"
+            return len(actors) > 0
         except Exception:
             # Simply treat the worker as alive if any unexpected error occurs during state query
             return True
