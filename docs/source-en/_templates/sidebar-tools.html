@@ -1,0 +1,13 @@
+<div class="rlinf-sidebar-tools">
+  <div class="rlinf-sidebar-tools__version">
+    {% include "components/version-switcher.html" %}
+  </div>
+  {% include "language-switcher.html" %}
+  <div class="rlinf-sidebar-tools__icons">
+    <button class="rlinf-theme-toggle btn btn-sm pst-navbar-icon" type="button" aria-label="{{ _('Color mode') }}">
+      <i class="fa-solid fa-sun fa-lg rlinf-theme-icon-light"></i>
+      <i class="fa-solid fa-moon fa-lg rlinf-theme-icon-dark"></i>
+    </button>
+    {% include "components/navbar-icon-links.html" %}
+  </div>
+</div>

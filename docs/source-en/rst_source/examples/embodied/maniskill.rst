@@ -6,93 +6,96 @@ RL with ManiSkill Benchmark
    :height: 16px
    :class: inline-icon
 
-This document provides a comprehensive guide to launching and managing the 
-Vision-Language-Action Models (VLAs) training task within the RLinf framework, 
-focusing on finetuning a VLA model for robotic manipulation in the ManiSkill3 environment. 
+.. figure:: https://raw.githubusercontent.com/mani-skill/ManiSkill/main/figures/teaser.jpg
+   :align: center
+   :width: 90%
 
-The primary objective is to develop a model capable of performing robotic manipulation by:
+   Environments rendered in ManiSkill (image: `ManiSkill <https://github.com/haosulab/ManiSkill>`__).
 
-1. **Visual Understanding**: Processing RGB images from the robot's camera.
-2. **Language Comprehension**: Interpreting natural-language task descriptions.
-3. **Action Generation**: Producing precise robotic actions (position, rotation, gripper control).
-4. **Reinforcement Learning**: Optimizing the policy via the PPO with environment feedback.
+`ManiSkill <https://maniskill.readthedocs.io>`__ is a GPU-parallelized robotics
+simulator and benchmark for manipulation. A 7-DoF arm performs language-conditioned
+tabletop tasks; RLinf uses ManiSkill3 to RL-fine-tune vision-language-action (VLA)
+policies and reach state-of-the-art success rates, including on out-of-distribution
+(OOD) variations.
 
-Environment
------------
+Overview
+--------
 
-**ManiSkill3 Environment**
+RL-finetune a VLA on ManiSkill3; OpenVLA and OpenVLA-OFT exceed 90% success on plate-25.
 
-- **Environment**: ManiSkill3 simulation platform
-- **Task**: Control a robotic arm to grasp a variety of objects
-- **Observation**: RGB images (224×224) from a third-person camera
-- **Action Space**: 7-dimensional continuous actions
-  - 3D position control (x, y, z)
-  - 3D rotation control (roll, pitch, yaw)
-  - Gripper control (open/close)
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**Task Description Format**
+   .. grid-item-card:: Models
+      :text-align: center
 
-.. code-block:: text
+      OpenVLA · OpenVLA-OFT · π₀ / π₀.₅ · MLP · ResNet
 
-   In: What action should the robot take to [task_description]?
-   Out: 
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-**Data Structure**
+      PPO · GRPO · SAC · CrossQ · DAgger
 
-- **Images**: RGB tensors ``[batch_size, 224, 224, 3]``
-- **Task Descriptions**: Natural-language instructions
-- **Actions**: Normalized continuous values converted to discrete tokens
-- **Rewards**: Step-level rewards based on task completion
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-Algorithm
------------------------------------------
+      Tabletop manipulation (plate-25 + OOD)
 
-**Core Algorithm Components**
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-1. **PPO (Proximal Policy Optimization)**
+      1–2 nodes · 8–16 GPUs
 
-   - Advantage estimation using GAE (Generalized Advantage Estimation)
+| **You'll do:** install deps → download assets + base model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · the ManiSkill assets and a base checkpoint (steps below).
 
-   - Policy clipping with ratio limits
+Tasks
+~~~~~
 
-   - Value function clipping
+The reference recipe trains on the ``PutOnPlateInScene25Main-v3`` (plate-25) task and
+evaluates both in-distribution (IND) and on out-of-distribution (OOD) settings:
 
-   - Entropy regularization
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
 
-2. **GRPO (Group Relative Policy Optimization)**
+   * - Setting
+     - What it tests
+   * - Training (IND)
+     - The plate-25 training task.
+   * - Vision (OOD)
+     - Visual variations of the scene.
+   * - Semantic (OOD)
+     - Semantic variations (objects, instructions).
+   * - Execution (OOD)
+     - Execution-time variations.
 
-   - For every state / prompt the policy generates *G* independent actions
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~~
 
-   - Compute the advantage of each action by subtracting the group’s mean reward.
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
+   * - Field
+     - Specification
+   * - Observation
+     - RGB from a third-person camera (224×224); language task description.
+   * - Action
+     - 7-dim continuous: 3D end-effector position, 3D rotation, and 1-D gripper open/close.
+   * - Reward
+     - Step-level reward based on task progress and success.
+   * - Task prompt
+     - ``In: What action should the robot take to [task_description]? Out:``
 
-3. **Vision-Language-Action Model**
+The walkthrough below uses **OpenVLA / OpenVLA-OFT** with **PPO/GRPO**; switch the config to use another supported model.
 
-   - OpenVLA architecture with multimodal fusion
+Installation
+------------
 
-   - Action tokenization and de-tokenization
+.. include:: _setup_common.rst
 
-   - Value head for critic function
-
-Dependency Installation
------------------------
-
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
+**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
 
 .. code:: bash
 
@@ -102,170 +105,92 @@ Use Docker image for the experiment.
       --name rlinf \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
 
-For experiments on different models, please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
+   # Inside the container, switch to the model's virtual environment:
+   source switch_env openvla        # or: source switch_env openvla-oft
 
-.. code:: bash
-
-   # Switch to OpenVLA environment
-   source switch_env openvla
-   # Switch to OpenVLA-OFT environment
-   source switch_env openvla-oft
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
+**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-   # Change --model to openvla-oft for OpenVLA-OFT model experiment
+   # Add --use-mirror for faster downloads in mainland China.
+   # Use --model openvla-oft for the OpenVLA-OFT experiments.
    bash requirements/install.sh embodied --model openvla --env maniskill_libero
    source .venv/bin/activate
 
-Assets Download
-----------------
+Download the Assets
+-------------------
 
-Download the ManiSkill assets by running the following command:
+Download the ManiSkill assets into the env package directory:
 
 .. code:: bash
 
    cd <path_to_RLinf>/rlinf/envs/maniskill
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
+   # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
-Model Download
---------------
+Download the Model
+------------------
 
-Before starting training, you need to download the corresponding pretrained model and assets:
+Download a pretrained base checkpoint (either method works):
 
 .. code:: bash
 
-   # Download the model (choose either method)
-   # Method 1: Using git clone
+   # Method 1: git clone
    git lfs install
    git clone https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
-   # export HF_ENDPOINT=https://hf-mirror.com
+   # Method 2: huggingface-hub (set HF_ENDPOINT=https://hf-mirror.com in mainland China)
    pip install huggingface-hub
    hf download gen-robot/openvla-7b-rlvla-warmup --local-dir openvla-7b-rlvla-warmup
 
-After downloading, make sure to correctly specify the model path in the configuration yaml file.
+.. include:: _model_path.rst
 
-Besides, you also need to add the assets if there is no `assets/` dir in Pathto/rlinf/envs/maniskill . The download instruction can be found here in `huggingface <https://huggingface.co/datasets/RLinf/maniskill_assets>`_.
+Run It
+------
 
-Running the Script
--------------------
+Each recipe is a YAML config under ``examples/embodiment/config/``:
 
-**1. Key Parameters Configuration**
+- **OpenVLA + PPO** — ``maniskill_ppo_openvla.yaml``
+- **OpenVLA-OFT + PPO** — ``maniskill_ppo_openvlaoft.yaml``
+- **OpenVLA + GRPO** — ``maniskill_grpo_openvla.yaml``
+- **OpenVLA-OFT + GRPO** — ``maniskill_grpo_openvlaoft.yaml``
 
-.. code-block:: yaml
-
-   cluster:
-      num_nodes: 2
-      component_placement:
-         env: 0-7
-         rollout: 8-15
-         actor: 0-15
-
-   rollout:
-      pipeline_stage_num: 2
-
-Here you can flexibly configure the GPU count for env, rollout, and actor components.
-Additionally, by setting `pipeline_stage_num = 2` in the configuration, you can achieve pipeline overlap between rollout and env, improving rollout efficiency.
-
-.. code-block:: yaml
-   
-   cluster:
-      num_nodes: 1
-      component_placement:
-         env,rollout,actor: all
-
-You can also reconfigure the placement to achieve complete sharing, where env, rollout, and actor components all share all GPUs.
-
-.. code-block:: yaml
-
-   cluster:
-      num_nodes: 2
-      component_placement:
-         env: 0-3
-         rollout: 4-7
-         actor: 8-15
-
-You can also reconfigure the placement to achieve complete separation, where env, rollout, and actor components each use their own GPUs without interference, eliminating the need for offload functionality.
-
-**2. Configuration Files**
-
-We support two models: **OpenVLA** and **OpenVLA-OFT**, along with two algorithms: **PPO** and **GRPO**.  
-The corresponding configuration files are:
-
-- **OpenVLA + PPO**: ``examples/embodiment/config/maniskill_ppo_openvla.yaml``
-- **OpenVLA-OFT + PPO**: ``examples/embodiment/config/maniskill_ppo_openvlaoft.yaml``
-- **OpenVLA + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvla.yaml``
-- **OpenVLA-OFT + GRPO**: ``examples/embodiment/config/maniskill_grpo_openvlaoft.yaml``
-
-**3. Launch Commands**
-
-To start training with a chosen configuration, run the following command:
-
-.. code-block:: bash
-
-   bash examples/embodiment/run_embodiment.sh CHOSEN_CONFIG
-
-For example, to train the OpenVLA model using the PPO algorithm in the ManiSkill3 environment, run:
+Launch a config with ``run_embodiment.sh``:
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvla
 
+**What this command does:**
+
+1. Loads ``examples/embodiment/config/maniskill_ppo_openvla.yaml``.
+2. Attaches to (or starts) Ray and places the actor, rollout, and env workers per ``cluster.component_placement``.
+3. Runs the PPO training loop, writing logs and checkpoints under ``runner.logger.log_path``.
+
+.. admonition:: Configure further
+   :class: note
+
+   - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+   - All config keys → :doc:`Configuration <../../guides/index>`
+   - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
+   - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
+   - Stuck or hitting OOM? → :doc:`FAQ <../../resources/faq>`
 
 Visualization and Results
 -------------------------
 
-**1. TensorBoard Logging**
+Launch TensorBoard to watch training live:
 
 .. code-block:: bash
 
-   # Start TensorBoard
    tensorboard --logdir ./logs --port 6006
 
-**2. Key Metrics Tracked**
+The key signal to watch is **``env/success_once``** — the unnormalized episodic success
+rate. For every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
 
-- **Training Metrics**:
-
-  - ``train/actor/approx_kl``: Approximate KL divergence between old and new policies.
-  - ``train/actor/clip_fraction``: Fraction of updates where the probability ratio was clipped.
-  - ``train/actor/clipped_ratio``: Mean of the clipped probability ratios.
-  - ``train/actor/grad_norm``: Gradient norm.
-  - ``train/actor/lr``: Learning rate.
-  - ``train/actor/policy_loss``: PPO/GRPO policy loss.
-  - ``train/critic/value_loss``: Value function loss.
-  - ``train/critic/value_clip_ratio``: Fraction of value targets whose update was clipped.
-  - ``train/critic/explained_variance``: Explained variance of the value function predictions.
-  - ``train/entropy_loss``: Policy entropy.
-  - ``train/loss``: Total training loss (actor_loss + critic_loss + entropy_loss regularization).
-
-- **Rollout Metrics**:
-
-  - ``rollout/advantages_max``: the max of the advantage.
-  - ``rollout/advantages_mean``: the mean of the advantage.
-  - ``rollout/advantages_min``: the min of the advantage.
-  - ``rollout/rewards``: chunk of reward.
-
-- **Environment Metrics**:
-
-  - ``env/episode_len``: Number of environment steps elapsed in the episode (unit: step).
-  - ``env/return``: Episode return.
-  - ``env/reward``: Step-level reward.  
-  - ``env/success_once``: Recommended metric to monitor training performance. It directly reflects the unnormalized episodic success rate.
-
-**3. Video Generation**
+To save evaluation videos, enable them in the config:
 
 .. code-block:: yaml
 
@@ -275,49 +200,37 @@ Visualization and Results
             save_video: True
             video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. Train Log Tool Integration**
-
-.. code-block:: yaml
-
-   runner:
-      task_type: embodied
-      logger:
-         log_path: "../results"
-         project_name: rlinf
-         experiment_name: "maniskill_ppo_openvla"
-         logger_backends: ["tensorboard"] # wandb, swanlab
-
 ManiSkill3 Results
 ~~~~~~~~~~~~~~~~~~
 
-As an illustrative example, we present the training results of the PPO algorithm in the ManiSkill3 environment. 
-Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieved over 90% success on ManiSkill3’s plate-25-main task.
+Running on a single 8-GPU H100 machine, OpenVLA (left) and OpenVLA-OFT (right) achieve
+over 90% success on ManiSkill3's plate-25-main task.
 
 .. raw:: html
 
    <div style="display: flex; justify-content: space-between; gap: 10px;">
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvla.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvla.png" style="width: 100%;"/>
        <p><em>OpenVLA</em></p>
      </div>
      <div style="flex: 1; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/mani_openvlaoft.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-vla/mani_openvlaoft.png" style="width: 100%;"/>
        <p><em>OpenVLA-OFT</em></p>
      </div>
    </div>
 
+We evaluate on both in-distribution (IND) and OOD scenarios (Vision, Semantic, Execution).
+The best result per column is in bold.
 
-We evaluated on both training and OOD(out-of-distribution) scenarios. The OOD setting includes variations on Vision, Semantic, and Execution.
-The best-performing model for each task is highlighted in bold.
+.. note::
 
-.. note:: 
-   The same OOD test set used in `rl4vla` (`paper link <https://arxiv.org/abs/2505.19789>`_) is adopted here for fair comparison. 
-   Base models: For the OpenVLA model, we adopt the pre-trained checkpoint available at HuggingFace 
-   (`OpenVLA (Base) (aka openvla-7b-rlvla-warmup) <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_). 
-   For the OpenVLA-OFT model, we perform our own LoRA fine-tuning using motion planning data collected from the “PutOnPlateInScene25Main-v3” task. 
-   The resulting LoRA model weights are also provided at HuggingFace (`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_).
+   The same OOD test set as `rl4vla <https://arxiv.org/abs/2505.19789>`_ is used for a fair
+   comparison. Base models: OpenVLA uses the pretrained
+   `openvla-7b-rlvla-warmup <https://huggingface.co/gen-robot/openvla-7b-rlvla-warmup>`_;
+   OpenVLA-OFT uses our own LoRA fine-tune on ``PutOnPlateInScene25Main-v3`` data
+   (`OpenVLA-OFT (Base) <https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora>`_).
 
-.. list-table:: **OpenVLA and OpenVLA-OFT model results on ManiSkill3**
+.. list-table:: **OpenVLA and OpenVLA-OFT results on ManiSkill3**
    :header-rows: 1
    :widths: 40 15 15 15 15 15
 
@@ -370,17 +283,18 @@ The best-performing model for each task is highlighted in bold.
      - 44.66%
      - 60.64%
 
-.. note:: 
-   The `rl4vla` model refers to PPO combined with OpenVLA under a **small batch size**, and thus should only be compared with our PPO+OpenVLA trained under similar conditions. 
-   In contrast, our PPO+OpenVLA benefits from RLinf's large-scale infrastructure, allowing training with **larger batch sizes**, which we found to significantly improve performance.
+.. note::
 
+   The ``rl4vla`` model is PPO + OpenVLA under a **small batch size**, so it should be
+   compared only with our PPO+OpenVLA trained under similar conditions. Our PPO+OpenVLA
+   uses RLinf's large-scale infrastructure to train with **larger batch sizes**, which we
+   found significantly improves performance.
 
-The animation below shows the results of training the OpenVLA model on ManiSkill3's multi-task benchmark 
-using the PPO algorithm within the RLinf framework.
+The animation below shows OpenVLA trained on ManiSkill3's multi-task benchmark with PPO in RLinf.
 
 .. raw:: html
 
    <video controls autoplay loop muted playsinline preload="metadata" width="720">
-     <source src="https://github.com/RLinf/misc/raw/main/pic/embody.mp4" type="video/mp4">
+     <source src="https://raw.githubusercontent.com/RLinf/misc/main/pic/embody.mp4" type="video/mp4">
      Your browser does not support the video tag.
    </video>

@@ -217,6 +217,10 @@ def test_cluster_launch_collects_real_worker_logs(tmp_path: Path):
         logs_dir = collector._get_ray_logs_dir()
         assert logs_dir is not None
 
+        collector._stop_event.set()
+        if collector._thread is not None:
+            collector._thread.join(timeout=10)
+
         candidates = []
         bind_deadline = time.time() + 30
         while time.time() < bind_deadline and len(candidates) == 0:
@@ -234,6 +238,9 @@ def test_cluster_launch_collects_real_worker_logs(tmp_path: Path):
         )
         for candidate in candidates:
             collector._log_file_map[candidate] = ("collector_integration_group:0", "0")
+            # Drop any offset the background loop may have recorded so the
+            # from-start read below begins at byte 0 and captures the token.
+            collector._file_offsets.pop(candidate, None)
 
         target_log = out_dir / "collector_integration_group" / "rank_0.log"
         deadline = time.time() + 30

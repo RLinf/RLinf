@@ -64,6 +64,9 @@ class NodeInfo:
     hardware_resources: list[HardwareResource] = field(default_factory=list)
     """List of hardware resources available on the node."""
 
+    profiler_backends: list[str] = field(default_factory=list)
+    """Profiling backends whose required tools are available on this node (e.g. ``["nsight"]``)."""
+
     @property
     def num_accelerators(self) -> int:
         """Get the number of accelerators on the node."""
@@ -539,6 +542,15 @@ class _RemoteNodeProbe:
                     f"Python interpreter path {path} does not exist on node with node rank {node_rank}. Please check your cluster configuration."
                 )
 
+        # Discover which profiling backends have their required tools available on this node.
+        from ..hardware.accelerators.accelerator import AcceleratorManager
+
+        profiler_backends = [
+            backend_name
+            for backend_name, backend_cls in AcceleratorManager.profile_backend_register.items()
+            if backend_cls().check()
+        ]
+
         self._node_info = NodeInfo(
             node_labels=node_labels,
             node_rank=node_rank,
@@ -549,6 +561,7 @@ class _RemoteNodeProbe:
             default_env_vars=os.environ.copy(),
             env_vars=os.environ.copy(),
             hardware_resources=hardware_resources,
+            profiler_backends=profiler_backends,
         )
 
     def get_node_info(self):

@@ -13,10 +13,38 @@ On the WideSearch benchmark, WideSeek-R1-4B reaches an item F1 score of
 to improve as the number of parallel subagents increases.
 
 For the full method and results, see the
-:doc:`WideSeek-R1 publication <../../../publications/wideseek_r1>`, the
+:doc:`WideSeek-R1 publication <../../../resources/publications/wideseek_r1>`, the
 `project page <https://wideseek-r1.github.io>`__, the
 `paper on arXiv <https://arxiv.org/abs/2602.04634>`__, and the
 `example code in RLinf <https://github.com/RLinf/RLinf/tree/main/examples/agent/wideseek_r1>`__.
+
+Overview
+--------
+
+Use this guide as the entry point for WideSeek-R1 setup, training, and evaluation.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Model
+      :text-align: center
+
+      Qwen3-4B and Qwen3-series dense models
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      Multi-agent RL for broad information seeking
+
+   .. grid-item-card:: Tools
+      :text-align: center
+
+      Online web search or offline Qdrant retrieval
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Single-node quick start or multi-node scaling
 
 .. contents::
    :depth: 2
@@ -39,25 +67,40 @@ If you prefer a local environment, install the agentic stack:
 .. code-block:: bash
 
    bash requirements/install.sh agentic
-   
+
 Our startup scripts and configuration files are located in ``examples/agent/wideseek_r1``.
 
-- ``examples/agent/wideseek_r1/config`` contains the YAML configuration files for training and evaluation.
-- ``examples/agent/tools/search_local_server_qdrant`` provides the search engine implementation used by offline tools.
-- ``examples/agent/wideseek_r1/run_train.sh`` and ``examples/agent/wideseek_r1/run_eval.sh`` are the main entry points for training and evaluation, respectively.
+.. list-table::
+   :header-rows: 1
+
+   * - Path
+     - Role
+   * - ``examples/agent/wideseek_r1/config``
+     - YAML configuration files for training and evaluation.
+   * - ``examples/agent/tools/search_local_server_qdrant``
+     - Search engine implementation used by offline tools.
+   * - ``examples/agent/wideseek_r1/run_train.sh`` / ``examples/agent/wideseek_r1/run_eval.sh``
+     - Main entry points for training and evaluation.
 
 Tool Backends
 -------------
 
 WideSeek-R1 supports two tool backends:
 
-- :ref:`wideseek-r1-offline-tools` for training and standard QA evaluation.
-- :ref:`wideseek-r1-online-tools` for WideSearch evaluation.
+.. list-table::
+   :header-rows: 1
+
+   * - Backend
+     - Use it for
+   * - :ref:`Offline tools <wideseek-r1-offline-tools>`
+     - Training and standard QA evaluation.
+   * - :ref:`Online tools <wideseek-r1-online-tools>`
+     - WideSearch evaluation.
 
 See :doc:`Tool Setup <tools>` for the full configuration workflow.
 
-Quick Start
------------
+Run It
+------
 
 Before running either training or evaluation, start the judge model server.
 WideSeek-R1 uses an LLM judge to provide more reliable feedback than exact-match
@@ -125,7 +168,7 @@ Then configure the rollout_judge section with your desired model and settings:
      group_name: "RolloutJudgeGroup"
      gpu_memory_utilization: 0.5
      model:
-       model_type: qwen3  
+       model_type: qwen3
        model_path: /PATH/TO/YOUR/JUDGE/MODEL  # Replace with actual path
        precision: fp16
      rollout_backend: sglang
@@ -135,23 +178,38 @@ Then configure the rollout_judge section with your desired model and settings:
 
 Example configuration files using the built-in judge can be found in:
 
- - ``examples/agent/wideseek_r1/config/train_qwen3_hybrid_local_judge.yaml``
- - ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch_local_judge.yaml``
+.. list-table::
+   :header-rows: 1
+
+   * - Config
+     - Purpose
+   * - ``examples/agent/wideseek_r1/config/train_qwen3_hybrid_local_judge.yaml``
+     - Train with the local judge.
+   * - ``examples/agent/wideseek_r1/config/eval_qwen3_widesearch_local_judge.yaml``
+     - Evaluate WideSearch with the local judge.
 
 When using the built-in judge, you don't need to start a separate judge server. The judge model will be loaded and managed by RLinf's rollout engine.
 
-Multi-node 
+Multi-node
 ~~~~~~~~~~~~
 
-Since multi-agent generation incurs substantial time overhead, training and evaluation on a single machine with eight GPUs can significantly slow down experiments; therefore, 
-WideSeek-R1 supports multi-node training and evaluation. Please refer to the documentation :doc:`../../../start/distribute`.
+Since multi-agent generation incurs substantial time overhead, training and evaluation on a single machine with eight GPUs can significantly slow down experiments; therefore,
+WideSeek-R1 supports multi-node training and evaluation. Please refer to :doc:`../../../guides/multi_node`.
 
 Next Steps
 ~~~~~~~~~~
 
-- For tool configuration, see :doc:`tools`.
-- For the full training procedure, see :doc:`train`.
-- For the full evaluation procedure, see :doc:`eval`.
+.. list-table::
+   :header-rows: 1
+
+   * - Page
+     - Next step
+   * - :doc:`Tool Setup <tools>`
+     - Configure offline and online tool backends.
+   * - :doc:`Training <train>`
+     - Run the full training procedure.
+   * - :doc:`Evaluation <eval>`
+     - Run the full evaluation procedure.
 
 .. toctree::
    :hidden:

@@ -1,65 +1,72 @@
 RL-based Sim-Real Co-Training
 ==============================
 
-This example shows how to use the RLinf framework for **sim-real co-training**
-(Sim-Real Co-Training) of the π\ :sub:`0.5`\  model. It provides a simulation
-environment, corresponding real and simulation datasets, and the full workflow
-to run co-training in that setting.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
+   :align: center
+   :width: 90%
 
-Co-training combines **PPO** in simulation with **SFT** on real data so the
-policy improves task success in sim while retaining real-world priors and
-avoiding sim-only overfitting that hurts sim-to-real transfer.
+   Sim-real co-training overview.
 
-For technical details, see the paper: *Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models*.
+**Sim-real co-training** trains a π₀.₅ policy by combining **PPO in simulation** with **SFT on
+real data**, so the policy improves task success in sim while retaining real-world priors and
+avoiding sim-only overfitting that hurts sim-to-real transfer. For technical details, see
+:doc:`Beyond Imitation: RL-Based Sim-Real Co-Training for VLA Models <../../resources/publications/rlinf_co>`.
 
-After training, the model is expected to support:
+Overview
+--------
 
-1. **Visual understanding**: Process RGB images from the robot camera.
-2. **Language understanding**: Interpret natural-language task descriptions.
-3. **Action generation**: Produce precise robot actions (position, rotation, gripper).
-4. **Co-evolution**: Improve via RL in simulation while staying grounded via SFT on real data.
+Co-train π₀.₅ on a ManiSkill digital twin — PPO in sim + SFT on 50 real trajectories (~35%→~50% sim success).
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      PPO + SFT (RL-Co)
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      π₀.₅
+
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      ManiSkill digital twin
+
+   .. grid-item-card:: Training
+      :text-align: center
+
+      2-stage sim-real
+
+| **You'll do:** install → download assets + SFT model → SFT (Stage I) → co-train RL (Stage II) → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · ManiSkill assets · an SFT checkpoint and the real dataset (steps below).
+
+Setup
+~~~~~
+
+This example ships one demo setup; for your own robot, collect data and build a matching sim scene.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 86
+
+   * - Part
+     - Detail
+   * - Task
+     - Pick-and-place — move an object from the table into a bowl.
+   * - Real
+     - Franka Emika Panda + RealSense; third-person RGB (640×480); 7-DoF action (x, y, z, roll, pitch, yaw, gripper).
+   * - Sim
+     - ManiSkill3 digital twin aligned with the real setup in layout, camera view, task logic, language, and action space; dynamics tuned to approximate real physics.
 
 
-Environment
------------
+Installation
+------------
 
-**Note:** This example provides a single demo environment. In practice, you should collect data and build a matching sim scene for your own setup.
-
-**Real-world setup**
-
-- **Environment**: Franka Emika Panda arm, RealSense camera.
-- **Task**: Pick and place — place an object from the table into a bowl.
-- **Observation**: Third-person RGB (640×480).
-- **Language**: Task description from the environment.
-- **Action space**: 7D continuous (x, y, z, roll, pitch, yaw, gripper open/close).
-
-**Simulation (digital twin)**
-
-Built with ManiSkill3:
-
-- **Digital twin**: Aligned with the real setup in layout, camera view, task logic, language, and action space.
-- **Dynamics**: Tuned to approximate real-world physics.
-
-
-Algorithm
----------
-
-This example uses **RL-Co**, combining:
-
-1. **PPO (Proximal Policy Optimization)**
-   - GAE for advantage estimation
-   - Ratio-based policy clipping
-   - Value clipping and entropy regularization
-
-2. **SFT (Supervised Fine-Tuning)**
-   - Real-world trajectory data as supervision alongside RL to avoid sim-only overfitting and preserve sim-to-real transfer.
-
-
-Dependency installation
-------------------------
-
-1. Clone the RLinf repo
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+1. Clone the RLinf Repository
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
@@ -68,8 +75,8 @@ Dependency installation
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
-2. Install dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. Install Dependencies
+~~~~~~~~~~~~~~~~~~~~~~~
 
 **Option 1: Docker**
 
@@ -112,8 +119,11 @@ Refer to the :doc:`ManiSkill example <maniskill>` for base asset setup, then dow
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
 
 
-Stage I: SFT pretraining
-------------------------
+Run It
+------
+
+Stage I: SFT Pretraining
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Stage I injects real and sim data via supervised learning before RL. You can either train yourself or use a provided checkpoint.
 
@@ -147,8 +157,8 @@ Skip training and use the provided SFT checkpoint:
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
-Stage II: Sim-real co-training (RL)
------------------------------------
+Stage II: Sim-Real Co-Training (RL)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This stage adds SFT loss into the PPO loop for joint optimization.
 
@@ -164,7 +174,7 @@ Download the 50 real trajectories in LeRobot format used for co-training:
 
 **Important config**
 
-The config ``maniskill_ppo_co_training_openpi_pi05.yaml`` is provided. For general PPO settings see :doc:`π₀ and π₀.₅ RL training <pi0>`. Co-training-specific options:
+The config ``maniskill_ppo_co_training_openpi_pi05.yaml`` is provided. For common path, cluster, and runner fields, see :doc:`Training configuration <../../reference/configuration>`. For general PPO settings see :doc:`π₀ and π₀.₅ RL training <pi0>`. Co-training-specific options:
 
 **Model paths**
 
@@ -213,7 +223,7 @@ See :doc:`./pi0` for ``global_batch_size`` and ``micro_batch_size`` settings.
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
 
 
-Visualization and results
+Visualization and Results
 -------------------------
 
 **TensorBoard**
@@ -224,7 +234,7 @@ Visualization and results
 
 **Metrics**
 
-Besides standard RL metrics (see :doc:`π₀ and π₀.₅ visualization <pi0>`), co-training adds:
+Besides the standard metrics (see :doc:`Training metrics <../../reference/metrics>`), co-training adds:
 
 - ``train/ppo_loss``: PPO (RL) loss.
 - ``train/sft_loss``: SFT loss on real data.

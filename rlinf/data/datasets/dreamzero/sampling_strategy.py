@@ -14,9 +14,9 @@
 
 """Temporal index sampling for DreamZero LeRobot SFT datasets.
 
-Two modes (relative frame offsets before adding ``frame_in_ep``):
+Two modes with different index contracts:
 
-**fixed_window** — one contiguous span from the dataset index (legacy RLinf).
+**fixed_window** — relative frame offsets before adding ``frame_in_ep`` (legacy RLinf).
 
 Config: ``num_frames``, ``max_chunk_size`` (macro blocks), ``action_horizon``.
 
@@ -31,8 +31,7 @@ Config: ``num_frames``, ``max_chunk_size`` (macro blocks), ``action_horizon``.
     chunk0  [0 .. H-1]   chunk1  [H .. 2H-1]   ...   chunk_{K-1}
             |<- H act ->|       |<- H act ->|
 
-**multi_anchor** — expand along the episode within the same language label
-(Groot ``lerobot_sharded`` semantics).
+**multi_anchor** — episode-local absolute frame indices.
 
 Config: ``max_chunk_size``, ``macro_stride`` (default 24), per-anchor micro
 offsets (video: 0,3,...,21; action: 0..H-1).
@@ -65,6 +64,9 @@ class EmptyTemporalSampleError(ValueError):
     """Raised when multi-anchor sampling yields no valid video/action/state indices."""
 
 
+DEFAULT_VIDEO_IN_CHUNK_OFFSETS: tuple[int, ...] = (0, 3, 6, 9, 12, 15, 18, 21)
+
+
 @dataclass(frozen=True)
 class MultiAnchorTemporalConfig:
     """Hyper-parameters for language-bounded multi-anchor temporal sampling."""
@@ -72,12 +74,19 @@ class MultiAnchorTemporalConfig:
     max_chunk_size: int
     macro_stride: int = 24
     action_horizon: int = 24
-    video_in_chunk_offsets: tuple[int, ...] = (0, 3, 6, 9, 12, 15, 18, 21)
+    video_in_chunk_offsets: tuple[int, ...] = DEFAULT_VIDEO_IN_CHUNK_OFFSETS
+
+    def __post_init__(self) -> None:
+        validate_multi_anchor_temporal_config(self)
 
 
 @dataclass(frozen=True)
 class TemporalIndices:
-    """Relative frame indices within an episode (before adding ``frame_in_ep``)."""
+    """Temporal frame indices for one sample.
+
+    ``fixed_window``: offsets relative to ``frame_in_ep``.
+    ``multi_anchor``: episode-local absolute frame indices.
+    """
 
     video: np.ndarray
     state: np.ndarray
@@ -87,6 +96,56 @@ class TemporalIndices:
     @property
     def is_empty(self) -> bool:
         return self.video.size == 0 or self.action.size == 0 or self.state.size == 0
+
+
+def validate_multi_anchor_temporal_config(cfg: MultiAnchorTemporalConfig) -> None:
+    """Validate multi-anchor hyper-parameters."""
+    if cfg.max_chunk_size <= 0:
+        raise ValueError(f"max_chunk_size must be positive, got {cfg.max_chunk_size!r}")
+    if cfg.macro_stride <= 0:
+        raise ValueError(f"macro_stride must be positive, got {cfg.macro_stride!r}")
+    if cfg.action_horizon <= 0:
+        raise ValueError(f"action_horizon must be positive, got {cfg.action_horizon!r}")
+    if not cfg.video_in_chunk_offsets:
+        raise ValueError("video_in_chunk_offsets must be non-empty")
+    offsets = tuple(int(o) for o in cfg.video_in_chunk_offsets)
+    if any(o < 0 for o in offsets):
+        raise ValueError(
+            f"video_in_chunk_offsets must be non-negative, got {offsets!r}"
+        )
+    if list(offsets) != sorted(offsets):
+        raise ValueError(
+            f"video_in_chunk_offsets must be strictly increasing, got {offsets!r}"
+        )
+    if len(set(offsets)) != len(offsets):
+        raise ValueError(f"video_in_chunk_offsets must be unique, got {offsets!r}")
+    _video_micro_stride(cfg)
+
+
+def _video_frames_per_chunk(cfg: MultiAnchorTemporalConfig) -> int:
+    return len(cfg.video_in_chunk_offsets)
+
+
+def _video_max_anchor_extent(cfg: MultiAnchorTemporalConfig) -> int:
+    """Max relative frame index covered by one anchor (video + action span)."""
+    return max(max(cfg.video_in_chunk_offsets), cfg.action_horizon - 1)
+
+
+def _video_micro_stride(cfg: MultiAnchorTemporalConfig) -> int:
+    offsets = cfg.video_in_chunk_offsets
+    if len(offsets) < 2:
+        return 1
+    step = int(offsets[1] - offsets[0])
+    if step <= 0:
+        raise ValueError(
+            f"video_in_chunk_offsets must be strictly increasing, got {offsets!r}"
+        )
+    for i in range(2, len(offsets)):
+        if int(offsets[i] - offsets[i - 1]) != step:
+            raise ValueError(
+                f"video_in_chunk_offsets must be uniformly spaced, got {offsets!r}"
+            )
+    return step
 
 
 def sample_video_indices(
@@ -100,12 +159,15 @@ def sample_video_indices(
         return np.array([], dtype=np.int64), 0
 
     target_language = language_annotations[first_idx]
-    max_frames = 8 * cfg.max_chunk_size + 1
+    frames_per_chunk = _video_frames_per_chunk(cfg)
+    max_frames = frames_per_chunk * cfg.max_chunk_size + 1
     per_step_offsets = list(cfg.video_in_chunk_offsets)
+    max_anchor_extent = _video_max_anchor_extent(cfg)
+    boundary_stride = _video_micro_stride(cfg)
     sampled_list: list[int] = []
 
     def add_step_set(anchor_index: int) -> None:
-        if anchor_index < 0 or anchor_index + 23 >= trajectory_length:
+        if anchor_index < 0 or anchor_index + max_anchor_extent >= trajectory_length:
             return
         if len(sampled_list) + len(per_step_offsets) > max_frames:
             return
@@ -147,18 +209,18 @@ def sample_video_indices(
 
     if unique_sorted.size > 0:
         last_idx = int(unique_sorted[-1])
-        additional_idx = last_idx + 3
+        additional_idx = last_idx + boundary_stride
         if additional_idx < trajectory_length and unique_sorted.size < max_frames:
             unique_sorted = np.append(unique_sorted, additional_idx)
         else:
-            if unique_sorted.size <= 8:
+            if unique_sorted.size <= frames_per_chunk:
                 return np.array([], dtype=np.int64), 0
-            unique_sorted = unique_sorted[:-7]
+            unique_sorted = unique_sorted[: -(frames_per_chunk - 1)]
 
-    if unique_sorted.size == 0 or unique_sorted.size % 8 != 1:
+    if unique_sorted.size == 0 or unique_sorted.size % frames_per_chunk != 1:
         return np.array([], dtype=np.int64), 0
 
-    num_video_chunks = (unique_sorted.size - 1) // 8
+    num_video_chunks = (unique_sorted.size - 1) // frames_per_chunk
     return unique_sorted.astype(np.int64, copy=False), int(num_video_chunks)
 
 

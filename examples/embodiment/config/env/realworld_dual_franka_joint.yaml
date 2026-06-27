@@ -1,0 +1,71 @@
+env_type: realworld
+
+total_num_envs: 1
+
+auto_reset: False
+ignore_terminations: False
+reward_mode: raw
+wrap_obs_mode: simple
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_spacemouse: False
+use_gello: False
+# GELLO joint-space teleop arrives in PR #1140 (DualGelloJointIntervention).
+# Until that lands, leave use_gello_joint=False so apply_dual_franka_joint_wrappers
+# does not try to instantiate a wrapper that doesn't exist yet; the env will
+# run policy-only eval through env.step's _dispatch_arm_motion path.
+use_gello_joint: False
+use_relative_frame: False  # Not applicable for joint-space control
+no_gripper: False
+# Pre-wired GELLO serial ports (by-id paths are stable across reboots).
+# Read by DualGelloJointIntervention once PR #1140 lands; harmless until then.
+# Both ports must be plugged into the env-worker machine (cluster node 0).
+left_gello_port: LEFT_GELLO_PORT    # Replace: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_*-if00-port0
+right_gello_port: RIGHT_GELLO_PORT  # Replace: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_*-if00-port0
+main_image_key: left_wrist_0_rgb
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/eval
+
+init_params:
+  id: "DualFrankaJointEnv-v1"
+  num_envs: null
+
+override_cfg:
+  is_dummy: false
+  task_description: "dual arm joint-space manipulation task"
+  # Only "robotiq" is currently supported on the franky/libfranka stack.
+  # The libfranka Franka Hand backend is planned but not yet implemented.
+  left_gripper_type: robotiq
+  right_gripper_type: robotiq
+  # Joint action mode: "absolute" for direct GELLO mapping, "delta" for RL.
+  joint_action_mode: "absolute"
+  # Scaling factor for delta mode (rad per unit action). Ignored in absolute.
+  joint_action_scale: 0.1
+  max_num_steps: 300
+  # Only [2] (gripper channel) is consumed in joint-space; [0] / [1] are
+  # Cartesian-only and ignored here.
+  action_scale: [1.0, 1.0, 1.0]
+  # Per-arm (2, 6) [xyz, euler_xyz (rad)] bounds used to build the obs / action
+  # space and to clip tcp_target. XYZ is a workspace safety box; euler is
+  # [-π, π] (effectively unbounded) so the clip does not truncate training-
+  # distribution wrist poses.
+  ee_pose_limit_min:
+    - [0.3, -0.4, 0.2, -3.1416, -3.1416, -3.1416]
+    - [0.3, -0.0, 0.2, -3.1416, -3.1416, -3.1416]
+  ee_pose_limit_max:
+    - [0.7,  0.0, 0.6, 3.1416, 3.1416, 3.1416]
+    - [0.7,  0.4, 0.6, 3.1416, 3.1416, 3.1416]
+  success_hold_steps: 1
+  # GELLO direct-stream: when True, a 1 kHz daemon in DualGelloJointIntervention
+  # (PR #1140) pushes joint targets straight to each controller, bypassing
+  # env.step's rate gate. env.step still reads state / obs at step_frequency
+  # but does NOT forward move_joints — avoids two writers racing franky's
+  # motion queue. Leave False until PR #1140 lands; otherwise the env will
+  # silently stop dispatching joint targets.
+  teleop_direct_stream: false
