@@ -551,9 +551,7 @@ class Robocasa365Env(gym.Env):
         camera_names = _ensure_list(_cfg_to_python(self.cfg.camera_names))
         return [str(camera_name) for camera_name in camera_names]
 
-    def get_env_fns(
-        self, env_idx: Optional[Union[list[int], np.ndarray]] = None
-    ):
+    def get_env_fns(self, env_idx: Optional[Union[list[int], np.ndarray]] = None):
         env_fns = []
 
         if env_idx is None:
