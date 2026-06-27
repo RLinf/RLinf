@@ -81,26 +81,10 @@ algorithm:
     # HG-DAgger: only human-intervened data is saved to the replay buffer.
     only_save_expert: True
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
   gamma: 0.99
   update_epoch: 1
   adv_type: gae
   loss_type: embodied_dagger
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
 
   replay_buffer:
     enable_cache: True
@@ -115,6 +99,7 @@ env:
   enable_offload: False
 
   train:
+    rollout_epoch: 1
     total_num_envs: 1
     ignore_terminations: False
     auto_reset: False
@@ -176,6 +161,7 @@ env:
       use_dense_reward: False
 
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
     ignore_terminations: False
     auto_reset: False
