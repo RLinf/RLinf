@@ -646,9 +646,8 @@ class EnvWorker(Worker):
     def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
         """Receive and merge chunked actions for the current env worker.
 
-        The method fetches one action shard from each mapped rollout source rank
-        under a deterministic channel key pattern and concatenates them on the
-        batch dimension.
+        The method receives routed action shards from rollout workers and merges them
+        on the batch dimension.
 
         Args:
             input_channel: Channel carrying rollout->env action chunks.
@@ -658,28 +657,16 @@ class EnvWorker(Worker):
             Concatenated action chunk array with shape ``[num_envs_per_stage, ...]``.
         """
         assert mode in ["train", "eval"], f"{mode=} is not supported"
-        src_ranks_and_sizes = self.src_rank_map[f"rollout_{mode}"]
-        chunk_action = []
-        for src_rank, expected_size in src_ranks_and_sizes:
-            action_i = input_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra=f"{mode}_actions"
-                ),
-            )
-            if isinstance(action_i, torch.Tensor):
-                action_i = action_i.detach().cpu().numpy()
-            else:
-                action_i = np.asarray(action_i)
-            assert action_i.shape[0] == expected_size, (
-                f"Expected action shard size {expected_size} from rollout rank {src_rank}, "
-                f"got shape {action_i.shape}."
-            )
-            chunk_action.append(action_i)
-        chunk_action = np.concatenate(chunk_action, axis=0)
-        expected_total_size = sum(size for _, size in src_ranks_and_sizes)
-        assert chunk_action.shape[0] == expected_total_size, (
-            f"Expected concatenated action size {expected_total_size}, got {chunk_action.shape[0]}."
+        chunk_action = self.recv_from(
+            group_name=self.cfg.rollout.group_name,
+            channel=input_channel,
+            tag=f"{mode}_rollout_results",
+            batch_size=self._rollout_stage_batch_size(mode),
         )
+        if isinstance(chunk_action, torch.Tensor):
+            chunk_action = chunk_action.detach().cpu().numpy()
+        else:
+            chunk_action = np.asarray(chunk_action)
         return chunk_action
 
     @Worker.timer("recv_rollout_results")
@@ -687,8 +674,6 @@ class EnvWorker(Worker):
         self, input_channel: Channel, mode="train"
     ) -> RolloutResult:
         assert mode in ["train", "eval"], f"{mode=} is not supported"
-        src_ranks_and_sizes = self.src_rank_map[f"rollout_{mode}"]
-        rollout_results: list[RolloutResult] = []
 
         def _infer_rollout_batch_size(rollout_result: RolloutResult) -> int:
             for field_name in (
@@ -707,22 +692,14 @@ class EnvWorker(Worker):
                     return first_tensor.shape[0]
             raise ValueError("Cannot infer batch size from rollout result.")
 
-        for src_rank, expected_size in src_ranks_and_sizes:
-            rollout_result = input_channel.get(
-                key=CommMapper.build_channel_key(
-                    src_rank, self._rank, extra=f"{mode}_rollout_results"
-                ),
-            )
-
-            actual_size = _infer_rollout_batch_size(rollout_result)
-            assert actual_size == expected_size, (
-                f"Expected rollout result size {expected_size} from rollout rank {src_rank}, "
-                f"got batch size {actual_size}."
-            )
-
-            rollout_results.append(rollout_result)
-
-        return RolloutResult.merge_rollout_results(rollout_results)
+        return self.recv_from(
+            group_name=self.cfg.rollout.group_name,
+            channel=input_channel,
+            tag=f"{mode}_rollout_results",
+            batch_size=self._rollout_stage_batch_size(mode),
+            merge_fn=RolloutResult.merge_rollout_results,
+            infer_batch_size_fn=_infer_rollout_batch_size,
+        )
 
     @Worker.timer("compute_bootstrap_rewards")
     def compute_bootstrap_rewards(
@@ -813,8 +790,8 @@ class EnvWorker(Worker):
     ) -> None:
         """Send split env batches to mapped rollout ranks.
 
-        Each destination rank receives one split batch via a stable key built from
-        ``src_rank``, ``dst_rank`` and ``mode``.
+        Each destination rank receives one routed split batch through the scheduler
+        routing helper.
 
         Args:
             rollout_channel: Channel carrying env->rollout outputs.
@@ -822,14 +799,19 @@ class EnvWorker(Worker):
             mode: Rollout mode, either ``"train"`` or ``"eval"``.
         """
         assert mode in ["train", "eval"], f"{mode=} is not supported"
-        dst_ranks_and_sizes = self.dst_rank_map[f"rollout_{mode}"]
-        split_sizes = [size for _, size in dst_ranks_and_sizes]
-        env_batches = split_dict(env_batch, split_sizes)
-        for (rank, _), env_batch_i in zip(dst_ranks_and_sizes, env_batches):
-            rollout_channel.put(
-                item=env_batch_i,
-                key=CommMapper.build_channel_key(self._rank, rank, extra=f"{mode}_obs"),
-            )
+        self.send_to(
+            group_name=self.cfg.rollout.group_name,
+            channel=rollout_channel,
+            data=env_batch,
+            tag=f"{mode}_rollout_results",
+            batch_size=self._rollout_stage_batch_size(mode),
+            split_fn=split_dict,
+        )
+
+    def _rollout_stage_batch_size(self, mode: Literal["train", "eval"]) -> int:
+        """Return the logical env/rollout batch size for one pipeline stage."""
+        env_cfg = self.cfg.env[mode]
+        return env_cfg.total_num_envs // self.stage_num
 
     def send_reward_input(
         self,
