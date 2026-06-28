@@ -1005,6 +1005,27 @@ def validate_embodied_cfg(cfg):
             if cfg.env.get("eval", None) is not None
             else None
         )
+        if cfg.get("reward", {}).get("use_reward_model", False):
+            reward_model_cfg = cfg.reward.get("model", {})
+            if (
+                reward_model_cfg.get("model_type") == "history_vlm"
+                and str(reward_model_cfg.get("inference_backend", "")).lower()
+                == "sglang"
+            ):
+                for removed_key in ("sglang_server_args", "sglang_router_args"):
+                    assert removed_key not in reward_model_cfg, (
+                        f"reward.model.{removed_key} is no longer supported for "
+                        "Ray-managed SGLang reward serving. Use "
+                        "reward.model.sglang_engine_args for supported engine options."
+                    )
+                engine_args = reward_model_cfg.get("sglang_engine_args", {})
+                unsupported_engine_args = sorted(
+                    set(engine_args.keys()) - {"max_running_requests"}
+                )
+                assert not unsupported_engine_args, (
+                    "Unsupported reward.model.sglang_engine_args keys: "
+                    f"{unsupported_engine_args}. Supported keys: ['max_running_requests']."
+                )
         if cfg.algorithm.loss_type == "embodied_sac":
             pending_step_window = int(cfg.reward.get("pending_step_window", 0))
             assert pending_step_window >= 0, (

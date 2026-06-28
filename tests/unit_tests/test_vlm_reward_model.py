@@ -251,6 +251,7 @@ def _make_sglang_cfg() -> OmegaConf:
                     "input_on_done": False,
                 }
             },
+            "_runtime_sglang_api_base": "http://router:30000/v1",
         }
     )
 
@@ -812,9 +813,6 @@ def test_sglang_reward_server_registers_reward_lora_path():
         {
             "model_path": "/models/Qwen3-VL",
             "lora_path": "/checkpoints/qwentrend-lora",
-            "sglang_server_args": {
-                "served_model_name": "qwentrend-reward",
-            },
         }
     )
 
@@ -824,51 +822,50 @@ def test_sglang_reward_server_registers_reward_lora_path():
     )
 
     assert server_cfg.enable_lora is True
-    assert server_cfg.lora_paths == ["qwentrend-reward=/checkpoints/qwentrend-lora"]
+    assert server_cfg.lora_paths == ["Qwen3-VL=/checkpoints/qwentrend-lora"]
 
 
-def test_sglang_reward_server_keeps_explicit_lora_paths():
+def test_sglang_reward_server_rejects_removed_server_args():
     reward_model_cfg = OmegaConf.create(
         {
             "model_path": "/models/Qwen3-VL",
             "lora_path": "/checkpoints/qwentrend-lora",
             "sglang_server_args": {
-                "served_model_name": "qwentrend-reward",
-                "lora_paths": ["custom-reward=/custom/adapter"],
+                "api_base": "http://router:30000/v1",
             },
         }
     )
 
-    server_cfg = _build_server_cfg(
-        reward_model_cfg,
-        component_placement=_FakeComponentPlacement(),
-    )
+    with pytest.raises(ValueError, match="sglang_server_args"):
+        should_launch_sglang_reward_server(
+            OmegaConf.create(
+                {
+                    "reward": {
+                        "use_reward_model": True,
+                        "model": {
+                            **OmegaConf.to_container(reward_model_cfg, resolve=True),
+                            "model_type": "history_vlm",
+                            "inference_backend": "sglang",
+                        },
+                    }
+                }
+            )
+        )
 
-    assert server_cfg.enable_lora is True
-    assert server_cfg.lora_paths == ["custom-reward=/custom/adapter"]
 
-
-def test_sglang_reward_server_stack_launches_router_and_writes_api_base(
+def test_sglang_reward_server_stack_launches_router_and_injects_runtime_api_base(
     monkeypatch,
 ):
     cfg = OmegaConf.create(
         {
             "reward": {
                 "use_reward_model": True,
-                "server_group_name": "RewardServerGroup",
-                "router_group_name": "RewardRouterGroup",
                 "model": {
                     "model_path": "/models/QwenTrend",
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "sglang_server_args": {
-                        "served_model_name": "qwentrend-reward",
-                        "server_startup_timeout": 12,
+                    "sglang_engine_args": {
                         "max_running_requests": 16,
-                    },
-                    "sglang_router_args": {
-                        "router_node_rank": 0,
-                        "policy": "cache_aware",
                     },
                 },
             }
@@ -890,14 +887,15 @@ def test_sglang_reward_server_stack_launches_router_and_writes_api_base(
     assert server_cfg.model_path == "/models/QwenTrend"
     assert server_cfg.tp_size == 2
     assert server_cfg.enable_multimodal is True
-    assert server_cfg.served_model_name == "qwentrend-reward"
+    assert server_cfg.served_model_name == "QwenTrend"
     assert server_cfg.max_running_requests == 16
     assert router_cfg.policy == "cache_aware"
-    assert cfg.reward.model.sglang_server_args.api_base == "http://router:32000/v1"
+    assert cfg.reward.model._runtime_sglang_api_base == "http://router:32000/v1"
+    assert "sglang_server_args" not in cfg.reward.model
     assert stack.router_group.registered_urls == ["http://server-0:31000"]
-    assert stack.router_group.registration_kwargs == [{"timeout": 12.0}]
-    assert _FakeServerWorker.launcher.launch_kwargs["name"] == "RewardServerGroup"
-    assert _FakeRouterWorker.launcher.launch_kwargs["name"] == "RewardRouterGroup"
+    assert stack.router_group.registration_kwargs == [{"timeout": 600.0}]
+    assert _FakeServerWorker.launcher.launch_kwargs["name"] == "SGLangRewardServerGroup"
+    assert _FakeRouterWorker.launcher.launch_kwargs["name"] == "SGLangRewardRouterGroup"
 
     stack.stop()
     assert stack.router_group is None
@@ -958,23 +956,41 @@ def test_sglang_reward_timing_recorder_exposes_compatibility_metrics():
     assert metrics["media_convert_ms"] == metrics["image_encode_ms"]
 
 
-def test_sglang_reward_server_skips_user_managed_api_base():
+def test_history_vlm_sglang_rejects_public_server_args():
+    cfg = _make_sglang_cfg()
+    cfg.sglang_server_args = {"api_base": "http://router:30000/v1"}
+
+    with pytest.raises(ValueError, match="sglang_server_args is no longer supported"):
+        _TestHistoryVLMSGLangRewardModel(cfg)
+
+
+def test_history_vlm_sglang_requires_runtime_api_base():
+    cfg = _make_sglang_cfg()
+    del cfg._runtime_sglang_api_base
+
+    with pytest.raises(ValueError, match="_runtime_sglang_api_base must be set"):
+        _TestHistoryVLMSGLangRewardModel(cfg)
+
+
+def test_sglang_reward_server_rejects_removed_router_args():
     cfg = OmegaConf.create(
         {
             "reward": {
                 "use_reward_model": True,
                 "model": {
+                    "model_path": "/models/QwenTrend",
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "sglang_server_args": {
-                        "api_base": "http://server:30000/v1",
+                    "sglang_router_args": {
+                        "policy": "cache_aware",
                     },
                 },
             }
         }
     )
 
-    assert not should_launch_sglang_reward_server(cfg)
+    with pytest.raises(ValueError, match="sglang_router_args"):
+        should_launch_sglang_reward_server(cfg)
 
 
 def test_qwentrend_sglang_reward_yaml_uses_dedicated_config():
@@ -997,10 +1013,12 @@ def test_qwentrend_sglang_reward_yaml_uses_dedicated_config():
     assert e2e_sglang_cfg.cluster.component_placement.reward == "0-0"
     assert sglang_cfg.cluster.component_placement.reward_server == "0-1:0"
     assert e2e_sglang_cfg.cluster.component_placement.reward_server == "0-1:0"
-    assert "sglang_router_args" in sglang_cfg.reward.model
-    assert "sglang_router_args" in e2e_sglang_cfg.reward.model
-    assert "tp_size" not in sglang_cfg.reward.model.sglang_server_args
-    assert "tp_size" not in e2e_sglang_cfg.reward.model.sglang_server_args
+    assert "sglang_server_args" not in sglang_cfg.reward.model
+    assert "sglang_server_args" not in e2e_sglang_cfg.reward.model
+    assert "sglang_router_args" not in sglang_cfg.reward.model
+    assert "sglang_router_args" not in e2e_sglang_cfg.reward.model
+    assert sglang_cfg.reward.model.sglang_engine_args.max_running_requests == 64
+    assert e2e_sglang_cfg.reward.model.sglang_engine_args.max_running_requests == 64
     assert sglang_cfg.runner.logger.experiment_name != (
         hf_cfg.runner.logger.experiment_name
     )
@@ -1015,9 +1033,6 @@ def test_sglang_reward_server_should_launch_without_api_base():
                     "model_path": "/models/QwenTrend",
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "sglang_server_args": {
-                        "port": 30125,
-                    },
                 },
             }
         }

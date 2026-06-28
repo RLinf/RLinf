@@ -277,16 +277,8 @@ reward:
     do_sample: false
     temperature: 0.0
     use_chat_template: true
-    sglang_server_args:
-      host: "127.0.0.1"
-      port: 30000
-      server_startup_timeout: 600
-      served_model_name: qwentrend-reward
+    sglang_engine_args:
       max_running_requests: 64
-    sglang_router_args:
-      policy: cache_aware
-      worker_startup_timeout_secs: 1800
-      request_timeout_secs: 1800
 
 critic:
   use_critic_model: false

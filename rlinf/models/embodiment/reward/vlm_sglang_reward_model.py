@@ -17,7 +17,6 @@ import io
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -88,48 +87,20 @@ def _to_plain_dict(value: Any) -> dict[str, Any]:
     return dict(value)
 
 
-def _normalize_sglang_server_args(value: Any) -> dict[str, Any]:
-    return {
-        str(key).replace("_", "-"): val for key, val in _to_plain_dict(value).items()
-    }
-
-
-def _infer_lora_adapter_name(
-    sglang_server_args: dict[str, Any],
-    model_name: str,
-) -> str:
-    adapter_name = sglang_server_args.get("lora-name") or sglang_server_args.get(
-        "lora-adapter-name"
-    )
-    if adapter_name:
-        return str(adapter_name)
-
-    lora_paths = sglang_server_args.get("lora-paths")
-    if isinstance(lora_paths, str):
-        lora_paths = [lora_paths]
-    if isinstance(lora_paths, list) and lora_paths:
-        first_lora_path = lora_paths[0]
-        if isinstance(first_lora_path, dict):
-            adapter_name = first_lora_path.get("lora_name")
-            if adapter_name:
-                return str(adapter_name)
-            first_lora_path = first_lora_path.get("lora_path")
-        if isinstance(first_lora_path, str):
-            if "=" in first_lora_path:
-                return first_lora_path.split("=", 1)[0]
-            return Path(first_lora_path).name
-
-    return model_name
+def _derive_served_model_name(model_path: Any) -> str:
+    name = str(model_path).rstrip("/").split("/")[-1]
+    return name or "history_vlm_reward"
 
 
 class HistoryVLMSGLangRewardModel(BaseRewardModel):
     """SGLang HTTP-backed embodied history VLM reward model.
 
     The embodied entrypoint starts a Ray-managed SGLang OpenAI-compatible
-    server/router stack for this backend unless ``sglang_server_args.api_base``
-    points to a user-managed server. The reward worker submits one
-    ``/v1/chat/completions`` request per valid history-window input in parallel
-    and leaves request scheduling and concurrency limits to the SGLang server.
+    server/router stack for this backend and injects its router ``/v1`` URL
+    into a private runtime field.
+    The reward worker submits one ``/v1/chat/completions`` request per valid
+    history-window input in parallel and leaves request scheduling and
+    concurrency limits to that Ray-managed SGLang server stack.
     """
 
     def __init__(self, cfg: DictConfig):
@@ -143,31 +114,22 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.gt_success_bonus = float(cfg.get("gt_success_bonus", 0.0))
-        sglang_server_args = _normalize_sglang_server_args(
-            cfg.get("sglang_server_args", {})
-        )
-        self.api_base = str(sglang_server_args.get("api-base") or "").rstrip("/")
-        if not self.api_base:
-            host = str(sglang_server_args.get("host", "127.0.0.1"))
-            port = int(sglang_server_args.get("port", 30000))
-            self.api_base = f"http://{host}:{port}/v1"
-        self.model_name = str(
-            sglang_server_args.get("served-model-name")
-            or Path(str(self.model_path)).name
-            or self.model_path
-        )
-        self.lora_path = cfg.get("lora_path")
-        self.lora_name = None
-        if (
-            self.lora_path
-            or sglang_server_args.get("lora-paths")
-            or sglang_server_args.get("lora-name")
-            or sglang_server_args.get("lora-adapter-name")
-        ):
-            self.lora_name = _infer_lora_adapter_name(
-                sglang_server_args,
-                self.model_name,
+        if cfg.get("sglang_server_args", None) is not None:
+            raise ValueError(
+                "reward.model.sglang_server_args is no longer supported. "
+                "The SGLang reward server is always Ray-managed; use "
+                "reward.model.sglang_engine_args for supported engine options."
             )
+        self.api_base = str(cfg.get("_runtime_sglang_api_base") or "").rstrip("/")
+        if not self.api_base:
+            raise ValueError(
+                "reward.model._runtime_sglang_api_base must be set by the "
+                "Ray-managed SGLang reward server launcher before constructing "
+                f"{self.__class__.__name__}."
+            )
+        self.model_name = _derive_served_model_name(self.model_path)
+        self.lora_path = cfg.get("lora_path")
+        self.lora_name = self.model_name if self.lora_path else None
         self.request_timeout = float(cfg.get("request_timeout", 120.0))
         self.image_format = str(cfg.get("image_format", "jpeg")).lower()
         if self.image_format not in {"jpeg", "png"}:

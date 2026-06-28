@@ -259,6 +259,11 @@ class EmbodiedRewardWorker(Worker):
             if inference_backend is not None:
                 model_cfg.inference_backend = inference_backend
             model_cfg.num_envs = self.local_num_train_envs
+        if self._standalone_realworld and inference_backend == "sglang":
+            raise ValueError(
+                "standalone_realworld reward workers do not support the SGLang "
+                "backend. Use the Ray-managed embodied reward server path instead."
+            )
         model = reward_cls(model_cfg)
 
         return model

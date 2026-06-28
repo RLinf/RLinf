@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf, open_dict
@@ -26,13 +25,12 @@ from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
-_RLINF_SERVER_CONFIG_KEYS = {
-    "api_base",
-    "lora_adapter_name",
-    "lora_name",
-    "server_startup_timeout",
-}
-_RLINF_ROUTER_CONFIG_KEYS = {"router_node_rank"}
+_REWARD_SERVER_GROUP_NAME = "SGLangRewardServerGroup"
+_REWARD_ROUTER_GROUP_NAME = "SGLangRewardRouterGroup"
+_REWARD_ROUTER_NODE_RANK = 0
+_REWARD_SERVER_STARTUP_TIMEOUT = 600.0
+_REWARD_SGLANG_ENGINE_ALLOWED_KEYS = {"max_running_requests"}
+_REMOVED_REWARD_SGLANG_CONFIG_KEYS = ("sglang_server_args", "sglang_router_args")
 
 
 def _to_plain(value: Any) -> Any:
@@ -56,38 +54,34 @@ def _get_reward_model_cfg(cfg: DictConfig) -> DictConfig:
     return cfg.get("reward", {}).get("model", {})
 
 
-def _get_sglang_server_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
-    return _normalize_config_dict(reward_model_cfg.get("sglang_server_args", {}))
+def _get_sglang_engine_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
+    engine_args = _normalize_config_dict(reward_model_cfg.get("sglang_engine_args", {}))
+    unsupported = sorted(set(engine_args) - _REWARD_SGLANG_ENGINE_ALLOWED_KEYS)
+    if unsupported:
+        raise ValueError(
+            "Unsupported reward.model.sglang_engine_args keys: "
+            f"{unsupported}. Supported keys: "
+            f"{sorted(_REWARD_SGLANG_ENGINE_ALLOWED_KEYS)}."
+        )
+    return engine_args
 
 
-def _get_sglang_router_args(reward_model_cfg: DictConfig) -> dict[str, Any]:
-    return _normalize_config_dict(reward_model_cfg.get("sglang_router_args", {}))
+def _derive_served_model_name(model_path: Any) -> str:
+    name = str(model_path).rstrip("/").split("/")[-1]
+    return name or "history_vlm_reward"
 
 
-def _infer_lora_adapter_name(
-    server_args: dict[str, Any],
-    served_model_name: str,
-) -> str:
-    adapter_name = server_args.get("lora_name") or server_args.get("lora_adapter_name")
-    if adapter_name:
-        return str(adapter_name)
-
-    lora_paths = server_args.get("lora_paths")
-    if isinstance(lora_paths, str):
-        lora_paths = [lora_paths]
-    if isinstance(lora_paths, list) and lora_paths:
-        first_lora_path = lora_paths[0]
-        if isinstance(first_lora_path, dict):
-            adapter_name = first_lora_path.get("lora_name")
-            if adapter_name:
-                return str(adapter_name)
-            first_lora_path = first_lora_path.get("lora_path")
-        if isinstance(first_lora_path, str):
-            if "=" in first_lora_path:
-                return first_lora_path.split("=", 1)[0]
-            return Path(first_lora_path).name
-
-    return served_model_name
+def _validate_ray_managed_sglang_config(reward_model_cfg: DictConfig) -> None:
+    removed_keys = [
+        key for key in _REMOVED_REWARD_SGLANG_CONFIG_KEYS if key in reward_model_cfg
+    ]
+    if removed_keys:
+        raise ValueError(
+            "Ray-managed SGLang reward serving does not support user-configured "
+            f"{removed_keys}. Use reward.model.sglang_engine_args for supported "
+            "SGLang engine options."
+        )
+    _get_sglang_engine_args(reward_model_cfg)
 
 
 def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
@@ -99,7 +93,8 @@ def should_launch_sglang_reward_server(cfg: DictConfig) -> bool:
         return False
     if str(model_cfg.get("inference_backend", "")).lower() != "sglang":
         return False
-    return not bool(_get_sglang_server_args(model_cfg).get("api_base", None))
+    _validate_ray_managed_sglang_config(model_cfg)
+    return True
 
 
 @dataclass
@@ -166,22 +161,11 @@ def _build_server_cfg(
         raise ValueError(
             "reward.model.model_path must be set to launch SGLang reward server."
         )
+    _validate_ray_managed_sglang_config(reward_model_cfg)
 
     inferred_tp_size = _infer_reward_server_tp_size(component_placement)
-    server_args = _get_sglang_server_args(reward_model_cfg)
-    explicit_tp_size = server_args.get("tp_size", None)
-    if explicit_tp_size is not None and int(explicit_tp_size) != inferred_tp_size:
-        raise ValueError(
-            "reward.model.sglang_server_args.tp_size must match the number of "
-            f"GPUs per reward_server worker ({inferred_tp_size}), got "
-            f"{explicit_tp_size}."
-        )
-
-    served_model_name = (
-        server_args.get("served_model_name")
-        or Path(str(model_path)).name
-        or "history_vlm_reward"
-    )
+    engine_args = _get_sglang_engine_args(reward_model_cfg)
+    served_model_name = _derive_served_model_name(model_path)
     defaults: dict[str, Any] = {
         "model_path": model_path,
         "served_model_name": served_model_name,
@@ -197,39 +181,20 @@ def _build_server_cfg(
     lora_path = reward_model_cfg.get("lora_path")
     if lora_path:
         defaults["enable_lora"] = True
-        if not server_args.get("lora_paths"):
-            lora_name = _infer_lora_adapter_name(server_args, served_model_name)
-            defaults["lora_paths"] = [f"{lora_name}={lora_path}"]
-    server_cfg = {
-        **defaults,
-        **{
-            key: value
-            for key, value in server_args.items()
-            if key not in _RLINF_SERVER_CONFIG_KEYS and value is not None
-        },
-    }
+        defaults["lora_paths"] = [f"{served_model_name}={lora_path}"]
+    server_cfg = {**defaults, **engine_args}
     server_cfg["tp_size"] = inferred_tp_size
     return OmegaConf.create(server_cfg)
 
 
-def _build_router_cfg(reward_model_cfg: DictConfig) -> tuple[DictConfig, int]:
-    router_args = _get_sglang_router_args(reward_model_cfg)
-    router_node_rank = int(router_args.pop("router_node_rank", 0))
+def _build_router_cfg() -> tuple[DictConfig, int]:
     defaults: dict[str, Any] = {
         "policy": "cache_aware",
         "log_level": "warn",
         "worker_startup_timeout_secs": 1800,
         "request_timeout_secs": 1800,
     }
-    router_cfg = {
-        **defaults,
-        **{
-            key: value
-            for key, value in router_args.items()
-            if key not in _RLINF_ROUTER_CONFIG_KEYS and value is not None
-        },
-    }
-    return OmegaConf.create(router_cfg), router_node_rank
+    return OmegaConf.create(defaults), _REWARD_ROUTER_NODE_RANK
 
 
 def launch_sglang_reward_server_stack(
@@ -242,10 +207,8 @@ def launch_sglang_reward_server_stack(
         return None
 
     model_cfg = _get_reward_model_cfg(cfg)
-    server_args = _get_sglang_server_args(model_cfg)
-    server_startup_timeout = float(server_args.get("server_startup_timeout", 600.0))
     server_cfg = _build_server_cfg(model_cfg, component_placement)
-    router_cfg, router_node_rank = _build_router_cfg(model_cfg)
+    router_cfg, router_node_rank = _build_router_cfg()
     SGLangServerWorker, SGLangRouterWorker = _load_sglang_server_worker_classes()
 
     server_group = None
@@ -256,7 +219,7 @@ def launch_sglang_reward_server_stack(
             sglang_cfg=server_cfg,
         ).launch(
             cluster=cluster,
-            name=cfg.reward.get("server_group_name", "SGLangRewardServerGroup"),
+            name=_REWARD_SERVER_GROUP_NAME,
             placement_strategy=component_placement.get_strategy("reward_server"),
         )
         router_group = SGLangRouterWorker.create_group(
@@ -264,7 +227,7 @@ def launch_sglang_reward_server_stack(
             router_cfg=router_cfg,
         ).launch(
             cluster=cluster,
-            name=cfg.reward.get("router_group_name", "SGLangRewardRouterGroup"),
+            name=_REWARD_ROUTER_GROUP_NAME,
             placement_strategy=NodePlacementStrategy(node_ranks=[router_node_rank]),
         )
 
@@ -276,15 +239,13 @@ def launch_sglang_reward_server_stack(
         for server_url in server_group.get_server_url().wait():
             router_group.register_server(
                 server_url,
-                timeout=server_startup_timeout,
+                timeout=_REWARD_SERVER_STARTUP_TIMEOUT,
             ).wait()
 
         router_url = router_group.get_router_url().wait()[0].rstrip("/")
         api_base = f"{router_url}/v1"
         with open_dict(model_cfg):
-            if model_cfg.get("sglang_server_args", None) is None:
-                model_cfg.sglang_server_args = {}
-            model_cfg.sglang_server_args.api_base = api_base
+            model_cfg._runtime_sglang_api_base = api_base
 
         logger.info("SGLang reward router is ready at %s", api_base)
         return SGLangRewardServerStack(

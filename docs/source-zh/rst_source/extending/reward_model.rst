@@ -386,56 +386,114 @@ reward 后端所需的依赖。
        lora_path: "/path/to/qwen3-vl-lora-checkpoint"
 
 SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history
-buffer 配置。当设置 ``inference_backend: sglang`` 时，embodied entrypoint 会
-启动 Ray 管理的 SGLang ``reward_server`` group 和 ``sglang-router`` group，
-并把 router 的 ``/v1`` URL 写入 reward model config。reward worker 通过兼容
-OpenAI 的 ``/v1/chat/completions`` API 为每个有效 history-window input 并发
-提交一个请求。每个请求会将历史帧作为多个 ``image_url`` data URL 放在同一个
+buffer 配置。设置 ``inference_backend: sglang`` 后，RLinf 会启用 Ray-managed
+SGLang reward serving。
+
+RLinf 会为你连接这些角色：
+
+.. list-table::
+   :header-rows: 1
+
+   * - 组件
+     - 作用
+   * - ``reward_server``
+     - 运行一个或多个 SGLang server replica。每个 replica 使用一个
+       ``reward_server`` process 分配到的 GPU。
+   * - 内部 router
+     - 接收所有 ``reward_server`` URL，并把 reward model request 路由到这些
+       replica。
+   * - ``reward``
+     - 运行 RLinf reward worker。它构造并聚合 reward input，然后通过兼容
+       OpenAI 的 ``/v1/chat/completions`` API 调用内部 router。
+
+使用 SGLang 时，``reward`` worker 不承载 VLM。它只调用 launcher 注入的内部
+router endpoint。不要在 reward YAML 里配置手动 endpoint、socket 绑定或 router
+lifecycle 字段。每个请求会将历史帧作为多个 ``image_url`` data URL 放在同一个
 chat message 中发送，因此该后端不使用进程内 ``sglang.Engine``，也不生成临时
 MP4/video 输入。
 
 当 SGLang 后端设置了 ``reward.model.lora_path`` 时，RLinf 会启用 SGLang
 LoRA，将该路径注册为 adapter，并在每个兼容 OpenAI 的请求中选择这个 adapter。
-adapter 名默认使用 ``sglang_server_args.served_model_name``；如果手动提供
-``sglang_server_args.lora_paths``，可以用 ``sglang_server_args.lora_name``
-保持请求侧选择的 adapter 名一致。
+RLinf 会根据 ``reward.model.model_path`` 推导 served model 和 adapter 名。
 
-通过覆盖 backend 字段选择 SGLang：
+用下面的最小配置选择 SGLang，并声明 serving placement：
 
 .. code-block:: yaml
 
+   cluster:
+     component_placement:
+       reward: 1
+       reward_server: 0-3:0-1  # TP=2, DP=2
+
    reward:
+     use_reward_model: true
+     reward_mode: history_buffer
+     pending_step_window: 4
+     aggregate_request_count: 2
      model:
        model_type: "history_vlm"
        inference_backend: sglang
-
-RLinf 默认会启动 Ray 管理的 server 和 router。也可以覆盖 server/router 暴露
-参数，或指向用户自己管理的 server。请求并发由 SGLang server 控制，例如通过
-``sglang_server_args.max_running_requests`` 设置：
-
-.. code-block:: yaml
-
-   reward:
-     model:
-       model_type: "history_vlm"
-       inference_backend: sglang
-       sglang_server_args:
-         host: "127.0.0.1"
-         port: 30000
-         server_startup_timeout: 600
-         served_model_name: qwentrend-reward
-         # api_base: "http://127.0.0.1:30000/v1"  # 设置后使用用户自管 server
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
+       sglang_engine_args:
          max_running_requests: 64
-       sglang_router_args:
-         policy: cache_aware
-         worker_startup_timeout_secs: 1800
-         request_timeout_secs: 1800
 
-自动启动 SGLang 时，请配置 ``cluster.component_placement.reward_server``。
-RLinf 会通过 Ray 按该 placement 启动 SGLang server worker，并根据每个
-server worker 分配到的 GPU 数推断 ``tp_size``。例如 ``reward_server: 0-1:0``
-表示通过 placement 配置分配 GPU，用户不需要在 Ray 之外手动绑定 server GPU。
-``reward`` component 仍然是调用 API 的 reward worker。
+使用 ``cluster.component_placement.reward_server`` 同时控制 tensor parallelism
+和 replica 数：
+
+.. list-table::
+   :header-rows: 1
+
+   * - Placement
+     - 含义
+     - 适用场景
+   * - ``reward_server: 0-1:0``
+     - 一个 SGLang server replica 使用 GPU 0 和 1。``TP=2``，``DP=1``。
+     - VLM 单卡放不下。
+   * - ``reward_server: 0-3``
+     - 四个 SGLang server replicas 各使用一张 GPU。``TP=1``，``DP=4``。
+     - VLM 单卡能放下，并且你想提高吞吐。
+   * - ``reward_server: 0-3:0-1``
+     - 两个 SGLang server replicas 各使用两张 GPU。``TP=2``，``DP=2``。
+     - VLM 需要 TP，同时你也需要 replica 吞吐。
+   * - ``reward_server: all``
+     - 在当前 reward 路径里，每个资源 rank 启动一个 replica。通常是
+       ``TP=1``，``DP=<GPU 数量>``。
+     - VLM 单卡能放下，并且列出的每张 GPU 都可以服务 reward request。
+
+这里的 TP 是一个 SGLang server process 分配到的 GPU 数。增大 TP 可以放下更大
+的 VLM。DP 是注册到内部 router 的 SGLang server process 数。增大 DP 可以让
+router 把 request 分发到更多 replica，从而提高吞吐。
+
+这个 reward 路径不同于通用 SGLang server launcher：通用 launcher 可以先选择
+全部 GPU，再用显式的 ``tensor_parallel_size`` 重新打包 server replica。reward
+路径不暴露这个字段。它直接从每个 ``reward_server`` process 分到几张 GPU 推断
+TP，并从 ``reward_server`` process 数推断 DP。
+
+分别调三层并发：
+
+.. list-table::
+   :header-rows: 1
+
+   * - 字段
+     - 层级
+     - 含义
+   * - ``reward.pending_step_window``
+     - Env worker
+     - env rollout 最多保留多少个尚未回收的 reward request。``0`` 表示每次发出
+       request 后立即等待。
+   * - ``reward.aggregate_request_count``
+     - Reward worker
+     - 最多将多少个已收到的 reward request 合并成一次 model call。
+       ``pending_step_window`` 为 ``0`` 时必须为 ``1``；否则必须小于等于
+       ``pending_step_window``。
+   * - ``reward.model.sglang_engine_args.max_running_requests``
+     - SGLang server replica
+     - 每个 SGLang replica 内部最多同时处理多少请求。它不设置 TP、DP，也不替代
+       env 侧 pending window。
+
+reward worker 会上报 ``reward/input_queue_depth`` 和
+``reward/input_queue_depth_max``，你可以用它们判断 request 是否在进入 SGLang
+router 之前堆积。
 
 启动 MLP RL：
 

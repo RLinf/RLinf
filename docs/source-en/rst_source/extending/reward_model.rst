@@ -392,60 +392,119 @@ configure ``lora_path`` if needed:
        lora_path: "/path/to/qwen3-vl-lora-checkpoint"
 
 The SGLang backend reuses the same QwenTrend input builder, reward parser, and
-history buffer settings. When ``inference_backend: sglang`` is selected, the
-embodied entrypoint launches a Ray-managed SGLang ``reward_server`` group plus
-an ``sglang-router`` group, then writes the router's ``/v1`` URL into the reward
-model config. The reward worker calls the router's OpenAI-compatible
-``/v1/chat/completions`` API by submitting one request per valid history-window
-input concurrently. Each request sends history frames as multiple
-``image_url`` data URLs in a single chat message, so the backend does not use
-in-process ``sglang.Engine`` or temporary MP4/video inputs.
+history buffer settings. Select it with ``inference_backend: sglang`` to enable
+Ray-managed SGLang reward serving.
+
+RLinf wires these roles for you:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Component
+     - What It Does
+   * - ``reward_server``
+     - Runs one or more SGLang server replicas. Each replica owns the GPUs
+       assigned to one ``reward_server`` process.
+   * - Internal router
+     - Receives every ``reward_server`` URL and routes reward-model requests
+       across the replicas.
+   * - ``reward``
+     - Runs the RLinf reward worker. It builds and aggregates reward inputs, then
+       calls the internal router through the OpenAI-compatible
+       ``/v1/chat/completions`` API.
+
+The ``reward`` worker does not run the VLM when you use SGLang. It only calls
+the internal router endpoint injected by the launcher. Do not configure manual
+endpoints, socket bindings, or router lifecycle fields in the reward YAML.
+Each request sends history frames as multiple ``image_url`` data URLs in a
+single chat message, so the backend does not use in-process ``sglang.Engine`` or
+temporary MP4/video inputs.
 
 When ``reward.model.lora_path`` is set for the SGLang backend, RLinf enables
 SGLang LoRA, registers that path as an adapter, and selects the adapter in
-each OpenAI-compatible request. The adapter name defaults to
-``sglang_server_args.served_model_name``; override it with
-``sglang_server_args.lora_name`` if you provide custom
-``sglang_server_args.lora_paths``.
+each OpenAI-compatible request. RLinf derives the served model and adapter name
+from ``reward.model.model_path``.
 
-Select SGLang by overriding the backend field:
+Use this minimal block to select SGLang and show serving placement:
 
 .. code-block:: yaml
 
+   cluster:
+     component_placement:
+       reward: 1
+       reward_server: 0-3:0-1  # TP=2, DP=2
+
    reward:
+     use_reward_model: true
+     reward_mode: history_buffer
+     pending_step_window: 4
+     aggregate_request_count: 2
      model:
        model_type: "history_vlm"
        inference_backend: sglang
-
-RLinf starts the Ray-managed server and router by default. You can override the
-server/router surface or point to a user-managed server. Request concurrency is
-controlled by the SGLang server, for example through
-``sglang_server_args.max_running_requests``:
-
-.. code-block:: yaml
-
-   reward:
-     model:
-       model_type: "history_vlm"
-       inference_backend: sglang
-       sglang_server_args:
-         host: "127.0.0.1"
-         port: 30000
-         server_startup_timeout: 600
-         served_model_name: qwentrend-reward
-         # api_base: "http://127.0.0.1:30000/v1"  # set to use a user-managed server
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
+       sglang_engine_args:
          max_running_requests: 64
-       sglang_router_args:
-         policy: cache_aware
-         worker_startup_timeout_secs: 1800
-         request_timeout_secs: 1800
 
-For auto-launched SGLang, configure ``cluster.component_placement.reward_server``.
-RLinf launches the SGLang server worker through Ray using that placement and
-infers ``tp_size`` from the GPUs allocated to each server worker. For example,
-``reward_server: 0-1:0`` allocates GPUs through the placement config, so users
-do not need to manually bind server GPUs outside Ray. The ``reward`` component
-remains the API-calling reward worker.
+Use ``cluster.component_placement.reward_server`` to control both tensor
+parallelism and replica count:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Placement
+     - Meaning
+     - Use It When
+   * - ``reward_server: 0-1:0``
+     - One SGLang server replica owns GPUs 0 and 1. ``TP=2``, ``DP=1``.
+     - The VLM does not fit on one GPU.
+   * - ``reward_server: 0-3``
+     - Four SGLang server replicas each own one GPU. ``TP=1``, ``DP=4``.
+     - The VLM fits on one GPU and you want higher throughput.
+   * - ``reward_server: 0-3:0-1``
+     - Two SGLang server replicas each own two GPUs. ``TP=2``, ``DP=2``.
+     - The VLM needs TP and you also want replica throughput.
+   * - ``reward_server: all``
+     - One replica per resource rank in the current reward path. Usually
+       ``TP=1`` and ``DP=<number of GPUs>``.
+     - The VLM fits on one GPU and every listed GPU can serve reward requests.
+
+Here, TP is the number of GPUs assigned to one SGLang server process. Increase
+it to fit a larger VLM. DP is the number of SGLang server processes registered
+with the internal router. Increase it to let the router spread requests across
+more replicas.
+
+This reward path differs from the generic SGLang server launcher: the generic
+launcher can take all selected GPUs and repack them with an explicit
+``tensor_parallel_size``. The reward path does not expose that field. It infers
+TP from how many GPUs each ``reward_server`` process receives, and DP from the
+number of ``reward_server`` processes.
+
+Tune the three concurrency layers separately:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Field
+     - Layer
+     - Meaning
+   * - ``reward.pending_step_window``
+     - Env worker
+     - Maximum number of outstanding reward requests the env rollout may keep
+       before waiting. ``0`` waits immediately after each request.
+   * - ``reward.aggregate_request_count``
+     - Reward worker
+     - Maximum number of received reward requests to merge into one model call.
+       It must be ``1`` when ``pending_step_window`` is ``0`` and otherwise must
+       be less than or equal to ``pending_step_window``.
+   * - ``reward.model.sglang_engine_args.max_running_requests``
+     - SGLang server replica
+     - Maximum in-flight requests inside each SGLang replica. It does not set
+       TP, DP, or the env pending window.
+
+The reward worker reports ``reward/input_queue_depth`` and
+``reward/input_queue_depth_max`` so you can see whether requests are building up
+before they reach the SGLang router.
 
 Launch the MLP RL run with:
 

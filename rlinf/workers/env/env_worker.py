@@ -856,7 +856,7 @@ class EnvWorker(Worker):
         env_output: EnvOutput,
         stage_id: int | None = None,
         last_run: bool = False,
-    ) -> tuple[dict[str, Any] | None, dict[str, list[int]] | None]:
+    ) -> tuple[dict[str, Any], dict[str, list[int]] | None]:
         if self.reward_mode in {"per_step", "history_buffer"}:
             observations = (
                 env_output.final_obs
@@ -865,8 +865,12 @@ class EnvWorker(Worker):
             )
         elif self.reward_mode == "terminal" and env_output.final_obs is not None:
             observations = env_output.final_obs
+        elif self.reward_mode == "terminal":
+            raise ValueError(
+                "Cannot build terminal reward request without env_output.final_obs."
+            )
         else:
-            return None, None
+            raise ValueError(f"Unsupported reward.reward_mode: {self.reward_mode!r}")
         reward_input = dict(observations)
         if env_output.env_infos is not None:
             reward_input["env_infos"] = self._select_reward_env_infos(
@@ -922,9 +926,6 @@ class EnvWorker(Worker):
                 stage_id=stage_id,
                 last_run=last_run,
             )
-        if reward_input is None:
-            return False, None
-
         with self.worker_timer("reward_request_send"):
             self.send_reward_input(send_channel=send_channel, reward_input=reward_input)
         return True, history_lengths

@@ -205,45 +205,43 @@ def test_reward_worker_rejects_inconsistent_aggregated_reward_input_keys():
         asyncio.run(worker.recv_aggregated_reward_inputs(channel, mode="train"))
 
 
-def test_reward_worker_initializes_sglang_model_without_launching_server():
+def test_standalone_realworld_reward_worker_rejects_sglang_backend(monkeypatch):
     worker = object.__new__(EmbodiedRewardWorker)
     worker._standalone_realworld = True
     worker.device = "cpu"
+    worker.local_num_train_envs = 1
     worker.cfg = OmegaConf.create(
         {
             "reward": {
                 "model": {
                     "model_type": "history_vlm",
                     "inference_backend": "sglang",
-                    "sglang_server_args": {
-                        "api_base": "http://router:30000/v1",
-                    },
                 },
             }
         }
     )
 
-    class _Model:
-        def __init__(self):
-            self.to_device = None
-            self.eval_called = False
+    monkeypatch.setattr(
+        "rlinf.workers.reward.reward_worker.get_reward_model_class",
+        lambda model_type, inference_backend=None: object,
+    )
 
-        def to(self, device):
-            self.to_device = device
-            return self
+    with pytest.raises(ValueError, match="standalone_realworld"):
+        worker.model_provider_func()
 
-        def eval(self):
-            self.eval_called = True
 
-    model = _Model()
-    worker.model_provider_func = lambda: model
+def test_env_terminal_reward_request_requires_final_obs():
+    worker = object.__new__(EnvWorker)
+    worker.reward_mode = "terminal"
 
-    EmbodiedRewardWorker.init_worker(worker)
+    env_output = EnvOutput(
+        obs={"states": torch.zeros((1, 1), dtype=torch.float32)},
+        final_obs=None,
+        dones=torch.zeros((1, 1), dtype=torch.bool),
+    )
 
-    assert worker.model is model
-    assert model.to_device == "cpu"
-    assert model.eval_called is True
-    assert not hasattr(worker, "_sglang_reward_server")
+    with pytest.raises(ValueError, match="terminal reward request"):
+        worker.build_reward_request(env_output)
 
 
 def test_env_pending_reward_drain_preserves_fifo_order():
