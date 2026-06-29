@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -23,6 +25,7 @@ from rlinf.scheduler import (
     merge_batches,
     split_batch,
 )
+from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -166,6 +169,56 @@ def test_build_route_channel_key_is_stable():
         0,
         3,
     )
+
+
+def test_env_worker_decoupled_rollout_route_tags():
+    worker = object.__new__(EnvWorker)
+    worker.env_decoupled_mode = False
+    assert worker._env_to_rollout_tag("train") == "train_rollout_results"
+    assert worker._rollout_to_env_tag("train") == "train_rollout_results"
+    assert worker._env_to_rollout_tag("eval") == "eval_rollout_results"
+    assert worker._rollout_to_env_tag("eval") == "eval_rollout_results"
+
+    worker.env_decoupled_mode = True
+    assert worker._env_to_rollout_tag("train") == "rollout_results"
+    assert worker._rollout_to_env_tag("train") == "train_rollout_results"
+    assert worker._env_to_rollout_tag("eval") == "eval_rollout_results"
+    assert worker._rollout_to_env_tag("eval") == "eval_rollout_results"
+
+
+class _FakeChannel:
+    def __init__(self):
+        self.keys = []
+
+    def put(self, item, key, async_op):
+        self.keys.append(key)
+        return object()
+
+
+def test_rollout_recorded_routes_do_not_double_prefix_mode():
+    worker = object.__new__(MultiStepRolloutWorker)
+    worker._worker_address = SimpleNamespace(root_group_name="rollout")
+    channel = _FakeChannel()
+
+    worker.batch_router = {"rollout_results": ["3_0_train_rollout_results"]}
+    worker.send_to_recorded_batch_routes(
+        group_name="env",
+        channel=channel,
+        data=torch.arange(2),
+        tag="rollout_results",
+        split_sizes=[2],
+    )
+    assert channel.keys[-1][3] == "train_rollout_results"
+
+    worker.batch_router = {"eval_rollout_results": ["4_0_eval_eval_rollout_results"]}
+    worker.send_to_recorded_batch_routes(
+        group_name="env",
+        channel=channel,
+        data=torch.arange(2),
+        tag="eval_rollout_results",
+        split_sizes=[2],
+    )
+    assert channel.keys[-1][3] == "eval_rollout_results"
 
 
 def test_split_and_merge_nested_batches():

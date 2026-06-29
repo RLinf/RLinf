@@ -20,7 +20,6 @@ from contextlib import contextmanager
 from typing import Any, Optional
 
 import numpy as np
-import requests
 import torch
 from omegaconf import DictConfig, OmegaConf
 from PIL import Image
@@ -34,6 +33,7 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     get_reward_parser,
 )
+from rlinf.utils import internal_http
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -309,7 +309,7 @@ class HistoryVLMSGLangRewardModel(BaseRewardModel):
 
     def _chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.api_base}/chat/completions"
-        response = requests.post(url, json=payload, timeout=self.request_timeout)
+        response = internal_http.post(url, json=payload, timeout=self.request_timeout)
         response.raise_for_status()
         return response.json()
 

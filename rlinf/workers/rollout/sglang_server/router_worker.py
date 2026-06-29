@@ -30,6 +30,7 @@ from omegaconf import DictConfig, OmegaConf
 from sglang_router.router_args import RouterArgs
 
 from rlinf.scheduler import Worker
+from rlinf.utils import internal_http
 
 # RouterArgs fields the launch_router CLI does NOT accept and that we
 # therefore must not forward as flags.
@@ -167,7 +168,11 @@ class SGLangRouterWorker(Worker):
         # SIGTERM to it doesn't propagate to the Ray actor (and vice
         # versa). stdout/stderr inherit the actor's so router logs land
         # in the same place as the worker's own logs.
-        self._proc = subprocess.Popen(cmd, start_new_session=True)
+        self._proc = subprocess.Popen(
+            cmd,
+            env=internal_http.direct_request_env(),
+            start_new_session=True,
+        )
 
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
@@ -195,7 +200,7 @@ class SGLangRouterWorker(Worker):
                     f"becoming healthy."
                 )
             try:
-                if requests.get(url, timeout=5).status_code == 200:
+                if internal_http.get(url, timeout=5).status_code == 200:
                     return
             except requests.exceptions.RequestException as e:
                 last_err = e
@@ -219,7 +224,8 @@ class SGLangRouterWorker(Worker):
             return False
         try:
             return (
-                requests.get(f"{self._router_url}/health", timeout=2).status_code == 200
+                internal_http.get(f"{self._router_url}/health", timeout=2).status_code
+                == 200
             )
         except requests.exceptions.RequestException:
             return False
@@ -261,7 +267,7 @@ class SGLangRouterWorker(Worker):
         """
         assert self._router_url is not None, "init_router() has not been called."
         self.log_info(f"Registering worker {server_url!r} ({worker_type}) on router.")
-        resp = requests.post(
+        resp = internal_http.post(
             f"{self._router_url}/workers",
             json={"url": server_url, "worker_type": worker_type},
             timeout=60,
@@ -279,7 +285,7 @@ class SGLangRouterWorker(Worker):
         status: dict = {}
         while time.perf_counter() < deadline:
             time.sleep(poll_interval)
-            r = requests.get(f"{self._router_url}/workers/{worker_id}", timeout=10)
+            r = internal_http.get(f"{self._router_url}/workers/{worker_id}", timeout=10)
             if r.status_code == 404:
                 continue  # router hasn't persisted the row yet — keep polling
             r.raise_for_status()
@@ -312,7 +318,7 @@ class SGLangRouterWorker(Worker):
         self.log_info(
             f"Unregistering worker {server_url!r} (id={worker_id}) from router."
         )
-        resp = requests.delete(
+        resp = internal_http.delete(
             f"{self._router_url}/workers/{worker_id}", timeout=timeout
         )
         if resp.status_code == 404:
@@ -339,7 +345,9 @@ class SGLangRouterWorker(Worker):
             body["input_ids"] = input_ids
         if sampling_params is not None:
             body["sampling_params"] = sampling_params
-        resp = requests.post(f"{self._router_url}/generate", json=body, timeout=timeout)
+        resp = internal_http.post(
+            f"{self._router_url}/generate", json=body, timeout=timeout
+        )
         resp.raise_for_status()
         return resp.json()
 

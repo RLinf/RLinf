@@ -984,7 +984,7 @@ EOF
         base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
         echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
-        if uv pip install --no-deps "${base_url}/${wheel_name}"; then
+        if uv pip install "${base_url}/${wheel_name}"; then
             return 0
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
@@ -1376,7 +1376,7 @@ install_gr00t_model() {
     install_common_embodied_deps
 
     local gr00t_path
-    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/RLinf/Isaac-GR00T.git -b n1.5-release)
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git -b n1.5-release)
     uv pip install -e "$gr00t_path" --no-deps
     uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
     case "$ENV_NAME" in

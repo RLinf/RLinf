@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Callable, ClassVar, Optional, Union
 
 import torch
 import torch.nn.functional as F
-import yaml
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
@@ -1086,30 +1085,10 @@ def validate_embodied_cfg(cfg):
             train_env_type == SupportedEnvType.BEHAVIOR
             or eval_env_type == SupportedEnvType.BEHAVIOR
         ):
-            import omnigibson as og
-
-            behavior_env_cfg = (
-                cfg.env.train
-                if cfg.env.get("train", None) is not None
-                else cfg.env.eval
-            )
-            assert behavior_env_cfg.base_config_name == "r1pro_behavior", (
-                f"Only r1pro_behavior is supported for omnigibson, got {behavior_env_cfg.base_config_name}"
-            )
-            # Load the pre-selected configuration and set the online_sampling flag
-            config_filename = os.path.join(
-                og.example_config_path, "r1pro_behavior.yaml"
-            )
-            omnigibson_cfg = yaml.load(
-                open(config_filename, "r"), Loader=yaml.FullLoader
-            )
-            omnigibson_cfg = OmegaConf.create(omnigibson_cfg)
-            with open_dict(omnigibson_cfg):
-                omnigibson_cfg.robots[0].obs_modalities = ["rgb", "depth", "proprio"]
             if cfg.env.get("train", None) is not None:
-                cfg.env.train.omnigibson_cfg = omnigibson_cfg
-            if cfg.env.get("eval", None) is not None:
-                cfg.env.eval.omnigibson_cfg = omnigibson_cfg
+                assert cfg.env.train.base_config_name == "r1pro_behavior", (
+                    f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
+                )
     return cfg
 
 

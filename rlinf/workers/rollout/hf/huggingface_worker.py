@@ -126,6 +126,7 @@ class MultiStepRolloutWorker(Worker):
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
             self.batch_router = {
                 "rollout_results": [],
+                "eval_rollout_results": [],
             }
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
@@ -231,6 +232,60 @@ class MultiStepRolloutWorker(Worker):
             split_fn=split_fn,
         )
 
+    async def recv_train_env_output(
+        self, input_channel: Channel
+    ) -> tuple[dict[str, Any], list[int] | None]:
+        if not self.env_decoupled_mode:
+            return (
+                await self.recv_env_output(
+                    input_channel=input_channel,
+                    tag="train_rollout_results",
+                    batch_size=self.train_batch_size,
+                ),
+                None,
+            )
+        recv_result = None
+        while recv_result is None:
+            recv_result = await self.recv_from_and_record_batch_routes_with_timeout(
+                group_name=self.cfg.env.group_name,
+                channel=input_channel,
+                tag="rollout_results",
+                batch_size=self.train_batch_size,
+                merge_fn=self._merge_obs_batches,
+                infer_batch_size_fn=self._infer_env_batch_size,
+                timeout_time=0.02,
+                recv_queue_size=self.rollout_queue_size,
+            )
+            if recv_result is None:
+                await asyncio.sleep(0.001)
+        env_output, split_sizes = recv_result
+        return env_output, split_sizes
+
+    def send_train_rollout_result(
+        self,
+        output_channel: Channel,
+        rollout_result: RolloutResult,
+        split_sizes: list[int] | None,
+    ) -> None:
+        if not self.env_decoupled_mode:
+            self.send_rollout_result(
+                output_channel=output_channel,
+                rollout_result=rollout_result,
+                tag="train_rollout_results",
+                batch_size=self.train_batch_size,
+                split_fn=self._split_rollout_result,
+            )
+            return
+        assert split_sizes is not None
+        self.send_to_recorded_batch_routes(
+            group_name=self.cfg.env.group_name,
+            channel=output_channel,
+            data=rollout_result,
+            tag="rollout_results",
+            split_fn=self._split_rollout_result,
+            split_sizes=split_sizes,
+        )
+
     async def recv_from_and_record_batch_routes_with_timeout(
         self,
         group_name: str,
@@ -299,7 +354,7 @@ class MultiStepRolloutWorker(Worker):
 
         def _finalize(received_items: list[Any]):
             if not received_items:
-                assert False, "received_items is empty"
+                return None
 
             # get the tag from the received_items
             _, _, _, tag = split_channel_message(received_items[0]["batch_index"])
@@ -326,35 +381,22 @@ class MultiStepRolloutWorker(Worker):
                 return received_items[0]
             return merge_batches(received_items), split_sizes
 
-        timeout_time = timeout_time + time.time()
-        get_items = None
+        deadline = timeout_time + time.time()
         max_item_num = len(plan.entries)
         get_item_num = 0
         received_items = []
         while get_item_num < max_item_num:
-            # get the items
-            if get_items is None:
-                get_items = channel.get(
-                    key=plan.entries[get_item_num].key, async_op=True
+            try:
+                received_items.append(
+                    channel.get_nowait(key=plan.entries[get_item_num].key)
                 )
-            else:
-                # Now, the worker is getting a item, sleep to wait
-                await asyncio.sleep(0.0001)
-
-            # handle the get_items finish
-            if get_items.done():
-                # save the data and init the get_items to get next data
-                received_items.append(await get_items.async_wait())
-                get_items = None
                 get_item_num = get_item_num + 1
+                continue
+            except asyncio.QueueEmpty:
+                if time.time() >= deadline:
+                    break
 
-            # handle the timeout case
-            if time.time() >= timeout_time:
-                max_item_num = get_item_num
-                if get_items is not None:
-                    received_items.append(await get_items.async_wait())
-                    get_items = None
-                    get_item_num = get_item_num + 1
+            await asyncio.sleep(0.0001)
 
         return _finalize(received_items)
 
@@ -433,12 +475,19 @@ class MultiStepRolloutWorker(Worker):
                 "batch_index": batch_index,
                 "batch": payload,
             }
+            response_tag = tag
+            if (
+                mode is not None
+                and response_tag is not None
+                and not response_tag.startswith(f"{mode}_")
+            ):
+                response_tag = f"{mode}_{response_tag}"
             key = build_send_key(
                 src_group_name=self.worker_address.root_group_name,
                 dst_group_name=group_name,
                 src_rank=None,
                 dst_rank=send_rank,
-                tag=tag if mode is None else f"{mode}_{tag}",
+                tag=response_tag,
                 route_key=route_key,
             )
             work = channel.put(
@@ -637,10 +686,8 @@ class MultiStepRolloutWorker(Worker):
         self.update_dagger_beta()
         for _ in range(self.n_train_chunk_steps):
             for _ in range(self.num_pipeline_stages):
-                env_output = await self.recv_env_output(
-                    input_channel=input_channel,
-                    tag="train_rollout_results",
-                    batch_size=self.train_batch_size,
+                env_output, split_sizes = await self.recv_train_env_output(
+                    input_channel
                 )
                 actions, result = self.predict(env_output["obs"])
 
@@ -671,19 +718,13 @@ class MultiStepRolloutWorker(Worker):
                         dtype=torch.float32,
                     ),
                 )
-                self.send_rollout_result(
-                    output_channel=output_channel,
-                    rollout_result=rollout_result,
-                    tag="train_rollout_results",
-                    batch_size=self.train_batch_size,
-                    split_fn=self._split_rollout_result,
+                self.send_train_rollout_result(
+                    output_channel,
+                    rollout_result,
+                    split_sizes,
                 )
         for _ in range(self.num_pipeline_stages):
-            env_output = await self.recv_env_output(
-                input_channel=input_channel,
-                tag="train_rollout_results",
-                batch_size=self.train_batch_size,
-            )
+            env_output, split_sizes = await self.recv_train_env_output(input_channel)
             actions, result = self.predict(env_output["obs"])
 
             rollout_result = RolloutResult(
@@ -693,12 +734,10 @@ class MultiStepRolloutWorker(Worker):
                     env_output.get("final_obs", None)
                 ),
             )
-            self.send_rollout_result(
-                output_channel=output_channel,
-                rollout_result=rollout_result,
-                tag="train_rollout_results",
-                batch_size=self.train_batch_size,
-                split_fn=self._split_rollout_result,
+            self.send_train_rollout_result(
+                output_channel,
+                rollout_result,
+                split_sizes,
             )
 
     @Worker.timer("rollout/generate")
@@ -724,30 +763,55 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.reload_model()
         if self.env_decoupled_mode:
-            while True:
-                (
-                    env_output,
-                    split_sizes,
-                ) = await self.recv_from_and_record_batch_routes_with_timeout(
-                    group_name=self.cfg.env.group_name,
-                    channel=input_channel,
-                    tag="rollout_results",
-                    batch_size=self.eval_batch_size,
-                    merge_fn=self._merge_obs_batches,
-                    infer_batch_size_fn=self._infer_env_batch_size,
-                    timeout_time=0.02,
-                    recv_queue_size=self.rollout_queue_size,
-                )
+            idle_timeout = self.cfg.rollout.get("decoupled_eval_idle_timeout", 10.0)
+            env_world_size = self.placement.get_world_size("env")
+            total_eval_batches = (
+                env_world_size
+                * self.eval_rollout_epoch
+                * self.n_eval_chunk_steps
+                * self.num_pipeline_stages
+            )
+            idle = False
+            for _ in tqdm(
+                range(total_eval_batches),
+                desc="Evaluating Rollout Epochs",
+                disable=(self._rank != 0),
+            ):
+                recv_result = None
+                deadline = time.time() + idle_timeout
+                while recv_result is None:
+                    recv_result = (
+                        await self.recv_from_and_record_batch_routes_with_timeout(
+                            group_name=self.cfg.env.group_name,
+                            channel=input_channel,
+                            tag="eval_rollout_results",
+                            batch_size=self.eval_batch_size,
+                            merge_fn=self._merge_obs_batches,
+                            infer_batch_size_fn=self._infer_env_batch_size,
+                            timeout_time=0.02,
+                            recv_queue_size=self.rollout_queue_size,
+                        )
+                    )
+                    if recv_result is not None:
+                        break
+                    if time.time() >= deadline:
+                        idle = True
+                        break
+                    await asyncio.sleep(0.001)
+                if idle:
+                    break
+                env_output, split_sizes = recv_result
                 actions, _ = self.predict(env_output["obs"], mode="eval")
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
-                self.send_to_recorded_batch_routes(
+                send_work = self.send_to_recorded_batch_routes(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
                     data=actions,
-                    tag="rollout_results",
+                    tag="eval_rollout_results",
                     split_sizes=split_sizes,
                 )
+                await send_work.async_wait()
         else:
             for _ in tqdm(
                 range(self.eval_rollout_epoch),
@@ -771,8 +835,8 @@ class MultiStepRolloutWorker(Worker):
                             batch_size=self.eval_batch_size,
                         )
 
-            if self.enable_offload:
-                self.offload_model()
+        if self.enable_offload:
+            self.offload_model()
 
     def offload_model(self):
         if self.enable_cuda_graph:
