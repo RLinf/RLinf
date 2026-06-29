@@ -1,0 +1,9 @@
+defaults:
+  - qwen2.5-1.5b-routerserver-multiturn
+
+eval: true
+
+rollout:
+  model:
+    model_path: /path/to/eval/hf_model
+

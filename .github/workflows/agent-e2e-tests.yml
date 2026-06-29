@@ -102,14 +102,35 @@ jobs:
         run: |
           export UV_LINK_MODE=copy
           source .venv/bin/activate
-          uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0"
+          uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0" "sglang-router==0.3.2"
 
-      - name: AgentLightning calc_x multiturn 
+      - name: AgentLightning calc_x enginehttp 
         timeout-minutes: 20
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/agentlightning/run.sh
+          bash tests/e2e_tests/agentlightning/run.sh qwen2.5-1.5b-enginehttp-multiturn
+
+      - name: AgentLightning calc_x enginehttp eval
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agentlightning/run.sh qwen2.5-1.5b-enginehttp-multiturn_eval
+
+      - name: AgentLightning calc_x routerserver train
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agentlightning/run.sh qwen2.5-1.5b-routerserver-multiturn
+
+      - name: AgentLightning calc_x routerserver eval
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/agentlightning/run.sh qwen2.5-1.5b-routerserver-multiturn_eval
 
       - name: Clean up
         run: |

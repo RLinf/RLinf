@@ -150,7 +150,7 @@ data:
   validation_shuffle: False
   seed: 42
   train_data_paths: ["/workspace/dataset/calc/train.parquet"]
-  val_data_paths: ["/workspace/dataset/calc/test.parquet"]
+  val_data_paths: ["/workspace/dataset/calc/test_mini.parquet"]
 
 actor:
   group_name: "ActorGroup"
@@ -294,3 +294,4 @@ critic:
 agentlightning:
   # E2E: fewer runners than example base
   n_runners: 1
+  openai_response_tokens: true

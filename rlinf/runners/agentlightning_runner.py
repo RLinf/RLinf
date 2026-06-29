@@ -25,8 +25,8 @@ from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
+from rlinf.runners.reasoning_eval_runner import ReasoningEvalRunner
 from rlinf.runners.reasoning_runner import ReasoningRunner
-from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import check_progress
@@ -213,7 +213,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
                     _, save_model, is_train_end = check_progress(
                         self.global_steps,
                         self.max_steps,
-                        self.cfg.runner.val_check_interval,
+                        self.cfg.runner.get("val_check_interval", 0),
                         self.cfg.runner.save_interval,
                         1.0,
                         run_time_exceeded=run_time_exceeded,
@@ -285,7 +285,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         self.metric_logger.finish()
 
 
-class AgentLightningEvalRunner:
+class AgentLightningEvalRunner(ReasoningEvalRunner):
     def __init__(
         self,
         cfg: DictConfig,
@@ -300,20 +300,22 @@ class AgentLightningEvalRunner:
         if "CUDA_LAUNCH_BLOCKING" not in os.environ:
             os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
-        self.cfg = cfg
-        self.placement = placement
-        self.val_dataset = val_dataset
-        self.rollout = rollout
+        super().__init__(
+            cfg=cfg,
+            placement=placement,
+            val_dataset=val_dataset,
+            rollout=rollout,
+            reward=None,
+        )
+
         self.actor = actor
         self.store = store
         self.adapter = adapter
         self.agentlightning_rollout_worker = agentlightning_rollout_worker
 
-        self.dataloader_channel = Channel.create("DataLoader")
-        self.rollout_channel = Channel.create("Rollout")
-        self._build_dataloader()
+    def _build_dataloader(self, val_dataset, collate_fn=None):
+        self.val_dataset = val_dataset
 
-    def _build_dataloader(self):
         def agl_collate_fn(data_list: list[dict]) -> dict[str, Any]:
             batch = {}
             keys = list(data_list[0].keys())
@@ -321,16 +323,23 @@ class AgentLightningEvalRunner:
                 batch[key] = [item[key] for item in data_list]
             return batch
 
-        val_batch_size = len(self.val_dataset)
+        if collate_fn is None:
+            collate_fn = agl_collate_fn
+
+        self.val_batch_size = len(self.val_dataset)
+        self.total_batch_size = self.val_batch_size
 
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
-            batch_size=val_batch_size,
+            batch_size=self.val_batch_size,
             num_workers=self.cfg.data.num_workers,
             shuffle=self.cfg.data.get("validation_shuffle", True),
             drop_last=False,
-            collate_fn=agl_collate_fn,
+            collate_fn=collate_fn,
         )
+
+        assert len(self.val_dataloader) >= 1, "Validation dataloader is empty!"
+        logging.info(f"Size of val dataloader: {len(self.val_dataloader)}")
 
     def init_rollout_workers(self):
         logging.info(
