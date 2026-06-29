@@ -233,9 +233,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.2-franka
+    rlinf/rlinf:agentic-rlinf0.3-franka
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
 
 目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
 
@@ -321,9 +321,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+    rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 

@@ -28,10 +28,10 @@ AMD ROCm 芯片上的 LIBERO 强化学习
       --network host \
       --name rlinf-amd-libero \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-rocm6.4
+      rlinf/rlinf:agentic-rlinf0.3-libero-rocm6.4
       # 对于中国大陆用户，可以使用以下方式加速下载：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-rocm6.4
-      # rocm7.2.3: rlinf/rlinf:agentic-rlinf0.2-libero-rocm7.2.3
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-rocm6.4
+      # rocm7.2.3: rlinf/rlinf:agentic-rlinf0.3-libero-rocm7.2.3
 
 进入容器后，切换到 OpenVLA-OFT 环境：
 

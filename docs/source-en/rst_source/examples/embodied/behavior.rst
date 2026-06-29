@@ -88,20 +88,32 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-behavior``:
+**Option 1: Docker image** — BEHAVIOR ships **two separate images**, one per model:
+``agentic-rlinf0.3-behavior`` (OpenVLA-OFT) and ``agentic-rlinf0.3-behavior-openpi``
+(OpenPI). Each image bundles only its own virtual environment, so pull the one that
+matches the model you intend to train (there is no ``switch_env`` between them):
 
 .. code-block:: bash
 
+   # OpenVLA-OFT model:
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-behavior
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
+      rlinf/rlinf:agentic-rlinf0.3-behavior
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior
 
-   # Inside the container, switch to the model's virtual environment:
-   source switch_env openvla-oft        # or: source switch_env openpi
+   # OpenPI model (separate image):
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+
+   # In either image the matching virtual environment is already activated by default.
 
 **Option 2: Custom environment** — install bundle ``--env behavior``:
 

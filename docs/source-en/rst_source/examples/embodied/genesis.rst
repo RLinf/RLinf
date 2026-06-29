@@ -86,10 +86,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-genesis
+      rlinf/rlinf:agentic-rlinf0.3-genesis
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-genesis
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-genesis
 
 **Custom environment**
 
