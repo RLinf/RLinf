@@ -765,18 +765,27 @@ class EnvWorker(Worker):
         ]
 
     def finish_rollout(self, mode="train"):
+        record_video_cls = None
         # reset
         if mode == "train":
+            if self.cfg.env.train.video_cfg.save_video:
+                from rlinf.envs.wrappers import RecordVideo
+
+                record_video_cls = RecordVideo
             for i in range(self.stage_num):
-                if self.cfg.env.train.video_cfg.save_video and hasattr(
-                    self.env_list[i], "flush_video"
+                if record_video_cls is not None and isinstance(
+                    self.env_list[i], record_video_cls
                 ):
                     self.env_list[i].flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
+            if self.cfg.env.eval.video_cfg.save_video:
+                from rlinf.envs.wrappers import RecordVideo
+
+                record_video_cls = RecordVideo
             for i in range(self.stage_num):
-                if self.cfg.env.eval.video_cfg.save_video and hasattr(
-                    self.eval_env_list[i], "flush_video"
+                if record_video_cls is not None and isinstance(
+                    self.eval_env_list[i], record_video_cls
                 ):
                     self.eval_env_list[i].flush_video()
                 if not self.cfg.env.eval.auto_reset:
@@ -1282,19 +1291,24 @@ class EnvWorker(Worker):
         )
 
     def record_env_metrics(
-        self, env_metrics: dict[str, list], env_info: dict[str, Any], epoch: int
+        self,
+        env_metrics: dict[str, list],
+        env_info: dict[str, Any],
+        epoch: int | None = None,
     ):
         for key, value in env_info.items():
+            metric_values = env_metrics.setdefault(key, [])
             if (
-                not self.cfg.env.train.auto_reset
-                and not self.cfg.env.train.ignore_terminations
+                not self.cfg.env.train.get("auto_reset", False)
+                and not self.cfg.env.train.get("ignore_terminations", False)
+                and epoch is not None
             ):
-                if key in env_metrics and len(env_metrics[key]) > epoch:
-                    env_metrics[key][epoch] = value
+                if len(metric_values) > epoch:
+                    metric_values[epoch] = value
                 else:
-                    env_metrics[key].append(value)
+                    metric_values.append(value)
             else:
-                env_metrics[key].append(value)
+                metric_values.append(value)
 
     def store_last_obs_and_intervened_info(self, env_output_list: list[EnvOutput]):
         self.last_obs_list = [env_output.obs for env_output in env_output_list]
@@ -1449,7 +1463,12 @@ class EnvWorker(Worker):
                         )
 
                     env_outputs[stage_id] = next_env_output
-                    self.record_env_metrics(env_metrics, env_info, epoch)
+                    if (
+                        self.cfg.env.train.get("auto_reset", False)
+                        or self.cfg.env.train.get("ignore_terminations", False)
+                        or chunk_step_idx == self.n_train_chunk_steps - 1
+                    ):
+                        self.record_env_metrics(env_metrics, env_info, epoch)
 
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
