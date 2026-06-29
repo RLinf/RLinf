@@ -91,10 +91,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-isaaclab
+      rlinf/rlinf:agentic-rlinf0.3-isaaclab
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-isaaclab
 
 Switch to the matching virtual environment inside the image:
 
