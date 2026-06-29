@@ -76,6 +76,10 @@ _suppress_video_logging()
 from rlinf.data.datasets.recap.utils import (  # noqa: E402
     load_return_stats_from_dataset,
 )
+from rlinf.data.process.mixture_config import (  # noqa: E402
+    read_mixture_config,
+    write_mixture_config,
+)
 
 
 def _infer_return_range(
@@ -90,17 +94,10 @@ def _infer_return_range(
 
     mins, maxs = [], []
     for dp in dataset_paths:
-        dp_min, dp_max = None, None
-        mc_path = dp / "mixture_config.yaml"
-        if mc_path.exists():
-            try:
-                mc = yaml.safe_load(mc_path.read_text()) or {}
-                dp_min, dp_max = (
-                    mc.get("global_return_min"),
-                    mc.get("global_return_max"),
-                )
-            except yaml.YAMLError:
-                pass
+        # Read per-dataset return range from meta/mixture_config.yaml — the
+        # same location compute_advantages writes it to.
+        mc = read_mixture_config(dp)
+        dp_min, dp_max = mc.get("global_return_min"), mc.get("global_return_max")
         if dp_min is None or dp_max is None:
             s_min, s_max = load_return_stats_from_dataset(dp)
             dp_min = dp_min if dp_min is not None else s_min
@@ -527,13 +524,8 @@ def update_mixture_config(
     global_return_min: float | None,
     global_return_max: float | None,
 ) -> None:
-    """Update mixture_config.yaml for the current relabeling run."""
-    mixture_path = mixture_root / "mixture_config.yaml"
-    if mixture_path.exists():
-        with open(mixture_path, "r") as f:
-            mixture = yaml.safe_load(f) or {}
-    else:
-        mixture = {}
+    """Update meta/mixture_config.yaml for the current relabeling run."""
+    mixture = read_mixture_config(mixture_root)
 
     mixture["datasets"] = [{"name": p.name, "weight": 1.0} for p in dataset_paths]
     if global_return_min is not None:
@@ -554,8 +546,7 @@ def update_mixture_config(
     mixture["unified_threshold"] = unified_threshold
     mixture["positive_quantile"] = positive_quantile
 
-    with open(mixture_path, "w") as f:
-        yaml.dump(mixture, f, default_flow_style=False)
+    mixture_path = write_mixture_config(mixture_root, mixture)
 
     logger.info(f"  Saved mixture_config.yaml to: {mixture_path}")
 
@@ -766,9 +757,8 @@ def main() -> None:
                     if dst.exists():
                         shutil.rmtree(dst)
                     shutil.copytree(src, dst)
-            src_mixture = ds_path / "mixture_config.yaml"
-            if src_mixture.exists():
-                shutil.copy2(src_mixture, out_ds / "mixture_config.yaml")
+            # meta/mixture_config.yaml is copied as part of the meta/ subdir
+            # above; update_mixture_config rewrites it under target_path/meta.
             target_path = out_ds
         else:
             target_path = ds_path

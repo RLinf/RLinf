@@ -57,6 +57,7 @@ from matplotlib.animation import FFMpegWriter, FuncAnimation
 from tqdm import tqdm
 
 from rlinf.data.datasets.recap.utils import decode_image_struct_batch
+from rlinf.data.process.mixture_config import read_mixture_config
 
 
 def to_numpy(x):
@@ -847,29 +848,21 @@ def main():
     # Detect threshold: CLI arg > mixture_config.yaml (tag-aware) > infer from data
     threshold = args.threshold
     if threshold is None:
-        # Try to read from mixture_config.yaml in dataset dir or parent dir
-        for config_dir in [dataset_path, dataset_path.parent]:
-            mixture_path = config_dir / "mixture_config.yaml"
-            if mixture_path.exists():
-                import yaml
-
-                with open(mixture_path, "r") as f:
-                    mixture_cfg = yaml.safe_load(f) or {}
-                # Tag-aware lookup: tags.<tag>.unified_threshold > unified_threshold
-                if tag and "tags" in mixture_cfg and tag in mixture_cfg["tags"]:
-                    tag_cfg = mixture_cfg["tags"][tag]
-                    if "unified_threshold" in tag_cfg:
-                        threshold = float(tag_cfg["unified_threshold"])
-                        print(
-                            f"Auto-detected threshold from {mixture_path} [tags.{tag}]: {threshold:.4f}"
-                        )
-                        break
-                elif "unified_threshold" in mixture_cfg:
-                    threshold = float(mixture_cfg["unified_threshold"])
-                    print(
-                        f"Auto-detected threshold from {mixture_path}: {threshold:.4f}"
-                    )
-                    break
+        # Read from meta/mixture_config.yaml — the same location
+        # compute_advantages / relabel_advantages write thresholds to.
+        mixture_path = dataset_path / "meta" / "mixture_config.yaml"
+        mixture_cfg = read_mixture_config(dataset_path)
+        # Tag-aware lookup: tags.<tag>.unified_threshold > unified_threshold
+        if tag and tag in mixture_cfg.get("tags", {}):
+            tag_cfg = mixture_cfg["tags"][tag]
+            if "unified_threshold" in tag_cfg:
+                threshold = float(tag_cfg["unified_threshold"])
+                print(
+                    f"Auto-detected threshold from {mixture_path} [tags.{tag}]: {threshold:.4f}"
+                )
+        elif "unified_threshold" in mixture_cfg:
+            threshold = float(mixture_cfg["unified_threshold"])
+            print(f"Auto-detected threshold from {mixture_path}: {threshold:.4f}")
 
     if threshold is None:
         # Infer from advantages parquet: min advantage_continuous where advantage==True
