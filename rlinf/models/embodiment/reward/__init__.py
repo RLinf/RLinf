@@ -15,8 +15,19 @@
 """Reward models for embodied RL."""
 
 from importlib import import_module
+from typing import TYPE_CHECKING
 
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+
+if TYPE_CHECKING:
+    from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
+    from rlinf.models.embodiment.reward.vlm_reward_model import (
+        HistoryVLMRewardModel,
+        VLMRewardModel,
+    )
+    from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
+        HistoryVLMSGLangRewardModel,
+    )
 
 __all__ = [
     "BaseRewardModel",
