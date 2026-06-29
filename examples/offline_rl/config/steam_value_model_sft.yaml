@@ -48,7 +48,9 @@ data:
     - observation.images.wrist
 
   k: 32
-  only_success: true
+  # false = train on all episodes (success + failure); true = keep only
+  # successful episodes (rollout datasets only; sft is always all-success).
+  only_success: false
   min_episode_length: null
 
   train_num_workers: 8

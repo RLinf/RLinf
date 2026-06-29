@@ -589,11 +589,14 @@ class PairDataset(_BasePairDataset):
         dataset_type: Must be explicitly provided and be either ``"sft"``
             or ``"rollout"``. ``sft`` datasets are treated as all-success
             episodes, so they do not require an ``is_success`` column.
-        only_success: Must be explicitly provided and currently must be
-            ``True``. Keeps only episodes whose per-frame ``is_success``
-            column marks the episode as successful. For LeRobot datasets
-            this checks one representative frame row per episode rather
-            than relying on episode-level metadata files.
+        only_success: Must be explicitly provided. When ``True``, keeps only
+            episodes whose per-frame ``is_success`` column marks the episode
+            as successful (for LeRobot datasets this checks one representative
+            frame row per episode rather than relying on episode-level
+            metadata files). When ``False``, every episode is used regardless
+            of outcome and no ``is_success`` column is required. ``sft``
+            datasets are always all-success, so this only affects
+            ``rollout`` datasets.
         min_episode_length: Optional override for the minimum-length
             floor (default ``k + 1``).
         length_scale_enabled: If ``True`` (multi-bin modes only), the signed
@@ -695,14 +698,10 @@ class PairDataset(_BasePairDataset):
         if only_success is None:
             raise ValueError(
                 "PairDataset requires an explicit only_success argument. "
-                "Set only_success=true."
+                "Set only_success=true to keep only successful episodes, or "
+                "only_success=false to use every episode (success and failure)."
             )
         self.only_success = bool(only_success)
-        if not self.only_success:
-            raise ValueError(
-                "PairDataset currently only supports only_success=True. "
-                "Please remove the override or set only_success=true."
-            )
 
         self._source = _LeRobotSource(
             dataset_path,
