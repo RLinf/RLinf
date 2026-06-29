@@ -24,6 +24,11 @@ advantage:
     gemma3_path: /path/to/gemma-3-270m
 
 data:
+  # openpi variant the value model was trained with ("pi0" / "pi05"). Must
+  # match recap_value_model_sft.yaml's data.model_type — it selects the input
+  # transforms and quantile normalization used to score frames.
+  model_type: "pi05"
+
   train_data_paths:
     - dataset_path: "/path/to/sft_dataset"
       robot_type: "libero"

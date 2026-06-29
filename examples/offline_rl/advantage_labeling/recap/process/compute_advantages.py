@@ -209,6 +209,11 @@ def _parse_value_model_kwargs(cfg: DictConfig) -> dict:
     return {
         "checkpoint_dir": checkpoint_path,
         "env_type": robot_type,
+        # Must match the value model's training-time openpi variant ("pi0" /
+        # "pi05"); it selects the input transforms and quantile normalization.
+        # Dropping it would silently force pi05 and corrupt advantages for a
+        # pi0-trained critic.
+        "model_type": data_cfg.get("model_type", "pi05"),
         "num_return_bins": model_cfg.get("num_bins", 201),
         "return_min": model_cfg.get("v_min", -1.0),
         "return_max": model_cfg.get("v_max", 0.0),
