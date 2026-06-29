@@ -97,10 +97,10 @@ OpenPI π₀ 策略。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-robocasa
+      rlinf/rlinf:agentic-rlinf0.3-robocasa
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-robocasa
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-robocasa
 
 在镜像中切换到 OpenPI 虚拟环境：
 

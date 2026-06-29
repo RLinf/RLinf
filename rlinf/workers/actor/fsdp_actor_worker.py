@@ -125,6 +125,27 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
     return ret_dict
 
 
+def compute_rollout_train_kl(
+    m_batch: dict, loss_mask: torch.Tensor
+) -> Optional[torch.Tensor]:
+    """
+    Compute the masked mean of absolute difference between rollout and training logprobs.
+
+    Args:
+        m_batch: Dictionary containing 'rollout_logprobs' and 'recomputed_logprobs'.
+        loss_mask: Mask tensor for computing weighted mean.
+
+    Returns:
+        Masked mean of abs(recomputed_logprobs - rollout_logprobs), or None if keys are missing.
+    """
+    if "rollout_logprobs" not in m_batch or "recomputed_logprobs" not in m_batch:
+        return None
+    rollout_logprobs = m_batch["rollout_logprobs"]
+    recomputed_logprobs = m_batch["recomputed_logprobs"]
+    kl = torch.abs(recomputed_logprobs - rollout_logprobs)
+    return masked_mean(kl, loss_mask)
+
+
 class FSDPActor(FSDPModelManager, Worker):
     def __init__(
         self,
@@ -197,6 +218,9 @@ class FSDPActor(FSDPModelManager, Worker):
                 "Dynamic batch size is not supported in pipeline mode."
             )
         self.max_tokens_per_mbs = cfg.runner.get("max_tokens_per_mbs", 2048)
+        self.variable_seq_lengths = self.cfg.actor.model.get(
+            "variable_seq_lengths", False
+        )
 
     def init_worker(self) -> None:
         """
@@ -476,7 +500,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     dim=0,
                 ).to(Worker.torch_device_type)
 
-        if self.enable_dynamic_batch_size:
+        if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             max_seq_len_pack = self.max_tokens_per_mbs
             max_seq_len_unpack = self.cfg.actor.model.encoder_seq_length
             max_prompt_len = self.cfg.data.max_prompt_length
@@ -490,6 +514,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 idx_ends=idx_ends,
                 max_seq_len_pack=max_seq_len_pack,
                 eos_token_id=self.tokenizer.eos_token_id,
+                pad_to_fixed_len=not self.variable_seq_lengths,
             )
 
         with self.amp_context:
@@ -502,8 +527,10 @@ class FSDPActor(FSDPModelManager, Worker):
             )
 
         logits: torch.Tensor = outputs.logits
+
         logits.div_(self.cfg.algorithm.sampling_params.temperature)
-        if self.enable_dynamic_batch_size:
+
+        if self.enable_dynamic_batch_size or self.variable_seq_lengths:
             logprobs = unpack_fsdp_logprobs(
                 logits,
                 input_ids,
@@ -519,26 +546,30 @@ class FSDPActor(FSDPModelManager, Worker):
             logits = logits[:, -self.response_len - 1 : -1, :]
             responses = input_ids[:, -self.response_len :]
             logprobs = self.compute_logprobs(logits, responses)
+
         if calculate_entropy:
             entropy = compute_entropy_from_logits(logits)
-            if self.enable_dynamic_batch_size:
+
+            if self.enable_dynamic_batch_size or self.variable_seq_lengths:
                 entropy = unpack_sequences(
                     entropy, idx_starts, idx_ends, max_seq_len_unpack, pad_val=0
                 )[:, -self.response_len :]
+
             return logprobs, entropy
+
         return logprobs
 
     def inference_step(
         self,
         batch: dict[str, torch.Tensor],
-        rollout_result: RolloutResult,
+        num_sequences: int,
         compute_ref_logprobs: bool,
     ):
         micro_batches_iter, _, dbs_indices = self._split_to_micro_batch(
             batch,
             self.enable_dynamic_batch_size,
             max_tokens_per_mbs=self.max_tokens_per_mbs,
-            split_num=rollout_result.num_sequence
+            split_num=num_sequences
             // self.cfg.algorithm.logprob_forward_micro_batch_size,
         )
         if self.enable_dynamic_batch_size:
@@ -549,19 +580,19 @@ class FSDPActor(FSDPModelManager, Worker):
             )
         micro_batches = list(micro_batches_iter)
 
-        prev_logprobs, ref_logprobs = None, None
+        recomputed_logprobs, ref_logprobs = None, None
 
-        # Prev logprobs
-        prev_logprobs = torch.cat(
+        # Recompute logprobs
+        recomputed_logprobs = torch.cat(
             [self.forward_batch(batch) for batch in micro_batches]
         ).cpu()
 
         if self.enable_dynamic_batch_size:
-            assert len(indices) == prev_logprobs.size(0), (
+            assert len(indices) == recomputed_logprobs.size(0), (
                 f"Dynamic batch size indices length {len(indices)} does not equal "
-                f"output length {prev_logprobs.size(0)}"
+                f"output length {recomputed_logprobs.size(0)}"
             )
-            prev_logprobs = prev_logprobs[revert_indices]
+            recomputed_logprobs = recomputed_logprobs[revert_indices]
 
         # Ref logprobs
         if compute_ref_logprobs:
@@ -584,7 +615,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     )
                     ref_logprobs = ref_logprobs[revert_indices]
 
-        return prev_logprobs, ref_logprobs
+        return recomputed_logprobs, ref_logprobs
 
     def run_inference(
         self,
@@ -645,16 +676,11 @@ class FSDPActor(FSDPModelManager, Worker):
 
             with self.worker_timer():
                 with torch.no_grad():
-                    prev_logprobs, ref_logprobs = self.inference_step(
-                        batch, rollout_result, compute_ref_logprobs
+                    recomputed_logprobs, ref_logprobs = self.inference_step(
+                        batch, rollout_result.num_sequence, compute_ref_logprobs
                     )
 
-                if rollout_result.rollout_logprobs is not None:
-                    # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-                    rollout_result.recompute_prev_logprobs = prev_logprobs
-                else:
-                    # Otherwise, directly store the logprobs in prev_logprobs (the final logprobs used for training)
-                    rollout_result.prev_logprobs = prev_logprobs
+                rollout_result.recomputed_logprobs = recomputed_logprobs
 
                 # Ref logprobs
                 if compute_ref_logprobs:
@@ -723,7 +749,10 @@ class FSDPActor(FSDPModelManager, Worker):
             logprobs, entropy = self.forward_batch(m_batch, True)
 
             # batch for backward
-            prev_logprobs = m_batch["prev_logprobs"]
+            # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
+            old_logprobs = m_batch.get("recomputed_logprobs")
+            if old_logprobs is None:
+                old_logprobs = m_batch["rollout_logprobs"]
             advantages = m_batch["advantages"]
             ref_logprobs = None
             if "ref_logprobs" in m_batch:
@@ -743,11 +772,18 @@ class FSDPActor(FSDPModelManager, Worker):
             clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
             if self.cfg.algorithm.get("importance_sampling_fix", False):
-                rollout_prev_logprobs = prev_logprobs
-                recompute_prev_logprobs = m_batch["recompute_prev_logprobs"]
+                if (
+                    "rollout_logprobs" not in m_batch
+                    or "recomputed_logprobs" not in m_batch
+                ):
+                    raise ValueError(
+                        "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
+                    )
+                rollout_logprobs = m_batch["rollout_logprobs"]
+                recomputed_logprobs = m_batch["recomputed_logprobs"]
                 advantages = advantages * torch.clamp(
-                    (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                    min=self.cfg.algorithm.importance_sampling_clip,
+                    (recomputed_logprobs - rollout_logprobs).exp(),
+                    max=self.cfg.algorithm.importance_sampling_clip,
                 )
 
             loss, mbs_metrics_data = policy_loss(
@@ -755,7 +791,7 @@ class FSDPActor(FSDPModelManager, Worker):
                 loss_type=self.cfg.algorithm.loss_type,
                 loss_agg_func=self.loss_agg_func,
                 logprobs=logprobs,
-                old_logprobs=prev_logprobs,
+                old_logprobs=old_logprobs,
                 advantages=advantages,
                 clip_ratio_c=clip_ratio_c,
                 clip_ratio_low=clip_ratio_low,
@@ -802,6 +838,9 @@ class FSDPActor(FSDPModelManager, Worker):
         if self.lr_sched_sync_with_optim:
             self.lr_scheduler.step()
 
+        # display the degree of mismatch between training and rollout
+        rollout_train_kl = compute_rollout_train_kl(m_batch, loss_mask)
+
         # aggregate metrics across micro-batches
         explained_variance_stats = pop_critic_explained_variance_stats(
             mbs_metrics_list
@@ -810,6 +849,9 @@ class FSDPActor(FSDPModelManager, Worker):
             key: torch.mean(torch.stack(value))
             for key, value in mbs_metrics_list.items()
         }
+        if rollout_train_kl is not None:
+            mean_metric_dict["actor/rollout_train_kl"] = rollout_train_kl
+
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
@@ -901,6 +943,10 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         global_batch = RolloutResult.merge_batches(batches)
 
+        assert (
+            "recomputed_logprobs" in global_batch or "rollout_logprobs" in global_batch
+        )
+
         # Compute advantages and returns
         global_batch = self.compute_advantages_and_returns(global_batch)
 
@@ -957,6 +1003,11 @@ class FSDPActor(FSDPModelManager, Worker):
         with self.worker_timer():
             if batch.get("advantages", None) is None:
                 mask = batch["response_mask"][:, -self.response_len :]
+                logprob = batch.get("recomputed_logprobs")
+                if logprob is None:
+                    logprob = batch.get("rollout_logprobs")
+                logprob = logprob.to(Worker.torch_device_type)
+
                 advantages, _ = calculate_adv_and_returns(
                     task_type=self.task_type,
                     adv_type=self.cfg.algorithm.adv_type,
@@ -965,9 +1016,7 @@ class FSDPActor(FSDPModelManager, Worker):
                     group_size=self.cfg.algorithm.group_size,
                     kl_beta=self.reinpp_kl_beta,
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=batch["prev_logprobs"].to(Worker.torch_device_type)
-                    if "prev_logprobs" in batch
-                    else None,
+                    logprob=logprob,
                     ref_logprob=batch["ref_logprobs"].to(Worker.torch_device_type)
                     if "ref_logprobs" in batch
                     else None,

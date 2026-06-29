@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 import torch
@@ -25,7 +24,7 @@ from rlinf.scheduler import Worker
 from rlinf.utils.utils import (
     materialize_tensor,
     normalize_device,
-    synchronize_pending_accel_copies,
+    tensors_record_stream,
 )
 
 from .base import RecvFn, SendFn, WeightSyncer
@@ -34,6 +33,19 @@ from .compressor import PatchCompressor
 
 
 def downscale_nonnegative_indices(tensor: torch.Tensor) -> torch.Tensor:
+    """Cast nonnegative index tensors to the smallest supported integer dtype.
+
+    Empty tensors are encoded as ``torch.uint8``. Non-empty tensors are cast to
+    ``torch.uint8``, ``torch.int32``, or ``torch.int64`` according to the maximum
+    value they contain. Callers must only pass nonnegative indices.
+
+    Args:
+        tensor: Index tensor whose values are expected to be nonnegative.
+
+    Returns:
+        A tensor with the same values stored in the smallest supported integer
+        dtype.
+    """
     if tensor.numel() == 0:
         return tensor.to(torch.uint8)
     max_value = int(tensor.max().item())
@@ -45,6 +57,24 @@ def downscale_nonnegative_indices(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def as_coo_2d_view(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
+    """View a tensor as a 2-D COO indexing target.
+
+    Scalars are viewed as shape ``(1, 1)``, vectors as ``(1, N)``, matrices are
+    returned as-is, and higher-rank tensors are viewed as
+    ``(shape[0], prod(shape[1:]))``. Higher-rank tensors must be flattenable as a
+    view, so non-contiguous layouts that require a copy are rejected.
+
+    Args:
+        tensor: Tensor to expose as a 2-D view for COO row/column indexing.
+
+    Returns:
+        A tuple ``(view, original_shape)`` where ``view`` is the 2-D tensor view
+        and ``original_shape`` is the input tensor shape.
+
+    Raises:
+        ValueError: If a tensor with rank three or higher cannot flatten its
+            trailing dimensions as a view.
+    """
     original_shape = tensor.shape
     if tensor.ndim == 0:
         view = tensor.unsqueeze(0).unsqueeze(0)
@@ -66,19 +96,65 @@ def as_coo_2d_view(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
 
 @dataclass
 class EmptyWeightPatch:
+    """
+    Patch payload used when no synchronized tensor values changed.
+
+    Attributes:
+        version: Weight version represented by this empty patch.
+    """
+
     version: torch.Tensor
 
     def to(
         self, device: torch.device | str, non_blocking: bool = False
     ) -> "EmptyWeightPatch":
+        """
+        Move the empty patch metadata to a device.
+
+        Args:
+            device: Target device for the version tensor.
+            non_blocking: Whether to request non-blocking tensor movement.
+
+        Returns:
+            A new ``EmptyWeightPatch`` whose tensor fields are on ``device``.
+        """
         device = normalize_device(device)
         return EmptyWeightPatch(
             version=self.version.to(device=device, non_blocking=non_blocking),
         )
 
+    def tensors(self) -> list[torch.Tensor]:
+        """
+        Return a list of all tensor fields in the empty patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [self.version]
+
 
 @dataclass
 class WeightPatch:
+    """Sparse patch payload for changed state dict entries.
+
+    The patch stores changed tensors in COO-like form. ``ordinals`` identifies
+    which state dict entries changed, ``nnz_per_tensor`` stores how many changed
+    values belong to each ordinal, ``rows`` and ``cols`` store the changed
+    positions in each entry's 2-D view, and ``values`` stores the raw bytes of
+    the changed values.
+
+    Attributes:
+        version: Weight version represented by this patch.
+        ordinals: State dict key ordinals for tensors with at least one changed
+            value.
+        nnz_per_tensor: Number of changed values for each ordinal.
+        rows: Row indices for changed values, concatenated across tensors.
+        cols: Column indices for changed values, concatenated across tensors.
+        values: Raw byte representation of changed values, concatenated across
+            tensors.
+    """
+
     version: torch.Tensor
     ordinals: torch.Tensor
     nnz_per_tensor: torch.Tensor
@@ -89,6 +165,15 @@ class WeightPatch:
     def to(
         self, device: torch.device | str, non_blocking: bool = False
     ) -> "WeightPatch":
+        """Move all patch tensors to a device.
+
+        Args:
+            device: Target device for every tensor field.
+            non_blocking: Whether to request non-blocking tensor movement.
+
+        Returns:
+            A new ``WeightPatch`` whose tensor fields are on ``device``.
+        """
         device = normalize_device(device)
         return WeightPatch(
             version=self.version.to(device=device, non_blocking=non_blocking),
@@ -101,9 +186,44 @@ class WeightPatch:
             values=self.values.to(device=device, non_blocking=non_blocking),
         )
 
+    def tensors(self) -> list[torch.Tensor]:
+        """Return a list of all tensor fields in the patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [
+            self.version,
+            self.ordinals,
+            self.nnz_per_tensor,
+            self.rows,
+            self.cols,
+            self.values,
+        ]
+
 
 @dataclass
 class CompressedWeightPatch:
+    """Compressed sparse patch payload.
+
+    This payload mirrors ``WeightPatch`` but stores the row indices, column
+    indices, and raw value bytes in compressed byte tensors. The dtype-code
+    tensors record the original dtypes needed by the compressor to reconstruct
+    each compressed field.
+
+    Attributes:
+        version: Weight version represented by this patch.
+        ordinals: State dict key ordinals for tensors with changed values.
+        nnz_per_tensor: Number of changed values for each ordinal.
+        rows_compressed: Compressed representation of the row-index tensor.
+        cols_compressed: Compressed representation of the column-index tensor.
+        values_compressed: Compressed representation of the raw value bytes.
+        rows_dtype_code: Encoded dtype metadata for decompressed rows.
+        cols_dtype_code: Encoded dtype metadata for decompressed columns.
+        values_dtype_code: Encoded dtype metadata for decompressed values.
+    """
+
     version: torch.Tensor
     ordinals: torch.Tensor
     nnz_per_tensor: torch.Tensor
@@ -113,6 +233,25 @@ class CompressedWeightPatch:
     rows_dtype_code: torch.Tensor
     cols_dtype_code: torch.Tensor
     values_dtype_code: torch.Tensor
+
+    def tensors(self) -> list[torch.Tensor]:
+        """Return a list of all tensor fields in the compressed patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [
+            self.version,
+            self.ordinals,
+            self.nnz_per_tensor,
+            self.rows_compressed,
+            self.cols_compressed,
+            self.values_compressed,
+            self.rows_dtype_code,
+            self.cols_dtype_code,
+            self.values_dtype_code,
+        ]
 
 
 WeightPatchTransport = EmptyWeightPatch | WeightPatch | CompressedWeightPatch
@@ -149,6 +288,23 @@ class PatchBuilder(ABC):
     def delta_encode(
         rows: torch.Tensor, cols: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Delta-encode COO row and column indices for compact transport.
+
+        The input indices are expected to be ordered as produced by
+        ``Tensor.nonzero(as_tuple=True)`` on a 2-D view: rows are nondecreasing,
+        and columns are ordered within each row. Row indices are encoded as
+        first-order deltas. Column indices are encoded as deltas within the same
+        row and reset to the absolute column value when a new row starts.
+
+        Args:
+            rows: One-dimensional row indices for changed values.
+            cols: One-dimensional column indices for changed values. Must have
+                the same number of elements as ``rows``.
+
+        Returns:
+            A tuple ``(row_deltas, col_deltas)`` with the same shapes and dtypes
+            as the input tensors.
+        """
         assert rows.numel() > 0, "No indices to encode"
         assert rows.numel() == cols.numel(), (
             "Rows and columns must have the same number of elements"
@@ -170,8 +326,27 @@ class PatchBuilder(ABC):
     def delta_decode(
         rows_delta: torch.Tensor, cols_delta: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        assert rows_delta.numel() > 0
-        assert rows_delta.numel() == cols_delta.numel()
+        """Decode row and column deltas produced by ``delta_encode``.
+
+        Row indices are reconstructed with a cumulative sum. Column deltas are
+        accumulated within each row segment and reset whenever the decoded row
+        changes. The returned tensors use ``torch.int64`` so they can be used
+        directly as PyTorch advanced-indexing inputs after transport dtypes have
+        been downscaled.
+
+        Args:
+            rows_delta: One-dimensional row deltas produced by ``delta_encode``.
+            cols_delta: One-dimensional column deltas produced by
+                ``delta_encode``. Must have the same number of elements as
+                ``rows_delta``.
+
+        Returns:
+            A tuple ``(rows, cols)`` containing decoded ``torch.int64`` indices.
+        """
+        if rows_delta.numel() == 0:
+            raise ValueError("No indices to decode")
+        if rows_delta.numel() != cols_delta.numel():
+            raise ValueError("Rows and columns must have the same number of elements")
 
         rows = torch.cumsum(rows_delta, dim=0, dtype=torch.int64)
 
@@ -238,15 +413,6 @@ class _PrefetchedCPUSnapshot:
     copy_done: torch.Event
 
 
-@dataclass
-class _PendingSnapshotUpdate:
-    snapshot_value: torch.Tensor
-    rows: torch.Tensor
-    cols: torch.Tensor
-    values: torch.Tensor
-    copy_done: torch.Event
-
-
 class CPUSnapshotPatchBuilder(PatchBuilder):
     def __init__(
         self,
@@ -264,25 +430,17 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             delta_encoding=delta_encoding,
         )
         self._copy_streams: dict[torch.device, torch.Stream] = {}
-        self._snapshot_flush_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="patch-snapshot-flush",
-        )
-        self._pending_snapshot_flush: Future[None] | None = None
 
     def create_patch(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
-        self._wait_pending_snapshot_flush()
-
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []
         col_chunks: list[torch.Tensor] = []
         value_byte_chunks: list[torch.Tensor] = []
-        pending_snapshot_updates: list[_PendingSnapshotUpdate] = []
         patch_device: torch.device | None = None
 
         prefetched = self._prefetch_snapshot(state_dict, 0)
@@ -325,13 +483,11 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             cols = cols.to(torch.int64)
             values = compare_value[rows, cols]
 
-            pending_snapshot_updates.append(
-                self._stage_snapshot_update(
-                    snapshot_value=current.snapshot_value,
-                    rows=rows,
-                    cols=cols,
-                    values=values,
-                )
+            self._update_snapshot(
+                snapshot_value=current.snapshot_value,
+                rows=rows,
+                cols=cols,
+                values=values,
             )
 
             if self.delta_encoding:
@@ -366,7 +522,6 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 cols=cols_tensor,
                 values=torch.cat(value_byte_chunks, dim=0),
             )
-            self._submit_snapshot_updates(pending_snapshot_updates)
             return patch
 
         if patch_device is None:
@@ -374,25 +529,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         patch = EmptyWeightPatch(
             version=torch.tensor(version, dtype=torch.int64, device=patch_device)
         )
-        self._submit_snapshot_updates(pending_snapshot_updates)
         return patch
-
-    def _wait_pending_snapshot_flush(self) -> None:
-        if self._pending_snapshot_flush is None:
-            return
-        self._pending_snapshot_flush.result()
-        self._pending_snapshot_flush = None
-
-    def _submit_snapshot_updates(
-        self,
-        pending_snapshot_updates: list[_PendingSnapshotUpdate],
-    ) -> None:
-        if not pending_snapshot_updates:
-            return
-        self._pending_snapshot_flush = self._snapshot_flush_executor.submit(
-            self._flush_snapshot,
-            pending_snapshot_updates,
-        )
 
     def _get_copy_stream(self, device: torch.device | None) -> torch.Stream:
         if device.index is None:
@@ -450,40 +587,17 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             copy_done=copy_done,
         )
 
-    def _stage_snapshot_update(
+    def _update_snapshot(
         self,
         snapshot_value: torch.Tensor,
         rows: torch.Tensor,
         cols: torch.Tensor,
         values: torch.Tensor,
-    ) -> _PendingSnapshotUpdate:
-        rows_cpu = torch.empty_like(rows, device="cpu", pin_memory=True)
-        cols_cpu = torch.empty_like(cols, device="cpu", pin_memory=True)
-        values_cpu = torch.empty_like(values, device="cpu", pin_memory=True)
-
-        with Worker.torch_platform.device(values.device):
-            stream = Worker.torch_platform.current_stream(values.device)
-            rows_cpu.copy_(rows, non_blocking=True)
-            cols_cpu.copy_(cols, non_blocking=True)
-            values_cpu.copy_(values, non_blocking=True)
-            copy_done = Worker.torch_platform.Event()
-            copy_done.record(stream)
-
-        return _PendingSnapshotUpdate(
-            snapshot_value=snapshot_value,
-            rows=rows_cpu,
-            cols=cols_cpu,
-            values=values_cpu,
-            copy_done=copy_done,
-        )
-
-    def _flush_snapshot(
-        self,
-        pending_snapshot_updates: list[_PendingSnapshotUpdate],
     ) -> None:
-        for update in pending_snapshot_updates:
-            update.copy_done.synchronize()
-            update.snapshot_value[update.rows, update.cols] = update.values
+        rows_cpu = rows.to(device="cpu", non_blocking=False)
+        cols_cpu = cols.to(device="cpu", non_blocking=False)
+        values_cpu = values.to(device="cpu", non_blocking=False)
+        snapshot_value[rows_cpu, cols_cpu] = values_cpu
 
 
 class GPUSnapshotPatchBuilder(PatchBuilder):
@@ -670,8 +784,8 @@ class PatchWeightSyncer(WeightSyncer):
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         bucket: dict[str, torch.Tensor],
-    ) -> set[torch.device]:
-        pending_copy_devices: set[torch.device] = set()
+    ) -> list[torch.Tensor]:
+        fallback_keepalive: list[torch.Tensor] = []
         for key, value in bucket.items():
             if key not in state_dict:
                 raise ValueError(
@@ -683,28 +797,25 @@ class PatchWeightSyncer(WeightSyncer):
                     "Patch init sync receiver does not support DTensor state_dict values"
                 )
             target.copy_(value, non_blocking=True)
-            if target.device.type == Worker.torch_device_type:
-                pending_copy_devices.add(target.device)
-            elif value.device.type == Worker.torch_device_type:
-                pending_copy_devices.add(value.device)
-        return pending_copy_devices
+        if self.transport_device.type == Worker.torch_device_type:
+            fallback_keepalive.extend(tensors_record_stream(bucket.values()))
+        return fallback_keepalive
 
     async def _apply_init_weights(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         recv: RecvFn,
     ) -> None:
-        first_bucket = await recv()
-        if not isinstance(first_bucket, dict):
+        bucket = await recv()
+        if not isinstance(bucket, dict):
             raise TypeError(
                 "Patch init sync receiver expected a bucket payload dictionary"
             )
 
-        total_buckets = int(
-            first_bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item()
-        )
-        first_bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
-        pending_copy_devices = self._apply_init_weight_bucket(state_dict, first_bucket)
+        total_buckets = int(bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item())
+        bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
+        fallback_keepalive: list[torch.Tensor] = []
+        fallback_keepalive.extend(self._apply_init_weight_bucket(state_dict, bucket))
 
         for _ in range(total_buckets - 1):
             bucket = await recv()
@@ -712,10 +823,11 @@ class PatchWeightSyncer(WeightSyncer):
                 raise TypeError(
                     "Patch init sync receiver expected a bucket payload dictionary"
                 )
-            pending_copy_devices.update(
+            fallback_keepalive.extend(
                 self._apply_init_weight_bucket(state_dict, bucket)
             )
-        synchronize_pending_accel_copies(pending_copy_devices)
+        Worker.torch_platform.current_stream().synchronize()
+        fallback_keepalive.clear()
 
     async def init_sender(
         self,
@@ -768,7 +880,6 @@ class PatchWeightSyncer(WeightSyncer):
                 snapshot_value = value_2dview.detach().to(
                     device=snapshot_device,
                     dtype=receiver_dtypes[key],
-                    non_blocking=self.snapshot_device.type != "cpu",
                     copy=True,
                 )
                 snapshot[key] = (
@@ -820,16 +931,6 @@ class PatchWeightSyncer(WeightSyncer):
             await self._apply_init_weights(state_dict, recv)
         self._receiver_initialized = True
 
-    def delta_encode(
-        self, rows: torch.Tensor, cols: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return PatchBuilder.delta_encode(rows, cols)
-
-    def delta_decode(
-        self, rows_delta: torch.Tensor, cols_delta: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return PatchBuilder.delta_decode(rows_delta, cols_delta)
-
     @torch.no_grad()
     def create_patch(
         self,
@@ -866,9 +967,16 @@ class PatchWeightSyncer(WeightSyncer):
             "Snapshot info not initialized"
         )
 
-        payload = await recv()
+        payload: WeightPatchTransport = await recv()
+
+        fallback_keepalive: list[torch.Tensor] = []
+        if self.transport_device.type == Worker.torch_device_type:
+            fallback_keepalive = tensors_record_stream(payload.tensors())
 
         if isinstance(payload, EmptyWeightPatch):
+            if fallback_keepalive:
+                Worker.torch_platform.current_stream().synchronize()
+                fallback_keepalive.clear()
             return int(payload.version.item())
         patch = self.compressor.decompress(payload)
         applied_version = int(patch.version.item())
@@ -942,4 +1050,9 @@ class PatchWeightSyncer(WeightSyncer):
             )
 
         assert offset == patch.rows.numel(), "Patch offsets do not match payload size"
+
+        if fallback_keepalive:
+            Worker.torch_platform.current_stream().synchronize()
+            fallback_keepalive.clear()
+
         return applied_version

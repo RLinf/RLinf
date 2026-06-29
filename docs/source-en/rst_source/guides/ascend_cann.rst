@@ -31,9 +31,9 @@ mounted into the container:
       --name rlinf-ascend-libero \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
 
 Inside the container, switch to the OpenVLA-OFT environment:
 

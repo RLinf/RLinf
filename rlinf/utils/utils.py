@@ -20,7 +20,7 @@ import random
 import sys
 from contextlib import contextmanager
 from functools import partial, wraps
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Iterable, Literal, Optional
 
 import numpy as np
 import torch
@@ -63,22 +63,49 @@ def materialize_tensor(tensor: torch.Tensor | DTensor) -> torch.Tensor:
     return tensor
 
 
-def normalize_dtype(dtype: torch.dtype | str) -> torch.dtype:
+_TORCH_STR_DTYPE_MAPPING = {
+    "float32": torch.float32,
+    "fp32": torch.float32,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+}
+
+_TORCH_DTYPE_SIZE_MAPPING = {
+    torch.bool: 1,
+    torch.uint8: 1,
+    torch.int8: 1,
+    torch.int16: 2,
+    torch.int32: 4,
+    torch.int64: 8,
+    torch.float16: 2,
+    torch.bfloat16: 2,
+    torch.float32: 4,
+    torch.float64: 8,
+    torch.complex64: 8,
+    torch.complex128: 16,
+}
+
+
+def dtype_size(dtype: torch.dtype | str) -> int:
+    """Return the size in bytes of a given torch.dtype."""
+    dtype = normalize_dtype(dtype)
+    if dtype not in _TORCH_DTYPE_SIZE_MAPPING:
+        return torch.empty((), dtype=dtype).element_size()
+    return _TORCH_DTYPE_SIZE_MAPPING[dtype]
+
+
+def normalize_dtype(dtype: torch.dtype | str | None) -> torch.dtype | None:
     """Normalize string dtype aliases into torch.dtype values."""
+    if dtype is None:
+        return None
     if isinstance(dtype, torch.dtype):
         return dtype
     if isinstance(dtype, str):
-        mapping = {
-            "float32": torch.float32,
-            "fp32": torch.float32,
-            "float16": torch.float16,
-            "fp16": torch.float16,
-            "bfloat16": torch.bfloat16,
-            "bf16": torch.bfloat16,
-        }
         key = dtype.lower()
-        if key in mapping:
-            return mapping[key]
+        if key in _TORCH_STR_DTYPE_MAPPING:
+            return _TORCH_STR_DTYPE_MAPPING[key]
     raise TypeError(f"Unsupported dtype: {dtype}")
 
 
@@ -115,19 +142,42 @@ def collect_param_names_need_sync(module: torch.nn.Module) -> list[str]:
     return trainable_param_names + persistent_buffer_names
 
 
-def synchronize_pending_accel_copies(copy_devices: set[torch.device]) -> None:
-    """Wait for queued accelerator copies before host-side consumption."""
-    if not copy_devices:
-        return
+def tensors_record_stream(
+    tensors: Iterable[torch.Tensor], stream: torch.Stream | None = None
+) -> list[torch.Tensor]:
+    """
+    Record a stream for a collection of accelerator tensors.
 
-    events: list[torch.Event] = []
-    for device in copy_devices:
-        event = Worker.torch_platform.Event()
-        event.record(Worker.torch_platform.current_stream(device))
-        events.append(event)
+    In some cases, the backend may not support record_stream,
+    in which case we keep a reference to the tensors in a list to prevent the tensor storage
+    from being freed prematurely and allocated again by pytorch caching allocator.
+    The caller should synchronize before clearing these tensors.
 
-    for event in events:
-        event.synchronize()
+    Args:
+        tensors (Iterable[torch.Tensor]): An iterable of tensors to record.
+        stream (torch.Stream | None): Stream to record for every tensor. When
+            unset, each tensor records the current stream for its own device.
+
+    Returns:
+        list[torch.Tensor]: A list of tensors that failed to record the stream,
+            which should be kept alive until synchronization.
+    """
+    if not Worker.torch_platform.is_initialized():
+        raise RuntimeError("Torch platform is not initialized, cannot record stream.")
+    fallback_keepalive: list[torch.Tensor] = []
+    for tensor in tensors:
+        if tensor.device.type != Worker.torch_device_type:
+            raise RuntimeError(
+                "Tensor device type does not match the worker device type, cannot record stream."
+            )
+        try:
+            record_stream = stream or Worker.torch_platform.current_stream(
+                tensor.device
+            )
+            tensor.record_stream(record_stream)
+        except (AttributeError, RuntimeError, TypeError):
+            fallback_keepalive.append(tensor)
+    return fallback_keepalive
 
 
 def seed_everything(seed: int) -> int:
@@ -164,6 +214,7 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
+    from rlinf.scheduler.worker.worker import Worker
 
     Worker.torch_platform.synchronize()
     return offloaded_buffer
@@ -594,6 +645,8 @@ def get_rng_state() -> dict:
         "numpy": np.random.get_state(),
         "random": random.getstate(),
     }
+    from rlinf.scheduler.worker.worker import Worker
+
     if Worker.torch_platform.is_available():
         rng_state[Worker.torch_device_type] = Worker.torch_platform.get_rng_state()
     return rng_state
@@ -613,6 +666,8 @@ def set_rng_state(rng_state: dict) -> None:
     torch.set_rng_state(rng_state["cpu"])
     np.random.set_state(rng_state["numpy"])
     random.setstate(rng_state["random"])
+    from rlinf.scheduler.worker.worker import Worker
+
     if Worker.torch_platform.is_available() and Worker.torch_device_type in rng_state:
         Worker.torch_platform.set_rng_state(rng_state[Worker.torch_device_type])
 

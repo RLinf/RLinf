@@ -20,6 +20,7 @@ import numpy as np
 import torch
 import torch.distributed
 
+<<<<<<< fix-critic-explained-variance
 from rlinf.scheduler import Worker
 
 CRITIC_EXPLAINED_VARIANCE_KEY = "critic/explained_variance"
@@ -40,6 +41,8 @@ CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
     CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY,
 )
 
+=======
+>>>>>>> main
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
@@ -224,7 +227,10 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
     loss_mask = data_buffer.get("loss_mask", None)
 
     def reduce_metrics(values: torch.Tensor) -> tuple[float, float, float]:
+        from rlinf.scheduler.worker.worker import Worker
+
         device = Worker.torch_platform.current_device()
+
         if values.numel() == 0:
             count = torch.tensor(0.0, device=device, dtype=torch.float32)
             values_sum = torch.tensor(0.0, device=device, dtype=torch.float32)

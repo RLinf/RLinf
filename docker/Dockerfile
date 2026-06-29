@@ -49,6 +49,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
@@ -447,6 +448,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Genesis
+##################################################################################################
+FROM embodied-common-image AS embodied-genesis-image
+
+# Install genesis env (MLP/CNN policy, no VLA model)
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv genesis --env genesis
+
+# Set default env
+RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

@@ -8,7 +8,11 @@ MODEL=""
 ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
+LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
+SGLANG_VERSION=""
+TRANSFORMERS_VERSION=""
+XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
 # PEP 440 local-version segment (including the leading '+') that
@@ -43,6 +47,8 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 # so the user can skip flash-attn on platforms where it would otherwise
 # install (e.g. when build deps aren't available on the host).
 DISABLE_FLASH_ATTN=0
+# User-level opt-out for apex, set by --no-apex. Wins over the platform default.
+DISABLE_APEX=0
 # Whether apply_torch_override should rewrite the pyproject.toml `torchcodec`
 # pin from ==0.2 to >=0.5. The ==0.2 line in override-dependencies has wheels
 # only for x86_64 + torch 2.5/2.6, so it breaks on AMD (torch 2.8 from rocm
@@ -101,6 +107,10 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
+    --sglang <version>    Override sglang version (e.g., 0.5.4). xgrammar is
+                           auto-derived from the sglang version.
+    --transformers <version> Override transformers version (e.g., 4.57.1). Patches
+                           the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), or ascend (experimental, NPU). Sets UV_TORCH_BACKEND
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
@@ -115,6 +125,8 @@ Common options:
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support (Ascend).
+    --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
+                           CUDA toolchain mismatch prevents download apex of the right version.
     --install-rlinf        Install RLinf itself into the python.
 EOF
 }
@@ -153,6 +165,22 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                shift 2
+                ;;
+            --sglang)
+                if [ -z "${2:-}" ]; then
+                    echo "--sglang requires a version argument (e.g. 0.5.4)." >&2
+                    exit 1
+                fi
+                SGLANG_VERSION="${2:-}"
+                shift 2
+                ;;
+            --transformers)
+                if [ -z "${2:-}" ]; then
+                    echo "--transformers requires a version argument (e.g. 4.57.1)." >&2
+                    exit 1
+                fi
+                TRANSFORMERS_VERSION="${2:-}"
                 shift 2
                 ;;
             --platform)
@@ -201,6 +229,10 @@ parse_args() {
                 ;;
             --no-flash-attn)
                 DISABLE_FLASH_ATTN=1
+                shift
+                ;;
+            --no-apex)
+                DISABLE_APEX=1
                 shift
                 ;;
             --*)
@@ -563,6 +595,62 @@ restore_pyproject() {
     fi
 }
 
+apply_sglang_override() {
+    if [ -z "$SGLANG_VERSION" ] && [ -z "$TRANSFORMERS_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$PYPROJECT_FILE" ]; then
+        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
+        exit 1
+    fi
+
+    # Reuse an existing backup if apply_torch_override already created one.
+    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
+        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-sglang-bak.$$"
+        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
+        trap 'restore_pyproject' EXIT INT TERM HUP
+    fi
+
+    if [ -n "$SGLANG_VERSION" ]; then
+        sed -i \
+            -e "s/\"sglang\[all\]==[^\"]*\"/\"sglang[all]==${SGLANG_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: sglang[all]==${SGLANG_VERSION}"
+    fi
+
+    if [ -n "$TRANSFORMERS_VERSION" ]; then
+        sed -i \
+            -e "s/\"transformers==[^\"]*\"/\"transformers==${TRANSFORMERS_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: transformers==${TRANSFORMERS_VERSION}"
+    fi
+
+    # Auto-derive xgrammar from sglang version when not explicitly set.
+    # Mapping derived from each sglang release's python/pyproject.toml.
+    if [ -n "$SGLANG_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        case "${SGLANG_VERSION}" in
+            0.4.6) XGRAMMAR_VERSION="0.1.17" ;;
+            0.4.7|0.4.8|0.4.9) XGRAMMAR_VERSION="0.1.19" ;;
+            0.5.0|0.5.0rc*) XGRAMMAR_VERSION="0.1.22" ;;
+            0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
+            0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
+            0.5.4) XGRAMMAR_VERSION="0.1.25" ;;
+            *)
+                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
+                exit 1
+                ;;
+        esac
+    fi
+
+    if [ -n "$XGRAMMAR_VERSION" ]; then
+        sed -i \
+            -e "s/\"xgrammar==[^\"]*\"/\"xgrammar==${XGRAMMAR_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml override-dependencies: xgrammar==${XGRAMMAR_VERSION}"
+    fi
+}
+
 apply_torch_override() {
     # Fires when --torch is given (rewrite versions), PLATFORM_TORCH_STR is
     # non-empty (append a PEP 440 local segment so uv picks the platform-specific
@@ -880,9 +968,15 @@ EOF
     local cu_tag="cu${cuda_major}"            # e.g. cu12
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
 
-    # We currently assume cxx11 abi FALSE and linux x86_64
+    # Match flash-attn wheel ABI to the currently installed torch build.
     local platform_tag="linux_x86_64"
-    local cxx_abi="cxx11abiFALSE"
+    local cxx_abi
+    cxx_abi=$(python - <<'EOF'
+import torch
+
+print("cxx11abiTRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "cxx11abiFALSE")
+EOF
+)
 
     uv pip uninstall flash-attn || true
     local prebuilt_ver base_url wheel_name
@@ -900,6 +994,10 @@ EOF
 }
 
 install_apex() {
+    if [ "$DISABLE_APEX" -eq 1 ]; then
+        echo "[install.sh] --no-apex was specified; skipping apex install."
+        return 0
+    fi
     if [ "$PLATFORM" != "nvidia" ]; then
         echo "[install.sh] Skipping apex install on platform=${PLATFORM} (CUDA-only)."
         return 0
@@ -994,7 +1092,7 @@ install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
-        bash $SCRIPT_DIR/embodied/sys_deps.sh "$PLATFORM"
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
     if [ ${#PLATFORM_VENV_EXPORTS[@]} -gt 0 ]; then
         printf '%s\n' "${PLATFORM_VENV_EXPORTS[@]}" >> "$VENV_DIR/bin/activate"
@@ -1031,6 +1129,9 @@ install_openvla_oft_model() {
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             install_behavior_env
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1107,6 +1208,9 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_behavior_env
             uv pip install protobuf==6.33.0
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1342,8 +1446,8 @@ install_lingbot_vla_model() {
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
-    uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
+    install_lerobot
+    env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
 
     case "$ENV_NAME" in
         robotwin)
@@ -1400,19 +1504,42 @@ install_abot_m0_model() {
     uv pip uninstall pynvml || true
 }
 
+install_dreamzero_deps() {
+    local dreamzero_path
+    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git)
+    if [ -z "${DREAMZERO_PATH:-}" ]; then
+        git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
+    fi
+
+    uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+    python -m pip install -e "$dreamzero_path" --no-deps --ignore-requires-python
+}
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
+        behavior)
+            # BEHAVIOR/OmniGibson currently requires Python 3.10 and installs
+            # its own Torch 2.5.1 stack inside install_behavior_env.
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_behavior_env
+            install_dreamzero_deps
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
+            ;;
         maniskill_libero|libero)
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         "")
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         *)
@@ -1441,8 +1568,14 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
+install_lerobot() {
+    env -u UV_TORCH_BACKEND uv pip install \
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+}
+
 install_franka_realworld_env() {
     uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh
@@ -1523,6 +1656,7 @@ install_libero_env() {
     libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
     uv pip install -e "$libero_dir"
+    uv pip install "mujoco<=3.9.0"
     echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 }
 
@@ -1605,6 +1739,7 @@ install_liberopro_env() {
     local libero_pro_dir
     libero_pro_dir=$(clone_or_reuse_repo LIBERO_PRO_PATH "$VENV_DIR/libero_pro" https://github.com/RLinf/LIBERO-PRO.git)
     uv pip install -e "$libero_pro_dir"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_liberoplus_env() {
@@ -1616,6 +1751,7 @@ install_liberoplus_env() {
     libero_plus_dir=$(clone_or_reuse_repo LIBERO_PLUS_PATH "$VENV_DIR/libero_plus" https://github.com/RLinf/LIBERO-plus.git)
     uv pip install -r $libero_plus_dir/extra_requirements.txt
     uv pip install -e "$libero_plus_dir"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_behavior_env() {
@@ -1636,7 +1772,6 @@ install_behavior_env() {
     uv pip install llvmlite==0.47.0 numba==0.65.1
     pushd ~ >/dev/null
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    install_flash_attn
     popd >/dev/null
 }
 
@@ -1767,6 +1902,7 @@ install_franka_franky_env() {
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
+    install_lerobot
 }
 
 install_franka_dexhand_deps() {
@@ -1774,6 +1910,7 @@ install_franka_dexhand_deps() {
 }
 
 install_xsquare_turtle2_env() {
+    install_lerobot
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
 }
 
@@ -1964,6 +2101,9 @@ install_roboverse_env() {
 install_agentic() {
     uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
     uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
+    fi
 
     # Megatron-LM
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
@@ -1999,6 +2139,7 @@ main() {
     configure_platform
     setup_mirror
     apply_torch_override
+    apply_sglang_override
 
     case "$TARGET" in
         embodied)
