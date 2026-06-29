@@ -40,11 +40,11 @@ Franka 真机强化学习
 
       使用 GELLO 进行关节级遥操作数据采集。
 
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
+   .. grid-item-card:: VR / PICO
+      :link: franka_vr
       :link-type: doc
 
-      运行双臂 Franka 配置。
+      使用 VR / PICO 设备进行遥操作。
 
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
@@ -63,6 +63,18 @@ Franka 真机强化学习
       :link-type: doc
 
       人类介入的 DAgger 交互式训练。
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      运行双臂 Franka 配置。
+
+   .. grid-item-card:: Dual PICO DAgger
+      :link: dual_franka_pico_dagger
+      :link-type: doc
+
+      使用 PICO 采集双臂数据并运行 HG-DAgger。
 
 概览
 ----------------------------------------
@@ -723,7 +735,8 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
    ZED + Robotiq <franka_zed_robotiq>
    GELLO <franka_gello>
    VR / PICO <franka_vr>
-   Dual-Arm <dual_franka>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
+   Dual-Arm <dual_franka>
+   Dual PICO DAgger <dual_franka_pico_dagger>
