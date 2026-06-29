@@ -1,0 +1,90 @@
+# ============================================================================
+# pi0.5 + dummy turtle2 — ROLLOUT-ONLY EVAL, DECOUPLED + PER-GROUP ROUTE BINDING
+# Path ③ validation (flag ON). 4 dummy robots : 2 pi0.5 rollout GPUs, fixed
+# binding via route_key: grp0={env0,env1}->rollout0, grp1={env2,env3}->rollout1.
+# Each rollout serves ONLY its bound group (no global pool), bs=1, no barrier.
+#   ratio = env_ws(4) / rollout_ws(2) = 2.
+# A/B partner: ..._eval_pi05_decoupled_global.yaml (same, flag OFF = global pool).
+# ============================================================================
+defaults:
+  - env/realworld_button@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env: 0-3        # 4 env workers = 4 dummy robots
+    rollout: 4-5    # 2 rollout workers = 2 groups (ratio 2: each serves 2 robots)
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "turtle2_dummy_eval_pi05_grouproute"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+  enable_decoupled_mode: True   # decoupled env<->rollout (global pool unless route binding)
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 4   # 4 dummy robots (1 per env worker)
+    max_episode_steps: 100
+    max_steps_per_rollout_epoch: 100
+    auto_reset: True
+    ignore_terminations: True
+    is_eval: True
+    seed: 42
+    override_cfg:
+      is_dummy: True
+      use_arm_ids: [1]
+      use_camera_ids: [0, 1, 2]
+      target_ee_pose: [[0, 0, 0, 0, 0, 0], [0.0, 0.0, 0.15, 0.0, 1, 0.0]]
+      step_frequency: 30.0
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  unnorm_key: turtle
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  collect_transitions: False
+  collect_prev_infos: False
+
+  rollout_queue_size: 1            # bs=1 (no batch aggregation)
+  enable_group_route_binding: True # PATH ③: per-group route_key (fixed binding)
+
+  model:
+    model_path: "/workspace/rlinf_pub/models/RLinf-Pi05-LIBERO-SFT"
+    model_type: "openpi"
+    action_dim: 6
+    num_action_chunks: 50
+    num_steps: 3
+    add_value_head: False
+    openpi:
+      config_name: "pi05_turtle"
+      num_images_in_input: 3
+      num_steps: ${rollout.model.num_steps}
+      detach_critic_input: True
