@@ -21,12 +21,6 @@ from typing import Any, Optional
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    set_peft_model_state_dict,
-)
-from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
@@ -70,6 +64,8 @@ class VLMRewardModel(BaseRewardModel):
         }
 
     def setup_processor(self) -> None:
+        from transformers import AutoProcessor
+
         self._processor = AutoProcessor.from_pretrained(
             self.model_path, trust_remote_code=True
         )
@@ -150,6 +146,8 @@ class VLMRewardModel(BaseRewardModel):
         return rewards
 
     def setup_model(self) -> None:
+        from transformers import AutoModelForVision2Seq
+
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             trust_remote_code=True,
@@ -183,6 +181,12 @@ class VLMRewardModel(BaseRewardModel):
                         for key in lora_state_dict
                         if ".lora_" in key
                     }
+                )
+
+                from peft import (
+                    LoraConfig,
+                    get_peft_model,
+                    set_peft_model_state_dict,
                 )
 
                 lora_config = LoraConfig(

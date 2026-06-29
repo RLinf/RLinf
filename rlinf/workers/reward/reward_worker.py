@@ -673,6 +673,9 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
         # Training step counter for validation interval
         self._training_step = 0
+        self.data_loader = None
+        self.val_loader = None
+        self.data_iter = None
 
     def model_provider_func(self):
         reward_cls = get_reward_model_class(self.cfg.actor.model.model_type)
@@ -686,7 +689,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
-        self.data_loader, self.val_loader = self.build_dataloader()
+        if self.data_loader is None:
+            self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
@@ -755,6 +759,14 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
 
         return train_loader, val_loader
+
+    def get_max_steps_per_epoch(self) -> int:
+        """Return SFT training steps available in one reward data epoch."""
+        if self.data_loader is None:
+            self.data_loader, self.val_loader = self.build_dataloader()
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
 
     @Worker.timer("run_training")
     def run_training(self) -> dict[str, float]:

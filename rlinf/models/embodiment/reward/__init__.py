@@ -14,15 +14,9 @@
 
 """Reward models for embodied RL."""
 
+from importlib import import_module
+
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-from rlinf.models.embodiment.reward.resnet_reward_model import ResNetRewardModel
-from rlinf.models.embodiment.reward.vlm_reward_model import (
-    HistoryVLMRewardModel,
-    VLMRewardModel,
-)
-from rlinf.models.embodiment.reward.vlm_sglang_reward_model import (
-    HistoryVLMSGLangRewardModel,
-)
 
 __all__ = [
     "BaseRewardModel",
@@ -34,16 +28,47 @@ __all__ = [
     "resolve_reward_model_backend",
 ]
 
+_REWARD_MODEL_CLASS_SPECS = {
+    "ResNetRewardModel": (
+        "rlinf.models.embodiment.reward.resnet_reward_model",
+        "ResNetRewardModel",
+    ),
+    "VLMRewardModel": (
+        "rlinf.models.embodiment.reward.vlm_reward_model",
+        "VLMRewardModel",
+    ),
+    "HistoryVLMRewardModel": (
+        "rlinf.models.embodiment.reward.vlm_reward_model",
+        "HistoryVLMRewardModel",
+    ),
+    "HistoryVLMSGLangRewardModel": (
+        "rlinf.models.embodiment.reward.vlm_sglang_reward_model",
+        "HistoryVLMSGLangRewardModel",
+    ),
+}
+
 reward_model_registry = {
-    "resnet": ResNetRewardModel,
-    "vlm": VLMRewardModel,
-    "history_vlm": HistoryVLMRewardModel,
+    "resnet": "ResNetRewardModel",
+    "vlm": "VLMRewardModel",
+    "history_vlm": "HistoryVLMRewardModel",
 }
 
 _HISTORY_VLM_MODEL_TYPE = "history_vlm"
 _HISTORY_VLM_TRANSFORMERS_BACKEND = "hf"
 _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES = {"hf", "transformers"}
 _HISTORY_VLM_SUPPORTED_BACKENDS = _HISTORY_VLM_TRANSFORMERS_BACKEND_ALIASES | {"sglang"}
+
+
+def _load_reward_model_class(class_name: str):
+    module_name, attr_name = _REWARD_MODEL_CLASS_SPECS[class_name]
+    module = import_module(module_name)
+    return getattr(module, attr_name)
+
+
+def __getattr__(name: str):
+    if name in _REWARD_MODEL_CLASS_SPECS:
+        return _load_reward_model_class(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _normalize_backend(inference_backend: str | None) -> str | None:
@@ -92,6 +117,6 @@ def get_reward_model_class(
     )
 
     if reward_model_type == _HISTORY_VLM_MODEL_TYPE and inference_backend == "sglang":
-        return HistoryVLMSGLangRewardModel
+        return _load_reward_model_class("HistoryVLMSGLangRewardModel")
 
-    return reward_model_registry[reward_model_type]
+    return _load_reward_model_class(reward_model_registry[reward_model_type])

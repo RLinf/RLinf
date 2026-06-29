@@ -32,7 +32,6 @@ from rlinf.data.embodied_io_struct import (
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
-from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
@@ -303,6 +302,8 @@ class EnvWorker(Worker):
                 worker_info=self.worker_info,
             )
             if env_cfg.video_cfg.save_video:
+                from rlinf.envs.wrappers import RecordVideo
+
                 env = RecordVideo(env, env_cfg.video_cfg)
             if env_cfg.get("data_collection", None) and getattr(
                 env_cfg.data_collection, "enabled", False
@@ -767,15 +768,15 @@ class EnvWorker(Worker):
         # reset
         if mode == "train":
             for i in range(self.stage_num):
-                if self.cfg.env.train.video_cfg.save_video and isinstance(
-                    self.env_list[i], RecordVideo
+                if self.cfg.env.train.video_cfg.save_video and hasattr(
+                    self.env_list[i], "flush_video"
                 ):
                     self.env_list[i].flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
-                if self.cfg.env.eval.video_cfg.save_video and isinstance(
-                    self.eval_env_list[i], RecordVideo
+                if self.cfg.env.eval.video_cfg.save_video and hasattr(
+                    self.eval_env_list[i], "flush_video"
                 ):
                     self.eval_env_list[i].flush_video()
                 if not self.cfg.env.eval.auto_reset:
