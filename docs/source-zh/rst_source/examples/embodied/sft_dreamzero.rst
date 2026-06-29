@@ -638,3 +638,81 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 - 全量适配 WAN2.2 可冷启动，但需更大数据与更长训练；改配置后先用 50–200 step 试跑验证 shape 与 loss。
 - 每次更换数据集或 ``embodiment_tag``，务必重新生成或更新 ``metadata.json``。
 - LIBERO 与 DROID 的 ``action_horizon``、 ``embodiment_tag``、多视角拼接逻辑不同，不要混用配置模板。
+
+
+训练加速
+----------------------------------------
+
+RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加速。相比 DreamZero 官方提供的基线训练脚本，RLinf **实现了近 4 倍的训练吞吐加速**，同时保持甚至优化了收敛效果。
+
+
+端到端性能实测
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+以下所有测试均在 Droid 数据集（单样本含左、右、腕部三个视角，视频规格 33 frames × 480 × 640）上，使用 8×H100 GPU 完成。
+
+**DreamZero-14B**
+
+在 14B 大模型上，由于显存压力巨大，官方基线通常被迫采用 DeepSpeed ZeRO-offload 方案，这导致了严重的计算/通信浪费与 CPU 换入换出开销。我们通过工程优化，以 FSDP2 full_shard 替代 DeepSpeed ZeRO-offload 方案，并进一步结合了计算图优化（算子融合与 CUDA Graph）。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本）
+     - 18.0 s
+     - 0.055
+     - 基线
+   * - FSDP2 Base（原生支持）
+     - 9.0 s
+     - 0.111
+     - +100%（2.0x）
+   * - **RLinf 深度优化版**
+     - **6.7 s**
+     - **0.150**
+     - **+170%（2.7x）**
+
+14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
+
+**DreamZero-5B**
+
+对于 5B 中等规模模型，RLinf 的优势在于能够通过高效率的重计算逻辑稳定开启更大的 Microbatch Size，并配合计算图调优，彻底释放 GPU 算力。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本，mbs=32 × 8 GPU）
+     - 30.0 s
+     - 1.10
+     - 基线
+   * - FSDP2 Base（mbs=1 × 8 GPU）
+     - 1.8 s
+     - 0.56
+     - -49%（受限于小 MBS 算子效率低、CPU 开销显著、FSDP2 通信无法掩盖）
+   * - **RLinf 深度优化版（mbs=32 + Recompute × 8 GPU）**
+     - **7.2 s**
+     - **4.44**
+     - **+300%（4.0x）**
+
+5B 模型使用 GBS=256 测试。FSDP2 Base 版本由于 PyTorch 的一些限制不能开大 MBS，导致吞吐受限；RLinf 解决了这些问题并取得了显著的吞吐增长。训练吞吐从官方代码的 1.1 samples/sec/gpu 飙升至 4.44 samples/sec/gpu，实现了约 4 倍的训练加速。
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
+   :align: center
+   :width: 45%
+
+   DreamZero 5B 与 14B 模型的加速效果对比
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0accthpt.jpg
+   :align: center
+   :width: 45%
+
+   DreamZero 5B 与 14B 模型的吞吐提升对比
