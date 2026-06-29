@@ -68,6 +68,9 @@ from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.robotwin_aloha_dataconfig import (
     LeRobotAlohaDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.turtle_dataconfig import (
+    TurtleDataConfig,
+)
 
 _CONFIGS = [
     TrainConfig(
@@ -104,6 +107,21 @@ _CONFIGS = [
         ),
         optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
         ema_decay=0.999,
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_turtle",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=50, discrete_state_input=False
+        ),
+        data=TurtleDataConfig(
+            repo_id="physical-intelligence/libero",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base"),
+        ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "checkpoints/jax/pi05_base"
         ),
