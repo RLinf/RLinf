@@ -86,7 +86,6 @@ class EnvWorker(Worker):
         self.last_obs_list = []
         self.last_intervened_info_list = []
         self._prefetched_train_bootstrap: list[EnvOutput] | None = None
-        self.rollout_epoch = self.cfg.algorithm.get("rollout_epoch", 1)
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
@@ -124,51 +123,64 @@ class EnvWorker(Worker):
         # Env configurations
         self.use_training_pipeline = self.cfg.runner.get("use_training_pipeline", False)
         self.only_eval = getattr(self.cfg.runner, "only_eval", False)
+        self.model_cfg = (
+            self.cfg.rollout.model if self.only_eval else self.cfg.actor.model
+        )
         train_env_cfg = self.cfg.env.get("train", None)
         eval_env_cfg = self.cfg.env.get("eval", None)
-        self.enable_offload = (
-            train_env_cfg.get("enable_offload", False)
-            if train_env_cfg is not None
-            else (
-                eval_env_cfg.get("enable_offload", False)
-                if eval_env_cfg is not None
-                else False
-            )
-        )
+        self.enable_train = not self.only_eval and train_env_cfg is not None
         self.enable_eval = (
             self.cfg.runner.get("val_check_interval", -1) > 0 or self.only_eval
-        ) and eval_env_cfg is not None
+        )
+        self.rollout_epoch = (
+            train_env_cfg.rollout_epoch if train_env_cfg is not None else 1
+        )
+        self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
+
+        self.train_enable_offload = (
+            train_env_cfg.get("enable_offload", False)
+            if train_env_cfg is not None
+            else False
+        )
+        self.eval_enable_offload = (
+            eval_env_cfg.get("enable_offload", False)
+            if eval_env_cfg is not None
+            else False
+        )
+        self.enable_offload = self.train_enable_offload or self.eval_enable_offload
         if self.only_eval and eval_env_cfg is None:
             raise ValueError("env.eval config is required when runner.only_eval=True.")
         if self.enable_eval and eval_env_cfg is None:
             raise ValueError("env.eval config is required when validation is enabled.")
-        if not self.only_eval:
-            if train_env_cfg is None:
-                raise ValueError(
-                    "env.train config is required when runner.only_eval=False."
-                )
+        if self.enable_train:
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
+            self.train_batch_size = self.cfg.env.train.total_num_envs // self.stage_num
         if self.enable_eval:
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
             )
+            self.eval_batch_size = self.cfg.env.eval.total_num_envs // self.stage_num
         self.n_train_chunk_steps = 0
-        if not self.only_eval:
+        if self.enable_train:
             self.n_train_chunk_steps = (
                 self.cfg.env.train.max_steps_per_rollout_epoch
-                // self.cfg.actor.model.num_action_chunks
+                // self.model_cfg.num_action_chunks
             )
         self.n_eval_chunk_steps = 0
         if self.enable_eval:
             self.n_eval_chunk_steps = (
                 self.cfg.env.eval.max_steps_per_rollout_epoch
-                // self.cfg.actor.model.num_action_chunks
+                // self.model_cfg.num_action_chunks
             )
-        self.actor_split_num = self.get_actor_split_num()
+        self.actor_split_num = (
+            1 if not self.enable_train else self.get_actor_split_num()
+        )
+        if self.use_training_pipeline and self.enable_train:
+            self._init_pipeline_params()
 
-        if not self.only_eval:
+        if self.enable_train:
             self.train_prev_done: list[torch.Tensor] = [
                 torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
@@ -178,6 +190,7 @@ class EnvWorker(Worker):
                 torch.zeros(self.eval_num_envs_per_stage, dtype=torch.bool)
                 for _ in range(self.stage_num)
             ]
+        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
     def init_worker(self):
         self.dst_rank_map = self._setup_dst_rank_map()
@@ -195,13 +208,17 @@ class EnvWorker(Worker):
 
         self.update_env_cfg()
 
-        if not self.only_eval:
+        if self.enable_train:
             train_env_cls = get_env_cls(self.cfg.env.train.env_type, self.cfg.env.train)
             self.env_list = self._setup_env_and_wrappers(
                 env_cls=train_env_cls,
                 env_cfg=self.cfg.env.train,
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
+            if self.train_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.env_list), (
+                    "train envs must have an offload method to enable offload!"
+                )
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -209,8 +226,12 @@ class EnvWorker(Worker):
                 env_cfg=self.cfg.env.eval,
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
+            if self.eval_enable_offload:
+                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
+                    "eval envs must have an offload method to enable offload!"
+                )
 
-        if not self.only_eval:
+        if self.enable_train:
             self._init_env()
             if self.use_history_reward_pipeline:
                 self.train_history_managers = [
@@ -219,7 +240,7 @@ class EnvWorker(Worker):
                 ]
 
     def update_env_cfg(self):
-        if not self.only_eval:
+        if self.enable_train:
             # train env
             train_override_cfgs = self.cfg.env.train.get("override_cfgs", None)
             if train_override_cfgs is not None:
@@ -342,7 +363,7 @@ class EnvWorker(Worker):
             The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (dst_rank, batch_size).
         """
         dst_rank_map = {}
-        if not self.only_eval:
+        if self.enable_train:
             dst_rank_map = {
                 "rollout_train": CommMapper.get_dst_ranks(
                     batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
@@ -394,7 +415,7 @@ class EnvWorker(Worker):
             The key is the channel name (e.g. "rollout_train", "reward_train", "rollout_eval"), and the value is a ordered list of tuples of (src_rank, batch_size).
         """
         src_rank_map = {}
-        if not self.only_eval:
+        if self.enable_train:
             src_rank_map = {
                 "rollout_train": CommMapper.get_src_ranks(
                     batch_size=self.cfg.env.train.total_num_envs // self.stage_num,
@@ -1602,7 +1623,7 @@ class EnvWorker(Worker):
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
 
-        for eval_rollout_epoch in range(self.cfg.algorithm.eval_rollout_epoch):
+        for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
                     self.eval_env_list[stage_id].is_start = True
@@ -1640,8 +1661,7 @@ class EnvWorker(Worker):
 
                     if self.cfg.env.eval.auto_reset:
                         if (
-                            eval_rollout_epoch
-                            == self.cfg.algorithm.eval_rollout_epoch - 1
+                            eval_rollout_epoch == self.eval_rollout_epoch - 1
                             and eval_step == self.n_eval_chunk_steps - 1
                         ):
                             continue

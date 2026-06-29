@@ -50,9 +50,6 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -90,6 +87,7 @@ data:
 
 env:
   train:
+    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple
@@ -129,6 +127,7 @@ env:
       render_mode: all
     use_3rd_view_as_extra: True
   eval:
+    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple
