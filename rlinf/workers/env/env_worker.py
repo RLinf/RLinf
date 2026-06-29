@@ -474,10 +474,10 @@ class EnvWorker(Worker):
         chunk_actions = prepare_actions(
             raw_chunk_actions=chunk_actions,
             env_type=self.cfg.env.train.env_type,
-            model_type=self.cfg.actor.model.model_type,
-            num_action_chunks=self.cfg.actor.model.num_action_chunks,
-            action_dim=self.cfg.actor.model.action_dim,
-            policy=self.cfg.actor.model.get("policy_setup", None),
+            model_type=self.model_cfg.model_type,
+            num_action_chunks=self.model_cfg.num_action_chunks,
+            action_dim=self.model_cfg.action_dim,
+            policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
         env_info = {}
@@ -551,10 +551,10 @@ class EnvWorker(Worker):
         chunk_actions = prepare_actions(
             raw_chunk_actions=raw_actions,
             env_type=self.cfg.env.eval.env_type,
-            model_type=self.cfg.actor.model.model_type,
-            num_action_chunks=self.cfg.actor.model.num_action_chunks,
-            action_dim=self.cfg.actor.model.action_dim,
-            policy=self.cfg.actor.model.get("policy_setup", None),
+            model_type=self.model_cfg.model_type,
+            num_action_chunks=self.model_cfg.num_action_chunks,
+            action_dim=self.model_cfg.action_dim,
+            policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
         )
         env_info = {}
@@ -1238,7 +1238,7 @@ class EnvWorker(Worker):
             return (
                 torch.zeros((self.train_num_envs_per_stage,), dtype=bool)
                 .unsqueeze(1)
-                .repeat(1, self.cfg.actor.model.num_action_chunks)
+                .repeat(1, self.model_cfg.num_action_chunks)
             )
 
         env_outputs: list[EnvOutput] = []
