@@ -206,15 +206,52 @@ class EnvWorker(Worker):
             ),
         )
 
+        # When enabled, each rollout worker serves ONLY the env ranks bound to it
+        # (per-group fixed binding) instead of the default global decoupled pool.
+        # Defaults to False so the global-pool behavior is unchanged when absent.
+        self.enable_group_route_binding = self.cfg.rollout.get(
+            "enable_group_route_binding", False
+        )
+        self._group_id: int | None = None
+
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
             self.batch_router = {}
-            assert self._component_placement.get_world_size(
-                "env"
-            ) >= self._component_placement.get_world_size("rollout"), (
+            env_world_size = self._component_placement.get_world_size("env")
+            rollout_world_size = self._component_placement.get_world_size("rollout")
+            assert env_world_size >= rollout_world_size, (
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
+            if self.enable_group_route_binding:
+                assert env_world_size % rollout_world_size == 0, (
+                    f"enable_group_route_binding requires env world size ({env_world_size}) "
+                    f"to be divisible by rollout world size ({rollout_world_size}) so each "
+                    "rollout worker is bound to a whole, equal-sized env group."
+                )
+                ratio = env_world_size // rollout_world_size
+                # env ranks (ratio*k .. ratio*k+ratio-1) are bound to rollout rank k.
+                self._group_id = self._rank // ratio
+                self.log_info(
+                    f"env_decoupled_mode group-route binding enabled: env_rank={self._rank} "
+                    f"-> group_id={self._group_id} (ratio={ratio})"
+                )
+
+    def _group_route_key(self) -> str | None:
+        """Return the per-group route key for decoupled binding, or None for the global pool."""
+        if not self.enable_group_route_binding:
+            return None
+        assert self._group_id is not None, (
+            "group route binding is enabled but group_id was not computed; "
+            "this requires env_decoupled_mode to be active."
+        )
+        return f"grp{self._group_id}"
+
+    def _rollout_route_key(self, stage_id: int) -> str | int | None:
+        """Return the route key used for an env/rollout channel operation."""
+        if self.env_decoupled_mode:
+            return self._group_route_key()
+        return stage_id
 
     def _prepare_trajectory_builders(
         self, trajectory_builders: list | None = None
@@ -1021,7 +1058,7 @@ class EnvWorker(Worker):
                 split_fn=self._obs_split_fn,
                 mode="train",
                 tag="rollout_results",
-                route_key=stage_id if not self.env_decoupled_mode else None,
+                route_key=self._rollout_route_key(stage_id),
                 decoupled_mode=self.env_decoupled_mode,
             )
 
@@ -1163,7 +1200,7 @@ class EnvWorker(Worker):
                             group_name=self.cfg.rollout.group_name,
                             channel=input_channel,
                             tag="train_rollout_results",
-                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            route_key=self._rollout_route_key(stage_id),
                             batch_size=self.train_batch_size,
                             merge_fn=PolicyOutput.merge,
                             infer_batch_size_fn=self._infer_rollout_batch_size,
@@ -1248,7 +1285,7 @@ class EnvWorker(Worker):
                             split_fn=self._obs_split_fn,
                             mode="train",
                             tag="rollout_results",
-                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            route_key=self._rollout_route_key(stage_id),
                             decoupled_mode=self.env_decoupled_mode,
                         )
                     if (
@@ -1310,7 +1347,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="train_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=self._rollout_route_key(stage_id),
                         batch_size=self.train_batch_size,
                         merge_fn=PolicyOutput.merge,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
@@ -1441,7 +1478,7 @@ class EnvWorker(Worker):
                         split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=self._rollout_route_key(stage_id),
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
@@ -1451,7 +1488,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=self._rollout_route_key(stage_id),
                         batch_size=self.eval_batch_size,
                         infer_batch_size_fn=self._infer_rollout_batch_size
                         if self.env_decoupled_mode
@@ -1491,7 +1528,7 @@ class EnvWorker(Worker):
                         split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        route_key=self._rollout_route_key(stage_id),
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
