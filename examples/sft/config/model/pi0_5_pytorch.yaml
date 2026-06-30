@@ -1,0 +1,45 @@
+model_type: "openpi_pytorch"
+
+# Model-shape template only. Filesystem paths (model_path, openpi.assets_dir,
+# openpi.asset_id, openpi.paligemma_tokenizer) live in the experiment config
+# (behavior_pi05_vla.yaml), not here, so this template stays path-free and reusable.
+
+# Weight dtype for SFT: fp32. The fp32 weights are the FSDP optimizer master; FSDP
+# MixedPrecision casts params to bf16 only for compute (param_dtype is a separate
+# knob in the experiment config), so warmup-LR updates are not lost to bf16
+# rounding. (Eval casts the weights to bf16; see the embodiment template.)
+precision: fp32
+
+# LoRA is not used, but the shared model factory reads these keys.
+is_lora: False
+lora_rank: 32
+
+# Action and chunk settings (BEHAVIOR pi05): 23-dim env actions, 32-step chunk
+# (action_horizon). `num_action_chunks` is the Pi0 action_horizon.
+num_action_chunks: 32
+action_dim: 23
+use_proprio: True
+
+# Flow-matching denoising steps (used by the eval sampler; carried here so the
+# shared factory reads one uniform field).
+num_steps: 5
+
+# No value head in the SFT model.
+add_value_head: False
+
+# openpi_pytorch model-shape parameters (clean/minimal: no full_pi05, dsrl,
+# value-head, RL). get_model builds Pi0Config from num_action_chunks
+# (action_horizon) + the openpi.* shape fields below; no config.json is read.
+openpi:
+  num_images_in_input: 3
+  action_chunk: ${actor.model.num_action_chunks}
+  action_env_dim: ${actor.model.action_dim}
+  # Selects the per-env eval processor
+  # (rlinf.data.datasets.openpi_pytorch.get_eval_processor). SFT builds the
+  # processor but does not use it for eval.
+  env: behavior
+  # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
