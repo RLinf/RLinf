@@ -193,6 +193,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
