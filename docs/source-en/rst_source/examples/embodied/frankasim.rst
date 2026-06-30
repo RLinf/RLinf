@@ -89,10 +89,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-frankasim
+      rlinf/rlinf:agentic-rlinf0.3-frankasim
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-frankasim
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-frankasim
 
 Switch to the virtual environment inside the image:
 

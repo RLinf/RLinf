@@ -96,10 +96,10 @@ GSEnv，也称 ManiSkill-GS，将 ManiSkill 物理仿真与 3D Gaussian Splattin
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 在镜像中切换到 OpenPI 虚拟环境：
 

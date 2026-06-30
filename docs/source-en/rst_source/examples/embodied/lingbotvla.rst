@@ -119,7 +119,7 @@ Run embodied training based on RoboTwin using the Docker image:
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-robotwin
+      rlinf/rlinf:agentic-rlinf0.3-robotwin
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 

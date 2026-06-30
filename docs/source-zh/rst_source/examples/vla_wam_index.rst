@@ -10,8 +10,8 @@
    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/mlp.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/3_layer_mlp.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/mlp.html" style="text-decoration: underline; color: blue;">
            <b>MLP 策略强化学习</b>
@@ -21,8 +21,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/pi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/pi0.html" style="text-decoration: underline; color: blue;">
            <b>π₀和π₀.₅模型强化学习训练</b>
@@ -32,8 +32,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/gr00t.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/gr00t.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/gr00t.html" style="text-decoration: underline; color: blue;">
            <b>GR00T模型强化学习训练</b>
@@ -43,8 +43,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/lingbotvla.html" style="text-decoration: underline; color: blue;">
            <b>基于 Lingbot-VLA 模型的强化学习</b>
@@ -54,8 +54,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/dexbotic.html" style="display: block;"><img src="https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/dexbotic.html" style="text-decoration: underline; color: blue;">
            <b>基于 Dexbotic 模型的强化学习训练</b>
@@ -65,8 +65,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/starvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/starvla.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/starvla.html" style="text-decoration: underline; color: blue;">
            <b>StarVLA 模型强化学习训练</b>
@@ -76,8 +76,8 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/abot_m0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/abot_m0.html" style="text-decoration: underline; color: blue;">
            <b>ABot-M0 模型强化学习训练</b>
@@ -87,9 +87,9 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png"
+       <a href="embodied/opensora.html" style="display: block;"><img src="https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage">
+            data-target="animated-image.originalImage"></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/opensora.html" style="text-decoration: underline; color: blue;">
            <b>基于 OpenSora 世界模型的强化学习</b>
@@ -99,9 +99,9 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
+       <a href="embodied/wan.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage">
+            data-target="animated-image.originalImage"></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/wan.html" style="text-decoration: underline; color: blue;">
            <b>基于 Wan 世界模型的强化学习</b>
