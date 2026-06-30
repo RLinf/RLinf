@@ -1025,7 +1025,7 @@ def validate_embodied_cfg(cfg):
                     "Unsupported reward.model.sglang_engine_args keys: "
                     f"{unsupported_engine_args}. Supported keys: ['max_running_requests']."
                 )
-        if cfg.algorithm.loss_type == "embodied_sac":
+        if not only_eval and algorithm_cfg.get("loss_type") == "embodied_sac":
             pending_step_window = int(cfg.reward.get("pending_step_window", 0))
             assert pending_step_window >= 0, (
                 "reward.pending_step_window must be greater than or equal to 0"

@@ -105,6 +105,27 @@ def test_async_sac_qwen_config_validates():
     assert validated_cfg.env.train.init_params.control_mode == "pd_ee_delta_pos"
 
 
+def test_embodied_eval_config_without_algorithm_validates():
+    cfg = _make_async_sac_qwen_cfg()
+    del cfg.algorithm
+    del cfg.actor
+    del cfg.env.train
+    cfg.runner.task_type = "embodied_eval"
+    cfg.runner.only_eval = True
+    cfg.rollout.model = {
+        "model_type": "mlp_policy",
+        "num_action_chunks": 1,
+        "policy_setup": "panda-ee-dpos",
+        "action_dim": 4,
+    }
+
+    validated_cfg = validate_embodied_cfg(cfg)
+
+    assert "algorithm" not in validated_cfg
+    assert validated_cfg.runner.only_eval is True
+    assert validated_cfg.env.eval.init_params.control_mode == "pd_ee_delta_pos"
+
+
 def test_async_sac_qwen_config_allows_no_pending_reward():
     cfg = _make_async_sac_qwen_cfg()
     cfg.reward.pending_step_window = 0

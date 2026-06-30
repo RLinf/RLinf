@@ -49,10 +49,7 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
-from rlinf.workers.env.reward_postprocess import (
-    compute_reward_assign_lengths,
-    normalize_total_reward,
-)
+from rlinf.workers.env.reward_postprocess import compute_reward_assign_lengths
 
 
 @dataclass
@@ -105,15 +102,6 @@ class EnvWorker(Worker):
         if self.use_external_reward_model:
             self.reward_weight = self.reward_cfg.get("reward_weight", 1.0)
             self.env_reward_weight = self.reward_cfg.get("env_reward_weight", 0.0)
-        self.normalize_total_reward = bool(
-            self.reward_cfg.get("normalize_total_reward", False)
-        )
-        self.reward_normalization_mode = self.reward_cfg.get(
-            "normalization_mode", "batch_zscore"
-        )
-        self.reward_normalization_eps = float(
-            self.reward_cfg.get("normalization_eps", 1.0e-6)
-        )
         self.reward_pending_step_window = int(
             self.reward_cfg.get("pending_step_window", 0)
         )
@@ -836,26 +824,6 @@ class EnvWorker(Worker):
         adjusted_rewards[:, -1] += self.cfg.algorithm.gamma * final_values
         return adjusted_rewards
 
-    def _apply_reward_postprocess(
-        self,
-        rollout_result: EmbodiedRolloutResult,
-    ) -> None:
-        if not rollout_result.rewards:
-            return
-
-        reward_tensor = torch.stack(rollout_result.rewards, dim=0).cpu().contiguous()
-
-        if self.normalize_total_reward:
-            reward_tensor = normalize_total_reward(
-                reward_tensor,
-                mode=self.reward_normalization_mode,
-                eps=self.reward_normalization_eps,
-            ).to(dtype=reward_tensor.dtype)
-
-        rollout_result.rewards = [
-            step.cpu().contiguous() for step in reward_tensor.unbind(0)
-        ]
-
     def finish_rollout(self, mode="train"):
         record_video_cls = None
         # reset
@@ -1429,7 +1397,6 @@ class EnvWorker(Worker):
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
-        self._apply_reward_postprocess(rollout_result)
         trajectories: Trajectory = rollout_result.to_splited_trajectories(
             self.actor_split_num
         )

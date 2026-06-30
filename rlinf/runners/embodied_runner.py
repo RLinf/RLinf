@@ -133,7 +133,7 @@ class EmbodiedRunner:
             except queue.Empty:
                 continue
             except Exception as e:
-                self.logger.error("Logging error: %s", e, exc_info=True)
+                print(f"Logging error: {e}")
                 continue
 
     def print_metrics_table_async(

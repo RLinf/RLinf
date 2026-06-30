@@ -16,10 +16,7 @@ from __future__ import annotations
 
 import torch
 
-from rlinf.workers.env.reward_postprocess import (
-    compute_reward_assign_lengths,
-    normalize_total_reward,
-)
+from rlinf.workers.env.reward_postprocess import compute_reward_assign_lengths
 
 
 def test_compute_reward_assign_lengths_uses_min_history_and_current_length():
@@ -35,20 +32,3 @@ def test_compute_reward_assign_lengths_uses_min_history_and_current_length():
     )
 
     assert torch.equal(lengths, torch.tensor([3, 2], dtype=torch.long))
-
-
-def test_normalize_total_reward_batch_zscore_has_zero_mean_and_unit_variance():
-    rewards = torch.tensor([[1.0], [2.0], [4.0]], dtype=torch.float32)
-
-    normalized = normalize_total_reward(rewards, mode="batch_zscore", eps=1.0e-6)
-
-    assert abs(float(normalized.mean().item())) < 1.0e-6
-    assert abs(float(normalized.std(unbiased=False).item()) - 1.0) < 1.0e-6
-
-
-def test_normalize_total_reward_zero_variance_falls_back_to_zero_centered():
-    rewards = torch.full((3, 2), 5.0, dtype=torch.float32)
-
-    normalized = normalize_total_reward(rewards, mode="batch_zscore", eps=1.0e-6)
-
-    assert torch.allclose(normalized, torch.zeros_like(rewards))

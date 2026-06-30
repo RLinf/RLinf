@@ -32,22 +32,3 @@ def compute_reward_assign_lengths(
         )
         assign_lengths.append(min(assign_length, current_rollout_length))
     return torch.as_tensor(assign_lengths, dtype=torch.long)
-
-
-def normalize_total_reward(
-    rewards: torch.Tensor,
-    *,
-    mode: str,
-    eps: float,
-) -> torch.Tensor:
-    if mode != "batch_zscore":
-        raise ValueError(f"Unsupported reward normalization mode: {mode}")
-
-    rewards = rewards.float()
-    mean = rewards.mean()
-    centered = rewards - mean
-    variance = centered.pow(2).mean()
-    std = variance.sqrt()
-    if float(std.item()) < eps:
-        return centered
-    return centered / std.clamp_min(eps)

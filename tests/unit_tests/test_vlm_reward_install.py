@@ -74,6 +74,28 @@ def test_qwen3_vl_model_installs_sglang_reward_runtime():
     assert "install_qwen_vlm_reward_deps" not in body
 
 
+def test_flash_attn_install_does_not_resolve_torch_dependencies():
+    install_script = (REPO_ROOT / "requirements/install.sh").read_text()
+
+    flash_attn_body_match = re.search(
+        r"install_flash_attn\(\) \{\n(?P<body>.*?)\n\}\n\ninstall_apex",
+        install_script,
+        flags=re.S,
+    )
+    assert flash_attn_body_match is not None
+
+    body = flash_attn_body_match.group("body")
+    flash_attn_installs = [
+        line.strip()
+        for line in body.splitlines()
+        if "uv pip install" in line and "flash-attn" in line
+    ]
+
+    assert flash_attn_installs
+    assert all("--no-deps" in line for line in flash_attn_installs)
+    assert 'uv pip install --no-deps "${base_url}/${wheel_name}"' in body
+
+
 def test_agentic_sglang_extra_keeps_base_runtime():
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
 
