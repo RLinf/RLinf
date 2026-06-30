@@ -60,7 +60,7 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
          <a href="embodied/steam.html" style="text-decoration: underline; color: blue;">
            <b>STEAM: Ensemble Advantage Modeling</b>
          </a><br>
-         Offline policy optimization with a worst-of-N ensemble progress critic
+         Conservative sample evaluation with an ensemble advantage predictor
        </p>
      </div>
 

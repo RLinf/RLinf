@@ -60,7 +60,7 @@
          <a href="embodied/steam.html" style="text-decoration: underline; color: blue;">
            <b>STEAM：集成优势建模</b>
          </a><br>
-         用 worst-of-N 集成进度评论器进行离线策略优化
+         用集成优势预测器进行保守样本评估
        </p>
      </div>
 
