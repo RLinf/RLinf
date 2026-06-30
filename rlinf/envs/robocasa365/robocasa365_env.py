@@ -15,6 +15,8 @@
 """RoboCasa365 environment wrapper for RLinf."""
 
 import copy
+import logging
+import os
 import re
 from typing import Any, Optional, Union
 
@@ -26,6 +28,8 @@ from omegaconf import OmegaConf
 from rlinf.envs.robocasa.venv import RobocasaSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 
+# TODO: use for legacy task source mode — provides fallback task descriptions
+# when task_source="legacy" and no dataset registry prompt is available.
 _LEGACY_TASK_DESC_MAP = {
     "OpenSingleDoor": "open cabinet or microwave door",
     "CloseSingleDoor": "close cabinet or microwave door",
@@ -91,6 +95,71 @@ def _split_camel_case(name: str) -> str:
     name = name.removeprefix("Kitchen")
     tokens = re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|\d+", name)
     return " ".join(token.lower() for token in tokens) if tokens else name.lower()
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _detect_gl_backend() -> str:
+    """Detect the active MuJoCo GL backend from environment variables.
+
+    Returns one of ``"osmesa"``, ``"egl"``, ``"glfw"``, or ``"unknown"``.
+    """
+    gl_backend = os.environ.get("MUJOCO_GL", "").lower()
+    if gl_backend in ("osmesa", "egl", "glfw"):
+        return gl_backend
+    # When MUJOCO_GL is not set, mujoco defaults to GLFW on Linux.
+    return "glfw"
+
+
+def _ensure_mujoco_gl_context() -> None:
+    """Pre-initialize the MuJoCo GL context before forking subprocesses.
+
+    When using OSMesa (off-screen Mesa), the GL context must be created in
+    the parent process *before* any fork/spawn, otherwise child processes
+    may inherit an invalid or missing rendering context, resulting in
+    crashes such as::
+
+        gladLoadGL error
+        libGL error: failed to create drawable
+
+    This function imports ``mujoco`` and triggers a lightweight GL init
+    to stabilise the context for child processes.  It is a no-op when the
+    GL backend is already EGL or GLFW.
+    """
+    gl_backend = _detect_gl_backend()
+    if gl_backend not in ("osmesa",):
+        return
+
+    _logger.info("Pre-initialising MuJoCo GL context for backend=%s …", gl_backend)
+    try:
+        import mujoco
+
+        # Create a minimal off-screen model with a camera to force GL
+        # context creation.  The camera is required because
+        # renderer.update_scene needs a named view.
+        xml = """<mujoco>
+        <worldbody>
+          <light directional="false"/>
+          <geom type="box" size="0.1 0.1 0.1"/>
+          <camera name="fixed"/>
+        </worldbody>
+        </mujoco>"""
+        spec = mujoco.MjSpec.from_string(xml)
+        model = spec.compile()
+        data = mujoco.MjData(model)
+        mujoco.mj_step(model, data)
+        with mujoco.Renderer(model, 64, 64) as renderer:
+            renderer.update_scene(data, camera="fixed")
+            _ = renderer.render()
+        _logger.info("MuJoCo GL context initialised successfully for backend=%s.", gl_backend)
+    except Exception:
+        _logger.warning(
+            "Failed to pre-initialise MuJoCo GL context for backend=%s. "
+            "The child processes will attempt to create their own context.",
+            gl_backend,
+            exc_info=True,
+        )
 
 
 def _official_prompt_from_info(info_single: dict[str, Any]) -> str:
@@ -526,6 +595,12 @@ class Robocasa365Env(gym.Env):
 
     def _init_env(self):
         self._refresh_task_context()
+
+        # Pre-initialise the MuJoCo GL context before spawning subprocess
+        # environments.  This is critical for OSMesa headless rendering:
+        # without it, forked child processes may inherit a broken GL
+        # context and crash.
+        _ensure_mujoco_gl_context()
 
         env_fns = self.get_env_fns()
         self.env = RobocasaSubprocEnv(env_fns)
