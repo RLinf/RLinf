@@ -182,7 +182,7 @@ def test_env_worker_decoupled_rollout_route_tags():
     worker.env_decoupled_mode = True
     assert worker._env_to_rollout_tag("train") == "rollout_results"
     assert worker._rollout_to_env_tag("train") == "train_rollout_results"
-    assert worker._env_to_rollout_tag("eval") == "eval_rollout_results"
+    assert worker._env_to_rollout_tag("eval") == "rollout_results"
     assert worker._rollout_to_env_tag("eval") == "eval_rollout_results"
 
 
@@ -210,12 +210,12 @@ def test_rollout_recorded_routes_do_not_double_prefix_mode():
     )
     assert channel.keys[-1][3] == "train_rollout_results"
 
-    worker.batch_router = {"eval_rollout_results": ["4_0_eval_eval_rollout_results"]}
+    worker.batch_router = {"rollout_results": ["4_0_eval_rollout_results"]}
     worker.send_to_recorded_batch_routes(
         group_name="env",
         channel=channel,
         data=torch.arange(2),
-        tag="eval_rollout_results",
+        tag="rollout_results",
         split_sizes=[2],
     )
     assert channel.keys[-1][3] == "eval_rollout_results"

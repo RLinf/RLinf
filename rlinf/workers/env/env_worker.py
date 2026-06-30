@@ -713,6 +713,38 @@ class EnvWorker(Worker):
 
         return merged_final_obs
 
+    @staticmethod
+    def _infer_rollout_batch_size(data: Any) -> int:
+        """Infer batch dim for routed shards; supports RolloutResult and plain tensor payloads.
+
+        When the channel carries a non-``RolloutResult`` shard (e.g. reward tensor or eval
+        actions) into a rollout recv, avoid assuming dataclass fields and delegate or use
+        the leading dimension of dense arrays.
+        """
+
+        if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
+            return int(data.shape[0])
+        if isinstance(data, RolloutResult):
+            for field_name in (
+                "actions",
+                "prev_logprobs",
+                "prev_values",
+                "bootstrap_values",
+                "versions",
+            ):
+                value = getattr(data, field_name, None)
+                if isinstance(value, torch.Tensor):
+                    return int(value.shape[0])
+            forward_inputs = getattr(data, "forward_inputs", None)
+            if forward_inputs:
+                first_tensor = next(iter(forward_inputs.values()))
+                if isinstance(first_tensor, torch.Tensor):
+                    return int(first_tensor.shape[0])
+            raise ValueError("Cannot infer batch size from rollout result.")
+        from rlinf.scheduler import infer_batch_size
+
+        return infer_batch_size(data)
+
     @Worker.timer("env/recv_actions")
     def recv_chunk_actions(self, input_channel: Channel, mode="train") -> np.ndarray:
         """Receive and merge chunked actions for the current env worker.
@@ -733,8 +765,13 @@ class EnvWorker(Worker):
             channel=input_channel,
             tag=self._rollout_to_env_tag(mode),
             batch_size=self._rollout_stage_batch_size(mode),
+            infer_batch_size_fn=self._infer_rollout_batch_size
+            if self.env_decoupled_mode
+            else None,
             decoupled_mode=self.env_decoupled_mode,
         )
+        if hasattr(chunk_action, "actions"):
+            chunk_action = chunk_action.actions
         if isinstance(chunk_action, torch.Tensor):
             chunk_action = chunk_action.detach().cpu().numpy()
         else:
@@ -747,30 +784,13 @@ class EnvWorker(Worker):
     ) -> RolloutResult:
         assert mode in ["train", "eval"], f"{mode=} is not supported"
 
-        def _infer_rollout_batch_size(rollout_result: RolloutResult) -> int:
-            for field_name in (
-                "actions",
-                "prev_logprobs",
-                "prev_values",
-                "bootstrap_values",
-                "versions",
-            ):
-                value = getattr(rollout_result, field_name, None)
-                if isinstance(value, torch.Tensor):
-                    return value.shape[0]
-            if rollout_result.forward_inputs:
-                first_tensor = next(iter(rollout_result.forward_inputs.values()))
-                if isinstance(first_tensor, torch.Tensor):
-                    return first_tensor.shape[0]
-            raise ValueError("Cannot infer batch size from rollout result.")
-
         return self.recv_from(
             group_name=self.cfg.rollout.group_name,
             channel=input_channel,
             tag=self._rollout_to_env_tag(mode),
             batch_size=self._rollout_stage_batch_size(mode),
             merge_fn=RolloutResult.merge_rollout_results,
-            infer_batch_size_fn=_infer_rollout_batch_size,
+            infer_batch_size_fn=self._infer_rollout_batch_size,
             decoupled_mode=self.env_decoupled_mode,
         )
 
@@ -897,7 +917,7 @@ class EnvWorker(Worker):
         assert mode in ["train", "eval"], f"{mode=} is not supported"
         if not self.env_decoupled_mode:
             return f"{mode}_rollout_results"
-        return "rollout_results" if mode == "train" else "eval_rollout_results"
+        return "rollout_results"
 
     def _rollout_to_env_tag(self, mode: Literal["train", "eval"]) -> str:
         """Return the route tag used by rollout results sent back to env workers."""
