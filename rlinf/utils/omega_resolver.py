@@ -17,22 +17,16 @@ from omegaconf import OmegaConf
 
 _REGISTERED = False
 
-_register_resolver = (
-    OmegaConf.register_resolver
-    if hasattr(OmegaConf, "register_resolver")
-    else OmegaConf.register_new_resolver
-)
-
 
 def omegaconf_register():
     global _REGISTERED
     if _REGISTERED:  # avoid duplicate
         return
-    _register_resolver("multiply", lambda x, y: x * y)
-    _register_resolver("int_div", lambda x, y: x // y)
-    _register_resolver("subtract", lambda x, y: x - y)
-    _register_resolver("not", lambda x: not bool(x))
-    _register_resolver(
+    OmegaConf.register_new_resolver("multiply", lambda x, y: x * y)
+    OmegaConf.register_new_resolver("int_div", lambda x, y: x // y)
+    OmegaConf.register_new_resolver("subtract", lambda x, y: x - y)
+    OmegaConf.register_new_resolver("not", lambda x: not bool(x))
+    OmegaConf.register_new_resolver(
         "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
     )
     _REGISTERED = True

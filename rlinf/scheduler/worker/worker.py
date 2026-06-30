@@ -29,8 +29,8 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 import ray
 import ray.util.state
 import torch
+from omegaconf import OmegaConf
 
-from ...utils.omega_resolver import omegaconf_register
 from ..cluster import (
     Cluster,
     ClusterEnvVar,
@@ -372,7 +372,7 @@ class Worker(metaclass=WorkerMeta):
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
-        omegaconf_register()
+        self._set_new_omegaconf_resolvers()
 
         # Load user-provided extension modules (e.g., for registering custom envs/models)
         self._load_user_extensions()
@@ -1583,6 +1583,14 @@ class Worker(metaclass=WorkerMeta):
                 warnings.warn("prctl(PR_SET_PTRACER, ANY) failed!")
         except Exception as e:
             warnings.warn(f"Failed to enable ptrace from any same-UID process: {e}")
+
+    def _set_new_omegaconf_resolvers(self):
+        OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
+        OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+        OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
+        OmegaConf.register_new_resolver(
+            "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
+        )
 
     def _get_collective_group(self, peer_addr: WorkerAddress):
         """Get a collective group for communication with a peer worker."""
