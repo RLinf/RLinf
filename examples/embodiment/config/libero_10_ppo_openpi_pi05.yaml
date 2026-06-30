@@ -100,7 +100,7 @@ rollout:
   # torch_compile_mode: "max-autotune"
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-SFT
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -113,7 +113,7 @@ actor:
 
   # Override the default values in model/pi0_5
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-SFT
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     model_type: "openpi"
     add_value_head: True
     # openpi specific parameters

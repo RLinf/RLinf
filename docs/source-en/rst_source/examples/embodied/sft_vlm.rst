@@ -49,7 +49,7 @@ Installation
 ------------
 
 1. **Pull the RLinf image:**
-   ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
+   ``rlinf/rlinf:agentic-rlinf0.3-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``.
 2. **Download model weights:** `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_.
 3. **Download the dataset:** `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_.
 4. **Edit** ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml`` and run ``examples/sft/run_vlm_sft.sh``.

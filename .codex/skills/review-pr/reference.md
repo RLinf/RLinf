@@ -26,6 +26,7 @@ Use alongside the PR diff. **Always cross-reference against `origin/main`** (`gi
 - [ ] If docs changed, follow the [docs-check skill](../docs-check/SKILL.md) (code↔docs cross-check + EN↔ZH parity)
 - [ ] Every config key / CLI flag / env var / path / supported name mentioned in changed docs exists in `origin/main` + PR
 - [ ] Public-facing additions/renames/removals in code are reflected in BOTH `docs/source-en/` AND `docs/source-zh/`
+- [ ] Changed `examples/embodiment/config/*.yaml` model-weight paths (`model_path`/`lora_path`/`backbone_model_path`/`wan_wm_hf_ckpt_path`): basename == repo in the `# https://huggingface.co/...` comment; repo resolves on HF (`/api/models/<org>/<repo>` → 200, non-redirecting `id`); and matches the model the env recipe doc prescribes for that env+suite+model family (e.g. LIBERO spatial/object/goal + π₀ → `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT`); no base-vs-LoRA mixup or casing drift
 - [ ] EN/ZH paired pages agree: commands, paths, keys, claims, numbers, structure
 - [ ] No duplicated/missing/conflicting paragraphs between EN and ZH (or justified)
 - [ ] Style aligned with sibling docs (section titles/order, code blocks, table/link style)

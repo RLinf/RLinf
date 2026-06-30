@@ -86,20 +86,32 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.2-behavior``：
+**选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
+``agentic-rlinf0.3-behavior``（OpenVLA-OFT）和 ``agentic-rlinf0.3-behavior-openpi``
+（OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
+（两者之间无法通过 ``switch_env`` 互相切换）：
 
 .. code-block:: bash
 
+   # OpenVLA-OFT 模型：
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-behavior
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
+      rlinf/rlinf:agentic-rlinf0.3-behavior
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior
 
-   # 在容器内切换到对应模型的虚拟环境：
-   source switch_env openvla-oft        # 或：source switch_env openpi
+   # OpenPI 模型（独立镜像）：
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+
+   # 两个镜像都会默认激活各自对应的虚拟环境。
 
 **选项 2：自定义环境** — 安装 ``--env behavior`` 依赖组合：
 
