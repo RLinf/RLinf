@@ -540,12 +540,23 @@ class FSDPModelManager:
                 }
             )
 
+        # Fused AdamW avoids a large foreach temp buffer during warmup_optimizer_state
+        # for NO_SHARD models (e.g. STEAM ensemble SFT). It is unsafe with sharded
+        # FSDP params + grad_scaler.step() and can fail at runtime with:
+        # "output with shape [] doesn't match the broadcast shape [1]".
+        all_params = [p for group in param_groups for p in group["params"]]
+        use_fused_adamw = (
+            self._cfg.fsdp_config.get("sharding_strategy", "full_shard") == "no_shard"
+            and Worker.torch_device_type == "cuda"
+            and Worker.torch_platform.is_available()
+            and not any(p.dim() == 0 for p in all_params)
+        )
         try:
             optimizer = torch.optim.AdamW(
                 param_groups,
                 eps=adam_eps,
                 weight_decay=weight_decay,
-                fused=Worker.torch_platform.is_available(),
+                fused=use_fused_adamw,
             )
         except (RuntimeError, TypeError):
             optimizer = torch.optim.AdamW(
