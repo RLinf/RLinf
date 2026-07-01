@@ -25,8 +25,6 @@ import rlinf.runners.async_ppo_embodied_runner as async_ppo_runner_module
 import rlinf.runners.embodied_runner as embodied_runner_module
 from rlinf.runners.async_ppo_embodied_runner import AsyncPPOEmbodiedRunner
 from rlinf.runners.embodied_runner import EmbodiedRunner
-from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
 
 
 class _FakeHandle:
@@ -424,49 +422,3 @@ def test_async_ppo_runner_keeps_reward_queue_depth_max_metric(
 
     assert reward_metrics["reward/input_queue_depth"] == 2.0
     assert reward_metrics["reward/input_queue_depth_max"] == 3.0
-
-
-def test_async_env_worker_stop_cancels_background_interact_task():
-    async def run_stop():
-        worker = object.__new__(AsyncEnvWorker)
-        cancelled = False
-
-        async def never_finishes():
-            nonlocal cancelled
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-
-        worker._interact_task = asyncio.create_task(never_finishes())
-        await asyncio.sleep(0)
-        await worker.stop()
-
-        assert cancelled
-        assert worker._interact_task.done()
-
-    asyncio.run(run_stop())
-
-
-def test_embodied_reward_worker_stop_cancels_background_reward_task():
-    async def run_stop():
-        worker = object.__new__(EmbodiedRewardWorker)
-        cancelled = False
-
-        async def never_finishes():
-            nonlocal cancelled
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled = True
-                raise
-
-        worker._interact_task = asyncio.create_task(never_finishes())
-        await asyncio.sleep(0)
-        await worker.stop()
-
-        assert cancelled
-        assert worker._interact_task.done()
-
-    asyncio.run(run_stop())

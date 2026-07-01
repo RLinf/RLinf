@@ -12,6 +12,9 @@
    * - 论文
      - 主题
      - 预印本
+   * - :doc:`STEAM <steam>`
+     - 面向真实机器人学习的自监督时序集成优势建模。
+     - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
    * - :doc:`RLinf-USER <rlinf_user>`
      - 统一真机在线策略学习系统。
      - `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
@@ -38,6 +41,7 @@
    :hidden:
    :maxdepth: 2
 
+   steam
    rlinf_user
    rlinf_vla
    rlinf_co

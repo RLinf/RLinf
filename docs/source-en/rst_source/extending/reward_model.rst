@@ -319,15 +319,16 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
-This installs the Qwen3-VL reward runtime used by the MLP policy example,
-including the dependencies required by the SGLang reward backend.
+This installs the Qwen3-VL reward runtime used by the MLP policy example and
+the dependencies needed by the SGLang reward backend.
 
-Then configure the reward section to use ``model_type: history_vlm``. Set
-``inference_backend: hf`` for the Hugging Face/Transformers backend, or
-``inference_backend: sglang`` for the SGLang backend. The QwenTrend example uses
-``reward_mode: history_buffer`` so the env worker maintains per-env history
-windows and sends them to the reward worker only when a valid window is
-available:
+Set ``model_type: history_vlm`` in the reward model config. Select
+``inference_backend: hf`` for local Hugging Face inference, or
+``inference_backend: sglang`` to serve Qwen3-VL with Ray-managed SGLang workers.
+
+QwenTrend uses ``reward_mode: history_buffer``. In this mode, the env worker
+waits until the history window has enough frames before sending a reward
+request:
 
 .. code-block:: yaml
 
@@ -371,17 +372,18 @@ available:
 
 Important fields:
 
-- ``model_type`` selects the reward model family. Use ``history_vlm`` for
-  history-window VLM rewards.
-- ``inference_backend`` selects the inference backend. Set ``hf`` for
-  Hugging Face/Transformers, or ``sglang`` for SGLang.
-- ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
+- ``model_type`` selects the reward model family. Use ``history_vlm`` for VLM
+  rewards.
+- ``inference_backend`` selects either Hugging Face/Transformers (``hf``) or
+  SGLang (``sglang``).
+- ``history_buffers`` defines the cached keys, window length, and minimum valid
+  length.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
-- ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
+- ``reward_parser_name`` maps generated labels to scalar rewards.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
 
-For the Hugging Face/Transformers backend, keep ``inference_backend: hf`` and
-configure ``lora_path`` if needed:
+For Hugging Face inference, keep ``inference_backend: hf``.
+Set ``lora_path`` when the reward model uses a LoRA adapter:
 
 .. code-block:: yaml
 
@@ -391,41 +393,14 @@ configure ``lora_path`` if needed:
        inference_backend: hf
        lora_path: "/path/to/qwen3-vl-lora-checkpoint"
 
-The SGLang backend reuses the same QwenTrend input builder, reward parser, and
-history buffer settings. Select it with ``inference_backend: sglang`` to enable
-Ray-managed SGLang reward serving.
+For SGLang inference, keep the same input builder, parser, and history-buffer
+settings, then add a ``reward_server`` placement. RLinf launches the SGLang
+server group and an internal router, injects the router URL into the reward
+worker, and sends requests through the OpenAI-compatible
+``/v1/chat/completions`` API. Do not add manual router endpoints or socket
+settings to the reward YAML.
 
-RLinf wires these roles for you:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Component
-     - What It Does
-   * - ``reward_server``
-     - Runs one or more SGLang server replicas. Each replica owns the GPUs
-       assigned to one ``reward_server`` process.
-   * - Internal router
-     - Receives every ``reward_server`` URL and routes reward-model requests
-       across the replicas.
-   * - ``reward``
-     - Runs the RLinf reward worker. It builds and aggregates reward inputs, then
-       calls the internal router through the OpenAI-compatible
-       ``/v1/chat/completions`` API.
-
-The ``reward`` worker does not run the VLM when you use SGLang. It only calls
-the internal router endpoint injected by the launcher. Do not configure manual
-endpoints, socket bindings, or router lifecycle fields in the reward YAML.
-Each request sends history frames as multiple ``image_url`` data URLs in a
-single chat message, so the backend does not use in-process ``sglang.Engine`` or
-temporary MP4/video inputs.
-
-When ``reward.model.lora_path`` is set for the SGLang backend, RLinf enables
-SGLang LoRA, registers that path as an adapter, and selects the adapter in
-each OpenAI-compatible request. RLinf derives the served model and adapter name
-from ``reward.model.model_path``.
-
-Use this minimal block to select SGLang and show serving placement:
+Use this minimal block to select SGLang:
 
 .. code-block:: yaml
 
@@ -446,65 +421,12 @@ Use this minimal block to select SGLang and show serving placement:
        sglang_engine_args:
          max_running_requests: 64
 
-Use ``cluster.component_placement.reward_server`` to control both tensor
-parallelism and replica count:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Placement
-     - Meaning
-     - Use It When
-   * - ``reward_server: 0-1:0``
-     - One SGLang server replica owns GPUs 0 and 1. ``TP=2``, ``DP=1``.
-     - The VLM does not fit on one GPU.
-   * - ``reward_server: 0-3``
-     - Four SGLang server replicas each own one GPU. ``TP=1``, ``DP=4``.
-     - The VLM fits on one GPU and you want higher throughput.
-   * - ``reward_server: 0-3:0-1``
-     - Two SGLang server replicas each own two GPUs. ``TP=2``, ``DP=2``.
-     - The VLM needs TP and you also want replica throughput.
-   * - ``reward_server: all``
-     - One replica per resource rank in the current reward path. Usually
-       ``TP=1`` and ``DP=<number of GPUs>``.
-     - The VLM fits on one GPU and every listed GPU can serve reward requests.
-
-Here, TP is the number of GPUs assigned to one SGLang server process. Increase
-it to fit a larger VLM. DP is the number of SGLang server processes registered
-with the internal router. Increase it to let the router spread requests across
-more replicas.
-
-This reward path differs from the generic SGLang server launcher: the generic
-launcher can take all selected GPUs and repack them with an explicit
-``tensor_parallel_size``. The reward path does not expose that field. It infers
-TP from how many GPUs each ``reward_server`` process receives, and DP from the
-number of ``reward_server`` processes.
-
-Tune the three concurrency layers separately:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Field
-     - Layer
-     - Meaning
-   * - ``reward.pending_step_window``
-     - Env worker
-     - Maximum number of outstanding reward requests the env rollout may keep
-       before waiting. ``0`` waits immediately after each request.
-   * - ``reward.aggregate_request_count``
-     - Reward worker
-     - Maximum number of received reward requests to merge into one model call.
-       It must be ``1`` when ``pending_step_window`` is ``0`` and otherwise must
-       be less than or equal to ``pending_step_window``.
-   * - ``reward.model.sglang_engine_args.max_running_requests``
-     - SGLang server replica
-     - Maximum in-flight requests inside each SGLang replica. It does not set
-       TP, DP, or the env pending window.
-
-The reward worker reports ``reward/input_queue_depth`` and
-``reward/input_queue_depth_max`` so you can see whether requests are building up
-before they reach the SGLang router.
+``reward_server`` placement controls the serving shape. For example,
+``0-1:0`` starts one TP=2 replica, while ``0-3`` starts four one-GPU replicas.
+``max_running_requests`` only limits in-flight requests inside each SGLang
+replica; it does not change TP, DP, or the env pending window. If requests build
+up before the router, check ``reward/input_queue_depth`` and
+``reward/input_queue_depth_max``.
 
 Launch the MLP RL run with:
 

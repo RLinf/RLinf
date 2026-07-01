@@ -32,6 +32,7 @@ from rlinf.data.embodied_io_struct import (
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.utils import get_env_attr
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
@@ -207,9 +208,9 @@ class EnvWorker(Worker):
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
             if self.train_enable_offload:
-                assert all(hasattr(env, "offload") for env in self.env_list), (
-                    "train envs must have an offload method to enable offload!"
-                )
+                assert all(
+                    callable(get_env_attr(env, "offload")) for env in self.env_list
+                ), "train envs must have an offload method to enable offload!"
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
             self.eval_env_list = self._setup_env_and_wrappers(
@@ -218,9 +219,9 @@ class EnvWorker(Worker):
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
             if self.eval_enable_offload:
-                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
-                    "eval envs must have an offload method to enable offload!"
-                )
+                assert all(
+                    callable(get_env_attr(env, "offload")) for env in self.eval_env_list
+                ), "eval envs must have an offload method to enable offload!"
 
         if self.enable_train:
             self._init_env()
@@ -494,12 +495,18 @@ class EnvWorker(Worker):
 
     def _init_env(self):
         for i in range(self.stage_num):
-            if self.cfg.env.train.auto_reset:
-                extracted_obs, _ = self.env_list[i].reset()
-                self.last_obs_list.append(extracted_obs)
-                self.last_intervened_info_list.append((None, None))
-            if self.enable_offload and hasattr(self.env_list[i], "offload"):
-                self.env_list[i].offload()
+            if self.enable_train:
+                if self.cfg.env.train.auto_reset:
+                    extracted_obs, _ = self.env_list[i].reset()
+                    self.last_obs_list.append(extracted_obs)
+                    self.last_intervened_info_list.append((None, None))
+                if self.train_enable_offload and self.cfg.env.train.get(
+                    "enable_init_offload", True
+                ):
+                    get_env_attr(self.env_list[i], "offload")()
+            if self.enable_eval:
+                if self.eval_enable_offload:
+                    get_env_attr(self.eval_env_list[i], "offload")()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -1668,8 +1675,8 @@ class EnvWorker(Worker):
         )
 
         for env in self.env_list:
-            if self.enable_offload and hasattr(env, "offload"):
-                env.offload()
+            if self.train_enable_offload:
+                get_env_attr(env, "offload")()
 
         return env_metrics
 
@@ -1733,10 +1740,8 @@ class EnvWorker(Worker):
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
-            if self.cfg.env.eval.get("enable_offload", False) and hasattr(
-                self.eval_env_list[stage_id], "offload"
-            ):
-                self.eval_env_list[stage_id].offload()
+            if self.eval_enable_offload:
+                get_env_attr(self.eval_env_list[stage_id], "offload")()
 
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

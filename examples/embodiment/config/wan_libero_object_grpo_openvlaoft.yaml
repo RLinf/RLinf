@@ -77,7 +77,7 @@ env:
     max_steps_per_rollout_epoch: 256
     reward_coef: ${algorithm.reward_coef}
     reset_gripper_open: True
-    wan_wm_hf_ckpt_path: "/path/to/RLinf-Wan-Libero-Object" # https://huggingface.co/RLinf/RLinf-Wan-Libero-Object
+    wan_wm_hf_ckpt_path: "/path/to/RLinf-Wan-LIBERO-Object" # https://huggingface.co/RLinf/RLinf-Wan-LIBERO-Object
     enable_offload: True # otherwise, may OOM
     num_inference_steps: 5 # default 5, can be set to 3 or 1 for faster inference, but lower quality
   eval:

@@ -244,7 +244,7 @@ Step 1：计算回报（Compute Returns）
 
 **配置文件**
 
-配置文件位于 ``examples/recap/process/config/compute_returns.yaml``：
+配置文件位于 ``examples/offline_rl/config/recap_compute_returns.yaml``：
 
 .. code:: yaml
 
@@ -286,7 +286,7 @@ Step 1：计算回报（Compute Returns）
 
 .. code:: bash
 
-   bash examples/recap/process/run_compute_returns.sh compute_returns
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
 
 **输出文件**
 
@@ -322,7 +322,7 @@ Step 2：训练价值模型（Value Model SFT）
 
 **配置文件**
 
-配置文件位于 ``examples/recap/value/config/libero_sft_value.yaml``，核心字段如下：
+配置文件位于 ``examples/offline_rl/config/recap_value_model_sft.yaml``，核心字段如下：
 
 .. code:: yaml
 
@@ -393,7 +393,7 @@ Step 2：训练价值模型（Value Model SFT）
 
 .. code:: bash
 
-   bash examples/recap/value/run_value_sft.sh libero_sft_value
+   bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh recap_value_model_sft
 
 **输出**
 
@@ -430,7 +430,7 @@ Step 3：计算优势（Compute Advantages）
 
 **配置文件**
 
-配置文件位于 ``examples/recap/process/config/compute_advantages.yaml``：
+配置文件位于 ``examples/offline_rl/config/recap_compute_advantages.yaml``：
 
 .. code:: yaml
 
@@ -481,7 +481,7 @@ Step 3：计算优势（Compute Advantages）
 
 .. code:: bash
 
-   bash examples/recap/process/run_compute_advantages.sh compute_advantages
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh recap_compute_advantages
 
 **输出文件**
 
@@ -514,7 +514,7 @@ Step 4：CFG Training
 
 **配置文件**
 
-配置文件位于 ``examples/recap/cfg/config/libero_cfg_openpi.yaml``：
+配置文件位于 ``examples/offline_rl/config/cfg_rl_openpi.yaml``：
 
 .. code:: yaml
 
@@ -577,7 +577,7 @@ Step 4：CFG Training
 
 .. code:: bash
 
-   bash examples/recap/cfg/run_cfg_sft.sh libero_cfg_openpi
+   bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
 
 **关键监控指标**
 
@@ -587,7 +587,7 @@ Step 4：CFG Training
 可视化优势分布
 ----------------------------------------
 
-Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dataset.py`` 对优势分布进行可视化分析，
+Step 3 完成后，可以使用 ``examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py`` 对优势分布进行可视化分析，
 包括优势直方图、价值预测分布、逐 episode 正样本率等统计图，以及带优势标注的 episode 回放视频。
 
 **基本用法**
@@ -596,7 +596,7 @@ Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dat
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -606,7 +606,7 @@ Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dat
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -616,7 +616,7 @@ Step 3 完成后，可以使用 ``examples/recap/process/visualize_advantage_dat
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -732,12 +732,12 @@ RECAP 实验结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 如果需要修改分位数阈值（如从 30% 调整为 20%），无需重新运行完整的 Step 3。
-可以使用 ``recompute_advantages_from_value_reward.py`` 仅重标阈值：
+可以使用 ``relabel_advantages.py`` 仅重标阈值：
 
 .. code:: bash
 
-   cd examples/recap/process
-   python recompute_advantages_from_value_reward.py \
+   cd examples/offline_rl/advantage_labeling/recap/process
+   python relabel_advantages.py \
        --dataset_paths /path/to/sft_dataset /path/to/rollout_dataset \
        --source_tag "fail300_N10_ckpt18000_q30" \
        --new_tag "fail300_N10_ckpt18000_q20" \
@@ -747,7 +747,7 @@ RECAP 实验结果
 
 .. code:: bash
 
-   python recompute_advantages_from_value_reward.py \
+   python relabel_advantages.py \
        --dataset_root /path/to/dataset_root \
        --advantage_lookahead_step 20 \
        --positive_quantile 0.3
@@ -770,27 +770,34 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
 
 .. code-block:: text
 
-   examples/
-   └── recap/
-       ├── process/
-       │   ├── compute_returns.py               # Step 1: 计算回报
-       │   ├── compute_advantages.py            # Step 3: 计算优势
-       │   ├── recompute_advantages_from_value_reward.py  # 阈值重标
-       │   ├── visualize_advantage_dataset.py    # 优势可视化
-       │   ├── run_compute_returns.sh            # Step 1 启动脚本
-       │   ├── run_compute_advantages.sh         # Step 3 启动脚本
-       │   └── config/
-       │       ├── compute_returns.yaml
-       │       └── compute_advantages.yaml
-       ├── value/
-       │   ├── train_value.py                # Step 2: 训练价值模型
-       │   ├── run_value_sft.sh              # Step 2 启动脚本
-       │   └── config/
-       │       ├── libero_sft_value.yaml
-       │       └── model/
-       │           └── value.yaml            # 价值模型配置
-       └── cfg/
-           ├── train_cfg.py                  # Step 4: CFG 策略训练
-           ├── run_cfg_sft.sh                # Step 4 启动脚本
-           └── config/
-               └── libero_cfg_openpi.yaml
+   examples/offline_rl/
+   ├── config/                                  # 共享生产配置
+   │   ├── recap_compute_returns.yaml           # Step 1
+   │   ├── recap_value_model_sft.yaml           # Step 2
+   │   ├── recap_compute_advantages.yaml        # Step 3
+   │   ├── cfg_rl_openpi.yaml                   # Step 4
+   │   └── model/
+   │       └── recap_value_model.yaml           # 价值模型架构默认配置
+   ├── advantage_labeling/
+   │   └── recap/
+   │       ├── train_value.py                    # Step 2: 训练价值模型
+   │       ├── run_value_sft.sh                  # Step 2 启动脚本
+   │       └── process/
+   │           ├── compute_returns.py            # Step 1：回报逻辑 + Hydra 入口
+   │           ├── compute_advantages.py         # Step 3：优势逻辑 + Hydra 入口
+   │           ├── relabel_advantages.py         # 阈值重标（CPU）
+   │           ├── visualize_advantage_dataset.py    # 优势可视化
+   │           ├── run_compute_returns.sh        # Step 1 启动脚本
+   │           └── run_compute_advantages.sh     # Step 3 启动脚本
+   └── policy_optimization/
+       └── cfg_rl/
+           ├── train_cfg.py                      # Step 4: CFG 策略训练
+           └── run_cfg_rl.sh                     # Step 4 启动脚本
+
+   rlinf/
+   ├── models/embodiment/value_model/recap/     # 价值评论器、配置、checkpoint 工具
+   ├── data/datasets/recap/                     # value_dataset.py、cfg_model.py 等
+   └── data/process/                            # 共享、模型无关（RECAP + STEAM）
+       ├── advantage.py                          # 分位数阈值 + 布尔标签
+       ├── distributed.py                        # 分片推理辅助
+       └── mixture_config.py                     # meta/mixture_config.yaml tag I/O
