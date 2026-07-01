@@ -23,6 +23,7 @@ jobs:
       embodied_filter: ${{ steps.filter.outputs.embodied_filter }}
       agent_reason_filter: ${{ steps.filter.outputs.agent_reason_filter }}
       sft_filter: ${{ steps.filter.outputs.sft_filter }}
+      offline_rl_filter: ${{ steps.filter.outputs.offline_rl_filter }}
       unit_test_filter: ${{ steps.filter.outputs.unit_test_filter }}
       scheduler_test_filter: ${{ steps.filter.outputs.scheduler_test_filter }}
 
@@ -73,7 +74,6 @@ jobs:
               - 'rlinf/workers/reward/*.py'
               - 'rlinf/workers/rollout/**'
               - 'rlinf/hybrid_engines/**'
-              - 'rlinf/data/**'
               - 'rlinf/config.py'
               - 'rlinf/__init__.py'
               - 'rlinf/*/__init__.py'
@@ -96,8 +96,8 @@ jobs:
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
               - 'rlinf/runners/*reward*.py'
-              - 'examples/embodiment/**'
-              - 'examples/recap/process/**'
+              - 'examples/embodiment/*'
+              - 'examples/embodiment/config/*/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/evaluations/**'
@@ -137,11 +137,25 @@ jobs:
               - *shared
               - 'rlinf/workers/sft/**'
               - 'rlinf/runners/sft_runner.py'
-              - 'examples/recap/cfg/**'
-              - 'examples/recap/value/**'
               - 'examples/sft/**'
               - 'tests/e2e_tests/sft/**'
               - '.github/workflows/sft-e2e-tests.yml'
+            offline_rl_filter: &offline_rl
+              - *shared
+              - 'rlinf/workers/sft/**'
+              - 'rlinf/runners/sft_runner.py'
+              - 'rlinf/data/process/**'
+              - 'examples/offline_rl/config/**'
+              - 'examples/offline_rl/policy_optimization/cfg_rl/train_cfg.py'
+              - 'examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh'
+              - 'examples/offline_rl/advantage_labeling/recap/**'
+              - 'examples/offline_rl/advantage_labeling/steam/**'
+              - 'rlinf/models/embodiment/value_model/recap/**'
+              - 'rlinf/models/embodiment/value_model/steam/**'
+              - 'rlinf/data/datasets/steam/**'
+              - 'examples/sft/**'
+              - 'tests/e2e_tests/offline_rl/**'
+              - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
@@ -161,6 +175,7 @@ jobs:
               - *embodied
               - *agent
               - *sft
+              - *offline_rl
               - *unit
               - *scheduler
               - '.pre-commit-config.yaml'
@@ -252,6 +267,13 @@ jobs:
     if: needs.check-changes.outputs.sft_filter == 'true'
     uses: ./.github/workflows/sft-e2e-tests.yml
 
+  # =============================================== offline rl e2e tests ====================================================
+
+  offline-rl-e2e-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.offline_rl_filter == 'true'
+    uses: ./.github/workflows/offline_rl-e2e-tests.yml
+
   # =============================================== scheduler tests ====================================================
 
   scheduler-tests:
@@ -270,6 +292,7 @@ jobs:
       agent-reason-e2e-tests,
       embodied-e2e-tests,
       sft-e2e-tests,
+      offline-rl-e2e-tests,
       scheduler-tests
     ]
     if: always()
