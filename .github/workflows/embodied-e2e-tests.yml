@@ -451,6 +451,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_reward
 
+      - name: ManiSkill SGLang VLM Reward PPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_sglang_reward
+
       - name: ManiSkill ResNet Reward PPO test
         timeout-minutes: 20
         run: |

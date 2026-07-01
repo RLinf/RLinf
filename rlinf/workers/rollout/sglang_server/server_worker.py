@@ -28,9 +28,12 @@ from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 
 from rlinf.scheduler import Worker
+from rlinf.utils import internal_http
 
 
-def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
+def _run_sglang_server(
+    server_args_dict: dict, ready_pipe, direct_env: dict[str, str]
+) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
     Runs in a *spawned* subprocess so the parent's Ray actor isn't blocked
@@ -39,6 +42,9 @@ def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
     either completes or throws (mirrors sglang's ``pipe_finish_writer``
     contract).
     """
+    os.environ.clear()
+    os.environ.update(direct_env)
+
     # Put this process in its own group so SIGTERM to the parent can
     # forward via os.killpg without killing the Ray actor itself.
     try:
@@ -66,7 +72,7 @@ def _wait_for_http_health(host: str, port: int, timeout: float = 300.0) -> None:
     last_err: Optional[BaseException] = None
     while time.perf_counter() < deadline:
         try:
-            resp = requests.get(url, timeout=5)
+            resp = internal_http.get(url, timeout=5)
             if resp.status_code == 200:
                 return
         except requests.exceptions.RequestException as e:
@@ -154,7 +160,7 @@ class SGLangServerWorker(Worker):
         self._ready_pipe = parent_pipe
         proc = ctx.Process(
             target=_run_sglang_server,
-            args=(asdict(server_args), child_pipe),
+            args=(asdict(server_args), child_pipe, internal_http.direct_request_env()),
             daemon=False,
         )
         proc.start()
@@ -188,7 +194,7 @@ class SGLangServerWorker(Worker):
             return False
         try:
             url = f"http://{self._advertise_host}:{self._server_port}/health"
-            return requests.get(url, timeout=2).status_code == 200
+            return internal_http.get(url, timeout=2).status_code == 200
         except requests.exceptions.RequestException:
             return False
 

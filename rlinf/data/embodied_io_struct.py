@@ -223,6 +223,15 @@ class EnvOutput:
         merged_terminations = _merge_optional_tensor_field("terminations")
         merged_truncations = _merge_optional_tensor_field("truncations")
         merged_rewards = _merge_optional_tensor_field("rewards")
+        env_infos_list = [env_output.get("env_infos") for env_output in env_outputs]
+        if all(env_infos is None for env_infos in env_infos_list):
+            merged_env_infos = None
+        elif any(env_infos is None for env_infos in env_infos_list):
+            raise ValueError(
+                "Inconsistent field 'env_infos': some shards are None while others contain metadata."
+            )
+        else:
+            merged_env_infos = cat_list_of_dict_tensor(env_infos_list, dim=0)
         merged_intervene_actions = _merge_optional_tensor_field(
             "intervene_actions",
             allow_partial_none=True,
@@ -241,6 +250,7 @@ class EnvOutput:
             terminations=merged_terminations,
             truncations=merged_truncations,
             rewards=merged_rewards,
+            env_infos=merged_env_infos,
             intervene_actions=merged_intervene_actions,
             intervene_flags=merged_intervene_flags,
         ).to_dict()
@@ -539,6 +549,10 @@ class EmbodiedRolloutResult:
 
     curr_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
     next_obs: list[dict[str, Any]] = field(default_factory=list)  # trajectory_length
+    reward_assign_lengths: list[torch.Tensor] = field(
+        default_factory=list
+    )  # reward_length
+    reward_dones: list[torch.Tensor] = field(default_factory=list)  # reward_length
 
     def append_step_result(self, result: ChunkStepResult):
         if result.actions is not None:

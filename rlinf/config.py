@@ -1010,6 +1010,54 @@ def validate_embodied_cfg(cfg):
             if cfg.env.get("eval", None) is not None
             else None
         )
+        if cfg.get("reward", {}).get("use_reward_model", False):
+            reward_model_cfg = cfg.reward.get("model", {})
+            if (
+                reward_model_cfg.get("model_type") == "history_vlm"
+                and str(reward_model_cfg.get("inference_backend", "")).lower()
+                == "sglang"
+            ):
+                for removed_key in ("sglang_server_args", "sglang_router_args"):
+                    assert removed_key not in reward_model_cfg, (
+                        f"reward.model.{removed_key} is no longer supported for "
+                        "Ray-managed SGLang reward serving. Use "
+                        "reward.model.sglang_engine_args for supported engine options."
+                    )
+                engine_args = reward_model_cfg.get("sglang_engine_args", {})
+                unsupported_engine_args = sorted(
+                    set(engine_args.keys()) - {"max_running_requests"}
+                )
+                assert not unsupported_engine_args, (
+                    "Unsupported reward.model.sglang_engine_args keys: "
+                    f"{unsupported_engine_args}. Supported keys: ['max_running_requests']."
+                )
+        if not only_eval and algorithm_cfg.get("loss_type") == "embodied_sac":
+            pending_step_window = int(cfg.reward.get("pending_step_window", 0))
+            assert pending_step_window >= 0, (
+                "reward.pending_step_window must be greater than or equal to 0"
+            )
+            cfg.reward.pending_step_window = pending_step_window
+
+            aggregate_request_count = int(cfg.reward.get("aggregate_request_count", 1))
+            assert aggregate_request_count > 0, (
+                "reward.aggregate_request_count must be greater than 0"
+            )
+            if pending_step_window == 0:
+                assert aggregate_request_count == 1, (
+                    "reward.aggregate_request_count must be 1 when "
+                    "reward.pending_step_window is 0"
+                )
+            else:
+                assert aggregate_request_count <= pending_step_window, (
+                    "reward.aggregate_request_count must be less than or equal to "
+                    "reward.pending_step_window"
+                )
+            cfg.reward.aggregate_request_count = aggregate_request_count
+            if cfg.get("reward", {}).get("use_reward_model", False):
+                assert cfg.reward.get("use_output_step", 0) == 0, (
+                    "Async embodied SAC with reward workers requires "
+                    "reward.use_output_step=0."
+                )
         if (
             train_env_type == SupportedEnvType.MANISKILL
             or eval_env_type == SupportedEnvType.MANISKILL

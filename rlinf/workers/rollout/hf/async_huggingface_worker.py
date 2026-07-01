@@ -166,10 +166,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                     await self._poll_background_weight_sync()
                 await self.wait_if_stale()
             decoupled_generate_time = decoupled_generate_time + 1
-            (
-                env_output,
-                split_sizes,
-            ) = await self.recv_from_and_record_batch_routes_with_timeout(
+            recv_result = await self.recv_from_and_record_batch_routes_with_timeout(
                 group_name=self.cfg.env.group_name,
                 channel=input_channel,
                 tag="rollout_results",
@@ -179,6 +176,10 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 timeout_time=0.02,
                 recv_queue_size=self.rollout_queue_size,
             )
+            if recv_result is None:
+                await asyncio.sleep(0.001)
+                continue
+            env_output, split_sizes = recv_result
             actions, result = self.predict(env_output["obs"])
             save_flags = None
             if result.get("expert_label_flag", False):

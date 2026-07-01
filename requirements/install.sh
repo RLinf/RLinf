@@ -928,7 +928,7 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        uv pip install "flash-attn==${flash_ver}" --no-build-isolation --no-deps
         return 0
     fi
     # Detect Python tags
@@ -960,7 +960,7 @@ EOF
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        uv pip install "flash-attn==${flash_ver}" --no-build-isolation --no-deps
         return 0
     }
     cuda_major="${cuda_mm%% *}"
@@ -984,13 +984,13 @@ EOF
         base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
         echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
-        if uv pip install "${base_url}/${wheel_name}"; then
+        if uv pip install --no-deps "${base_url}/${wheel_name}"; then
             return 0
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
-    uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+    uv pip install "flash-attn==${flash_ver}" --no-build-isolation --no-deps
 }
 
 install_apex() {
@@ -1088,6 +1088,35 @@ clone_or_reuse_repo() {
 }
 
 #=======================EMBODIED INSTALLERS=======================
+assert_transformers_version() {
+    local expected="$1"
+    python - "$expected" <<'EOF'
+from importlib.metadata import version
+import sys
+
+expected = sys.argv[1]
+actual = version("transformers")
+if actual != expected:
+    raise SystemExit(f"Expected transformers=={expected}, found {actual}.")
+EOF
+}
+
+install_qwen_vlm_reward_sglang_deps() {
+    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    uv pip install --no-config -r "$SCRIPT_DIR/embodied/models/qwen_vlm_reward_sglang.txt"
+    assert_transformers_version "4.57.1"
+    python - <<'EOF'
+from importlib.metadata import version
+
+from packaging.version import Version
+
+expected = Version("0.5.5.post3")
+actual = Version(version("sglang"))
+if actual != expected:
+    raise SystemExit(f"Expected sglang=={expected}, found {actual}.")
+EOF
+}
+
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -1563,7 +1592,7 @@ install_qwen3_vl_model() {
             ;;
     esac
 
-    uv pip install --upgrade "transformers>=4.57.1,<=4.57.6" "tokenizers>=0.22,<0.23"
+    install_qwen_vlm_reward_sglang_deps
 
     install_flash_attn
 }

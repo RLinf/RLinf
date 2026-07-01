@@ -20,6 +20,8 @@ from typing import Any, Optional
 import aiohttp
 import requests
 
+from rlinf.utils import internal_http
+
 
 class InferenceHTTPClient:
     """Thin HTTP client for an sglang router or server base URL.
@@ -83,7 +85,7 @@ class InferenceHTTPClient:
 
     def health(self) -> bool:
         try:
-            r = requests.get(f"{self.base_url}/health", timeout=5)
+            r = internal_http.get(f"{self.base_url}/health", timeout=5)
             return r.status_code == 200
         except requests.exceptions.RequestException:
             return False
@@ -174,7 +176,7 @@ class InferenceHTTPClient:
     def _post(self, path: str, body: dict) -> dict:
         # (connect, read) tuple: bound the TCP connect phase only;
         # let the response take as long as it needs.
-        resp = requests.post(
+        resp = internal_http.post(
             f"{self.base_url}{path}",
             json=body,
             timeout=(self.connect_timeout, None),

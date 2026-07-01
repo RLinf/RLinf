@@ -235,7 +235,8 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``（设置 ``inference_backend: hf``）
+- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_sglang_reward.yaml``（设置 ``inference_backend: sglang``）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -312,11 +313,17 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
 
-随后在 reward 配置中使用 ``history_vlm``。QwenTrend 示例使用
-``reward_mode: history_buffer``，因此 env worker 会按 env 维护历史窗口，
-只在窗口有效时将历史输入发送给 reward worker：
+这会安装 MLP policy 示例所需的 Qwen3-VL reward runtime，以及 SGLang reward
+后端需要的依赖。
+
+在 reward model 配置中使用 ``model_type: history_vlm``。``inference_backend: hf``
+表示在本地用 Hugging Face/Transformers 推理；``inference_backend: sglang`` 表示
+通过 Ray 托管的 SGLang worker 服务 Qwen3-VL。
+
+QwenTrend 示例使用 ``reward_mode: history_buffer``。在这个模式下，env worker
+会等历史窗口收集到足够帧数后再发送 reward request：
 
 .. code-block:: yaml
 
@@ -330,7 +337,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       inference_backend: hf
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -360,16 +367,64 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 关键字段说明：
 
-- ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效历史长度。
+- ``model_type`` 选择 reward model 类型。历史窗口 VLM reward 使用 ``history_vlm``。
+- ``inference_backend`` 选择推理后端：``hf`` 使用 Hugging Face/Transformers；
+  ``sglang`` 使用 SGLang。
+- ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效长度。
 - ``input_builder_name`` 将历史窗口转换为双视角 VLM 输入。
-- ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
+- ``reward_parser_name`` 将模型生成的标签映射为标量 reward。
 - ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
+
+使用 Hugging Face/Transformers 后端时，保留 ``inference_backend: hf``。
+如果 reward model 使用 LoRA adapter，再配置 ``lora_path``：
+
+.. code-block:: yaml
+
+   reward:
+     model:
+       model_type: "history_vlm"
+       inference_backend: hf
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+
+SGLang 后端复用同一套 QwenTrend input builder、reward parser 和 history buffer
+配置。你只需要选择 ``inference_backend: sglang``，并为 ``reward_server`` 设置
+placement。RLinf 会启动 SGLang server group 和内部 router，把 router URL 注入
+reward worker，并通过兼容 OpenAI 的 ``/v1/chat/completions`` API 发起请求。
+不要在 reward YAML 中手动配置 router endpoint 或 socket 绑定。
+
+下面是最小 SGLang 配置：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       reward: 1
+       reward_server: 0-3:0-1  # TP=2, DP=2
+
+   reward:
+     use_reward_model: true
+     reward_mode: history_buffer
+     pending_step_window: 4
+     aggregate_request_count: 2
+     model:
+       model_type: "history_vlm"
+       inference_backend: sglang
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
+       sglang_engine_args:
+         max_running_requests: 64
+
+``reward_server`` placement 决定服务形态。例如，``0-1:0`` 表示启动一个
+TP=2 replica；``0-3`` 表示启动四个单卡 replica。``max_running_requests`` 只限制
+每个 SGLang replica 内部的并发请求数，不会改变 TP、DP，也不会替代 env 侧的
+pending window。如果 request 在进入 router 前堆积，查看
+``reward/input_queue_depth`` 和 ``reward/input_queue_depth_max``。
 
 启动 MLP RL：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
 4. 总结
 ^^^^^^^^^^^^

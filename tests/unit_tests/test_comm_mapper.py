@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
+import pytest
 import torch
 
 from rlinf.data.embodied_io_struct import EnvOutput, RolloutResult
@@ -22,6 +25,7 @@ from rlinf.scheduler import (
     merge_batches,
     split_batch,
 )
+from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -167,6 +171,56 @@ def test_build_route_channel_key_is_stable():
     )
 
 
+def test_env_worker_decoupled_rollout_route_tags():
+    worker = object.__new__(EnvWorker)
+    worker.env_decoupled_mode = False
+    assert worker._env_to_rollout_tag("train") == "train_rollout_results"
+    assert worker._rollout_to_env_tag("train") == "train_rollout_results"
+    assert worker._env_to_rollout_tag("eval") == "eval_rollout_results"
+    assert worker._rollout_to_env_tag("eval") == "eval_rollout_results"
+
+    worker.env_decoupled_mode = True
+    assert worker._env_to_rollout_tag("train") == "rollout_results"
+    assert worker._rollout_to_env_tag("train") == "train_rollout_results"
+    assert worker._env_to_rollout_tag("eval") == "rollout_results"
+    assert worker._rollout_to_env_tag("eval") == "eval_rollout_results"
+
+
+class _FakeChannel:
+    def __init__(self):
+        self.keys = []
+
+    def put(self, item, key, async_op):
+        self.keys.append(key)
+        return object()
+
+
+def test_rollout_recorded_routes_do_not_double_prefix_mode():
+    worker = object.__new__(MultiStepRolloutWorker)
+    worker._worker_address = SimpleNamespace(root_group_name="rollout")
+    channel = _FakeChannel()
+
+    worker.batch_router = {"rollout_results": ["3_0_train_rollout_results"]}
+    worker.send_to_recorded_batch_routes(
+        group_name="env",
+        channel=channel,
+        data=torch.arange(2),
+        tag="rollout_results",
+        split_sizes=[2],
+    )
+    assert channel.keys[-1][3] == "train_rollout_results"
+
+    worker.batch_router = {"rollout_results": ["4_0_eval_rollout_results"]}
+    worker.send_to_recorded_batch_routes(
+        group_name="env",
+        channel=channel,
+        data=torch.arange(2),
+        tag="rollout_results",
+        split_sizes=[2],
+    )
+    assert channel.keys[-1][3] == "eval_rollout_results"
+
+
 def test_split_and_merge_nested_batches():
     batch = {
         "obs": _make_obs(0, 6),
@@ -256,3 +310,27 @@ def test_merge_env_outputs_with_partial_optional_fields():
     assert torch.equal(
         merged["intervene_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
     )
+
+
+def test_merge_env_outputs_rejects_partial_env_infos():
+    env_output_0 = EnvOutput(
+        obs=_make_obs(0, 2),
+        final_obs=None,
+        dones=torch.zeros((2, 1), dtype=torch.bool),
+        terminations=torch.zeros((2, 1), dtype=torch.bool),
+        truncations=torch.zeros((2, 1), dtype=torch.bool),
+        rewards=torch.ones((2, 1), dtype=torch.float32),
+        env_infos=None,
+    ).to_dict()
+    env_output_1 = EnvOutput(
+        obs=_make_obs(100, 3),
+        final_obs=None,
+        dones=torch.zeros((3, 1), dtype=torch.bool),
+        terminations=torch.zeros((3, 1), dtype=torch.bool),
+        truncations=torch.zeros((3, 1), dtype=torch.bool),
+        rewards=torch.ones((3, 1), dtype=torch.float32),
+        env_infos={"episode": {"success": torch.ones((3, 1), dtype=torch.float32)}},
+    ).to_dict()
+
+    with pytest.raises(ValueError, match="Inconsistent field 'env_infos'"):
+        EnvOutput.merge_env_outputs([env_output_0, env_output_1])

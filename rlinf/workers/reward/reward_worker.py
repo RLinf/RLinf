@@ -14,7 +14,7 @@
 
 import asyncio
 import os
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 import torch
@@ -24,11 +24,14 @@ from torch.utils.data import DataLoader, DistributedSampler
 from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
-from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models.embodiment.reward import get_reward_model_class
+from rlinf.models.embodiment.reward import (
+    get_reward_model_class,
+    resolve_reward_model_backend,
+)
 from rlinf.scheduler import (
     Channel,
     Cluster,
+    CommMapper,
     FlexiblePlacementStrategy,
     NodePlacementStrategy,
     Worker,
@@ -36,12 +39,25 @@ from rlinf.scheduler import (
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.down_sampling import down_sample_batch
 from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
-from rlinf.utils.utils import (
-    clear_memory,
-)
+from rlinf.utils.utils import clear_memory
+
+try:
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+except ImportError as exc:
+    _FSDP_MODEL_MANAGER_IMPORT_ERROR = exc
+
+    class FSDPModelManager:  # type: ignore[no-redef]
+        """Placeholder when reward inference env lacks FSDP training deps."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "FSDPRewardWorker requires FSDPModelManager dependencies to be "
+                "available in the active Python environment."
+            ) from _FSDP_MODEL_MANAGER_IMPORT_ERROR
 
 
 class RewardWorker(Worker):
@@ -82,19 +98,11 @@ class RewardWorker(Worker):
     def compute_rewards(
         self, input_channel: Channel, output_channel: Channel, total_batch_size=None
     ):
-        """Compute rewards for reasoning/agentic rollout batches.
-        This method is used by the generic ``RewardWorker`` path. It consumes
-        ``RolloutResult`` objects from ``input_channel`` until this worker has received
-        its expected share of sequences, fills missing rewards with rule-based rewards,
-        optionally applies down-sampling, and sends the processed ``RolloutResult`` to
-        ``output_channel``.
-        Unlike the embodied reward path, this method works on text/token rollout data
-        and is bounded by ``total_batch_size_per_dp``.
+        """Compute rewards.
+
         Args:
-            input_channel: Channel that provides ``RolloutResult`` batches.
-            output_channel: Channel used to send rewarded ``RolloutResult`` batches.
-            total_batch_size: Optional global batch size. If provided, it is divided by
-                the reward worker world size to determine this rank's receive quota.
+            input_channel: The input channel to read from.
+            output_channel: The output channel to send results to.
         """
         recv_batch_size = 0
         if total_batch_size is None:
@@ -225,61 +233,66 @@ class EmbodiedRewardWorker(Worker):
                 else 0
             )
             self.num_pipeline_stages = cfg.rollout.pipeline_stage_num
-            self.train_batch_size = (
-                self.total_num_train_envs // self.num_pipeline_stages
-            )
-            self.eval_batch_size = self.total_num_eval_envs // self.num_pipeline_stages
         else:
             self.total_num_train_envs = 1
             self.total_num_eval_envs = 1
             self.num_pipeline_stages = 1
-            self.train_batch_size = 1
-            self.eval_batch_size = 1
 
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
         self._interact_task = None
 
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
-        self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
-
-        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
-
-        if self.env_decoupled_mode:
-            # save the run-time imformation in communicate channel for decoupled mode
-            # The batch_router is a dictionary that maps the tag to the list of batch_index.
-            self.batch_router = {
-                "train_reward_obs": [],
-            }
+        self.aggregate_request_count = int(
+            self.cfg.reward.get("aggregate_request_count", 1)
+        )
 
     def model_provider_func(self):
-        reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
-
         model_cfg = self.cfg.reward.model
+        model_type, inference_backend = resolve_reward_model_backend(
+            model_cfg.model_type,
+            model_cfg.get("inference_backend", None),
+        )
+        reward_cls = get_reward_model_class(model_type, inference_backend)
+
         with open_dict(model_cfg):
+            model_cfg.model_type = model_type
+            if inference_backend is not None:
+                model_cfg.inference_backend = inference_backend
             model_cfg.num_envs = self.local_num_train_envs
+        if self._standalone_realworld and inference_backend == "sglang":
+            raise ValueError(
+                "standalone_realworld reward workers do not support the SGLang "
+                "backend. Use the Ray-managed embodied reward server path instead."
+            )
         model = reward_cls(model_cfg)
 
         return model
 
     def init_worker(self):
         """Initialize the reward worker for inference."""
+        # build model
+
         if self._standalone_realworld:
-            self.local_num_train_envs = self.total_num_train_envs
+            self.dst_ranks = {"train": [(0, 1)]}
+            self.src_ranks = {"train": [(0, 1)]}
         else:
-            assert self.train_batch_size % self._world_size == 0, (
-                f"train_batch_size ({self.train_batch_size}) must be divisible by "
-                f"world_size ({self._world_size})."
-            )
-            self.local_num_train_envs = self.train_batch_size // self._world_size
+            self.dst_ranks = {
+                "train": self._setup_dst_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+            self.src_ranks = {
+                "train": self._setup_src_ranks(
+                    self.total_num_train_envs // self.num_pipeline_stages
+                ),
+            }
+        self.local_num_train_envs = sum(size for _, size in self.src_ranks["train"])
 
         self.model = self.model_provider_func()
 
         # Move to device and set eval mode
         self.model = self.model.to(self.device)
         self.model.eval()
-
-        if self._standalone_realworld:
-            return
 
     @Worker.timer("compute_rewards")
     async def compute_rewards(self, input_channel: Channel, output_channel: Channel):
@@ -288,25 +301,16 @@ class EmbodiedRewardWorker(Worker):
 
         total_last_run_count = 0
         while True:
-            merged_data = await self.recv_from(
-                group_name=self.cfg.env.group_name,
-                channel=input_channel,
-                tag="train_reward_obs",
-                async_op=True,
-                batch_size=self.train_batch_size,
-            ).async_wait()
-            last_run = merged_data.get("last_run", None)
-            last_run_count = int(last_run.sum().item()) if last_run is not None else 0
-            rewards = self.compute_image_rewards(observations=merged_data)
-            if isinstance(rewards, torch.Tensor):
-                rewards = rewards.contiguous()
-            self.send_to(
-                group_name=self.cfg.env.group_name,
-                channel=output_channel,
-                data=rewards,
-                tag="train_reward_obs",
-                async_op=True,
+            reward_input, last_run_count = await self.recv_merged_reward_input(
+                input_channel, mode="train"
             )
+            rewards = self.model.compute_reward(reward_input)
+            self._record_reward_model_timings()
+
+            if rewards is not None and rewards.dim() == 1:
+                rewards = rewards.unsqueeze(-1)
+
+            self.send_reward_output(output_channel, rewards)
             total_last_run_count += last_run_count
             if total_last_run_count >= self.local_num_train_envs:
                 break
@@ -314,85 +318,337 @@ class EmbodiedRewardWorker(Worker):
         if self.enable_offload:
             self.model.to("cpu")
 
-    @Worker.timer("compute_image_rewards")
-    def compute_image_rewards(
-        self, observations: dict[str, Any]
-    ) -> torch.Tensor | np.ndarray:
-        """Compute reward scores from observation input.
+    async def recv_merged_reward_input(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> tuple[dict[str, Any], int]:
+        """Receive all mapped reward inputs and merge on batch dimension.
 
-        Interface:
-            - Input: ``observations`` (batched observation payload passed to
-              ``self.model.compute_reward``).
-            - Output: ``torch.Tensor`` or ``np.ndarray`` reward results. Tensor
-              outputs are detached to CPU, and 1-D tensors are reshaped to ``(N, 1)``.
-
-        Called from:
-            - ``RewardWorker.compute_rewards`` (in-process)
-            - ``RewardWorker._compute_rewards`` (in-process)
-            - ``FrankaEnv._compute_reward_model`` via worker RPC
-            - ``RealworldTeleopEvaluator._teleop_loop`` via worker RPC
+        The env worker sends reward inputs using stable per-rank keys:
+        `CommMapper.build_channel_key(src_rank, reward_rank, extra=f"{mode}_reward_input")`.
+        This function reassembles shards into one batch-aligned dict.
         """
-        rewards = self.model.compute_reward(observations)
-        if rewards is not None and rewards.dim() == 1:
-            rewards = rewards.unsqueeze(-1)
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
+        src_ranks_and_sizes = self.src_ranks[mode]
+        batches: list[dict[str, Any]] = []
+        last_run_count = 0
+
+        for src_rank, expected_size in src_ranks_and_sizes:
+            data = await input_channel.get(
+                key=CommMapper.build_channel_key(
+                    src_rank, self._rank, extra=f"{mode}_reward_input"
+                ),
+                async_op=True,
+            ).async_wait()
+            actual_size = self._infer_reward_batch_size(data)
+            assert actual_size == expected_size, (
+                f"Expected reward input batch size {expected_size} from env rank {src_rank}, "
+                f"got batch size {actual_size}."
+            )
+            last_run = data.get("last_run", None)
+            last_run_count += int(last_run.sum().item()) if last_run is not None else 0
+            batches.append(data)
+
+        batch_keys = [set(batch) - {"last_run"} for batch in batches]
+        assert len(set(map(frozenset, batch_keys))) == 1, (
+            f"Inconsistent reward input keys across shards: {batch_keys}"
+        )
+        merged = cat_list_of_dict_tensor(
+            [{k: v for k, v in b.items() if k != "last_run"} for b in batches], dim=0
+        )
+        return merged, last_run_count
+
+    def try_recv_merged_reward_input(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> tuple[dict[str, Any], int] | None:
+        assert mode in ["train", "eval"], f"{mode=} is not supported"
+        src_ranks_and_sizes = self.src_ranks[mode]
+        queue_keys = [
+            CommMapper.build_channel_key(
+                src_rank, self._rank, extra=f"{mode}_reward_input"
+            )
+            for src_rank, _ in src_ranks_and_sizes
+        ]
+        if any(input_channel.qsize(key=queue_key) <= 0 for queue_key in queue_keys):
+            return None
+
+        batches: list[dict[str, Any]] = []
+        last_run_count = 0
+        for (src_rank, expected_size), queue_key in zip(
+            src_ranks_and_sizes, queue_keys
+        ):
+            data = input_channel.get(key=queue_key)
+            actual_size = self._infer_reward_batch_size(data)
+            assert actual_size == expected_size, (
+                f"Expected reward input batch size {expected_size} from env rank {src_rank}, "
+                f"got batch size {actual_size}."
+            )
+            last_run = data.get("last_run", None)
+            last_run_count += int(last_run.sum().item()) if last_run is not None else 0
+            batches.append(data)
+
+        merged = cat_list_of_dict_tensor(
+            [{k: v for k, v in b.items() if k != "last_run"} for b in batches], dim=0
+        )
+        return merged, last_run_count
+
+    @staticmethod
+    def _infer_reward_batch_size(reward_input: dict[str, Any]) -> int:
+        main_images = reward_input.get("main_images", None)
+        if main_images is None:
+            raise ValueError(
+                "Reward input dict missing 'main_images' for batch size inference."
+            )
+        if not isinstance(main_images, (np.ndarray, torch.Tensor)):
+            raise TypeError(f"Unsupported main_images type: {type(main_images)}")
+
+        batch_size = int(main_images.shape[0])
+
+        for key, value in reward_input.items():
+            if key == "last_run" or value is None:
+                continue
+            elif isinstance(value, (torch.Tensor, np.ndarray, list)):
+                assert len(value) == batch_size, (
+                    f"{key} batch size {len(value)} != main_images batch size {batch_size}"
+                )
+        return batch_size
+
+    def compute_image_rewards(
+        self, images: torch.Tensor | np.ndarray
+    ) -> torch.Tensor | np.ndarray:
+        """Run one-shot reward inference and return CPU results."""
+        rewards = self.model.compute_reward({"main_images": images})
         if isinstance(rewards, torch.Tensor):
+            if rewards.dim() == 1:
+                rewards = rewards.unsqueeze(-1)
             return rewards.detach().cpu()
+        if isinstance(rewards, np.ndarray) and rewards.ndim == 1:
+            return np.expand_dims(rewards, axis=-1)
         return rewards
 
+    def _setup_dst_ranks(self, batch_size: int) -> list[tuple[int, int]]:
+        """Compute env peer ranks for this reward worker.
+
+        This mapping supports both one-to-many and many-to-one env/reward layouts.
+        The returned ranks are used as communication counterparts for receiving env
+        outputs and sending action chunks.
+
+        Args:
+            batch_size: Total env batch size per pipeline stage across all workers.
+
+        Returns:
+            Ordered ``(env_rank, batch_size)`` tuples this reward worker should
+            send action chunks to.
+        """
+        env_world_size = self.placement.get_world_size("env")
+        reward_world_size = self.placement.get_world_size("reward")
+        return CommMapper.get_dst_ranks(
+            batch_size=batch_size,
+            src_world_size=reward_world_size,
+            dst_world_size=env_world_size,
+            src_rank=self._rank,
+        )
+
+    def _setup_src_ranks(self, batch_size: int) -> list[tuple[int, int]]:
+        """Compute env source ranks and sizes for receiving env outputs."""
+        env_world_size = self.placement.get_world_size("env")
+        reward_world_size = self.placement.get_world_size("reward")
+        return CommMapper.get_src_ranks(
+            batch_size=batch_size,
+            src_world_size=env_world_size,
+            dst_world_size=reward_world_size,
+            dst_rank=self._rank,
+        )
+
+    def send_reward_output(
+        self,
+        output_channel: Channel,
+        reward_tensor: torch.Tensor | np.ndarray,
+    ):
+        """Send action shards to mapped env ranks.
+
+        Args:
+            output_channel: Channel carrying rollout->env action chunks.
+            reward_tensor: Predicted rewards (tensor or ndarray).
+        """
+        dst_ranks_and_sizes = self.dst_ranks["train"]
+        split_sizes = [size for _, size in dst_ranks_and_sizes]
+        reward_tensor_split = (
+            list(torch.split(reward_tensor, split_sizes, dim=0))
+            if reward_tensor is not None
+            else [None] * len(dst_ranks_and_sizes)
+        )
+        for (dst_rank, _), reward_i in zip(dst_ranks_and_sizes, reward_tensor_split):
+            if isinstance(reward_i, torch.Tensor):
+                reward_i = reward_i.cpu().contiguous()
+            output_channel.put(
+                reward_i,
+                key=CommMapper.build_channel_key(
+                    self._rank, dst_rank, extra="reward_output"
+                ),
+                async_op=True,
+            )
+
+    async def recv_aggregated_reward_inputs(
+        self,
+        input_channel: Channel,
+        mode: Literal["train", "eval"] = "train",
+    ) -> tuple[dict[str, Any], list[int], int]:
+        reward_inputs: list[dict[str, Any]] = []
+        batch_sizes: list[int] = []
+        total_last_run_count = 0
+
+        reward_input, last_run_count = await self.recv_merged_reward_input(
+            input_channel, mode=mode
+        )
+        reward_inputs.append(reward_input)
+        batch_sizes.append(self._infer_reward_batch_size(reward_input))
+        total_last_run_count += last_run_count
+
+        while len(reward_inputs) < self.aggregate_request_count:
+            if total_last_run_count >= self.local_num_train_envs:
+                break
+            next_request = self.try_recv_merged_reward_input(input_channel, mode=mode)
+            if next_request is None:
+                break
+            reward_input, last_run_count = next_request
+            reward_inputs.append(reward_input)
+            batch_sizes.append(self._infer_reward_batch_size(reward_input))
+            total_last_run_count += last_run_count
+
+        batch_keys = [set(batch) for batch in reward_inputs]
+        assert len(set(map(frozenset, batch_keys))) == 1, (
+            f"Inconsistent aggregated reward input keys: {batch_keys}"
+        )
+        if len(reward_inputs) == 1:
+            return reward_inputs[0], batch_sizes, total_last_run_count
+        return (
+            cat_list_of_dict_tensor(reward_inputs, dim=0),
+            batch_sizes,
+            total_last_run_count,
+        )
+
+    def send_aggregated_reward_output(
+        self,
+        output_channel: Channel,
+        reward_tensor: torch.Tensor | np.ndarray | None,
+        batch_sizes: list[int],
+    ) -> None:
+        if reward_tensor is None:
+            for _ in batch_sizes:
+                self.send_reward_output(output_channel, None)
+            return
+
+        reward_splits = torch.split(reward_tensor, batch_sizes, dim=0)
+        for reward_split in reward_splits:
+            self.send_reward_output(output_channel, reward_split)
+
     async def compute_rewards_async(
-        self, input_channel: Channel, output_channel: Channel
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        metric_channel: Channel | None = None,
     ):
         assert self._interact_task is None or self._interact_task.done(), (
             "Previous interact task is still running while a new interact call is made."
         )
         self._interact_task = asyncio.create_task(
-            self._compute_rewards(input_channel, output_channel)
+            self._compute_rewards(input_channel, output_channel, metric_channel)
         )
         try:
             await self._interact_task
         except asyncio.CancelledError:
             pass
 
-    async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        """Continuously compute image rewards for embodied env batches.
+    def _reward_input_queue_depth(
+        self, input_channel: Channel, mode: Literal["train", "eval"] = "train"
+    ) -> int:
+        depth = 0
+        for src_rank, _ in self.src_ranks[mode]:
+            key = CommMapper.build_channel_key(
+                src_rank, self._rank, extra=f"{mode}_reward_input"
+            )
+            depth += input_channel.qsize(key=key)
+        return depth
 
-        This private coroutine is used by ``compute_rewards_async`` in embodied RL. It
-        receives image observations from Env Workers through routed worker communication,
-        runs the embodied reward model with ``compute_image_rewards``, and sends the
-        resulting rewards back to the Env Worker group.
-
-        Unlike ``RewardWorker.compute_rewards``, this path operates on image data from
-        ``train_reward_obs`` messages, can use ``env_decoupled_mode`` routing, and runs
-        as a long-lived async loop until the task is stopped.
-
-        Args:
-            input_channel: Channel used to receive reward inputs from Env Workers.
-            output_channel: Channel used to return computed rewards to Env Workers.
-        """
-        while True:
-            merged_data = await self.recv_from(
-                group_name=self.cfg.env.group_name,
-                channel=input_channel,
-                tag="train_reward_obs",
-                async_op=True,
-                batch_size=self.train_batch_size,
-                decoupled_mode=self.env_decoupled_mode,
-            ).async_wait()
-            rewards = self.compute_image_rewards(observations=merged_data)
-            if isinstance(rewards, torch.Tensor):
-                rewards = rewards.contiguous()
-            self.send_to(
-                group_name=self.cfg.env.group_name,
-                channel=output_channel,
-                data=rewards,
-                tag="train_reward_obs",
-                async_op=True,
-                decoupled_mode=self.env_decoupled_mode,
+    def _record_reward_model_timings(self) -> None:
+        timings = getattr(self.model, "last_timing_ms", None)
+        if not timings:
+            return
+        for name, value in timings.items():
+            metric_name = str(name)
+            if metric_name.endswith("_ms"):
+                metric_name = metric_name[:-3]
+            duration_ms = float(value)
+            timer_key = f"model/{metric_name}"
+            self._timer_metrics[timer_key] = (
+                self._timer_metrics.get(timer_key, 0.0) + duration_ms / 1000.0
             )
 
+    async def _compute_rewards(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        metric_channel: Channel | None = None,
+    ):
+        while True:
+            reward_metrics: dict[str, float] = {
+                "aggregate_request_count": float(self.aggregate_request_count)
+            }
+            with self.worker_timer("loop_total"):
+                input_queue_depth = self._reward_input_queue_depth(
+                    input_channel, mode="train"
+                )
+                reward_metrics["input_queue_depth"] = float(input_queue_depth)
+                reward_metrics["input_queue_depth_max"] = float(input_queue_depth)
+                with self.worker_timer("recv_input_wait"):
+                    (
+                        observations,
+                        batch_sizes,
+                        _,
+                    ) = await self.recv_aggregated_reward_inputs(
+                        input_channel, mode="train"
+                    )
+                    batch_size = sum(batch_sizes)
+
+                reward_metrics["input_batch_size"] = float(batch_size)
+
+                with self.worker_timer("model_compute"):
+                    rewards = self.model.compute_reward(observations)
+                self._record_reward_model_timings()
+
+                if rewards is not None and rewards.dim() == 1:
+                    rewards = rewards.unsqueeze(-1)
+
+                with self.worker_timer("send_output"):
+                    self.send_aggregated_reward_output(
+                        output_channel, rewards, batch_sizes
+                    )
+
+            if metric_channel is not None:
+                time_metrics = {
+                    f"time/reward/{key}": value
+                    for key, value in self.pop_execution_times().items()
+                }
+                metric_channel.put(
+                    {
+                        "rank": self._rank,
+                        "time": time_metrics,
+                        "reward": reward_metrics,
+                    },
+                    async_op=True,
+                )
+
     async def stop(self):
-        if self._interact_task is not None and not self._interact_task.done():
-            self._interact_task.cancel()
+        if self._interact_task is None:
+            return
+        if self._interact_task.done():
+            await self._interact_task
+            return
+        self._interact_task.cancel()
+        try:
+            await self._interact_task
+        except asyncio.CancelledError:
+            pass
 
 
 class FSDPRewardWorker(FSDPModelManager, Worker):
@@ -400,26 +656,26 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
-        super().__init__(cfg.actor, self._world_size, self._rank)
-
         self.cfg = cfg
-
-        self.data_loader, self.val_loader = self.build_dataloader()
-
-        # Training step counter for validation interval
-        self._training_step = 0
 
         assert (
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
             == 0
         ), "global_batch_size is not divisible by micro_batch_size * world_size"
-
         self.gradient_accumulation = (
             self.cfg.actor.global_batch_size
             // self.cfg.actor.micro_batch_size
             // self._world_size
         )
+
+        super().__init__(cfg.actor, self._world_size, self._rank)
+
+        # Training step counter for validation interval
+        self._training_step = 0
+        self.data_loader = None
+        self.val_loader = None
+        self.data_iter = None
 
     def model_provider_func(self):
         reward_cls = get_reward_model_class(self.cfg.actor.model.model_type)
@@ -433,6 +689,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
     def init_worker(self):
         """Initialize model and optimizer using base class."""
 
+        if self.data_loader is None:
+            self.data_loader, self.val_loader = self.build_dataloader()
         if self.data_loader is None:
             raise ValueError("data_loader is not set")
         self.data_iter = iter(self.data_loader)
@@ -501,6 +759,14 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
 
         return train_loader, val_loader
+
+    def get_max_steps_per_epoch(self) -> int:
+        """Return SFT training steps available in one reward data epoch."""
+        if self.data_loader is None:
+            self.data_loader, self.val_loader = self.build_dataloader()
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
 
     @Worker.timer("run_training")
     def run_training(self) -> dict[str, float]:
@@ -604,8 +870,3 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         val_metrics = all_reduce_dict(val_metrics, op=torch.distributed.ReduceOp.AVG)
 
         return val_metrics
-
-    def get_max_steps_per_epoch(self):
-        if self.data_loader is not None:
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        return 0
