@@ -884,6 +884,8 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
 
     num_envs: int = 1
     only_success: bool = False
+    num_action_chunks: int = 1
+    action_dim: int = 7
     _env_buffers: list[list[dict[str, Any]]] = field(
         default_factory=list, init=False, repr=False
     )
@@ -1048,6 +1050,90 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
             return False
         return bool(np.asarray(arr, dtype=bool).reshape(-1).any())
 
+    @staticmethod
+    def _reshape_chunk_actions(
+        actions,
+        *,
+        num_envs: int,
+        num_chunks: int,
+        action_dim: int,
+    ) -> np.ndarray | None:
+        """Match ``CollectEpisode.chunk_step``: [B,C,D] per-step actions."""
+        if actions is None:
+            return None
+        arr = EmbodiedLerobotRolloutResult._to_numpy(actions)
+        batch_size = arr.shape[0]
+        flat_dim = num_chunks * action_dim
+        if arr.ndim == 3:
+            return arr
+        if arr.ndim == 2:
+            if arr.shape[-1] == flat_dim:
+                return arr.reshape(batch_size, num_chunks, action_dim)
+            if arr.shape[-1] == action_dim:
+                return arr[:, None, :]
+        raise ValueError(
+            f"Unexpected chunk action shape {arr.shape}; expected "
+            f"[{num_envs}, {num_chunks}, {action_dim}] or flat dim {flat_dim}."
+        )
+
+    @staticmethod
+    def _normalize_intervene_in_info(env_info: Any, action_dim: int) -> None:
+        """Port of ``CollectEpisode._record_step`` intervene reshape (per env)."""
+        if not isinstance(env_info, dict) or "intervene_action" not in env_info:
+            return
+        intervene_action = EmbodiedLerobotRolloutResult._to_numpy(
+            env_info["intervene_action"]
+        )
+        if intervene_action.size <= action_dim:
+            env_info["intervene_action"] = intervene_action.reshape(-1)[:action_dim]
+            return
+        chunk_size = intervene_action.reshape(-1, action_dim).shape[0]
+        env_info["intervene_action"] = intervene_action.reshape(-1, action_dim)[-1]
+        if "intervene_flag" in env_info:
+            intervene_flag = EmbodiedLerobotRolloutResult._to_numpy(
+                env_info["intervene_flag"]
+            )
+            env_info["intervene_flag"] = intervene_flag.reshape(chunk_size, -1)[-1, 0]
+
+    @staticmethod
+    def _inject_expert_into_step_info(
+        step_info: dict,
+        expert_actions: np.ndarray,
+        save_flags,
+        *,
+        step_idx: int,
+        step_term,
+        step_trunc,
+        num_envs: int,
+    ) -> None:
+        """Port of pre-refactor ``CollectEpisode.chunk_step`` expert injection."""
+        if expert_actions is None or "intervene_action" in step_info:
+            return
+        step_expert = expert_actions[:, step_idx]
+        if "final_info" in step_info:
+            step_info["final_info"]["intervene_action"] = expert_actions
+            if save_flags is not None:
+                step_info["final_info"]["intervene_flag"] = np.ones(
+                    (num_envs, expert_actions.shape[1]), dtype=bool
+                )
+            else:
+                step_info["final_info"]["intervene_flag"] = np.zeros(
+                    (num_envs, expert_actions.shape[1]), dtype=bool
+                )
+            step_info["intervene_action"] = step_expert
+            if save_flags is not None:
+                term = EmbodiedLerobotRolloutResult._to_numpy(step_term)
+                trunc = EmbodiedLerobotRolloutResult._to_numpy(step_trunc)
+                step_info["intervene_flag"] = ~(term | trunc)
+            else:
+                step_info["intervene_flag"] = np.zeros(num_envs, dtype=bool)
+        else:
+            step_info["intervene_action"] = step_expert
+            if save_flags is not None:
+                step_info["intervene_flag"] = np.ones(num_envs, dtype=bool)
+            else:
+                step_info["intervene_flag"] = np.zeros(num_envs, dtype=bool)
+
     def _update_episode_success(self, env_idx: int, env_info: Any) -> None:
         success = self._extract_success_from_info(env_info)
         if success is not None:
@@ -1161,11 +1247,25 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
     ) -> None:
         """Record per-step LeRobot frames from one env chunk interaction."""
         chunk_size = len(obs_list) if isinstance(obs_list, (list, tuple)) else 1
-        actions_arr = self._to_numpy(chunk_actions)
+        num_envs = self.num_envs
+        num_chunks = self.num_action_chunks
+        action_dim = self.action_dim
+
+        actions_arr = self._reshape_chunk_actions(
+            chunk_actions,
+            num_envs=num_envs,
+            num_chunks=num_chunks,
+            action_dim=action_dim,
+        )
         save_flags = rollout_result.save_flags
         expert_actions = rollout_result.forward_inputs.get("action", None)
-        if expert_actions is not None and isinstance(chunk_actions, torch.Tensor):
-            expert_actions = expert_actions.reshape_as(chunk_actions)
+        if expert_actions is not None:
+            expert_actions = self._reshape_chunk_actions(
+                expert_actions,
+                num_envs=num_envs,
+                num_chunks=num_chunks,
+                action_dim=action_dim,
+            )
 
         for step_idx in range(chunk_size):
             step_obs = (
@@ -1186,10 +1286,20 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
                 if isinstance(infos_list, (list, tuple))
                 else copy.deepcopy(infos_list)
             )
+            if isinstance(step_info, dict):
+                self._inject_expert_into_step_info(
+                    step_info,
+                    expert_actions,
+                    save_flags,
+                    step_idx=step_idx,
+                    step_term=step_term,
+                    step_trunc=step_trunc,
+                    num_envs=num_envs,
+                )
 
-            for env_idx in range(self.num_envs):
-                done_by_term = self._scalar_flag(step_term, env_idx, self.num_envs)
-                done_by_trunc = self._scalar_flag(step_trunc, env_idx, self.num_envs)
+            for env_idx in range(num_envs):
+                done_by_term = self._scalar_flag(step_term, env_idx, num_envs)
+                done_by_trunc = self._scalar_flag(step_trunc, env_idx, num_envs)
                 env_done = done_by_term or done_by_trunc
                 env_obs, env_info = self._resolve_step_obs_info(
                     step_obs=step_obs,
@@ -1233,25 +1343,15 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
                 if state is None or actions_arr is None:
                     continue
 
-                env_action = (
-                    actions_arr[env_idx, step_idx]
-                    if actions_arr.ndim > 2
-                    else actions_arr[env_idx]
-                )
+                if isinstance(frame_info, dict):
+                    self._normalize_intervene_in_info(frame_info, action_dim)
+
+                env_action = actions_arr[env_idx, min(step_idx, actions_arr.shape[1] - 1)]
                 intervene_flag = False
-                if save_flags is not None and expert_actions is not None:
-                    if save_flags.ndim > 1:
-                        intervene_flag = bool(save_flags[env_idx, step_idx].item())
-                    else:
-                        intervene_flag = bool(save_flags[env_idx].item())
-                    if intervene_flag:
-                        expert_arr = self._to_numpy(expert_actions)
-                        env_action = (
-                            expert_arr[env_idx, step_idx]
-                            if expert_arr.ndim > 2
-                            else expert_arr[env_idx]
-                        )
-                elif isinstance(frame_info, dict) and "intervene_action" in frame_info:
+                if isinstance(frame_info, dict) and (
+                    "intervene_flag" in frame_info
+                    and "intervene_action" in frame_info
+                ):
                     if self._intervene_flag_from_info(frame_info):
                         intervene_flag = True
                         env_action = self._to_numpy(frame_info["intervene_action"])

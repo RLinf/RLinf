@@ -201,6 +201,8 @@ class EnvWorker(Worker):
                     max_episode_length=max_episode_length,
                     num_envs=self.train_num_envs_per_stage,
                     only_success=collect_only_success,
+                    num_action_chunks=self.model_cfg.num_action_chunks,
+                    action_dim=self.model_cfg.action_dim,
                 )
                 for _ in range(self.stage_num)
             ]
