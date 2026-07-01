@@ -604,15 +604,11 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _lerobot_all_ranks_ready(self) -> bool:
         """Return True only when every actor rank can train from LeRobot data."""
-        local_ready = int(
-            self.dataset.is_ready() and self._lerobot_loader is not None
-        )
+        local_ready = int(self.dataset.is_ready() and self._lerobot_loader is not None)
         ready_tensor = torch.tensor(
             [local_ready], device=self.device, dtype=torch.int32
         )
-        torch.distributed.all_reduce(
-            ready_tensor, op=torch.distributed.ReduceOp.MIN
-        )
+        torch.distributed.all_reduce(ready_tensor, op=torch.distributed.ReduceOp.MIN)
         return ready_tensor.item() == 1
 
     def _skip_lerobot_training(self) -> bool:

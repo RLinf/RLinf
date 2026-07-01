@@ -1346,11 +1346,12 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
                 if isinstance(frame_info, dict):
                     self._normalize_intervene_in_info(frame_info, action_dim)
 
-                env_action = actions_arr[env_idx, min(step_idx, actions_arr.shape[1] - 1)]
+                env_action = actions_arr[
+                    env_idx, min(step_idx, actions_arr.shape[1] - 1)
+                ]
                 intervene_flag = False
                 if isinstance(frame_info, dict) and (
-                    "intervene_flag" in frame_info
-                    and "intervene_action" in frame_info
+                    "intervene_flag" in frame_info and "intervene_action" in frame_info
                 ):
                     if self._intervene_flag_from_info(frame_info):
                         intervene_flag = True
