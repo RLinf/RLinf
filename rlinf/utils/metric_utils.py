@@ -20,9 +20,6 @@ import numpy as np
 import torch
 import torch.distributed
 
-<<<<<<< fix-critic-explained-variance
-from rlinf.scheduler import Worker
-
 CRITIC_EXPLAINED_VARIANCE_KEY = "critic/explained_variance"
 CRITIC_EXPLAINED_VARIANCE_COUNT_KEY = "_critic_explained_variance/count"
 CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY = "_critic_explained_variance/returns_sum"
@@ -40,9 +37,6 @@ CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
     CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY,
     CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY,
 )
-
-=======
->>>>>>> main
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
