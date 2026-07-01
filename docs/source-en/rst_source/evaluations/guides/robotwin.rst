@@ -45,7 +45,7 @@ Set these before every evaluation run:
 
 **Docker (optional)**
 
-You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.2-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
+You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.3-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
 
 - OpenVLA-OFT: ``source switch_env openvla-oft``
 - OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env OpenPI``

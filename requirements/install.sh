@@ -543,7 +543,7 @@ EOF
         return 0
     fi
     echo "[install.sh] Installing triton==${triton_ver} to match pytorch-triton-rocm"
-    uv pip install "triton==${triton_ver}"
+    uv pip install "triton==${triton_ver}" amdsmi
 }
 
 install_ascend_extras() {

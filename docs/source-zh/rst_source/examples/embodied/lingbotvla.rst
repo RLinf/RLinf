@@ -117,7 +117,7 @@ Lingbot-VLA模型强化学习
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-robotwin
+      rlinf/rlinf:agentic-rlinf0.3-robotwin
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
