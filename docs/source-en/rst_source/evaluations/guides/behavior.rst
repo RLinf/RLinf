@@ -24,7 +24,7 @@ BEHAVIOR depends on Isaac Sim 4.5 and has additional GPU and driver requirements
 - A GPU with Ray Tracing support (e.g. RTX 30/40 series) is recommended. GPUs without RT (A100, H100, etc.) produce poor rendering quality with visible artifacts.
 - Hopper and newer GPUs require NVIDIA driver 570 or later.
 
-You can also run evaluation inside the official Docker image ``rlinf/rlinf:agentic-rlinf0.2-behavior``; see :doc:`../../examples/embodied/behavior`.
+You can also run evaluation inside the official Docker image ``rlinf/rlinf:agentic-rlinf0.3-behavior``; see :doc:`../../examples/embodied/behavior`.
 
 **Environment variables**
 

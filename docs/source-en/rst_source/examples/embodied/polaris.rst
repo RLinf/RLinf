@@ -104,10 +104,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-polaris
+      rlinf/rlinf:agentic-rlinf0.3-polaris
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-polaris
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-polaris
 
 Switch to the OpenPI virtual environment inside the image:
 

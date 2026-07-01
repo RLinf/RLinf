@@ -99,7 +99,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-wan``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-wan``:
 
 .. code:: bash
 
@@ -108,8 +108,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-wan
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-wan
+      rlinf/rlinf:agentic-rlinf0.3-wan
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-wan
 
    # Inside the container, switch to the OpenVLA-OFT virtual environment:
    source switch_env openvla-oft
