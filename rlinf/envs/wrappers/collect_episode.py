@@ -491,6 +491,7 @@ class CollectEpisode(gym.Wrapper):
                 wrist_image_keys=wrist_image_keys,
                 extra_view_image_keys=extra_view_image_keys,
                 has_intervene_flag="intervene_flag" in first,
+                has_segment_id="segment_id" in first,
             )
         return self._lerobot_writer
 

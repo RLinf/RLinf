@@ -424,6 +424,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             wrist_image_keys=wrist_image_keys,
             extra_view_image_keys=extra_view_image_keys,
             has_intervene_flag="intervene_flag" in first,
+            has_segment_id="segment_id" in first,
         )
         for ep_frames in pending_episodes:
             writer.add_episode(ep_frames)
@@ -601,6 +602,27 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         return all_reduce_dict(mean_metric_dict, op=torch.distributed.ReduceOp.AVG)
 
+    def _lerobot_all_ranks_ready(self) -> bool:
+        """Return True only when every actor rank can train from LeRobot data."""
+        local_ready = int(
+            self.dataset.is_ready() and self._lerobot_loader is not None
+        )
+        ready_tensor = torch.tensor(
+            [local_ready], device=self.device, dtype=torch.int32
+        )
+        torch.distributed.all_reduce(
+            ready_tensor, op=torch.distributed.ReduceOp.MIN
+        )
+        return ready_tensor.item() == 1
+
+    def _skip_lerobot_training(self) -> bool:
+        if self._lerobot_all_ranks_ready():
+            return False
+        self.log_on_first_rank(
+            f"LeRobot dataset not ready (len={len(self.dataset)}), skipping training"
+        )
+        return True
+
     @Worker.timer("run_training")
     def run_training(self):
         """Run DAgger updates with replay-buffer samples."""
@@ -616,10 +638,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     f"Replay buffer size {len(self.replay_buffer)} < {min_buffer_size}, skipping training"
                 )
                 return {}
-        elif not self.dataset.is_ready() or self._lerobot_loader is None:
-            self.log_on_first_rank(
-                f"LeRobot dataset not ready (len={len(self.dataset)}), skipping training"
-            )
+        elif self._skip_lerobot_training():
             return {}
         assert (
             self.cfg.actor.global_batch_size

@@ -124,13 +124,9 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 "min_buffer_size", 100
             )
             await self._wait_for_replay_buffer_ready(min_buffer_size)
-        elif not self.dataset.is_ready() or self._lerobot_loader is None:
-            self.log_on_first_rank(
-                f"LeRobot dataset not ready (len={len(self.dataset)}), skipping training"
-            )
+        elif self._skip_lerobot_training():
             return {}
 
-        torch.distributed.barrier()
         assert (
             self.cfg.actor.global_batch_size
             % (self.cfg.actor.micro_batch_size * self._world_size)
