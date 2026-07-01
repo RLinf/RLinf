@@ -343,17 +343,18 @@ def test_env_no_pending_reward_mode_waits_and_finalizes_immediately():
     worker.send_env_batch = lambda channel, batch: sent_obs.append(
         batch["obs"]["states"].clone()
     )
-    worker.send_reward_request = (
-        lambda env_output,
+
+    def _send_reward_request(
+        env_output,
         send_channel,
         stage_id,
         last_run=False,
         epoch=None,
-        chunk_step_idx=None: (
-            True,
-            None,
-        )
-    )
+        chunk_step_idx=None,
+    ):
+        return True, None
+
+    worker.send_reward_request = _send_reward_request
     worker.recv_pending_reward_output = (
         lambda recv_channel, env_output, pending_step=None: torch.tensor(
             [[0.5]], dtype=torch.float32
