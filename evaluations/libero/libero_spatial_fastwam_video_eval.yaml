@@ -1,0 +1,60 @@
+# FastWAM eval that ALSO generates the predicted future video (world-model
+# imagination) via infer_joint, dumping clips for env 0. Small + short.
+defaults:
+  - env/libero_spatial@env.eval
+  - model/fastwam@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_spatial_fastwam_video"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 2
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: False
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  model:
+    model_type: "fastwam"
+    # World-model future-video generation (env 0, capped).
+    visualize_future_video: true
+    future_video_dir: /workspace/future_video_demo
+    max_video_saves: 8

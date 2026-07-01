@@ -1,0 +1,62 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - model/fastwam@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_spatial_eval_fastwam"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    # Minimal eval: a handful of parallel envs, one rollout epoch. FastWAM runs a
+    # 5B+1B flow-matching inference every `num_action_chunks` sim steps, so keep
+    # the env count / horizon small for a quick real-world sanity number.
+    rollout_epoch: 1
+    total_num_envs: 4
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240  # ~1 trajectory per env this epoch
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_type: "fastwam"
