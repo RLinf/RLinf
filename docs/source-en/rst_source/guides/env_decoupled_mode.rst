@@ -82,6 +82,31 @@ A smaller ``rollout_queue_size`` usually reduces waiting time. A larger value ma
 improve inference batch utilization, but it may also increase the waiting time
 for each aggregation.
 
+Per-Group Route Binding
+-----------------------
+
+By default, decoupled mode uses a single global pool where any Rollout Worker
+may fetch any Env batch. Setting ``rollout.enable_group_route_binding: true``
+(default ``false``) instead partitions the pool into fixed per-group bindings:
+Rollout Worker rank ``k`` serves only its own Env group (env ranks
+``k * ratio .. k * ratio + ratio - 1``, where ``ratio = env_world_size //
+rollout_world_size``), via an isolated ``route_key`` per group. There is no
+global pool and no cross-group work-stealing.
+
+.. code-block:: yaml
+
+   runner:
+     enable_decoupled_mode: true
+
+   rollout:
+     enable_group_route_binding: true
+
+This gives a fixed ``1`` Rollout : ``N`` Env-Worker overlap, replicable as
+independent groups across a robot fleet — useful for real-robot rollout where
+each Rollout Worker drives a fixed set of robots. It requires ``env_world_size``
+to be divisible by ``rollout_world_size`` (validated at startup); plain decoupled
+mode allows an arbitrary ratio.
+
 Training Flow
 -------------
 

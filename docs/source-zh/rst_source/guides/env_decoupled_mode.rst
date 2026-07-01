@@ -70,6 +70,27 @@ Channel 排队时间。
 较小的 ``rollout_queue_size`` 通常降低等待时间；较大的值可能提高推理 batch 利用率，
 但也可能增加单次聚合等待。
 
+分组路由绑定
+------------
+
+默认情况下 decoupled 模式使用单一全局池，任意 Rollout Worker 都可获取任意 Env batch。
+设置 ``rollout.enable_group_route_binding: true``（默认 ``false``）会将全局池划分为固定的
+分组绑定：Rollout Worker rank ``k`` 只服务自己的 Env 分组（env rank
+``k * ratio .. k * ratio + ratio - 1``，其中 ``ratio = env_world_size //
+rollout_world_size``），每组通过独立的 ``route_key`` 隔离，不存在全局池，也没有跨组抢任务。
+
+.. code-block:: yaml
+
+   runner:
+     enable_decoupled_mode: true
+
+   rollout:
+     enable_group_route_binding: true
+
+由此得到固定的 ``1`` Rollout : ``N`` Env-Worker 重叠，并可作为多个独立分组在机器人集群上复制，
+适用于每个 Rollout Worker 驱动一组固定机器人的真机 rollout 场景。它要求 ``env_world_size``
+能被 ``rollout_world_size`` 整除（启动时校验）；普通 decoupled 模式则允许任意比例。
+
 训练流程
 --------
 
