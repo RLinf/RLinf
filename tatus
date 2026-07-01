@@ -1,0 +1,976 @@
+[1mdiff --git a/.claude/skills/add-example-doc-model-env/SKILL.md b/.claude/skills/add-example-doc-model-env/SKILL.md[m
+[1mindex 759a6e9b..77c4a15c 100644[m
+[1m--- a/.claude/skills/add-example-doc-model-env/SKILL.md[m
+[1m+++ b/.claude/skills/add-example-doc-model-env/SKILL.md[m
+[36m@@ -22,14 +22,19 @@[m [mUse this skill when adding example documentation for a new **model** (e.g. π₀[m
+    Follow the structure of existing examples in the same category (see [reference.md](reference.md)).[m
+ [m
+ 2. **Register in the English category index**  [m
+[31m-   Each category has its own index file (e.g. `docs/source-en/rst_source/examples/embodied/index.rst`).  [m
+[31m-   - Edit `docs/source-en/rst_source/examples/<category>/index.rst`.[m
+[31m-   - Add an entry for `<name>` in the hidden `.. toctree::` at the bottom (e.g. `dexbotic`).[m
+[31m-   - Optionally add a gallery card in the correct section using the same HTML block pattern as existing cards (image, hyperlink to the rendered doc, short title + description).  [m
+[31m-   **Note:** The top-level `examples/index.rst` now only links to the four category indexes and usually does not need to be changed when adding a single example.[m
+[32m+[m[32m   The embodied gallery is split into five category index files that live directly under `examples/` (not inside `embodied/`):[m
+[32m+[m[32m   `simulators_index.rst` (benchmark/simulator-centric), `real_world_index.rst` (real-robot hardware),[m
+[32m+[m[32m   `vla_wam_index.rst` (model-centric: π₀, GR00T, …), `sft_index.rst` (SFT recipes), and[m
+[32m+[m[32m   `methods_index.rst` (algorithm-centric: DAgger, RECAP, IQL, …). The example RST itself still lives at[m
+[32m+[m[32m   `docs/source-en/rst_source/examples/embodied/<name>.rst`; the index files reference it as `embodied/<name>`.[m
+[32m+[m[32m   Non-embodied categories (agentic, system) still use `docs/source-en/rst_source/examples/<category>/index.rst`.[m
+[32m+[m[32m   - Edit the matching index file (e.g. `docs/source-en/rst_source/examples/vla_wam_index.rst` for a new VLA model, or `examples/<category>/index.rst` for agentic/system).[m
+[32m+[m[32m   - Add an entry for `<name>` in the hidden `.. toctree::` at the bottom (for embodied, prefixed: e.g. `embodied/dexbotic`).[m
+[32m+[m[32m   - Optionally add a gallery card in the correct section using the same HTML block pattern as existing cards (image, hyperlink to the rendered doc — `embodied/<name>.html` for embodied — short title + description).[m[41m  [m
+[32m+[m[32m   **Note:** The top-level `examples/index.rst` only links to the category indexes and usually does not need to be changed when adding a single example.[m
+ [m
+ 3. **If it is an embodied evaluation environment**  [m
+[31m-   In `docs/source-en/rst_source/start/vla-eval.rst`, add a line in the “List of currently supported evaluation environments”:[m
+[32m+[m[32m   In `docs/source-en/rst_source/evaluations/index.rst` or the relevant evaluation guide, add the new evaluation flow:[m
+    - For embodied examples: `:doc:\`Display Name <../examples/embodied/<name>\``[m
+    - For other categories, follow the existing pattern in that file and mirror the relative path used there.[m
+ [m
+[36m@@ -39,10 +44,10 @@[m [mUse this skill when adding example documentation for a new **model** (e.g. π₀[m
+    Mirror the English content (same structure and sections). Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in both `source-en` and `source-zh`) as reference.[m
+ [m
+ 5. **Register in the Chinese category index**  [m
+[31m-   Edit `docs/source-zh/rst_source/examples/<category>/index.rst`:  [m
+[32m+[m[32m   Edit the matching Chinese index file — for embodied, the same five split indexes under `docs/source-zh/rst_source/examples/` (`simulators_index.rst`, `real_world_index.rst`, `vla_wam_index.rst`, `sft_index.rst`, `methods_index.rst`); for agentic/system, `docs/source-zh/rst_source/examples/<category>/index.rst`:[m[41m  [m
+    - Add the same `<name>` entry to the hidden `.. toctree::`.  [m
+    - If you added a gallery card in the English index, add a matching Chinese gallery card here, following existing HTML patterns.  [m
+[31m-   If the Chinese docs have a vla-eval or start page that lists environments, add the new example using the same relative path pattern as in English (typically `../examples/embodied/<name>` for embodied.[m
+[32m+[m[32m   If the Chinese evaluation docs list the same benchmark or environment, add the new example using the same relative path pattern as in English.[m
+ [m
+ 6. **Update README.md**  [m
+    In the "What's NEW!" section at the top, add a new dated bullet, with the documentation link pointing to the correct **category** path, e.g.:  [m
+[36m@@ -73,9 +78,9 @@[m [mUse existing examples in the same category (e.g. `embodied/libero.rst`, `embodie[m
+ [m
+ - [ ] English RST created: `docs/source-en/rst_source/examples/<category>/<name>.rst`.[m
+ - [ ] English category index updated: `docs/source-en/rst_source/examples/<category>/index.rst` (toctree; optional gallery card).[m
+[31m-- [ ] If embodied eval env: `docs/source-en/rst_source/start/vla-eval.rst` updated with `../examples/embodied/<name>`.[m
+[32m+[m[32m- [ ] If embodied eval env: `docs/source-en/rst_source/evaluations/index.rst` or the relevant evaluation guide updated with the new flow.[m
+ - [ ] Chinese RST created: `docs/source-zh/rst_source/examples/<category>/<name>.rst`.[m
+ - [ ] Chinese category index updated: `docs/source-zh/rst_source/examples/<category>/index.rst` (toctree; gallery card if added for EN).[m
+[31m-- [ ] If embodied eval env: Chinese vla-eval/start page updated if it lists environments (use the same relative path pattern as EN).[m
+[32m+[m[32m- [ ] If embodied eval env: Chinese evaluation page updated if it lists environments (use the same relative path pattern as EN).[m
+ - [ ] README.md updated: new bullet in "What's NEW!" and, if applicable, entry in Key Features table (using the correct category path).[m
+ - [ ] README.zh-CN.md updated: new bullet in "最新动态" and, if applicable, entry in 核心特性 table (using the correct category path).[m
+[1mdiff --git a/.claude/skills/add-example-doc-model-env/reference.md b/.claude/skills/add-example-doc-model-env/reference.md[m
+[1mindex 49edfc67..fb8d2769 100644[m
+[1m--- a/.claude/skills/add-example-doc-model-env/reference.md[m
+[1m+++ b/.claude/skills/add-example-doc-model-env/reference.md[m
+[36m@@ -64,7 +64,7 @@[m [mEvaluation (optional)[m
+ [m
+ .. code-block:: bash[m
+ [m
+[31m-   bash examples/embodiment/eval_embodiment.sh <eval_config_name>[m
+[32m+[m[32m   bash evaluations/run_eval.sh <benchmark> <eval_config_name>[m
+ ```[m
+ [m
+ ## Index toctree entry[m
+[36m@@ -119,10 +119,10 @@[m [mUse the current year/month for the date. Match the tone of existing bullets (e.g[m
+ [m
+ Place the new `<li>...</li>` above the "More..." / "更多..." item when present.[m
+ [m
+[31m-## vla-eval.rst environment list entry[m
+[32m+[m[32m## Evaluation section entry[m
+ [m
+ ```rst[m
+[31m-:doc:`Display Name <../examples/<name>>`[m
+[32m+[m[32m:doc:`Display Name <../examples/<category>/<name>>`[m
+ ```[m
+ [m
+ ## Chinese documentation (required)[m
+[36m@@ -131,7 +131,7 @@[m [mAdd a matching RST and index entry for Chinese:[m
+ [m
+ - **RST**: `docs/source-zh/rst_source/examples/<name>.rst` — same structure as the English file; mirror sections and adapt links (e.g. `/en/` → `/zh/` in doc URLs if applicable).[m
+ - **Index**: `docs/source-zh/rst_source/examples/index.rst` — add `<name>` to the toctree; add a gallery card in the same category if one was added for English.[m
+[31m-- **Start/vla-eval**: If the example is an embodied eval environment, check `docs/source-zh/rst_source/start/` for a vla-eval or equivalent page and add the new example to the list.[m
+[32m+[m[32m- **Evaluation**: If the example is an embodied eval environment, update the matching Chinese page under `docs/source-zh/rst_source/evaluations/`.[m
+ [m
+ Use existing en/zh pairs (e.g. `docs/source-en/rst_source/examples/libero.rst` and `docs/source-zh/rst_source/examples/libero.rst`) as reference.[m
+ [m
+[1mdiff --git a/.claude/skills/add-publication-docs/SKILL.md b/.claude/skills/add-publication-docs/SKILL.md[m
+[1mindex 43efb48d..85c934fc 100644[m
+[1m--- a/.claude/skills/add-publication-docs/SKILL.md[m
+[1m+++ b/.claude/skills/add-publication-docs/SKILL.md[m
+[36m@@ -1,6 +1,6 @@[m
+ ---[m
+ name: add-publication-docs[m
+[31m-description: Adds a new publication page to the RLinf Sphinx docs (EN + ZH) and wires it into the Publications index/toctree and navbar. Use when the user asks to add a publication/paper page, convert a paper README/markdown into docs, or update the publications listing.[m
+[32m+[m[32mdescription: Adds a new publication page to the RLinf Sphinx docs (EN + ZH) and wires it into the Publications index/toctree. Use when the user asks to add a publication/paper page, convert a paper README/markdown into docs, or update the publications listing.[m
+ ---[m
+ [m
+ # Add a Publication to RLinf Docs[m
+[36m@@ -9,11 +9,11 @@[m [mThis skill adds **one new publication** (paper/tech report/system note) into the[m
+ [m
+ ## What to create[m
+ [m
+[31m-- **EN page**: `docs/source-en/rst_source/publications/<slug>.rst`[m
+[31m-- **ZH page**: `docs/source-zh/rst_source/publications/<slug>.rst`[m
+[32m+[m[32m- **EN page**: `docs/source-en/rst_source/resources/publications/<slug>.rst`[m
+[32m+[m[32m- **ZH page**: `docs/source-zh/rst_source/resources/publications/<slug>.rst`[m
+ - **Index wiring**:[m
+[31m-  - `docs/source-en/rst_source/publications/index.rst`[m
+[31m-  - `docs/source-zh/rst_source/publications/index.rst`[m
+[32m+[m[32m  - `docs/source-en/rst_source/resources/publications/index.rst`[m
+[32m+[m[32m  - `docs/source-zh/rst_source/resources/publications/index.rst`[m
+ [m
+ Where `<slug>` is lowercase with underscores (match current style, e.g. `rlinf_vla`, `rlinf_user`).[m
+ [m
+[36m@@ -35,9 +35,9 @@[m [mFor both EN and ZH pages, keep the same section order as existing publication pa[m
+ [m
+ - **Do not re-iterate full instructions** in publication pages.[m
+ - **Quickstart must contain exactly one link** and it must point to the **corresponding existing example page** (no extra links).[m
+[31m-  - Embodied: `:doc:\`../examples/embodied/<benchmark_or_platform>\``[m
+[31m-  - Agentic/reasoning: `:doc:\`../examples/agentic/<task>\``[m
+[31m-  - Real-world: `:doc:\`../examples/embodied/franka\``[m
+[32m+[m[32m  - Embodied: `:doc:\`../../examples/embodied/<benchmark_or_platform>\``[m
+[32m+[m[32m  - Agentic/reasoning: `:doc:\`../../examples/agentic/<task>\``[m
+[32m+[m[32m  - Real-world: `:doc:\`../../examples/embodied/franka\``[m
+ - If there is no suitable example page yet, create that example page first; do not add installation / generic guides to Quickstart.[m
+ [m
+ ## Tables & figures rules[m
+[36m@@ -101,7 +101,7 @@[m [mResults[m
+ Quickstart[m
+ ----------[m
+ [m
+[31m-- :doc:`../examples/embodied/<benchmark_or_platform>`[m
+[32m+[m[32m- :doc:`../../examples/embodied/<benchmark_or_platform>`[m
+ [m
+ Citation[m
+ --------[m
+[1mdiff --git a/.claude/skills/docs-check/reference.md b/.claude/skills/docs-check/reference.md[m
+[1mindex 738b4d53..22c12ed8 100644[m
+[1m--- a/.claude/skills/docs-check/reference.md[m
+[1m+++ b/.claude/skills/docs-check/reference.md[m
+[36m@@ -13,15 +13,24 @@[m [mDetailed checklists for doc-code cross-check.[m
+ [m
+ ## Doc layout[m
+ [m
+[32m+[m[32mDocs use a sidebar-only IA with eight top-level axes (Get Started · Examples ·[m
+[32m+[m[32mEvaluation · Concepts · Guides · Reference · Extending · Resources). Each axis[m
+[32m+[m[32mowns its pages directly; the legacy `tutorials/`, `apis/`, `blog/`, and[m
+[32m+[m[32m`publications/` trees were removed and their pages relocated into the axes.[m
+[32m+[m
+ | Area | EN path | ZH path |[m
+ |------|---------|---------|[m
+ | Root index | `docs/source-en/index.rst` | `docs/source-zh/index.rst` |[m
+[31m-| Start | `docs/source-en/rst_source/start/` | `docs/source-zh/rst_source/start/` |[m
+[31m-| Tutorials | `docs/source-en/rst_source/tutorials/` | `docs/source-zh/rst_source/tutorials/` |[m
+[32m+[m[32m| Get Started | `docs/source-en/rst_source/start/` | `docs/source-zh/rst_source/start/` |[m
+ | Examples (embodied) | `docs/source-en/rst_source/examples/embodied/` | `docs/source-zh/rst_source/examples/embodied/` |[m
+ | Examples (agentic) | `docs/source-en/rst_source/examples/agentic/` | `docs/source-zh/rst_source/examples/agentic/` |[m
+[31m-| APIs | `docs/source-en/rst_source/apis/` | `docs/source-zh/rst_source/apis/` |[m
+[31m-| FAQ | `docs/source-en/rst_source/faq.rst` | `docs/source-zh/rst_source/faq.rst` |[m
+[32m+[m[32m| Evaluation | `docs/source-en/rst_source/evaluations/` | `docs/source-zh/rst_source/evaluations/` |[m
+[32m+[m[32m| Concepts | `docs/source-en/rst_source/concepts/` | `docs/source-zh/rst_source/concepts/` |[m
+[32m+[m[32m| Guides | `docs/source-en/rst_source/guides/` | `docs/source-zh/rst_source/guides/` |[m
+[32m+[m[32m| Reference (API) | `docs/source-en/rst_source/reference/api/` | `docs/source-zh/rst_source/reference/api/` |[m
+[32m+[m[32m| Reference (algorithms) | `docs/source-en/rst_source/reference/algorithms/` | `docs/source-zh/rst_source/reference/algorithms/` |[m
+[32m+[m[32m| Extending | `docs/source-en/rst_source/extending/` | `docs/source-zh/rst_source/extending/` |[m
+[32m+[m[32m| Resources (blog, publications, release, FAQ) | `docs/source-en/rst_source/resources/` | `docs/source-zh/rst_source/resources/` |[m
+ [m
+ ---[m
+ [m
+[1mdiff --git a/.claude/skills/install-check/SKILL.md b/.claude/skills/install-check/SKILL.md[m
+[1mnew file mode 100644[m
+[1mindex 00000000..b53a7d3f[m
+[1m--- /dev/null[m
+[1m+++ b/.claude/skills/install-check/SKILL.md[m
+[36m@@ -0,0 +1,161 @@[m
+[32m+[m[32m---[m
+[32m+[m[32mname: install-check[m
+[32m+[m[32mdescription: Check, fix, or extend requirements/install.sh and its docker/Dockerfile coverage when adding a new embodied model or environment in RLinf, so the install logic reuses common utilities, keeps system deps in sys_deps.sh, pins/forks git deps, avoids ad-hoc pyproject/core-dep hacks, and every new model/env gets a matching Dockerfile build stage. Use when writing or cleaning up an install_<model>_model / install_<env>_env function, fixing a flaky or non-portable install path, or reviewing an install.sh / Dockerfile diff for convention compliance.[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m# Install check: install.sh + Dockerfile conventions for a new model/env[m
+[32m+[m
+[32m+[m[32m`requirements/install.sh` installs every embodied model + env combo, and[m
+[32m+[m[32m`docker/Dockerfile` builds an image per target. New contributions tend to[m
+[32m+[m[32mcopy-paste an existing block and hack it until it works on one machine —[m
+[32m+[m[32mre-cloning repos by hand, `apt-get`-ing a package, pinning `ray`, `sed`-ing[m
+[32m+[m[32m`pyproject.toml`, and forgetting the Dockerfile entirely. This skill is the[m
+[32m+[m[32mconvention checklist plus a linter that flags those anti-patterns.[m
+[32m+[m
+[32m+[m[32m> Sibling skill: [add-install-docker-ci-e2e](../add-install-docker-ci-e2e/SKILL.md)[m
+[32m+[m[32m> *wires up* a new model/env (register, Dockerfile stage, CI jobs). This skill[m
+[32m+[m[32m> checks the *quality* of the install function and that the Dockerfile keeps up.[m
+[32m+[m
+[32m+[m[32mAll paths below are relative to the repo root.[m
+[32m+[m
+[32m+[m[32m## Run the check (start here)[m
+[32m+[m
+[32m+[m[32mThe harness is [check.sh](check.sh). Run it before and after editing[m
+[32m+[m[32m`requirements/install.sh` or `docker/Dockerfile`:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mbash .claude/skills/install-check/check.sh[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mIt scans the install script for each convention, then verifies every model in[m
+[32m+[m[32m`SUPPORTED_MODELS` and env in `SUPPORTED_ENVS` has a matching `--model` /[m
+[32m+[m[32m`--env` install invocation in `docker/Dockerfile`. It prints line numbers + fix[m
+[32m+[m[32mhints and exits non-zero if anything is flagged. Paths can be passed explicitly:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mbash .claude/skills/install-check/check.sh requirements/install.sh docker/Dockerfile[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mHeuristics **over-report** — every hit is a line to *review*, not an automatic[m
+[32m+[m[32mbug. Some are legitimate exceptions (see Gotchas). The goal when fixing is: each[m
+[32m+[m[32mflagged item is either resolved or consciously kept with a one-line reason.[m
+[32m+[m
+[32m+[m[32m## The conventions[m
+[32m+[m
+[32m+[m[32m1. **Reuse common utilities — don't rebuild them.** Clone with[m
+[32m+[m[32m   `clone_or_reuse_repo`, install flash-attn with `install_flash_attn`, apex[m
+[32m+[m[32m   with `install_apex`, base deps with `install_common_embodied_deps`. If a[m
+[32m+[m[32m   utility *almost* fits, **enhance the utility**, don't fork a near-duplicate.[m
+[32m+[m[32m2. **A model has one `install_<model>_model()`** that `case`s on `$ENV_NAME` and[m
+[32m+[m[32m   calls the matching `install_<env>_env()`. An env with **no** model is[m
+[32m+[m[32m   installed through `install_env_only` (add a branch there).[m
+[32m+[m[32m3. **System packages go in `requirements/embodied/sys_deps.sh`**, never[m
+[32m+[m[32m   `apt-get`/`dnf`/`yum`/`pacman` inside `install.sh`. `sys_deps.sh` covers[m
+[32m+[m[32m   apt/dnf/yum/pacman — add the package to **every** `install_deps_<mgr>`[m
+[32m+[m[32m   function so all distros are handled.[m
+[32m+[m[32m4. **Pin every git dependency** to a commit/tag/branch (`@<rev>` or `-b[m
+[32m+[m[32m   <branch>`), **or** fork it into `github.com/RLinf/<repo>`. No floating[m
+[32m+[m[32m   `main`.[m
+[32m+[m[32m5. **Don't touch RLinf's own `pyproject.toml` from `install.sh`** except through[m
+[32m+[m[32m   `apply_torch_override`. If an override pin conflicts with a dependency you're[m
+[32m+[m[32m   installing, `cd`/`pushd` into that dependency's checkout and install from[m
+[32m+[m[32m   there (editing the *cloned* repo's pyproject after `cd` is fine).[m
+[32m+[m[32m6. **Don't override core deps (`ray`, and avoid loose `torch` pins).** Before[m
+[32m+[m[32m   adding a `uv pip install x==y`, check whether the common embodied/agentic[m
+[32m+[m[32m   deps or `pyproject.toml` already provide it. Fewer overrides = fewer[m
+[32m+[m[32m   cross-env breakages.[m
+[32m+[m[32m7. **Every new model/env install needs a matching `docker/Dockerfile` change.**[m
+[32m+[m[32m   Adding a model to `SUPPORTED_MODELS` or env to `SUPPORTED_ENVS` (and its[m
+[32m+[m[32m   `install_*` function) is not complete until `docker/Dockerfile` has a build[m
+[32m+[m[32m   stage that installs it. Add `base-image-embodied-<target>`, a `FROM[m
+[32m+[m[32m   embodied-common-image AS embodied-<target>-image` stage, the `RUN bash[m
+[32m+[m[32m   requirements/install.sh … --model <m> --env <e>` line, and the default-venv[m
+[32m+[m[32m   `.bashrc` line. (See [add-install-docker-ci-e2e](../add-install-docker-ci-e2e/SKILL.md)[m
+[32m+[m[32m   for the full stage + CI pattern.)[m
+[32m+[m[32m8. **Keep it clean and simple.** Prefer a small `case` branch that calls shared[m
+[32m+[m[32m   helpers over a long bespoke block of `sed`/`uv pip` hacks.[m
+[32m+[m[32m9. **When uncertain, ask.** If you can't tell whether an override is required,[m
+[32m+[m[32m   whether to fork-vs-pin, or whether a target genuinely needs a Docker image —[m
+[32m+[m[32m   surface the question instead of guessing.[m
+[32m+[m
+[32m+[m[32m## Common utilities to reuse (in `install.sh`)[m
+[32m+[m
+[32m+[m[32m| Need | Use | Don't |[m
+[32m+[m[32m|---|---|---|[m
+[32m+[m[32m| Clone a repo | `clone_or_reuse_repo ENV_VAR DEFAULT_DIR URL [git args…]` (reuse via `*_PATH`, mirror prefix, corruption re-clone) | raw `git clone` |[m
+[32m+[m[32m| flash-attn | `install_flash_attn` (platform-aware, prebuilt wheels, source fallback) | hand-built wheel URLs |[m
+[32m+[m[32m| apex | `install_apex` | building apex inline |[m
+[32m+[m[32m| venv + base sync | `create_and_sync_venv` then `install_common_embodied_deps` | re-implementing `uv venv` / `uv sync` |[m
+[32m+[m[32m| torch version change | `--torch` flag → `apply_torch_override` | `sed` on `pyproject.toml` |[m
+[32m+[m[32m| system libs / EGL / Vulkan | `requirements/embodied/sys_deps.sh` (+ per-platform render config) | `apt-get`, writing ICD json inline |[m
+[32m+[m[32m| CUDA / ROCm detection | `detect_cuda_major_minor`, `detect_rocm_version` | re-parsing `nvcc`/`rocminfo` |[m
+[32m+[m[32m| mirror-aware git | `GITHUB_PREFIX` prefix + `setup_mirror` | hardcoding mirror URLs |[m
+[32m+[m
+[32m+[m[32m## Workflow[m
+[32m+[m
+[32m+[m[32m**Adding an env to a model:** add a branch to the model's `case "$ENV_NAME"`:[m
+[32m+[m[32m`create_and_sync_venv` → `install_common_embodied_deps` → `install_<env>_env`[m
+[32m+[m[32m(+ `install_flash_attn` if the model needs it). Register the env name in[m
+[32m+[m[32m`SUPPORTED_ENVS`. **Then add the Dockerfile stage (Req 7).**[m
+[32m+[m
+[32m+[m[32m**Adding a model:** add `install_<model>_model()` (case on `$ENV_NAME`), a[m
+[32m+[m[32m`case "$MODEL"` branch in `main()`, and the name in `SUPPORTED_MODELS`. Put[m
+[32m+[m[32mmodel-specific pip pins in `requirements/embodied/models/<model>.txt` rather[m
+[32m+[m[32mthan inline when there are more than a couple. **Then add the Dockerfile stage.**[m
+[32m+[m
+[32m+[m[32m**Env with no model:** add a branch in `install_env_only`.[m
+[32m+[m
+[32m+[m[32mAfter editing, run the check and resolve/annotate every new hit, then[m
+[32m+[m[32msyntax-check both files:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mbash -n requirements/install.sh && echo "syntax OK"[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m## Gotchas (real findings from the current tree)[m
+[32m+[m
+[32m+[m[32m- **`apt-get install git-lfs` inside `install_gr00t_n1d6_model`** (around line[m
+[32m+[m[32m  1248) is exactly the Req-3 violation: git-lfs should be added to[m
+[32m+[m[32m  `sys_deps.sh` across all four package managers, not `apt-get`-ed inline (which[m
+[32m+[m[32m  breaks on non-Debian hosts).[m
+[32m+[m[32m- **`torch==` pins: behavior is fine, genesis is a real candidate.**[m
+[32m+[m[32m  `install_behavior_env` pins `torch==2.5.1` but wraps it in `pushd ~ … popd` —[m
+[32m+[m[32m  installing from `~` so RLinf's pyproject overrides don't apply (sanctioned).[m
+[32m+[m[32m  `install_genesis_env` pins `torch==2.8.0` **inline with no `cd`** — review it.[m
+[32m+[m[32m  Same Req-6 flag, opposite verdicts — read the context.[m
+[32m+[m[32m- **A clone can be "pinned later."** `NVIDIA/Isaac-GR00T` is cloned unpinned but[m
+[32m+[m[32m  the function then does `git checkout 7d5a455…` — effectively pinned. The[m
+[32m+[m[32m  linter still flags the clone line; acceptable. Prefer pinning at the[m
+[32m+[m[32m  `clone_or_reuse_repo` call when possible.[m
+[32m+[m[32m- **The franka catkin workspace** uses raw `git clone` for three ROS repos[m
+[32m+[m[32m  building one workspace — a genuine multi-repo build, not a single dep. Keep[m
+[32m+[m[32m  it.[m
+[32m+[m[32m- **Editing a *cloned* repo's `pyproject.toml`** (gr00t's `peft` pin) is fine[m
+[32m+[m[32m  because it happens after `cd "$gr00t_path"`. The linter can't tell whose[m
+[32m+[m[32m  pyproject it is — confirm it's not RLinf's.[m
+[32m+[m[32m- **Docker coverage gaps are real.** The check currently flags models[m
+[32m+[m[32m  `gr00t_n1d6`, `dreamzero`, `qwen3_vl` and envs `genesis`, `habitat`,[m
+[32m+[m[32m  `xsquare_turtle2`, `franka-dexhand` as having no Dockerfile stage. New[m
+[32m+[m[32m  additions like these should get one. A handful of utility/real-robot targets[m
+[32m+[m[32m  (`dummy`, `d4rl`, `gim_arm`, `dosw1`) intentionally have no image — keep them[m
+[32m+[m[32m  out *consciously*, don't let the gap pass silently.[m
+[32m+[m
+[32m+[m[32m## Gotchas (about the harness)[m
+[32m+[m
+[32m+[m[32m- It's grep/awk static analysis: it cannot see runtime `cd`, so it can't always[m
+[32m+[m[32m  tell a sanctioned cloned-repo edit from an RLinf-pyproject edit. Read the[m
+[32m+[m[32m  surrounding function.[m
+[32m+[m[32m- Docker matching is by `--model <name>` / `--env <name>` with a name boundary,[m
+[32m+[m[32m  so `--env libero` won't match `--env liberopro` and `--env franka;` (trailing[m
+[32m+[m[32m  `;`) still matches. If you wire a target in via a non-standard invocation, the[m
+[32m+[m[32m  check may report a false gap.[m
+[32m+[m[32m- The ANSI bold headers come out as escape codes when piped; strip with[m
+[32m+[m[32m  `sed 's/\x1b\[[0-9;]*m//g'` if you need plain text.[m
+[32m+[m
+[32m+[m[32m## When to stop and ask[m
+[32m+[m
+[32m+[m[32mAsk the user (Req 9) when: a needed dep genuinely conflicts with a core pin and[m
+[32m+[m[32mneither fork-vs-pin nor a `cd` workaround is obviously right; a model's set of[m
+[32m+[m[32msupported envs is unclear; or whether a new target should ship a Docker image at[m
+[32m+[m[32mall. Don't silently pick — a wrong pin or a missing image breaks installs/CI for[m
+[32m+[m[32mevery other env.[m
+[1mdiff --git a/.claude/skills/install-check/check.sh b/.claude/skills/install-check/check.sh[m
+[1mnew file mode 100755[m
+[1mindex 00000000..bf4e752d[m
+[1m--- /dev/null[m
+[1m+++ b/.claude/skills/install-check/check.sh[m
+[36m@@ -0,0 +1,183 @@[m
+[32m+[m[32m#!/usr/bin/env bash[m
+[32m+[m[32m# check.sh — lint requirements/install.sh (and its docker/Dockerfile coverage)[m
+[32m+[m[32m# against RLinf install conventions.[m
+[32m+[m[32m#[m
+[32m+[m[32m# This is the harness for the `install-check` skill. It statically scans[m
+[32m+[m[32m# install.sh and flags lines that likely violate the conventions in SKILL.md,[m
+[32m+[m[32m# then checks that every model/env in SUPPORTED_MODELS / SUPPORTED_ENVS has a[m
+[32m+[m[32m# matching install invocation in docker/Dockerfile. Findings are *candidates for[m
+[32m+[m[32m# review*, not hard errors — some are legitimate (see SKILL.md Gotchas).[m
+[32m+[m[32m#[m
+[32m+[m[32m# Usage:   bash .claude/skills/install-check/check.sh [install.sh] [Dockerfile][m
+[32m+[m[32m# Default: requirements/install.sh  and  <repo>/docker/Dockerfile (derived).[m
+[32m+[m[32m# Exit:    0 if no candidates found, 1 otherwise.[m
+[32m+[m
+[32m+[m[32mset -uo pipefail[m
+[32m+[m
+[32m+[m[32mF="${1:-requirements/install.sh}"[m
+[32m+[m[32mif [ ! -f "$F" ]; then[m
+[32m+[m[32m    echo "check.sh: cannot find install script at '$F'." >&2[m
+[32m+[m[32m    echo "Pass the path explicitly: bash check.sh requirements/install.sh" >&2[m
+[32m+[m[32m    exit 2[m
+[32m+[m[32mfi[m
+[32m+[m[32m# Derive the Dockerfile from the install script's location unless given.[m
+[32m+[m[32mREPO_ROOT="$(cd "$(dirname "$F")/.." && pwd)"[m
+[32m+[m[32mD="${2:-$REPO_ROOT/docker/Dockerfile}"[m
+[32m+[m
+[32m+[m[32mHITS=0[m
+[32m+[m[32msection() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }[m
+[32m+[m[32mhit()     { HITS=$((HITS + 1)); printf '  %s\n' "$1"; }[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Req 3: system packages must go through requirements/embodied/sys_deps.sh,[m
+[32m+[m[32m# never apt/dnf/yum/pacman inside install.sh (so all distros are covered).[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Req 3 — system package managers inside install.sh (use sys_deps.sh instead)"[m
+[32m+[m[32mm=$(grep -nE '^[[:space:]]*(sudo[[:space:]]+)?(apt-get|apt|dnf|yum|pacman)[[:space:]]' "$F" \[m
+[32m+[m[32m    | grep -vE 'command -v|detect_pkg_manager' || true)[m
+[32m+[m[32mif [ -n "$m" ]; then[m
+[32m+[m[32m    while IFS= read -r line; do hit "$line"; done <<< "$m"[m
+[32m+[m[32m    echo "  FIX: move the package(s) into requirements/embodied/sys_deps.sh"[m
+[32m+[m[32m    echo "       (add to every install_deps_<pkgmgr> function), then drop the call here."[m
+[32m+[m[32melse[m
+[32m+[m[32m    echo "  ok — no direct package-manager calls"[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Req 6: don't override core deps (ray) and minimise torch-family overrides.[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Req 6 — core dependency overrides (ray / explicit torch pins)"[m
+[32m+[m[32mm=$(grep -nE 'uv pip install[^#]*\bray==' "$F" || true)[m
+[32m+[m[32mif [ -n "$m" ]; then[m
+[32m+[m[32m    while IFS= read -r line; do hit "$line  <-- ray is a core dep; do NOT pin it per-env"; done <<< "$m"[m
+[32m+[m[32melse[m
+[32m+[m[32m    echo "  ok — no ray override"[m
+[32m+[m[32mfi[m
+[32m+[m[32mm=$(grep -nE 'uv pip install[^#]*\b(torch|torchvision|torchaudio)==' "$F" || true)[m
+[32m+[m[32mif [ -n "$m" ]; then[m
+[32m+[m[32m    echo "  review — explicit torch-family pins (prefer --torch flag / apply_torch_override,"[m
+[32m+[m[32m    echo "           or 'pushd ~' before installing so pyproject overrides don't apply):"[m
+[32m+[m[32m    while IFS= read -r line; do hit "$line"; done <<< "$m"[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Req 5: don't edit RLinf's own pyproject.toml from install.sh except via the[m
+[32m+[m[32m# apply_torch_override utility. Editing a *cloned dependency's* pyproject after[m
+[32m+[m[32m# cd-ing into it is fine.[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Req 5 — pyproject.toml edits outside apply_torch_override"[m
+[32m+[m[32mlo=$(grep -n '^apply_torch_override()' "$F" | head -1 | cut -d: -f1)[m
+[32m+[m[32mhi=$(grep -n '^install_uv()' "$F" | head -1 | cut -d: -f1)[m
+[32m+[m[32mm=$(grep -nE 'pyproject\.toml' "$F" | grep -E 'sed -i|>> |>>"|cp |tee ' || true)[m
+[32m+[m[32mif [ -n "$m" ]; then[m
+[32m+[m[32m    found=0[m
+[32m+[m[32m    while IFS= read -r line; do[m
+[32m+[m[32m        ln=${line%%:*}[m
+[32m+[m[32m        if [ -n "$lo" ] && [ -n "$hi" ] && [ "$ln" -ge "$lo" ] && [ "$ln" -lt "$hi" ]; then[m
+[32m+[m[32m            continue   # inside the sanctioned utility[m
+[32m+[m[32m        fi[m
+[32m+[m[32m        hit "$line"; found=1[m
+[32m+[m[32m    done <<< "$m"[m
+[32m+[m[32m    if [ "$found" -eq 1 ]; then[m
+[32m+[m[32m        echo "  NOTE: editing a *cloned repo's* pyproject after 'cd <repo>' is OK (req 5)."[m
+[32m+[m[32m        echo "        Editing RLinf's own pyproject is NOT — route it through apply_torch_override."[m
+[32m+[m[32m    else[m
+[32m+[m[32m        echo "  ok — only apply_torch_override edits pyproject.toml"[m
+[32m+[m[32m    fi[m
+[32m+[m[32melse[m
+[32m+[m[32m    echo "  ok — no out-of-band pyproject.toml edits"[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Req 4: every git dependency must be forked into github.com/RLinf OR pinned to[m
+[32m+[m[32m# a revision / branch / tag.[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Req 4 — git deps that are neither RLinf-forked nor pinned"[m
+[32m+[m[32mawk '[m
+[32m+[m[32m  /github\.com\// {[m
+[32m+[m[32m    if ($0 ~ /^[[:space:]]*#/) next[m
+[32m+[m[32m    if ($0 ~ /git config/) next                     # mirror insteadOf setup, not a dep[m
+[32m+[m[32m    if ($0 ~ /clone_or_reuse_repo\(\)/) next        # the helper definition itself[m
+[32m+[m[32m    if ($0 ~ /releases\/download/) next             # prebuilt wheel URLs, not source[m
+[32m+[m[32m    org=$0; sub(/.*github\.com\//, "", org); sub(/[\/".].*/, "", org)[m
+[32m+[m[32m    pinned = ($0 ~ /@[0-9a-fA-F]{7,}/ || $0 ~ /@v?[0-9]/ || $0 ~ /@[A-Za-z][A-Za-z0-9._\/-]+/ || $0 ~ /-b[[:space:]]/)[m
+[32m+[m[32m    forked = (org == "RLinf")[m
+[32m+[m[32m    if (!forked && !pinned) printf "  %d: %s\n", NR, $0[m
+[32m+[m[32m  }[m
+[32m+[m[32m' "$F" | while IFS= read -r l; do hit "$l"; done[m
+[32m+[m[32munpinned=$(awk '[m
+[32m+[m[32m  /github\.com\// {[m
+[32m+[m[32m    if ($0 ~ /^[[:space:]]*#/) next[m
+[32m+[m[32m    if ($0 ~ /git config/) next[m
+[32m+[m[32m    if ($0 ~ /clone_or_reuse_repo\(\)/) next[m
+[32m+[m[32m    if ($0 ~ /releases\/download/) next[m
+[32m+[m[32m    org=$0; sub(/.*github\.com\//,"",org); sub(/[\/".].*/,"",org)[m
+[32m+[m[32m    pinned=($0 ~ /@[0-9a-fA-F]{7,}/ || $0 ~ /@v?[0-9]/ || $0 ~ /@[A-Za-z][A-Za-z0-9._\/-]+/ || $0 ~ /-b[[:space:]]/)[m
+[32m+[m[32m    if (org!="RLinf" && !pinned) c++[m
+[32m+[m[32m  } END{print c+0}' "$F")[m
+[32m+[m[32mif [ "$unpinned" -gt 0 ]; then[m
+[32m+[m[32m    HITS=$((HITS + unpinned))[m
+[32m+[m[32m    echo "  FIX: pin with @<commit|tag|branch> or -b <branch>, OR fork into github.com/RLinf"[m
+[32m+[m[32m    echo "  NOTE: a clone that is checked out to a fixed hash later in its function"[m
+[32m+[m[32m    echo "        (e.g. NVIDIA/Isaac-GR00T -> git checkout 7d5a455) is effectively pinned."[m
+[32m+[m[32melse[m
+[32m+[m[32m    echo "  ok — all github source deps are RLinf-forked or pinned"[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Req 1: reuse common utilities instead of re-implementing them. Raw 'git clone'[m
+[32m+[m[32m# outside the clone_or_reuse_repo helper usually means the env should call it.[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Req 1 — raw 'git clone' that should use clone_or_reuse_repo"[m
+[32m+[m[32mm=$(grep -nE '(^|[^_])git clone' "$F" | grep -vE 'clone_or_reuse_repo|git clone "\$@"' || true)[m
+[32m+[m[32mif [ -n "$m" ]; then[m
+[32m+[m[32m    while IFS= read -r line; do hit "$line"; done <<< "$m"[m
+[32m+[m[32m    echo "  FIX: prefer clone_or_reuse_repo ENV_VAR DEFAULT_DIR URL [git args...]"[m
+[32m+[m[32m    echo "       unless this is a genuinely multi-repo build (e.g. franka catkin ws)."[m
+[32m+[m[32melse[m
+[32m+[m[32m    echo "  ok — all clones go through clone_or_reuse_repo"[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32m# Docker: every model/env in SUPPORTED_MODELS / SUPPORTED_ENVS must be wired[m
+[32m+[m[32m# into docker/Dockerfile (a `--model <m>` / `--env <e>` install invocation).[m
+[32m+[m[32m# A new model/env install MUST be accompanied by the matching Dockerfile change.[m
+[32m+[m[32m# ---------------------------------------------------------------------------[m
+[32m+[m[32msection "Docker — models/envs in install.sh missing from docker/Dockerfile"[m
+[32m+[m[32mif [ ! -f "$D" ]; then[m
+[32m+[m[32m    hit "Dockerfile not found at '$D' — pass it as the 2nd argument."[m
+[32m+[m[32melse[m
+[32m+[m[32m    # boundary = next char is not part of a name (handles '--env libero;' and[m
+[32m+[m[32m    # avoids '--env libero' matching inside '--env liberopro').[m
+[32m+[m[32m    bnd='([^a-zA-Z0-9_-]|$)'[m
+[32m+[m[32m    models=$(grep -E '^SUPPORTED_MODELS=' "$F" | sed -E 's/^[^(]*\(//; s/\).*//; s/"//g')[m
+[32m+[m[32m    envs=$(grep -E '^SUPPORTED_ENVS='   "$F" | sed -E 's/^[^(]*\(//; s/\).*//; s/"//g')[m
+[32m+[m[32m    miss_m=""; miss_e=""[m
+[32m+[m[32m    for x in $models; do grep -Eq -- "--model ${x}${bnd}" "$D" || miss_m="$miss_m $x"; done[m
+[32m+[m[32m    for x in $envs;   do grep -Eq -- "--env ${x}${bnd}"   "$D" || miss_e="$miss_e $x"; done[m
+[32m+[m[32m    if [ -n "$miss_m" ]; then[m
+[32m+[m[32m        for x in $miss_m; do hit "model '$x' has no '--model $x' install in docker/Dockerfile"; done[m
+[32m+[m[32m    fi[m
+[32m+[m[32m    if [ -n "$miss_e" ]; then[m
+[32m+[m[32m        for x in $miss_e; do hit "env   '$x' has no '--env $x' install in docker/Dockerfile"; done[m
+[32m+[m[32m    fi[m
+[32m+[m[32m    if [ -z "$miss_m$miss_e" ]; then[m
+[32m+[m[32m        echo "  ok — every model and env is referenced in docker/Dockerfile"[m
+[32m+[m[32m    else[m
+[32m+[m[32m        echo "  FIX: add a build stage + install invocation in docker/Dockerfile for each"[m
+[32m+[m[32m        echo "       (FROM embodied-common-image AS embodied-<env>-image; base-image line;"[m
+[32m+[m[32m        echo "       RUN bash requirements/install.sh ... --model <m> --env <e>). See"[m
+[32m+[m[32m        echo "       the add-install-docker-ci-e2e skill for the full stage pattern."[m
+[32m+[m[32m        echo "  NOTE: a few utility/real-robot targets intentionally have no image"[m
+[32m+[m[32m        echo "        (e.g. dummy, d4rl, gim_arm, dosw1) — keep those out consciously."[m
+[32m+[m[32m    fi[m
+[32m+[m[32mfi[m
+[32m+[m
+[32m+[m[32mprintf '\n\033[1m== Summary ==\033[0m\n'[m
+[32m+[m[32mif [ "$HITS" -eq 0 ]; then[m
+[32m+[m[32m    echo "No convention candidates found in $F."[m
+[32m+[m[32m    exit 0[m
+[32m+[m[32mfi[m
+[32m+[m[32mecho "$HITS candidate(s) flagged — review each against SKILL.md."[m
+[32m+[m[32mecho "Heuristics over-report; a flagged line may be a legitimate exception."[m
+[32m+[m[32mexit 1[m
+[1mdiff --git a/.claude/skills/refine-docs/SKILL.md b/.claude/skills/refine-docs/SKILL.md[m
+[1mnew file mode 100644[m
+[1mindex 00000000..0a9c3a14[m
+[1m--- /dev/null[m
+[1m+++ b/.claude/skills/refine-docs/SKILL.md[m
+[36m@@ -0,0 +1,81 @@[m
+[32m+[m[32m---[m
+[32m+[m[32mname: refine-docs[m
+[32m+[m[32mdescription: Refine, rewrite, or write an RLinf documentation page or section so it conforms to the docs style guide (docs/STYLE_GUIDE.md) — voice, information architecture, card/table index pages, the recipe-page template, navigation labels, reuse, and EN/ZH parity. Use when improving an existing doc page, drafting a new one, or doing a style/structure pass. For pure doc-to-code and EN/ZH correctness checks, use the docs-check skill instead (the two are complementary).[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32m# Refine RLinf Docs[m
+[32m+[m
+[32m+[m[32mBring a documentation page (or a whole section) up to the RLinf documentation[m
+[32m+[m[32m**style guide**. Use this when writing a new page, rewriting an existing one, or[m
+[32m+[m[32mdoing a style/structure pass.[m
+[32m+[m
+[32m+[m[32mThe single source of truth is **`docs/STYLE_GUIDE.md`** — read it first and apply[m
+[32m+[m[32mit. This skill is the operating procedure; the style guide holds the exact rules.[m
+[32m+[m[32mWhen the two disagree, the style guide wins.[m
+[32m+[m
+[32m+[m[32m## When to use[m
+[32m+[m
+[32m+[m[32m- Editing/improving an existing page, or drafting a new one.[m
+[32m+[m[32m- A "make this page match our docs style" / "clean up these docs" request.[m
+[32m+[m[32m- Pair with the **docs-check** skill: `refine-docs` covers voice, structure, and[m
+[32m+[m[32m  style; `docs-check` covers facts, code references, and EN/ZH parity.[m
+[32m+[m
+[32m+[m[32m## Workflow[m
+[32m+[m
+[32m+[m[32m1. **Read `docs/STYLE_GUIDE.md`.** It is authoritative.[m
+[32m+[m[32m2. **Find both language files.** Every page exists at `docs/source-en/...` and[m
+[32m+[m[32m   `docs/source-zh/...`. Refine **both in the same pass** and keep them in parity.[m
+[32m+[m[32m3. **Classify the page**, then apply the matching part of the guide:[m
+[32m+[m[32m   - **Landing / section / sub-section index** → cards or tables + a `:hidden:`[m
+[32m+[m[32m     toctree; one-line outcome; routed list. Never body bullet lists.[m
+[32m+[m[32m   - **Recipe / example page** (env, model, algorithm, SFT, robot) → the page[m
+[32m+[m[32m     anatomy: figure + intro → `Overview` (4 aligned cards) → `Tasks` +[m
+[32m+[m[32m     `Observation and Action` tables → `Installation` → `Download the Model` →[m
+[32m+[m[32m     `Run It` → `Visualization and Results`. Use the standard section names and[m
+[32m+[m[32m     the aligned card schema for that gallery subsection.[m
+[32m+[m[32m   - **Concept / guide / reference / extending prose page** → outcome-first intro,[m
+[32m+[m[32m     short sections, link out instead of inlining reference material.[m
+[32m+[m[32m4. **Apply the voice rules** to every paragraph: second person, imperative,[m
+[32m+[m[32m   outcome first, no throat-clearing, short sentences, annotate non-trivial[m
+[32m+[m[32m   commands ("What this does: 1… 2…").[m
+[32m+[m[32m5. **Fix structure and labels:** Title Case headings + standard names, one H1 per[m
+[32m+[m[32m   page, bare nav captions, cards/tables instead of bullet walls, footguns in a[m
+[32m+[m[32m   `warning`, correct axis ownership/placement.[m
+[32m+[m[32m6. **De-duplicate:** link to the canonical Reference / Evaluation page instead of[m
+[32m+[m[32m   re-explaining; if identical prose/commands repeat across 3+ pages, extract an[m
+[32m+[m[32m   underscore include partial (`_name.rst`).[m
+[32m+[m[32m7. **Keep EN ↔ ZH parity:** same structure and (translated) headings; identical,[m
+[32m+[m[32m   untranslated code identifiers (config keys, CLI flags, env/model names); stable[m
+[32m+[m[32m   `:doc:` / `:ref:` links (no hardcoded ReadTheDocs URLs); never glue `**bold**`[m
+[32m+[m[32m   directly between CJK characters.[m
+[32m+[m[32m8. **Verify (the gate)** — see below.[m
+[32m+[m
+[32m+[m[32m## Quick checklists by page type[m
+[32m+[m
+[32m+[m[32m**Any page**[m
+[32m+[m[32m- [ ] Opens with the outcome, second person, no throat-clearing.[m
+[32m+[m[32m- [ ] One H1; Title Case headings; standard section names where applicable.[m
+[32m+[m[32m- [ ] EN and ZH updated together; code tokens identical; no CJK-glued `**bold**`.[m
+[32m+[m[32m- [ ] Reference material linked, not inlined; repeated blocks factored into partials.[m
+[32m+[m
+[32m+[m[32m**Index / landing page**[m
+[32m+[m[32m- [ ] Body uses a card grid or `list-table`, not bullets or bare `:doc:` lists.[m
+[32m+[m[32m- [ ] `.. toctree::` is `:hidden:` and drives nav/order.[m
+[32m+[m[32m- [ ] One-line purpose ("Pick this when…") before the cards/tables.[m
+[32m+[m
+[32m+[m[32m**Recipe / example page**[m
+[32m+[m[32m- [ ] Credited figure + one-paragraph intro.[m
+[32m+[m[32m- [ ] `Overview` card grid (`.. grid:: 2 4 4 4`) with the gallery's aligned schema.[m
+[32m+[m[32m- [ ] `Tasks` and `Observation and Action` are `list-table`s.[m
+[32m+[m[32m- [ ] No "Env type" card, no generic "Algorithm" section, no boilerplate VLA intro.[m
+[32m+[m[32m- [ ] Metrics/eval linked out; only "watch `env/success_once`" + a results table stay.[m
+[32m+[m[32m- [ ] Shared install / model-path tails come from `_setup_common.rst` / `_model_path.rst`.[m
+[32m+[m
+[32m+[m[32m## Gate[m
+[32m+[m
+[32m+[m[32m- Build both trees with **zero new warnings**:[m
+[32m+[m[32m  `/opt/venv/docs/bin/sphinx-build -b html docs/source-en /tmp/build-en` and the[m
+[32m+[m[32m  same for `docs/source-zh`.[m
+[32m+[m[32m- Run the **`docs-check`** skill (doc-to-code correctness + EN/ZH parity).[m
+[32m+[m[32m- Confirm: no new bullet-list index pages, no throat-clearing intros, and no[m
+[32m+[m[32m  literal `**` leaking into built ZH pages from CJK-glued bold.[m
+[1mdiff --git a/.claude/skills/review-pr/SKILL.md b/.claude/skills/review-pr/SKILL.md[m
+[1mindex 0c2f0a5c..c846c6c7 100644[m
+[1m--- a/.claude/skills/review-pr/SKILL.md[m
+[1m+++ b/.claude/skills/review-pr/SKILL.md[m
+[36m@@ -5,7 +5,7 @@[m [mdescription: Reviews a pull request from a PR URL by directly fetching the URL c[m
+ [m
+ # Review PR (From PR URL)[m
+ [m
+[31m-Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution rules referenced below.[m
+[32m+[m[32mReviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the contribution rules referenced below.[m
+ [m
+ ## 1. Input: PR URL[m
+ [m
+[36m@@ -65,6 +65,7 @@[m [mThe PR must match how RLinf already does things. Mismatches are usually defects[m
+ [m
+ Both directions matter, and EN/ZH parity must be checked explicitly:[m
+ [m
+[32m+[m[32m- **If this PR changes documentation**, follow the [docs-check skill](../docs-check/SKILL.md) to drive this review: it cross-checks docs against code and against each other (commands, config keys, paths, model/env names) and enforces EN↔ZH parity.[m
+ - **Docs → code**: every config key, CLI flag, env var, file path, function/class name, and supported model/env name mentioned in changed docs must exist in `origin/main` + this PR. Verify with `git show origin/main:rlinf/...`. Stale references = finding.[m
+ - **Code → docs**: when this PR adds, removes, or renames a public-facing config key, model, env, runner, script, env var, or supported feature, the corresponding doc page **must be updated in the same PR**. If missing, list the exact doc files (EN and ZH) that need edits.[m
+ - **EN ↔ ZH parity** (do this explicitly, even when only one language was touched): paired pages under `docs/source-en/` and `docs/source-zh/` must agree on setup commands, paths, env vars, config keys, supported models/envs/algorithms, capability claims, reported numbers (metrics, table values, dataset sizes, trial counts), and section structure/order. If only one side is updated, name the matching file that also needs the change.[m
+[36m@@ -74,6 +75,7 @@[m [mBoth directions matter, and EN/ZH parity must be checked explicitly:[m
+ ### (d) Tests and CI integration[m
+ [m
+ - **User-facing changes** must have **tests** (unit or e2e). Reviewer must be able to validate reproducibility.[m
+[32m+[m[32m- **If this PR changes the install script** (`requirements/install.sh`, `requirements/embodied/`, or `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md) to review the changes: reuse of common utilities, system deps kept in `sys_deps.sh`, pinned/forked git deps, no ad-hoc `pyproject.toml`/core-dep hacks, and a matching Dockerfile build stage for every new model/env.[m
+ - **Dependencies / CI**: new env/model needs install-script update, Docker stage, and CI/e2e coverage — cross-check with the [add-install-docker-ci-e2e skill](../add-install-docker-ci-e2e/SKILL.md).[m
+ - New CI-relevant YAML must be referenced in the e2e test matrix.[m
+ - Large/new dependencies (docker, models, datasets) → maintainer ping noted.[m
+[36m@@ -86,6 +88,7 @@[m [mMention only if there are real issues; do not pad the review.[m
+ - Public classes/methods have Google-style docstrings; type hints on parameters; return type when not deducible.[m
+ - Assertions/exceptions have meaningful messages (no empty or `xxx != yyy` restatements).[m
+ - `logging` / `self.log_*` not `print`.[m
+[32m+[m[32m- **License header (newly-added files)**: every file *added* by this PR must carry the standard RLinf header (`# Copyright <YEAR> The RLinf Authors.`), and `<YEAR>` must equal the current calendar year. Determine the current year (e.g. `date +%Y`), list added files with `git diff --name-status origin/main...<pr-head>` (status `A`), and flag any new file whose header is missing or whose copyright year is not the current year. Files vendored from third parties keep their upstream copyright line — apply this only to the RLinf Authors header.[m
+ - Every commit `Signed-off-by`; messages follow Conventional Commits `<type>(<scope>): <description>`.[m
+ - PR title in Conventional Commits format; PR Description and Checklist sections filled; testing results if performance/stability is affected.[m
+ [m
+[1mdiff --git a/.claude/skills/review-pr/reference.md b/.claude/skills/review-pr/reference.md[m
+[1mindex 08d41543..ebb0c4d0 100644[m
+[1m--- a/.claude/skills/review-pr/reference.md[m
+[1m+++ b/.claude/skills/review-pr/reference.md[m
+[36m@@ -23,6 +23,7 @@[m [mUse alongside the PR diff. **Always cross-reference against `origin/main`** (`gi[m
+ - [ ] No hardcoded machine paths, sleep-based sync, or monkey-patches[m
+ [m
+ ## (c) Code ↔ docs consistency[m
+[32m+[m[32m- [ ] If docs changed, follow the [docs-check skill](../docs-check/SKILL.md) (code↔docs cross-check + EN↔ZH parity)[m
+ - [ ] Every config key / CLI flag / env var / path / supported name mentioned in changed docs exists in `origin/main` + PR[m
+ - [ ] Public-facing additions/renames/removals in code are reflected in BOTH `docs/source-en/` AND `docs/source-zh/`[m
+ - [ ] EN/ZH paired pages agree: commands, paths, keys, claims, numbers, structure[m
+[36m@@ -31,6 +32,7 @@[m [mUse alongside the PR diff. **Always cross-reference against `origin/main`** (`gi[m
+ - [ ] Each docs finding gives concrete wording/structure fix and file references[m
+ [m
+ ## (d) Tests & CI[m
+[32m+[m[32m- [ ] If the install script changed (`requirements/install.sh`, `requirements/embodied/`, `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md)[m
+ - [ ] User-facing changes have unit or e2e tests[m
+ - [ ] New env/model has install-script + Docker stage + CI/e2e coverage (use add-install-docker-ci-e2e)[m
+ - [ ] New CI-relevant YAML referenced in the e2e test matrix[m
+[36m@@ -41,5 +43,6 @@[m [mUse alongside the PR diff. **Always cross-reference against `origin/main`** (`gi[m
+ - [ ] Public classes/methods have Google-style docstrings; param type hints; return type when needed[m
+ - [ ] Assertions/exceptions have meaningful messages[m
+ - [ ] Logging used (no `print`)[m
+[32m+[m[32m- [ ] Newly-added files (`git diff --name-status origin/main...<pr-head>`, status `A`) carry the `# Copyright <YEAR> The RLinf Authors.` header with `<YEAR>` = current year (`date +%Y`); third-party-vendored files keep their upstream copyright line[m
+ - [ ] Every commit `Signed-off-by`; Conventional Commits subject[m
+ - [ ] PR title in Conventional Commits format; PR Description + Checklist sections filled[m
+[1mdiff --git a/.claude/skills/test-install/SKILL.md b/.claude/skills/test-install/SKILL.md[m
+[1mnew file mode 100644[m
+[1mindex 00000000..68824a14[m
+[1m--- /dev/null[m
+[1m+++ b/.claude/skills/test-install/SKILL.md[m
+[36m@@ -0,0 +1,180 @@[m
+[32m+[m[32m---[m
+[32m+[m[32mname: test-install[m
+[32m+[m[32mdescription: Test that requirements/install.sh works for an embodied model/env by building its venv and running the matching CI e2e test. Use when asked to test or verify an install, check a new model/env installs cleanly, run the e2e test for a model/env, confirm a venv works, or check that the model/checkpoint paths referenced by an e2e config actually exist on disk.[m
+[32m+[m[32m---[m
+[32m+[m
+[32m+[m[32mVerify that `requirements/install.sh` actually works for an embodied model/env:[m
+[32m+[m[32mbuild its venv, confirm the e2e config's model paths exist, then run the matching[m
+[32m+[m[32mCI e2e test against that venv. The harness is[m
+[32m+[m[32m[.claude/skills/test-install/driver.py](.claude/skills/test-install/driver.py) —[m
+[32m+[m[32mit reads the install command, env vars, and test config **straight out of**[m
+[32m+[m[32m[.github/workflows/embodied-e2e-tests.yml](.github/workflows/embodied-e2e-tests.yml),[m
+[32m+[m[32mso it never drifts from CI. Drive everything through that script.[m
+[32m+[m
+[32m+[m[32mAll paths below are relative to the repo root (the dir with `requirements/install.sh`).[m
+[32m+[m
+[32m+[m[32m## Prerequisites[m
+[32m+[m
+[32m+[m[32mThis runs on the **embodied CI runner** (or an equivalent box): NVIDIA GPUs, the[m
+[32m+[m[32mshared `/workspace/dataset/` tree (models, LIBERO, etc.), `uv`, and a `python3`[m
+[32m+[m[32mthat has PyYAML. No `apt-get` needed — the driver only orchestrates. Quick check:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mnvidia-smi -L | head -1[m
+[32m+[m[32mls -d /workspace/dataset >/dev/null && python3 -c "import yaml" && echo "env OK"[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mIf `python3` lacks PyYAML, the driver auto-reexecs under `uv run --with pyyaml`,[m
+[32m+[m[32mso it works regardless.[m
+[32m+[m
+[32m+[m[32m## Run (agent path)[m
+[32m+[m
+[32m+[m[32mThe driver has seven subcommands. **Start with the read-only ones** (`list`,[m
+[32m+[m[32m`resolve`, `check-paths`) — they're instant and tell you exactly what CI does[m
+[32m+[m[32mbefore you spend an hour on an install.[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32m# What model/env combos does CI cover, and which configs do they run?[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py list[m
+[32m+[m
+[32m+[m[32m# Show the exact install command + env vars + test configs for one combo:[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py resolve gr00t_n1d6 maniskill_libero[m
+[32m+[m
+[32m+[m[32m# Do the model/checkpoint paths an e2e config needs actually exist on disk?[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py check-paths libero_spatial_ppo_gr00t_n1d6[m
+[32m+[m
+[32m+[m[32m# Same check across every e2e config at once (great pre-flight / PR check):[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py check-all[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32m`check-paths` classifies every absolute path in the config: `[model/input]`[m
+[32m+[m[32m(must exist — a missing one fails the run before training and returns exit 1),[m
+[32m+[m[32m`[output dir]` (created by the run, may be missing), `[path]` (informational).[m
+[32m+[m
+[32m+[m[32m### The full pipeline[m
+[32m+[m
+[32m+[m[32m`run` does install → check-paths (per config) → test, stopping a test whose[m
+[32m+[m[32mrequired model paths are missing. **Always preview with `--dry-run` first** — it[m
+[32m+[m[32mprints the exact shell (install line + CI test step) without executing:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py run gr00t_n1d6 maniskill_libero \[m
+[32m+[m[32m    --venv /workspace/test-venvs/gr00t_n1d6 --dry-run[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mDrop `--dry-run` to actually build and test. Or drive the two halves separately[m
+[32m+[m[32m(faster iteration — install once, test many):[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32m# Preview the install (env vars + install.sh line, with --venv and --use-mirror[m
+[32m+[m[32m# injected). Drop --dry-run to build the venv; add --no-mirror to skip mirrors:[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py install gr00t_n1d6 maniskill_libero \[m
+[32m+[m[32m    --venv /workspace/test-venvs/gr00t_n1d6 --dry-run[m
+[32m+[m
+[32m+[m[32m# Run the matching e2e test against any venv (verbatim CI test step, venv path[m
+[32m+[m[32m# swapped in). This one is cheap — dummy SAC, 2 epochs — so run it for real:[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py test realworld_dummy_sac_cnn \[m
+[32m+[m[32m    --venv /opt/venv/openvla[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mA full model install (e.g. `gr00t_n1d6`) is heavy — it clones repos and builds[m
+[32m+[m[32mflash-attn — so preview with `--dry-run`, then run it where you can afford the[m
+[32m+[m[32mtime. The dummy-SAC `test` above completes in a few minutes against the prebuilt[m
+[32m+[m[32m`/opt/venv/openvla`.[m
+[32m+[m
+[32m+[m[32mA real test run spins up Ray, the env/rollout/policy workers, and trains for the[m
+[32m+[m[32mconfig's (deliberately tiny) epoch count. The dummy-SAC smoke above finishes in a[m
+[32m+[m[32mfew minutes and writes TensorBoard output under the config's `log_path`[m
+[32m+[m[32m(`/workspace/results/<config>/tensorboard/`) — that directory appearing with[m
+[32m+[m[32mfresh files is your "it worked" signal.[m
+[32m+[m
+[32m+[m[32m### Clean up the venv when you're done[m
+[32m+[m
+[32m+[m[32mA test venv is heavy (e.g. `gr00t_n1d6` is ~600M) and is throwaway — it exists[m
+[32m+[m[32monly to prove the install + e2e work. **After the test finishes, `rm -rf` the[m
+[32m+[m[32m`--venv` path you built** unless the user asked to keep it for reuse:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32mrm -rf /workspace/test-venvs/<model>[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mDon't touch the shared caches (`/workspace/dataset/.uv`, `.uv_cache`) or the[m
+[32m+[m[32mprebuilt `/opt/venv/*` — only the per-test venv you created. Cleaning up keeps[m
+[32m+[m[32m`/workspace/test-venvs/` from accumulating stale multi-hundred-MB trees across[m
+[32m+[m[32mruns. (Cleanup is for the venv only; the `/workspace/results/<config>/` outputs[m
+[32m+[m[32mare your proof the test ran — leave them or mention them.)[m
+[32m+[m
+[32m+[m[32m### When there's no matching test[m
+[32m+[m
+[32m+[m[32mIf a model/env has an install but **no** e2e job in the workflow, `run` installs[m
+[32m+[m[32mand then tells you there's nothing to run — **ask the user what to run** rather[m
+[32m+[m[32mthan guessing. If you have a config name that isn't wired into CI, `test[m
+[32m+[m[32m<config> --runner run|run_async|run_offline` runs it directly (pick the runner;[m
+[32m+[m[32m`run` is the default).[m
+[32m+[m
+[32m+[m[32m## Verifying a brand-new model/env (the common case)[m
+[32m+[m
+[32m+[m[32mWhen someone adds `install_<model>_model()` + an e2e job (see the[m
+[32m+[m[32m`add-install-docker-ci-e2e` and `install-check` skills), confirm it end to end:[m
+[32m+[m
+[32m+[m[32m```bash[m
+[32m+[m[32m# 1. CI parsed it correctly and the install command looks right:[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py resolve <model> <env>[m
+[32m+[m[32m# 2. The SFT checkpoint the e2e config points at is actually on this box:[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py check-paths <its_config>[m
+[32m+[m[32m# 3. Full build + test (preview with --dry-run, then drop it to run for real):[m
+[32m+[m[32mpython3 .claude/skills/test-install/driver.py run <model> <env> \[m
+[32m+[m[32m    --venv /workspace/test-venvs/<model> --dry-run[m
+[32m+[m[32m```[m
+[32m+[m
+[32m+[m[32mIf step 2 reports `MISS [model/input]`, the install can be perfect and the e2e[m
+[32m+[m[32mwill still fail — the dataset/checkpoint just isn't staged on this runner. Surface[m
+[32m+[m[32mthat to the user; it's not an install bug.[m
+[32m+[m
+[32m+[m[32m## Gotchas[m
+[32m+[m
+[32m+[m[32m- **`install`/`run` need `--venv <path>`** — it's injected as `install.sh --venv`.[m
+[32m+[m[32m  Use an absolute path (e.g. `/workspace/test-venvs/<model>`); a bare name lands[m
+[32m+[m[32m  relative to the repo root. The `test` step then sources `<path>/bin/activate`.[m
+[32m+[m[32m- **`--venv` reuses an existing venv** if one is already at that path (install.sh[m
+[32m+[m[32m  validates the Python version and reuses it). For a truly clean install, point at[m
+[32m+[m[32m  a fresh path or `rm -rf` it first.[m
+[32m+[m[32m- **The driver runs CI's shell verbatim**, including its `export UV_PATH=/workspace/dataset/.uv`[m
+[32m+[m[32m  etc. That's intentional — it reproduces CI exactly. It also means the install[m
+[32m+[m[32m  writes into the shared uv cache, same as CI.[m
+[32m+[m[32m- **`--use-mirror` is added to every install by default** (faster downloads),[m
+[32m+[m[32m  even for CI jobs that don't list it. Pass `--no-mirror` to `install`/`run` to[m
+[32m+[m[32m  turn it off. It's never duplicated if the CI job already has it.[m
+[32m+[m[32m- **Some jobs use `--platform amd`/`ascend`** (ROCm/Ascend runners) — `resolve`[m
+[32m+[m[32m  shows the platform; those won't install on an NVIDIA box.[m
+[32m+[m[32m- **Some jobs do extra setup inside the test step** (e.g. `cp .../maniskill_assets/assets`[m
+[32m+[m[32m  into the repo, or `export ROBOT_PLATFORM=ALOHA`). The driver replays the whole[m
+[32m+[m[32m  CI test step, so those are included automatically — but they assume the asset[m
+[32m+[m[32m  dirs exist under `/workspace/dataset/`.[m
+[32m+[m[32m- **A duplicated config in `list`** (e.g. `d4rl_iql_mujoco,d4rl_iql_mujoco`) just[m
+[32m+[m[32m  means the job runs that config twice with different flags (FSDP on/off). Normal.[m
+[32m+[m
+[32m+[m[32m## Troubleshooting[m
+[32m+[m
+[32m+[m[32m- **`No CI job for model=… env=…`** — that combo isn't in the workflow. Run[m
+[32m+[m[32m  `list` to see valid pairs; the model/env strings must match `--model`/`--env`[m
+[32m+[m[32m  in `install.sh` exactly (`maniskill_libero`, not `libero`).[m
+[32m+[m[32m- **`AttributeError: 'MessageFactory' object has no attribute 'GetPrototype'`** in[m
+[32m+[m[32m  a test run — benign protobuf/TF-on-import noise from the workers, not a failure.[m
+[32m+[m[32m  Look for the Ray `Placement(...)` lines and the rollout progress bar to confirm[m
+[32m+[m[32m  real progress.[m
+[32m+[m[32m- **`error: run this from inside the RLinf repo`** — `cd` to the repo root (the[m
+[32m+[m[32m  dir containing `requirements/install.sh`) before invoking the driver.[m
+[32m+[m[32m- **Test exits 0 immediately but nothing trained** — you backgrounded it with `&`;[m
+[32m+[m[32m  the launcher returns 0 while training detaches. Run it in the foreground, or[m
+[32m+[m[32m  wait on the real `train_embodied_agent.py` pid.[m
+[32m+[m[32m- **`install` hangs at `uv sync` with ~0 CPU and no `.uv_cache` writes** — almost[m
+[32m+[m[32m  always a dead `http(s)_proxy` env var on the box (e.g. a local[m
+[32m+[m[32m  `127.0.0.1:10809` that isn't forwarding), leaving idle ESTABLISHED `:443`[m
+[32m+[m[32m  connections. `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy[m
+[32m+[m[32m  ALL_PROXY` before running the install. Not an install.sh bug.[m
+[32m+[m[32m- **`setup_mirror` fails: `cannot overwrite multiple values ... insteadOf`** —[m
+[32m+[m[32m  prior interrupted runs left duplicate `url.<mirror>.insteadOf` entries in the[m
+[32m+[m[32m  global git config. Clear them with[m
+[32m+[m[32m  `git config --global --unset-all url."https://ghfast.top/github.com/".insteadOf`[m
+[32m+[m[32m  then retry. Also environmental, not an install.sh bug.[m
+[1mdiff --git a/.claude/skills/test-install/driver.py b/.claude/skills/test-install/driver.py[m
+[1mnew file mode 100755[m
+[1mindex 00000000..12331709[m
+[1m--- /dev/null[m
+[1m+++ b/.claude/skills/test-install/driver.py[m
+[36m@@ -0,0 +1,430 @@[m
+[32m+[m[32m#!/usr/bin/env python3[m
+[32m+[m
+[32m+[m[32m# Copyright 2025 The RLinf Authors.[m
+[32m+[m[32m#[m
+[32m+[m[32m# Licensed under the Apache License, Version 2.0 (the "License");[m
+[32m+[m[32m# you may not use this file except in compliance with the License.[m
+[32m+[m[32m# You may obtain a copy of the License at[m
+[32m+[m[32m#[m
+[32m+[m[32m#     https://www.apache.org/licenses/LICENSE-2.0[m
+[32m+[m[32m#[m
+[32m+[m[32m# Unless required by applicable law or agreed to in writing, software[m
+[32m+[m[32m# distributed under the License is distributed on an "AS IS" BASIS,[m
+[32m+[m[32m# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.[m
+[32m+[m[32m# See the License for the specific language governing permissions and[m
+[32m+[m[32m# limitations under the License.[m
+[32m+[m
+[32m+[m[32m"""Drive the embodied install + e2e pipeline for one model/env.[m
+[32m+[m
+[32m+[m[32mThis is the harness behind the `test-install` skill. It is the single source of[m
+[32m+[m[32mtruth for "how does CI install and test <model>/<env>" — it reads that straight[m
+[32m+[m[32mout of .github/workflows/embodied-e2e-tests.yml instead of hard-coding it, so it[m
+[32m+[m[32mnever drifts from CI.[m
+[32m+[m
+[32m+[m[32mSubcommands (run `driver.py <cmd> -h` for flags):[m
+[32m+[m
+[32m+[m[32m  list                       Table of every (model, env, job, configs) in CI.[m
+[32m+[m[32m  resolve  <model> [env]     Show the CI install command + test configs.[m
+[32m+[m[32m  check-paths <config>       Check the absolute model/ckpt paths in an e2e[m
+[32m+[m[32m                             config yaml actually exist on disk.[m
+[32m+[m[32m  check-all                  Run check-paths over every e2e config; report gaps.[m
+[32m+[m[32m  install  <model> [env]     Run CI's install command into --venv <path>.[m
+[32m+[m[32m  test     <config>          Run CI's e2e test for <config> with --venv <path>.[m
+[32m+[m[32m  run      <model> [env]     install -> check-paths -> test (the full pipeline).[m
+[32m+[m
+[32m+[m[32mPaths printed/used are relative to the repo root (the dir that contains[m
+[32m+[m[32mrequirements/install.sh). Run this from there.[m
+[32m+[m[32m"""[m
+[32m+[m
+[32m+[m[32mimport argparse[m
+[32m+[m[32mimport os[m
+[32m+[m[32mimport re[m
+[32m+[m[32mimport subprocess[m
+[32m+[m[32mimport sys[m
+[32m+[m
+[32m+[m[32mtry:[m
+[32m+[m[32m    import yaml[m
+[32m+[m[32mexcept ImportError:[m
+[32m+[m[32m    # System python on the embodied runner has PyYAML; if not, bootstrap via uv.[m
+[32m+[m[32m    os.execvp("uv", ["uv", "run", "--with", "pyyaml", "python3", *sys.argv])[m
+[32m+[m
+[32m+[m[32mHERE = os.path.dirname(os.path.abspath(__file__))[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef repo_root():[m
+[32m+[m[32m    """Walk up from CWD to the dir holding requirements/install.sh."""[m
+[32m+[m[32m    d = os.getcwd()[m
+[32m+[m[32m    while True:[m
+[32m+[m[32m        if os.path.isfile(os.path.join(d, "requirements", "install.sh")):[m
+[32m+[m[32m            return d[m
+[32m+[m[32m        if d == "/":[m
+[32m+[m[32m            sys.exit([m
+[32m+[m[32m                "error: run this from inside the RLinf repo (no "[m
+[32m+[m[32m                "requirements/install.sh found above CWD)."[m
+[32m+[m[32m            )[m
+[32m+[m[32m        d = os.path.dirname(d)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mROOT = repo_root()[m
+[32m+[m[32mWF = os.path.join(ROOT, ".github", "workflows", "embodied-e2e-tests.yml")[m
+[32m+[m[32mE2E_DIR = os.path.join(ROOT, "tests", "e2e_tests", "embodied")[m
+[32m+[m
+[32m+[m[32m# Config keys whose value is an *input* artifact that must already exist.[m
+[32m+[m[32mREQUIRED_KEY = re.compile([m
+[32m+[m[32m    r"(model_path|ckpt|checkpoint|pretrained|tokenizer|processor|lora|"[m
+[32m+[m[32m    r"weights?|_path$|_dir$)",[m
+[32m+[m[32m    re.I,[m
+[32m+[m[32m)[m
+[32m+[m[32m# Keys that are outputs (created by the run) — existence is not required.[m
+[32m+[m[32mOUTPUT_KEY = re.compile(r"(log_path|output|save|video|results?)", re.I)[m
+[32m+[m
+[32m+[m[32mRUN_RE = re.compile(r"tests/e2e_tests/embodied/(run\w*)\.sh\s+(\S+)(.*)")[m
+[32m+[m
+[32m+[m
+[32m+[m[32m# --------------------------------------------------------------------------- #[m
+[32m+[m[32m# Parse the CI workflow into a list of jobs.[m
+[32m+[m[32m# --------------------------------------------------------------------------- #[m
+[32m+[m[32mclass Job:[m
+[32m+[m[32m    def __init__(self, name):[m
+[32m+[m[32m        self.name = name[m
+[32m+[m[32m        self.model = None[m
+[32m+[m[32m        self.env = None[m
+[32m+[m[32m        self.platform = None[m
+[32m+[m[32m        self.install_run = None  # full shell of the install step[m
+[32m+[m[32m        self.tests = []  # list of dicts: runner, config, args, run[m
+[32m+[m
+[32m+[m[32m    def __repr__(self):[m
+[32m+[m[32m        return f"<Job {self.name} model={self.model} env={self.env}>"[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef load_jobs():[m
+[32m+[m[32m    with open(WF) as f:[m
+[32m+[m[32m        data = yaml.safe_load(f)[m
+[32m+[m[32m    jobs = [][m
+[32m

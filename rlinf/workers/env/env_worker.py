@@ -401,6 +401,7 @@ class EnvWorker(Worker):
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
+            env_cfg=self.cfg.env.train,
         )
         env_info = {}
 
@@ -474,6 +475,7 @@ class EnvWorker(Worker):
             action_dim=self.model_cfg.action_dim,
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
+            env_cfg=self.cfg.env.eval,
         )
         env_info = {}
 

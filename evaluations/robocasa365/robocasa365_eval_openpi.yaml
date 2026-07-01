@@ -1,0 +1,79 @@
+defaults:
+  - env/robocasa365@env.eval
+  - model/pi0@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "robocasa365_openpi_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    total_num_envs: 18  # Atomic-Seen has 18 tasks
+    split: target
+    task_soup: atomic_seen
+    task_mode: atomic
+    task_sampling_strategy: ordered
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 700
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      video_base_dir: "../results/video/eval"
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: robocasa
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/model/pi0_robocasa365"
+    model_type: "openpi"
+    num_action_chunks: 10
+    action_dim: 12
+    num_steps: 5
+    precision: null
+    openpi:
+      config_name: "pi0_robocasa365"
+      num_images_in_input: 3
+      num_steps: 5
+      detach_critic_input: False
+    openpi_data:
+      state_space: "16d"
+      image_space: "3views"
+      action_space: "12d"

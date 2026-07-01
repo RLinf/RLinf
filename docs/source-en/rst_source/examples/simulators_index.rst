@@ -182,6 +182,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    IsaacLab <embodied/isaaclab>
    CALVIN <embodied/calvin>
    RoboCasa <embodied/robocasa>
+   RoboCasa365 <embodied/robocasa365>
    RoboTwin <embodied/robotwin>
    RoboVerse <embodied/roboverse>
    Franka-Sim <embodied/frankasim>

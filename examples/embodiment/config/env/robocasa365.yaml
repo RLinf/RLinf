@@ -1,0 +1,84 @@
+env_type: robocasa365
+
+# RoboCasa365 benchmark selection
+task_source: dataset_registry
+dataset_source: human
+split: pretrain
+task_soup: atomic_seen
+task_mode: atomic
+task_filter: []
+task_sampling_strategy: random
+rotate_tasks_on_auto_reset: True
+
+# Robot configuration
+robot_name: PandaOmron
+
+# Camera configuration
+camera_names:
+  - robot0_agentview_left
+  - robot0_eye_in_hand
+  - robot0_agentview_right
+render_camera: robot0_agentview_left
+has_renderer: False
+has_offscreen_renderer: True
+ignore_done: True
+use_object_obs: True
+use_camera_obs: True
+camera_depths: False
+
+total_num_envs: null
+
+auto_reset: False
+ignore_terminations: False
+max_steps_per_rollout_epoch: 300
+max_episode_steps: 300
+use_fixed_reset_state_ids: False
+use_ordered_reset_state_ids: False
+
+use_rel_reward: True
+reward_coef: 1.0
+is_eval: False
+
+seed: 0
+group_size: 1
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: "../results/video/train"
+
+init_params:
+  camera_heights: 224
+  camera_widths: 224
+
+observation:
+  main_camera_key: robot0_agentview_left_image
+  wrist_camera_key: robot0_eye_in_hand_image
+  extra_camera_keys:
+    - robot0_agentview_right_image
+  flip_images_vertical: True
+  state_layout:
+    - eef_pos
+    - eef_quat
+    - gripper_qpos
+    - gripper_qvel
+    - base_to_eef_pos
+    - base_to_eef_quat
+    - base_pos
+    - base_quat
+  state_key_map:
+    eef_pos: robot0_eef_pos
+    eef_quat: robot0_eef_quat
+    gripper_qpos: robot0_gripper_qpos
+    gripper_qvel: robot0_gripper_qvel
+    base_to_eef_pos: robot0_base_to_eef_pos
+    base_to_eef_quat: robot0_base_to_eef_quat
+    base_pos: robot0_base_pos
+    base_quat: robot0_base_quat
+
+action_space:
+  env_action_dim: 12
+  openpi_valid_action_slice: [0, 12]
+  disable_base_control: False
+  base_mode_index: 11
+  binarize_gripper_control: True

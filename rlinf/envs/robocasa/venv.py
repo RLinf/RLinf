@@ -136,6 +136,10 @@ def _worker(
                 p.send(getattr(env, data) if hasattr(env, data) else None)
             elif cmd == "setattr":
                 setattr(env.unwrapped, data["key"], data["value"])
+            elif cmd == "reconfigure":
+                env.close()
+                env = data.data()
+                p.send(None)
             else:
                 p.close()
                 raise NotImplementedError(f"Unknown command: {cmd}")
@@ -172,6 +176,10 @@ class RobocasaSubprocEnvWorker(SubprocEnvWorker):
         self.child_remote.close()
         EnvWorker.__init__(self, env_fn)
 
+    def reconfigure_env_fn(self, env_fn: Callable[[], gym.Env]) -> None:
+        self.parent_remote.send(["reconfigure", CloudpickleWrapper(env_fn)])
+        return self.parent_remote.recv()
+
 
 class RobocasaSubprocEnv(SubprocVectorEnv):
     """Subprocess vectorized environment for Robocasa/Robosuite.
@@ -187,3 +195,12 @@ class RobocasaSubprocEnv(SubprocVectorEnv):
             return RobocasaSubprocEnvWorker(fn, share_memory=False)
 
         BaseVectorEnv.__init__(self, env_fns, worker_fn, **kwargs)
+
+    def reconfigure_env_fns(self, env_fns, id=None):
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        if self.is_async:
+            self._assert_id(id)
+
+        for j, i in enumerate(id):
+            self.workers[i].reconfigure_env_fn(env_fns[j])
