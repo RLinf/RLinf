@@ -40,8 +40,8 @@ Megatron-Bridge 和匹配版本的 Megatron-LM，并把两个源码目录加入
 
 .. code:: bash
 
-   export MBRIDGE_ROOT=/workspace/dataset/Megatron-Bridge-0.3.0
-   export MEGATRON_LM_ROOT=/workspace/dataset/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
+   export MBRIDGE_ROOT=/path/to/Megatron-Bridge-0.3.0
+   export MEGATRON_LM_ROOT=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
 
    mkdir -p "$(dirname "${MBRIDGE_ROOT}")" "$(dirname "${MEGATRON_LM_ROOT}")"
    git clone --branch v0.3.0 https://github.com/NVIDIA-NeMo/Megatron-Bridge.git "${MBRIDGE_ROOT}"
