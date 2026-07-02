@@ -167,6 +167,10 @@ Clone RoboTwin and download its assets:
    export PYTHONPATH=/path/to/RoboTwin:$PYTHONPATH
    export ROBOT_PLATFORM=ALOHA
 
+By default, this script downloads assets under ``/path/to/RoboTwin/assets/``.
+After the download completes, set ``env.train.assets_path`` and
+``env.eval.assets_path`` to ``/path/to/RoboTwin`` (the parent folder of ``assets/``).
+
 Download the Model
 ------------------
 
@@ -262,7 +266,6 @@ and result interpretation.
 
 .. note::
 
-   Replace ``assets_path`` in the config with your downloaded RoboTwin assets path.
    The provided configs use train/eval seed files under ``rlinf/envs/robotwin/seeds/``.
 
 Visualization and Results
