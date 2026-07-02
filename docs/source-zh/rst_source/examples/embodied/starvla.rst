@@ -109,7 +109,7 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.2-maniskill_libero``：
+**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
 
 .. code:: bash
 
@@ -118,8 +118,8 @@ StarVLA 推理输出动作块 ``[B, T, D_action]``，其中
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
    # 进入容器后，切换到 StarVLA 虚拟环境：
    source switch_env starvla
