@@ -147,6 +147,7 @@ Download BEHAVIOR-1K assets and set ``OMNIGIBSON_DATA_PATH`` before every run:
    mkdir -p $OMNIGIBSON_DATA_PATH
 
    # Run these inside the active venv. Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
+   # The following Python command will download the dataset into $OMNIGIBSON_DATA_PATH.
    python -c "from omnigibson.utils.asset_utils import download_omnigibson_robot_assets; download_omnigibson_robot_assets()"
    python -c "from omnigibson.utils.asset_utils import download_behavior_1k_assets; download_behavior_1k_assets(accept_license=True)"
    python -c "from omnigibson.utils.asset_utils import download_2025_challenge_task_instances; download_2025_challenge_task_instances()"
