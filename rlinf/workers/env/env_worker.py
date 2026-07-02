@@ -807,7 +807,12 @@ class EnvWorker(Worker):
         if not self.cfg.env.train.auto_reset:
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
-                extracted_obs, infos = self.env_list[stage_id].reset()
+                try:
+        extracted_obs, infos = self.env_list[stage_id].reset()
+    except (ConnectionError, EOFError, OSError) as e:
+        self.logger.warning(f"Environment reset failed due to connection error: {e}")
+        self.should_stop = True
+        raise
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
