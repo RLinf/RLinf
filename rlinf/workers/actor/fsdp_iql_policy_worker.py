@@ -802,6 +802,7 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
                 send=send_func,
                 recv=recv_func,
                 param_names_need_sync=self.param_names_need_sync,
+                is_sender=self._is_weight_sender,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)
