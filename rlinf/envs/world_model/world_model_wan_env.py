@@ -122,6 +122,8 @@ class WanEnv(BaseWorldEnv):
         )
 
     def _build_pipeline(self):
+        # Install the GPU<->NPU patch before the DiT is built.
+        self._install_ascend_patch()
         pipe = WanVideoPipeline.from_pretrained(
             torch_dtype=torch.bfloat16,
             device=self._get_runtime_device_str(),
@@ -135,6 +137,61 @@ class WanEnv(BaseWorldEnv):
         pipe.dit.to(self.device)
         pipe.vae.to(self.device)
         return pipe
+
+    def _install_ascend_patch(self):
+        """On Ascend NPU, some operators can be replaced with mindie-sd or torch_npu operators to boost performance
+        """
+        import logging
+
+        if self.device.type != "npu":
+            return
+
+        logger = logging.getLogger(__name__)
+        try:
+            import diffsynth.models.wan_video_dit as wan_dit
+        except Exception as exc:
+            logger.warning(
+                "ascend_wan_patch: cannot import diffsynth wan_video_dit (%s); "
+                "Wan NPU attention patch not applied",
+                exc,
+            )
+            return
+        if not hasattr(wan_dit, "flash_attention"):
+            logger.warning(
+                "ascend_wan_patch: diffsynth wan_video_dit has no flash_attention; "
+                "Wan NPU attention patch not applied"
+            )
+            return
+        if not hasattr(wan_dit, "rope_apply"):
+            logger.warning(
+                "ascend_wan_patch: diffsynth wan_video_dit has no rope_apply; "
+                "Wan NPU attention patch not applied"
+            )
+            return
+        if not hasattr(wan_dit, "RMSNorm"):
+            logger.warning(
+                "ascend_wan_patch: diffsynth wan_video_dit has no RMSNorm; "
+                "Wan NPU attention patch not applied"
+            )
+            return
+
+        from rlinf.utils.patcher import Patcher
+
+        Patcher.clear()
+        Patcher.add_patch(
+            "diffsynth.models.wan_video_dit.flash_attention",
+            "rlinf.envs.world_model.ascend_patch.wan_video_dit.flash_attention",
+        )
+        Patcher.add_patch(
+            "diffsynth.models.wan_video_dit.rope_apply",
+            "rlinf.envs.world_model.ascend_patch.wan_video_dit.rope_apply",
+        )
+        Patcher.add_patch(
+            "diffsynth.models.wan_video_dit.RMSNorm",
+            "rlinf.envs.world_model.ascend_patch.wan_video_dit.RMSNorm",
+        )
+        Patcher.apply()
+        logger.info("ascend_wan_patch: Wan DiT flash_attention patched for NPU")
 
     def _load_reward_model(self):
         if self.cfg.reward_model.type == "ResnetRewModel":
