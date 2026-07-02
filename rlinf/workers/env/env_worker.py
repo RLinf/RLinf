@@ -894,6 +894,53 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
+    @staticmethod
+    def _extract_rlt_obs_from_forward_inputs(
+        forward_inputs: dict[str, Any],
+        *,
+        transition: bool = False,
+    ) -> dict[str, Any]:
+        prefix = "rlt_transition_" if transition else ""
+        required = ("z_rl", "proprio", "ref_chunk")
+        missing = [
+            f"{prefix}{key}"
+            for key in required
+            if f"{prefix}{key}" not in forward_inputs
+        ]
+        if missing:
+            raise ValueError(
+                f"Missing RLT forward_inputs keys: {missing}. Ensure "
+                "rollout.rlt_feature_model is configured and the rollout worker "
+                "populates RLT features."
+            )
+        return copy_dict_tensor(
+            {key: forward_inputs[f"{prefix}{key}"] for key in required}
+        )
+
+    def _update_rlt_stage2_transitions(
+        self,
+        stage_id: int,
+        pending_obs: list[dict[str, Any] | None],
+        rollout_result: RolloutResult,
+        *,
+        cache_current: bool,
+    ) -> None:
+        if pending_obs[stage_id] is not None:
+            next_obs = self._extract_rlt_obs_from_forward_inputs(
+                rollout_result.forward_inputs,
+                transition=True,
+            )
+            self.rollout_results[stage_id].append_transitions(
+                pending_obs[stage_id],
+                next_obs,
+            )
+            pending_obs[stage_id] = None
+
+        if cache_current:
+            pending_obs[stage_id] = self._extract_rlt_obs_from_forward_inputs(
+                rollout_result.forward_inputs
+            )
+
     @Worker.timer("env/send_rollout_trajectories")
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
@@ -924,6 +971,8 @@ class EnvWorker(Worker):
             for _ in range(self.stage_num)
         ]
         env_metrics = defaultdict(list)
+        use_rlt_stage2 = self.cfg.algorithm.get("loss_type", "") == "rlt_ac"
+        rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
         for epoch in range(self.rollout_epoch):
             env_outputs = self.bootstrap_step()
@@ -1002,6 +1051,13 @@ class EnvWorker(Worker):
                         self.rollout_results[stage_id].mark_last_step_with_flags(
                             rollout_result.save_flags
                         )
+                    if use_rlt_stage2 and self.collect_transitions:
+                        self._update_rlt_stage2_transitions(
+                            stage_id,
+                            rlt_pending_obs,
+                            rollout_result,
+                            cache_current=True,
+                        )
 
                     env_output, env_info = self.env_interact_step(
                         rollout_result.actions, stage_id
@@ -1018,7 +1074,7 @@ class EnvWorker(Worker):
                         tag="rollout_results",
                         decoupled_mode=self.env_decoupled_mode,
                     )
-                    if self.collect_transitions:
+                    if self.collect_transitions and not use_rlt_stage2:
                         next_obs = (
                             env_output.final_obs
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
@@ -1086,6 +1142,13 @@ class EnvWorker(Worker):
                     and reward_model_output is not None
                 ):
                     self.assign_history_reward(stage_id, reward_model_output)
+                if use_rlt_stage2 and self.collect_transitions:
+                    self._update_rlt_stage2_transitions(
+                        stage_id,
+                        rlt_pending_obs,
+                        rollout_result,
+                        cache_current=False,
+                    )
 
             if self.use_training_pipeline and actor_channel is not None:
                 await self.send_rollout_trajectories_pipeline(

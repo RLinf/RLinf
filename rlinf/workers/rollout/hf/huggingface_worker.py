@@ -72,6 +72,7 @@ class MultiStepRolloutWorker(Worker):
         self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
+        self.rlt_feature_model = None
 
         self.total_num_train_envs = (
             cfg.env.train.total_num_envs if self.enable_train else 0
@@ -141,6 +142,14 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        rlt_feature_model_config = OmegaConf.select(
+            self.cfg, "rollout.rlt_feature_model", default=None
+        )
+        if rlt_feature_model_config is not None:
+            self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
+            self.rlt_feature_model.eval()
+            self.rlt_feature_model.requires_grad_(False)
+
         if self.cfg.rollout.get("expert_model", None):
             expert_model_config = copy.deepcopy(self.model_cfg)
             with open_dict(expert_model_config):
@@ -157,6 +166,8 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model.eval()
         if self.expert_model is not None:
             self.expert_model.eval()
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.eval()
 
         if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
@@ -568,6 +579,62 @@ class MultiStepRolloutWorker(Worker):
         result["expert_label_flag"] = bool(expert_label_flag)
         return actions, result
 
+    def _predict_rollout_actions(
+        self,
+        env_obs: dict[str, Any],
+        mode: Literal["train", "eval"] = "train",
+        final_obs: dict[str, Any] | None = None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        if self.rlt_feature_model is not None:
+            return self._predict_with_rlt_features(env_obs, final_obs, mode)
+        return self.predict(env_obs, mode=mode)
+
+    def _predict_with_rlt_features(
+        self,
+        env_obs: dict[str, Any],
+        final_obs: dict[str, Any] | None,
+        mode: Literal["train", "eval"],
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        with torch.no_grad():
+            rlt_obs = self.rlt_feature_model.extract_rlt_stage2_obs(env_obs)
+            actions, result = self.hf_model.predict_action_batch(
+                env_obs=rlt_obs,
+                mode=mode,
+                return_obs=True,
+            )
+            if isinstance(actions, np.ndarray):
+                actions = torch.from_numpy(actions)
+
+            use_actor = env_obs.get("rlt_use_actor", None)
+            if use_actor is not None:
+                use_actor = (
+                    torch.as_tensor(use_actor, device=actions.device)
+                    .bool()
+                    .reshape(actions.shape[0], 1, 1)
+                )
+                ref_actions = result["forward_inputs"]["ref_chunk"].to(
+                    device=actions.device, dtype=actions.dtype
+                )
+                actions = torch.where(
+                    use_actor,
+                    actions,
+                    ref_actions[:, : actions.shape[1], : actions.shape[2]],
+                ).contiguous()
+                result["forward_inputs"]["action"] = actions.reshape(
+                    actions.shape[0], -1
+                ).contiguous()
+
+            transition_obs = rlt_obs
+            if final_obs is not None:
+                transition_obs = self.rlt_feature_model.extract_rlt_stage2_obs(
+                    final_obs
+                )
+            for key in ("z_rl", "proprio", "ref_chunk"):
+                result["forward_inputs"][f"rlt_transition_{key}"] = transition_obs[key]
+
+        result["expert_label_flag"] = False
+        return actions, result
+
     def get_bootstrap_values(
         self, final_obs: dict[str, Any] | None
     ) -> torch.Tensor | None:
@@ -578,7 +645,7 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            actions, result = self.predict(final_obs)
+            actions, result = self._predict_rollout_actions(final_obs)
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
             else:
@@ -642,7 +709,9 @@ class MultiStepRolloutWorker(Worker):
                     tag="train_rollout_results",
                     batch_size=self.train_batch_size,
                 )
-                actions, result = self.predict(env_output["obs"])
+                actions, result = self._predict_rollout_actions(
+                    env_output["obs"], final_obs=env_output.get("final_obs", None)
+                )
 
                 save_flags = None
                 if result.get("expert_label_flag", False):
@@ -684,7 +753,9 @@ class MultiStepRolloutWorker(Worker):
                 tag="train_rollout_results",
                 batch_size=self.train_batch_size,
             )
-            actions, result = self.predict(env_output["obs"])
+            actions, result = self._predict_rollout_actions(
+                env_output["obs"], final_obs=env_output.get("final_obs", None)
+            )
 
             rollout_result = RolloutResult(
                 actions=actions,
@@ -692,6 +763,7 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=self.get_bootstrap_values(
                     env_output.get("final_obs", None)
                 ),
+                forward_inputs=result["forward_inputs"],
             )
             self.send_rollout_result(
                 output_channel=output_channel,
@@ -738,7 +810,11 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
-                actions, _ = self.predict(env_output["obs"], mode="eval")
+                actions, _ = self._predict_rollout_actions(
+                    env_output["obs"],
+                    mode="eval",
+                    final_obs=env_output.get("final_obs", None),
+                )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
                 self.send_to_recorded_batch_routes(
@@ -761,7 +837,11 @@ class MultiStepRolloutWorker(Worker):
                             tag="eval_rollout_results",
                             batch_size=self.eval_batch_size,
                         )
-                        actions, _ = self.predict(env_output["obs"], mode="eval")
+                        actions, _ = self._predict_rollout_actions(
+                            env_output["obs"],
+                            mode="eval",
+                            final_obs=env_output.get("final_obs", None),
+                        )
                         if isinstance(actions, torch.Tensor):
                             actions = actions.detach().cpu().contiguous()
                         self.send_rollout_result(
@@ -778,10 +858,14 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.to(self.device)
         if self.enable_cuda_graph:
             self.hf_model.capture_cuda_graph(
                 train_batch_size=self.per_node_train_batch_size,

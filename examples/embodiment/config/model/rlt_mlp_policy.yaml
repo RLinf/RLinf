@@ -1,0 +1,27 @@
+model_type: "rlt_mlp_policy"
+
+# RLT latent and robot-state dimensions.
+z_dim: 2048
+proprio_dim: 7
+
+# Per-step action dimension and chunk lengths. Task configs should pass through
+# to these exact fields under actor.model, for example:
+#   actor.model.action_dim: ${env.train.action_dim}
+#   actor.model.num_action_chunks: ${env.train.num_action_chunks}
+#   actor.model.ref_num_action_chunks: ${env.train.ref_num_action_chunks}
+# For dual-arm actions, set action_dim to the full per-step action dimension,
+# for example 14. VLA may output ref_num_action_chunks actions; the RLT
+# actor consumes only the first num_action_chunks actions from that reference.
+action_dim: 7
+num_action_chunks: 50
+ref_num_action_chunks: 100
+
+# RLT AC defaults to fp32 for Q-learning and target-update stability.
+precision: fp32
+add_value_head: False
+add_q_head: True
+q_head_type: "default"
+fixed_std: 0.002
+
+is_lora: False
+lora_rank: 32

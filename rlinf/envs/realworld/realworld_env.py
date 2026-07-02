@@ -229,6 +229,10 @@ class RealWorldEnv(gym.Env):
 
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
+        if self.cfg.get("keyboard_reward_wrapper", None) == "rlt_policy_switch":
+            use_actor = self.env.call("get_wrapper_attr", "rlt_use_actor")
+            use_actor = np.asarray(use_actor, dtype=np.bool_).reshape(self.num_envs, 1)
+            obs["rlt_use_actor"] = torch.from_numpy(use_actor)
         return obs
 
     def step(self, actions=None, auto_reset=True):
