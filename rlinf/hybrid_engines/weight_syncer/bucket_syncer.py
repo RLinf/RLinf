@@ -235,6 +235,7 @@ class BucketWeightSyncer(WeightSyncer):
         param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
+        is_sender: bool = True,
     ) -> None:
         """
         Initialize the sender for weight synchronization.
@@ -245,9 +246,11 @@ class BucketWeightSyncer(WeightSyncer):
             - param_names_need_sync (list[str]): A list of parameter names that need to be synchronized.
             - send (SendFn): The function for sender to communicate with the receiver.
             - recv (RecvFn | None): The function for receiver to communicate with the sender.
+            - is_sender (bool): Whether this worker is the active weight sender. BucketWeightSyncer ignores
+                this flag because the caller's send function already handles sender selection.
         """
 
-        del state_dict, send, recv
+        del state_dict, send, recv, is_sender
         self.param_names_need_sync = set(param_names_need_sync)
         if not self.param_names_need_sync:
             raise ValueError("param_names_need_sync must not be empty")
