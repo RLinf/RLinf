@@ -134,6 +134,23 @@ def _worker(
                 break
             elif cmd == "render":
                 p.send(env.render(**data) if hasattr(env, "render") else None)
+            elif cmd == "render_camera":
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 1024))
+                w = int(data.get("width", 1024))
+                depth = bool(data.get("depth", False))
+                p.send(
+                    sim.render(
+                        width=w,
+                        height=h,
+                        camera_name=cam,
+                        depth=depth,
+                    )
+                )
             elif cmd == "seed":
                 if hasattr(env, "seed"):
                     p.send(env.seed(data))
@@ -234,6 +251,25 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
 
     def reconfigure_env_fn(self, env_fn_param):
         self.parent_remote.send(["reconfigure", env_fn_param])
+        return self.parent_remote.recv()
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> Any:
+        """Render an arbitrary LIBERO camera from the worker subprocess."""
+        self.parent_remote.send([
+            "render_camera",
+            {
+                "camera_name": camera_name,
+                "height": height,
+                "width": width,
+                "depth": depth,
+            },
+        ])
         return self.parent_remote.recv()
 
 
