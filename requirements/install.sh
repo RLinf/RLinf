@@ -928,7 +928,9 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        # UV_TORCH_BACKEND=auto can probe legacy indexes (e.g. cu116) even when
+        # torch is already installed; unset so resolution uses the venv.
+        env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     fi
     # Detect Python tags
@@ -960,7 +962,7 @@ EOF
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     }
     cuda_major="${cuda_mm%% *}"
@@ -984,13 +986,16 @@ EOF
         base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
         echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
-        if uv pip install "${base_url}/${wheel_name}"; then
+        # Direct wheel URL: skip dependency resolution so uv does not hit
+        # UV_TORCH_BACKEND=auto legacy torch indexes (e.g. cu116) after install.
+        if env -u UV_TORCH_BACKEND uv pip install --no-deps "${base_url}/${wheel_name}" \
+            && python -c "import flash_attn" >/dev/null 2>&1; then
             return 0
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
-    uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+    env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
 }
 
 install_apex() {
@@ -1441,10 +1446,12 @@ install_lingbot_vla_model() {
     install_common_embodied_deps
     local lingbotvla_dir
     lingbotvla_dir=$(clone_or_reuse_repo LINGBOT_PATH "$VENV_DIR/lingbot-vla" ${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla.git --recurse-submodules)
-    uv pip install -e $lingbotvla_dir
-    uv pip install -r $lingbotvla_dir/requirements.txt
-    uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
-    uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
+    # UV_TORCH_BACKEND=auto can route torch-family deps (e.g. torchdata) through
+    # download.pytorch.org/whl/cu120 and time out on CI; torch is already in venv.
+    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir"
+    env -u UV_TORCH_BACKEND uv pip install -r "$lingbotvla_dir/requirements.txt"
+    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/" --no-deps
+    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe/" --no-deps
 
     install_lerobot
     env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
@@ -1662,7 +1669,13 @@ install_libero_env() {
 
 install_maniskill_libero_env() {
     install_libero_env
-    uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
+    local maniskill_dir="${MANISKILL_PATH:-$VENV_DIR/maniskill}"
+    if [ ! -d "$maniskill_dir/.git" ]; then
+        env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
+            git clone --branch v3.0.0b22 --depth 1 \
+            https://github.com/haosulab/ManiSkill.git "$maniskill_dir"
+    fi
+    uv pip install -e "$maniskill_dir"
 
     # Maniskill assets
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
