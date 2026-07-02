@@ -230,7 +230,7 @@ the MBridge override is applied explicitly:
    python examples/reasoning/main_grpo.py \
        --config-path "$(pwd)/examples/reasoning/config/math" \
        --config-name qwen2.5-1.5b-grpo-megatron \
-       actor.megatron.mbridge=True
+       +actor.megatron.mbridge=True
 
 Start VLM SFT training from the repository root:
 

@@ -215,7 +215,7 @@ MBridge 配置覆盖：
    python examples/reasoning/main_grpo.py \
        --config-path "$(pwd)/examples/reasoning/config/math" \
        --config-name qwen2.5-1.5b-grpo-megatron \
-       actor.megatron.mbridge=True
+       +actor.megatron.mbridge=True
 
 在仓库根目录启动 VLM SFT 训练脚本:
 
