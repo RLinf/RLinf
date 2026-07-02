@@ -1,0 +1,11 @@
+# TensorFlow 2.21.0 currently breaks GR00T training on Ascend.
+# Keep the last verified working TensorFlow dependency set pinned here
+# until newer versions are validated on this platform.
+tensorflow==2.15.0
+tensorflow-cpu-aws==2.15.0; platform_machine == "aarch64"
+tensorflow-estimator==2.15.0
+tensorflow-io-gcs-filesystem==0.37.1
+keras==2.15.0
+tensorboard==2.15.2
+ml-dtypes==0.2.0
+protobuf==3.20.3

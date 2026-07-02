@@ -1088,15 +1088,161 @@ clone_or_reuse_repo() {
 }
 
 #=======================EMBODIED INSTALLERS=======================
+append_platform_compat_requirements() {
+    local -n req_args_ref="$1"
+
+    case "${PLATFORM}:${MODEL}" in
+        ascend:gr00t)
+            echo "[install.sh] Applying Ascend GR00T TensorFlow compatibility pins"
+            req_args_ref+=(-r "$SCRIPT_DIR/embodied/platforms/ascend/models/gr00t.txt")
+            ;;
+    esac
+}
+
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+
+    local common_req_args=(-r "$SCRIPT_DIR/embodied/envs/common.txt")
+    append_platform_compat_requirements common_req_args
+    uv pip install "${common_req_args[@]}"
+
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
     if [ ${#PLATFORM_VENV_EXPORTS[@]} -gt 0 ]; then
         printf '%s\n' "${PLATFORM_VENV_EXPORTS[@]}" >> "$VENV_DIR/bin/activate"
     fi
+}
+
+is_aarch64_platform() {
+    case "$(uname -m)" in
+        aarch64|arm64)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_decord_from_source() {
+    local installed_version
+    installed_version=$(python - <<'EOF'
+try:
+    import importlib.metadata as metadata
+    print(metadata.version("decord"))
+except Exception:
+    pass
+EOF
+)
+    echo "[install.sh] Building decord==0.6.0 from source on $(uname -m)..."
+    local decord_path
+    decord_path=$(clone_or_reuse_repo DECORD_PATH "$VENV_DIR/decord" ${GITHUB_PREFIX}https://github.com/dmlc/decord.git -b v0.6.0)
+    update_decord_submodules "$decord_path"
+
+    mkdir -p "$decord_path/build"
+    (
+        cd "$decord_path/build"
+        cmake .. -DUSE_CUDA=0 -DCMAKE_BUILD_TYPE=Release
+        make -j"$(nproc)"
+    )
+    uv pip install "$decord_path/python" --no-build-isolation
+}
+
+update_decord_submodules() {
+    local decord_path="$1"
+
+    if [ -n "$GITHUB_PREFIX" ]; then
+        git -C "$decord_path" config url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
+    fi
+    git -C "$decord_path" submodule sync --recursive
+
+    local attempt
+    for attempt in 1 2 3; do
+        echo "[install.sh] Updating decord submodules (attempt ${attempt}/3)..."
+        if git -C "$decord_path" -c http.version=HTTP/1.1 submodule update --init --recursive --depth 1 --jobs 1; then
+            return 0
+        fi
+        echo "[install.sh] decord submodule update failed; retrying..." >&2
+        sleep 5
+    done
+
+    echo "[install.sh] Failed to update decord submodules. Try rerunning install.sh with --use-mirror or set DECORD_PATH to a pre-cloned decord checkout." >&2
+    return 1
+}
+
+normalize_requirement_line() {
+    local req_line="${1%%#*}"
+    req_line="${req_line#"${req_line%%[![:space:]]*}"}"
+    req_line="${req_line%"${req_line##*[![:space:]]}"}"
+    printf '%s\n' "$req_line"
+}
+
+should_source_build_decord() {
+    [ "$PLATFORM" = "ascend" ] && is_aarch64_platform || return 1
+
+    case "$MODEL" in
+        gr00t|dreamzero)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_platform_requirement_override() {
+    local req_line
+    req_line=$(normalize_requirement_line "$1")
+
+    case "$req_line" in
+        decord==0.6.0)
+            if should_source_build_decord; then
+                install_decord_from_source || return 2
+                return 0
+            fi
+            ;;
+    esac
+
+    return 1
+}
+
+install_requirements_file() {
+    local req_file="$1"
+
+    local filtered_req
+    local consumed_override=0
+    filtered_req=$(mktemp)
+
+    # Platform overrides consume requirement lines that must be installed by a
+    # custom path, so uv cannot later replace them with an incompatible wheel.
+    local req_line
+    while IFS= read -r req_line || [ -n "$req_line" ]; do
+        if install_platform_requirement_override "$req_line"; then
+            consumed_override=1
+            continue
+        else
+            local override_status=$?
+            if [ "$override_status" -gt 1 ]; then
+                rm -f "$filtered_req"
+                return "$override_status"
+            fi
+        fi
+
+        printf '%s\n' "$req_line" >> "$filtered_req"
+    done < "$req_file"
+
+    if [ "$consumed_override" -eq 1 ]; then
+        if ! uv pip install -r "$filtered_req"; then
+            rm -f "$filtered_req"
+            return 1
+        fi
+        rm -f "$filtered_req"
+        return 0
+    fi
+
+    rm -f "$filtered_req"
+    uv pip install -r "$req_file"
 }
 
 install_openvla_model() {
@@ -1349,7 +1495,7 @@ install_gr00t_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git -b n1.5-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
+    install_requirements_file "$SCRIPT_DIR/embodied/models/gr00t.txt"
     case "$ENV_NAME" in
         maniskill_libero|libero)
             install_${ENV_NAME}_env
@@ -1511,7 +1657,7 @@ install_dreamzero_deps() {
         git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
     fi
 
-    uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+    install_requirements_file "$SCRIPT_DIR/embodied/models/dreamzero.txt"
     python -m pip install -e "$dreamzero_path" --no-deps --ignore-requires-python
 }
 

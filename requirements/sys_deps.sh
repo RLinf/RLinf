@@ -89,6 +89,7 @@ install_deps_apt() {
     sudo apt-get install -y --no-install-recommends libgl1-mesa-glx || sudo apt-get install -y --no-install-recommends libglx-mesa0
     sudo apt-get install -y --no-install-recommends \
         linux-libc-dev \
+        build-essential \
         wget \
         unzip \
         curl \
@@ -99,6 +100,7 @@ install_deps_apt() {
         libavutil-dev \
         libavcodec-dev \
         libavformat-dev \
+        libavfilter-dev \
         libavdevice-dev \
         libibverbs-dev \
         ncurses-term \
