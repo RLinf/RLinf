@@ -36,6 +36,9 @@ from rlinf.envs.libero.utils import (
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 libero_type = get_libero_type()
 
@@ -86,6 +89,9 @@ class LiberoEnv(gym.Env):
         self.cfg = cfg
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
+
+        if seed_offset == 0:
+            self._log_evaluation_mode()
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
         self.num_envs = num_envs
@@ -127,6 +133,18 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
+
+    def _log_evaluation_mode(self):
+        """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
+        libero_type = get_libero_type()
+        if libero_type == "pro":
+            perturbation = os.environ.get("LIBERO_PERTURBATION", "all")
+            logger.info(f"Evaluation Mode: LIBERO-PRO | Perturbation: {perturbation}")
+        elif libero_type == "plus":
+            suffix = os.environ.get("LIBERO_SUFFIX", "all")
+            logger.info(f"Evaluation Mode: LIBERO-PLUS | Suffix: {suffix}")
+        else:
+            logger.info("Evaluation Mode: Standard LIBERO")
 
     def _init_env(self):
         env_fns = self.get_env_fns()

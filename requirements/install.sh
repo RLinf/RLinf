@@ -1471,8 +1471,12 @@ install_abot_m0_model() {
     abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/amap-cvlab/ABot-Manipulation.git)
     vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/facebookresearch/vggt.git)
 
+    cd "$vggt_path" && git checkout a288dd0f14786c93483e45524328726ab7b1b4ce
+    cd -
     uv pip install -e "$vggt_path"
 
+    cd "$abot_path" && git checkout 81b71d25a0c4dd46d931550fd2d08ec02ff84cbf
+    cd -
     uv pip install -e "$abot_path" --no-deps
 
     uv pip install -r $SCRIPT_DIR/embodied/models/abot.txt
