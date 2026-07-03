@@ -2,7 +2,7 @@
 
 defaults:
   - model/steam_value_model@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:

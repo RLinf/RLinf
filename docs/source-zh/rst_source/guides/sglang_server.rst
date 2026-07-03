@@ -138,7 +138,7 @@ SGLang Server 与 Router
 .. note::
 
    仓库已在
-   ``examples/embodiment/config/training_backend/sglang_router_server.yaml``
+   ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml``
    中提供了一份默认配置。可通过 Hydra 的 ``defaults`` 列表引用它，然后只覆盖
    你需要改动的字段——通常是 ``model_path``（以及 ``server`` / ``router`` 里的
    个别项）：
@@ -146,7 +146,7 @@ SGLang Server 与 Router
    .. code-block:: yaml
 
       defaults:
-        - training_backend/sglang_router_server@router_server_args
+        - hybrid_engines/sglang_router_server@router_server_args
 
       router_server_args:
         model_path: /path/to/hf_model

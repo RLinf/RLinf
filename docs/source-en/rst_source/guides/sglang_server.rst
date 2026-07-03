@@ -144,14 +144,14 @@ long as it carries the keys the launcher consumes:
 .. note::
 
    A ready-made default is shipped at
-   ``examples/embodiment/config/training_backend/sglang_router_server.yaml``.
+   ``examples/embodiment/config/hybrid_engines/sglang_router_server.yaml``.
    Pull it in through Hydra's ``defaults`` list and only override the fields you
    need — typically ``model_path`` (and any ``server`` / ``router`` tweaks):
 
    .. code-block:: yaml
 
       defaults:
-        - training_backend/sglang_router_server@router_server_args
+        - hybrid_engines/sglang_router_server@router_server_args
 
       router_server_args:
         model_path: /path/to/hf_model
