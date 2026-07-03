@@ -48,7 +48,7 @@ VLM 监督微调
 ----------------------------------------
 
 1. **拉取 RLinf 镜像：**
-   ``rlinf/rlinf:math-rlinf0.2-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``。
+   ``rlinf/rlinf:agentic-rlinf0.3-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1``。
 2. **下载模型权重：** `Qwen2.5-VL-3B-Instruct <https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct>`_。
 3. **下载数据集：** `Robo2VLM-1 <https://huggingface.co/datasets/keplerccc/Robo2VLM-1>`_。
 4. **修改** ``examples/sft/config/qwen2_5_vl_sft_vlm.yaml``，并运行 ``examples/sft/run_vlm_sft.sh``。

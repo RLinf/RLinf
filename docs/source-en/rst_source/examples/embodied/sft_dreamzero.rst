@@ -644,3 +644,81 @@ Practical Recommendations
 - Full WAN2.2 adaptation via cold start needs more data and longer training; after config changes, run 50–200 steps to validate shapes and loss.
 - Regenerate or update ``metadata.json`` whenever you change datasets or ``embodiment_tag``.
 - Do not mix LIBERO and DROID config templates; ``action_horizon``, ``embodiment_tag``, and multi-view concat logic differ.
+
+
+Training Acceleration
+---------------------
+
+The RLinf team has deeply rebuilt and accelerated the DreamZero training pipeline at the systems level. Compared to the official DreamZero baseline training script, **RLinf achieves a ~4× training throughput boost** while maintaining, and in some cases improving, convergence quality.
+
+
+End-to-End Performance Benchmarks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All tests below use the **Droid dataset** (three views per sample: left, right, wrist; video spec: 33 frames × 480 × 640) on 8×H100 GPUs.
+
+**DreamZero-14B**
+
+For the 14B model, memory pressure leaves the official baseline little choice but DeepSpeed ZeRO-offload, incurring severe compute/communication waste and CPU swap overhead. Through engineering optimization, we replaced DeepSpeed ZeRO-offload with FSDP2 full_shard, and further incorporated compute graph optimizations (operator fusion and CUDA Graph).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - Configuration
+     - Step Time
+     - Throughput (samples/sec/GPU)
+     - Speedup (vs. baseline)
+   * - DeepSpeed ZeRO2 + Offload (official)
+     - 18.0 s
+     - 0.055
+     - baseline
+   * - FSDP2 Base (native)
+     - 9.0 s
+     - 0.111
+     - +100% (2.0×)
+   * - **RLinf optimized**
+     - **6.7 s**
+     - **0.150**
+     - **+170% (2.7×)**
+
+14B tested with MBS=1 and GBS=8. RLinf achieves a **2.7×** speedup over the DeepSpeed baseline, and **35%** further gain even over unoptimized FSDP2.
+
+**DreamZero-5B**
+
+For the 5B mid-scale model, RLinf's advantage lies in stable large-microbatch execution through recompute, combined with compute graph tuning to fully unleash GPU utilization.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - Configuration
+     - Step Time
+     - Throughput (samples/sec/GPU)
+     - Speedup (vs. baseline)
+   * - DeepSpeed ZeRO2 + Offload (official, mbs=32 × 8 GPU)
+     - 30.0 s
+     - 1.10
+     - baseline
+   * - FSDP2 Base (mbs=1 × 8 GPU)
+     - 1.8 s
+     - 0.56
+     - -49% (constrained: small mbs, low operator efficiency, high CPU overhead, FSDP2 comm not hidden)
+   * - **RLinf optimized (mbs=32 + recompute × 8 GPU)**
+     - **7.2 s**
+     - **4.44**
+     - **+300% (4.0×)**
+
+5B tested with GBS=256. The FSDP2 Base version cannot open large mbs due to PyTorch limitations, capping throughput; RLinf resolves these issues and achieves substantial throughput growth. Training throughput soars from 1.1 samples/sec/gpu (official) to 4.44 samples/sec/gpu—a ~4× training acceleration.
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
+   :align: center
+   :width: 45%
+
+   Speedup comparison for DreamZero 5B and 14B models
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0accthpt.jpg
+   :align: center
+   :width: 45%
+
+   Throughput improvement for DreamZero 5B and 14B models

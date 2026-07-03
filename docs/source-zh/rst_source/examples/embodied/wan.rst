@@ -98,7 +98,7 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.2-wan``：
+**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-wan``：
 
 .. code:: bash
 
@@ -107,8 +107,8 @@ VLA 策略。Wan 根据当前观测与动作序列生成未来视频帧，因此
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-wan
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-wan
+      rlinf/rlinf:agentic-rlinf0.3-wan
+      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-wan
 
    # 进入容器后，切换到 OpenVLA-OFT 虚拟环境：
    source switch_env openvla-oft

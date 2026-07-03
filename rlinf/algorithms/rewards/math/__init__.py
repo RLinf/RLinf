@@ -20,6 +20,8 @@ from .math_verifier.verify import math_verify_call
 class MathReward:
     def __init__(self, config: DictConfig):
         self.scale = config.get("reward_scale", 1.0)
+        self.min_val = config.get("reward_min_val", -1.0)
+        self.max_val = config.get("reward_max_val", 1.0)
 
     def get_reward(
         self, response: list[str], reference: list[list[str]]
@@ -37,6 +39,6 @@ class MathReward:
 
         is_correct_list = math_verify_call(response, reference)
         return [
-            float(1 if is_correct else -1) * self.scale
+            float(self.max_val if is_correct else self.min_val) * self.scale
             for is_correct in is_correct_list
         ]

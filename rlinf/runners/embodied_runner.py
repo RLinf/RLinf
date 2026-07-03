@@ -164,6 +164,7 @@ class EmbodiedRunner:
         # create worker in order to decrease the maximum memory usage
         rollout_handle = self.rollout.init_worker()
         env_handle = self.env.init_worker()
+
         if self.reward is not None:
             self.reward.init_worker().wait()
 
