@@ -34,9 +34,9 @@ privileged 模式运行，并挂载宿主机 Ascend 驱动目录：
       -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
       -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # 为提升国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
 
 如果不想使用privileged，则需要额外添加设备，并手动添加NPU：
 

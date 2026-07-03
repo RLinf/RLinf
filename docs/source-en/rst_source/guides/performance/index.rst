@@ -20,6 +20,8 @@ efficiency becomes the bottleneck.
      - Configure 5D parallelism for large models.
    * - :doc:`LoRA <../lora>`
      - Train with LoRA adapters.
+   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
+     - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
 
 .. toctree::
    :hidden:
@@ -29,3 +31,4 @@ efficiency becomes the bottleneck.
    Profiling <../profile>
    5D Parallelism <../5D>
    LoRA <../lora>
+   Env Decoupled Mode <../env_decoupled_mode>

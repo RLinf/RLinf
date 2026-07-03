@@ -90,10 +90,10 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-roboverse
+      rlinf/rlinf:agentic-rlinf0.3-roboverse
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-roboverse
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-roboverse
 
 在镜像中切换到 OpenPI 虚拟环境：
 

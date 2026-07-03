@@ -37,13 +37,19 @@
       :link: hardware/index
       :link-type: doc
 
-      在 AMD ROCm、Ascend CANN 或不同 SGLang 版本上运行 RLinf。
+      在 AMD ROCm 或 Ascend CANN 上运行 RLinf。
 
    .. grid-item-card:: 智能体工作流
       :link: agent-workflows/index
       :link-type: doc
 
       运行智能体与推理工作负载。
+
+   .. grid-item-card:: Rollout 引擎
+      :link: rollout-engines/index
+      :link-type: doc
+
+      启动 sglang server 与 router，向外暴露统一的推理入口。
 
 .. toctree::
    :hidden:
@@ -54,3 +60,4 @@
    性能 <performance/index>
    硬件后端 <hardware/index>
    智能体工作流 <agent-workflows/index>
+   Rollout 引擎 <rollout-engines/index>

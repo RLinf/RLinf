@@ -24,7 +24,7 @@ init_params:
   num_envs: null # will be set in ManiSkillEnv init
   obs_mode: "state"
   control_mode: None
-  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  max_episode_steps: ${..max_episode_steps} # max episode steps for truncation
   robot_uids: "my_franka"
   render_mode: "rgb_array"
   disable_env_checker: True

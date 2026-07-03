@@ -21,7 +21,7 @@ video_cfg:
 init_params:
   id: "Isaac-Stack-Cube-Franka-IK-Rel-Visuomotor-Rewarded-v0"
   num_envs: null
-  max_episode_steps: ${env.train.max_episode_steps} # max episode steps for truncation
+  max_episode_steps: ${..max_episode_steps} # max episode steps for truncation
   task_description: "Stack the red block on the blue block, then stack the green block on the red block."
   table_cam:
     height: 256

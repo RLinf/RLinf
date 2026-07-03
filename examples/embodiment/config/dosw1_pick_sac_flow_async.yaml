@@ -147,7 +147,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -165,7 +165,7 @@ actor:
     model_type: "flow_policy"
     input_type: "mixed"  # only mixed input can be used in real world
 
-    model_path: "/path/to/resnet10_pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
     state_dim: 14   # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
     action_dim: 14  # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper

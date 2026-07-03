@@ -36,9 +36,9 @@ mounted into the container:
       -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
       -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
 
 If you don't want to use privileged flag, then you need to add serval devices, and manually add NPU:
 

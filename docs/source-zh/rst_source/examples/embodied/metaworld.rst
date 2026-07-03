@@ -86,7 +86,7 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.2-metaworld``：
+**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.3-metaworld``：
 
 .. code-block:: bash
 
@@ -95,8 +95,8 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-metaworld
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-metaworld
+      rlinf/rlinf:agentic-rlinf0.3-metaworld
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-metaworld
 
    # 在容器内切换到对应模型的虚拟环境：
    source switch_env openpi        # 或：source switch_env openvla-oft

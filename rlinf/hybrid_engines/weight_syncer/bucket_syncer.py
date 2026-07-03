@@ -21,10 +21,11 @@ from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import (
+    dtype_size,
     materialize_tensor,
     normalize_device,
     normalize_dtype,
-    synchronize_pending_accel_copies,
+    tensors_record_stream,
 )
 
 from .base import RecvFn, SendFn, WeightSyncer
@@ -38,16 +39,28 @@ def iter_named_tensor_buckets(
     bucket_device: str | torch.device,
     dtype_resolver: Callable[[str, torch.dtype], torch.dtype] | None = None,
 ) -> Iterator[dict[str, torch.Tensor]]:
-    """Yield transport-ready buckets from already-selected named tensors."""
+    """
+    Iterate transport-ready buckets from already-selected named tensors.
+
+    Args:
+        - items (Iterable[tuple[str, torch.Tensor | DTensor]]): An iterable of tuples containing parameter names and their corresponding tensors.
+        - version (int | torch.Tensor): The version of the model weights.
+        - bucket_size (int): The maximum threshold (in bytes) of each bucket.
+        - bucket_device (str | torch.device): The device to which the buckets will be moved, cpu or accelerator device.
+        - dtype_resolver (Callable[[str, torch.dtype], torch.dtype] | None): A function that takes a parameter name and its original dtype,
+            and returns the dtype to be used for transport. If None, the original dtype is used.
+
+    Yields:
+        dict[str, torch.Tensor]: A dictionary representing a bucket of parameters to be synchronized.
+    """
     metadata_keys = {
         BucketWeightSyncer._TOTAL_BUCKETS_KEY,
         BucketWeightSyncer._SYNCER_VERSION_KEY,
     }
     bucket_device = normalize_device(bucket_device)
     prepared_items: list[tuple[str, torch.Tensor | DTensor, torch.dtype]] = []
-    currently_hold = 0
-    total_buckets = 0
-
+    currently_hold: int = 0
+    bucket_plan: list[list[tuple[str, torch.Tensor | DTensor, torch.dtype]]] = []
     for key, value in items:
         if key in metadata_keys:
             raise ValueError(f"Bucket payload key conflicts with metadata key: {key}")
@@ -58,63 +71,71 @@ def iter_named_tensor_buckets(
             else value.dtype
         )
         prepared_items.append((key, value, transport_dtype))
-        currently_hold += (
-            value.numel() * torch.empty((), dtype=transport_dtype).element_size()
-        )
+        currently_hold += value.numel() * dtype_size(transport_dtype)
         if currently_hold >= bucket_size:
-            total_buckets += 1
+            bucket_plan.append(prepared_items)
+            prepared_items = []
             currently_hold = 0
 
     if currently_hold > 0:
-        total_buckets += 1
-    assert total_buckets > 0, "No parameters to sync"
+        bucket_plan.append(prepared_items)
+        prepared_items = []
+        currently_hold = 0
 
-    metadata = {
+    if len(bucket_plan) == 0:
+        raise ValueError("No parameters to sync")
+
+    bucket: dict[str, torch.Tensor] = {
         BucketWeightSyncer._TOTAL_BUCKETS_KEY: torch.tensor(
-            total_buckets, dtype=torch.int32, device=bucket_device
+            len(bucket_plan), dtype=torch.int32, device=bucket_device
         ),
         BucketWeightSyncer._SYNCER_VERSION_KEY: torch.as_tensor(
-            version, dtype=torch.int64, device=bucket_device
+            version, dtype=torch.int32, device=bucket_device
         ),
     }
+    for bucket_items in bucket_plan:
+        for key, value, transport_dtype in bucket_items:
+            tensor = materialize_tensor(value)
 
-    bucket_idx = 0
-    currently_hold = 0
-    bucket: dict[str, torch.Tensor] = {}
-    pending_copy_devices: set[torch.device] = set()
-    for key, value, transport_dtype in prepared_items:
-        tensor = materialize_tensor(value)
-        async_accel_to_cpu = (
-            bucket_device.type == "cpu"
-            and tensor.device.type == Worker.torch_device_type
-        )
-        bucket[key] = tensor.to(
-            device=bucket_device,
-            dtype=transport_dtype,
-            non_blocking=async_accel_to_cpu or bucket_device.type != "cpu",
-        )
-        if async_accel_to_cpu:
-            pending_copy_devices.add(tensor.device)
-        currently_hold += bucket[key].numel() * bucket[key].element_size()
-
-        if currently_hold >= bucket_size:
-            if bucket_idx == 0:
-                bucket.update(metadata)
-            synchronize_pending_accel_copies(pending_copy_devices)
-            yield bucket
-            bucket_idx += 1
-            bucket = {}
-            currently_hold = 0
-            pending_copy_devices = set()
+            bucket[key] = tensor.to(
+                device=bucket_device,
+                dtype=transport_dtype,
+                non_blocking=False,
+            )
+        yield bucket
+        bucket = {}
 
     if bucket:
-        if bucket_idx == 0:
-            bucket.update(metadata)
-        synchronize_pending_accel_copies(pending_copy_devices)
         yield bucket
+        bucket = {}
 
 
 class BucketWeightSyncer(WeightSyncer):
+    """Synchronize model weights by sending state dict tensors in buckets.
+
+    The sender materializes selected tensors, optionally casts floating-point
+    tensors to ``bucket_dtype`` for transport, moves them to ``bucket_device``,
+    and sends them as dictionaries whose payload entries are parameter or buffer
+    names. The receiver applies the received buckets to the target model with
+    ``load_state_dict(strict=False)``.
+
+    The first bucket also carries metadata used by the receiver-side protocol:
+    ``_TOTAL_BUCKETS_KEY`` stores the number of buckets to receive, and
+    ``_SYNCER_VERSION_KEY`` stores the weight version associated with the
+    transfer. These keys are reserved and must not collide with state dict keys.
+
+    Attributes:
+        bucket_size: Target maximum bucket payload size in bytes. A single tensor
+            is never split, so an individual payload may exceed this value.
+        bucket_dtype: Optional dtype used to transport floating-point tensors.
+            Non-floating tensors keep their original dtype.
+        bucket_device: Device where bucket payload tensors are staged before
+            sending.
+        is_agent: Whether to apply agent-specific language-model key rewriting.
+        load_instant: Whether the receiver loads each bucket immediately instead
+            of staging all buckets on CPU before one final model load.
+    """
+
     _TOTAL_BUCKETS_KEY = "total_buckets"
     _SYNCER_VERSION_KEY = "syncer_version"
 
@@ -128,14 +149,26 @@ class BucketWeightSyncer(WeightSyncer):
     ):
         super().__init__()
         self.bucket_size = bucket_size
-        self.bucket_dtype = (
-            normalize_dtype(bucket_dtype) if bucket_dtype is not None else None
-        )
+        self.bucket_dtype = normalize_dtype(bucket_dtype)
         self.bucket_device = normalize_device(bucket_device)
         self.is_agent = is_agent
         self.load_instant = load_instant
 
     def _bucket_key(self, key: str, has_visual: bool) -> str | None:
+        """
+        Handle special cases for parameter names when syncing weights.
+        If the key contains "_extra_state", it is ignored (returns None).
+        If the model has visual components and is an agent, and the key starts with
+        "model.language_model.", it is transformed to start with "model." instead.
+        Otherwise, the key is returned unchanged.
+
+        Args:
+            key (str): The original parameter name.
+            has_visual (bool): Indicates if the model has visual components.
+
+        Returns:
+            str | None: The transformed parameter name, or None if it should be ignored.
+        """
         if "_extra_state" in key:
             return None
         if has_visual and self.is_agent and key.startswith("model.language_model."):
@@ -143,6 +176,17 @@ class BucketWeightSyncer(WeightSyncer):
         return key
 
     def _transport_dtype(self, dtype: torch.dtype) -> torch.dtype:
+        """
+        Determine the dtype for transporting tensors in buckets.
+        If it's floating point and a bucket_dtype is specified, use the bucket_dtype.
+        Otherwise, use the original dtype.
+
+        Args:
+            dtype (torch.dtype): The original dtype of the tensor.
+
+        Returns:
+            torch.dtype: The dtype to be used for transporting the tensor.
+        """
         if self.bucket_dtype is not None and dtype.is_floating_point:
             return self.bucket_dtype
         return dtype
@@ -151,35 +195,39 @@ class BucketWeightSyncer(WeightSyncer):
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         version: int | torch.Tensor,
-    ):
-        has_visual = any("visual." in key for key in state_dict.keys())
-        named_items: list[tuple[str, torch.Tensor | DTensor]] = []
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """
+        Iterate over the state_dict and yield buckets of parameters that need to be synchronized.
 
-        assert self.param_names_need_sync, (
-            "param_names_need_sync must be set and not empty"
+        Args:
+            state_dict (dict[str, torch.Tensor | DTensor]): The model's state dictionary. If the tensor is a DTensor,
+                it will be materialized to a regular torch.Tensor before being added to the bucket.
+            version (int | torch.Tensor): The version of the model weights being synchronized.
+
+        Yields:
+            dict[str, torch.Tensor]: A dictionary representing a bucket of parameters to be synchronized.
+        """
+
+        has_visual = any(
+            "visual." in key for key in self.param_names_need_sync if key in state_dict
         )
-        for key, value in state_dict.items():
-            if key not in self.param_names_need_sync:
-                continue
-            name = self._bucket_key(key, has_visual)
-            if name is None:
-                continue
-            named_items.append((name, value))
+
+        def iter_named_items() -> Iterator[tuple[str, torch.Tensor | DTensor]]:
+            for key in self.param_names_need_sync:
+                value = state_dict.get(key)
+                if value is None:
+                    continue
+                bucket_key = self._bucket_key(key, has_visual)
+                if bucket_key is not None:
+                    yield bucket_key, value
 
         yield from iter_named_tensor_buckets(
-            named_items,
+            iter_named_items(),
             version,
             bucket_size=self.bucket_size,
             bucket_device=self.bucket_device,
-            dtype_resolver=lambda _key, dtype: self._transport_dtype(dtype),
+            dtype_resolver=lambda _, dtype: self._transport_dtype(dtype),
         )
-
-    def divide_into_buckets(
-        self,
-        state_dict: dict[str, torch.Tensor | DTensor],
-        version: int | torch.Tensor,
-    ) -> list[dict[str, torch.Tensor]]:
-        return list(self.iter_buckets(state_dict, version))
 
     async def init_sender(
         self,
@@ -188,8 +236,21 @@ class BucketWeightSyncer(WeightSyncer):
         send: SendFn,
         recv: RecvFn | None = None,
     ) -> None:
+        """
+        Initialize the sender for weight synchronization.
+
+        Args:
+            - state_dict (dict[str, torch.Tensor | DTensor]): The model's state dictionary. For BucketWeightSyncer,
+                it's not used, just to keep the interface consistent with other syncers.
+            - param_names_need_sync (list[str]): A list of parameter names that need to be synchronized.
+            - send (SendFn): The function for sender to communicate with the receiver.
+            - recv (RecvFn | None): The function for receiver to communicate with the sender.
+        """
+
         del state_dict, send, recv
         self.param_names_need_sync = set(param_names_need_sync)
+        if not self.param_names_need_sync:
+            raise ValueError("param_names_need_sync must not be empty")
         self._sender_initialized = True
 
     async def sync(
@@ -198,26 +259,55 @@ class BucketWeightSyncer(WeightSyncer):
         send: SendFn,
         version: int | torch.Tensor,
     ) -> None:
+        """
+        Synchronize the model weights by sending buckets of parameters to the receiver.
+        Called by the sender every time the model weights should update after sender/receiver is initialized.
+
+        Args:
+            - state_dict (dict[str, torch.Tensor | DTensor]): The model's state dictionary
+            - send (SendFn): The function to send synchronized buckets. it should define who sends, how to send, and where to send.
+            - version (int | torch.Tensor): The version of the model weights being synchronized.
+        """
         for bucket in self.iter_buckets(state_dict, version):
             await send(bucket)
             del bucket
 
     async def apply(self, model: torch.nn.Module, recv: RecvFn) -> int:
+        """
+        Apply the synchronized weights to the model by receiving buckets of parameters from the sender.
+        Called by the receiver every time the model weights should update after sender/receiver is initialized.
+
+        Args:
+            - model (torch.nn.Module): The model to which the synchronized weights will be applied.
+            - recv (RecvFn): The function to receive synchronized buckets. it should define who receives, how to receive, and where to receive.
+
+        Returns:
+            int: The version of the model weights that have been applied.
+        """
+
         bucket: dict[str, torch.Tensor] = await recv()
         total_buckets = int(bucket.pop(self._TOTAL_BUCKETS_KEY).item())
         applied_version = int(bucket.pop(self._SYNCER_VERSION_KEY).item())
+
+        fallback_keepalive: list[torch.Tensor] = []
+        current_stream: torch.Stream | None = None
+        # NOTE:
+        # actually only accel -> accel could return without finishing copy (if non_blocking=False)
+        # to simpilify code and keep extensibility, we judge by bucket's device only.
+        # we record buckets because bucket's deleted but tensor comes with another stream.
+        need_record = (
+            self.load_instant and self.bucket_device.type == Worker.torch_device_type
+        )
 
         if self.load_instant:
             model.load_state_dict(bucket, strict=False)
         else:
             cpu_buffer: dict[str, torch.Tensor] = {}
-            pending_copy_devices: set[torch.device] = set()
             for key, value in bucket.items():
-                if value.device.type == "cpu":
-                    cpu_buffer[key] = value
-                else:
-                    cpu_buffer[key] = value.to("cpu", non_blocking=True)
-                    pending_copy_devices.add(value.device)
+                cpu_buffer[key] = value.to("cpu")
+        if need_record:
+            current_stream = Worker.torch_platform.current_stream(self.bucket_device)
+            fallback_keepalive.extend(tensors_record_stream(bucket.values()))
         del bucket
 
         for _ in range(total_buckets - 1):
@@ -226,16 +316,18 @@ class BucketWeightSyncer(WeightSyncer):
                 model.load_state_dict(bucket, strict=False)
             else:
                 for key, value in bucket.items():
-                    if value.device.type == "cpu":
-                        cpu_buffer[key] = value
-                    else:
-                        cpu_buffer[key] = value.to("cpu", non_blocking=True)
-                        pending_copy_devices.add(value.device)
+                    cpu_buffer[key] = value.to("cpu")
+
+            if need_record:
+                fallback_keepalive.extend(tensors_record_stream(bucket.values()))
             del bucket
 
         if not self.load_instant:
-            synchronize_pending_accel_copies(pending_copy_devices)
             model.load_state_dict(cpu_buffer, strict=False)
             del cpu_buffer
+
+        if fallback_keepalive:
+            current_stream.synchronize()
+            del fallback_keepalive
 
         return applied_version
