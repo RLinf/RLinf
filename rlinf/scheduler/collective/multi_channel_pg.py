@@ -310,7 +310,7 @@ class MultiChannelProcessGroup:
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             # Transfer to CPU if accel CCL is not available
-            tensor = tensor.to("cpu")
+            tensor = self._stage_to_pinned_cpu(tensor)
         group = (
             self._send_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -348,7 +348,7 @@ class MultiChannelProcessGroup:
         recv_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             # Create a new tensor on CPU if accel CCL is not available
-            recv_tensor = torch.empty_like(tensor, device="cpu")
+            recv_tensor = torch.empty_like(tensor, device="cpu", pin_memory=True)
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -386,10 +386,12 @@ class MultiChannelProcessGroup:
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             if self._cur_rank == src:
                 # Transfer to CPU if accel CCL is not available
-                broadcast_tensor = broadcast_tensor.to("cpu")
+                broadcast_tensor = self._stage_to_pinned_cpu(broadcast_tensor)
             else:
                 # Create a new tensor on CPU if accel CCL is not available for non-src ranks
-                broadcast_tensor = torch.empty_like(tensor, device="cpu")
+                broadcast_tensor = torch.empty_like(
+                    tensor, device="cpu", pin_memory=True
+                )
 
         group = (
             self._collective_accel_ccl_process_groups[channel_id]
@@ -406,6 +408,15 @@ class MultiChannelProcessGroup:
             )
         else:
             self._copy_to_accel_tensor(device, tensor, broadcast_tensor)
+
+    @staticmethod
+    def _stage_to_pinned_cpu(tensor: torch.Tensor) -> torch.Tensor:
+        """Copy an accelerator tensor into freshly page-locked host memory."""
+        if tensor.device.type == "cpu":
+            return tensor
+        pinned = torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
+        pinned.copy_(tensor)
+        return pinned
 
     def _copy_to_accel_tensor(
         self, device: str, accel_tensor: torch.Tensor, cpu_tensor: torch.Tensor
