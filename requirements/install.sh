@@ -1469,6 +1469,10 @@ install_abot_m0_model() {
     local abot_path
     local vggt_path
     abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/RLinf/ABot-Manipulation.git)
+    if [ -z "${ABOT_PATH:-}" ]; then
+      git -C "$abot_path" fetch --depth 1 origin ee9013cd8341d5424aa722a8cf25e8985a6e673b
+      git -C "$abot_path" checkout --detach ee9013cd8341d5424aa722a8cf25e8985a6e673b
+    fi	
     vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/RLinf/vggt.git)
 
     uv pip install -e "$vggt_path"
