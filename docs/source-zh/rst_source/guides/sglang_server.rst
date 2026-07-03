@@ -135,6 +135,28 @@ SGLang Server 与 Router
        key 必须是 ``RouterArgs`` 合法字段名——参见 `RouterArgs 源码
        <https://github.com/sgl-project/sglang/blob/main/sgl-model-gateway/bindings/python/src/sglang_router/router_args.py>`_。
 
+.. note::
+
+   仓库已在
+   ``examples/embodiment/config/training_backend/sglang_router_server.yaml``
+   中提供了一份默认配置。可通过 Hydra 的 ``defaults`` 列表引用它，然后只覆盖
+   你需要改动的字段——通常是 ``model_path``（以及 ``server`` / ``router`` 里的
+   个别项）：
+
+   .. code-block:: yaml
+
+      defaults:
+        - training_backend/sglang_router_server@router_server_args
+
+      router_server_args:
+        model_path: /path/to/hf_model
+        # tensor_parallel_size: 2       # 其他字段按需覆盖
+        # server:
+        #   mem_fraction_static: 0.9
+
+   ``@router_server_args`` 是 Hydra 的 package override 语法——它把默认配置挂到
+   顶层 key ``router_server_args`` 下。
+
 .. warning::
 
    Launcher 不会校验 ``server`` 与 ``router`` 块内的 key。``server`` 里有非法字段会让

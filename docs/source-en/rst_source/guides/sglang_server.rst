@@ -141,6 +141,27 @@ long as it carries the keys the launcher consumes:
        Keys must be valid ``RouterArgs`` field names — see the `RouterArgs
        source <https://github.com/sgl-project/sglang/blob/main/sgl-model-gateway/bindings/python/src/sglang_router/router_args.py>`_.
 
+.. note::
+
+   A ready-made default is shipped at
+   ``examples/embodiment/config/training_backend/sglang_router_server.yaml``.
+   Pull it in through Hydra's ``defaults`` list and only override the fields you
+   need — typically ``model_path`` (and any ``server`` / ``router`` tweaks):
+
+   .. code-block:: yaml
+
+      defaults:
+        - training_backend/sglang_router_server@router_server_args
+
+      router_server_args:
+        model_path: /path/to/hf_model
+        # tensor_parallel_size: 2       # override anything else you need
+        # server:
+        #   mem_fraction_static: 0.9
+
+   The ``@router_server_args`` part is Hydra's package override — it mounts the
+   defaults under the ``router_server_args`` top-level key.
+
 .. warning::
 
    The launcher does not validate keys under ``server`` and ``router``. An
