@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
+import threading
 from datetime import timedelta
-from typing import Optional
+from typing import Iterator, Optional
 
 import torch
 import torch.distributed as dist
@@ -105,6 +106,15 @@ class MultiChannelProcessGroup:
             None for _ in range(num_channels)
         ]
 
+        # Fixed-size pinned host buffers for chunk-streaming accelerator
+        # tensors over GLOO when no accelerator CCL is available. Keyed by
+        # process group because each group's ops are serialized on one work
+        # queue thread, so a per-group buffer is never used concurrently.
+        # Allocated lazily on first use; size is set in init().
+        self._host_chunk_bytes = 0
+        self._chunk_buffers: dict[dist.ProcessGroup, torch.Tensor] = {}
+        self._chunk_buffer_lock = threading.Lock()
+
     @property
     def is_initialized(self) -> bool:
         """Check if the MultiChannelProcessGroup is initialized."""
@@ -142,6 +152,14 @@ class MultiChannelProcessGroup:
             raise ValueError(
                 "Invalid TIMEOUT value. It should be an integer representing minutes."
             )
+
+        try:
+            chunk_mb = int(Cluster.get_sys_env_var(ClusterEnvVar.GLOO_CHUNK_MB, "64"))
+        except ValueError:
+            raise ValueError(
+                "Invalid GLOO_CHUNK_MB value. It should be an integer representing megabytes (0 disables chunking)."
+            )
+        self._host_chunk_bytes = chunk_mb * 1024 * 1024
 
         if not self._no_accel_ccl:
             pg_options = AcceleratorUtil.get_accel_pg_options(self._accel_type, options)
@@ -286,6 +304,20 @@ class MultiChannelProcessGroup:
                 self._send_gloo_process_groups,
             )
 
+        if (
+            self._no_accel_ccl
+            and self._accel_type != AcceleratorType.NO_ACCEL
+            and self._host_chunk_bytes > 0
+        ):
+            # Preallocate the pinned chunk buffers so the first transfer does
+            # not pay the cudaHostAlloc latency.
+            for group in (
+                self._send_gloo_process_groups
+                + self._recv_gloo_process_groups
+                + self._collective_gloo_process_groups
+            ):
+                self._get_chunk_buffer(group)
+
         self._is_initialized = True
 
     def send(
@@ -309,8 +341,13 @@ class MultiChannelProcessGroup:
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            # Transfer to CPU if accel CCL is not available
-            tensor = self._stage_to_pinned_cpu(tensor)
+            # Stream the tensor through pinned host chunks if accel CCL is not available
+            return self._chunked_host_send(
+                tensor,
+                src=self._cur_rank,
+                group=self._send_gloo_process_groups[channel_id],
+                async_op=async_op,
+            )
         group = (
             self._send_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -345,10 +382,15 @@ class MultiChannelProcessGroup:
             )
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
-        recv_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            # Create a new tensor on CPU if accel CCL is not available
-            recv_tensor = torch.empty_like(tensor, device="cpu", pin_memory=True)
+            # Stream the tensor through pinned host chunks if accel CCL is not available
+            return self._chunked_host_recv(
+                tensor,
+                src=self._peer_rank,
+                group=self._recv_gloo_process_groups[channel_id],
+                async_op=async_op,
+            )
+        recv_tensor = tensor
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -382,17 +424,18 @@ class MultiChannelProcessGroup:
             raise ValueError(
                 f"Invalid channel_id: {channel_id}. Must be in range [0, {self._num_channels - 1}]"
             )
-        broadcast_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
+            # Stream the tensor through pinned host chunks if accel CCL is not available
+            group = self._collective_gloo_process_groups[channel_id]
             if self._cur_rank == src:
-                # Transfer to CPU if accel CCL is not available
-                broadcast_tensor = self._stage_to_pinned_cpu(broadcast_tensor)
-            else:
-                # Create a new tensor on CPU if accel CCL is not available for non-src ranks
-                broadcast_tensor = torch.empty_like(
-                    tensor, device="cpu", pin_memory=True
+                return self._chunked_host_send(
+                    tensor, src=src, group=group, async_op=async_op
                 )
+            return self._chunked_host_recv(
+                tensor, src=src, group=group, async_op=async_op
+            )
 
+        broadcast_tensor = tensor
         group = (
             self._collective_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -408,6 +451,216 @@ class MultiChannelProcessGroup:
             )
         else:
             self._copy_to_accel_tensor(device, tensor, broadcast_tensor)
+
+    @staticmethod
+    def _flat_uint8_view(tensor: torch.Tensor) -> torch.Tensor:
+        """View a contiguous tensor as a flat uint8 tensor over its raw bytes.
+
+        Args:
+            tensor (torch.Tensor): The tensor to view. Must be contiguous.
+
+        Returns:
+            torch.Tensor: A 1-D uint8 view of the tensor's bytes.
+
+        """
+        return tensor.reshape(-1).view(torch.uint8)
+
+    def _chunk_ranges(self, total_bytes: int) -> Iterator[tuple[int, int]]:
+        """Yield (offset, num_bytes) chunk ranges covering total_bytes.
+
+        Both peers derive the identical sequence from the tensor's byte size,
+        so the resulting GLOO broadcasts always pair up across ranks.
+
+        Args:
+            total_bytes (int): The total number of bytes to cover.
+
+        Yields:
+            tuple[int, int]: The (offset, num_bytes) of each chunk.
+
+        """
+        for offset in range(0, total_bytes, self._host_chunk_bytes):
+            yield offset, min(self._host_chunk_bytes, total_bytes - offset)
+
+    def _get_chunk_buffer(self, group: dist.ProcessGroup) -> torch.Tensor:
+        """Get (lazily allocating) the pinned chunk buffer for a process group.
+
+        Each process group's synchronous ops run serialized on a single work
+        queue thread, so one buffer per group is never used concurrently.
+
+        Args:
+            group (dist.ProcessGroup): The process group the buffer serves.
+
+        Returns:
+            torch.Tensor: A pinned uint8 buffer of self._host_chunk_bytes bytes.
+
+        """
+        with self._chunk_buffer_lock:
+            buffer = self._chunk_buffers.get(group)
+            if buffer is None:
+                buffer = torch.empty(
+                    self._host_chunk_bytes, dtype=torch.uint8, pin_memory=True
+                )
+                self._chunk_buffers[group] = buffer
+            return buffer
+
+    def _chunked_host_send(
+        self,
+        tensor: torch.Tensor,
+        src: int,
+        group: dist.ProcessGroup,
+        async_op: bool = False,
+    ) -> Optional[AsyncWork]:
+        """Send an accelerator tensor over GLOO via pinned host chunks.
+
+        Streams the tensor's bytes through a fixed-size reusable pinned buffer
+        (NCCL_BUFFSIZE-style): D2H-copy one chunk, broadcast it, repeat. Host
+        memory use is bounded by the chunk size regardless of tensor size.
+
+        The on-wire message sequence depends only on the tensor's byte size,
+        never on async_op, because the peer may use a different async flag for
+        the same logical transfer.
+
+        Args:
+            tensor (torch.Tensor): The tensor to send.
+            src (int): The source rank of the underlying broadcast.
+            group (dist.ProcessGroup): The GLOO process group to send on.
+            async_op (bool): Whether to perform the operation asynchronously.
+
+        """
+        tensor = tensor.contiguous()
+        if self._host_chunk_bytes <= 0:
+            # Chunking disabled: stage the whole tensor in pinned memory
+            staged = self._stage_to_pinned_cpu(tensor)
+            work = self._broadcast(staged, src=src, group=group, async_op=async_op)
+            return AsyncCollWork(work) if work else None
+
+        flat = self._flat_uint8_view(tensor)
+        total_bytes = flat.numel()
+        if async_op:
+            # The shared chunk buffer cannot back in-flight async ops, so
+            # stage the whole tensor, but keep the same on-wire chunking.
+            staged = self._flat_uint8_view(self._stage_to_pinned_cpu(tensor))
+            works = []
+            for offset, num_bytes in self._chunk_ranges(total_bytes):
+                work = self._broadcast(
+                    staged[offset : offset + num_bytes],
+                    src=src,
+                    group=group,
+                    async_op=True,
+                )
+                if work is not None:
+                    works.append(work)
+            return AsyncCollWork(works) if works else None
+
+        buffer = self._get_chunk_buffer(group)
+        for offset, num_bytes in self._chunk_ranges(total_bytes):
+            buffer[:num_bytes].copy_(flat[offset : offset + num_bytes])
+            self._broadcast(buffer[:num_bytes], src=src, group=group, async_op=False)
+        return None
+
+    def _chunked_host_recv(
+        self,
+        tensor: torch.Tensor,
+        src: int,
+        group: dist.ProcessGroup,
+        async_op: bool = False,
+    ) -> Optional[AsyncWork]:
+        """Receive an accelerator tensor over GLOO via pinned host chunks.
+
+        Mirror of _chunked_host_send: broadcast-recv one chunk into the fixed
+        pinned buffer, H2D-copy it into the destination, repeat. The H2D copy
+        is blocking so the buffer can be safely reused for the next chunk.
+
+        Args:
+            tensor (torch.Tensor): The tensor to receive into.
+            src (int): The source rank of the underlying broadcast.
+            group (dist.ProcessGroup): The GLOO process group to receive on.
+            async_op (bool): Whether to perform the operation asynchronously.
+
+        """
+        if self._host_chunk_bytes <= 0:
+            # Chunking disabled: stage the whole tensor in pinned memory
+            staged = torch.empty_like(tensor, device="cpu", pin_memory=True)
+            work = self._broadcast(staged, src=src, group=group, async_op=async_op)
+            if async_op:
+                work = AsyncCollWork(work)
+                return work.then(
+                    self._copy_to_accel_tensor, CollectiveGroup.ACCEL, tensor, staged
+                )
+            self._copy_to_accel_tensor(CollectiveGroup.ACCEL, tensor, staged)
+            return None
+
+        # A non-contiguous destination cannot be viewed as raw bytes; receive
+        # into a contiguous device tensor and copy over at the end.
+        dst = (
+            tensor
+            if tensor.is_contiguous()
+            else torch.empty(tensor.shape, dtype=tensor.dtype, device=tensor.device)
+        )
+        flat = self._flat_uint8_view(dst)
+        total_bytes = flat.numel()
+        if async_op:
+            # The shared chunk buffer cannot back in-flight async ops, so
+            # stage the whole tensor, but keep the same on-wire chunking.
+            staged = torch.empty(
+                total_bytes, dtype=torch.uint8, device="cpu", pin_memory=True
+            )
+            works = []
+            for offset, num_bytes in self._chunk_ranges(total_bytes):
+                work = self._broadcast(
+                    staged[offset : offset + num_bytes],
+                    src=src,
+                    group=group,
+                    async_op=True,
+                )
+                if work is not None:
+                    works.append(work)
+            if not works:
+                return None
+            # GLOO works may complete out of submission order, so the callback
+            # waits on the full list, not just the wrapped tail work. It must
+            # wait futures, not works: the callback fires inline on the GLOO
+            # thread from the tail work's future, before Work.finish() marks
+            # the work complete, so Work.wait() there would self-deadlock.
+            futures = [work.get_future() for work in works]
+            tail = AsyncCollWork(works[-1])
+            return tail.then(
+                self._finish_chunked_host_recv, futures, tensor, dst, flat, staged
+            )
+
+        buffer = self._get_chunk_buffer(group)
+        for offset, num_bytes in self._chunk_ranges(total_bytes):
+            self._broadcast(buffer[:num_bytes], src=src, group=group, async_op=False)
+            # Blocking H2D so the chunk buffer can be reused for the next chunk
+            flat[offset : offset + num_bytes].copy_(buffer[:num_bytes])
+        if dst is not tensor:
+            tensor.copy_(dst)
+        return None
+
+    def _finish_chunked_host_recv(
+        self,
+        futures: list,
+        tensor: torch.Tensor,
+        dst: torch.Tensor,
+        flat: torch.Tensor,
+        staged: torch.Tensor,
+    ) -> None:
+        """Complete an async chunked recv: drain all chunks, then copy to device.
+
+        Args:
+            futures (list): The futures of all per-chunk broadcast works.
+            tensor (torch.Tensor): The user-provided destination tensor.
+            dst (torch.Tensor): The contiguous device destination (tensor
+                itself unless tensor is non-contiguous).
+            flat (torch.Tensor): The flat uint8 view of dst.
+            staged (torch.Tensor): The pinned host staging buffer.
+
+        """
+        for future in futures:
+            future.wait()
+        flat.copy_(staged, non_blocking=True)
+        if dst is not tensor:
+            tensor.copy_(dst)
 
     @staticmethod
     def _stage_to_pinned_cpu(tensor: torch.Tensor) -> torch.Tensor:
