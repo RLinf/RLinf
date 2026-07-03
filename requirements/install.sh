@@ -928,9 +928,7 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        # UV_TORCH_BACKEND=auto can probe legacy indexes (e.g. cu116) even when
-        # torch is already installed; unset so resolution uses the venv.
-        env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     fi
     # Detect Python tags
@@ -962,7 +960,7 @@ EOF
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     }
     cuda_major="${cuda_mm%% *}"
@@ -986,16 +984,13 @@ EOF
         base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
         echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
-        # Direct wheel URL: skip dependency resolution so uv does not hit
-        # UV_TORCH_BACKEND=auto legacy torch indexes (e.g. cu116) after install.
-        if env -u UV_TORCH_BACKEND uv pip install --no-deps "${base_url}/${wheel_name}" \
-            && python -c "import flash_attn" >/dev/null 2>&1; then
+        if uv pip install "${base_url}/${wheel_name}"; then
             return 0
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
-    env -u UV_TORCH_BACKEND uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+    uv pip install "flash-attn==${flash_ver}" --no-build-isolation
 }
 
 install_apex() {
