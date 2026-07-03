@@ -306,17 +306,30 @@ class MultiChannelProcessGroup:
 
         if (
             self._no_accel_ccl
-            and self._accel_type != AcceleratorType.NO_ACCEL
             and self._host_chunk_bytes > 0
+            # The group-level accelerator type (workers[0]) says nothing about
+            # THIS process: a CPU-only worker paired with GPU peers must not
+            # try to pin host memory. Probe the local hardware instead.
+            and AcceleratorUtil.get_accelerator_type() != AcceleratorType.NO_ACCEL
         ):
             # Preallocate the pinned chunk buffers so the first transfer does
             # not pay the cudaHostAlloc latency.
-            for group in (
-                self._send_gloo_process_groups
-                + self._recv_gloo_process_groups
-                + self._collective_gloo_process_groups
-            ):
-                self._get_chunk_buffer(group)
+            try:
+                for group in (
+                    self._send_gloo_process_groups
+                    + self._recv_gloo_process_groups
+                    + self._collective_gloo_process_groups
+                ):
+                    self._get_chunk_buffer(group)
+            except RuntimeError as error:
+                # Local accelerator context unusable (e.g. GPU present but
+                # masked via CUDA_VISIBLE_DEVICES=""): pinning is impossible
+                # here, and also unneeded — a process that cannot create
+                # accelerator tensors never reaches the chunked ACCEL path.
+                self._chunk_buffers.clear()
+                self._logger.debug(
+                    f"Skipping pinned chunk buffer preallocation for group {group_name}: {error}"
+                )
 
         self._is_initialized = True
 
