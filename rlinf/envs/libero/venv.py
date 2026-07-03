@@ -191,6 +191,23 @@ def _worker(
                         "depth_far": far,
                     }
                 )
+            elif cmd == "render_camera":
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 1024))
+                w = int(data.get("width", 1024))
+                depth = bool(data.get("depth", False))
+                p.send(
+                    sim.render(
+                        width=w,
+                        height=h,
+                        camera_name=cam,
+                        depth=depth,
+                    )
+                )
             else:
                 p.close()
                 raise NotImplementedError

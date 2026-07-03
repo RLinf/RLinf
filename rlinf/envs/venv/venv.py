@@ -407,6 +407,25 @@ class SubprocEnvWorker(EnvWorker):
         ])
         return self.parent_remote.recv()
 
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> Any:
+        """Render an arbitrary LIBERO camera from the worker subprocess."""
+        self.parent_remote.send([
+            "render_camera",
+            {
+                "camera_name": camera_name,
+                "height": height,
+                "width": width,
+                "depth": depth,
+            },
+        ])
+        return self.parent_remote.recv()
+
     def _decode_obs(self) -> Union[dict, tuple, np.ndarray]:
         def decode_obs(
             buffer: Optional[Union[dict, tuple, ShArray]]

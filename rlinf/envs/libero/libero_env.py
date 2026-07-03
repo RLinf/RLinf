@@ -707,6 +707,21 @@ class LiberoEnv(gym.Env):
             camera_name=camera_name, height=height, width=width
         )
 
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ):
+        """Render an arbitrary camera at the requested resolution."""
+        return self.env.workers[0].render_camera(
+            camera_name=camera_name,
+            height=height,
+            width=width,
+            depth=depth,
+        )
+
     def step(self, actions=None, auto_reset=True):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
