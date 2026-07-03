@@ -142,6 +142,7 @@
 
    # 数据集会占用超过 30 GB。
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   # 之后的 python 命令会下载数据集到 $OMNIGIBSON_DATA_PATH 中。
    mkdir -p $OMNIGIBSON_DATA_PATH
 
    # 在已激活的 venv 中运行。国内用户可设置 HF_ENDPOINT=https://hf-mirror.com。
