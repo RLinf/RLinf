@@ -154,7 +154,7 @@ class MultiChannelProcessGroup:
             )
 
         try:
-            chunk_mb = int(Cluster.get_sys_env_var(ClusterEnvVar.GLOO_CHUNK_MB, "64"))
+            chunk_mb = int(Cluster.get_sys_env_var(ClusterEnvVar.GLOO_CHUNK_MB, "128"))
         except ValueError:
             raise ValueError(
                 "Invalid GLOO_CHUNK_MB value. It should be an integer representing megabytes (0 disables chunking)."
