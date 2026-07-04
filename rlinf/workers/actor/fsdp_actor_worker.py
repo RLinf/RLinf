@@ -20,7 +20,10 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 from torch import nn
-from torch.distributed.tensor import DTensor
+try:
+    from torch.distributed.tensor import DTensor
+except ImportError:
+    from torch.distributed._tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401

@@ -1,0 +1,26 @@
+model_type: "molmoact2"
+
+# checkpoint path
+model_path: "/workspace/models/MolmoAct2-LIBERO"
+checkpoint_path: "/workspace/models/MolmoAct2-LIBERO"
+
+precision: "bf16"
+
+# action settings
+action_dim: 7
+num_action_chunks: 1
+
+# MolmoAct2 inference settings
+seq_len: null
+num_steps: null
+inference_action_mode: "continuous"
+discrete_action_tokenizer: "allenai/MolmoAct2-FAST-Tokenizer"
+enable_depth_reasoning: false
+num_depth_tokens_per_image: null
+verbose: false
+norm_tag: "libero"
+
+# loading settings
+is_lora: false
+load_to_device: true
+trust_remote_code: true
