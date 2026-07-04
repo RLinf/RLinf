@@ -63,22 +63,28 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self._lerobot_resume_thread: threading.Thread | None = None
         self._lerobot_resume_error: Exception | None = None
 
+    def _online_lerobot_cfg(self) -> DictConfig:
+        return OmegaConf.select(
+            self.cfg, "algorithm.dagger.online_lerobot", default=OmegaConf.create({})
+        )
+
     def _build_lerobot_dataset(self):
-        lerobot_num_workers = self.cfg.actor.get("lerobot_num_workers")
-        if lerobot_num_workers is None:
-            lerobot_num_workers = 0
+        online_lerobot_cfg = self._online_lerobot_cfg()
+        lerobot_num_workers = online_lerobot_cfg.get("lerobot_num_workers", 0)
         self._lerobot_resume_num_workers = int(lerobot_num_workers)
         if self._lerobot_resume_num_workers < 0:
-            raise ValueError("actor.lerobot_num_workers must be non-negative.")
+            raise ValueError(
+                "algorithm.dagger.online_lerobot.lerobot_num_workers must be non-negative."
+            )
         self.dataset = RollingLeRobotDataset(
             root_dir=self.cfg.algorithm.dagger.online_lerobot.data_path,
             chunk_size=self.cfg.actor.model.num_action_chunks,
-            min_frames=self.cfg.actor.get("min_frames", 1),
-            wait_interval_s=self.cfg.actor.get("wait_interval_s", 10.0),
+            min_frames=online_lerobot_cfg.get("min_frames", 1),
+            wait_interval_s=online_lerobot_cfg.get("wait_interval_s", 10.0),
             require_all_intervene=self.cfg.algorithm.dagger.get(
                 "only_save_expert", False
             ),
-            window_size=self.cfg.actor.get("rolling_lerobot_window_size", None),
+            window_size=online_lerobot_cfg.get("rolling_lerobot_window_size", None),
             in_memory_mode=True,
             fps=int(
                 OmegaConf.select(
@@ -190,7 +196,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _select_lerobot_resume_shards(self, valid_shards: list[dict]) -> list[dict]:
         total_frames = sum(shard["num_frames"] for shard in valid_shards)
-        window_size = self.cfg.actor.get("rolling_lerobot_window_size", None)
+        window_size = self._online_lerobot_cfg().get("rolling_lerobot_window_size", None)
         if (
             window_size is None
             or int(window_size) <= 0

@@ -238,8 +238,8 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
 **4. LIBERO Spatial + Pi0（在线 LeRobot）**
 
-学生与专家 ``model_path`` 配置与经典 LIBERO Pi0 DAgger 相同。在线 LeRobot 与
-actor 滑动窗口参数位于 ``algorithm.dagger`` 与 ``actor`` 下：
+学生与专家 ``model_path`` 配置与经典 LIBERO Pi0 DAgger 相同。滑动窗口与 cache
+参数位于 ``algorithm.dagger.online_lerobot`` 下：
 
 .. code:: yaml
 
@@ -252,13 +252,11 @@ actor 滑动窗口参数位于 ``algorithm.dagger`` 与 ``actor`` 下：
          fps: 10
          finalize_interval: 8
          data_path: ${runner.logger.log_path}/physical-intelligence/libero
-
-   actor:
-     rolling_lerobot_window_size: 50000
-     enable_decoded_cache: true
-     decoded_cache_capacity: 25000
-     cache_ingest_mode: new_shards   # 或 last_n / both
-     lerobot_num_workers: 0          # 开启 cache 时推荐为 0
+         rolling_lerobot_window_size: 50000
+         enable_decoded_cache: true
+         decoded_cache_capacity: 25000
+         cache_ingest_mode: new_shards   # 或 last_n / both
+         lerobot_num_workers: 0          # 开启 cache 时推荐为 0
 
 完整参考配置见 ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml``。
 
@@ -298,7 +296,7 @@ actor 滑动窗口参数位于 ``algorithm.dagger`` 与 ``actor`` 下：
 **在线 LeRobot 参数**
 
 在线 LeRobot 配置不使用 ``algorithm.replay_buffer``，请调整
-``algorithm.dagger.online_lerobot`` 与 ``actor.rolling_lerobot_*`` 字段：
+``algorithm.dagger.online_lerobot`` 字段：
 
 .. list-table::
    :header-rows: 1
@@ -314,9 +312,9 @@ actor 滑动窗口参数位于 ``algorithm.dagger`` 与 ``actor`` 下：
      - rolling dataset 写入 LeRobot shard 的根目录。
    * - ``online_lerobot.finalize_interval``
      - 每 N 个 episode finalize 一次 LeRobot 元数据。
-   * - ``actor.rolling_lerobot_window_size``
+   * - ``rolling_lerobot_window_size``
      - 滑动训练窗口保留的最大帧数。
-   * - ``actor.enable_decoded_cache``
+   * - ``enable_decoded_cache``
      - 缓存解码后的帧，加速 actor DataLoader 采样。
 
 **3. 启动命令**

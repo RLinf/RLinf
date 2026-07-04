@@ -251,8 +251,8 @@ In addition, the RoboTwin environment requires separate configuration of the Rob
 **4. LIBERO Spatial + Pi0 (online LeRobot)**
 
 Use the same student and expert ``model_path`` fields as the classic LIBERO Pi0
-DAgger config above. The online LeRobot block and actor rolling-window settings
-live under ``algorithm.dagger`` and ``actor``:
+DAgger config above. Rolling-window and cache settings live under
+``algorithm.dagger.online_lerobot``:
 
 .. code:: yaml
 
@@ -265,13 +265,11 @@ live under ``algorithm.dagger`` and ``actor``:
          fps: 10
          finalize_interval: 8
          data_path: ${runner.logger.log_path}/physical-intelligence/libero
-
-   actor:
-     rolling_lerobot_window_size: 50000
-     enable_decoded_cache: true
-     decoded_cache_capacity: 25000
-     cache_ingest_mode: new_shards   # or last_n / both
-     lerobot_num_workers: 0          # recommended when cache is on
+         rolling_lerobot_window_size: 50000
+         enable_decoded_cache: true
+         decoded_cache_capacity: 25000
+         cache_ingest_mode: new_shards   # or last_n / both
+         lerobot_num_workers: 0          # recommended when cache is on
 
 See ``examples/embodiment/config/libero_spatial_dagger_openpi_lerobot.yaml`` for
 the full reference config.
@@ -314,8 +312,7 @@ values.
 **Online LeRobot parameters**
 
 The online LeRobot config does not use ``algorithm.replay_buffer``. Tune the
-``algorithm.dagger.online_lerobot`` and ``actor.rolling_lerobot_*`` fields
-instead:
+``algorithm.dagger.online_lerobot`` fields instead:
 
 .. list-table::
    :header-rows: 1
@@ -331,9 +328,9 @@ instead:
      - Root directory for LeRobot shards written by the rolling dataset.
    * - ``online_lerobot.finalize_interval``
      - Finalize LeRobot metadata every N completed episodes.
-   * - ``actor.rolling_lerobot_window_size``
+   * - ``rolling_lerobot_window_size``
      - Maximum number of frames kept in the rolling training window.
-   * - ``actor.enable_decoded_cache``
+   * - ``enable_decoded_cache``
      - Cache decoded frames to speed up actor DataLoader sampling.
 
 **3. Launch Commands**

@@ -1441,12 +1441,10 @@ install_lingbot_vla_model() {
     install_common_embodied_deps
     local lingbotvla_dir
     lingbotvla_dir=$(clone_or_reuse_repo LINGBOT_PATH "$VENV_DIR/lingbot-vla" ${GITHUB_PREFIX}https://github.com/RLinf/lingbot-vla.git --recurse-submodules)
-    # UV_TORCH_BACKEND=auto can route torch-family deps (e.g. torchdata) through
-    # download.pytorch.org/whl/cu120 and time out on CI; torch is already in venv.
-    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir"
-    env -u UV_TORCH_BACKEND uv pip install -r "$lingbotvla_dir/requirements.txt"
-    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/" --no-deps
-    env -u UV_TORCH_BACKEND uv pip install -e "$lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe/" --no-deps
+    uv pip install -e $lingbotvla_dir
+    uv pip install -r $lingbotvla_dir/requirements.txt
+    uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
+    uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
 
     install_lerobot
     env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
@@ -1664,13 +1662,7 @@ install_libero_env() {
 
 install_maniskill_libero_env() {
     install_libero_env
-    local maniskill_dir="${MANISKILL_PATH:-$VENV_DIR/maniskill}"
-    if [ ! -d "$maniskill_dir/.git" ]; then
-        env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null \
-            git clone --branch v3.0.0b22 --depth 1 \
-            https://github.com/haosulab/ManiSkill.git "$maniskill_dir"
-    fi
-    uv pip install -e "$maniskill_dir"
+    uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
 
     # Maniskill assets
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill

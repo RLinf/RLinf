@@ -58,6 +58,13 @@ algorithm:
       fps: 10
       finalize_interval: 8
       data_path: ${runner.logger.log_path}/physical-intelligence/libero
+      rolling_lerobot_window_size: 50000
+      enable_decoded_cache: true
+      decoded_cache_capacity: 25000
+      cache_ingest_mode: new_shards   # or last_n / both
+      cache_last_n_frames: 25000
+      cache_ingest_max_frames: null   # optional int cap per refresh
+      lerobot_num_workers: 0          # recommended when cache is on
 
   gamma: 0.99
 
@@ -105,14 +112,6 @@ rollout:
     precision: ${actor.model.precision}
 
 actor:
-  rolling_lerobot_window_size: 50000
-  enable_decoded_cache: true
-  decoded_cache_capacity: 25000
-  cache_ingest_mode: new_shards   # or last_n / both
-  cache_last_n_frames: 25000
-  cache_ingest_max_frames: null   # optional int cap per refresh
-  lerobot_num_workers: 0          # recommended when cache is on
-
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 16

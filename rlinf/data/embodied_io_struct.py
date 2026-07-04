@@ -811,6 +811,11 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
               fps: 10
               finalize_interval: 8
               data_path: /path/to/shards
+              rolling_lerobot_window_size: 50000
+              enable_decoded_cache: true
+              decoded_cache_capacity: 25000
+              cache_ingest_mode: new_shards
+              lerobot_num_workers: 0
 
     **Integration**: When online LeRobot collection is enabled, EnvWorker builds
     this class and the actor loads
