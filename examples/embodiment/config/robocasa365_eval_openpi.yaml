@@ -42,7 +42,6 @@ algorithm:
   reward_coef: 1.0
 
   rollout_epoch: 1
-  # 90 envs / 18 tasks * 10 epochs = 50 episodes per task.
   eval_rollout_epoch: 50 # 1
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -94,7 +93,6 @@ env:
     reward_coef: 1.0
     group_size: 1
   eval:
-    # atomic_seen has 18 tasks. 90 envs gives 5 envs/task and 10 rollout epochs.
     total_num_envs: 18 # 50 # 90
     seed: 7
     seed_strategy: openpi # global_unique
@@ -111,9 +109,6 @@ env:
     max_steps_per_rollout_epoch: 1500 # 700
     group_size: 1
     is_eval: True
-    parallel_eval:
-      enabled: False # True
-      episodes_per_task: 50
     video_cfg:
       save_video: True
       info_on_video: True

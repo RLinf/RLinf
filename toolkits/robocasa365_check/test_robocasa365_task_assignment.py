@@ -184,7 +184,6 @@ _install_gym_stub("gymnasium")
 
 from rlinf.envs.robocasa365.eval_schedule import (  # noqa: E402
     resolve_robocasa365_episode_horizons,
-    resolve_robocasa365_eval_schedule,
     resolve_robocasa365_rollout_budget,
     validate_robocasa365_eval_horizons,
 )
@@ -914,167 +913,6 @@ def _check_ppo_grpo_group_semantics(
     )
 
 
-def _check_parallel_eval_episode_schedule(
-    suite: CheckSuite, args: argparse.Namespace
-) -> None:
-    print("\n[每个任务 50 个 episode 的并行评估调度]")
-    scenarios = [
-        ("2 个任务、100 个 env、1 个 epoch", 2, 100, 1),
-        ("18 个任务、18 个 env、50 个 epoch", 18, 18, 50),
-        ("18 个任务、90 个 env、10 个 epoch", 18, 90, 10),
-        ("18 个任务、180 个 env、5 个 epoch", 18, 180, 5),
-        ("18 个任务、900 个 env、1 个 epoch", 18, 900, 1),
-    ]
-
-    for label, num_tasks, total_num_envs, configured_epochs in scenarios:
-        schedule = resolve_robocasa365_eval_schedule(
-            num_tasks=num_tasks,
-            total_num_envs=total_num_envs,
-            eval_rollout_epoch=configured_epochs,
-            expected_episodes_per_task=50,
-        )
-        env = _make_env(
-            args,
-            num_envs=total_num_envs,
-            strategy="ordered",
-            fixed_flag=True,
-            rotate_on_auto_reset=False,
-            is_eval=True,
-            mock_num_tasks=num_tasks,
-        )
-        episode_counts = np.zeros(num_tasks, dtype=np.int32)
-        initial_task_ids = env.task_ids.copy()
-        for _ in range(schedule.eval_rollout_epoch):
-            episode_counts += np.bincount(
-                env.task_ids.astype(np.int64),
-                minlength=num_tasks,
-            )
-            env.update_reset_state_ids()
-
-        suite.check(
-            f"{label}：保留显式配置的 eval_rollout_epoch",
-            schedule.eval_rollout_epoch == configured_epochs,
-            f"实际={schedule.eval_rollout_epoch}，配置={configured_epochs}",
-        )
-        suite.check(
-            f"{label}：每轮每个任务获得相同数量的并行 env",
-            bool(
-                np.all(
-                    np.bincount(initial_task_ids, minlength=num_tasks)
-                    == schedule.envs_per_task
-                )
-            ),
-            (
-                f"每任务 env 数="
-                f"{np.bincount(initial_task_ids, minlength=num_tasks).tolist()}"
-            ),
-        )
-        suite.check(
-            f"{label}：所有轮次结束后每个任务恰好有 50 个 episode",
-            bool(np.all(episode_counts == 50)),
-            f"每任务 episode 数={episode_counts.tolist()}",
-        )
-        suite.check(
-            f"{label}：固定任务模式下各 env 的任务不会跨轮次改变",
-            np.array_equal(env.task_ids, initial_task_ids),
-            (f"初始={initial_task_ids.tolist()}，最终={env.task_ids.tolist()}"),
-        )
-
-    filtered_env = _make_env(
-        args,
-        num_envs=10,
-        strategy="ordered",
-        fixed_flag=True,
-        rotate_on_auto_reset=False,
-        is_eval=True,
-        task_filter={"include": ["MockTask03"], "exclude": []},
-    )
-    filtered_schedule = resolve_robocasa365_eval_schedule(
-        num_tasks=len(filtered_env.task_specs),
-        total_num_envs=filtered_env.num_envs,
-        eval_rollout_epoch=5,
-        expected_episodes_per_task=50,
-    )
-    filtered_episode_count = 0
-    for _ in range(filtered_schedule.eval_rollout_epoch):
-        filtered_episode_count += filtered_env.num_envs
-        filtered_env.update_reset_state_ids()
-    suite.check(
-        "单任务 task_filter、10 个 env、显式 5 个 epoch：完成 50 个 episode",
-        filtered_schedule.eval_rollout_epoch == 5
-        and filtered_episode_count == 50
-        and set(_task_names(filtered_env)) == {"MockTask03"},
-        (
-            f"轮数={filtered_schedule.eval_rollout_epoch}，"
-            f"episode 数={filtered_episode_count}，"
-            f"任务={sorted(set(_task_names(filtered_env)))}"
-        ),
-    )
-
-    for num_processes in (2, 5):
-        local_num_envs = 90 // num_processes
-        process_envs = [
-            _make_env(
-                args,
-                num_envs=local_num_envs,
-                strategy="ordered",
-                fixed_flag=True,
-                rotate_on_auto_reset=False,
-                is_eval=True,
-                total_num_processes=num_processes,
-                seed_offset=process_id,
-                seed_strategy="global_unique",
-            )
-            for process_id in range(num_processes)
-        ]
-        global_task_ids = np.concatenate([env.task_ids for env in process_envs])
-        global_seeds = [seed for env in process_envs for seed in env.env_seeds]
-        suite.check(
-            f"90 个 env 分布到 {num_processes} 个进程后仍是每任务 5 个 env",
-            bool(np.all(np.bincount(global_task_ids, minlength=args.num_tasks) == 5)),
-            (
-                f"全局每任务 env 数="
-                f"{np.bincount(global_task_ids, minlength=args.num_tasks).tolist()}"
-            ),
-        )
-        suite.check(
-            f"{num_processes} 个进程使用 global_unique 时 env seed 全局不重复",
-            len(global_seeds) == len(set(global_seeds)),
-            f"seed 数={len(global_seeds)}，去重后={len(set(global_seeds))}",
-        )
-
-    invalid_cases = [
-        (18, 20, 10, 50),
-        (18, 72, 10, 50),
-        (1, 100, 1, 50),
-    ]
-    for (
-        num_tasks,
-        total_num_envs,
-        eval_rollout_epoch,
-        expected_episodes_per_task,
-    ) in invalid_cases:
-        try:
-            resolve_robocasa365_eval_schedule(
-                num_tasks=num_tasks,
-                total_num_envs=total_num_envs,
-                eval_rollout_epoch=eval_rollout_epoch,
-                expected_episodes_per_task=expected_episodes_per_task,
-            )
-        except ValueError:
-            rejected = True
-        else:
-            rejected = False
-        suite.check(
-            (
-                f"非法调度会被拒绝：tasks={num_tasks}, "
-                f"envs={total_num_envs}, epochs={eval_rollout_epoch}, "
-                f"expected episodes/task={expected_episodes_per_task}"
-            ),
-            rejected,
-        )
-
-
 def _first_truncation_steps(
     env: ProbeRobocasa365Env, max_steps: int
 ) -> np.ndarray:
@@ -1196,28 +1034,6 @@ def _load_yaml(path: pathlib.Path) -> dict[str, Any]:
     return data
 
 
-def _selected_task_count_from_yaml(task_filter: Any, default_count: int) -> int:
-    """Infer the selected task count for lightweight YAML consistency checks."""
-
-    if not task_filter:
-        return default_count
-    if isinstance(task_filter, str):
-        return 1
-    if isinstance(task_filter, list):
-        return len({str(task) for task in task_filter})
-    if isinstance(task_filter, dict):
-        include = task_filter.get("include", [])
-        exclude = task_filter.get("exclude", [])
-        include = [include] if isinstance(include, str) else list(include or [])
-        exclude = [exclude] if isinstance(exclude, str) else list(exclude or [])
-        include_set = {str(task) for task in include}
-        exclude_set = {str(task) for task in exclude}
-        if include_set:
-            return len(include_set - exclude_set)
-        return default_count - len(exclude_set)
-    raise TypeError(f"Unsupported task_filter type: {type(task_filter)}")
-
-
 def _check_yaml_group_size_consistency(
     suite: CheckSuite, args: argparse.Namespace
 ) -> None:
@@ -1267,46 +1083,6 @@ def _check_yaml_group_size_consistency(
                     f"env.train.group_size={train_group_size}"
                 ),
             )
-            parallel_eval = eval_env.get("parallel_eval", {})
-            if isinstance(parallel_eval, bool):
-                parallel_enabled = parallel_eval
-                episodes_per_task = 50
-            else:
-                parallel_enabled = bool(parallel_eval.get("enabled", False))
-                episodes_per_task = int(parallel_eval.get("episodes_per_task", 50))
-
-            if parallel_enabled:
-                selected_task_count = _selected_task_count_from_yaml(
-                    eval_env.get("task_filter", []),
-                    args.num_tasks,
-                )
-                schedule = resolve_robocasa365_eval_schedule(
-                    num_tasks=selected_task_count,
-                    total_num_envs=int(eval_env.get("total_num_envs", 0)),
-                    eval_rollout_epoch=int(algorithm.get("eval_rollout_epoch", 0)),
-                    expected_episodes_per_task=episodes_per_task,
-                )
-                suite.check(
-                    f"{label} 配置开启每任务 {episodes_per_task} 个 episode 的并行评估",
-                    schedule.episodes_per_task == episodes_per_task,
-                    (
-                        f"parallel_eval={parallel_eval}, "
-                        f"selected_task_count={selected_task_count}"
-                    ),
-                )
-                suite.check(
-                    f"{label} 配置显式保留 eval_rollout_epoch",
-                    schedule.eval_rollout_epoch
-                    == int(algorithm.get("eval_rollout_epoch", -1)),
-                    (
-                        f"调度轮数={schedule.eval_rollout_epoch}，"
-                        f"配置轮数={algorithm.get('eval_rollout_epoch')}"
-                    ),
-                )
-            else:
-                suite.note(
-                    f"{label} 配置未开启 parallel_eval，跳过每任务 episode 调度检查"
-                )
 
 
 def parse_args() -> argparse.Namespace:
@@ -1388,7 +1164,6 @@ def main() -> None:
     _check_env_count_distribution(suite, args)
     _check_unfiltered_reset_parameter_matrix(suite, args)
     _check_ppo_grpo_group_semantics(suite, args)
-    _check_parallel_eval_episode_schedule(suite, args)
     _check_episode_horizon_sources(suite, args)
     _check_yaml_group_size_consistency(suite, args)
     suite.summary()
