@@ -33,7 +33,11 @@ from lerobot.common.datasets.lerobot_dataset import (
 from openpi.transforms import DataTransformFn
 from torch.utils.data import Dataset
 
-from rlinf.models.embodiment.openpi.policies import franka_policy, libero_policy
+from rlinf.models.embodiment.openpi.policies import (
+    aloha_policy,
+    franka_policy,
+    libero_policy,
+)
 
 from .common import BaseDataLoaderImpl, ReCapMixtureDataset
 from .utils import (
@@ -62,6 +66,16 @@ _REPACK_KEYS = {
         "observation/image": "observation.images.image",
         "observation/wrist_image": "observation.images.wrist_image",
         "observation/state": "observation.state",
+        "actions": "action",
+        "prompt": "prompt",
+    },
+    "aloha": {
+        "images": {
+            "cam_high": "observation.images.cam_high",
+            "cam_left_wrist": "observation.images.cam_left_wrist",
+            "cam_right_wrist": "observation.images.cam_right_wrist",
+        },
+        "state": "observation.state",
         "actions": "action",
         "prompt": "prompt",
     },
@@ -318,6 +332,8 @@ class ValueDataset(Dataset):
             transforms_list.append(
                 libero_policy.LiberoInputs(model_type=model_type_enum)
             )
+        elif robot == "aloha":
+            transforms_list.append(aloha_policy.AlohaInputs(adapt_to_pi=True))
         elif robot in ("franka", "franka_co_train"):
             transforms_list.append(
                 franka_policy.FrankaEEInputs(
