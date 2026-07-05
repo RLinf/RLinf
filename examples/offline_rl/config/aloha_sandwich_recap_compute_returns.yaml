@@ -1,0 +1,22 @@
+# Usage:
+#   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh aloha_sandwich_recap_compute_returns
+
+data:
+  data_root: null
+  train_data_paths:
+    - dataset_path: /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_lerobot_v21
+      type: rollout
+
+  dataset_type: rollout
+  gamma: 1.0
+  failure_reward: -300.0
+  hitl_aware_returns: true
+  tag: sandwich_fail300
+  num_workers: 128
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

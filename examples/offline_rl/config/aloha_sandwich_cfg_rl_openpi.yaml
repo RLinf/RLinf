@@ -1,0 +1,99 @@
+# Usage:
+#   bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh aloha_sandwich_cfg_rl_openpi
+
+defaults:
+  - model/pi0_5@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results/aloha_sandwich_cfg"
+    project_name: rlinf
+    experiment_name: "aloha_sandwich_cfg"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: 3000
+
+data:
+  num_workers: 8
+  advantage_tag: sandwich_fail300_N10_q30_teleop
+  balance_dataset_weights: true
+  seed: 42
+
+  train_data_paths:
+    - dataset_path: /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_lerobot_v21
+      type: rollout
+      weight: 1.0
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 512
+  seed: 0
+
+  model:
+    precision: null
+    model_path: /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all_pytorch/49999
+    model_type: cfg_model
+    add_value_head: false
+    action_dim: 14
+    num_action_chunks: 10
+    openpi:
+      config_name: pi05_aloha_robotwin
+      num_images_in_input: 3
+      action_env_dim: 14
+      cfgrl_guidance_scale: 1.0
+      unconditional_prob: 0.1
+      train_expert_only: false
+      guidance_type: positive
+      positive_only_conditional: true
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: 5000
+    total_training_steps: 30000
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: false
+    gradient_checkpointing: true
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

@@ -1,0 +1,112 @@
+# Usage:
+#   bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh aloha_sandwich_recap_value_model_sft
+
+defaults:
+  - model/recap_value_model@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results/aloha_sandwich_value"
+    project_name: rlinf
+    experiment_name: "aloha_sandwich_value"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 30000
+  max_steps: -1
+  val_check_interval: 500
+  save_interval: 3000
+
+data:
+  tag: sandwich_fail300
+
+  train_data_paths:
+    - dataset_path: /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_lerobot_v21
+      type: rollout
+      weight: 1.0
+      robot_type: aloha
+      model_type: pi05
+
+  eval_data_paths:
+    - dataset_path: /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_lerobot_v21
+      max_samples: 4096
+      robot_type: aloha
+      model_type: pi05
+
+  train_num_workers: 8
+  eval_num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: false
+  pin_memory: false
+  include_state: true
+  gamma: 1.0
+  action_horizon: 10
+  normalize_to_minus_one_zero: true
+  include_next_obs: false
+  action_dim: 14
+  robot_type: aloha
+  model_type: pi05
+  balance_weights: true
+  seed: 42
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 256
+  seed: 0
+
+  model:
+    precision: bf16
+    siglip_path: /inspire/hdd/project/robot-reasoning/public/shared/hf-models/google/siglip2-so400m-patch14-224
+    gemma3_path: /inspire/hdd/project/robot-reasoning/public/shared/hf-models/google/gemma-3-270m
+    tokenizer_path: /inspire/hdd/project/robot-reasoning/public/shared/hf-models/google/gemma-3-270m
+    freeze_vlm: false
+    action_dim: 14
+    action_horizon: 10
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 500
+    total_training_steps: 8000
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: false
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
