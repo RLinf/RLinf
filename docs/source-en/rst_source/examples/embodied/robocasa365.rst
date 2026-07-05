@@ -101,18 +101,34 @@ Dependency Installation
       --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
 
    for item in \
-      textures.zip:textures \
-      generative_textures.zip:generative_textures \
-      fixtures.zip:fixtures \
-      objaverse.zip:objects/objaverse \
-      aigen_objs.zip:objects/aigen_objs; do
-      mkdir -p "$ROBOCASA_ASSETS_PATH/${item#*:}"
-      unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/${item%%:*}" -d "$ROBOCASA_ASSETS_PATH/${item#*:}"
+   textures.zip:textures \
+   generative_textures.zip:generative_textures \
+   objaverse.zip:objects/objaverse \
+   aigen_objs.zip:objects/aigen_objs; do
+
+   zip_name="${item%%:*}"
+   target_rel="${item#*:}"
+   parent_rel="$(dirname "$target_rel")"
+
+   if [[ "$parent_rel" == "." ]]; then
+      unzip_dir="$ROBOCASA_ASSETS_PATH"
+   else
+      unzip_dir="$ROBOCASA_ASSETS_PATH/$parent_rel"
+   fi
+
+   mkdir -p "$unzip_dir"
+
+   unzip -q "$ROBOCASA_ASSETS_PATH/_downloads/$zip_name" \
+      -d "$unzip_dir"
    done
+
+   mkdir -p "$ROBOCASA_ASSETS_PATH/fixtures"
    find "$ROBOCASA_ASSETS_PATH/_downloads/fixtures_lightwheel" -name "*.zip" \
-      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
+   -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/fixtures" \;
+
+   mkdir -p "$ROBOCASA_ASSETS_PATH/objects/lightwheel"
    find "$ROBOCASA_ASSETS_PATH/_downloads/objects_lightwheel" -name "*.zip" \
-      -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
+   -exec unzip -q {} -d "$ROBOCASA_ASSETS_PATH/objects/lightwheel" \;
 
 3. Install Dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~
