@@ -265,6 +265,7 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
 
      gamma: 1.0              # discount factor
      failure_reward: -300.0   # terminal reward for failed trajectories
+     hitl_aware_returns: false  # split successful HITL episodes at first teleop frame
      tag: "fail300"           # output file tag
      num_workers: 128         # parallel processing threads
 
@@ -283,6 +284,9 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
    * - ``data.failure_reward``
      - ``-300.0``
      - Penalty for failed trajectory terminal steps. Larger magnitude increases separation between success and failure returns
+   * - ``data.hitl_aware_returns``
+     - ``false``
+     - Enables HITL-aware returns for rollout datasets with ``teleop_mask``. Successful episodes split at the first teleop frame; the autonomous prefix receives failed returns and the intervention suffix receives successful returns. Entries in ``data.train_data_paths`` can override this value.
    * - ``data.tag``
      - ``null``
      - Output file tag, generates ``meta/returns_{tag}.parquet``

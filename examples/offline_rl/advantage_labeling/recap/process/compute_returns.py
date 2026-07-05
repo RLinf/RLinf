@@ -48,7 +48,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 logger = logging.getLogger(__name__)
 
 # Columns needed for computation (tiny — no images)
-_READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
+_READ_COLUMNS = [
+    "episode_index",
+    "frame_index",
+    "is_success",
+    "teleop_mask",
+    "task_index",
+    "task",
+]
 
 
 def compute_returns_for_episode(
@@ -86,6 +93,73 @@ def compute_returns_for_episode(
     return returns, rewards
 
 
+def compute_hitl_aware_returns_for_episode(
+    episode_length: int,
+    is_success: bool,
+    teleop_mask: np.ndarray,
+    gamma: float,
+    failure_reward: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute returns that mark pre-intervention prefixes as failed.
+
+    Successful HITL episodes are split at the first teleop frame. The
+    autonomous prefix receives failed-episode returns and the suffix receives
+    successful returns. Failed episodes remain failed even when they contain
+    teleop frames.
+    """
+    if not is_success:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=False,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    mask = np.asarray(teleop_mask).astype(bool)
+    if mask.ndim == 2 and mask.shape[1] == 1:
+        mask = mask[:, 0]
+    elif mask.ndim != 1:
+        raise ValueError(f"teleop_mask must be 1-D or shape (N, 1), got {mask.shape}")
+    if mask.shape[0] != episode_length:
+        raise ValueError(
+            f"teleop_mask length {mask.shape[0]} does not match episode length {episode_length}"
+        )
+    teleop_indices = np.flatnonzero(mask)
+    if len(teleop_indices) == 0:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=True,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    split = int(teleop_indices[0])
+    if split == 0:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=True,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    prefix_returns, prefix_rewards = compute_returns_for_episode(
+        episode_length=split,
+        is_success=False,
+        gamma=gamma,
+        failure_reward=failure_reward,
+    )
+    suffix_returns, suffix_rewards = compute_returns_for_episode(
+        episode_length=episode_length - split,
+        is_success=True,
+        gamma=gamma,
+        failure_reward=failure_reward,
+    )
+    return (
+        np.concatenate([prefix_returns, suffix_returns]).astype(np.float32),
+        np.concatenate([prefix_rewards, suffix_rewards]).astype(np.float32),
+    )
+
+
 def get_episode_boundaries(episode_indices: np.ndarray) -> list[tuple[int, int, int]]:
     """Extract episode boundaries from episode_index array.
 
@@ -114,10 +188,12 @@ def _process_single_parquet(
     gamma: float,
     failure_reward: float,
     tasks: dict[int, str],
+    hitl_aware_returns: bool = False,
 ) -> pa.Table | None:
     """Process a single parquet file: read only metadata columns, compute returns.
 
-    Only reads episode_index, frame_index, is_success, task_index — no images.
+    Only reads episode_index, frame_index, is_success, task_index, task, and
+    optional teleop_mask — no images.
 
     Returns:
         Arrow table with (episode_index, frame_index, return, reward, prompt)
@@ -155,6 +231,16 @@ def _process_single_parquet(
             "to correctly distinguish successful and failed episodes."
         )
 
+    teleop_col = None
+    if hitl_aware_returns and "teleop_mask" in col_names:
+        teleop_col = np.asarray(table.column("teleop_mask").to_pylist(), dtype=np.int64)
+    elif hitl_aware_returns:
+        logger.warning(
+            "data.hitl_aware_returns is enabled but teleop_mask is missing in %s; "
+            "falling back to standard returns for this file.",
+            pq_file,
+        )
+
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
 
@@ -166,12 +252,21 @@ def _process_single_parquet(
         else:
             is_success = bool(is_success_col[ep_end - 1])
 
-        ep_returns, ep_rewards = compute_returns_for_episode(
-            episode_length=ep_length,
-            is_success=is_success,
-            gamma=gamma,
-            failure_reward=failure_reward,
-        )
+        if hitl_aware_returns and teleop_col is not None:
+            ep_returns, ep_rewards = compute_hitl_aware_returns_for_episode(
+                episode_length=ep_length,
+                is_success=is_success,
+                teleop_mask=teleop_col[ep_start:ep_end],
+                gamma=gamma,
+                failure_reward=failure_reward,
+            )
+        else:
+            ep_returns, ep_rewards = compute_returns_for_episode(
+                episode_length=ep_length,
+                is_success=is_success,
+                gamma=gamma,
+                failure_reward=failure_reward,
+            )
         returns_arr[ep_start:ep_end] = ep_returns
         rewards_arr[ep_start:ep_end] = ep_rewards
 
@@ -203,6 +298,7 @@ def process_dataset(
     failure_reward: float,
     num_workers: int = 8,
     tag: str | None = None,
+    hitl_aware_returns: bool = False,
 ) -> dict:
     """Process a LeRobot dataset and compute return/reward/prompt.
 
@@ -218,13 +314,16 @@ def process_dataset(
         failure_reward: Penalty for failed episodes
         num_workers: Number of parallel workers for parquet processing
         tag: Optional tag for the sidecar filename
+        hitl_aware_returns: Whether to split successful HITL episodes at the
+            first teleop frame
 
     Returns:
         Statistics dict with return/reward stats
     """
     logger.info(f"Processing dataset: {dataset_path}")
     logger.info(
-        f"  Type: {dataset_type}, Gamma: {gamma}, Failure reward: {failure_reward}"
+        f"  Type: {dataset_type}, Gamma: {gamma}, "
+        f"Failure reward: {failure_reward}, HITL-aware returns: {hitl_aware_returns}"
     )
 
     if output_path is None:
@@ -260,7 +359,12 @@ def process_dataset(
     if effective_workers <= 1:
         for pq_file in tqdm(parquet_files, desc="Processing parquet files"):
             tbl = _process_single_parquet(
-                pq_file, dataset_type, gamma, failure_reward, tasks
+                pq_file,
+                dataset_type,
+                gamma,
+                failure_reward,
+                tasks,
+                hitl_aware_returns,
             )
             if tbl is not None:
                 result_tables.append(tbl)
@@ -276,6 +380,7 @@ def process_dataset(
                     gamma,
                     failure_reward,
                     tasks,
+                    hitl_aware_returns,
                 )
                 futures[fut] = pq_file
 
@@ -401,6 +506,7 @@ def compute_returns(cfg: DictConfig) -> None:
         )
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
+    hitl_aware_returns = cfg.data.get("hitl_aware_returns", False)
 
     datasets_list = cfg.data.get("train_data_paths", None)
 
@@ -429,6 +535,9 @@ def compute_returns(cfg: DictConfig) -> None:
                     "failure_reward": entry.get(
                         "failure_reward", default_failure_reward
                     ),
+                    "hitl_aware_returns": entry.get(
+                        "hitl_aware_returns", hitl_aware_returns
+                    ),
                 }
             )
     else:
@@ -452,6 +561,7 @@ def compute_returns(cfg: DictConfig) -> None:
                 "dataset_type": default_type,
                 "gamma": default_gamma,
                 "failure_reward": default_failure_reward,
+                "hitl_aware_returns": hitl_aware_returns,
             }
         )
 
@@ -479,6 +589,7 @@ def compute_returns(cfg: DictConfig) -> None:
             failure_reward=ds_config["failure_reward"],
             num_workers=num_workers,
             tag=tag,
+            hitl_aware_returns=ds_config["hitl_aware_returns"],
         )
         all_stats.append(
             {

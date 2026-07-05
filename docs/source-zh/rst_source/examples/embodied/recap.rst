@@ -257,6 +257,7 @@ Step 1：计算回报（Compute Returns）
 
      gamma: 1.0              # 折扣因子
      failure_reward: -300.0   # 失败轨迹终止奖励
+     hitl_aware_returns: false  # 在首个 teleop 帧切分成功的 HITL episode
      tag: "fail300"           # 输出文件标签
      num_workers: 128         # 并行处理线程数
 
@@ -275,6 +276,9 @@ Step 1：计算回报（Compute Returns）
    * - ``data.failure_reward``
      - ``-300.0``
      - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
+   * - ``data.hitl_aware_returns``
+     - ``false``
+     - 为带有 ``teleop_mask`` 的 rollout 数据集启用 HITL-aware returns。成功 episode 会在首个 teleop 帧切分；自主执行前缀使用 failed returns，人工介入后缀使用 successful returns。``data.train_data_paths`` 中的每个条目可以覆盖该值。
    * - ``data.tag``
      - ``null``
      - 输出文件标签，生成 ``meta/returns_{tag}.parquet``
