@@ -206,22 +206,30 @@ def _read_encoded_camera_stream(
     camera: str,
 ) -> np.ndarray:
     """Decode a one-dimensional stream of encoded camera frames."""
-    frames = [
-        _decode_image_frame(encoded, episode_name, camera, frame_idx)
-        for frame_idx, encoded in enumerate(camera_stream)
-    ]
-    if not frames:
+    num_frames = int(camera_stream.shape[0])
+    if num_frames == 0:
         raise ValueError(f"{episode_name}: camera {camera} has no frames")
 
-    reference_shape = frames[0].shape
-    for frame_idx, frame in enumerate(frames[1:], start=1):
+    first_frame = _decode_image_frame(camera_stream[0], episode_name, camera, 0)
+    reference_shape = first_frame.shape
+    frames = np.empty((num_frames, *reference_shape), dtype=first_frame.dtype)
+    frames[0] = first_frame
+
+    for frame_idx in range(1, num_frames):
+        frame = _decode_image_frame(
+            camera_stream[frame_idx],
+            episode_name,
+            camera,
+            frame_idx,
+        )
         if frame.shape != reference_shape:
             raise ValueError(
                 f"{episode_name}: decoded camera {camera} frame {frame_idx} "
                 f"shape {frame.shape} does not match {reference_shape}"
             )
+        frames[frame_idx] = frame
 
-    return np.stack(frames, axis=0)
+    return frames
 
 
 def _read_images(ep: h5py.File, episode_name: str) -> dict[str, np.ndarray]:
@@ -236,7 +244,7 @@ def _read_images(ep: h5py.File, episode_name: str) -> dict[str, np.ndarray]:
         if camera not in images_group:
             raise ValueError(f"{episode_name}: missing camera {camera}")
         camera_stream = images_group[camera]
-        if camera_stream.ndim == 1 and camera_stream.dtype.kind in {"O", "S"}:
+        if camera_stream.ndim == 1 and camera_stream.dtype.kind in {"O", "S", "V"}:
             camera_images = _read_encoded_camera_stream(
                 camera_stream,
                 episode_name,

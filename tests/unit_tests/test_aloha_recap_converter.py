@@ -69,6 +69,15 @@ def _jpeg_bytes(color: tuple[int, int, int]) -> bytes:
     return buffer.getvalue()
 
 
+def _fixed_width_void_frames(colors: list[tuple[int, int, int]]) -> np.ndarray:
+    encoded_frames = [_jpeg_bytes(color) for color in colors]
+    max_size = max(len(frame) for frame in encoded_frames)
+    return np.asarray(
+        [np.void(frame) for frame in encoded_frames],
+        dtype=f"V{max_size}",
+    )
+
+
 def test_teleop_mask_maps_half_open_segments() -> None:
     segments = np.asarray([[1, 3], [4, 5]], dtype=np.int64)
     mask = _teleop_mask(segments, num_frames=6, episode_name="episode_0.hdf5")
@@ -212,6 +221,37 @@ def test_read_images_decodes_fixed_width_jpeg_camera_streams(
     assert set(images) == {"cam_high", "cam_left_wrist", "cam_right_wrist"}
     assert images["cam_high"].shape == (2, 4, 5, 3)
     assert images["cam_high"].dtype == np.uint8
+    np.testing.assert_allclose(
+        images["cam_high"].mean(axis=(1, 2)),
+        np.asarray([[20, 40, 60], [80, 100, 120]], dtype=np.float64),
+        atol=3.0,
+    )
+
+
+def test_read_images_decodes_opaque_jpeg_camera_streams(tmp_path: Path) -> None:
+    episode_path = tmp_path / "opaque_camera_images.hdf5"
+    _write_episode(episode_path)
+    encoded_frames = _fixed_width_void_frames(
+        [(30, 50, 70), (90, 110, 130)],
+    )
+
+    with h5py.File(episode_path, "a") as ep:
+        images = ep["observations"]["images"]
+        for camera in ("cam_high", "cam_left_wrist", "cam_right_wrist"):
+            del images[camera]
+            images.create_dataset(camera, data=encoded_frames)
+
+    with h5py.File(episode_path, "r") as ep:
+        images = _read_images(ep, "opaque_camera_images.hdf5")
+
+    assert set(images) == {"cam_high", "cam_left_wrist", "cam_right_wrist"}
+    assert images["cam_high"].shape == (2, 4, 5, 3)
+    assert images["cam_high"].dtype == np.uint8
+    np.testing.assert_allclose(
+        images["cam_high"].mean(axis=(1, 2)),
+        np.asarray([[30, 50, 70], [90, 110, 130]], dtype=np.float64),
+        atol=3.0,
+    )
 
 
 def test_load_episode_payload_reads_sandwich_hdf5(tmp_path: Path) -> None:
