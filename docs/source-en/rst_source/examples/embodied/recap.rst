@@ -281,8 +281,9 @@ training:
 .. code:: bash
 
    python /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/examples/convert_jax_model_to_pytorch.py \
-      --input-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all/pi05_sandwich_new_all_20260628_193430/49999 \
-      --output-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all_pytorch/49999
+      --checkpoint-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all/pi05_sandwich_new_all_20260628_193430/49999 \
+      --config-name pi05_sandwich_new_all \
+      --output-path /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all_pytorch/49999
 
 Run the four RECAP stages:
 

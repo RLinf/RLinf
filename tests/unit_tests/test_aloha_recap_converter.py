@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import json
+from io import BytesIO
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+from PIL import Image
 
 from examples.offline_rl.data.convert_aloha_hdf5_to_lerobot_v21 import (
     _aloha_features,
@@ -58,6 +60,13 @@ def _write_episode(
                 name,
                 data=np.zeros((4, 8, 8, 3), dtype=np.uint8),
             )
+
+
+def _jpeg_bytes(color: tuple[int, int, int]) -> bytes:
+    image = Image.new("RGB", (5, 4), color=color)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 def test_teleop_mask_maps_half_open_segments() -> None:
@@ -179,6 +188,30 @@ def test_read_images_rejects_invalid_camera_shape(tmp_path: Path) -> None:
     with h5py.File(episode_path, "r") as ep:
         with pytest.raises(ValueError, match=r"shape \(T, H, W, 3\)"):
             _read_images(ep, "bad_camera_shape.hdf5")
+
+
+def test_read_images_decodes_fixed_width_jpeg_camera_streams(
+    tmp_path: Path,
+) -> None:
+    episode_path = tmp_path / "encoded_camera_images.hdf5"
+    _write_episode(episode_path)
+    encoded_frames = np.asarray(
+        [_jpeg_bytes((20, 40, 60)), _jpeg_bytes((80, 100, 120))],
+        dtype="S",
+    )
+
+    with h5py.File(episode_path, "a") as ep:
+        images = ep["observations"]["images"]
+        for camera in ("cam_high", "cam_left_wrist", "cam_right_wrist"):
+            del images[camera]
+            images.create_dataset(camera, data=encoded_frames)
+
+    with h5py.File(episode_path, "r") as ep:
+        images = _read_images(ep, "encoded_camera_images.hdf5")
+
+    assert set(images) == {"cam_high", "cam_left_wrist", "cam_right_wrist"}
+    assert images["cam_high"].shape == (2, 4, 5, 3)
+    assert images["cam_high"].dtype == np.uint8
 
 
 def test_load_episode_payload_reads_sandwich_hdf5(tmp_path: Path) -> None:

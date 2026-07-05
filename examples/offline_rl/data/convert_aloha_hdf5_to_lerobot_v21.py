@@ -18,11 +18,13 @@ import argparse
 import json
 import shutil
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 try:
@@ -166,6 +168,62 @@ def _read_teleop_segments(ep: h5py.File) -> np.ndarray:
     return segments
 
 
+def _decode_image_frame(
+    encoded: Any,
+    episode_name: str,
+    camera: str,
+    frame_idx: int,
+) -> np.ndarray:
+    """Decode one encoded RGB camera frame into a uint8 image array."""
+    if isinstance(encoded, np.ndarray):
+        if encoded.shape == ():
+            encoded = encoded.item()
+        else:
+            encoded = encoded.tobytes()
+    elif isinstance(encoded, np.void):
+        encoded = encoded.tobytes()
+
+    encoded_bytes = bytes(encoded).rstrip(b"\x00")
+    try:
+        with Image.open(BytesIO(encoded_bytes)) as image:
+            frame = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    except Exception as exc:
+        raise ValueError(
+            f"{episode_name}: failed to decode camera {camera} frame {frame_idx}"
+        ) from exc
+
+    if frame.ndim != 3 or frame.shape[-1] != 3:
+        raise ValueError(
+            f"{episode_name}: decoded camera {camera} frame {frame_idx} must have "
+            f"shape (H, W, 3), got {frame.shape}"
+        )
+    return frame
+
+
+def _read_encoded_camera_stream(
+    camera_stream: h5py.Dataset,
+    episode_name: str,
+    camera: str,
+) -> np.ndarray:
+    """Decode a one-dimensional stream of encoded camera frames."""
+    frames = [
+        _decode_image_frame(encoded, episode_name, camera, frame_idx)
+        for frame_idx, encoded in enumerate(camera_stream)
+    ]
+    if not frames:
+        raise ValueError(f"{episode_name}: camera {camera} has no frames")
+
+    reference_shape = frames[0].shape
+    for frame_idx, frame in enumerate(frames[1:], start=1):
+        if frame.shape != reference_shape:
+            raise ValueError(
+                f"{episode_name}: decoded camera {camera} frame {frame_idx} "
+                f"shape {frame.shape} does not match {reference_shape}"
+            )
+
+    return np.stack(frames, axis=0)
+
+
 def _read_images(ep: h5py.File, episode_name: str) -> dict[str, np.ndarray]:
     """Read all required ALOHA camera streams from an episode."""
     if "observations" not in ep or "images" not in ep["observations"]:
@@ -177,7 +235,15 @@ def _read_images(ep: h5py.File, episode_name: str) -> dict[str, np.ndarray]:
     for camera in ALOHA_CAMERAS:
         if camera not in images_group:
             raise ValueError(f"{episode_name}: missing camera {camera}")
-        camera_images = np.asarray(images_group[camera])
+        camera_stream = images_group[camera]
+        if camera_stream.ndim == 1 and camera_stream.dtype.kind in {"O", "S"}:
+            camera_images = _read_encoded_camera_stream(
+                camera_stream,
+                episode_name,
+                camera,
+            )
+        else:
+            camera_images = np.asarray(camera_stream)
         if camera_images.ndim != 4 or camera_images.shape[-1] != 3:
             raise ValueError(
                 f"{episode_name}: camera {camera} must have shape (T, H, W, 3), "
