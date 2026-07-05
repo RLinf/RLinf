@@ -330,7 +330,7 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
 
      gamma: 1.0              # discount factor
      failure_reward: -300.0   # terminal reward for failed trajectories
-     hitl_aware_returns: false  # split successful HITL episodes at first teleop frame
+     hitl_aware_returns: false  # set true to split successful HITL episodes at first teleop frame
      tag: "fail300"           # output file tag
      num_workers: 128         # parallel processing threads
 
@@ -367,7 +367,7 @@ The configuration file is located at ``examples/offline_rl/config/recap_compute_
 
 **Output Files**
 
-- ``meta/returns_{tag}.parquet``: Each row contains ``episode_index``, ``frame_index``, ``return``, ``reward``, ``prompt``
+- ``meta/returns_{tag}.parquet``: Each row contains ``episode_index``, ``frame_index``, ``return``, ``reward``, ``done``, ``prompt``
 - ``meta/stats.json``: Updated with return statistics (mean, std, min, max)
 
 **Verification**

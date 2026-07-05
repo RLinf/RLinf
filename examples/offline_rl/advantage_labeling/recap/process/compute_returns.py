@@ -15,7 +15,7 @@
 """
 Compute returns for LeRobot datasets.
 
-Writes `return`, `reward`, and `prompt` as a sidecar parquet at
+Writes `return`, `reward`, `done`, and `prompt` as a sidecar parquet at
 ``meta/returns_{tag}.parquet``. Updates meta/stats.json and meta/info.json.
 Does not modify original per-episode parquet files.
 
@@ -56,6 +56,63 @@ _READ_COLUMNS = [
     "task_index",
     "task",
 ]
+
+
+def _normalize_scalar_bool(value) -> bool:
+    """Normalize scalar/list-wrapped boolean values from parquet metadata."""
+    if isinstance(value, np.ndarray):
+        if value.shape == ():
+            return bool(value.item())
+        if value.size != 1:
+            raise ValueError(
+                f"Expected scalar boolean value, got array shape {value.shape}"
+            )
+        return _normalize_scalar_bool(value.reshape(-1)[0])
+    if isinstance(value, (list, tuple)):
+        if len(value) != 1:
+            raise ValueError(
+                f"Expected singleton boolean list, got length {len(value)}"
+            )
+        return _normalize_scalar_bool(value[0])
+    return bool(value)
+
+
+def _normalize_teleop_mask(teleop_mask: np.ndarray, episode_length: int) -> np.ndarray:
+    """Normalize LeRobot teleop masks to a 1-D boolean array."""
+    mask = np.asarray(teleop_mask).astype(bool)
+    if mask.ndim == 2 and mask.shape[1] == 1:
+        mask = mask[:, 0]
+    elif mask.ndim != 1:
+        raise ValueError(f"teleop_mask must be 1-D or shape (N, 1), got {mask.shape}")
+    if mask.shape[0] != episode_length:
+        raise ValueError(
+            f"teleop_mask length {mask.shape[0]} does not match episode length {episode_length}"
+        )
+    return mask
+
+
+def _compute_done_flags_for_episode(
+    episode_length: int,
+    is_success: bool,
+    teleop_mask: np.ndarray | None = None,
+    hitl_aware_returns: bool = False,
+) -> np.ndarray:
+    """Compute terminal flags aligned with the returns sidecar rows."""
+    done = np.zeros(episode_length, dtype=bool)
+    done[-1] = True
+
+    if not hitl_aware_returns or not is_success or teleop_mask is None:
+        return done
+
+    mask = _normalize_teleop_mask(teleop_mask, episode_length)
+    teleop_indices = np.flatnonzero(mask)
+    if len(teleop_indices) == 0:
+        return done
+
+    split = int(teleop_indices[0])
+    if split > 0:
+        done[split - 1] = True
+    return done
 
 
 def compute_returns_for_episode(
@@ -115,15 +172,7 @@ def compute_hitl_aware_returns_for_episode(
             failure_reward=failure_reward,
         )
 
-    mask = np.asarray(teleop_mask).astype(bool)
-    if mask.ndim == 2 and mask.shape[1] == 1:
-        mask = mask[:, 0]
-    elif mask.ndim != 1:
-        raise ValueError(f"teleop_mask must be 1-D or shape (N, 1), got {mask.shape}")
-    if mask.shape[0] != episode_length:
-        raise ValueError(
-            f"teleop_mask length {mask.shape[0]} does not match episode length {episode_length}"
-        )
+    mask = _normalize_teleop_mask(teleop_mask, episode_length)
     teleop_indices = np.flatnonzero(mask)
     if len(teleop_indices) == 0:
         return compute_returns_for_episode(
@@ -196,7 +245,7 @@ def _process_single_parquet(
     optional teleop_mask — no images.
 
     Returns:
-        Arrow table with (episode_index, frame_index, return, reward, prompt)
+        Arrow table with (episode_index, frame_index, return, reward, done, prompt)
         columns, or None if the file is empty.
     """
     file_size = Path(pq_file).stat().st_size
@@ -243,6 +292,7 @@ def _process_single_parquet(
 
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
+    done_arr = np.zeros(n, dtype=bool)
 
     for _, ep_start, ep_end in episodes:
         ep_length = ep_end - ep_start
@@ -250,7 +300,7 @@ def _process_single_parquet(
         if dataset_type == "sft":
             is_success = True
         else:
-            is_success = bool(is_success_col[ep_end - 1])
+            is_success = _normalize_scalar_bool(is_success_col[ep_end - 1])
 
         if hitl_aware_returns and teleop_col is not None:
             ep_returns, ep_rewards = compute_hitl_aware_returns_for_episode(
@@ -269,6 +319,12 @@ def _process_single_parquet(
             )
         returns_arr[ep_start:ep_end] = ep_returns
         rewards_arr[ep_start:ep_end] = ep_rewards
+        done_arr[ep_start:ep_end] = _compute_done_flags_for_episode(
+            episode_length=ep_length,
+            is_success=is_success,
+            teleop_mask=teleop_col[ep_start:ep_end] if teleop_col is not None else None,
+            hitl_aware_returns=hitl_aware_returns and teleop_col is not None,
+        )
 
     if "task" in col_names:
         prompts_list = [str(t) for t in table.column("task").to_pylist()]
@@ -284,6 +340,7 @@ def _process_single_parquet(
             "frame_index": pa.array(frame_indices),
             "return": pa.array(returns_arr),
             "reward": pa.array(rewards_arr),
+            "done": pa.array(done_arr),
             "prompt": pa.array(prompts_list, type=pa.string()),
         }
     )
@@ -472,6 +529,11 @@ def process_dataset(
         }
         info["features"]["reward"] = {
             "dtype": "float32",
+            "shape": [1],
+            "names": None,
+        }
+        info["features"]["done"] = {
+            "dtype": "bool",
             "shape": [1],
             "names": None,
         }

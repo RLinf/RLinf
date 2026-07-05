@@ -14,6 +14,8 @@
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 
@@ -120,3 +122,72 @@ def test_save_advantages_teleop_override_preserves_continuous_values(
     assert saved["advantage_continuous"].tolist() == [-0.5, 0.2, -0.4]
     assert saved["advantage"].tolist() == [False, True, True]
     assert saved["teleop_positive"].tolist() == [False, False, True]
+
+
+def test_load_returns_sidecar_reads_optional_done(tmp_path) -> None:
+    from rlinf.data.datasets.recap.utils import load_returns_sidecar
+
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir()
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": pa.array([0, 0, 0], type=pa.int64()),
+                "frame_index": pa.array([0, 1, 2], type=pa.int64()),
+                "return": pa.array([-2.0, -1.0, 0.0], type=pa.float32()),
+                "reward": pa.array([-1.0, -1.0, 0.0], type=pa.float32()),
+                "done": pa.array([False, False, True]),
+            }
+        ),
+        meta_dir / "returns_test.parquet",
+    )
+
+    sidecar = load_returns_sidecar(tmp_path, returns_tag="test")
+
+    assert sidecar is not None
+    np.testing.assert_array_equal(
+        sidecar[0]["done"],
+        np.asarray([False, False, True], dtype=bool),
+    )
+
+
+def test_load_returns_sidecar_accepts_legacy_sidecar_without_done(tmp_path) -> None:
+    from rlinf.data.datasets.recap.utils import load_returns_sidecar
+
+    meta_dir = tmp_path / "meta"
+    meta_dir.mkdir()
+    pq.write_table(
+        pa.table(
+            {
+                "episode_index": pa.array([0, 0], type=pa.int64()),
+                "frame_index": pa.array([0, 1], type=pa.int64()),
+                "return": pa.array([-1.0, 0.0], type=pa.float32()),
+                "reward": pa.array([-1.0, 0.0], type=pa.float32()),
+            }
+        ),
+        meta_dir / "returns.parquet",
+    )
+
+    sidecar = load_returns_sidecar(tmp_path)
+
+    assert sidecar is not None
+    assert "done" not in sidecar[0]
+
+
+def test_resolve_lookahead_clamps_at_done_boundary() -> None:
+    from examples.offline_rl.advantage_labeling.recap.process.compute_advantages import (
+        _resolve_lookahead,
+    )
+
+    lookahead = _resolve_lookahead(
+        local_idx=1,
+        global_idx=1,
+        shard_start=0,
+        episode_end=6,
+        action_horizon=3,
+        done_flags=np.asarray([False, False, True, False, False, True]),
+    )
+
+    assert lookahead.num_valid == 2
+    assert lookahead.is_next_pad is True
+    assert lookahead.next_local_idx is None

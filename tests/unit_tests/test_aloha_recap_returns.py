@@ -155,6 +155,49 @@ def test_process_single_parquet_accepts_lerobot_column_teleop_mask(tmp_path) -> 
         result.column("return").to_numpy(),
         np.asarray([-302.0, -301.0, -300.0, -2.0, -1.0, 0.0], dtype=np.float32),
     )
+    assert result.column("done").to_pylist() == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        True,
+    ]
+
+
+def test_process_single_parquet_normalizes_singleton_list_is_success(
+    tmp_path,
+) -> None:
+    pq_file = tmp_path / "episode.parquet"
+    table = pa.table(
+        {
+            "episode_index": pa.array([0, 0, 0], type=pa.int64()),
+            "frame_index": pa.array([0, 1, 2], type=pa.int64()),
+            "is_success": pa.array([[False], [False], [False]]),
+            "task_index": pa.array([0, 0, 0], type=pa.int64()),
+            "task": pa.array(["pick"] * 3),
+        }
+    )
+    pq.write_table(table, pq_file)
+
+    result = _process_single_parquet(
+        str(pq_file),
+        dataset_type="rollout",
+        gamma=1.0,
+        failure_reward=-300.0,
+        tasks={},
+        hitl_aware_returns=False,
+    )
+
+    np.testing.assert_array_equal(
+        result.column("reward").to_numpy(),
+        np.asarray([-1.0, -1.0, -300.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        result.column("return").to_numpy(),
+        np.asarray([-302.0, -301.0, -300.0], dtype=np.float32),
+    )
+    assert result.column("done").to_pylist() == [False, False, True]
 
 
 def test_process_single_parquet_missing_teleop_mask_warns_and_falls_back(

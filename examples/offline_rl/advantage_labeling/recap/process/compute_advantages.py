@@ -30,6 +30,7 @@ import gc
 import json
 import logging
 import os
+from dataclasses import dataclass
 
 # Disable tokenizers parallelism to avoid warning when using multiprocessing
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -374,6 +375,49 @@ def build_obs(
     return obs
 
 
+@dataclass(frozen=True)
+class _LookaheadResolution:
+    """Resolved reward window and optional next-value index."""
+
+    next_global_idx: int
+    next_local_idx: int | None
+    num_valid: int
+    is_next_pad: bool
+
+
+def _resolve_lookahead(
+    local_idx: int,
+    global_idx: int,
+    shard_start: int,
+    episode_end: int,
+    action_horizon: int,
+    done_flags: np.ndarray | None = None,
+) -> _LookaheadResolution:
+    """Resolve the reward window without crossing episode or sidecar boundaries."""
+    episode_end = max(int(episode_end), global_idx + 1)
+    next_global_idx = global_idx + action_horizon
+    is_next_pad = next_global_idx >= episode_end
+    num_valid = min(action_horizon, episode_end - global_idx)
+
+    if done_flags is not None and num_valid > 0:
+        done_window = np.asarray(
+            done_flags[local_idx : local_idx + num_valid], dtype=bool
+        )
+        done_offsets = np.flatnonzero(done_window)
+        if done_offsets.size > 0:
+            num_valid = int(done_offsets[0]) + 1
+            next_global_idx = global_idx + num_valid
+            is_next_pad = True
+
+    next_local_idx = None if is_next_pad else next_global_idx - shard_start
+    return _LookaheadResolution(
+        next_global_idx=next_global_idx,
+        next_local_idx=next_local_idx,
+        num_valid=num_valid,
+        is_next_pad=is_next_pad,
+    )
+
+
 class ValueInferenceDataset(torch.utils.data.Dataset):
     """Wrapper dataset for DataLoader-based advantage computation.
 
@@ -418,10 +462,13 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
         if self.prepare_observation_cpu is not None:
             obs = self.prepare_observation_cpu(obs)
 
+        done = False
         if self.returns_sidecar is not None and ep_idx in self.returns_sidecar:
             ep_data = self.returns_sidecar[ep_idx]
             true_return = float(ep_data["return"][frame_idx])
             reward = float(ep_data["reward"][frame_idx])
+            if "done" in ep_data:
+                done = bool(ep_data["done"][frame_idx])
         else:
             if "return" not in sample:
                 raise ValueError(
@@ -437,6 +484,8 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
                     "Run compute_returns.py first."
                 )
             reward = float(to_scalar(sample["reward"]))
+            if "done" in sample:
+                done = bool(to_scalar(sample["done"]))
 
         teleop_mask = 0
         if "teleop_mask" in sample:
@@ -449,6 +498,7 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
             "frame_index": frame_idx,
             "true_return": true_return,
             "reward": reward,
+            "done": done,
             "teleop_mask": teleop_mask,
         }
 
@@ -473,6 +523,7 @@ def advantage_collate_fn(
             "frame_index": item["frame_index"],
             "true_return": item["true_return"],
             "reward": item["reward"],
+            "done": item.get("done", False),
             "teleop_mask": item.get("teleop_mask", 0),
         }
         for item in batch
@@ -680,6 +731,7 @@ def compute_advantages_for_dataset(
     meta_frame_idx = np.full(extended_size, -1, dtype=np.int64)
     meta_return = np.full(extended_size, np.nan, dtype=np.float64)
     meta_reward = np.full(extended_size, np.nan, dtype=np.float64)
+    meta_done = np.zeros(extended_size, dtype=bool)
     meta_teleop_mask = np.zeros(extended_size, dtype=np.int64)
     filled_mask = np.zeros(extended_size, dtype=bool)
 
@@ -709,6 +761,7 @@ def compute_advantages_for_dataset(
             meta_frame_idx[local_idx] = int(meta_info["frame_index"])
             meta_return[local_idx] = float(meta_info["true_return"])
             meta_reward[local_idx] = float(meta_info["reward"])
+            meta_done[local_idx] = bool(meta_info.get("done", False))
             meta_teleop_mask[local_idx] = int(meta_info.get("teleop_mask", 0))
             filled_mask[local_idx] = True
 
@@ -798,17 +851,23 @@ def compute_advantages_for_dataset(
         true_return = float(meta_return[i])
 
         ep_end = int(ep_ends.get(ep_idx, gidx + 1))
-        ep_end = max(ep_end, gidx + 1)
-        next_gidx = gidx + action_horizon
-        is_next_pad = next_gidx >= ep_end
-        num_valid = min(action_horizon, ep_end - gidx)
+        lookahead = _resolve_lookahead(
+            local_idx=i,
+            global_idx=gidx,
+            shard_start=shard_start,
+            episode_end=ep_end,
+            action_horizon=action_horizon,
+            done_flags=meta_done,
+        )
+        next_gidx = lookahead.next_global_idx
+        next_local_idx = lookahead.next_local_idx
+        is_next_pad = lookahead.is_next_pad
+        num_valid = lookahead.num_valid
 
         v_curr = float(v_values[i])
         if is_next_pad:
             v_next = 0.0
-            next_local_idx = None
         else:
-            next_local_idx = next_gidx - shard_start
             if next_local_idx < 0 or next_local_idx >= extended_size:
                 raise RuntimeError(
                     "next_local_idx out of range: "

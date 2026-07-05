@@ -317,7 +317,7 @@ Step 1：计算回报（Compute Returns）
 
      gamma: 1.0              # 折扣因子
      failure_reward: -300.0   # 失败轨迹终止奖励
-     hitl_aware_returns: false  # 在首个 teleop 帧切分成功的 HITL episode
+     hitl_aware_returns: false  # 设为 true 后在首个 teleop 帧切分成功的 HITL episode
      tag: "fail300"           # 输出文件标签
      num_workers: 128         # 并行处理线程数
 
@@ -354,7 +354,7 @@ Step 1：计算回报（Compute Returns）
 
 **输出文件**
 
-- ``meta/returns_{tag}.parquet``：每行包含 ``episode_index``、``frame_index``、``return``、``reward``、``prompt``
+- ``meta/returns_{tag}.parquet``：每行包含 ``episode_index``、``frame_index``、``return``、``reward``、``done``、``prompt``
 - ``meta/stats.json``：更新回报统计信息（均值、标准差、最小值、最大值）
 
 **验证方法**

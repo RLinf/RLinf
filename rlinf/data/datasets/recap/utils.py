@@ -99,16 +99,22 @@ def load_returns_sidecar(
     frame_col = table.column("frame_index").to_numpy()
     ret_col = table.column("return").to_numpy()
     rew_col = table.column("reward").to_numpy()
+    done_col = None
+    if "done" in table.column_names:
+        done_col = np.asarray(table.column("done").to_pylist(), dtype=bool)
 
     sidecar: dict[int, dict[str, np.ndarray]] = {}
     for ep in np.unique(ep_col):
         mask = ep_col == ep
         frames = frame_col[mask]
         order = np.argsort(frames)
-        sidecar[int(ep)] = {
+        ep_data = {
             "return": ret_col[mask][order].astype(np.float32),
             "reward": rew_col[mask][order].astype(np.float32),
         }
+        if done_col is not None:
+            ep_data["done"] = done_col[mask][order].astype(bool, copy=False)
+        sidecar[int(ep)] = ep_data
 
     logger.info(f"Loaded returns sidecar: {sidecar_path} ({len(sidecar)} episodes)")
     return sidecar
