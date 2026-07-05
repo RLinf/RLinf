@@ -1154,13 +1154,6 @@ install_openvla_oft_model() {
             install_calvin_env
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             ;;
-        robocasa365)
-            create_and_sync_venv
-            install_common_embodied_deps
-            install_robocasa365_env
-            install_flash_attn
-            uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
-            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1375,10 +1368,6 @@ install_gr00t_model() {
             install_flash_attn
             uv pip install numpydantic==1.7.0 pydantic==2.11.7 numpy==1.26.0
             ;;
-        robocasa365)
-            install_robocasa365_env
-            install_flash_attn
-            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for Gr00t model." >&2
             exit 1
@@ -1399,10 +1388,6 @@ install_gr00t_n1d6_model() {
     case "$ENV_NAME" in
         maniskill_libero)
             install_maniskill_libero_env
-            install_flash_attn
-            ;;
-        robocasa365)
-            install_robocasa365_env
             install_flash_attn
             ;;
         *)
@@ -1426,10 +1411,6 @@ install_gr00t_n1d7_model() {
     case "$ENV_NAME" in
         maniskill_libero)
             install_maniskill_libero_env
-            install_flash_attn
-            ;;
-        robocasa365)
-            install_robocasa365_env
             install_flash_attn
             ;;
         *)
@@ -1863,7 +1844,7 @@ install_robocasa_env() {
 
 install_robocasa365_env() {
     local robocasa_dir
-    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b v1.0)
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git)
 
     uv pip install -e "$robocasa_dir"
     uv pip install --no-deps "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"

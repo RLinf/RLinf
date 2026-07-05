@@ -253,101 +253,29 @@ def convert_to_isaaclab_stack_cube_action(
     return action_array
 
 
-def convert_robocasa365_obs_to_gr00t_format(env_obs):
-    """Convert RoboCasa365 observations to the GR00T model format.
-
-    RoboCasa365 provides a 16+-dim state vector (eef_pos + eef_quat +
-    gripper_qpos/qvel + base_to_eef + base_pose).  This converter extracts the
-    arm-only proprioception (eef_pos:3, eef_quat→euler:3, gripper_qpos:1) and
-    maps it to the same flat ``state.*`` keys expected by a libero-style GR00T
-    checkpoint, so the model can consume the data without architecture changes.
-
-    Notes:
-        - Quaternions are converted to intrinsic-XYZ Euler angles so they fit
-          the (roll, pitch, yaw) slots the checkpoint was trained with.
-        - Base-related state components (base_to_eef, base_pos, base_quat) are
-          intentionally dropped — the model only sees arm proprioception.
-        - Images: ``main_images`` → ``video.image``, ``wrist_images`` →
-          ``video.wrist_image``, same as the libero converter.
-    """
-    import logging
-
-    _logger = logging.getLogger(__name__)
-    groot_obs: dict[str, Any] = {}
-
-    # --- images ----------------------------------------------------------------
-    # [B, H, W, C] → [B, T=1, H, W, C]
-    groot_obs["video.image"] = env_obs["main_images"].unsqueeze(1).numpy()
-    if env_obs.get("wrist_images") is not None:
-        groot_obs["video.wrist_image"] = env_obs["wrist_images"].unsqueeze(1).numpy()
-
-    # --- state ----------------------------------------------------------------
-    states: torch.Tensor = env_obs["states"]  # [B, state_dim]
-    state_dim = states.shape[-1]
-
-    # The robocasa365 state layout (see env/robocasa365.yaml) is:
-    #   eef_pos (3) | eef_quat (4) | gripper_qpos (1) | gripper_qvel (1) |
-    #   base_to_eef_pos (3) | base_to_eef_quat (4) | base_pos (?) | base_quat (?)
-    #
-    # We take the first 8 dims (eef_pos + eef_quat + gripper_qpos) and convert
-    # the quaternion slice to Euler angles.
-    if state_dim < 8:
-        _logger.warning(
-            "RoboCasa365 state has only %d dims (expected ≥8); "
-            "zero-padding missing proprioception dims.",
-            state_dim,
-        )
-        padded = torch.zeros(states.shape[0], 8, dtype=states.dtype, device=states.device)
-        padded[:, :state_dim] = states[:, :state_dim]
-        states = padded
-
-    eef_pos = states[:, :3].cpu().numpy()          # [B, 3]
-    eef_quat = states[:, 3:7].cpu().numpy()        # [B, 4]  (w,x,y,z)
-    gripper = states[:, 7:8].cpu().numpy()          # [B, 1]
-
-    eef_euler = _batched_quat_to_euler_xyz(eef_quat)  # [B, 3]  (roll, pitch, yaw)
-
-    # unsqueeze time dim  [B, D] → [B, T=1, D]
-    groot_obs["state.x"] = eef_pos[:, np.newaxis, 0:1]
-    groot_obs["state.y"] = eef_pos[:, np.newaxis, 1:2]
-    groot_obs["state.z"] = eef_pos[:, np.newaxis, 2:3]
-    groot_obs["state.roll"] = eef_euler[:, np.newaxis, 0:1]
-    groot_obs["state.pitch"] = eef_euler[:, np.newaxis, 1:2]
-    groot_obs["state.yaw"] = eef_euler[:, np.newaxis, 2:3]
-    groot_obs["state.gripper"] = gripper[:, np.newaxis, :]
-
-    # --- task description -----------------------------------------------------
-    groot_obs["annotation.human.action.task_description"] = env_obs["task_descriptions"]
-
-    return groot_obs
-
 
 OBS_CONVERSION = {
     "maniskill": convert_maniskill_obs_to_gr00t_format,
     "libero": convert_libero_obs_to_gr00t_format,
     "isaaclab_stack_cube": convert_libero_obs_to_gr00t_format,
-    "robocasa365": convert_robocasa365_obs_to_gr00t_format,
 }
 
 ACTION_CONVERSION_N1D5 = {
     "libero": convert_to_libero_action_n1d5,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
-    "robocasa365": convert_to_libero_action_n1d5,
 }
 
 ACTION_CONVERSION_N1D6 = {
     "libero": convert_to_libero_action_n1d6,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
-    "robocasa365": convert_to_libero_action_n1d6,
 }
 
 ACTION_CONVERSION_N1D7 = {
     "libero": convert_to_libero_action_n1d7,
     "maniskill": convert_to_maniskill_action,
     "isaaclab_stack_cube": convert_to_isaaclab_stack_cube_action,
-    "robocasa365": convert_to_libero_action_n1d7,
 }
 
 

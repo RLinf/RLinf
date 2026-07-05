@@ -215,26 +215,10 @@ def prepare_actions_for_robocasa(
 
             return actions_env
 
-        chunk_actions = raw_chunk_actions[..., :env_action_dim].copy()
-
-        # When a model outputs fewer dimensions than the environment expects
-        # (e.g. OpenVLA-OFT / GR00T output 7-d while RoboCasa365 needs 12-d),
-        # zero-pad the missing dimensions.  This effectively disables base
-        # control for arm-only models while keeping the pipeline functional.
-        if chunk_actions.shape[-1] < env_action_dim:
-            pad_width = env_action_dim - chunk_actions.shape[-1]
-            padding = np.zeros(
-                chunk_actions.shape[:-1] + (pad_width,),
-                dtype=chunk_actions.dtype,
-            )
-            chunk_actions = np.concatenate([chunk_actions, padding], axis=-1)
-
-        if disable_base_control and env_action_dim >= 12:
-            chunk_actions[..., 7:10] = 0.0
-            chunk_actions[..., 10] = 0.0
-            if 0 <= base_mode_index < env_action_dim:
-                chunk_actions[..., base_mode_index] = -1.0
-        return chunk_actions
+        raise ValueError(
+            f"RoboCasa365 currently only supports OpenPI model type. "
+            f"Got model_type={model_type} with action_space in env_cfg."
+        )
 
     # raw_chunk_actions shape: [num_chunks, 32]
     # Extract first action_dim (<=12) dimensions as valid action chunks
