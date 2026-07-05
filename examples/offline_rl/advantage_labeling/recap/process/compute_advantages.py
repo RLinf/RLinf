@@ -299,6 +299,25 @@ def load_lerobot_dataset(
     return dataset, tasks, meta, returns_sidecar
 
 
+def _resolve_prompt(sample: dict, tasks: dict) -> str:
+    if "prompt" in sample:
+        return str(to_scalar(sample["prompt"]))
+    if "task" in sample:
+        return str(to_scalar(sample["task"]))
+    if "task_index" in sample and tasks:
+        task_idx = int(to_scalar(sample["task_index"]))
+        if task_idx not in tasks:
+            raise ValueError(
+                f"task_index {task_idx} not found in tasks dict. "
+                f"Available task indices: {list(tasks.keys())}."
+            )
+        return tasks[task_idx]
+    raise ValueError(
+        "Sample has no prompt, task, or task_index field. "
+        "Cannot determine task prompt for value model inference."
+    )
+
+
 def build_obs(
     sample: dict,
     robot_type: str,
@@ -314,6 +333,28 @@ def build_obs(
     Returns:
         Raw observation dict compatible with ValueCriticModel.infer()
     """
+    if robot_type == "aloha":
+        required = (
+            "observation.images.cam_high",
+            "observation.images.cam_left_wrist",
+            "observation.images.cam_right_wrist",
+            "observation.state",
+        )
+        missing = [key for key in required if key not in sample]
+        if missing:
+            raise KeyError(f"ALOHA sample missing required keys: {missing}")
+        return {
+            "images": {
+                "cam_high": to_numpy(sample["observation.images.cam_high"]),
+                "cam_left_wrist": to_numpy(sample["observation.images.cam_left_wrist"]),
+                "cam_right_wrist": to_numpy(
+                    sample["observation.images.cam_right_wrist"]
+                ),
+            },
+            "state": to_numpy(sample["observation.state"]),
+            "prompt": _resolve_prompt(sample, tasks),
+        }
+
     if robot_type not in KEY_MAPPINGS:
         raise ValueError(
             f"Unknown robot_type {robot_type!r}. "
@@ -325,22 +366,7 @@ def build_obs(
 
     for src_key, dst_key in key_map.items():
         if src_key == "task":
-            if "task" in sample:
-                obs[dst_key] = str(to_scalar(sample["task"]))
-            elif "task_index" in sample and tasks:
-                task_idx = int(to_scalar(sample["task_index"]))
-                if task_idx not in tasks:
-                    raise ValueError(
-                        f"task_index {task_idx} not found in tasks dict. "
-                        f"Available task indices: {list(tasks.keys())}. "
-                        "Check that meta/tasks.jsonl is complete."
-                    )
-                obs[dst_key] = tasks[task_idx]
-            else:
-                raise ValueError(
-                    "Sample has neither 'task' nor 'task_index' field. "
-                    "Cannot determine task prompt for value model inference."
-                )
+            obs[dst_key] = _resolve_prompt(sample, tasks)
         elif src_key in sample:
             val = to_numpy(sample[src_key])
             obs[dst_key] = val
@@ -412,6 +438,10 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
                 )
             reward = float(to_scalar(sample["reward"]))
 
+        teleop_mask = 0
+        if "teleop_mask" in sample:
+            teleop_mask = int(to_scalar(sample["teleop_mask"]))
+
         return {
             "obs": obs,
             "global_idx": idx,
@@ -419,6 +449,7 @@ class ValueInferenceDataset(torch.utils.data.Dataset):
             "frame_index": frame_idx,
             "true_return": true_return,
             "reward": reward,
+            "teleop_mask": teleop_mask,
         }
 
 
@@ -442,6 +473,7 @@ def advantage_collate_fn(
             "frame_index": item["frame_index"],
             "true_return": item["true_return"],
             "reward": item["reward"],
+            "teleop_mask": item.get("teleop_mask", 0),
         }
         for item in batch
     ]
@@ -559,6 +591,7 @@ def compute_advantages_for_dataset(
         "reward_sum": [],
         "reward_sum_raw": [],
         "num_valid_rewards": [],
+        "teleop_mask": [],
     }
 
     v_curr_stats = RunningStats("V(o_t)")
@@ -647,6 +680,7 @@ def compute_advantages_for_dataset(
     meta_frame_idx = np.full(extended_size, -1, dtype=np.int64)
     meta_return = np.full(extended_size, np.nan, dtype=np.float64)
     meta_reward = np.full(extended_size, np.nan, dtype=np.float64)
+    meta_teleop_mask = np.zeros(extended_size, dtype=np.int64)
     filled_mask = np.zeros(extended_size, dtype=bool)
 
     def process_value_batch(obs_list: list[dict], meta_list: list[dict]):
@@ -675,6 +709,7 @@ def compute_advantages_for_dataset(
             meta_frame_idx[local_idx] = int(meta_info["frame_index"])
             meta_return[local_idx] = float(meta_info["true_return"])
             meta_reward[local_idx] = float(meta_info["reward"])
+            meta_teleop_mask[local_idx] = int(meta_info.get("teleop_mask", 0))
             filled_mask[local_idx] = True
 
     # Prefetch next batch while GPU processes current batch
@@ -816,6 +851,7 @@ def compute_advantages_for_dataset(
         results["reward_sum"].append(reward_sum)
         results["reward_sum_raw"].append(reward_sum_raw)
         results["num_valid_rewards"].append(num_valid)
+        results["teleop_mask"].append(int(meta_teleop_mask[i]))
 
         if (i + 1) % flush_every_samples == 0:
             flush_results_to_disk()
@@ -896,11 +932,27 @@ def save_advantages_to_dataset(
         save_df.rename(columns={"advantage": "advantage_continuous"}, inplace=True)
         if (dataset_type or "").lower() == "sft":
             save_df["advantage"] = True
+            save_df["teleop_positive"] = False
         else:
-            # Shared with STEAM (RECAP uses the inclusive `>=` convention).
-            save_df["advantage"] = apply_boolean_label(
+            value_positive = apply_boolean_label(
                 save_df["advantage_continuous"], threshold, inclusive=True
             )
+            teleop_mask = (
+                save_df["teleop_mask"].astype(bool)
+                if "teleop_mask" in save_df.columns
+                else pd.Series(False, index=save_df.index)
+            )
+            save_df["teleop_positive"] = teleop_mask & ~value_positive
+            save_df["advantage"] = value_positive | teleop_mask
+            if teleop_mask.any():
+                overridden = int(save_df["teleop_positive"].sum())
+                teleop_total = int(teleop_mask.sum())
+                logger.info(
+                    "  Teleop positive override: %d/%d teleop frames forced positive (%.2f%% of dataset)",
+                    overridden,
+                    teleop_total,
+                    100.0 * overridden / max(len(save_df), 1),
+                )
 
         adv_filename = f"advantages_{tag}.parquet" if tag else "advantages.parquet"
         save_df.to_parquet(meta_dir / adv_filename, index=False)
