@@ -375,6 +375,58 @@ def test_patch_weight_syncer_roundtrip_delta_enabled():
     )
 
 
+def test_patch_weight_syncer_inactive_sender_returns_empty_patch():
+    device = _get_cuda_device()
+    sender_model = _make_model(device)
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _InMemoryDuplexTransport()
+
+    sender_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+    )
+    receiver_syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+    )
+
+    async def _run() -> None:
+        await asyncio.gather(
+            sender_syncer.init_sender(
+                sender_model.state_dict(),
+                _get_param_names_need_sync(sender_model),
+                transport.sender_send,
+                transport.sender_recv,
+                is_sender=False,
+            ),
+            receiver_syncer.init_receiver(
+                receiver_model.state_dict(),
+                transport.receiver_recv,
+                transport.receiver_send,
+            ),
+        )
+
+        assert sender_syncer.sender_initialized()
+        assert sender_syncer.snapshot is None
+        assert sender_syncer.patch_builder is not None
+        assert sender_syncer.patch_builder.snapshot is None
+
+        patch = sender_syncer.create_patch(sender_model.state_dict(), version=11)
+        assert isinstance(patch, EmptyWeightPatch)
+        assert int(patch.version.item()) == 11
+
+        async def _unused_send(_data):
+            return None
+
+        await sender_syncer.sync(sender_model.state_dict(), _unused_send, version=12)
+
+    asyncio.run(_run())
+
+
 def test_patch_weight_syncer_roundtrip_delta_disabled():
     device = _get_cuda_device()
     sender_model = _make_model(device)
@@ -599,6 +651,7 @@ def test_cpu_snapshot_patch_builder_matches_gpu_snapshot_under_allocator_pressur
         ordered_keys,
         param_names_need_sync,
         original_shapes,
+        torch.device("cpu"),
         delta_encoding=True,
     )
     gpu_builder = GPUSnapshotPatchBuilder(
@@ -606,6 +659,7 @@ def test_cpu_snapshot_patch_builder_matches_gpu_snapshot_under_allocator_pressur
         ordered_keys,
         param_names_need_sync,
         original_shapes,
+        torch.device("cpu"),
         delta_encoding=True,
     )
 
@@ -622,8 +676,10 @@ def test_cpu_snapshot_patch_builder_matches_gpu_snapshot_under_allocator_pressur
                     value_2dview[row2, col2] -= (step % 3 + 1) * 0.25
 
         cpu_patch = cpu_builder.create_patch(state_dict, version=step)
+        assert all(tensor.device.type == "cpu" for tensor in cpu_patch.tensors())
         _stress_cuda_allocator(device)
         gpu_patch = gpu_builder.create_patch(state_dict, version=step)
+        assert all(tensor.device.type == "cpu" for tensor in gpu_patch.tensors())
 
         _assert_patch_equal(cpu_patch, gpu_patch)
         for key in param_names_need_sync:

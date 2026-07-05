@@ -105,6 +105,8 @@ ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
 ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
+ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
+ENV HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
 
 RUN pip config set global.index-url ${PIP_INDEX}
 RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv

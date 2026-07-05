@@ -54,6 +54,17 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/steam.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/steam.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/steam.html" style="text-decoration: underline; color: blue;">
+           <b>STEAM: Ensemble Advantage Modeling</b>
+         </a><br>
+         Conservative sample evaluation with an ensemble advantage predictor
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/co_training.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -85,5 +96,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
    DSRL <embodied/dsrl>
    DAgger <embodied/dagger>
    RECAP <embodied/recap>
+   STEAM <embodied/steam>
    Co-Training <embodied/co_training>
    IQL (D4RL) <embodied/iql_d4rl>

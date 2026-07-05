@@ -203,7 +203,9 @@ class PicoExpert:
 
     def start(self) -> None:
         if zmq is None:
-            raise ImportError("pyzmq is required for PICO teleoperation. ")
+            raise ImportError(
+                "pyzmq is required for PICO teleoperation. Install with: pip install pyzmq"
+            )
         if self._running:
             return
 
@@ -316,8 +318,16 @@ class PicoExpert:
 
         delta_pos = (target_pos - current_pos) / float(action_scale[0])
         delta_rot = target_rot * current_rot.inv()
-        delta_euler = delta_rot.as_euler("xyz") / float(action_scale[1])
-        expert_action = np.concatenate((delta_pos, delta_euler), axis=0)
+        max_rot = float(action_scale[1])
+        delta_rotvec = delta_rot.as_rotvec()
+        if max_rot > 1e-9:
+            angle = float(np.linalg.norm(delta_rotvec))
+            if angle > max_rot:
+                delta_rotvec = delta_rotvec * (max_rot / angle)
+            delta_rot_action = delta_rotvec / max_rot
+        else:
+            delta_rot_action = np.zeros(3, dtype=np.float64)
+        expert_action = np.concatenate((delta_pos, delta_rot_action), axis=0)
         expert_action = np.clip(expert_action, -1.0, 1.0)
 
         gripper_close = False
