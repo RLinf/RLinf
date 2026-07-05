@@ -14,12 +14,21 @@
 
 """Convert ALOHA sandwich HITL HDF5 episodes to LeRobot v2.1."""
 
+import argparse
+import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import h5py
 import numpy as np
+from tqdm import tqdm
+
+try:
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+except ImportError:  # pragma: no cover - exercised only when converter deps are absent
+    LeRobotDataset = None
 
 ALOHA_CAMERAS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 DEFAULT_TASK = "Assemble a sandwich."
@@ -289,3 +298,172 @@ def _build_hil_segments_entry(payload: EpisodePayload) -> dict[str, Any]:
         "is_success": bool(payload.is_success),
         "teleop_segments": payload.teleop_segments.astype(np.int64).tolist(),
     }
+
+
+def _discover_hdf5_files(raw_dir: Path) -> list[Path]:
+    """Return sorted ALOHA HDF5 episode files under ``raw_dir``."""
+    files = sorted([*raw_dir.glob("*.hdf5"), *raw_dir.glob("*.h5")])
+    if not files:
+        raise FileNotFoundError(f"No .hdf5 or .h5 episodes found under {raw_dir}")
+    return files
+
+
+def _is_relative_to(path: Path, other: Path) -> bool:
+    """Return whether ``path`` is equal to or nested under ``other``."""
+    try:
+        path.relative_to(other)
+    except ValueError:
+        return False
+    return True
+
+
+def _validate_output_path(raw_dir: Path, output_dir: Path) -> None:
+    """Reject output paths that overlap the raw input tree."""
+    if (
+        raw_dir == output_dir
+        or _is_relative_to(raw_dir, output_dir)
+        or _is_relative_to(output_dir, raw_dir)
+    ):
+        raise ValueError("output_dir must not overlap raw_dir")
+
+
+def _first_image_shape(first_episode: Path) -> tuple[int, int, int]:
+    """Read the first camera image shape from an episode."""
+    with h5py.File(first_episode, "r") as ep:
+        images = _read_images(ep, first_episode.name)
+    first = images[ALOHA_CAMERAS[0]]
+    return tuple(int(v) for v in first.shape[1:])
+
+
+def _episode_optional_fields(path: Path) -> dict[str, bool]:
+    """Return optional observation fields present in one episode."""
+    with h5py.File(path, "r") as ep:
+        return {
+            "observations/qvel": "observations/qvel" in ep,
+            "observations/effort": "observations/effort" in ep,
+        }
+
+
+def _infer_optional_fields(hdf5_files: list[Path]) -> tuple[bool, bool]:
+    """Infer optional observation fields, requiring consistency across episodes."""
+    field_sets = [_episode_optional_fields(path) for path in hdf5_files]
+    inferred: dict[str, bool] = {}
+    for key in ("observations/qvel", "observations/effort"):
+        values = {fields[key] for fields in field_sets}
+        if len(values) != 1:
+            raise ValueError(f"{key} inconsistent across ALOHA episodes")
+        inferred[key] = values.pop()
+    return inferred["observations/qvel"], inferred["observations/effort"]
+
+
+def _write_hil_segments(output_dir: Path, entries: list[dict[str, Any]]) -> None:
+    """Write JSON metadata for human-in-the-loop segments."""
+    total_frames = sum(int(entry["num_frames"]) for entry in entries)
+    successful = sum(1 for entry in entries if bool(entry["is_success"]))
+    data = {
+        "total_episodes": len(entries),
+        "total_frames": total_frames,
+        "successful_episodes": successful,
+        "failed_episodes": len(entries) - successful,
+        "episodes": entries,
+    }
+    meta_dir = output_dir / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / "hil_segments.json").write_text(
+        json.dumps(data, indent=2),
+        encoding="utf-8",
+    )
+
+
+def convert_dataset(
+    raw_dir: Path,
+    output_dir: Path,
+    repo_id: str,
+    task: str = DEFAULT_TASK,
+    fps: int = 25,
+    overwrite: bool = False,
+    image_writer_threads: int = 5,
+    image_writer_processes: int = 10,
+) -> Any:
+    """Convert ALOHA sandwich HDF5 episodes into a LeRobot dataset."""
+    if LeRobotDataset is None:
+        raise ImportError("lerobot is required to run ALOHA HDF5 conversion")
+
+    raw_dir = raw_dir.resolve()
+    output_dir = output_dir.resolve()
+    _validate_output_path(raw_dir, output_dir)
+    hdf5_files = _discover_hdf5_files(raw_dir)
+    include_velocity, include_effort = _infer_optional_fields(hdf5_files)
+
+    if output_dir.exists():
+        if not overwrite:
+            raise FileExistsError(
+                f"Output directory exists: {output_dir}. "
+                "Pass --overwrite to replace it."
+            )
+        shutil.rmtree(output_dir)
+
+    features = _aloha_features(
+        image_shape=_first_image_shape(hdf5_files[0]),
+        include_velocity=include_velocity,
+        include_effort=include_effort,
+    )
+    dataset = LeRobotDataset.create(
+        repo_id=repo_id,
+        root=output_dir,
+        robot_type="aloha",
+        fps=fps,
+        features=features,
+        image_writer_threads=image_writer_threads,
+        image_writer_processes=image_writer_processes,
+    )
+
+    metadata_entries: list[dict[str, Any]] = []
+    for episode_index, episode_path in enumerate(
+        tqdm(hdf5_files, desc="Converting ALOHA episodes")
+    ):
+        payload = _load_episode_payload(
+            episode_path,
+            task=task,
+            episode_index=episode_index,
+        )
+        for frame in payload.frames:
+            dataset.add_frame(frame)
+        dataset.save_episode()
+        metadata_entries.append(_build_hil_segments_entry(payload))
+
+    _write_hil_segments(output_dir, metadata_entries)
+    return dataset
+
+
+def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--raw-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--repo-id", type=str, default="local/aloha_sandwich")
+    parser.add_argument("--task", type=str, default=DEFAULT_TASK)
+    parser.add_argument("--fps", type=int, default=25)
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--image-writer-threads", type=int, default=5)
+    parser.add_argument("--image-writer-processes", type=int, default=10)
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Run the ALOHA HDF5 to LeRobot converter CLI."""
+    args = _parse_args()
+    convert_dataset(
+        raw_dir=args.raw_dir,
+        output_dir=args.output_dir,
+        repo_id=args.repo_id,
+        task=args.task,
+        fps=args.fps,
+        overwrite=args.overwrite,
+        image_writer_threads=args.image_writer_threads,
+        image_writer_processes=args.image_writer_processes,
+    )
+
+
+if __name__ == "__main__":
+    main()

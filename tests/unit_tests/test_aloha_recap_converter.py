@@ -22,6 +22,7 @@ import pytest
 from examples.offline_rl.data.convert_aloha_hdf5_to_lerobot_v21 import (
     _aloha_features,
     _build_hil_segments_entry,
+    _discover_hdf5_files,
     _episode_success_array,
     _load_episode_payload,
     _read_images,
@@ -289,3 +290,149 @@ def test_build_hil_segments_entry_is_json_serializable(tmp_path: Path) -> None:
         "teleop_segments": [[1, 3]],
     }
     json.dumps(entry)
+
+
+class _FakeLeRobotDataset:
+    created_kwargs: dict | None = None
+
+    def __init__(self) -> None:
+        self.frames: list[dict] = []
+        self.episode_lengths: list[int] = []
+
+    @classmethod
+    def create(cls, **kwargs):
+        cls.created_kwargs = kwargs
+        return cls()
+
+    def add_frame(self, frame: dict) -> None:
+        self.frames.append(frame)
+
+    def save_episode(self) -> None:
+        self.episode_lengths.append(len(self.frames) - sum(self.episode_lengths))
+
+
+def test_convert_dataset_writes_frames_and_hil_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from examples.offline_rl.data import convert_aloha_hdf5_to_lerobot_v21 as converter
+
+    _FakeLeRobotDataset.created_kwargs = None
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    _write_episode(raw_dir / "episode_0.hdf5", reward=1.0)
+    _write_episode(raw_dir / "episode_1.hdf5", reward=0.0)
+    output_dir = tmp_path / "lerobot"
+
+    monkeypatch.setattr(converter, "LeRobotDataset", _FakeLeRobotDataset)
+
+    dataset = converter.convert_dataset(
+        raw_dir=raw_dir,
+        output_dir=output_dir,
+        repo_id="local/aloha_sandwich",
+        task="Assemble a sandwich.",
+        fps=25,
+        overwrite=True,
+        image_writer_threads=1,
+        image_writer_processes=1,
+    )
+
+    assert dataset.episode_lengths == [4, 4]
+    assert _FakeLeRobotDataset.created_kwargs["repo_id"] == "local/aloha_sandwich"
+    assert _FakeLeRobotDataset.created_kwargs["root"] == output_dir
+    assert _FakeLeRobotDataset.created_kwargs["robot_type"] == "aloha"
+    assert _FakeLeRobotDataset.created_kwargs["fps"] == 25
+    assert _FakeLeRobotDataset.created_kwargs["image_writer_threads"] == 1
+    assert _FakeLeRobotDataset.created_kwargs["image_writer_processes"] == 1
+    assert _FakeLeRobotDataset.created_kwargs["features"]["is_success"]["shape"] == (1,)
+    assert _FakeLeRobotDataset.created_kwargs["features"]["teleop_mask"]["shape"] == (
+        1,
+    )
+    assert _FakeLeRobotDataset.created_kwargs["features"][
+        "observation.images.cam_high"
+    ]["shape"] == (8, 8, 3)
+
+    metadata_path = output_dir / "meta" / "hil_segments.json"
+    metadata = json.loads(metadata_path.read_text())
+    assert metadata["total_episodes"] == 2
+    assert metadata["total_frames"] == 8
+    assert metadata["successful_episodes"] == 1
+    assert metadata["failed_episodes"] == 1
+    assert metadata["episodes"][0]["teleop_segments"] == [[1, 3]]
+
+
+def test_discover_hdf5_files_returns_hdf5_and_h5_union(tmp_path: Path) -> None:
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    h5_path = raw_dir / "episode_0.h5"
+    hdf5_path = raw_dir / "episode_1.hdf5"
+    h5_path.touch()
+    hdf5_path.touch()
+
+    assert _discover_hdf5_files(raw_dir) == [h5_path, hdf5_path]
+
+
+@pytest.mark.parametrize(
+    "output_kind",
+    ("same", "parent", "child"),
+)
+def test_convert_dataset_rejects_overlapping_output_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    output_kind: str,
+) -> None:
+    from examples.offline_rl.data import convert_aloha_hdf5_to_lerobot_v21 as converter
+
+    _FakeLeRobotDataset.created_kwargs = None
+    if output_kind == "parent":
+        output_dir = tmp_path / "raw_parent"
+        raw_dir = output_dir / "raw"
+    else:
+        raw_dir = tmp_path / "raw"
+        output_dir = raw_dir if output_kind == "same" else raw_dir / "lerobot"
+    raw_dir.mkdir(parents=True)
+    _write_episode(raw_dir / "episode_0.hdf5", reward=1.0)
+
+    monkeypatch.setattr(converter, "LeRobotDataset", _FakeLeRobotDataset)
+
+    with pytest.raises(ValueError, match="output_dir must not overlap raw_dir"):
+        converter.convert_dataset(
+            raw_dir=raw_dir,
+            output_dir=output_dir,
+            repo_id="local/aloha_sandwich",
+            overwrite=True,
+        )
+    assert _FakeLeRobotDataset.created_kwargs is None
+    assert raw_dir.exists()
+
+
+def test_convert_dataset_rejects_inconsistent_optional_fields_before_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from examples.offline_rl.data import convert_aloha_hdf5_to_lerobot_v21 as converter
+
+    _FakeLeRobotDataset.created_kwargs = None
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    _write_episode(raw_dir / "episode_0.hdf5", reward=1.0)
+    second_episode = raw_dir / "episode_1.hdf5"
+    _write_episode(second_episode, reward=0.0)
+    with h5py.File(second_episode, "a") as ep:
+        del ep["observations"]["qvel"]
+    output_dir = tmp_path / "lerobot"
+    output_dir.mkdir()
+    marker = output_dir / "keep.txt"
+    marker.write_text("existing", encoding="utf-8")
+
+    monkeypatch.setattr(converter, "LeRobotDataset", _FakeLeRobotDataset)
+
+    with pytest.raises(ValueError, match=r"observations/qvel.*inconsistent"):
+        converter.convert_dataset(
+            raw_dir=raw_dir,
+            output_dir=output_dir,
+            repo_id="local/aloha_sandwich",
+            overwrite=True,
+        )
+    assert _FakeLeRobotDataset.created_kwargs is None
+    assert marker.exists()
