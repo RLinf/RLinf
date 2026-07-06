@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import atexit
 import copy
+import json
 import os
 import pickle
+import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
@@ -29,6 +31,44 @@ import torch
 from rlinf.utils.logging import get_logger
 
 _VALID_FORMATS = ("pickle", "lerobot")
+
+
+_ID_DIR_RE = re.compile(r"^id_(\d+)$")
+
+
+def _scan_existing_lerobot_shards(save_dir: str, rank: int) -> tuple[int, int]:
+    """Return ``(total_episodes, next_shard_id)`` for resume.
+
+    ``next_shard_id`` is ``max(existing_id_numbers) + 1`` over every
+    ``id_<int>/`` directory (regardless of whether ``meta/info.json`` is
+    finalized) so a crashed session's partial shard is never overwritten.
+    Shards with unparseable ``info.json`` contribute 0 to ``total_episodes``.
+    """
+    rank_dir = os.path.join(save_dir, f"rank_{rank}")
+    if not os.path.isdir(rank_dir):
+        return 0, 0
+
+    total = 0
+    max_id = -1
+    for entry in os.listdir(rank_dir):
+        m = _ID_DIR_RE.match(entry)
+        if m is None:
+            continue
+        if not os.path.isdir(os.path.join(rank_dir, entry)):
+            continue
+        max_id = max(max_id, int(m.group(1)))
+
+        info_path = os.path.join(rank_dir, entry, "meta", "info.json")
+        try:
+            with open(info_path) as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        count = meta.get("total_episodes")
+        if isinstance(count, int) and count > 0:
+            total += count
+    next_shard_id = max_id + 1 if max_id >= 0 else 0
+    return total, next_shard_id
 
 
 class CollectEpisode(gym.Wrapper):
@@ -58,6 +98,11 @@ class CollectEpisode(gym.Wrapper):
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
             ``0`` disables periodic flushing (lerobot only). Defaults to 100.
+        resume: If True and ``export_format == "lerobot"``, reuse ``save_dir``
+            across sessions — new episodes land in a fresh ``id_{N}`` shard
+            (N = sum of episodes across pre-existing shards) so the in-progress
+            write never touches previously-finalized data. Ignored for pickle.
+            Defaults to False.
     """
 
     def __init__(
@@ -72,6 +117,7 @@ class CollectEpisode(gym.Wrapper):
         fps: int = 10,
         only_success: bool = False,
         finalize_interval: int = 100,
+        resume: bool = False,
     ):
         if isinstance(env, gym.Env):
             super().__init__(env)
@@ -94,11 +140,20 @@ class CollectEpisode(gym.Wrapper):
         self.only_success = only_success
         self.finalize_interval = finalize_interval
 
+        self._preexisting_episode_count = 0
+        self._next_shard_id = 0
         # LeRobot writer is created lazily on the first completed episode.
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
-            self._episodes_written = 0  # guarded by _lerobot_lock
+            if resume:
+                (
+                    self._preexisting_episode_count,
+                    self._next_shard_id,
+                ) = _scan_existing_lerobot_shards(save_dir, rank)
+            self._episodes_written = (
+                self._preexisting_episode_count
+            )  # guarded by _lerobot_lock
 
         # Single-worker executor keeps write ordering deterministic.
         self._executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
@@ -123,6 +178,11 @@ class CollectEpisode(gym.Wrapper):
 
         os.makedirs(self.save_dir, exist_ok=True)
         atexit.register(self._finalize_on_exit)
+
+    @property
+    def preexisting_episode_count(self) -> int:
+        """Number of episodes on disk at construction time (resume mode only)."""
+        return self._preexisting_episode_count
 
     @property
     def is_start(self):
@@ -474,13 +534,14 @@ class CollectEpisode(gym.Wrapper):
             from rlinf.data.lerobot_writer import LeRobotDatasetWriter
 
             self._lerobot_writer = LeRobotDatasetWriter()
+        shard_id = self._next_shard_id
         if self._lerobot_writer.dataset is None:
             first = ep_data[0]
             wrist_image_keys = self._collect_image_keys(first, "wrist_image")
             extra_view_image_keys = self._collect_image_keys(first, "extra_view_image")
             self._lerobot_writer.create(
                 repo_id=os.path.join(
-                    self.save_dir, f"rank_{self.rank}", f"id_{self._episodes_written}"
+                    self.save_dir, f"rank_{self.rank}", f"id_{shard_id}"
                 ),
                 robot_type=self.robot_type,
                 fps=self.fps,
@@ -493,6 +554,7 @@ class CollectEpisode(gym.Wrapper):
                 has_intervene_flag="intervene_flag" in first,
                 has_segment_id="segment_id" in first,
             )
+            self._next_shard_id = shard_id + 1
         return self._lerobot_writer
 
     @staticmethod
