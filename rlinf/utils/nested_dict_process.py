@@ -81,6 +81,21 @@ def put_tensor_device(data_dict, device):
     return data_dict
 
 
+def _split_list_by_sizes(value: list, split_sizes: list[int] | int) -> list[list]:
+    if isinstance(split_sizes, int):
+        chunks = split_sizes
+        chunk_size = (len(value) + chunks - 1) // chunks if chunks else 0
+        split_sizes = [
+            min(chunk_size, len(value) - i * chunk_size) if i * chunk_size < len(value) else 0
+            for i in range(chunks)
+        ]
+    out, i = [], 0
+    for n in split_sizes:
+        out.append(value[i : i + n])
+        i += n
+    return out
+
+
 def split_dict_to_chunk(data: dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]
     for key, value in data.items():
@@ -89,9 +104,8 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
                 chunk.contiguous() for chunk in torch.chunk(value, split_size, dim=dim)
             ]
         elif isinstance(value, list):
-            split_vs = [
-                value[i * split_size : (i + 1) * split_size] for i in range(split_size)
-            ]
+            assert dim == 0, f"List field only supports dim=0, got {dim}."
+            split_vs = _split_list_by_sizes(value, split_size)
         elif value is None:
             split_vs = [None for _ in range(split_size)]
         elif isinstance(value, dict):
@@ -222,10 +236,8 @@ def split_dict(
             assert length == total_size, (
                 f"List field '{key}' expected length {total_size}, got {length}."
             )
-            begin = 0
-            for i, size in enumerate(split_sizes):
-                splitted_batches[i][key] = value[begin : begin + size]
-                begin += size
+            for i, chunk in enumerate(_split_list_by_sizes(value, split_sizes)):
+                splitted_batches[i][key] = chunk
         elif isinstance(value, dict):
             splitted_sub_batches = split_dict(value, split_sizes, dim=dim)
             for i in range(count):
