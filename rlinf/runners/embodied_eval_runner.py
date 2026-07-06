@@ -68,23 +68,6 @@ class EmbodiedEvalRunner:
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
         )
-        env_results = env_handle.wait()
-        rollout_handle.wait()
-        eval_metrics_list = [results for results in env_results if results is not None]
-        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
-        return eval_metrics
-
-    def evaluate_rtc(self):
-        """Run RTC evaluation with bidirectional request/response channels."""
-        # RTC requests flow env->rollout, while responses flow rollout->env.
-        env_handle: Handle = self.env.evaluate_rtc(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
-        )
-        rollout_handle: Handle = self.rollout.evaluate_rtc(
-            input_channel=self.env_channel,
-            output_channel=self.rollout_channel,
-        )
 
         env_results = env_handle.wait()
         rollout_results = rollout_handle.wait()
@@ -94,18 +77,14 @@ class EmbodiedEvalRunner:
             results for results in rollout_results if results is not None
         ]
 
-        env_metrics = compute_evaluate_metrics(env_metrics_list)
+        eval_metrics = compute_evaluate_metrics(env_metrics_list)
         rollout_metrics = compute_evaluate_metrics(rollout_metrics_list)
         rollout_metrics.pop("num_trajectories", None)
-        env_metrics.update(rollout_metrics)
-        return env_metrics
+        eval_metrics.update(rollout_metrics)
+        return eval_metrics
 
     def run(self):
-        rtc_cfg = self.cfg.runner.get("rtc", {})
-        if rtc_cfg.get("enabled", False):
-            eval_metrics = self.evaluate_rtc()
-        else:
-            eval_metrics = self.evaluate()
+        eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
         self.logger.info(eval_metrics)
         self.metric_logger.log(step=0, data=eval_metrics)
