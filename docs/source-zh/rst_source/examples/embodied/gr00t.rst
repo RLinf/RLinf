@@ -195,13 +195,13 @@ GR00T模型强化学习训练
 
    # 方法1：使用git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
 
    # 方法2：使用huggingface-hub
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-N1.6-RL-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-RL-Spatial
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
 
 **N1.7：当前临时使用官方 release checkpoint**
 
