@@ -196,13 +196,13 @@ We currently support four LIBERO task: Spatial. For other tasks, Object, Goal, a
 
    # Method 1: Using git clone
    git lfs install
-   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
 
    # Method 2: Using huggingface-hub
    # For mainland China users, you can use the following for better download speed:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-Gr00t-N1.6-RL-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-RL-Spatial
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
 
 
 **N1.7: Temporary official release checkpoint usage**
