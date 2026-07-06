@@ -192,8 +192,8 @@ Stage 2 中比较关键的字段：
    # examples/embodiment/config/rlt_stage2_ac_mlp.yaml
    algorithm:
      loss_type: rlt_ac
-     q_weight: 0.5
-     bc_weight: 10
+     q_weight: 0.1
+     bc_weight: 5
      reference_dropout_prob: 0.5
      gamma: 0.96
      entropy_tuning:

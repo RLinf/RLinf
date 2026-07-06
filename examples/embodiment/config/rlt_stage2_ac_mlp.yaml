@@ -72,8 +72,8 @@ algorithm:
   loss_agg_func: "token-mean"
 
   # RLT Stage2 actor loss: -q_weight * Q + bc_weight * BC.
-  q_weight: 0.5
-  bc_weight: 10
+  q_weight: 0.1
+  bc_weight: 5
 
   # Reference-action dropout on the actor input, as in RLT Stage2.
   reference_dropout_prob: 0.5
