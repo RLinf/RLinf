@@ -43,7 +43,7 @@ def _normalize_rlt_switch_flags(
     return rlt_switch_flags.reshape(actions.shape[0], actions.shape[1], 1)
 
 
-def predict_rlt_stage2_actions(
+def predict_rlt_actions(
     *,
     policy_model: Any,
     feature_model: Any,
@@ -53,7 +53,7 @@ def predict_rlt_stage2_actions(
     rlt_switch_flags: torch.Tensor | None,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     with torch.no_grad():
-        rlt_obs = feature_model.extract_rlt_stage2_obs(env_obs)
+        rlt_obs = feature_model.extract_rlt_obs(env_obs)
         actions, result = policy_model.predict_action_batch(
             env_obs=rlt_obs,
             mode=mode,
@@ -77,7 +77,7 @@ def predict_rlt_stage2_actions(
 
         transition_obs = rlt_obs
         if final_obs is not None:
-            transition_obs = feature_model.extract_rlt_stage2_obs(final_obs)
+            transition_obs = feature_model.extract_rlt_obs(final_obs)
         for key in RLT_OBS_KEYS:
             result["forward_inputs"][f"{RLT_TRANSITION_PREFIX}{key}"] = transition_obs[
                 key

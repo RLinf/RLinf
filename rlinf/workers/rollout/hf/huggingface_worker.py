@@ -23,7 +23,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
-from rlinf.algorithms.rlt.rollout import predict_rlt_stage2_actions
+from rlinf.algorithms.rlt.rollout import predict_rlt_actions
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
     RolloutResult,
@@ -552,7 +552,7 @@ class MultiStepRolloutWorker(Worker):
         rlt_switch_flags: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
-            return predict_rlt_stage2_actions(
+            return predict_rlt_actions(
                 policy_model=self.hf_model,
                 feature_model=self.rlt_feature_model,
                 env_obs=env_obs,

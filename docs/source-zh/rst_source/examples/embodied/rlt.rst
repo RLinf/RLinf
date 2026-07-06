@@ -175,7 +175,7 @@ rollout 时：
    action   = 实际发送给环境的动作
    next_obs = {next_z_rl, next_proprio, next_ref_chunk}
 
-当前真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会额外提供 ``rlt_use_actor`` 标记。在操作员按下 ``b`` 之前，实际执行 VLA 的 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。仿真配置可以不使用这个 wrapper，也可以替换成自动切换逻辑。
+当前真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会额外提供 ``rlt_switch_flags`` 标记。在操作员按下 ``b`` 之前，实际执行 VLA 的 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。仿真配置可以不使用这个 wrapper，也可以替换成自动切换逻辑。
 
 critic 使用 chunked rewards 上的 TD target。一个 action chunk 内的奖励会先按折扣累计，然后用下一状态 Q 值 bootstrap：
 

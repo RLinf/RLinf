@@ -543,12 +543,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         return np.asarray(states)[..., indices]
 
     @torch.no_grad()
-    def extract_rlt_stage2_obs(
+    def extract_rlt_obs(
         self,
         env_obs: dict[str, Any],
     ) -> dict[str, torch.Tensor]:
         if not self.config.use_rlt or not hasattr(self, "rlt_module"):
-            raise ValueError("extract_rlt_stage2_obs requires openpi.use_rlt=True.")
+            raise ValueError("extract_rlt_obs requires openpi.use_rlt=True.")
 
         to_process_obs = self.obs_processor(env_obs)
         processed_obs = self.input_transform(to_process_obs, transpose=False)

@@ -42,7 +42,7 @@ def extract_rlt_obs_from_forward_inputs(
     )
 
 
-def update_rlt_stage2_transitions(
+def update_rlt_transitions(
     stage_id: int,
     pending_obs: list[dict[str, Any] | None],
     rollout_results: list[Any],

@@ -194,7 +194,7 @@ During rollout:
    next_obs = {next_z_rl, next_proprio, next_ref_chunk}
 
 For the provided real-robot config, ``keyboard_reward_wrapper:
-rlt_policy_switch`` adds an ``rlt_use_actor`` flag. Before the operator presses
+rlt_policy_switch`` adds an ``rlt_switch_flags`` flag. Before the operator presses
 ``b``, the executed action is the VLA ``ref_chunk``; after ``b`` is pressed,
 the executed action switches to the Stage 2 actor. Simulator configs can omit
 this wrapper or replace it with an automatic switching rule.

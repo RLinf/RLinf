@@ -22,7 +22,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
-from rlinf.algorithms.rlt.transition import update_rlt_stage2_transitions
+from rlinf.algorithms.rlt.transition import update_rlt_transitions
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
@@ -73,6 +73,9 @@ class EnvWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
+        self.enable_rlt = (
+            OmegaConf.select(self.cfg, "algorithm.loss_type", default="") == "rlt_ac"
+        )
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
@@ -858,7 +861,7 @@ class EnvWorker(Worker):
     def _send_train_bootstrap(
         self, rollout_channel: Channel, env_outputs: list[EnvOutput]
     ) -> None:
-        use_rlt_stage2 = self._use_rlt_stage2()
+        use_rlt = self.enable_rlt
         for stage_id in range(self.stage_num):
             env_output: EnvOutput = env_outputs[stage_id]
             env_batch = env_output.to_dict()
@@ -866,7 +869,7 @@ class EnvWorker(Worker):
                 "obs": env_batch["obs"],
                 "final_obs": env_batch["final_obs"],
             }
-            if use_rlt_stage2:
+            if use_rlt:
                 data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             self.send_to(
                 group_name=self.cfg.rollout.group_name,
@@ -939,7 +942,7 @@ class EnvWorker(Worker):
             for _ in range(self.stage_num)
         ]
         env_metrics = defaultdict(list)
-        use_rlt_stage2 = self._use_rlt_stage2()
+        use_rlt = self.enable_rlt
         rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
         for epoch in range(self.rollout_epoch):
@@ -1018,8 +1021,8 @@ class EnvWorker(Worker):
                         self.rollout_results[stage_id].mark_last_step_with_flags(
                             rollout_result.save_flags
                         )
-                    if use_rlt_stage2 and self.collect_transitions:
-                        update_rlt_stage2_transitions(
+                    if use_rlt and self.collect_transitions:
+                        update_rlt_transitions(
                             stage_id,
                             rlt_pending_obs,
                             self.rollout_results,
@@ -1035,7 +1038,7 @@ class EnvWorker(Worker):
                         "obs": env_batch["obs"],
                         "final_obs": env_batch["final_obs"],
                     }
-                    if use_rlt_stage2:
+                    if use_rlt:
                         data["rlt_switch_flags"] = env_batch.get(
                             "rlt_switch_flags", None
                         )
@@ -1048,7 +1051,7 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
-                    if self.collect_transitions and not use_rlt_stage2:
+                    if self.collect_transitions and not use_rlt:
                         next_obs = (
                             env_output.final_obs
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
@@ -1117,8 +1120,8 @@ class EnvWorker(Worker):
                     and reward_model_output is not None
                 ):
                     self.assign_history_reward(stage_id, reward_model_output)
-                if use_rlt_stage2 and self.collect_transitions:
-                    update_rlt_stage2_transitions(
+                if use_rlt and self.collect_transitions:
+                    update_rlt_transitions(
                         stage_id,
                         rlt_pending_obs,
                         self.rollout_results,
@@ -1178,7 +1181,7 @@ class EnvWorker(Worker):
 
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
-        use_rlt_stage2 = self._use_rlt_stage2()
+        use_rlt = self.enable_rlt
 
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
@@ -1201,7 +1204,7 @@ class EnvWorker(Worker):
                         "obs": env_batch["obs"],
                         "final_obs": env_batch["final_obs"],
                     }
-                    if use_rlt_stage2:
+                    if use_rlt:
                         data["rlt_switch_flags"] = env_batch.get(
                             "rlt_switch_flags", None
                         )
@@ -1258,7 +1261,7 @@ class EnvWorker(Worker):
                         "obs": env_batch["obs"],
                         "final_obs": env_batch["final_obs"],
                     }
-                    if use_rlt_stage2:
+                    if use_rlt:
                         data["rlt_switch_flags"] = env_batch.get(
                             "rlt_switch_flags", None
                         )
@@ -1281,9 +1284,6 @@ class EnvWorker(Worker):
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
 
         return eval_metrics
-
-    def _use_rlt_stage2(self) -> bool:
-        return OmegaConf.select(self.cfg, "algorithm.loss_type", default="") == "rlt_ac"
 
     def get_actor_split_num(self):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
