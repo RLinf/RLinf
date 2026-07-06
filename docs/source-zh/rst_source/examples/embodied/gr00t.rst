@@ -189,11 +189,19 @@ GR00T模型强化学习训练
 
 **N1.6: GR00T-N1.6 SFT模型**
 
-需要先运行RLinf提供的GR00T-N1.6的SFT，获得经过格式转换的模型，并将模型路径配置到指定的yaml文件中。
+目前支持libero Spatial 任务，其他RLinf SFT的模型  Object, Goal, 10 将会后续放出，敬请期待！
 
-RLinf SFT的模型将会后续放出，敬请期待！
+.. code:: bash
 
-目前支持四种libero任务：Spatial, Object, Goal, 10。
+   # 方法1：使用git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+
+   # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Gr00t-N1.6-RL-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-RL-Spatial
 
 **N1.7：当前临时使用官方 release checkpoint**
 
