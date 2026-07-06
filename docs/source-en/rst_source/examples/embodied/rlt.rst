@@ -49,7 +49,7 @@ RLT separates representation learning from online RL control.
 | **You'll do:** prepare demonstrations -> train Stage 1 -> point Stage 2 at
   the Stage 1 checkpoint -> launch actor-critic training -> monitor replay-buffer and task
   success metrics.
-| **Prerequisites:** install the OpenPI π₀.₅ checkpoint and prepare the
+| **Prerequisites:** prepare the OpenPI π₀.₅ checkpoint and prepare the
   :doc:`Franka real-world setup <../embodied/franka>`.
 
 Provided Configuration Files

@@ -39,7 +39,7 @@ RLT 将表示学习和在线 RL 控制拆开。
       当前是真机示例，结构可扩展到仿真
 
 | **你将完成：** 准备示范数据 -> 训练 Stage 1 -> 在 Stage 2 中加载 Stage 1 检查点 -> 启动 actor-critic 训练 -> 观察 replay buffer 与任务成功率指标。
-| **前置条件：** 安装 OpenPI π₀.₅ checkpoint，并准备 :doc:`Franka 真机环境 <../embodied/franka>`。
+| **前置条件：** 准备 OpenPI π₀.₅ checkpoint，并准备 :doc:`Franka 真机环境 <../embodied/franka>`。
 
 提供的配置文件
 ~~~~~~~~~~~~~~
