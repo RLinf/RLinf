@@ -142,7 +142,6 @@ class CollectEpisode(gym.Wrapper):
 
         self._preexisting_episode_count = 0
         self._next_shard_id = 0
-        # LeRobot writer is created lazily on the first completed episode.
         if export_format == "lerobot":
             self._lerobot_writer: Optional[Any] = None
             self._lerobot_lock = Lock()
