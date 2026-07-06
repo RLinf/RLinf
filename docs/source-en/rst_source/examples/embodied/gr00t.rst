@@ -190,7 +190,7 @@ SFT model downloads for other tasks:
 
 **N1.6: GR00T-N1.6 SFT Model**
 
-We currently support four LIBERO task: Spatial. For other tasks, Object, Goal, and Long, will be released sonn.
+We currently support LIBERO task Spatial and regard it as the RLinf demo for Gr00t N1.6
 
 .. code:: bash
 
