@@ -38,6 +38,8 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
     extra_delta_transform: bool = False  # False for additional process(abs_action - state) to get delta action for training
     # If action dim is not 7 (e.g. without gripper control), should change this
     output_action_dim: int = 7
+    # Keep Pi0.5 discrete state prompts at the raw dataset state dimension.
+    pad_state: bool = True
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -71,6 +73,7 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
                 franka_policy.FrankaEEInputs(
                     action_dim=model_config.action_dim,
                     model_type=model_config.model_type,
+                    pad_state=self.pad_state,
                 )
             ],
             outputs=[

@@ -179,7 +179,11 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 timeout_time=0.02,
                 recv_queue_size=self.rollout_queue_size,
             )
-            actions, result = self.predict(env_output["obs"])
+            actions, result = self._predict_rollout_actions(
+                env_output["obs"],
+                final_obs=env_output.get("final_obs", None),
+                rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+            )
             save_flags = None
             if result.get("expert_label_flag", False):
                 save_flags = torch.full(
