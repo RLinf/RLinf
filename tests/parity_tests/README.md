@@ -62,6 +62,27 @@ hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
 
 > Tip: instead of downloading model weights and LoRA checkpoints by hand, you can ask a coding agent (e.g. Claude Code) to scan every YAML config referenced by `run_all.sh`, collect all `model.*` paths and `lora_path` entries, and download/place them automatically under `/workspace/models/`.
 
+### Baseline Logs Directory
+
+Baseline comparison is driven by `BASELINE_DIR` in [`run_all.sh`](run_all.sh), which defaults to `$REPO_PATH/logs_baseline`. Before running the tests, create this directory and populate it with a reference (baseline) run log for **every** experiment listed in `TASKS`; missing baselines are skipped with a warning and no similarity metric is produced for that task.
+
+Layout — one subdirectory per experiment, whose name **ends with** `-<YAML_ARG>`, containing a `run_embodiment.log` file:
+
+```text
+$REPO_PATH/logs_baseline/
+├── 2025-01-15_10-00-00-maniskill_ppo_openvla/
+│   └── run_embodiment.log
+├── 2025-01-15_11-00-00-libero_goal_ppo_openpi/
+│   └── run_embodiment.log
+├── 2025-01-15_12-00-00-maniskill_ppo_mlp/
+│   └── run_embodiment.log
+└── ...
+```
+
+The `<YAML_ARG>` suffix must match the fourth field of the corresponding `TASKS` entry exactly (that's how `_find_baseline_log` in [`compare_baseline.py`](compare_baseline.py) locates the reference run). Any prefix (timestamp, run id, machine name, …) is fine — only the trailing `-<YAML_ARG>` matters.
+
+To generate baselines, run `run_all.sh` once on a known-good commit, then copy the produced experiment directories from `$REPO_PATH/logs/` into `$REPO_PATH/logs_baseline/`. To point at a different location, edit `BASELINE_DIR` in [`run_all.sh`](run_all.sh).
+
 ## Running the Tests
 
 Start automated testing:

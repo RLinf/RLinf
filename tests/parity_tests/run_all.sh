@@ -131,6 +131,28 @@ function cleanup() {
     sleep 3
 }
 
+# Interrupt handler: on Ctrl+C / SIGTERM, stop ray and exit immediately
+# (otherwise the for-loop would treat the killed child as a normal failure
+# and continue to the next task).
+INTERRUPT_HANDLED=0
+function on_interrupt() {
+    # Guard against re-entry if the user mashes Ctrl+C.
+    if [ "$INTERRUPT_HANDLED" -ne 0 ]; then
+        return
+    fi
+    INTERRUPT_HANDLED=1
+    echo ""
+    echo "[$(date +%T)] Caught interrupt, stopping ray and cleaning up..."
+    # Only the head node owns the sync flag file.
+    if [ "${RANK:-0}" -eq 0 ]; then
+        rm -f "$SYNC_FLAG_FILE" 2>/dev/null
+    fi
+    cleanup
+    echo "[$(date +%T)] Exiting due to interrupt."
+    exit 130
+}
+trap on_interrupt INT TERM
+
 # ---------------- RANK branch logic ----------------
 
 if [ "$RANK" -eq 0 ]; then
