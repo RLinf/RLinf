@@ -41,12 +41,8 @@ export ROBOT_PLATFORM
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
 if [ "$LIBERO_TYPE" == "pro" ]; then
     export LIBERO_PERTURBATION="all"  # all,swap,object,lan
-    echo "Evaluation Mode: LIBERO-PRO | Perturbation: $LIBERO_PERTURBATION"
 elif [ "$LIBERO_TYPE" == "plus" ]; then
     export LIBERO_SUFFIX="all"
-    echo "Evaluation Mode: LIBERO-PLUS | Suffix: $LIBERO_SUFFIX"
-else
-    echo "Evaluation Mode: Standard LIBERO"
 fi
 
 echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"

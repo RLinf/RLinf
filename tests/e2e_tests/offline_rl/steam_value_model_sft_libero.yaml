@@ -1,0 +1,101 @@
+# Usage: bash tests/e2e_tests/offline_rl/run_steam_value_model_sft.sh steam_value_model_sft_libero
+
+defaults:
+  - model/steam_value_model@actor.model
+  - training_backend/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-1
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "/workspace/results/steam_value_model_sft_libero"
+    project_name: rlinf
+    experiment_name: "steam_value_model_sft_libero"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 1
+  val_check_interval: -1
+  save_interval: 1
+
+data:
+  train_data_paths:
+    - dataset_path: "/workspace/dataset/STEAM/libero_partial_dataset"
+      type: sft
+
+  balance_weights: true
+  seed: 42
+  dataset_type: sft
+  only_success: true
+
+  camera_keys:
+    - image
+    - wrist_image
+
+  k: 8
+
+  train_num_workers: 1
+  eval_num_workers: 1
+  prefetch_factor: 1
+  persistent_workers: false
+  pin_memory: false
+  do_augment: false
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 2
+  global_batch_size: 4
+  seed: 0
+
+  model:
+    precision: bf16
+    fusion_hidden_dim: 512
+    dropout: 0.1
+    label_smoothing: 0.05
+    num_frames_per_pair: 2
+    num_bins: 2
+    vision_repo_id: "/workspace/dataset/STEAM/siglip-so400m-patch14-384"
+    language_repo_id: "/workspace/dataset/gemma-3-270m"
+    tokenizer_path: "/workspace/dataset/gemma-3-270m"
+    freeze_vision_encoder: false
+    freeze_language_model: false
+    include_state_in_prompt: false
+    ensemble_size: 1
+    ensemble_head_seed_base: 0
+    use_gradient_checkpointing: true
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 5.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 10.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 0
+    total_training_steps: 1
+    min_lr: 1.0e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32

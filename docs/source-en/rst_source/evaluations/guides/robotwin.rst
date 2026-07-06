@@ -30,7 +30,8 @@ Before evaluation, clone the RLinf-compatible branch and download simulation ass
    # 2. Download and extract assets
    bash script/_download_assets.sh
 
-After download, point ``env.eval.assets_path`` in the eval YAML to the extracted assets directory.
+By default, this script downloads assets under ``/path/to/RoboTwin/assets/``.
+After the download completes, set ``env.eval.assets_path`` to ``/path/to/RoboTwin`` (the parent folder of ``assets/``).
 
 **Environment variables**
 
@@ -48,7 +49,7 @@ Set these before every evaluation run:
 You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.3-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
 
 - OpenVLA-OFT: ``source switch_env openvla-oft``
-- OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env OpenPI``
+- OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env openpi``
 
 Example Configs
 ---------------

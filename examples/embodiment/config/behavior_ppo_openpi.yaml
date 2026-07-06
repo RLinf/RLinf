@@ -69,9 +69,8 @@ env:
   train:
     rollout_epoch: 8
     total_num_envs: 8
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
-    reward_coef: ${algorithm.reward_coef}
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/train
@@ -82,8 +81,8 @@ env:
   eval:
     rollout_epoch: 1
     total_num_envs: 8
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -97,7 +96,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi0-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
+    model_path: "/path/to/model/RLinf-Pi0-Behavior" # https://huggingface.co/RLinf/RLinf-Pi0-Behavior
     precision: ${actor.model.precision}
 
 actor:
