@@ -102,7 +102,7 @@ GR00T模型强化学习训练
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.2-maniskill_libero``：
+**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
 
 .. code:: bash
 
@@ -111,9 +111,9 @@ GR00T模型强化学习训练
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -189,11 +189,19 @@ GR00T模型强化学习训练
 
 **N1.6: GR00T-N1.6 SFT模型**
 
-需要先运行RLinf提供的GR00T-N1.6的SFT，获得经过格式转换的模型，并将模型路径配置到指定的yaml文件中。
+目前提供libero Spatial 任务，并作为GR00T N1.6的示例：
 
-RLinf SFT的模型将会后续放出，敬请期待！
+.. code:: bash
 
-目前支持四种libero任务：Spatial, Object, Goal, 10。
+   # 方法1：使用git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
+
+   # 方法2：使用huggingface-hub
+   # 为提升国内下载速度，可以设置：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
 
 **N1.7：当前临时使用官方 release checkpoint**
 

@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 import ray
 import ray.util.state
 import torch
-from omegaconf import OmegaConf
 
 from ..cluster import (
     Cluster,
@@ -372,7 +371,6 @@ class Worker(metaclass=WorkerMeta):
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
-        self._set_new_omegaconf_resolvers()
 
         # Load user-provided extension modules (e.g., for registering custom envs/models)
         self._load_user_extensions()
@@ -1369,13 +1367,10 @@ class Worker(metaclass=WorkerMeta):
         try:
             with without_http_proxies():
                 actors = ray.util.state.list_actors(
-                    filters=[("NAME", "=", worker_name)]
+                    filters=[("NAME", "=", worker_name), ("STATE", "!=", "DEAD")]
                 )
 
-            if len(actors) == 0:
-                return False
-            actor_info = actors[0]
-            return actor_info.state != "DEAD"
+            return len(actors) > 0
         except Exception:
             # Simply treat the worker as alive if any unexpected error occurs during state query
             return True
@@ -1586,14 +1581,6 @@ class Worker(metaclass=WorkerMeta):
                 warnings.warn("prctl(PR_SET_PTRACER, ANY) failed!")
         except Exception as e:
             warnings.warn(f"Failed to enable ptrace from any same-UID process: {e}")
-
-    def _set_new_omegaconf_resolvers(self):
-        OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
-        OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
-        OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
-        OmegaConf.register_new_resolver(
-            "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
-        )
 
     def _get_collective_group(self, peer_addr: WorkerAddress):
         """Get a collective group for communication with a peer worker."""

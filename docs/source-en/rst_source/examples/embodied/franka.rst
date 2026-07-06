@@ -40,11 +40,11 @@ Explore alternative Franka hardware, sensors, and training recipes.
 
       Joint-level teleoperation data collection with GELLO.
 
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
+   .. grid-item-card:: VR / PICO
+      :link: franka_vr
       :link-type: doc
 
-      Run a two-arm Franka setup.
+      Use VR / PICO devices for teleoperation.
 
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
@@ -63,6 +63,18 @@ Explore alternative Franka hardware, sensors, and training recipes.
       :link-type: doc
 
       Human-gated DAgger interactive training.
+
+   .. grid-item-card:: Dual-Arm
+      :link: dual_franka
+      :link-type: doc
+
+      Run a two-arm Franka setup.
+
+   .. grid-item-card:: Dual PICO DAgger
+      :link: dual_franka_pico_dagger
+      :link-type: doc
+
+      Collect dual-arm PICO data and run HG-DAgger.
 
 Overview
 --------
@@ -222,9 +234,9 @@ To access the robot, camera, and space mouse devices from within the docker cont
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-franka
+      rlinf/rlinf:agentic-rlinf0.3-franka
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
 
 Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
 
@@ -305,9 +317,9 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 **Option 2: Custom Environment**
 
@@ -712,7 +724,8 @@ Here we provide demo videos and training curves for the task peg-insertion and c
    ZED + Robotiq <franka_zed_robotiq>
    GELLO <franka_gello>
    VR / PICO <franka_vr>
-   Dual-Arm <dual_franka>
    Dexterous Hand <franka_dexhand>
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
+   Dual-Arm <dual_franka>
+   Dual PICO DAgger <dual_franka_pico_dagger>

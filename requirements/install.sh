@@ -8,6 +8,7 @@ MODEL=""
 ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
+LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 TRANSFORMERS_VERSION=""
@@ -542,7 +543,7 @@ EOF
         return 0
     fi
     echo "[install.sh] Installing triton==${triton_ver} to match pytorch-triton-rocm"
-    uv pip install "triton==${triton_ver}"
+    uv pip install "triton==${triton_ver}" amdsmi
 }
 
 install_ascend_extras() {
@@ -967,9 +968,15 @@ EOF
     local cu_tag="cu${cuda_major}"            # e.g. cu12
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
 
-    # We currently assume cxx11 abi FALSE and linux x86_64
+    # Match flash-attn wheel ABI to the currently installed torch build.
     local platform_tag="linux_x86_64"
-    local cxx_abi="cxx11abiFALSE"
+    local cxx_abi
+    cxx_abi=$(python - <<'EOF'
+import torch
+
+print("cxx11abiTRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "cxx11abiFALSE")
+EOF
+)
 
     uv pip uninstall flash-attn || true
     local prebuilt_ver base_url wheel_name
@@ -1122,6 +1129,9 @@ install_openvla_oft_model() {
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             install_behavior_env
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1198,6 +1208,9 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_behavior_env
             uv pip install protobuf==6.33.0
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1433,8 +1446,8 @@ install_lingbot_vla_model() {
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
-    uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
+    install_lerobot
+    env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
 
     case "$ENV_NAME" in
         robotwin)
@@ -1455,8 +1468,8 @@ install_abot_m0_model() {
 
     local abot_path
     local vggt_path
-    abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/amap-cvlab/ABot-Manipulation.git)
-    vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/facebookresearch/vggt.git)
+    abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/RLinf/ABot-Manipulation.git)
+    vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/RLinf/vggt.git)
 
     uv pip install -e "$vggt_path"
 
@@ -1491,19 +1504,42 @@ install_abot_m0_model() {
     uv pip uninstall pynvml || true
 }
 
+install_dreamzero_deps() {
+    local dreamzero_path
+    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git)
+    if [ -z "${DREAMZERO_PATH:-}" ]; then
+        git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
+    fi
+
+    uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+    python -m pip install -e "$dreamzero_path" --no-deps --ignore-requires-python
+}
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
+        behavior)
+            # BEHAVIOR/OmniGibson currently requires Python 3.10 and installs
+            # its own Torch 2.5.1 stack inside install_behavior_env.
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_behavior_env
+            install_dreamzero_deps
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
+            ;;
         maniskill_libero|libero)
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         "")
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         *)
@@ -1532,8 +1568,14 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
+install_lerobot() {
+    env -u UV_TORCH_BACKEND uv pip install \
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+}
+
 install_franka_realworld_env() {
     uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh
@@ -1730,7 +1772,6 @@ install_behavior_env() {
     uv pip install llvmlite==0.47.0 numba==0.65.1
     pushd ~ >/dev/null
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    install_flash_attn
     popd >/dev/null
 }
 
@@ -1861,6 +1902,7 @@ install_franka_franky_env() {
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
+    install_lerobot
 }
 
 install_franka_dexhand_deps() {
@@ -1868,6 +1910,7 @@ install_franka_dexhand_deps() {
 }
 
 install_xsquare_turtle2_env() {
+    install_lerobot
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
 }
 
