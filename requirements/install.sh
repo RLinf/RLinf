@@ -1516,16 +1516,23 @@ install_robocasa_env() {
 
 install_robocasa365_env() {
     local robocasa_dir
+    local assets_path
+
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b main)
+    assets_path="$robocasa_dir/robocasa/models/assets"
+
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        mkdir -p "$ROBOCASA_ASSETS_PATH"
+
+        if [[ -d "$assets_path" && ! -L "$assets_path" ]]; then
+            echo "[install_robocasa365_env] Copying RoboCasa assets from $assets_path to $ROBOCASA_ASSETS_PATH" >&2
+            cp -an "$assets_path/." "$ROBOCASA_ASSETS_PATH/"
+        fi
+
+        rm -rf "$assets_path"
+    fi
 
     if [[ -z "${ROBOCASA_PATH:-}" && -d "$robocasa_dir/.git" ]]; then
-        local assets_path assets_backup
-        assets_path="$robocasa_dir/robocasa/models/assets"
-        if [[ -e "$assets_path" || -L "$assets_path" ]] && ! git -C "$robocasa_dir" ls-files -- robocasa/models/assets | grep -q .; then
-            assets_backup="${assets_path}.rlinf-backup.$(date +%Y%m%d%H%M%S)"
-            echo "[install_robocasa365_env] Moving untracked RoboCasa assets to $assets_backup before switching to main." >&2
-            mv "$assets_path" "$assets_backup"
-        fi
         git -C "$robocasa_dir" fetch origin main >&2
         git -C "$robocasa_dir" checkout main >&2 || git -C "$robocasa_dir" checkout -B main origin/main >&2
         git -C "$robocasa_dir" pull --ff-only origin main >&2
@@ -1536,15 +1543,14 @@ install_robocasa365_env() {
     uv pip install --no-deps "robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
     uv pip install protobuf==6.33.0
+
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
-        if [[ ! -d "$ROBOCASA_ASSETS_PATH" ]]; then
-            echo "ROBOCASA_ASSETS_PATH does not exist or is not a directory: $ROBOCASA_ASSETS_PATH"
-            exit 1
-        fi
-        cp -an "$robocasa_dir/robocasa/models/assets/." "$ROBOCASA_ASSETS_PATH/"
-        rm -rf "$robocasa_dir/robocasa/models/assets"
-        ln -s "$ROBOCASA_ASSETS_PATH" "$robocasa_dir/robocasa/models/assets"
+        rm -rf "$assets_path"
+        ln -s "$ROBOCASA_ASSETS_PATH" "$assets_path"
+
+        echo "[install_robocasa365_env] Linked $assets_path -> $ROBOCASA_ASSETS_PATH" >&2
     fi
+
     python -m robocasa.scripts.setup_macros
 }
 
