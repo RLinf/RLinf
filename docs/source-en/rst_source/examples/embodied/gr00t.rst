@@ -190,11 +190,20 @@ SFT model downloads for other tasks:
 
 **N1.6: GR00T-N1.6 SFT Model**
 
-You need to run the RLinf-provided GR00T-N1.6 SFT first, obtain the format-converted model, and configure the model path in the designated YAML file.
+We currently support four LIBERO task: Spatial. For other tasks, Object, Goal, and Long, will be released sonn.
 
-RLinf SFT models will be released soon — stay tuned!
+.. code:: bash
 
-Currently supports four LIBERO tasks: Spatial, Object, Goal, 10.
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Spatial
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Gr00t-N1.6-RL-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-RL-Spatial
+
 
 **N1.7: Temporary official release checkpoint usage**
 
