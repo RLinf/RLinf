@@ -146,6 +146,10 @@ actor:
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
 
+weight_syncer:
+  snapshot_device: cpu
+  transport_device: cpu
+
 reward:
   use_reward_model: False
 

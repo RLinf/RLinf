@@ -209,7 +209,9 @@ class BucketWeightSyncer(WeightSyncer):
         """
 
         has_visual = any(
-            "visual." in key for key in self.param_names_need_sync_set if key in state_dict
+            "visual." in key
+            for key in self.param_names_need_sync_set
+            if key in state_dict
         )
 
         def iter_named_items() -> Iterator[tuple[str, torch.Tensor | DTensor]]:
