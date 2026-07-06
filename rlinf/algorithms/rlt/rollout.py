@@ -79,9 +79,9 @@ def predict_rlt_stage2_actions(
         if final_obs is not None:
             transition_obs = feature_model.extract_rlt_stage2_obs(final_obs)
         for key in RLT_OBS_KEYS:
-            result["forward_inputs"][f"{RLT_TRANSITION_PREFIX}{key}"] = (
-                transition_obs[key]
-            )
+            result["forward_inputs"][f"{RLT_TRANSITION_PREFIX}{key}"] = transition_obs[
+                key
+            ]
 
     result["expert_label_flag"] = False
     return actions, result
