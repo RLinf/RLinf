@@ -189,7 +189,7 @@ GR00T模型强化学习训练
 
 **N1.6: GR00T-N1.6 SFT模型**
 
-目前支持libero Spatial 任务，其他RLinf SFT的模型  Object, Goal, 10 将会后续放出，敬请期待！
+目前提供libero Spatial 任务，并作为GR00T N1.6的示例：
 
 .. code:: bash
 
