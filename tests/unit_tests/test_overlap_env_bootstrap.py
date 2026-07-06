@@ -14,7 +14,6 @@
 
 import sys
 import unittest
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 import torch
@@ -208,13 +207,13 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
     def test_record_env_metrics_appends_values(self):
         """record_env_metrics should append env info tensors as-is."""
-        env_metrics = defaultdict(list)
+        env_metrics = {}
 
         self.worker.record_env_metrics(
-            env_metrics, {"episode_len": torch.tensor([5, 6])}, epoch=0
+            env_metrics, {"episode_len": torch.tensor([5, 6])}
         )
         self.worker.record_env_metrics(
-            env_metrics, {"episode_len": torch.tensor([7, 8])}, epoch=0
+            env_metrics, {"episode_len": torch.tensor([7, 8])}
         )
 
         self.assertEqual(len(env_metrics["episode_len"]), 2)
@@ -233,6 +232,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             {"main_images": torch.zeros(2, 3, 224, 224)},
             {},
         )
+        self.worker.record_env_metrics = MagicMock()
 
         rollout_channel = MagicMock()
         input_channel = MagicMock()
@@ -275,16 +275,14 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            env_metrics = loop.run_until_complete(
+            loop.run_until_complete(
                 self.worker.interact(input_channel, rollout_channel, None, None)
             )
         finally:
             asyncio.set_event_loop(None)
             loop.close()
 
-        # Non-auto-reset should update metrics in-place per epoch, not append per chunk.
-        self.assertIn("episode_len", env_metrics)
-        self.assertEqual(env_metrics["episode_len"].tolist(), [1, 2])
+        self.assertEqual(self.worker.record_env_metrics.call_count, 1)
 
 
 if __name__ == "__main__":

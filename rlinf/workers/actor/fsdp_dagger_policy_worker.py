@@ -196,7 +196,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _select_lerobot_resume_shards(self, valid_shards: list[dict]) -> list[dict]:
         total_frames = sum(shard["num_frames"] for shard in valid_shards)
-        window_size = self._online_lerobot_cfg().get("rolling_lerobot_window_size", None)
+        window_size = self._online_lerobot_cfg().get(
+            "rolling_lerobot_window_size", None
+        )
         if (
             window_size is None
             or int(window_size) <= 0
