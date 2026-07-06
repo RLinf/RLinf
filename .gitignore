@@ -21,3 +21,5 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+/.sii
+/ocl-data

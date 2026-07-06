@@ -70,7 +70,8 @@ Use the RLinf-native approach:
 2. Convert sandwich HDF5 to LeRobot v2.1 without changing ALOHA semantics.
 3. Treat the data as `type: rollout`, because it contains both successes and
    failures.
-4. Let Step 1 compute returns from `is_success`.
+4. Let Step 1 compute returns from `is_success`, with HITL-aware splitting
+   enabled for successful episodes that contain `teleop_mask`.
 5. Let Step 3 compute continuous RECAP advantages with the value model, then
    force frames inside `teleop_segments` to positive labels for CFG training.
 6. Initialize CFG policy training from a PyTorch conversion of the provided
@@ -113,6 +114,26 @@ and `teleop_mask`.
 
 The default sandwich task prompt will be "Assemble a sandwich." and can be
 overridden by CLI argument.
+
+## HITL-Aware Return Computation
+
+Update `examples/offline_rl/advantage_labeling/recap/process/compute_returns.py`:
+
+- Add `data.hitl_aware_returns`.
+- Keep the default disabled for existing datasets.
+- When enabled, read the optional per-frame `teleop_mask` column.
+- For successful episodes with at least one teleop frame, split returns at the
+  first intervention frame:
+  - Frames before the first intervention use failed returns over the autonomous
+    prefix.
+  - Frames from the first intervention onward use successful returns over the
+    suffix.
+- Failed episodes remain failed episodes even if they contain teleop frames.
+
+This prevents the value model from learning that pre-intervention autonomous
+failure states are high value just because a human later rescued the episode.
+The teleop action preference signal still enters through Step 3's positive
+advantage-label override.
 
 ## RECAP ALOHA Support
 
@@ -206,6 +227,7 @@ Step 1, returns:
 - `data.train_data_paths[0].type: rollout`
 - `data.gamma: 1.0`
 - `data.failure_reward: -300.0`
+- `data.hitl_aware_returns: true`
 - `data.tag: sandwich_fail300`
 
 Step 2, value SFT:
@@ -259,6 +281,8 @@ Unit tests:
 
 - Add a small ALOHA LeRobot fixture or synthetic metadata-backed sample.
 - Test `ValueDataset` can build an ALOHA transformed sample.
+- Test HITL-aware Step 1 returns split successful intervention episodes at the
+  first teleop frame and leave failed intervention episodes failed.
 - Test `compute_advantages.build_obs(..., robot_type="aloha")` maps cameras,
   state, and prompt.
 - Test teleop label override changes only the boolean `advantage` label and
