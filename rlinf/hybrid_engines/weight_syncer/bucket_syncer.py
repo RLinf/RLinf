@@ -248,7 +248,7 @@ class BucketWeightSyncer(WeightSyncer):
         """
 
         del state_dict, send, recv
-        self.param_names_need_sync = set(param_names_need_sync)
+        self.param_names_need_sync = sorted(set(param_names_need_sync))
         if not self.param_names_need_sync:
             raise ValueError("param_names_need_sync must not be empty")
         self._sender_initialized = True
