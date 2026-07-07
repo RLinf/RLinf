@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
+from rlinf.algorithms.rlt.transition import update_rlt_transitions
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
@@ -72,6 +73,9 @@ class EnvWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
+        self.enable_rlt = (
+            OmegaConf.select(self.cfg, "algorithm.loss_type", default="") == "rlt_ac"
+        )
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
@@ -442,6 +446,9 @@ class EnvWorker(Worker):
             infos["intervene_action"] if "intervene_action" in infos else None
         )
         intervene_flags = infos["intervene_flag"] if "intervene_flag" in infos else None
+        rlt_switch_flags = (
+            infos["rlt_switch_flags"] if "rlt_switch_flags" in infos else None
+        )
         if self.cfg.env.train.auto_reset and chunk_dones.any():
             if "intervene_action" in infos["final_info"]:
                 intervene_actions = infos["final_info"]["intervene_action"]
@@ -457,6 +464,7 @@ class EnvWorker(Worker):
             truncations=chunk_truncations,
             intervene_actions=intervene_actions,
             intervene_flags=intervene_flags,
+            rlt_switch_flags=rlt_switch_flags,
         )
         return env_output, env_info
 
@@ -512,9 +520,14 @@ class EnvWorker(Worker):
                 for key in infos["episode"]:
                     env_info[key] = infos["episode"][key][newly_done].cpu()
 
+        rlt_switch_flags = (
+            infos["rlt_switch_flags"] if "rlt_switch_flags" in infos else None
+        )
+
         env_output = EnvOutput(
             obs=extracted_obs,
             final_obs=final_obs,
+            rlt_switch_flags=rlt_switch_flags,
         )
         return env_output, env_info
 
@@ -851,13 +864,16 @@ class EnvWorker(Worker):
         for stage_id in range(self.stage_num):
             env_output: EnvOutput = env_outputs[stage_id]
             env_batch = env_output.to_dict()
+            data = {
+                "obs": env_batch["obs"],
+                "final_obs": env_batch["final_obs"],
+            }
+            if self.enable_rlt:
+                data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             self.send_to(
                 group_name=self.cfg.rollout.group_name,
                 channel=rollout_channel,
-                data={
-                    "obs": env_batch["obs"],
-                    "final_obs": env_batch["final_obs"],
-                },
+                data=data,
                 mode="train",
                 tag="rollout_results",
                 route_key=stage_id if not self.env_decoupled_mode else None,
@@ -925,6 +941,7 @@ class EnvWorker(Worker):
             for _ in range(self.stage_num)
         ]
         env_metrics = defaultdict(list)
+        rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
         for epoch in range(self.rollout_epoch):
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
@@ -1002,24 +1019,37 @@ class EnvWorker(Worker):
                         self.rollout_results[stage_id].mark_last_step_with_flags(
                             rollout_result.save_flags
                         )
+                    if self.enable_rlt and self.collect_transitions:
+                        update_rlt_transitions(
+                            stage_id,
+                            rlt_pending_obs,
+                            self.rollout_results,
+                            rollout_result,
+                            cache_current=True,
+                        )
 
                     env_output, env_info = self.env_interact_step(
                         rollout_result.actions, stage_id
                     )
                     env_batch = env_output.to_dict()
+                    data = {
+                        "obs": env_batch["obs"],
+                        "final_obs": env_batch["final_obs"],
+                    }
+                    if self.enable_rlt:
+                        data["rlt_switch_flags"] = env_batch.get(
+                            "rlt_switch_flags", None
+                        )
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data={
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        data=data,
                         mode="train",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
-                    if self.collect_transitions:
+                    if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
@@ -1088,6 +1118,14 @@ class EnvWorker(Worker):
                     and reward_model_output is not None
                 ):
                     self.assign_history_reward(stage_id, reward_model_output)
+                if self.enable_rlt and self.collect_transitions:
+                    update_rlt_transitions(
+                        stage_id,
+                        rlt_pending_obs,
+                        self.rollout_results,
+                        rollout_result,
+                        cache_current=False,
+                    )
 
             if self.use_training_pipeline and actor_channel is not None:
                 await self.send_rollout_trajectories_pipeline(
@@ -1141,7 +1179,6 @@ class EnvWorker(Worker):
 
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
-
         for eval_rollout_epoch in range(self.eval_rollout_epoch):
             if not self.cfg.env.eval.auto_reset or eval_rollout_epoch == 0:
                 for stage_id in range(self.stage_num):
@@ -1159,13 +1196,18 @@ class EnvWorker(Worker):
                         ),
                     )
                     env_batch = env_output.to_dict()
+                    data = {
+                        "obs": env_batch["obs"],
+                        "final_obs": env_batch["final_obs"],
+                    }
+                    if self.enable_rlt:
+                        data["rlt_switch_flags"] = env_batch.get(
+                            "rlt_switch_flags", None
+                        )
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data={
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        data=data,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
@@ -1211,13 +1253,18 @@ class EnvWorker(Worker):
                         if eval_step == self.n_eval_chunk_steps - 1:
                             continue
                     env_batch = env_output.to_dict()
+                    data = {
+                        "obs": env_batch["obs"],
+                        "final_obs": env_batch["final_obs"],
+                    }
+                    if self.enable_rlt:
+                        data["rlt_switch_flags"] = env_batch.get(
+                            "rlt_switch_flags", None
+                        )
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data={
-                            "obs": env_batch["obs"],
-                            "final_obs": env_batch["final_obs"],
-                        },
+                        data=data,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,

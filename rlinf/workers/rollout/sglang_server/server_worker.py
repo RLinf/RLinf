@@ -28,6 +28,7 @@ from omegaconf import DictConfig, OmegaConf
 from sglang.srt.server_args import ServerArgs
 
 from rlinf.scheduler import Worker
+from rlinf.utils.http_client import no_proxy_env
 
 
 def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
@@ -49,14 +50,19 @@ def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
     from sglang.srt.entrypoints.http_server import launch_server
 
     server_args = ServerArgs(**server_args_dict)
-    try:
-        launch_server(server_args, pipe_finish_writer=ready_pipe)
-    except Exception as e:  # pragma: no cover — surface failures to parent
+    # Strip proxy env vars so sglang's internal HTTP calls (e.g. the
+    # tokenizer-manager / scheduler IPC that /get_server_info touches)
+    # don't tunnel through a user-configured proxy — otherwise the router's
+    # discover_metadata step hangs and worker registration fails.
+    with no_proxy_env():
         try:
-            ready_pipe.send(repr(e))
-        except Exception:
-            pass
-        raise
+            launch_server(server_args, pipe_finish_writer=ready_pipe)
+        except Exception as e:  # pragma: no cover — surface failures to parent
+            try:
+                ready_pipe.send(repr(e))
+            except Exception:
+                pass
+            raise
 
 
 def _wait_for_http_health(host: str, port: int, timeout: float = 300.0) -> None:
@@ -66,7 +72,7 @@ def _wait_for_http_health(host: str, port: int, timeout: float = 300.0) -> None:
     last_err: Optional[BaseException] = None
     while time.perf_counter() < deadline:
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=5, proxies={"http": None, "https": None})
             if resp.status_code == 200:
                 return
         except requests.exceptions.RequestException as e:
@@ -188,7 +194,12 @@ class SGLangServerWorker(Worker):
             return False
         try:
             url = f"http://{self._advertise_host}:{self._server_port}/health"
-            return requests.get(url, timeout=2).status_code == 200
+            return (
+                requests.get(
+                    url, timeout=2, proxies={"http": None, "https": None}
+                ).status_code
+                == 200
+            )
         except requests.exceptions.RequestException:
             return False
 
