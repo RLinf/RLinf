@@ -531,10 +531,10 @@ class MultiStepRolloutWorker(Worker):
                     **kwargs,
                 )
                 expert_forward_inputs = expert_result["forward_inputs"]
-                expert_target = expert_forward_inputs.get(
-                    "model_action", expert_forward_inputs.get("action")
-                )
+                expert_target = expert_forward_inputs["model_action"]
+                expert_action = expert_forward_inputs["action"]
                 if expert_target is not None:
+                    result["forward_inputs"]["action"] = expert_action
                     result["forward_inputs"]["model_action"] = expert_target
                 expert_label_flag = True
 
@@ -923,6 +923,7 @@ class MultiStepRolloutWorker(Worker):
                 {
                     key: torch.split(value, sizes, dim=0)[idx]
                     for key, value in rollout_result.forward_inputs.items()
+                    if value is not None
                 }
                 for idx in range(len(sizes))
             ]
