@@ -22,7 +22,7 @@ Add the profiling preset to ``defaults`` in your YAML:
 .. code-block:: yaml
 
    defaults:
-     - training_backend/fsdp@actor.fsdp_config
+     - hybrid_engines/fsdp@actor.fsdp_config
      - weight_syncer/patch_syncer@weight_syncer
      - profile/default@cluster.profiling
 
