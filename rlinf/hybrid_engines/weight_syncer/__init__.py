@@ -21,6 +21,7 @@ from .patch_syncer import (
     WeightPatch,
     WeightPatchTransport,
 )
+from .vanilla_syncer import VanillaWeightSyncer
 
 __all__ = [
     "BucketWeightSyncer",
@@ -29,6 +30,7 @@ __all__ = [
     "NVCompCompressor",
     "PatchCompressor",
     "PatchWeightSyncer",
+    "VanillaWeightSyncer",
     "WeightPatch",
     "WeightPatchTransport",
     "WeightSyncer",

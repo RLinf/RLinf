@@ -40,8 +40,9 @@ Core Interface
 - ``apply(...)``: receive and apply weights, then return the applied ``version``
 
 This means rollout code does not need to care whether the underlying mechanism
-is patch-based sync or bucket-based sync. After initialization, it only needs to
-call ``apply(...)`` through the common interface.
+is patch-based sync, bucket-based sync, or ``vanilla`` full-state sync. After
+initialization, it only needs to call ``apply(...)`` through the common
+interface.
 
 The implementation lives in ``rlinf/hybrid_engines/weight_syncer/``, while the
 YAML entry point remains the same independent ``weight_syncer`` Hydra config
@@ -51,7 +52,13 @@ group.
 Supported Sync Strategies
 ------------------------------
 
-RLinf currently provides two strategies:
+RLinf currently provides three strategies:
+
+``vanilla``
+  Legacy full ``state_dict`` synchronization. The sender gathers a full
+  ``state_dict`` with ``full_state_dict=true`` and point-to-point sends it to
+  mapped rollout ranks. The receiver performs a direct ``recv`` and loads the
+  payload with ``load_state_dict``.
 
 ``patch``
   Incremental synchronization. The sender maintains a snapshot and only sends
@@ -72,6 +79,12 @@ State Dict Device Requirements
 
 Different ``weight_syncer`` implementations have different requirements for
 the sender-side ``state_dict`` device:
+
+``vanilla``
+  The sender-side integration uses ``get_model_state_dict(cpu_offload=False,
+  full_state_dict=True)``. The full ``state_dict`` is sent directly without
+  key filtering, snapshot maintenance, or patch/bucket staging. On the receiver
+  side, ``apply(...)`` loads the received dict with ``load_state_dict``.
 
 ``bucket``
   There is no special device requirement for the sender-side ``state_dict``
@@ -147,13 +160,23 @@ The corresponding config files are:
 
 - ``examples/embodiment/config/weight_syncer/patch_syncer.yaml``
 - ``examples/embodiment/config/weight_syncer/bucket_syncer.yaml``
+- ``examples/embodiment/config/weight_syncer/vanilla_syncer.yaml``
+
+To switch to ``vanilla`` full-state sync:
+
+.. code-block:: yaml
+
+   defaults:
+     - weight_syncer/vanilla_syncer@weight_syncer
 
 
 Shared Communication Options
 ------------------------------
 
-Both ``patch`` and ``bucket`` modes also accept shared communication options at
-the top level of ``weight_syncer``:
+``patch`` and ``bucket`` modes accept shared communication options at the top
+level of ``weight_syncer``. ``vanilla`` also accepts ``nccl_max_ctas`` and
+``nccl_min_ctas`` for point-to-point send/recv, but ``use_ring_sync`` only
+applies to the broadcast path used by ``patch`` and ``bucket``.
 
 .. code-block:: yaml
 
@@ -177,10 +200,75 @@ the top level of ``weight_syncer``:
   ``CollectiveGroupOptions.accel_min_ctas`` to tune accelerator communication
   resource usage during weight sync.
 
-These options are shared by both syncer types, so they must be placed directly
-under ``weight_syncer`` rather than under ``patch`` or ``bucket``. They only
-change the collective options passed to broadcast/send/recv calls; they do not
-change the bucket or patch payload format.
+These options are shared by all syncer types for NCCL tuning, so
+``nccl_max_ctas`` and ``nccl_min_ctas`` must be placed directly under
+``weight_syncer`` rather than under ``patch`` or ``bucket``. They change the
+collective options passed to send/recv calls; they do not change the bucket or
+patch payload format.
+
+
+Vanilla Mode
+------------------------------
+
+A typical vanilla configuration looks like this:
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: vanilla
+     nccl_max_ctas: 32
+
+The fields mean:
+
+``type``
+  Fixed to ``vanilla`` to enable legacy full-state synchronization.
+
+``nccl_max_ctas`` / ``nccl_min_ctas``
+  Optional NCCL tuning knobs forwarded to point-to-point send/recv calls.
+
+Vanilla mode does not have a ``vanilla:`` sub-config block. Runtime sender
+topology is configured when the actor worker creates the syncer:
+
+- ``rollout_group_name``
+- ``rollout_world_size`` / ``actor_world_size`` / ``actor_rank``
+- ``worker_send`` (the actor worker's ``send`` method)
+
+These runtime values are passed to ``WeightSyncer.create(...)`` and are not
+stored in YAML.
+
+
+How Vanilla Mode Works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Vanilla mode uses point-to-point actor/rollout pairing:
+
+1. Sender-side rank mapping
+
+   Each actor rank sends weights to ``ceil(N / M)`` rollout ranks using the
+   modulo mapping implemented by ``VanillaWeightSyncer.setup_weight_dst_ranks()``,
+   where ``M`` is the actor world size and ``N`` is the rollout world size.
+
+2. Sender sync
+
+   The actor gathers ``full_state_dict=true``, launches point-to-point sends to
+   all mapped rollout ranks, then waits for all handles to complete.
+
+3. Receiver apply
+
+   Each rollout rank receives from ``actor_weight_src_rank = rollout_rank %
+   actor_world_size``, then calls ``load_state_dict`` on the received payload.
+
+
+Characteristics Of Vanilla Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- Advantage: simplest semantics
+- Advantage: full-model realignment without snapshot, patch, or bucket staging
+- Disadvantage: highest communication volume among the three strategies
+- Disadvantage: not optimized for sparse updates or large-model bandwidth savings
+
+Use vanilla when you want a conservative baseline for correctness debugging, or
+when you explicitly want the legacy full-sync behavior.
 
 
 Patch Mode
@@ -498,6 +586,8 @@ If your priority is to reduce synchronization overhead, a good tuning order is:
    subset, switch to ``bucket``. If you need to realign the full model
    including frozen weights, rely on init bootstrap or another explicit full
    weight load.
+8. If you want the legacy full-sync baseline or the simplest end-to-end
+   correctness check, use ``vanilla``.
 
 Patch mode keeps an extra sender-side snapshot. When ``snapshot_device: cuda``,
 that snapshot consumes GPU memory roughly equal to the number of model
@@ -532,8 +622,11 @@ The current implementation has several constraints to keep in mind:
 - ``bucket`` now shares the same selected-key filtering used by the current
   actor integration, so it is not a guaranteed full-model realignment path for
   frozen weights
+- ``vanilla`` is the only built-in strategy that always syncs the full
+  ``state_dict`` with legacy point-to-point actor/rollout pairing
 - if your immediate goal is "validate the selected-key transport path with the
-  simplest semantics", use ``bucket``; if your goal is "make weight sync fast
+  simplest semantics", use ``bucket``; if your goal is "validate legacy full
+  sync semantics", use ``vanilla``; if your goal is "make weight sync fast
   after correctness is verified", use ``patch``
 
 
@@ -547,12 +640,15 @@ A simple rule of thumb is:
   want to align
 - bootstrap or debug the selected-key transport path with the simplest
   semantics: start with ``bucket``
+- validate legacy full-state sync or establish a correctness baseline: use
+  ``vanilla``
 - high sparsity and aggressive optimization: ``patch + delta_encoding + optional nvcomp``
 
 If you are not fully sure the patch assumptions hold for your pipeline, the
 safest approach is:
 
 - first ensure actor and rollout have the same ``state_dict`` structure
-- keep patch init bootstrap enabled, or use ``bucket`` first to validate the
-  selected-key transport path
+- keep patch init bootstrap enabled, use ``bucket`` first to validate the
+  selected-key transport path, or use ``vanilla`` first to validate legacy
+  full sync
 - then switch to ``patch`` for performance optimization

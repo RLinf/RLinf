@@ -10,7 +10,7 @@
 - 添加一个使用 Megatron + SGLang 后端的 :doc:`新模型 <new_model_megatron>`  
 - 参考一条完整的 :doc:`Reward Model 工作流 <reward_model>` （仿真与真机）
 - 使用 :doc:`Megatron-Bridge <mbridge>` 集成 Megatron-LM 训练与 HuggingFace checkpoint
-- 通过 :doc:`权重同步 <weight_syncer>` 优化 actor 到 rollout 的权重传输（``patch`` 与 ``bucket`` 模式）
+- 通过 :doc:`权重同步 <weight_syncer>` 优化 actor 到 rollout 的权重传输（``patch``、``bucket`` 与 ``vanilla`` 模式）
 
 RLinf 支持多种模型训练后端，每种后端都有自己的初始化逻辑和执行流程。  
 本指南提供了逐步说明，帮助你完成以下任务：

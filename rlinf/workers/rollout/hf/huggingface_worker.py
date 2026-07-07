@@ -120,6 +120,12 @@ class MultiStepRolloutWorker(Worker):
             )
             self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
             self._sync_weight_comm_options = self.weight_syncer.comm_options
+            self._vanilla_weight_sync = (
+                OmegaConf.select(weight_syncer_cfg, "type") == "vanilla"
+            )
+            if self._vanilla_weight_sync:
+                actor_world_size = self.placement.get_world_size("actor")
+                self.actor_weight_src_rank = self._rank % actor_world_size
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
@@ -581,6 +587,20 @@ class MultiStepRolloutWorker(Worker):
 
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
+        if self._vanilla_weight_sync:
+
+            async def recv_func() -> Any:
+                return await self.recv(
+                    self.actor_group_name,
+                    src_rank=self.actor_weight_src_rank,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
+
+            await self.weight_syncer.apply(self.hf_model, recv_func)
+            gc.collect()
+            self.torch_platform.empty_cache()
+            return
 
         async def recv_func() -> Any:
             return await self.broadcast(

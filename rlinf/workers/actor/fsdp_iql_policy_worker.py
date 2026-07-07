@@ -761,6 +761,10 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
     async def sync_model_to_rollout(self) -> None:
         """Sync policy weights to rollout workers using the configured weight syncer."""
+        if self._vanilla_weight_sync:
+            await super().sync_model_to_rollout()
+            return
+
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
                 self.offload_optimizer()
@@ -769,7 +773,8 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
         if self._use_fsdp_wrap:
             state_dict = self.get_model_state_dict(
-                cpu_offload=False, full_state_dict=False
+                cpu_offload=False,
+                full_state_dict=self._vanilla_weight_sync,
             )
         else:
             state_dict = self.get_policy_state_dict()

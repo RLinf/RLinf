@@ -11,7 +11,7 @@ You will learn how to:
 - Add a :doc:`new model <new_model_megatron>` using the Megatron + SGLang backend  
 - Follow a complete :doc:`reward model workflow <reward_model>` (simulation and real-world)
 - Use :doc:`Megatron-Bridge <mbridge>` to integrate Megatron-LM training with HuggingFace checkpoints
-- Optimize weight transfer with :doc:`Weight Synchronization <weight_syncer>` (``patch`` and ``bucket`` modes)
+- Optimize weight transfer with :doc:`Weight Synchronization <weight_syncer>` (``patch``, ``bucket``, and ``vanilla`` modes)
 
 RLinf supports multiple backends for model training, each with its own initialization logic and execution flow.  
 This guide provides step-by-step instructions on how to:

@@ -1036,7 +1036,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         # create weight syncer
         weight_syncer_cfg = OmegaConf.select(cfg, "weight_syncer")
-        self.weight_syncer = WeightSyncer.create(weight_syncer_cfg)
+        self._vanilla_weight_sync = (
+            OmegaConf.select(weight_syncer_cfg, "type") == "vanilla"
+        )
+        vanilla_create_kwargs = {}
+        if self._vanilla_weight_sync:
+            vanilla_create_kwargs = {
+                "worker_send": self.send,
+                "rollout_group_name": self._rollout_group_name,
+                "rollout_world_size": self._component_placement.get_world_size(
+                    "rollout"
+                ),
+                "actor_world_size": self._world_size,
+                "actor_rank": self._rank,
+            }
+        self.weight_syncer = WeightSyncer.create(
+            weight_syncer_cfg,
+            **vanilla_create_kwargs,
+        )
 
         assert (
             self.cfg.actor.global_batch_size
@@ -1082,7 +1099,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return model
 
     def get_rollout_state_dict(self) -> dict:
-        return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
+        return self.get_model_state_dict(
+            cpu_offload=False,
+            full_state_dict=self._vanilla_weight_sync,
+        )
 
     @Worker.timer("actor/sync_model_to_rollout")
     async def sync_model_to_rollout(self) -> None:
@@ -1095,37 +1115,41 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         state_dict = self.get_rollout_state_dict()
 
-        async def send_func(data):
-            if not self._is_weight_sender:
-                return
-            await self.broadcast(
-                data,
-                groups=[
-                    (self._group_name, 0),
-                    (self._rollout_group_name, self._rollout_all_ranks),
-                ],
-                src=(self._group_name, 0),
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+        if self._vanilla_weight_sync:
+            await self.weight_syncer.sync(state_dict, version=self.version)
+        else:
 
-        async def recv_func():
-            return await self.recv(
-                src_group_name=self._rollout_group_name,
-                src_rank=0,
-                async_op=True,
-                options=self._sync_weight_comm_options,
-            ).async_wait()
+            async def send_func(data):
+                if not self._is_weight_sender:
+                    return
+                await self.broadcast(
+                    data,
+                    groups=[
+                        (self._group_name, 0),
+                        (self._rollout_group_name, self._rollout_all_ranks),
+                    ],
+                    src=(self._group_name, 0),
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
-        if not self.weight_syncer.sender_initialized():
-            await self.weight_syncer.init_sender(
-                state_dict=state_dict,
-                send=send_func,
-                recv=recv_func,
-                param_names_need_sync=self.param_names_need_sync,
-            )
+            async def recv_func():
+                return await self.recv(
+                    src_group_name=self._rollout_group_name,
+                    src_rank=0,
+                    async_op=True,
+                    options=self._sync_weight_comm_options,
+                ).async_wait()
 
-        await self.weight_syncer.sync(state_dict, send_func, version=self.version)
+            if not self.weight_syncer.sender_initialized():
+                await self.weight_syncer.init_sender(
+                    state_dict=state_dict,
+                    send=send_func,
+                    recv=recv_func,
+                    param_names_need_sync=self.param_names_need_sync,
+                )
+
+            await self.weight_syncer.sync(state_dict, send_func, version=self.version)
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (

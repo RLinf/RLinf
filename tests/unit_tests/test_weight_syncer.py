@@ -23,6 +23,7 @@ from omegaconf import OmegaConf
 from rlinf.hybrid_engines.weight_syncer import (
     BucketWeightSyncer,
     PatchWeightSyncer,
+    VanillaWeightSyncer,
     WeightSyncer,
 )
 from rlinf.hybrid_engines.weight_syncer.bucket_syncer import (
@@ -1247,6 +1248,39 @@ def test_bucket_weight_syncer_skips_frozen_params_but_syncs_persistent_buffers()
     torch.testing.assert_close(sender_model.scalar_buf, receiver_model.scalar_buf)
 
 
+def test_vanilla_weight_syncer_roundtrip():
+    sender_model = _make_model("cpu")
+    receiver_model = copy.deepcopy(sender_model)
+    transport = _InMemoryTransport()
+
+    sender_syncer = VanillaWeightSyncer()
+    receiver_syncer = VanillaWeightSyncer()
+
+    async def worker_send(data, *_args, **_kwargs):
+        await transport.send(data)
+
+    sender_syncer.configure_sender(
+        rollout_group_name="rollout",
+        weight_dst_ranks=[0],
+        worker_send=worker_send,
+    )
+
+    async def _run_roundtrip():
+        with torch.no_grad():
+            sender_model.linear.weight.add_(1.0)
+            sender_model.tensor3d.mul_(0.5)
+
+        state_dict = sender_model.state_dict()
+        await sender_syncer.sync(state_dict, version=7)
+        await receiver_syncer.apply(receiver_model, transport.recv)
+
+    asyncio.run(_run_roundtrip())
+    _assert_state_dict_equal(
+        _clone_state_dict(sender_model),
+        _clone_state_dict(receiver_model),
+    )
+
+
 def test_weight_syncer_factory_builds_patch_and_bucket():
     patch_cfg = OmegaConf.create(
         {
@@ -1287,6 +1321,23 @@ def test_weight_syncer_factory_builds_patch_and_bucket():
     assert isinstance(bucket_syncer, BucketWeightSyncer)
     assert bucket_syncer.comm_options is None
 
+    vanilla_cfg = OmegaConf.create({"type": "vanilla"})
+    vanilla_syncer = WeightSyncer.create(vanilla_cfg)
+    assert isinstance(vanilla_syncer, VanillaWeightSyncer)
+    assert vanilla_syncer.comm_options is None
+    assert not vanilla_syncer.sender_initialized()
+
+    configured_vanilla_syncer = WeightSyncer.create(
+        vanilla_cfg,
+        worker_send=lambda *args, **kwargs: None,
+        rollout_group_name="rollout",
+        rollout_world_size=4,
+        actor_world_size=2,
+        actor_rank=0,
+    )
+    assert configured_vanilla_syncer.sender_initialized()
+    assert configured_vanilla_syncer._weight_dst_ranks == [0, 2]
+
 
 def test_weight_syncer_factory_builds_shared_comm_options():
     base_patch_cfg = {
@@ -1306,13 +1357,14 @@ def test_weight_syncer_factory_builds_shared_comm_options():
             "bucket_device": "cpu",
         },
     }
+    base_vanilla_cfg = {"type": "vanilla"}
     shared_options = {
         "use_ring_sync": True,
         "nccl_max_ctas": 8,
         "nccl_min_ctas": 2,
     }
 
-    for base_cfg in (base_patch_cfg, base_bucket_cfg):
+    for base_cfg in (base_patch_cfg, base_bucket_cfg, base_vanilla_cfg):
         cfg = OmegaConf.create({**base_cfg, **shared_options})
 
         syncer = WeightSyncer.create(cfg)

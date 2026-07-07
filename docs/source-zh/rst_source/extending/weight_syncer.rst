@@ -34,8 +34,8 @@
 - ``sync(...)``：发送当前版本权重。
 - ``apply(...)``：接收并应用权重，同时返回本次应用的 ``version``。
 
-这意味着 rollout 侧不需要关心底层到底是 patch 同步还是 bucket 同步，
-只需要在初始化后统一调用 ``apply(...)`` 即可。
+这意味着 rollout 侧不需要关心底层到底是 patch 同步、bucket 同步还是
+``vanilla`` 全量同步，只需要在初始化后统一调用 ``apply(...)`` 即可。
 
 当前实现代码位于 ``rlinf/hybrid_engines/weight_syncer/``，但 YAML 配置入口
 仍保持为独立的 ``weight_syncer`` Hydra config group。
@@ -44,7 +44,12 @@
 当前支持的同步策略
 ------------------------------
 
-目前 RLinf 提供两种策略：
+目前 RLinf 提供三种策略：
+
+``vanilla``
+  传统全量 ``state_dict`` 同步。发送端以 ``full_state_dict=true`` 收集完整
+  ``state_dict``，并通过点对点 send 发送到映射的 rollout rank；接收端直接
+  ``recv`` 后调用 ``load_state_dict`` 加载。
 
 ``patch``
   增量同步。发送端维护一份 snapshot，仅发送相对于 snapshot 发生变化的参数位置与数值。
@@ -62,6 +67,12 @@ State Dict 设备要求
 ------------------------------
 
 不同 ``weight_syncer`` 对发送端 ``state_dict`` 的设备要求不同：
+
+``vanilla``
+  发送端集成使用 ``get_model_state_dict(cpu_offload=False,
+  full_state_dict=True)``。完整 ``state_dict`` 会直接发送，不做 key 过滤、
+  snapshot 维护或 patch/bucket 分阶段处理。接收端 ``apply(...)`` 通过
+  ``load_state_dict`` 加载收到的 dict。
 
 ``bucket``
   对 ``sync(...)`` 传入的发送端 ``state_dict`` 设备没有特殊要求。参数可以位于
@@ -130,12 +141,22 @@ State Dict 设备要求
 
 - ``examples/embodiment/config/weight_syncer/patch_syncer.yaml``
 - ``examples/embodiment/config/weight_syncer/bucket_syncer.yaml``
+- ``examples/embodiment/config/weight_syncer/vanilla_syncer.yaml``
+
+切换到 ``vanilla`` 全量同步：
+
+.. code-block:: yaml
+
+   defaults:
+     - weight_syncer/vanilla_syncer@weight_syncer
 
 
 共享通信选项
 ------------------------------
 
-``patch`` 和 ``bucket`` 两种模式都支持放在 ``weight_syncer`` 顶层的共享通信选项：
+``patch`` 和 ``bucket`` 模式支持放在 ``weight_syncer`` 顶层的共享通信选项。
+``vanilla`` 也支持 ``nccl_max_ctas`` 和 ``nccl_min_ctas`` 用于点对点 send/recv，
+但 ``use_ring_sync`` 仅作用于 ``patch`` 和 ``bucket`` 使用的 broadcast 路径。
 
 .. code-block:: yaml
 
@@ -159,9 +180,73 @@ State Dict 设备要求
   ``CollectiveGroupOptions.accel_min_ctas``，用于调整权重同步期间 accelerator
   通信占用的计算资源。
 
-这些选项对两种 syncer 类型通用，因此必须直接放在 ``weight_syncer`` 下，而不是
-``patch`` 或 ``bucket`` 子节点下。它们只改变传给 broadcast/send/recv 调用的
-collective options，不改变 bucket 或 patch payload 的格式。
+这些选项对所有 syncer 类型通用，因此 ``nccl_max_ctas`` 和 ``nccl_min_ctas``
+必须直接放在 ``weight_syncer`` 下，而不是 ``patch`` 或 ``bucket`` 子节点下。
+它们会改变传给 send/recv 调用的 collective options，不改变 bucket 或 patch
+payload 的格式。
+
+
+Vanilla 模式
+------------------------------
+
+一个典型的 vanilla 配置如下：
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: vanilla
+     nccl_max_ctas: 32
+
+各字段含义如下：
+
+``type``
+  固定为 ``vanilla``，表示使用 legacy 全量同步。
+
+``nccl_max_ctas`` / ``nccl_min_ctas``
+  可选 NCCL 调优参数，会转发给点对点 send/recv 调用。
+
+Vanilla 模式没有 ``vanilla:`` 子配置块。发送端拓扑在 actor worker 创建 syncer
+时注入：
+
+- ``rollout_group_name``
+- ``rollout_world_size`` / ``actor_world_size`` / ``actor_rank``
+- ``worker_send``（actor worker 的 ``send`` 方法）
+
+这些运行时参数通过 ``WeightSyncer.create(...)`` 传入，不会写在 YAML 中。
+
+
+Vanilla 模式的工作方式
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Vanilla 模式使用点对点的 actor/rollout 配对逻辑：
+
+1. 发送端 rank 映射
+
+   每个 actor rank 通过 ``VanillaWeightSyncer.setup_weight_dst_ranks()`` 的
+   取模映射，向 ``ceil(N / M)`` 个 rollout rank 发送权重，其中 ``M`` 为 actor
+   world size，``N`` 为 rollout world size。
+
+2. 发送端 sync
+
+   actor 以 ``full_state_dict=true`` 收集权重，向所有映射 rollout rank 发起
+   点对点 send，再统一等待所有 handle 完成。
+
+3. 接收端 apply
+
+   每个 rollout rank 从 ``actor_weight_src_rank = rollout_rank %
+   actor_world_size`` 接收权重，再对收到的 payload 调用 ``load_state_dict``。
+
+
+Vanilla 模式的特点
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- 优点：语义最简单
+- 优点：无需 snapshot、patch 或 bucket 分阶段，即可做全模型对齐
+- 缺点：三种策略中通信量通常最大
+- 缺点：未针对稀疏更新或大模型带宽做优化
+
+当你需要保守的正确性基线、调试同步链路，或明确希望使用 legacy 全量同步时，
+优先选择 ``vanilla``。
 
 
 Patch 模式
@@ -441,6 +526,8 @@ rollout 再据此更新自身版本状态。
 7. 若你想用最简单的逐 tensor 传输语义验证当前选中子集的同步链路，可以切回
    ``bucket``。如果你需要重新对齐包含冻结权重在内的完整模型，请依赖 init
    bootstrap 或其它显式的全量权重加载方式。
+8. 若你需要 legacy 全量同步基线，或做最简单的端到端正确性验证，可使用
+   ``vanilla``。
 
 需要注意的是，patch 模式会额外保存一份 sender 侧 snapshot。若
 ``snapshot_device: cuda``，这部分会占用 GPU 显存，大小约为模型参数量乘以
@@ -468,8 +555,11 @@ CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权
 - 当前文档中的压缩配置仅指 patch payload 压缩，不是模型权重本体压缩。
 - 当前 ``bucket`` 也会沿用 actor 集成中的选 key 过滤，因此它并不保证会重新
   对齐所有冻结权重。
+- ``vanilla`` 是唯一内置、始终同步完整 ``state_dict`` 且沿用 legacy 点对点
+  actor/rollout 配对的策略。
 - 如果你只是希望用最简单语义验证选中 key 子集的传输链路，请优先选 ``bucket``；
-  如果你要追求高效同步，再切到 ``patch``。
+  如果你要验证 legacy 全量同步语义，请选 ``vanilla``；如果你要追求高效同步，
+  再切到 ``patch``。
 
 
 推荐使用方式
@@ -480,11 +570,12 @@ CPU pinned memory。其大小同样约为模型参数量乘以接收端对应权
 - 默认训练：使用 ``patch + init_sync.enabled=true + prefixes:null``
 - 只有在你明确知道要对齐哪些 ``state_dict`` key 时，才使用定向 prefix bootstrap
 - 首次排查选中 key 子集的传输链路时，可先用 ``bucket``
+- 验证 legacy 全量同步或建立正确性基线：使用 ``vanilla``
 - 确认稀疏度高且追求极致性能：``patch + delta_encoding + 可选 nvcomp``
 
 如果你不确定当前链路是否满足 patch 的前提，最安全的做法是：
 
 - 先确保 actor 与 rollout 的 ``state_dict`` 结构一致
-- 保持 patch init bootstrap 开启，或者先用 ``bucket`` 验证选中 key 子集的
-  传输链路
+- 保持 patch init bootstrap 开启，或先用 ``bucket`` 验证选中 key 子集的
+  传输链路，或先用 ``vanilla`` 验证 legacy 全量同步
 - 再切到 ``patch`` 做性能优化

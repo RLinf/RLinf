@@ -73,7 +73,16 @@ class WeightSyncer(ABC):
         self._receiver_initialized = True
 
     @classmethod
-    def create(cls, config: DictConfig) -> "WeightSyncer":
+    def create(
+        cls,
+        config: DictConfig,
+        *,
+        worker_send: Any | None = None,
+        rollout_group_name: str | None = None,
+        rollout_world_size: int | None = None,
+        actor_world_size: int | None = None,
+        actor_rank: int | None = None,
+    ) -> "WeightSyncer":
         assert config is not None, "Weight syncer config must be provided"
         syncer_type = OmegaConf.select(config, "type")
         if syncer_type == "bucket":
@@ -94,6 +103,32 @@ class WeightSyncer(ABC):
                     bucket_config, "load_instant", default=True
                 ),
             )
+        elif syncer_type == "vanilla":
+            from .vanilla_syncer import VanillaWeightSyncer
+
+            syncer = VanillaWeightSyncer()
+            if rollout_group_name is not None:
+                assert worker_send is not None, (
+                    "worker_send is required to initialize vanilla weight syncer sender"
+                )
+                assert rollout_world_size is not None, (
+                    "rollout_world_size is required to initialize vanilla weight syncer sender"
+                )
+                assert actor_world_size is not None, (
+                    "actor_world_size is required to initialize vanilla weight syncer sender"
+                )
+                assert actor_rank is not None, (
+                    "actor_rank is required to initialize vanilla weight syncer sender"
+                )
+                syncer.configure_sender(
+                    rollout_group_name=rollout_group_name,
+                    weight_dst_ranks=VanillaWeightSyncer.setup_weight_dst_ranks(
+                        rollout_world_size,
+                        actor_world_size,
+                        actor_rank,
+                    ),
+                    worker_send=worker_send,
+                )
         elif syncer_type == "patch":
             from .patch_syncer import PatchWeightSyncer
 
