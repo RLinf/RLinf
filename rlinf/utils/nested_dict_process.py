@@ -84,13 +84,8 @@ def put_tensor_device(data_dict, device):
 def _split_list_by_sizes(value: list, split_sizes: list[int] | int) -> list[list]:
     if isinstance(split_sizes, int):
         chunks = split_sizes
-        chunk_size = (len(value) + chunks - 1) // chunks if chunks else 0
-        split_sizes = [
-            min(chunk_size, len(value) - i * chunk_size)
-            if i * chunk_size < len(value)
-            else 0
-            for i in range(chunks)
-        ]
+        k, m = divmod(len(value), chunks)
+        split_sizes = [k + (1 if i < m else 0) for i in range(chunks)]
     out, i = [], 0
     for n in split_sizes:
         out.append(value[i : i + n])
