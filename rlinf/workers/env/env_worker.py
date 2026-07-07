@@ -879,9 +879,10 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
                 extracted_obs, infos = self.env_list[stage_id].reset()
-                rollout_results = getattr(self, "rollout_results", None)
-                if self.enable_online_lerobot and rollout_results is not None:
-                    rollout_results[stage_id].reset_episode_buffers()
+                if self.enable_online_lerobot:
+                    rollout_results = getattr(self, "rollout_results", None)
+                    if rollout_results is not None:
+                        rollout_results[stage_id].reset_episode_buffers()
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()

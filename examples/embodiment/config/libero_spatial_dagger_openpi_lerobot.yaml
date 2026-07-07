@@ -104,11 +104,11 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: ""
+    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     precision: ${actor.model.precision}
 
   expert_model: # define expert model_path here
-    model_path: ""
+    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     precision: ${actor.model.precision}
 
 actor:
@@ -121,7 +121,7 @@ actor:
 
   model:
     precision: null
-    model_path: ""
+    model_path: "/path/to/RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT"
     num_action_chunks: 10
     add_value_head: False
     openpi:
