@@ -238,8 +238,10 @@ def split_dict(
             assert length == total_size, (
                 f"List field '{key}' expected length {total_size}, got {length}."
             )
-            for i, chunk in enumerate(_split_list_by_sizes(value, split_sizes)):
-                splitted_batches[i][key] = chunk
+            begin = 0
+            for i, size in enumerate(split_sizes):
+                splitted_batches[i][key] = value[begin : begin + size]
+                begin += size
         elif isinstance(value, dict):
             splitted_sub_batches = split_dict(value, split_sizes, dim=dim)
             for i in range(count):
