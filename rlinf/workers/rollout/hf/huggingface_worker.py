@@ -505,6 +505,7 @@ class MultiStepRolloutWorker(Worker):
 
         if mode == "train" and self.expert_model is not None:
             # training with expert model. Beta-probability acting.
+            self._logger.info(f"beta: {self._dagger_sampling_params['beta']}")
             use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
         else:
             use_expert = False

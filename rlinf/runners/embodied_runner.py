@@ -93,7 +93,13 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        if self.cfg.actor.get("data_source", "buffer") == "buffer":
+            self.actor_channel = Channel.create("Actor")
+        elif self.cfg.actor.get("data_source", "buffer") == "lerobot":
+            if self.cfg.env.train.data_collection.get("defer_write", False):
+                self.actor_channel = Channel.create("Actor")
+            else:
+                self.actor_channel = None
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -108,6 +114,10 @@ class EmbodiedRunner:
 
         # compute `max_steps`
         self.set_max_steps()
+
+        env_mode = self.cfg.env.train.get("env_mode", None)
+        assert env_mode in ["decoupled", None], f"{env_mode} is not supported"
+        self.env_decoupled_mode = env_mode == "decoupled"
 
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
@@ -195,12 +205,17 @@ class EmbodiedRunner:
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
         )
-        rollout_handle: Handle = self.rollout.evaluate(
-            input_channel=self.rollout_channel,
-            output_channel=self.env_channel,
-        )
+
+        if not self.env_decoupled_mode:
+            rollout_handle: Handle = self.rollout.evaluate(
+                input_channel=self.rollout_channel,
+                output_channel=self.env_channel,
+            )
+
         env_results = env_handle.wait()
-        rollout_handle.wait()
+        if not self.env_decoupled_mode:
+            rollout_handle.wait()
+
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
         return eval_metrics

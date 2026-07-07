@@ -28,6 +28,8 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.rolling_lerobot_dataset import build_rolling_lerobot_dataset
+from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -249,6 +251,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.offload_optimizer()
         if self.cfg.actor.get("compile_model", False):
             self.model = torch.compile(self.model, mode="default")
+        self._setup_rollout_weight_dst_ranks()
 
     def setup_dagger_components(self):
         """Initialize DAgger-specific replay buffer state."""
@@ -495,7 +498,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 is_last_micro_batch=(mb_idx + 1) == self.gradient_accumulation,
             )
             with self.amp_context:
-                actor_loss = self.forward_actor(batch["forward_inputs"])
+                actor_loss = self.forward_actor(batch)
             actor_loss = actor_loss / self.gradient_accumulation
             with backward_ctx:
                 self.grad_scaler.scale(actor_loss).backward()

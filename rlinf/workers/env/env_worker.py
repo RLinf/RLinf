@@ -15,7 +15,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Any
+from typing import Any, Callable, Literal
 
 import numpy as np
 import torch
@@ -38,11 +38,13 @@ from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
+from rlinf.utils.delay_sampler import DelaySampler
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
+    split_dict,
     split_dict_to_chunk,
     update_nested_cfg,
 )
@@ -53,6 +55,8 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
+
+INTERACT_DELAY_METRIC_KEY = "interact_delay"
 
 
 class EnvWorker(Worker):
@@ -160,6 +164,10 @@ class EnvWorker(Worker):
         )
         if self.use_training_pipeline and self.enable_train:
             self._init_pipeline_params()
+
+        self.delay_sampler = DelaySampler.create(
+            self.cfg.env.get("delay_sampler", None)
+        )
 
         if self.enable_train:
             self.train_prev_done: list[torch.Tensor] = [
@@ -412,9 +420,104 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
+                    defer_write=getattr(env_cfg.data_collection, "defer_write", False),
                 )
             env_list.append(env)
         return env_list
+
+    def _use_delayed_per_env_send(self, mode: Literal["train", "eval"]) -> bool:
+        if mode != "train":
+            return False
+        if getattr(self, "delay_sampler", None) is None:
+            return False
+        return getattr(self, "env_decoupled_mode", False)
+
+    async def _sleep_and_send_env_batch(
+        self,
+        send_func: Callable[..., None],
+        rollout_channel: Channel,
+        env_batch: dict[str, Any],
+        delay_seconds: float,
+        *,
+        mode: Literal["train", "eval"],
+        tag: str = "rollout_results",
+        route_key: int | None = None,
+        decoupled_mode: bool = False,
+    ) -> None:
+        if delay_seconds > 0.0:
+            await asyncio.sleep(delay_seconds)
+        send_func(
+            group_name=self.cfg.rollout.group_name,
+            channel=rollout_channel,
+            data=env_batch,
+            mode=mode,
+            tag=tag,
+            route_key=route_key,
+            decoupled_mode=decoupled_mode,
+        )
+
+    def _record_interact_delay_samples(
+        self,
+        env_metrics: dict[str, list[torch.Tensor]] | None,
+        delay_seconds_list: list[float],
+    ) -> None:
+        if env_metrics is None or not delay_seconds_list:
+            return
+        env_metrics[INTERACT_DELAY_METRIC_KEY].append(
+            torch.as_tensor(delay_seconds_list, dtype=torch.float32).reshape(-1).cpu()
+        )
+
+    async def _send_env_batch_with_delay(
+        self,
+        send_func: Callable[..., None],
+        channel: Channel,
+        data: dict[str, Any],
+        env_metrics: dict[str, list[torch.Tensor]] | None = None,
+        *,
+        mode: Literal["train", "eval"] = "train",
+        tag: str = "rollout_results",
+        route_key: int | None = None,
+    ) -> None:
+        if not self._use_delayed_per_env_send(mode=mode):
+            send_func(
+                group_name=self.cfg.rollout.group_name,
+                channel=channel,
+                data=data,
+                mode=mode,
+                tag=tag,
+                route_key=route_key,
+                decoupled_mode=self.env_decoupled_mode,
+            )
+            return
+
+        num_envs = (
+            self.train_num_envs_per_send
+            if mode == "train"
+            else self.eval_num_envs_per_send
+        )
+        env_batches = split_dict(data, [1 for _ in range(num_envs)])
+        delay_seconds_list = self.delay_sampler.sample(num_envs)
+
+        send_tasks = [
+            asyncio.create_task(
+                self._sleep_and_send_env_batch(
+                    send_func,
+                    channel,
+                    env_batch_i,
+                    delay_seconds,
+                    mode=mode,
+                    tag=tag,
+                    route_key=route_key,
+                    decoupled_mode=True,
+                )
+            )
+            for env_batch_i, delay_seconds in zip(env_batches, delay_seconds_list)
+        ]
+        await asyncio.gather(*send_tasks)
+        self._record_interact_delay_samples(
+            env_metrics=env_metrics,
+            delay_seconds_list=delay_seconds_list,
+        )
 
     def _init_env(self):
         for i in range(self.stage_num):
@@ -944,6 +1047,28 @@ class EnvWorker(Worker):
                 decoupled_mode=self.env_decoupled_mode,
             )
 
+    async def _send_train_bootstrap_with_delay(
+        self,
+        rollout_channel: Channel,
+        env_outputs: list[EnvOutput],
+        env_metrics: dict[str, list[torch.Tensor]] | None,
+    ) -> None:
+        for stage_id in range(self.stage_num):
+            env_output: EnvOutput = env_outputs[stage_id]
+            env_batch = env_output.to_dict()
+            await self._send_env_batch_with_delay(
+                self.send_to,
+                rollout_channel,
+                {
+                    "obs": env_batch["obs"],
+                    "final_obs": env_batch["final_obs"],
+                },
+                env_metrics=env_metrics,
+                mode="train",
+                tag="rollout_results",
+                route_key=stage_id if not self.env_decoupled_mode else None,
+            )
+
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
         self._send_train_bootstrap(rollout_channel, env_outputs)
@@ -1028,7 +1153,10 @@ class EnvWorker(Worker):
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
             else:
-                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+                env_outputs = self.bootstrap_step()
+                await self._send_train_bootstrap_with_delay(
+                    rollout_channel, env_outputs, env_metrics
+                )
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1121,15 +1249,26 @@ class EnvWorker(Worker):
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
-                    self.send_to(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
-                        mode="train",
-                        tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        decoupled_mode=self.env_decoupled_mode,
-                    )
+                    if not self._use_delayed_per_env_send(mode="train"):
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=self._build_rollout_input_data(env_batch),
+                            mode="train",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                    else:
+                        await self._send_env_batch_with_delay(
+                            self.send_to,
+                            channel=rollout_channel,
+                            data=data,
+                            env_metrics=env_metrics,
+                            mode="train",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                        )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs
@@ -1152,10 +1291,11 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
-                        env_output.intervene_actions,
-                        env_output.intervene_flags,
-                    )
+                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                        self.rollout_results[stage_id].update_last_actions(
+                            env_output.intervene_actions,
+                            env_output.intervene_flags,
+                        )
 
                 reward_model_output = None
                 if reward_channel is not None:
@@ -1193,7 +1333,8 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                if self.cfg.actor.get("data_source", "buffer") == "buffer":
+                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
                 if (
                     self.reward_mode == "history_buffer"
                     and self.history_reward_assign
@@ -1352,6 +1493,17 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
+
+    @staticmethod
+    def _find_collect_wrapper(env):
+        """Traverse env wrappers to find a CollectEpisode instance, or None."""
+        from rlinf.envs.wrappers.collect_episode import CollectEpisode
+
+        while env is not None:
+            if isinstance(env, CollectEpisode):
+                return env
+            env = getattr(env, "env", None)
+        return None
 
     def compute_advantages_and_returns(
         self, rollout_batch: dict[str, torch.Tensor]

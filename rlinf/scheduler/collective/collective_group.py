@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import torch
 import torch.distributed as dist
+from omegaconf import DictConfig, OmegaConf
 from ray.cloudpickle import Pickler as CloudPickler
 from torch.multiprocessing.reductions import reduce_tensor
 
@@ -36,6 +37,11 @@ from ..cluster.utils import (
 from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
 from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
+from .net_emulation import (
+    NetEmulationClient,
+    NetEmulationConfig,
+    estimate_payload_size_bytes,
+)
 
 if TYPE_CHECKING:
     from .collective import Collective
@@ -233,6 +239,8 @@ class CollectiveGroup:
         self._coll_manager = CollectiveManager.get_proxy()
         self._logger = logging.getLogger(cur_worker_address.get_name())
         self._lock = threading.Lock()
+        self._net_emulation_client: NetEmulationClient | None = None
+        self._net_emulation_config: NetEmulationConfig | None = None
         # Lazily populated sub-groups for the hybrid broadcast path.
         # IPC sub-groups: one per (src_rank, same_device_dst_rank) pair.
         self._ipc_sub_groups: dict[tuple[int, int], "CollectiveGroup"] = {}
@@ -350,6 +358,10 @@ class CollectiveGroup:
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
         """
         self._init_process_group(options=options)
+        self._maybe_wait_for_net_emulation(
+            payload=object,
+            extra_payload=piggyback_payload,
+        )
         # First send object type to the destination worker
         object_type_tensor = torch.tensor(object_type, dtype=torch.int, device="cpu")
         self._send(object_type_tensor, CollectiveGroup.CPU, comm_id)
@@ -551,6 +563,7 @@ class CollectiveGroup:
             )
 
         self._init_process_group(options=options)
+        self._maybe_wait_for_net_emulation(payload=tensor)
         self._logger.debug(
             f"Sending tensor to Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
@@ -1160,6 +1173,54 @@ class CollectiveGroup:
             src=src_rank,
             async_op=async_op,
         )
+
+    def _maybe_wait_for_net_emulation(
+        self, payload: Any, extra_payload: Any | None = None
+    ) -> None:
+        client = self._get_net_emulation_client()
+        if client is None:
+            return
+
+        dst_addr = self._worker_addresses[self._peer_rank]
+        size_bytes = estimate_payload_size_bytes(payload)
+        if extra_payload is not None:
+            size_bytes += estimate_payload_size_bytes(extra_payload)
+        client.wait_until_allowed(
+            src=self._cur_worker_address.get_name(),
+            dst=dst_addr.get_name(),
+            size_bytes=size_bytes,
+        )
+
+    def _get_net_emulation_cfg(self) -> NetEmulationConfig | None:
+        if self._net_emulation_config is not None:
+            return self._net_emulation_config
+
+        cfg = getattr(self._worker, "cfg", None)
+        if cfg is None:
+            cfg = getattr(self._worker, "_cfg", None)
+        if cfg is None:
+            return None
+
+        net_cfg = None
+        if isinstance(cfg, DictConfig):
+            net_cfg = OmegaConf.select(cfg, "net_emulation")
+        elif isinstance(cfg, dict):
+            net_cfg = cfg.get("net_emulation")
+        self._net_emulation_config = NetEmulationConfig.from_cfg(net_cfg)
+        return self._net_emulation_config
+
+    def _get_net_emulation_client(self) -> NetEmulationClient | None:
+        if self._net_emulation_client is not None:
+            return self._net_emulation_client
+
+        net_cfg = self._get_net_emulation_cfg()
+        if net_cfg is None:
+            return None
+        if not net_cfg.enabled:
+            return None
+
+        self._net_emulation_client = NetEmulationClient(net_cfg)
+        return self._net_emulation_client
 
     def _init_group(self):
         if self._group_info is None:

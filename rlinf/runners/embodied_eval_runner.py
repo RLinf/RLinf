@@ -52,6 +52,10 @@ class EmbodiedEvalRunner:
 
         self.logger = get_logger()
 
+        env_mode = self.cfg.env.train.get("env_mode", None)
+        assert env_mode in ["decoupled", None], f"{env_mode} is not supported"
+        self.env_decoupled_mode = env_mode == "decoupled"
+
     def init_workers(self):
         rollout_handle = self.rollout.init_worker()
         env_handle = self.env.init_worker()
