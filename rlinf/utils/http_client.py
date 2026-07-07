@@ -15,10 +15,42 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import os
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 import aiohttp
 import requests
+
+_PROXY_ENV_VARS = (
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+)
+
+
+@contextmanager
+def no_proxy_env() -> Iterator[None]:
+    """Temporarily unset HTTP proxy env vars.
+
+    Removes ``http_proxy`` / ``https_proxy`` / ``all_proxy`` (both cases)
+    from ``os.environ`` for the duration of the block, and restores the
+    original values on exit. Any subprocess spawned inside the block
+    inherits the stripped env, which is useful when the child's HTTP
+    client (e.g. sglang-router's Rust reqwest, or sglang server's
+    tokenizer-manager IPC) would otherwise tunnel intra-cluster traffic
+    through a user-configured proxy.
+    """
+    saved = {var: os.environ.pop(var, None) for var in _PROXY_ENV_VARS}
+    try:
+        yield
+    finally:
+        for var, val in saved.items():
+            if val is not None:
+                os.environ[var] = val
 
 
 class InferenceHTTPClient:
@@ -83,7 +115,11 @@ class InferenceHTTPClient:
 
     def health(self) -> bool:
         try:
-            r = requests.get(f"{self.base_url}/health", timeout=5)
+            r = requests.get(
+                f"{self.base_url}/health",
+                timeout=5,
+                proxies={"http": None, "https": None},
+            )
             return r.status_code == 200
         except requests.exceptions.RequestException:
             return False
@@ -178,6 +214,7 @@ class InferenceHTTPClient:
             f"{self.base_url}{path}",
             json=body,
             timeout=(self.connect_timeout, None),
+            proxies={"http": None, "https": None},
         )
         resp.raise_for_status()
         return resp.json()

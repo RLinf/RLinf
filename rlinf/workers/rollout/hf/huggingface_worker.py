@@ -23,6 +23,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
+from rlinf.algorithms.rlt.rollout import predict_rlt_actions
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
     RolloutResult,
@@ -72,6 +73,7 @@ class MultiStepRolloutWorker(Worker):
         self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
+        self.rlt_feature_model = None
 
         self.total_num_train_envs = (
             cfg.env.train.total_num_envs if self.enable_train else 0
@@ -141,6 +143,14 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
+        rlt_feature_model_config = OmegaConf.select(
+            self.cfg, "rollout.rlt_feature_model", default=None
+        )
+        if rlt_feature_model_config is not None:
+            self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
+            self.rlt_feature_model.eval()
+            self.rlt_feature_model.requires_grad_(False)
+
         if self.cfg.rollout.get("expert_model", None):
             expert_model_config = copy.deepcopy(self.model_cfg)
             with open_dict(expert_model_config):
@@ -157,6 +167,8 @@ class MultiStepRolloutWorker(Worker):
         self.hf_model.eval()
         if self.expert_model is not None:
             self.expert_model.eval()
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.eval()
 
         if self.cfg.rollout.get("enable_torch_compile", False):
             mode = self.cfg.rollout.get(
@@ -211,25 +223,6 @@ class MultiStepRolloutWorker(Worker):
                     "beta_decay", 0.99
                 ),
             }
-
-    def send_rollout_result(
-        self,
-        output_channel: Channel,
-        rollout_result: Any,
-        *,
-        tag: str,
-        batch_size: int,
-        split_fn: Optional[Callable[[Any, list[int]], list[Any]]] = None,
-    ):
-        self.send_to(
-            group_name=self.cfg.env.group_name,
-            channel=output_channel,
-            data=rollout_result,
-            tag=tag,
-            async_op=True,
-            batch_size=batch_size,
-            split_fn=split_fn,
-        )
 
     async def recv_from_and_record_batch_routes_with_timeout(
         self,
@@ -452,23 +445,6 @@ class MultiStepRolloutWorker(Worker):
         self.batch_router[tag] = []
         return AsyncRouteWork(works, lambda _: None)
 
-    async def recv_env_output(
-        self,
-        input_channel: Channel,
-        *,
-        tag: str,
-        batch_size: int,
-    ):
-        return await self.recv_from(
-            group_name=self.cfg.env.group_name,
-            channel=input_channel,
-            tag=tag,
-            async_op=True,
-            batch_size=batch_size,
-            merge_fn=self._merge_obs_batches,
-            infer_batch_size_fn=self._infer_env_batch_size,
-        ).async_wait()
-
     def update_dagger_beta(self):
         if self.expert_model is None:
             return
@@ -555,10 +531,10 @@ class MultiStepRolloutWorker(Worker):
                     **kwargs,
                 )
                 expert_forward_inputs = expert_result["forward_inputs"]
-                expert_target = expert_forward_inputs.get(
-                    "model_action", expert_forward_inputs.get("action")
-                )
+                expert_target = expert_forward_inputs["model_action"]
+                expert_action = expert_forward_inputs["action"]
                 if expert_target is not None:
+                    result["forward_inputs"]["action"] = expert_action
                     result["forward_inputs"]["model_action"] = expert_target
                 expert_label_flag = True
 
@@ -567,6 +543,24 @@ class MultiStepRolloutWorker(Worker):
 
         result["expert_label_flag"] = bool(expert_label_flag)
         return actions, result
+
+    def _predict_rollout_actions(
+        self,
+        env_obs: dict[str, Any],
+        mode: Literal["train", "eval"] = "train",
+        final_obs: dict[str, Any] | None = None,
+        rlt_switch_flags: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
+        if self.rlt_feature_model is not None:
+            return predict_rlt_actions(
+                policy_model=self.hf_model,
+                feature_model=self.rlt_feature_model,
+                env_obs=env_obs,
+                final_obs=final_obs,
+                mode=mode,
+                rlt_switch_flags=rlt_switch_flags,
+            )
+        return self.predict(env_obs, mode=mode)
 
     def get_bootstrap_values(
         self, final_obs: dict[str, Any] | None
@@ -578,7 +572,7 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            actions, result = self.predict(final_obs)
+            actions, result = self._predict_rollout_actions(final_obs)
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
             else:
@@ -636,13 +630,22 @@ class MultiStepRolloutWorker(Worker):
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         self.update_dagger_beta()
         for _ in range(self.n_train_chunk_steps):
-            for _ in range(self.num_pipeline_stages):
-                env_output = await self.recv_env_output(
-                    input_channel=input_channel,
+            for stage_id in range(self.num_pipeline_stages):
+                env_output = await self.recv_from(
+                    group_name=self.cfg.env.group_name,
+                    channel=input_channel,
                     tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
                     batch_size=self.train_batch_size,
+                    merge_fn=self._merge_obs_batches,
+                    infer_batch_size_fn=self._infer_env_batch_size,
+                ).async_wait()
+                actions, result = self._predict_rollout_actions(
+                    env_output["obs"],
+                    final_obs=env_output.get("final_obs", None),
+                    rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                 )
-                actions, result = self.predict(env_output["obs"])
 
                 save_flags = None
                 if result.get("expert_label_flag", False):
@@ -671,20 +674,32 @@ class MultiStepRolloutWorker(Worker):
                         dtype=torch.float32,
                     ),
                 )
-                self.send_rollout_result(
-                    output_channel=output_channel,
-                    rollout_result=rollout_result,
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=rollout_result,
                     tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
                     batch_size=self.train_batch_size,
                     split_fn=self._split_rollout_result,
                 )
-        for _ in range(self.num_pipeline_stages):
-            env_output = await self.recv_env_output(
-                input_channel=input_channel,
+        for stage_id in range(self.num_pipeline_stages):
+            env_output = await self.recv_from(
+                group_name=self.cfg.env.group_name,
+                channel=input_channel,
                 tag="train_rollout_results",
+                route_key=stage_id,
+                async_op=True,
                 batch_size=self.train_batch_size,
+                merge_fn=self._merge_obs_batches,
+                infer_batch_size_fn=self._infer_env_batch_size,
+            ).async_wait()
+            actions, result = self._predict_rollout_actions(
+                env_output["obs"],
+                final_obs=env_output.get("final_obs", None),
+                rlt_switch_flags=env_output.get("rlt_switch_flags", None),
             )
-            actions, result = self.predict(env_output["obs"])
 
             rollout_result = RolloutResult(
                 actions=actions,
@@ -692,11 +707,15 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=self.get_bootstrap_values(
                     env_output.get("final_obs", None)
                 ),
+                forward_inputs=result["forward_inputs"],
             )
-            self.send_rollout_result(
-                output_channel=output_channel,
-                rollout_result=rollout_result,
+            self.send_to(
+                group_name=self.cfg.env.group_name,
+                channel=output_channel,
+                data=rollout_result,
                 tag="train_rollout_results",
+                route_key=stage_id,
+                async_op=True,
                 batch_size=self.train_batch_size,
                 split_fn=self._split_rollout_result,
             )
@@ -738,7 +757,12 @@ class MultiStepRolloutWorker(Worker):
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
                 )
-                actions, _ = self.predict(env_output["obs"], mode="eval")
+                actions, _ = self._predict_rollout_actions(
+                    env_output["obs"],
+                    mode="eval",
+                    final_obs=env_output.get("final_obs", None),
+                    rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
                 self.send_to_recorded_batch_routes(
@@ -755,19 +779,32 @@ class MultiStepRolloutWorker(Worker):
                 disable=(self._rank != 0),
             ):
                 for _ in range(self.n_eval_chunk_steps):
-                    for _ in range(self.num_pipeline_stages):
-                        env_output = await self.recv_env_output(
-                            input_channel=input_channel,
+                    for stage_id in range(self.num_pipeline_stages):
+                        env_output = await self.recv_from(
+                            group_name=self.cfg.env.group_name,
+                            channel=input_channel,
                             tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
                             batch_size=self.eval_batch_size,
+                            merge_fn=self._merge_obs_batches,
+                            infer_batch_size_fn=self._infer_env_batch_size,
+                        ).async_wait()
+                        actions, _ = self._predict_rollout_actions(
+                            env_output["obs"],
+                            mode="eval",
+                            final_obs=env_output.get("final_obs", None),
+                            rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                         )
-                        actions, _ = self.predict(env_output["obs"], mode="eval")
                         if isinstance(actions, torch.Tensor):
                             actions = actions.detach().cpu().contiguous()
-                        self.send_rollout_result(
-                            output_channel=output_channel,
-                            rollout_result=actions,
+                        self.send_to(
+                            group_name=self.cfg.env.group_name,
+                            channel=output_channel,
+                            data=actions,
                             tag="eval_rollout_results",
+                            route_key=stage_id,
+                            async_op=True,
                             batch_size=self.eval_batch_size,
                         )
 
@@ -778,10 +815,14 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_cuda_graph:
             self.hf_model.release_cuda_graph()
         self.hf_model.to("cpu")
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.to("cpu")
         self.torch_platform.empty_cache()
 
     def reload_model(self):
         self.hf_model.to(self.device)
+        if self.rlt_feature_model is not None:
+            self.rlt_feature_model.to(self.device)
         if self.enable_cuda_graph:
             self.hf_model.capture_cuda_graph(
                 train_batch_size=self.per_node_train_batch_size,
@@ -808,6 +849,9 @@ class MultiStepRolloutWorker(Worker):
             for obs_batch in obs_batches
         ]
         final_obs_list = [obs_batch.get("final_obs", None) for obs_batch in obs_batches]
+        rlt_switch_flags_list = [
+            obs_batch.get("rlt_switch_flags", None) for obs_batch in obs_batches
+        ]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
             merged: dict[str, Any] = {}
@@ -835,7 +879,26 @@ class MultiStepRolloutWorker(Worker):
             ]
             merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
 
-        return {"obs": merged_obs, "final_obs": merged_final_obs}
+        merged_rlt_switch_flags = None
+        if any(flags is not None for flags in rlt_switch_flags_list):
+            ref_flags = next(
+                flags for flags in rlt_switch_flags_list if flags is not None
+            )
+            filled_flags = []
+            for obs_dict, flags in zip(obs_dicts, rlt_switch_flags_list):
+                if flags is None:
+                    batch_size = MultiStepRolloutWorker._infer_env_batch_size(obs_dict)
+                    fill_shape = (batch_size, *ref_flags.shape[1:])
+                    filled_flags.append(torch.zeros(fill_shape, dtype=ref_flags.dtype))
+                else:
+                    filled_flags.append(flags)
+            merged_rlt_switch_flags = torch.cat(filled_flags, dim=0)
+
+        return {
+            "obs": merged_obs,
+            "final_obs": merged_final_obs,
+            "rlt_switch_flags": merged_rlt_switch_flags,
+        }
 
     def _split_rollout_result(
         self, rollout_result: RolloutResult, sizes: list[int]
@@ -860,6 +923,7 @@ class MultiStepRolloutWorker(Worker):
                 {
                     key: torch.split(value, sizes, dim=0)[idx]
                     for key, value in rollout_result.forward_inputs.items()
+                    if value is not None
                 }
                 for idx in range(len(sizes))
             ]

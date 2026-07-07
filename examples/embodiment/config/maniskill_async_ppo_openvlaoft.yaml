@@ -2,7 +2,7 @@ defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
   - env/maniskill_ood_template@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -98,7 +98,7 @@ rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
 
   model:
@@ -111,7 +111,7 @@ actor:
   micro_batch_size: 40
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   # Override the default values in model/openvla_oft
   model:
@@ -137,7 +137,7 @@ actor:
     clip_grad: 10.0
     critic_warmup_steps: 20
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True
