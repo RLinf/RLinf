@@ -1,12 +1,14 @@
 defaults:
-  - ../training_backend/fsdp@inference.fsdp_config
-  - ../training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@inference.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
   run:
     dir: .
   output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/reasoning/config
 
 cluster:
   num_nodes: 1
