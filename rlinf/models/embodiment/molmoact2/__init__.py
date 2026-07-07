@@ -21,29 +21,46 @@ def _molmoact2_predict_action_batch(self, env_obs=None, mode="eval", **kwargs):
 
     batch = {}
 
-    # RLinf LIBERO env usually provides main_images as [B, H, W, C]
+    # RLinf LIBERO provides:
+    #   main_images  -> agent/front view
+    #   wrist_images -> wrist view
+    # MolmoAct2-LIBERO expects camera order: [agentview_rgb, wrist_rgb].
+    #
+    # Use separate observation.images.* keys instead of batch["images"].
+    # Otherwise MolmoAct2 may infer the two views as batch_size=2.
     if "main_images" in env_obs:
-        batch["image"] = env_obs["main_images"]
+        main_images = env_obs["main_images"]
+        if "wrist_images" in env_obs and env_obs["wrist_images"] is not None:
+            batch["observation.images.agentview"] = main_images
+            batch["observation.images.wrist"] = env_obs["wrist_images"]
+        else:
+            batch["image"] = main_images
     elif "image" in env_obs:
-        batch["image"] = env_obs["image"]
+        main_images = env_obs["image"]
+        batch["image"] = main_images
     else:
         raise KeyError(f"Cannot find image in env_obs. Available keys: {list(env_obs.keys())}")
 
+    batch_size = main_images.shape[0]
+
     # Language instruction
     if "task_descriptions" in env_obs:
-        batch["language_instruction"] = env_obs["task_descriptions"]
+        task_descriptions = env_obs["task_descriptions"]
+        if isinstance(task_descriptions, str):
+            task_descriptions = [task_descriptions]
+        batch["language_instruction"] = task_descriptions
     elif "language_instruction" in env_obs:
         batch["language_instruction"] = env_obs["language_instruction"]
     elif "instruction" in env_obs:
         batch["language_instruction"] = env_obs["instruction"]
     else:
-        batch["language_instruction"] = [""] * batch["image"].shape[0]
+        batch["language_instruction"] = [""] * batch_size
 
-    # Optional robot state / proprioception
-    if "proprio" in env_obs:
-        batch["state"] = env_obs["proprio"]
-    elif "states" in env_obs:
+    # Raw robot state for MolmoAct2-LIBERO.
+    if "states" in env_obs:
         batch["state"] = env_obs["states"]
+    elif "proprio" in env_obs:
+        batch["state"] = env_obs["proprio"]
     elif "robot_states" in env_obs:
         batch["state"] = env_obs["robot_states"]
 

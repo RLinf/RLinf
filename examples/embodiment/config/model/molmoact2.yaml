@@ -12,7 +12,7 @@ num_action_chunks: 1
 
 # MolmoAct2 inference settings
 seq_len: null
-num_steps: null
+num_steps: 10
 inference_action_mode: "continuous"
 discrete_action_tokenizer: "allenai/MolmoAct2-FAST-Tokenizer"
 enable_depth_reasoning: false
