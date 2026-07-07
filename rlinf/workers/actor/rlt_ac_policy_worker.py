@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import queue
+
 import torch
 import torch.nn.functional as F
 
+from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
-from rlinf.utils.metric_utils import append_to_dict, compute_split_num
+from rlinf.utils.metric_utils import (
+    append_to_dict,
+    collect_trajectory_replay_metrics,
+    compute_split_num,
+    trajectory_has_bool_tensor,
+)
 from rlinf.utils.utils import clear_memory
 from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
     AsyncEmbodiedSACFSDPPolicy,
@@ -46,32 +54,9 @@ class RLTACLossMixin:
         action_dim = int(self.cfg.actor.model.action_dim)
         return chunk_len, action_dim
 
-    def _rlt_schedule_cfg(self):
-        return self.cfg.algorithm.get("rlt_schedule", {})
-
-    def _rlt_schedule_value(self, key: str, default):
-        schedule_cfg = self._rlt_schedule_cfg()
-        if schedule_cfg is not None and key in schedule_cfg:
-            return schedule_cfg.get(key, default)
-        return self.cfg.algorithm.get(key, default)
-
-    def _use_rlt_schedule(self) -> bool:
-        if str(self.cfg.algorithm.get("loss_type", "")) != "rlt_ac":
-            return False
-        schedule_cfg = self._rlt_schedule_cfg()
-        if schedule_cfg is not None and "enable" in schedule_cfg:
-            return bool(schedule_cfg.get("enable", False))
-        schedule_keys = {
-            "warmup_post_collect_updates",
-            "train_every_transitions",
-            "train_every_episodes",
-            "max_updates_per_train_step",
-        }
-        return any(key in self.cfg.algorithm for key in schedule_keys)
-
     def get_rollout_sync_version(self) -> int:
         """Expose learner update count when RLT warmup gates actor rollout."""
-        if not self._use_rlt_schedule():
+        if not self.use_rlt_schedule:
             return super().get_rollout_sync_version()
         return int(self.update_step)
 
@@ -243,11 +228,6 @@ class RLTACLossMixin:
         }
         return bc_weight, q_weight, metrics
 
-    def _ready_for_online(self) -> bool:
-        return int(self.update_step) >= int(
-            self._rlt_schedule_value("warmup_post_collect_updates", 0)
-        )
-
     @Worker.timer("forward_critic")
     def forward_critic(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
@@ -386,8 +366,6 @@ class RLTACLossMixin:
         metrics["weighted_q"] = (q_weight * qf_pi.mean()).detach().item()
         metrics["weighted_bc"] = (bc_weight * bc_loss).detach().item()
         metrics["reference_dropout_prob"] = reference_dropout_prob
-        if self._use_rlt_schedule():
-            metrics["ready_for_online"] = float(self._ready_for_online())
 
         return actor_loss, entropy, metrics
 
@@ -400,24 +378,8 @@ class RLTACLossMixin:
         )
 
 
-class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
-    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
-
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.transitions_since_train = 0
-        self.episodes_since_train = 0
-        self.total_transitions_added = 0
-        self.total_episodes_added = 0
-        self._warmup_ready_total_transitions: int | None = None
-        self._warmup_ready_total_episodes: int | None = None
-        self.pending_update_budget = 0
-
-    def setup_sac_components(self):
-        """Initialize replay components and let RLT schedule own readiness."""
-        super().setup_sac_components()
-        if self._use_rlt_schedule():
-            self.buffer_dataset.min_replay_buffer_size = 1
+class RLTACReplayMixin:
+    """Shared rollout-to-replay ingestion for sync and async RLT AC workers."""
 
     @staticmethod
     def _trajectory_transition_count(traj: Trajectory) -> int:
@@ -433,13 +395,6 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
         return int(dones.reshape(dones.shape[0], dones.shape[1], -1).any(dim=-1).sum())
 
     @staticmethod
-    def _trajectory_forward_input_rate(traj: Trajectory, key: str) -> float | None:
-        value = traj.forward_inputs.get(key, None) if traj.forward_inputs else None
-        if not isinstance(value, torch.Tensor) or value.numel() == 0:
-            return None
-        return float(value.detach().float().mean().item())
-
-    @staticmethod
     def _transition_reward_value(traj: Trajectory) -> float | None:
         rewards = traj.rewards
         if not isinstance(rewards, torch.Tensor) or rewards.numel() == 0:
@@ -452,15 +407,6 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
         if not isinstance(dones, torch.Tensor) or dones.numel() == 0:
             return None
         return bool(dones.detach().to(torch.bool).reshape(-1).any().item())
-
-    def _use_maniskill_transition_replay(self) -> bool:
-        if str(self.cfg.algorithm.get("loss_type", "")) != "rlt_ac":
-            return False
-        train_env_cfg = self.cfg.env.get("train", None)
-        train_env_type = (
-            str(train_env_cfg.get("env_type", "")) if train_env_cfg is not None else ""
-        )
-        return train_env_type == "maniskill"
 
     @staticmethod
     def _row_tensor(tensor: torch.Tensor, idx: int) -> torch.Tensor:
@@ -523,28 +469,15 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
     def _flat_record_transition(flat: dict, idx: int) -> bool:
         forward_inputs = flat.get("forward_inputs")
         if not isinstance(forward_inputs, dict):
-            return True
+            return False
         record_transition = forward_inputs.get("record_transition")
         if not isinstance(record_transition, torch.Tensor):
-            return True
+            return False
         if idx >= record_transition.shape[0]:
             return False
         return bool(record_transition[idx].detach().to(torch.bool).reshape(-1).all())
 
-    @staticmethod
-    def _transition_has_intervention(trajectory: Trajectory) -> bool:
-        flags = trajectory.intervene_flags
-        if isinstance(flags, torch.Tensor) and flags.detach().to(torch.bool).any():
-            return True
-        if not isinstance(trajectory.forward_inputs, dict):
-            return False
-        forward_flags = trajectory.forward_inputs.get("intervention_flags")
-        return bool(
-            isinstance(forward_flags, torch.Tensor)
-            and forward_flags.detach().to(torch.bool).any()
-        )
-
-    def _maniskill_transition_replay_trajectories(
+    def _transition_replay_trajectories(
         self,
         trajectory: Trajectory,
     ) -> tuple[list[Trajectory], int]:
@@ -653,29 +586,6 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
 
         return replay_trajectories, completed_episodes
 
-    def _rollout_route_metrics(
-        self, trajectories: list[Trajectory]
-    ) -> dict[str, float]:
-        metric_keys = {
-            "student_control": "rollout/student_control_rate",
-            "intervention_flags": "rollout/intervention_rate",
-            "intervention_requested": "rollout/intervention_requested_rate",
-            "ready_for_online": "rollout/ready_for_online_rate",
-            "in_critical_phase": "rollout/in_critical_phase_rate",
-            "record_transition": "rollout/record_transition_rate",
-        }
-        metrics = {}
-        for source_key, metric_key in metric_keys.items():
-            values = [
-                rate
-                for traj in trajectories
-                if (rate := self._trajectory_forward_input_rate(traj, source_key))
-                is not None
-            ]
-            if values:
-                metrics[metric_key] = float(sum(values) / len(values))
-        return metrics
-
     def _transition_replay_metrics(
         self,
         replay_trajectories: list[Trajectory],
@@ -704,6 +614,92 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
             )
         return metrics
 
+    def _ingest_rollout_trajectories(
+        self,
+        recv_list: list[Trajectory],
+    ) -> tuple[int, int]:
+        self._last_replay_metrics = {}
+
+        if use_simulator_transition_replay(self.cfg):
+            replay_list = []
+            completed = 0
+            for traj in recv_list:
+                assert isinstance(traj, Trajectory)
+                transition_trajs, completed_count = (
+                    self._transition_replay_trajectories(traj)
+                )
+                replay_list.extend(transition_trajs)
+                completed += completed_count
+            self._last_replay_metrics = {
+                **self._transition_replay_metrics(replay_list),
+                **collect_trajectory_replay_metrics(recv_list, reducer=all_reduce_dict),
+            }
+            self.replay_buffer.add_trajectories(replay_list)
+
+            if self.demo_buffer is not None:
+                intervene_traj_list = [
+                    traj
+                    for traj in replay_list
+                    if trajectory_has_bool_tensor(traj.intervene_flags)
+                ]
+                if len(intervene_traj_list) > 0:
+                    self.demo_buffer.add_trajectories(intervene_traj_list)
+
+            return len(replay_list), completed
+
+        self.replay_buffer.add_trajectories(recv_list)
+
+        if self.demo_buffer is not None:
+            intervene_traj_list = []
+            for traj in recv_list:
+                assert isinstance(traj, Trajectory)
+                intervene_trajs = traj.extract_intervene_traj()
+                if intervene_trajs is not None:
+                    intervene_traj_list.extend(intervene_trajs)
+
+            if len(intervene_traj_list) > 0:
+                self.demo_buffer.add_trajectories(intervene_traj_list)
+
+        added = sum(self._trajectory_transition_count(traj) for traj in recv_list)
+        completed = sum(self._trajectory_completed_episodes(traj) for traj in recv_list)
+        self._last_replay_metrics = collect_trajectory_replay_metrics(
+            recv_list, reducer=all_reduce_dict
+        )
+        return added, completed
+
+    def _update_rollout_ingest_counters(self, added: int, completed: int) -> None:
+        if not getattr(self, "use_rlt_schedule", False):
+            return
+        if not hasattr(self, "transitions_since_train"):
+            return
+        self.transitions_since_train += added
+        self.episodes_since_train += completed
+        self.total_transitions_added += added
+        self.total_episodes_added += completed
+
+
+class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
+    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
+        self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
+        self.transitions_since_train = 0
+        self.episodes_since_train = 0
+        self.total_transitions_added = 0
+        self.total_episodes_added = 0
+        self._warmup_ready_total_transitions: int | None = None
+        self._warmup_ready_total_episodes: int | None = None
+        self.pending_update_budget = 0
+
+    def setup_sac_components(self):
+        """Initialize replay components and let RLT schedule own readiness."""
+        super().setup_sac_components()
+        if self.use_rlt_schedule:
+            self.buffer_dataset.min_replay_buffer_size = 1
+
+    @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel):
         clear_memory(sync=False)
 
@@ -716,57 +712,8 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
             trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
             recv_list.append(trajectory)
 
-        self._last_rollout_route_metrics = self._rollout_route_metrics(recv_list)
-
-        if self._use_maniskill_transition_replay():
-            replay_list = []
-            completed = 0
-            for traj in recv_list:
-                assert isinstance(traj, Trajectory)
-                transition_trajs, completed_count = (
-                    self._maniskill_transition_replay_trajectories(traj)
-                )
-                replay_list.extend(transition_trajs)
-                completed += completed_count
-            self._last_rollout_route_metrics.update(
-                self._transition_replay_metrics(replay_list)
-            )
-            self.replay_buffer.add_trajectories(replay_list)
-
-            if self.demo_buffer is not None:
-                intervene_traj_list = [
-                    traj
-                    for traj in replay_list
-                    if self._transition_has_intervention(traj)
-                ]
-                if len(intervene_traj_list) > 0:
-                    self.demo_buffer.add_trajectories(intervene_traj_list)
-
-            added = len(replay_list)
-        else:
-            self.replay_buffer.add_trajectories(recv_list)
-
-            if self.demo_buffer is not None:
-                intervene_traj_list = []
-                for traj in recv_list:
-                    assert isinstance(traj, Trajectory)
-                    intervene_trajs = traj.extract_intervene_traj()
-                    if intervene_trajs is not None:
-                        intervene_traj_list.extend(intervene_trajs)
-
-                if len(intervene_traj_list) > 0:
-                    self.demo_buffer.add_trajectories(intervene_traj_list)
-
-            added = sum(self._trajectory_transition_count(traj) for traj in recv_list)
-            completed = sum(
-                self._trajectory_completed_episodes(traj) for traj in recv_list
-            )
-
-        if self._use_rlt_schedule():
-            self.transitions_since_train += added
-            self.episodes_since_train += completed
-            self.total_transitions_added += added
-            self.total_episodes_added += completed
+        added, completed = self._ingest_rollout_trajectories(recv_list)
+        self._update_rollout_ingest_counters(added, completed)
 
     def _global_rlt_counters(self) -> dict[str, float]:
         summed = all_reduce_dict(
@@ -792,16 +739,14 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
 
     def _rlt_updates_to_run(self) -> tuple[int, dict[str, float]]:
         replay_cfg = self.cfg.algorithm.replay_buffer
+        schedule_cfg = self.rlt_schedule_cfg
         min_buffer_size = int(
-            self._rlt_schedule_value(
-                "warmup_min_size",
-                replay_cfg.get("min_buffer_size", 1),
-            )
+            schedule_cfg.get("warmup_min_size", replay_cfg.get("min_buffer_size", 1))
         )
         counters = self._global_rlt_counters()
         buffer_ready = counters["min_replay_size"] >= min_buffer_size
         warmup_required_updates = int(
-            self._rlt_schedule_value("warmup_post_collect_updates", 0)
+            schedule_cfg.get("warmup_post_collect_updates", 0)
         )
         if buffer_ready and self._warmup_ready_total_transitions is None:
             self._warmup_ready_total_transitions = int(
@@ -809,12 +754,10 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
             )
             self._warmup_ready_total_episodes = int(counters["total_episodes_added"])
 
-        train_every_transitions = int(
-            self._rlt_schedule_value("train_every_transitions", 0)
-        )
-        train_every_episodes = int(self._rlt_schedule_value("train_every_episodes", 0))
-        update_epoch = int(self._rlt_schedule_value("update_epoch", 1))
-        max_updates = int(self._rlt_schedule_value("max_updates_per_train_step", 0))
+        train_every_transitions = int(schedule_cfg.get("train_every_transitions", 0))
+        train_every_episodes = int(schedule_cfg.get("train_every_episodes", 0))
+        update_epoch = int(self.cfg.algorithm.get("update_epoch", 1))
+        max_updates = int(schedule_cfg.get("max_updates_per_train_step", 0))
 
         updates_to_run = 0
         skip_reason = 0
@@ -863,38 +806,42 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
         self.pending_update_budget = int(pending_updates)
 
         metrics = {
-            "rlt_stage2/update_step": float(self.update_step),
-            "rlt_stage2/ready_for_online": float(
+            "rlt/update_step": float(self.update_step),
+            "rlt/ready_for_online": float(
                 int(self.update_step) >= warmup_required_updates
             ),
-            "rlt_stage2/warmup_required_updates": float(warmup_required_updates),
-            "rlt_stage2/update_epoch": float(update_epoch),
-            "rlt_stage2/max_updates_per_train_step": float(max_updates),
-            "rlt_stage2/train_every_transitions": float(train_every_transitions),
-            "rlt_stage2/train_every_episodes": float(train_every_episodes),
-            "rlt_stage2/desired_total_updates": float(desired_total_updates),
-            "rlt_stage2/pending_update_budget": float(self.pending_update_budget),
-            "rlt_stage2/updates_scheduled": float(updates_scheduled),
-            "rlt_stage2/updates_to_run": float(updates_to_run),
-            "rlt_stage2/critic_updates_run": 0.0,
-            "rlt_stage2/actor_updates_run": 0.0,
-            "rlt_stage2/should_train": float(updates_to_run > 0),
-            "rlt_stage2/skip_reason": float(skip_reason),
-            "rlt_stage2/global_min_replay_size": float(counters["min_replay_size"]),
-            "rlt_stage2/min_replay_buffer_size": float(min_buffer_size),
-            "rlt_stage2/global_transitions_since_train": float(
+            "rlt/warmup_required_updates": float(warmup_required_updates),
+            "rlt/update_epoch": float(update_epoch),
+            "rlt/max_updates_per_train_step": float(max_updates),
+            "rlt/train_every_transitions": float(train_every_transitions),
+            "rlt/train_every_episodes": float(train_every_episodes),
+            "rlt/desired_total_updates": float(desired_total_updates),
+            "rlt/pending_update_budget": float(self.pending_update_budget),
+            "rlt/updates_scheduled": float(updates_scheduled),
+            "rlt/updates_to_run": float(updates_to_run),
+            "rlt/critic_updates_run": 0.0,
+            "rlt/actor_updates_run": 0.0,
+            "rlt/should_train": float(updates_to_run > 0),
+            "rlt/skip_reason": float(skip_reason),
+            "rlt/global_min_replay_size": float(counters["min_replay_size"]),
+            "rlt/min_replay_buffer_size": float(min_buffer_size),
+            "rlt/global_transitions_since_train": float(
                 counters["transitions_since_train"]
             ),
-            "rlt_stage2/global_total_transitions_added": float(
+            "rlt/global_total_transitions_added": float(
                 counters["total_transitions_added"]
             ),
         }
-        metrics.update(getattr(self, "_last_rollout_route_metrics", {}))
+        metrics.update(getattr(self, "_last_replay_metrics", {}))
         return updates_to_run, metrics
 
     def run_training(self):
-        if not self._use_rlt_schedule():
-            return super().run_training()
+        if not self.use_rlt_schedule:
+            mean_metric_dict = super().run_training()
+            replay_metrics = getattr(self, "_last_replay_metrics", {})
+            if replay_metrics:
+                mean_metric_dict = {**mean_metric_dict, **replay_metrics}
+            return mean_metric_dict
 
         if self.cfg.actor.get("enable_offload", False):
             self.load_param_and_grad(self.device)
@@ -931,13 +878,13 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
             critic_updates_run += 1
             actor_updates_run += int(update_actor)
 
-        schedule_metrics["rlt_stage2/critic_updates_run"] = float(critic_updates_run)
-        schedule_metrics["rlt_stage2/actor_updates_run"] = float(actor_updates_run)
+        schedule_metrics["rlt/critic_updates_run"] = float(critic_updates_run)
+        schedule_metrics["rlt/actor_updates_run"] = float(actor_updates_run)
         self.pending_update_budget = max(
             int(self.pending_update_budget) - critic_updates_run,
             0,
         )
-        schedule_metrics["rlt_stage2/pending_update_budget"] = float(
+        schedule_metrics["rlt/pending_update_budget"] = float(
             self.pending_update_budget
         )
         append_to_dict(metrics, schedule_metrics)
@@ -951,5 +898,36 @@ class RLTACFSDPPolicy(RLTACLossMixin, EmbodiedSACFSDPPolicy):
         return mean_metric_dict
 
 
-class AsyncRLTACFSDPPolicy(RLTACLossMixin, AsyncEmbodiedSACFSDPPolicy):
-    pass
+class AsyncRLTACFSDPPolicy(
+    RLTACLossMixin, RLTACReplayMixin, AsyncEmbodiedSACFSDPPolicy
+):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
+        self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
+
+    def _drain_received_trajectories(self, max_trajectories: int | None = None):
+        if getattr(self, "_recv_queue", None) is None:
+            return
+        recv_list = []
+        processed = 0
+        while True:
+            try:
+                recv_list.append(self._recv_queue.get_nowait())
+                processed += 1
+                if max_trajectories is not None and processed >= max_trajectories:
+                    break
+            except queue.Empty:
+                break
+        if not recv_list:
+            return
+
+        added, completed = self._ingest_rollout_trajectories(recv_list)
+        self._update_rollout_ingest_counters(added, completed)
+
+    async def run_training(self):
+        mean_metric_dict = await super().run_training()
+        replay_metrics = getattr(self, "_last_replay_metrics", {})
+        if replay_metrics:
+            mean_metric_dict = {**mean_metric_dict, **replay_metrics}
+        return mean_metric_dict

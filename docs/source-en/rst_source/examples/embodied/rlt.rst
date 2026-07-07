@@ -216,10 +216,11 @@ rlt_policy_switch`` adds an ``rlt_switch_flags`` flag. Before the operator press
 the executed action switches to the Stage 2 actor.
 
 For the ManiSkill joint config, ``env.*.rlt_policy_switch`` automatically
-produces ``rlt_switch_flags``, ``in_critical_phase``, and ``record_transition``
-from task information. The HF rollout worker uses those flags to choose the
-actor action or VLA ``ref_chunk`` at whole-chunk granularity, then writes the
-executed action into replay.
+produces ``rlt_switch_flags`` (actor/ref phase) and ``intervene_flag`` (expert
+takeover request) from task information. The HF rollout route uses those flags
+to choose the actor action, VLA ``ref_chunk``, or expert action at whole-chunk
+granularity, then writes ``record_transition`` and ``intervention_requested`` into
+``forward_inputs`` for replay and monitoring.
 
 The critic is trained with a TD target over chunked rewards. Rewards inside
 the action chunk are discounted and then bootstrapped with the next-state Q
@@ -669,8 +670,7 @@ the critical phase and store those expert actions as intervention targets:
 You can replace ``rollout.expert_model.model_path`` with a more fully trained
 joint-control SFT checkpoint. Keep the expert's OpenPI dataconfig and norm
 stats aligned with the Stage 2 dataset. The expert is only used for train
-rollout; eval rollout keeps ``allow_expert=False`` and measures the learned
-actor.
+rollout; eval rollout runs without expert takeover and measures the learned actor.
 
 Replay Buffer Behavior
 ----------------------
@@ -718,14 +718,24 @@ Useful RLT signals:
   - ``actor/actor_loss``: combined ``-Q + BC`` actor objective.
   - ``q_pi`` and ``q_value_*``: learned Q-values for actor and critic heads.
   - ``actor/bc_loss``, ``actor/bc_ref_loss``, ``actor/bc_human_loss``: BC regularization terms.
+  - ``actor/human_mask_ratio``: fraction of the current training batch marked as expert intervention (from ``trajectory.intervene_flags``).
   - ``train/replay_buffer/size``: number of stored replay transitions.
   - ``env/success_once`` and ``env/episode_len``: task outcome metrics.
   - ``eval/success_once``: success rate on fixed eval reset ids.
-  - ``rollout/in_critical_phase_rate`` and ``rollout/student_control_rate``:
-    whether the ManiSkill automatic route lets the actor take over as expected.
-  - ``rlt_stage2/ready_for_online``, ``rlt_stage2/actor_updates_run``, and
-    ``rlt_stage2/pending_update_budget``: warmup, actor-update, and learner
-    backlog status.
+
+  ManiSkill rollout / replay diagnostics (logged from trajectories received by the actor):
+
+  - ``train/replay/actor_switch_rate``: fraction of collected steps where the route executed the actor instead of VLA ``ref_chunk`` (from ``forward_inputs.record_transition``; includes schedule warmup masking).
+  - ``train/replay/intervention_requested_rate``: fraction of steps where the env requested expert takeover (from ``forward_inputs.intervention_requested``).
+  - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
+  - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
+
+  RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
+
+  - ``train/rlt/ready_for_online``: whether learner ``update_step`` has passed ``warmup_post_collect_updates``.
+  - ``train/rlt/actor_updates_run``, ``train/rlt/critic_updates_run``, and ``train/rlt/pending_update_budget``: actor/critic updates executed in the step and remaining learner backlog.
+  - ``train/rlt/updates_to_run``, ``train/rlt/should_train``, and ``train/rlt/skip_reason``: scheduled training for the step and why training may be skipped.
+  - ``train/rlt/global_transitions_since_train`` and ``train/rlt/global_total_transitions_added``: global replay ingest counters since the last training burst.
 
 Experimental Results
 --------------------

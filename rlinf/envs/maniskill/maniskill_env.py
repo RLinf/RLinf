@@ -25,48 +25,21 @@ from mani_skill.utils.visualization.misc import put_info_on_image, tile_images
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
-from rlinf.envs.maniskill.rlt_policy_switch_wrapper import (
-    ManiSkillRLTPolicySwitchWrapper,
-)
-
 __all__ = ["ManiskillEnv"]
 
 
-def _to_bool_tensor(value, *, num_envs, device):
-    if isinstance(value, bool):
-        return torch.full((num_envs,), value, dtype=torch.bool, device=device)
-    if isinstance(value, torch.Tensor):
-        value = value.to(device=device, dtype=torch.bool)
-    else:
-        value = torch.as_tensor(value, device=device, dtype=torch.bool)
-    if value.ndim == 0:
-        value = value.reshape(1).repeat(num_envs)
-    return value
-
-
-def extract_termination_from_info(info, num_envs, device, fallback=None):
+def extract_termination_from_info(info, num_envs, device):
     if "success" in info:
         if "fail" in info:
-            terminated = torch.logical_or(
-                _to_bool_tensor(info["success"], num_envs=num_envs, device=device),
-                _to_bool_tensor(info["fail"], num_envs=num_envs, device=device),
-            )
+            terminated = torch.logical_or(info["success"], info["fail"])
         else:
-            terminated = _to_bool_tensor(
-                info["success"], num_envs=num_envs, device=device
-            )
+            terminated = info["success"].clone()
     else:
         if "fail" in info:
-            terminated = _to_bool_tensor(info["fail"], num_envs=num_envs, device=device)
+            terminated = info["fail"].clone()
         else:
-            if fallback is None:
-                return torch.zeros(num_envs, dtype=bool, device=device)
-            terminated = _to_bool_tensor(fallback, num_envs=num_envs, device=device)
+            terminated = torch.zeros(num_envs, dtype=bool, device=device)
     return terminated
-
-
-def _shape_str(value):
-    return "None" if value is None else str(tuple(getattr(value, "shape", ())))
 
 
 class ManiskillEnv(gym.Env):
@@ -94,19 +67,10 @@ class ManiskillEnv(gym.Env):
         self.video_cfg = cfg.video_cfg
 
         self.cfg = cfg
-        self._has_seeded_reset = False
-        self.task_id = getattr(cfg.init_params, "id", None)
-        self._is_peg_insertion_side = (
-            ManiSkillRLTPolicySwitchWrapper.is_peg_insertion_side_env_id(self.task_id)
-        )
 
         with open_dict(cfg):
             cfg.init_params.num_envs = num_envs
         env_args = OmegaConf.to_container(cfg.init_params, resolve=True)
-        env_args = ManiSkillRLTPolicySwitchWrapper.patch_env_args(
-            env_args,
-            wrap_obs_mode=getattr(cfg, "wrap_obs_mode", "default"),
-        )
         self.env: BaseEnv = gym.make(**env_args)
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
@@ -115,11 +79,6 @@ class ManiskillEnv(gym.Env):
         self._is_start = True
         self._init_reset_state_ids()
         self.info_logging_keys = ["is_src_obj_grasped", "consecutive_grasp", "success"]
-        self.rlt_policy_switch_wrapper = ManiSkillRLTPolicySwitchWrapper(
-            owner=self,
-            switch_cfg=getattr(cfg, "rlt_policy_switch", None),
-            is_peg_insertion_side=self._is_peg_insertion_side,
-        )
         self._show_goal_site_visual()
         if self.record_metrics:
             self._init_metrics()
@@ -154,9 +113,7 @@ class ManiskillEnv(gym.Env):
 
     @property
     def instruction(self):
-        return self.rlt_policy_switch_wrapper.resolve_task_descriptions(
-            self.env.unwrapped
-        )
+        return self.env.unwrapped.get_language_instruction()
 
     def _init_reset_state_ids(self):
         self._generator = torch.Generator()
@@ -218,13 +175,6 @@ class ManiskillEnv(gym.Env):
                     "extra_view_images": extra_view_images,
                     "states": state,
                 }
-
-        if self.rlt_policy_switch_wrapper.handles_obs_mode(wrap_obs_mode):
-            return self.rlt_policy_switch_wrapper.wrap_obs(
-                raw_obs,
-                infos=infos,
-                task_descriptions=self.instruction,
-            )
 
         # Default
         obs_image = raw_obs["sensor_data"]["3rd_view_camera"]["rgb"].to(
@@ -312,7 +262,6 @@ class ManiskillEnv(gym.Env):
         if "fail" in infos:
             self.fail_once = self.fail_once | infos["fail"]
             episode_info["fail_once"] = self.fail_once.clone()
-        self.rlt_policy_switch_wrapper.record_metrics(episode_info, infos)
         episode_info["return"] = self.returns.clone()
         episode_info["episode_len"] = self.elapsed_steps.clone()
         episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
@@ -326,46 +275,30 @@ class ManiskillEnv(gym.Env):
         options: Optional[dict] = None,
     ):
         if options is None:
+            seed = self.seed
             options = (
                 {"episode_id": self.reset_state_ids}
                 if self.use_fixed_reset_state_ids
                 else {}
             )
-            if seed is None:
-                if self.use_fixed_reset_state_ids or not self._has_seeded_reset:
-                    seed = self.seed
-        if seed is not None:
-            self._has_seeded_reset = True
         raw_obs, infos = self.env.reset(seed=seed, options=options)
-        if "env_idx" in options:
-            env_idx = options["env_idx"]
-            self.rlt_policy_switch_wrapper.reset_episode_event_state(env_idx)
-            self._reset_metrics(env_idx)
-            self.rlt_policy_switch_wrapper.reset_rollout_state(env_idx)
-        else:
-            self.rlt_policy_switch_wrapper.reset_episode_event_state()
-            self._reset_metrics()
-            self.rlt_policy_switch_wrapper.reset_rollout_state()
         self._show_goal_site_visual()
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
+        if "env_idx" in options:
+            env_idx = options["env_idx"]
+            self._reset_metrics(env_idx)
+        else:
+            self._reset_metrics()
         return extracted_obs, infos
 
     def step(
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
-        infos = self.rlt_policy_switch_wrapper.augment_step_info(infos)
-        terminations = extract_termination_from_info(
-            infos,
-            num_envs=self.num_envs,
-            device=self.device,
-            fallback=terminations,
-        )
         extracted_obs = self._wrap_obs(raw_obs, infos=infos)
         step_reward = self._calc_step_reward(_reward, infos)
 
         infos = self._record_metrics(step_reward, infos)
-        self.rlt_policy_switch_wrapper.attach_step_info(infos)
         if isinstance(terminations, bool):
             terminations = torch.tensor([terminations], device=self.device)
         if isinstance(truncations, bool):
@@ -386,54 +319,18 @@ class ManiskillEnv(gym.Env):
             extracted_obs, infos = self._handle_auto_reset(dones, extracted_obs, infos)
         return extracted_obs, step_reward, terminations, truncations, infos
 
-    def _validate_chunk_actions(self, chunk_actions) -> None:
-        if not hasattr(chunk_actions, "shape") or len(chunk_actions.shape) != 3:
-            raise ValueError(
-                "ManiskillEnv.chunk_step expected action chunk shape "
-                f"[num_envs, chunk_steps, action_dim], got {_shape_str(chunk_actions)}. "
-                "Refuse to execute malformed actions."
-            )
-
-        if int(chunk_actions.shape[0]) != self.num_envs:
-            raise ValueError(
-                "ManiskillEnv.chunk_step action batch mismatch: expected "
-                f"num_envs={self.num_envs}, got shape {_shape_str(chunk_actions)}. "
-                "Refuse to execute actions for the wrong env batch."
-            )
-
-        expected_action_dim = getattr(
-            self.env.unwrapped.single_action_space, "shape", None
-        )
-        expected_action_dim = expected_action_dim[-1] if expected_action_dim else None
-        if expected_action_dim is not None and int(chunk_actions.shape[2]) != int(
-            expected_action_dim
-        ):
-            raise ValueError(
-                "ManiskillEnv.chunk_step action dim mismatch before env.step: "
-                f"expected action_dim={expected_action_dim}, got shape "
-                f"{_shape_str(chunk_actions)}. Check actor.model.action_dim and "
-                "ManiSkill control_mode."
-            )
-
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
-        self._validate_chunk_actions(chunk_actions)
         chunk_size = chunk_actions.shape[1]
         obs_list = []
         infos_list = []
-
         chunk_rewards = []
-
         raw_chunk_terminations = []
         raw_chunk_truncations = []
-        chunk_state = self.rlt_policy_switch_wrapper.begin_chunk_step()
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
-            extracted_obs, step_reward, terminations, truncations, infos = (
-                self.rlt_policy_switch_wrapper.step_chunk_action(
-                    actions,
-                    chunk_state,
-                )
+            extracted_obs, step_reward, terminations, truncations, infos = self.step(
+                actions, auto_reset=False
             )
             obs_list.append(extracted_obs)
             infos_list.append(infos)
@@ -454,23 +351,9 @@ class ManiskillEnv(gym.Env):
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        self.rlt_policy_switch_wrapper.finalize_chunk_step(
-            chunk_state=chunk_state,
-            obs_list=obs_list,
-            infos_list=infos_list,
-            raw_chunk_terminations=raw_chunk_terminations,
-            raw_chunk_truncations=raw_chunk_truncations,
-        )
-
         if past_dones.any() and self.auto_reset:
             obs_list[-1], infos_list[-1] = self._handle_auto_reset(
                 past_dones, obs_list[-1], infos_list[-1]
-            )
-        elif past_dones.any():
-            self.rlt_policy_switch_wrapper.update_persistent_done_state(
-                past_dones,
-                obs_list[-1],
-                infos_list[-1],
             )
 
         chunk_terminations = torch.zeros_like(raw_chunk_terminations)

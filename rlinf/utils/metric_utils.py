@@ -15,10 +15,119 @@
 import math
 import os
 import time
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import torch.distributed
+
+if TYPE_CHECKING:
+    from rlinf.data.embodied_io_struct import Trajectory
+
+
+def mean_bool_tensor_rate(
+    tensors: Sequence[torch.Tensor | None],
+    *,
+    sum_key: str,
+    count_key: str,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> float | None:
+    """Mean of flattened bool-like tensors, optionally reduced across ranks."""
+    shards = [
+        tensor.detach().reshape(-1).to(torch.float32)
+        for tensor in tensors
+        if isinstance(tensor, torch.Tensor) and tensor.numel() > 0
+    ]
+    if not shards:
+        return None
+
+    local_values = torch.cat(shards, dim=0)
+    reduced = {
+        sum_key: float(local_values.sum().item()),
+        count_key: float(local_values.numel()),
+    }
+    if reducer is not None:
+        reduced = reducer(reduced)
+    if reduced[count_key] <= 0:
+        return 0.0
+    return reduced[sum_key] / reduced[count_key]
+
+
+def mean_bool_tensor_rate_from_trajectories(
+    trajectories: Sequence["Trajectory"],
+    tensor_getter: Callable[["Trajectory"], torch.Tensor | None],
+    *,
+    sum_key: str,
+    count_key: str,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> float | None:
+    return mean_bool_tensor_rate(
+        [tensor_getter(trajectory) for trajectory in trajectories],
+        sum_key=sum_key,
+        count_key=count_key,
+        reducer=reducer,
+    )
+
+
+def trajectory_forward_input_tensor(
+    trajectory: "Trajectory", key: str
+) -> torch.Tensor | None:
+    forward_inputs = trajectory.forward_inputs
+    if not isinstance(forward_inputs, dict):
+        return None
+    value = forward_inputs.get(key)
+    return value if isinstance(value, torch.Tensor) else None
+
+
+def trajectory_has_bool_tensor(tensor: torch.Tensor | None) -> bool:
+    return bool(
+        isinstance(tensor, torch.Tensor) and tensor.detach().to(torch.bool).any()
+    )
+
+
+def collect_trajectory_replay_metrics(
+    trajectories: Sequence["Trajectory"],
+    *,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> dict[str, float]:
+    """Replay-route diagnostics aggregated from received trajectories."""
+    metrics: dict[str, float] = {}
+    rate_specs = (
+        (
+            "replay/actor_switch_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "record_transition"
+            ),
+            "actor_switch_sum",
+            "actor_switch_count",
+        ),
+        (
+            "replay/intervention_requested_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "intervention_requested"
+            ),
+            "intervention_requested_sum",
+            "intervention_requested_count",
+        ),
+        (
+            "replay/intervention_rate",
+            lambda trajectory: trajectory.intervene_flags,
+            "intervention_sum",
+            "intervention_count",
+        ),
+    )
+    for metric_key, tensor_getter, sum_key, count_key in rate_specs:
+        rate = mean_bool_tensor_rate_from_trajectories(
+            trajectories,
+            tensor_getter,
+            sum_key=sum_key,
+            count_key=count_key,
+            reducer=reducer,
+        )
+        if rate is not None:
+            metrics[metric_key] = rate
+    return metrics
 
 
 def compute_split_num(num, split_num):

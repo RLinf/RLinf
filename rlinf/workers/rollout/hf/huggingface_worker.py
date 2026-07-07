@@ -23,7 +23,11 @@ import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
-from rlinf.algorithms.rlt.rollout import predict_rlt_actions
+from rlinf.algorithms.rlt import (
+    build_expert_model_config,
+    build_rlt_route,
+    predict_rlt_actions,
+)
 from rlinf.config import SupportedModel
 from rlinf.data.embodied_io_struct import (
     RolloutResult,
@@ -33,10 +37,9 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.workers.rollout.hf.maniskill_rlt_policy import ManiSkillRLTPolicyMixin
 
 
-class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
+class MultiStepRolloutWorker(Worker):
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -75,6 +78,7 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.expert_model = None
         self.rlt_feature_model = None
+        self.rlt_route = None
 
         self.total_num_train_envs = (
             cfg.env.train.total_num_envs if self.enable_train else 0
@@ -151,17 +155,14 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
             self.rlt_feature_model.eval()
             self.rlt_feature_model.requires_grad_(False)
+            self.rlt_route = build_rlt_route(self.cfg)
 
-        if (
-            self.cfg.rollout.get("expert_model", None)
-            and not self._defer_rlt_expert_model()
-        ):
-            expert_model_config = copy.deepcopy(self.model_cfg)
-            with open_dict(expert_model_config):
-                expert_model_config.precision = self.cfg.rollout.expert_model.precision
-                expert_model_config.model_path = (
-                    self.cfg.rollout.expert_model.model_path
-                )
+        if self.cfg.rollout.get("expert_model", None):
+            expert_model_config = build_expert_model_config(
+                self.cfg,
+                self.model_cfg,
+                rlt_feature_model_config=rlt_feature_model_config,
+            )
             self.expert_model = get_model(expert_model_config)
 
             if self.cfg.runner.get("expert_ckpt_path", None):
@@ -553,29 +554,52 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
         env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
         final_obs: dict[str, Any] | None = None,
-        env_infos: dict[str, Any] | None = None,
-        allow_expert: bool = True,
         rlt_switch_flags: torch.Tensor | None = None,
+        intervene_requested: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
-            if self._use_rlt_maniskill_route():
-                return self._predict_with_rlt_features(
-                    env_obs,
-                    final_obs,
-                    mode,
-                    env_infos=env_infos,
-                    allow_expert=allow_expert,
-                    rlt_switch_flags=rlt_switch_flags,
-                )
             return predict_rlt_actions(
                 policy_model=self.hf_model,
                 feature_model=self.rlt_feature_model,
+                rlt_route=self.rlt_route,
                 env_obs=env_obs,
                 final_obs=final_obs,
                 mode=mode,
+                version=self.version,
                 rlt_switch_flags=rlt_switch_flags,
+                intervene_requested=intervene_requested,
+                expert_model=self.expert_model,
             )
         return self.predict(env_obs, mode=mode)
+
+    def _build_rollout_result(
+        self,
+        actions: torch.Tensor,
+        result: dict[str, Any],
+        *,
+        final_obs: dict[str, Any] | None = None,
+    ) -> RolloutResult:
+        intervene_flags = result.get("intervene_flags")
+        if intervene_flags is None and result.get("expert_label_flag", False):
+            intervene_flags = torch.full(
+                (actions.shape[0], self.model_cfg.num_action_chunks),
+                True,
+                dtype=torch.bool,
+                device=actions.device,
+            )
+        return RolloutResult(
+            actions=actions,
+            prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
+            prev_values=result["prev_values"] if self.collect_prev_infos else None,
+            bootstrap_values=self.get_bootstrap_values(final_obs),
+            intervene_flags=intervene_flags,
+            forward_inputs=result["forward_inputs"],
+            versions=torch.full_like(
+                result["prev_logprobs"],
+                float(self.version),
+                dtype=torch.float32,
+            ),
+        )
 
     def get_bootstrap_values(
         self, final_obs: dict[str, Any] | None
@@ -589,7 +613,7 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
         with torch.no_grad():
             actions, result = self._predict_rollout_actions(
                 final_obs,
-                allow_expert=False,
+                mode="eval",
             )
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
@@ -662,38 +686,14 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
                 actions, result = self._predict_rollout_actions(
                     env_output["obs"],
                     final_obs=env_output.get("final_obs", None),
-                    env_infos=env_output.get("env_infos", None),
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                    intervene_requested=env_output.get("intervene_flags", None),
                 )
 
-                save_flags = result.get("forward_inputs", {}).get(
-                    "intervention_flags", None
-                )
-                if save_flags is None and result.get("expert_label_flag", False):
-                    save_flags = torch.full(
-                        (actions.shape[0], self.model_cfg.num_action_chunks),
-                        True,
-                        dtype=torch.bool,
-                        device=actions.device,
-                    )
-                rollout_result = RolloutResult(
-                    actions=actions,
-                    prev_logprobs=result["prev_logprobs"]
-                    if self.collect_prev_infos
-                    else None,
-                    prev_values=result["prev_values"]
-                    if self.collect_prev_infos
-                    else None,
-                    bootstrap_values=self.get_bootstrap_values(
-                        env_output.get("final_obs", None)
-                    ),
-                    save_flags=save_flags,
-                    forward_inputs=result["forward_inputs"],
-                    versions=torch.full_like(
-                        result["prev_logprobs"],
-                        float(self.version),
-                        dtype=torch.float32,
-                    ),
+                rollout_result = self._build_rollout_result(
+                    actions,
+                    result,
+                    final_obs=env_output.get("final_obs", None),
                 )
                 self.send_to(
                     group_name=self.cfg.env.group_name,
@@ -719,9 +719,8 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
-                env_infos=env_output.get("env_infos", None),
-                allow_expert=False,
                 rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                intervene_requested=env_output.get("intervene_flags", None),
             )
 
             rollout_result = RolloutResult(
@@ -788,9 +787,8 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
                     env_output["obs"],
                     mode="eval",
                     final_obs=env_output.get("final_obs", None),
-                    env_infos=env_output.get("env_infos", None),
-                    allow_expert=False,
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                    intervene_requested=env_output.get("intervene_flags", None),
                 )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
@@ -823,9 +821,8 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
                             env_output["obs"],
                             mode="eval",
                             final_obs=env_output.get("final_obs", None),
-                            env_infos=env_output.get("env_infos", None),
-                            allow_expert=False,
                             rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                            intervene_requested=env_output.get("intervene_flags", None),
                         )
                         if isinstance(actions, torch.Tensor):
                             actions = actions.detach().cpu().contiguous()
@@ -850,7 +847,6 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             self.rlt_feature_model.to("cpu")
         if self.expert_model is not None:
             self.expert_model.to("cpu")
-        self._offload_rlt_models()
         self.torch_platform.empty_cache()
 
     def reload_model(self):
@@ -859,7 +855,6 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             self.rlt_feature_model.to(self.device)
         if self.expert_model is not None:
             self.expert_model.to(self.device)
-        self._reload_rlt_models()
         if self.enable_cuda_graph:
             self.hf_model.capture_cuda_graph(
                 train_batch_size=self.per_node_train_batch_size,
@@ -877,8 +872,25 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
                 return len(value)
         raise ValueError("Cannot infer batch size from env obs.")
 
-    @staticmethod
-    def _merge_obs_batches(obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
+    def _merge_optional_flag_tensors(
+        self,
+        obs_dicts: list[dict[str, Any]],
+        flags_list: list[torch.Tensor | None],
+    ) -> torch.Tensor | None:
+        if not any(flags is not None for flags in flags_list):
+            return None
+        ref_flags = next(flags for flags in flags_list if flags is not None)
+        filled_flags = []
+        for obs_dict, flags in zip(obs_dicts, flags_list):
+            if flags is None:
+                batch_size = self._infer_env_batch_size(obs_dict)
+                fill_shape = (batch_size, *ref_flags.shape[1:])
+                filled_flags.append(torch.zeros(fill_shape, dtype=ref_flags.dtype))
+            else:
+                filled_flags.append(flags)
+        return torch.cat(filled_flags, dim=0)
+
+    def _merge_obs_batches(self, obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
         if not obs_batches:
             return {}
         obs_dicts = [
@@ -886,9 +898,11 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             for obs_batch in obs_batches
         ]
         final_obs_list = [obs_batch.get("final_obs", None) for obs_batch in obs_batches]
-        env_infos_list = [obs_batch.get("env_infos", None) for obs_batch in obs_batches]
         rlt_switch_flags_list = [
             obs_batch.get("rlt_switch_flags", None) for obs_batch in obs_batches
+        ]
+        intervene_flags_list = [
+            obs_batch.get("intervene_flags", None) for obs_batch in obs_batches
         ]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -917,31 +931,15 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
             ]
             merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
 
-        merged_env_infos = MultiStepRolloutWorker._merge_maniskill_env_infos(
-            env_infos_list,
-            _merge_obs_dicts,
-        )
-
-        merged_rlt_switch_flags = None
-        if any(flags is not None for flags in rlt_switch_flags_list):
-            ref_flags = next(
-                flags for flags in rlt_switch_flags_list if flags is not None
-            )
-            filled_flags = []
-            for obs_dict, flags in zip(obs_dicts, rlt_switch_flags_list):
-                if flags is None:
-                    batch_size = MultiStepRolloutWorker._infer_env_batch_size(obs_dict)
-                    fill_shape = (batch_size, *ref_flags.shape[1:])
-                    filled_flags.append(torch.zeros(fill_shape, dtype=ref_flags.dtype))
-                else:
-                    filled_flags.append(flags)
-            merged_rlt_switch_flags = torch.cat(filled_flags, dim=0)
-
         return {
             "obs": merged_obs,
             "final_obs": merged_final_obs,
-            "env_infos": merged_env_infos,
-            "rlt_switch_flags": merged_rlt_switch_flags,
+            "rlt_switch_flags": self._merge_optional_flag_tensors(
+                obs_dicts, rlt_switch_flags_list
+            ),
+            "intervene_flags": self._merge_optional_flag_tensors(
+                obs_dicts, intervene_flags_list
+            ),
         }
 
     def _split_rollout_result(
@@ -958,7 +956,7 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
         split_prev_logprobs = _split_optional_tensor(rollout_result.prev_logprobs)
         split_prev_values = _split_optional_tensor(rollout_result.prev_values)
         split_bootstrap_values = _split_optional_tensor(rollout_result.bootstrap_values)
-        split_save_flags = _split_optional_tensor(rollout_result.save_flags)
+        split_intervene_flags = _split_optional_tensor(rollout_result.intervene_flags)
         split_versions = _split_optional_tensor(rollout_result.versions)
         split_forward_inputs = (
             [{} for _ in sizes]
@@ -978,7 +976,7 @@ class MultiStepRolloutWorker(ManiSkillRLTPolicyMixin, Worker):
                 prev_logprobs=split_prev_logprobs[idx],
                 prev_values=split_prev_values[idx],
                 bootstrap_values=split_bootstrap_values[idx],
-                save_flags=split_save_flags[idx],
+                intervene_flags=split_intervene_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
                 versions=split_versions[idx],
             )

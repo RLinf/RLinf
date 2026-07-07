@@ -14,10 +14,25 @@
 
 from typing import Any
 
+from rlinf.envs import SupportedEnvType
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
 RLT_TRANSITION_PREFIX = "rlt_transition_"
+
+
+def use_simulator_transition_replay(cfg: Any) -> bool:
+    """Return True for envs that store one replay row per env step."""
+    train_env_cfg = cfg.env.get("train", None)
+    if train_env_cfg is None:
+        return False
+    try:
+        return (
+            SupportedEnvType(train_env_cfg.get("env_type", ""))
+            == SupportedEnvType.MANISKILL_RLT
+        )
+    except ValueError:
+        return False
 
 
 def extract_rlt_obs_from_forward_inputs(
