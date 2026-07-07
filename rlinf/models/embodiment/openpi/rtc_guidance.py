@@ -15,6 +15,7 @@
 from dataclasses import dataclass
 
 import torch
+import math
 
 
 @dataclass
@@ -66,7 +67,7 @@ def build_rtc_target_and_mask(
         i = torch.arange(hard_end, overlap, device=device, dtype=dtype)
         denom = max(float(overlap - hard_end + 1), 1.0)
         c_i = (overlap - i) / denom
-        soft = c_i * (torch.expm1(c_i) / (2.718281828459045 - 1.0))
+        soft = c_i * (torch.expm1(c_i) / (math.e - 1.0))
         mask[:, hard_end:overlap, 0] = soft
     return target, mask
 

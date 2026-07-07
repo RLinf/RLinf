@@ -287,7 +287,6 @@ class RTCRequest:
     executed_horizon: int = 0
     predicted_delay_steps: int = 0
     chunk_id: int = 0
-    episode_id: int = 0
 
     def __post_init__(self):
         # Keep Ray channel payloads on CPU so the control node never receives
@@ -297,15 +296,11 @@ class RTCRequest:
 
 @dataclass(kw_only=True)
 class RTCActionResponse:
-    """RTC response carrying a fresh action chunk and inference timing stats."""
+    """RTC response carrying a fresh action chunk."""
 
     actions: torch.Tensor
     model_actions: torch.Tensor | None = None
-    infer_ms: float = 0.0
-    request_type: str = "bootstrap"
-    predicted_delay_steps: int = 0
     chunk_id: int = 0
-    episode_id: int = 0
     guidance_applied: bool = False
 
     def __post_init__(self):

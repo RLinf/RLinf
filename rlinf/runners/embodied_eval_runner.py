@@ -60,6 +60,9 @@ class EmbodiedEvalRunner:
         env_handle.wait()
 
     def evaluate(self):
+        # Channel direction convention (names follow the receiver, not the sender):
+        #   rollout_channel: env -> rollout  (env sends obs/RTC requests, rollout receives)
+        #   env_channel:     rollout -> env  (rollout sends actions/RTC responses, env receives)
         env_handle: Handle = self.env.evaluate(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,

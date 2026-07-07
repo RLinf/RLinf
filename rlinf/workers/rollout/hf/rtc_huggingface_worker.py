@@ -104,10 +104,7 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
         return RTCActionResponse(
             actions=actions.detach().cpu().contiguous(),
             model_actions=self._rtc_eval_model_actions,
-            request_type=rtc_request.request_type,
-            predicted_delay_steps=rtc_request.predicted_delay_steps,
             chunk_id=rtc_request.chunk_id,
-            episode_id=rtc_request.episode_id,
             guidance_applied=guidance_applied,
         )
 

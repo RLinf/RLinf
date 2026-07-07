@@ -144,8 +144,7 @@ env:
       use_dense_reward: False
       max_num_steps: 300
       target_ee_pose: TARGET_EE_POSE
-      camera_serials: ["233622071355", "233522071854"]
-      # camera_serials: ['141722075170']
+      camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
       use_state_to_grip: True
       binary_gripper_threshold: 0.02
       enable_gripper_penalty: False

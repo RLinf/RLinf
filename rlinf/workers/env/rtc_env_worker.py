@@ -170,6 +170,31 @@ class RTCEnvWorker(EnvWorker):
         )
         return env_output, env_info
 
+    @staticmethod
+    def _success_from_info(env_info: dict[str, Any]) -> bool:
+        """Check whether an episode succeeded based on env_info keys."""
+        for key in ("success_once", "success_at_end", "success"):
+            value = env_info.get(key)
+            if value is None:
+                continue
+            if isinstance(value, torch.Tensor):
+                return bool(value.any().item())
+            return bool(np.asarray(value).any())
+        return False
+
+    def _prepare_rtc_actions(self, rtc_response: RTCActionResponse):
+        """Prepare and optionally rewrite gripper actions from an RTC response."""
+        chunk_actions = prepare_actions(
+            raw_chunk_actions=rtc_response.actions,
+            env_type=self.cfg.env.eval.env_type,
+            model_type=self.cfg.actor.model.model_type,
+            num_action_chunks=self.cfg.actor.model.num_action_chunks,
+            action_dim=self.cfg.actor.model.action_dim,
+            policy=self.cfg.actor.model.get("policy_setup", None),
+            wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
+        )
+        return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
+
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         """Run real-time-control evaluation.
 
@@ -190,28 +215,6 @@ class RTCEnvWorker(EnvWorker):
             self.cfg.runner.get("stop_eval_on_keyboard_success", False)
         )
 
-        def _success_from_info(env_info: dict[str, Any]) -> bool:
-            for key in ("success_once", "success_at_end", "success"):
-                value = env_info.get(key)
-                if value is None:
-                    continue
-                if isinstance(value, torch.Tensor):
-                    return bool(value.any().item())
-                return bool(np.asarray(value).any())
-            return False
-
-        def _prepare_rtc_actions(rtc_response: RTCActionResponse):
-            chunk_actions = prepare_actions(
-                raw_chunk_actions=rtc_response.actions,
-                env_type=self.cfg.env.eval.env_type,
-                model_type=self.cfg.actor.model.model_type,
-                num_action_chunks=self.cfg.actor.model.num_action_chunks,
-                action_dim=self.cfg.actor.model.action_dim,
-                policy=self.cfg.actor.model.get("policy_setup", None),
-                wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
-            )
-            return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
-
         for eval_rollout_epoch in range(self.cfg.algorithm.eval_rollout_epoch):
             self.eval_env_list[stage_id].is_start = True
 
@@ -224,7 +227,6 @@ class RTCEnvWorker(EnvWorker):
             )
             env_batch = env_output.to_dict()
 
-            episode_id = eval_rollout_epoch
             chunk_id = 0
             episode_step = 0
             episode_success = False
@@ -239,14 +241,13 @@ class RTCEnvWorker(EnvWorker):
                     executed_horizon=0,
                     predicted_delay_steps=initial_delay_steps,
                     chunk_id=chunk_id,
-                    episode_id=episode_id,
                 ),
                 mode="eval",
             )
             rtc_response: RTCActionResponse = self.recv_rtc_response(
                 input_channel, mode="eval", async_op=False
             )
-            current_chunk_actions = _prepare_rtc_actions(rtc_response)
+            current_chunk_actions = self._prepare_rtc_actions(rtc_response)
             current_chunk_index = 0
             current_chunk_len = current_chunk_actions.shape[1]
             pending_rtc_response = None
@@ -258,7 +259,7 @@ class RTCEnvWorker(EnvWorker):
                     rtc_response = pending_rtc_response.wait()
                     observed_delay_steps = max(episode_step - request_start_step, 0)
                     delay_buffer.append(observed_delay_steps)
-                    current_chunk_actions = _prepare_rtc_actions(rtc_response)
+                    current_chunk_actions = self._prepare_rtc_actions(rtc_response)
                     current_chunk_len = current_chunk_actions.shape[1]
                     current_chunk_index = observed_delay_steps
                     pending_rtc_response = None
@@ -278,7 +279,6 @@ class RTCEnvWorker(EnvWorker):
                             executed_horizon=current_chunk_index,
                             predicted_delay_steps=predicted_delay_steps,
                             chunk_id=chunk_id + 1,
-                            episode_id=episode_id,
                         ),
                         mode="eval",
                     )
@@ -298,7 +298,7 @@ class RTCEnvWorker(EnvWorker):
 
                 for key, value in env_info.items():
                     eval_metrics[key].append(value)
-                episode_success = episode_success or _success_from_info(env_info)
+                episode_success = episode_success or self._success_from_info(env_info)
 
                 episode_step += 1
                 current_chunk_index += 1
@@ -343,7 +343,6 @@ class RTCEnvWorker(EnvWorker):
                 executed_horizon=0,
                 predicted_delay_steps=0,
                 chunk_id=0,
-                episode_id=-1,
             ),
             mode="eval",
         )
