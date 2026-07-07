@@ -2,7 +2,7 @@ defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
   - model/dexbotic_dm0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 

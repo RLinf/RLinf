@@ -102,7 +102,6 @@ jobs:
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/evaluations/**'
-              - 'tests/e2e_tests/training_backend/**'
               - 'evaluations/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             toolkits_no_ci_filter: &toolkits_no_ci

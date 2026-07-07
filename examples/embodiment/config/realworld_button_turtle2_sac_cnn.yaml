@@ -2,7 +2,7 @@ defaults:
   - env/realworld_button@env.train
   - env/realworld_button@env.eval
   - model/cnn_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -157,7 +157,7 @@ actor:
     lr: 3e-4
     lr_scheduler: torch_constant
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
