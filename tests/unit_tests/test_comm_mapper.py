@@ -235,6 +235,7 @@ def test_merge_env_outputs_with_partial_optional_fields():
         rewards=torch.ones((3, 1), dtype=torch.float32) * 2,
         intervene_actions=torch.ones((3, 4), dtype=torch.float32),
         intervene_flags=torch.ones((3, 1), dtype=torch.bool),
+        rlt_switch_flags=torch.ones((3, 1), dtype=torch.bool),
     ).to_dict()
 
     merged = EnvOutput.merge_env_outputs([env_output_0, env_output_1])
@@ -255,4 +256,8 @@ def test_merge_env_outputs_with_partial_optional_fields():
     assert merged["intervene_flags"].shape == (5, 1)
     assert torch.equal(
         merged["intervene_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
+    )
+    assert merged["rlt_switch_flags"].shape == (5, 1)
+    assert torch.equal(
+        merged["rlt_switch_flags"][:2], torch.zeros((2, 1), dtype=torch.bool)
     )
