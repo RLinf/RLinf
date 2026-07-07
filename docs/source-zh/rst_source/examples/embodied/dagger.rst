@@ -1,32 +1,72 @@
 具身策略的 DAgger 训练
-======================
+========================================
 
-**DAgger**（Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg
+   :align: center
+   :width: 75%
+
+   一个 DAgger 训练循环。
+
+**DAgger** （Dataset Aggregation）是一种模仿学习算法：它让学生策略与环境交互，
 再让专家策略对访问到的状态进行重标注，并持续聚合这些带专家标签的轨迹用于后续
-训练。本文档介绍 RLinf 中面向模拟器场景的具身 DAgger 工作流。目前 DAgger 支持
+训练。使用本页在模拟器中运行具身 DAgger 工作流。目前 DAgger 支持
 MLP 和 Pi0 模型，以及 **同步** 和 **异步** 两种训练流程。
 
 真实世界中 Franka 的 HG-DAgger 全流程请参考 :doc:`hg-dagger`。
 
-环境
-----
+概览
+----------------------------------------
 
-**ManiSkill + MLP**
+DAgger 微调具身策略：学生策略与环境交互，专家对访问到的状态进行重标注，聚合后的专家数据再训练学生策略。
 
-- **环境**：ManiSkill pick-cube 任务
-- **观测**：低维机器人状态
-- **动作空间**：连续机械臂与夹爪控制
-- **适用场景**：用轻量级状态策略快速验证 DAgger 训练流程
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**LIBERO Spatial + Pi0**
+   .. grid-item-card:: 算法
+      :text-align: center
 
-- **环境**：LIBERO Spatial 基准
-- **观测**：RGB 图像 + 本体状态
-- **动作空间**：由 Pi0 策略生成的连续机器人动作
-- **适用场景**：对预训练 VLA 策略进行带专家重标注的 DAgger 微调
+      DAgger
 
-算法
-----
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      MLP · π₀
+
+   .. grid-item-card:: 环境 / 数据
+      :text-align: center
+
+      ManiSkill · LIBERO · RoboTwin
+
+   .. grid-item-card:: 训练
+      :text-align: center
+
+      Sync · Async
+
+| **你将完成：** 安装 → 设置学生/专家检查点 → 运行 ``run_embodiment.sh``（或 ``run_async.sh``）→ 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 学生与专家检查点（见下文步骤）。
+
+支持的配置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 26 58
+
+   * - 模型
+     - 环境
+     - 配置
+   * - MLP
+     - ManiSkill（pick-cube）
+     - ``maniskill_dagger_mlp.yaml``
+   * - π₀
+     - LIBERO-Spatial
+     - ``libero_spatial_dagger_openpi.yaml``
+   * - π₀
+     - RoboTwin（adjust-bottle）
+     - ``robotwin_adjust_bottle_dagger_openpi.yaml``
+
+DAgger 工作原理
+----------------------------------------
 
 **DAgger 训练流程**
 
@@ -51,8 +91,8 @@ MLP 和 Pi0 模型，以及 **同步** 和 **异步** 两种训练流程。
    - ``beta_schedule`` 和 ``beta_decay`` 控制从专家逐步切换到学生的速度。
    - ``beta_min`` 为可选项，用于设置 ``beta`` 的下界。
 
-依赖安装
---------
+安装
+----------------------------------------
 
 安装细节请先参考 :doc:`../../start/installation`。下面的 DAgger 示例使用具身
 Docker 镜像或等价的本地环境。
@@ -66,9 +106,9 @@ Docker 镜像或等价的本地环境。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
 
@@ -82,10 +122,12 @@ Docker 镜像或等价的本地环境。
 
    # 为提高国内依赖安装速度，可以添加 `--use-mirror` 参数。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   # 如果是robotwin环境，请使用下面的安装命令：
+   # bash requirements/install.sh embodied --model openpi --env robotwin
    source .venv/bin/activate
 
 Checkpoint 配置
----------------
+----------------------------------------
 
 启动前，请先在所选 YAML 文件中补齐学生模型和专家模型的路径。
 
@@ -128,15 +170,53 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
 专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。
 
-运行脚本
---------
+**3. RoboTwin + Pi0**
+
+Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
+
+.. code:: yaml
+
+   actor:
+     model:
+       model_path: /path/to/student_model
+
+   rollout:
+     model:
+       model_path: /path/to/student_model
+     expert_model:
+       model_path: /path/to/expert_model
+
+同样可以在Hugging Face上找到用于学生策略初始化的预训练Pi0 checkpoint。例如：
+
+.. code:: bash
+
+   # 如果需要国内加速下载，可以使用：
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf/RLinf-Pi0-RoboTwin-SFT-adjust_bottle --local-dir /path/to/model
+
+专家策略的checkpoint可以来自运行 :doc:`pi0` 的PPO训练结果。
+
+此外，RoboTwin环境还需单独配置 RoboTwin 代码及相应的 Assets，可以参考 :doc:`robotwin` 里的说明，之后在yaml里配置相应的路径：
+
+.. code:: yaml
+
+   env:
+     train:
+       assets_path: /path/to/robotwin_assets
+     eval:
+       assets_path: /path/to/robotwin_assets
+
+运行
+----------------------------------------
 
 **1. 配置文件**
 
-目前支持以下两份 DAgger 配置：
+目前支持以下三份 DAgger 配置：
 
 - **MLP + ManiSkill**：``examples/embodiment/config/maniskill_dagger_mlp.yaml``
 - **Pi0 + LIBERO**：``examples/embodiment/config/libero_spatial_dagger_openpi.yaml``
+- **Pi0 + RoboTwin**：``examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml``
 
 **2. DAgger 关键参数**
 
@@ -169,6 +249,9 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
    bash examples/embodiment/run_embodiment.sh maniskill_dagger_mlp
    bash examples/embodiment/run_embodiment.sh libero_spatial_dagger_openpi
+   bash examples/embodiment/run_embodiment.sh robotwin_adjust_bottle_dagger_openpi
+   # For RoboTwin, add the following two commands before running the .sh file:
+   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
 
 **异步模式**
 
@@ -176,9 +259,12 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 
    bash examples/embodiment/run_async.sh maniskill_dagger_mlp
    bash examples/embodiment/run_async.sh libero_spatial_dagger_openpi
+   bash examples/embodiment/run_async.sh robotwin_adjust_bottle_dagger_openpi
+   # For RoboTwin, add the following two commands before running the .sh file:
+   # export ROBOT_PLATFORM=ALOHA export ROBOTWIN_PATH=/path/to/RoboTwin
 
 可视化与结果
-------------
+----------------------------------------
 
 **1. TensorBoard 日志**
 
@@ -187,6 +273,8 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
    tensorboard --logdir ./logs
 
 **2. 推荐关注的监控指标**
+
+指标含义见 :doc:`训练指标 <../../reference/metrics>`。DAgger 专属指标：
 
 - ``env/success_once``：推荐用于监控具身 DAgger 训练效果的成功率指标。
 - ``train/dagger/actor_loss``：基于专家标注样本计算的 DAgger 监督损失。
@@ -197,7 +285,7 @@ Pi0 DAgger 配置使用单独的学生模型与专家模型路径：
 - ``train/replay_buffer/cache_size``：当前缓存的展平轨迹数量。
 
 实验结果
---------
+----------------------------------------
 
 .. csv-table::
    :header: "配置", "学生初始成功率", "专家成功率", "训练时间", "学生最终成功率"

@@ -36,8 +36,6 @@ runner:
 algorithm:
   group_size: 1
   reward_coef: 1.0
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -60,25 +58,11 @@ algorithm:
   nft_xcur_source: "resample"
   nft_tau: 1.0
   recompute_v: False
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     task_id_filter: [0]
     total_num_envs: 8
     max_episode_steps: 5
@@ -86,6 +70,7 @@ env:
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: False
   eval:
+    rollout_epoch: 1
     task_id_filter: [0]
     total_num_envs: 1
     auto_reset: True

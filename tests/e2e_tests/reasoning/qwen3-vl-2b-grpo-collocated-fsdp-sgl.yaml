@@ -1,0 +1,245 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,rollout,reward: all
+
+runner:
+  task_type: reasoning
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: 1
+
+  val_check_interval: 1
+  save_interval: -1
+
+  seq_length: 2048
+
+  enable_dynamic_batch_size: True
+  max_tokens_per_mbs: 2048
+
+  resume_dir: null
+  experiment_name: grpo-qwen3-vl-2b-ci
+  output_dir: /workspace/results
+
+algorithm:
+  importance_sampling_fix: True
+  importance_sampling_clip: 2
+
+  group_size: 8
+
+  n_minibatches: 4
+  training_batch_size_per_gpu: 1
+  rollout_batch_size_per_gpu: null
+
+  logprob_forward_micro_batch_size: 1
+  val_rollout_batch_size_per_gpu: 4
+
+  recompute_logprobs: False
+  shuffle_rollout: False
+
+  loss_type: actor
+  loss_agg_func: "seq-mean-token-mean"
+  kl_beta: 0.0
+  kl_penalty_type: low_var_kl
+  ratio_clip_eps: 0.2
+  entropy_bonus: 0.0
+  calculate_entropy: False
+  clip_ratio_c: null
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.28
+
+  adv_type: grpo
+  normalize_advantages: False
+  early_stop_imp_ratio: 5.0
+  use_valid_token_scale: False
+
+  sampling_params:
+    do_sample: True
+    temperature: 1.0
+    top_k: 1000000
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${subtract:${runner.seq_length}, ${data.max_prompt_length}}
+    min_new_tokens: 1
+
+rollout:
+  group_name: "RolloutGroup"
+
+  gpu_memory_utilization: 0.55
+
+  model:
+    model_path: /workspace/dataset/Qwen3-VL-2B-Instruct
+    model_type: qwen3_vl
+    precision: ${actor.model.precision}
+  enforce_eager: False
+  distributed_executor_backend: mp
+  disable_log_stats: False
+  detokenize: False
+  padding: null
+  eos: null
+
+  rollout_backend: sglang
+
+  sglang:
+    attention_backend: triton
+    decode_log_interval: 500000
+    use_torch_compile: False
+    torch_compile_max_bs: 128
+
+  vllm:
+    attention_backend: FLASH_ATTN
+    enable_chunked_prefill: True
+    enable_prefix_caching: True
+    enable_flash_infer_sampler: True
+
+  return_logprobs: ${not:${algorithm.recompute_logprobs}}
+
+  tensor_parallel_size: 1
+  pipeline_parallel_size: 1
+
+  validate_weight: False
+  validate_save_dir: null
+  print_outputs: False
+
+  max_running_requests: 64
+  cuda_graph_max_bs: 128
+
+data:
+  type: vision_language
+  dataset_name: base
+  max_prompt_length: 1024
+  filter_prompt_by_length: True
+  rollout_batch_size: 16
+  val_rollout_batch_size: null
+  num_workers: 2
+  prompt_key: problem
+  image_keys: ["images"]
+  answer_key: answer
+  use_chat_template: True
+  lazy_loading: True
+  shuffle: True
+  validation_shuffle: True
+  seed: 1234
+  train_data_paths: ["/workspace/dataset/geo3k/data/train-00000-of-00001.parquet"]
+  val_data_paths: ["/workspace/dataset/geo3k/data/validation-00000-of-00001.parquet"]
+  system_prompt: 'Solve the following math problem step by step. The last line of your response should be of the form Answer: \boxed{$Answer} where $Answer is the answer to the problem.'
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: fsdp
+  mcore_gpt: True
+  spec_name: decoder_gpt
+
+  enable_offload: True
+
+  global_batch_size: 8
+  micro_batch_size: 1
+
+  enable_dp_load_balance: False
+
+  calculate_flops: False
+
+  seed: 1234
+
+  model:
+    precision: bf16
+    is_lora: False
+
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
+    variable_seq_lengths: True
+    model_type: ${rollout.model.model_type}
+    model_path: /workspace/dataset/Qwen3-VL-2B-Instruct
+
+  optim:
+    optimizer: adam
+    bf16: True
+    fp16: False
+    lr: 1e-06
+    adam_beta1: 0.9
+    adam_beta2: 0.98
+    adam_eps: 1.0e-8
+    min_lr: 0
+    weight_decay: 0.1
+    use_distributed_optimizer: True
+    overlap_grad_reduce: False
+    overlap_param_gather: False
+    optimizer_enable_pin: false
+    overlap_param_gather_with_optimizer_step: False
+    clip_grad: 1
+
+  lr_sched:
+    lr_warmup_fraction: 0.01
+    lr_warmup_init: 0.0
+    lr_warmup_iters: 0
+    max_lr: 1e-06
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_decay_iters: 10
+
+  tokenizer:
+    tokenizer_model: /workspace/dataset/Qwen3-VL-2B-Instruct
+    use_fast: False
+    trust_remote_code: True
+    padding_side: 'right'
+
+  fsdp_config:
+
+    strategy: "fsdp2"
+
+    sharding_strategy: "full_shard"
+
+    cpu_offload: False
+    offload_pin_memory: False
+    reshard_after_forward: True
+
+    enable_gradient_accumulation: True
+    forward_prefetch: True
+    limit_all_gathers: False
+    backward_prefetch: pre
+    use_orig_params: False
+    use_liger_kernel: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+
+    fsdp_size: -1
+
+    mixed_precision:
+      param_dtype: "bf16"
+      reduce_dtype: "fp32"
+      buffer_dtype: "fp32"
+
+    amp:
+      enabled: False
+      precision: "bf16"
+      use_grad_scaler: False
+
+reward:
+  group_name: "RewardGroup"
+  use_reward_model: false
+  reward_type: 'math'
+  reward_scale: 1.0
+  reward_min_val: 0
+  reward_max_val: 1
+
+  tokenizer:
+    tokenizer_model: ${actor.tokenizer.tokenizer_model}
+    use_fast: ${actor.tokenizer.use_fast}
+    trust_remote_code: ${actor.tokenizer.trust_remote_code}
+    padding_side: ${actor.tokenizer.padding_side}
+
+critic:
+  use_critic_model: false

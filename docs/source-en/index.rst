@@ -1,146 +1,100 @@
-RLinf Documentation
-===================
+.. _home:
 
-.. image:: _static/svg/logo_white.svg
-   :width: 500px
-   :align: center
-   :class: logo-svg
+Welcome to RLinf
+================
 
 .. raw:: html
 
-   <h1 style="text-align: center;">Welcome to <b>RLinf</b>!</h1>
+   <div class="rlinf-hero">
+     <img class="rlinf-hero-logo" src="_static/svg/logo_white.svg" alt="RLinf logo" />
+     <h1 class="rlinf-hero-title">Welcome to RLinf</h1>
+     <p class="rlinf-hero-subtitle">Scalable RL Post-Training for Foundation Models and Embodied Agents</p>
+   </div>
 
+RLinf is a flexible, scalable open-source infrastructure for post-training
+foundation models with reinforcement learning. The "inf" stands for
+*Infrastructure* — a robust backbone for next-generation training — and for
+*Infinite*, capturing open-ended learning and continuous generalization.
 
-RLinf is a flexible and scalable open-source infrastructure designed for post-training foundation models via reinforcement learning. The 'inf' in RLinf stands for `Infrastructure`, highlighting its role as a robust backbone for next-generation training. It also stands for `Infinite`, symbolizing the system’s support for open-ended learning, continuous generalization, and limitless possibilities in intelligence development.
+.. grid:: 2 4 4 4
+   :gutter: 2
 
+   .. grid-item-card:: Get Started
+      :link: rst_source/start/index
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: Install
+      :link: rst_source/start/installation
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: Examples
+      :link: rst_source/examples/index
+      :link-type: doc
+      :text-align: center
+
+   .. grid-item-card:: Evaluation
+      :link: rst_source/evaluations/index
+      :link-type: doc
+      :text-align: center
+
+Choose Your Path
 ----------------
 
-.. image:: _static/svg/overview.svg
-   :width: 1000px
-   :align: center
-   :class: overview-svg
+.. grid:: 1 2 2 2
+   :gutter: 3
 
-----------------
+   .. grid-item-card:: 🤖 Embodied RL
+      :link: rst_source/start/vla
+      :link-type: doc
 
-**RLinf is unique with:**
+      Fine-tune a VLA on LIBERO, ManiSkill, RoboTwin, and more with PPO or GRPO.
 
-- Macro-to-Micro Flow: a new paradigm M2Flow, which executes macro-level logical flows through micro-level execution flows, decoupling logical workflow construction (programmable) from physical communication and scheduling (efficiency).
+   .. grid-item-card:: 🧠 Agentic / Reasoning RL
+      :link: rst_source/examples/agentic/index
+      :link-type: doc
 
-- Flexible Execution Modes
+      Browse agentic and reasoning recipes for Qwen / DeepSeek models.
 
-  - Collocated mode: shares all GPUs across all workers.
-  - Disaggregated mode: enables fine-grained pipelining.
-  - Hybrid mode: a customizable combination of different placement modes, integrating both collocated and disaggregated modes.
+   .. grid-item-card:: 🧩 Bring Your Own
+      :link: rst_source/extending/index
+      :link-type: doc
 
-- Auto Scheduling
+      Add a model, environment, or algorithm and plug it into RLinf.
 
-  - Dynamic Scheduling: dynamically schedule resource allocation, maximizing resource utilization.
-  - Static Scheduling: automatically select the most suitable execution mode based on the training workload, without the need for manual resource allocation.
+   .. grid-item-card:: 🚀 Scale to a Cluster
+      :link: rst_source/guides/launch-scale/index
+      :link-type: doc
 
-- Embodied Agent Support
+      Collocated, disaggregated, and hybrid placement across GPUs and nodes.
 
-  - Fast adaptation support for mainstream VLA models: `OpenVLA`_, `OpenVLA-OFT`_, `π₀`_, `GR00T-N1.5`_
-  - Support for mainstream CPU & GPU-based simulators via standardized RL interfaces: `ManiSkill3`_, `LIBERO`_, `IsaacLab`_
-  - Enabling the first RL fine-tuning of the π₀ model family with a flow-matching action expert.
+Why RLinf
+---------
 
-**RLinf is fast with:**
+.. list-table::
+   :header-rows: 1
 
-- Hybrid mode with fine-grained pipelining: achieves a **120%+** throughput improvement compared to other frameworks.
-- Automatic Online Scaling Strategy: dynamically scales training resources, with GPU switching completed within seconds, further improving efficiency by 20–40% while preserving the on-policy nature of RL algorithms.
-
-**RLinf is flexible and easy to use with:**
-
-- Multiple Backend Integrations
-
-  .. - A single unified interface drives two complementary backends, allowing seamless switching without code changes.
-  
-  - FSDP + Hugging Face: rapid adaptation to new models and algorithms, ideal for beginners and fast prototyping.
-  - Megatron + SGLang: optimized for large-scale training, delivering maximum efficiency for expert users with demanding workloads.
-
-- Adaptive communication via the asynchronous communication channel
-
-- Built-in support for popular RL methods, including `PPO`_ , `GRPO`_ , `DAPO`_ , `Reinforce++`_ , and more.
-
-.. _PPO: https://arxiv.org/abs/1707.06347
-.. _GRPO: https://arxiv.org/abs/2402.03300
-.. _DAPO: https://arxiv.org/abs/2503.14476
-.. _Reinforce++: https://arxiv.org/abs/2501.03262
-
-
-
-.. _OpenVLA: https://github.com/openvla/openvla
-.. _OpenVLA-OFT: https://github.com/moojink/openvla-oft
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _ManiSkill3: https://github.com/haosulab/ManiSkill
-.. _LIBERO: https://github.com/Lifelong-Robot-Learning/LIBERO
-.. _IsaacLab: https://github.com/isaac-sim/IsaacLab
-.. _π₀: https://github.com/Physical-Intelligence/openpi
-.. _Megatron-LM: https://github.com/NVIDIA/Megatron-LM
-.. _SGLang: https://github.com/sgl-project/sglang
-.. _vLLM: https://github.com/vllm-project/vllm
-.. _GR00T-N1.5: https://github.com/NVIDIA/Isaac-GR00T.git
-
-
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/start/index
-
---------------------------------------------
+   * - Strength
+     - What it gives you
+   * - Fast
+     - Hybrid fine-grained pipelining delivers 120%+ throughput over comparable frameworks, plus automatic online scaling.
+   * - Flexible
+     - Switch FSDP + Hugging Face for prototyping or Megatron + SGLang for large-scale training, with no code changes.
+   * - Proven
+     - Built-in PPO, GRPO, DAPO, and Reinforce++, with SOTA recipes for embodied and reasoning tasks.
 
 .. toctree::
   :maxdepth: 3
   :includehidden:
   :titlesonly:
+  :hidden:
 
-  rst_source/tutorials/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/examples/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/blog/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/publications/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 2
-  :includehidden:
-  :titlesonly:
-
-  rst_source/apis/index
-
---------------------------------------------
-
-.. toctree::
-  :maxdepth: 1
-  :includehidden:
-  :titlesonly:
-
-  rst_source/faq
+  Get Started <rst_source/start/index>
+  Examples <rst_source/examples/index>
+  Evaluation <rst_source/evaluations/index>
+  Guides <rst_source/guides/index>
+  Concepts <rst_source/concepts/index>
+  Reference <rst_source/reference/index>
+  Extending <rst_source/extending/index>
+  Resources <rst_source/resources/index>

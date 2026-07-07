@@ -23,6 +23,9 @@ export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 
+# POLARIS dataset
+export POLARIS_DATA_PATH=${POLARIS_DATA_PATH:-"/path/to/dataset/PolaRiS-Hub"}
+
 if [ -z "$1" ]; then
     CONFIG_NAME=${CONFIG_NAME:-"maniskill_ppo_openvlaoft"}
 else
@@ -38,12 +41,8 @@ export ROBOT_PLATFORM
 export LIBERO_TYPE=${LIBERO_TYPE:-"standard"}
 if [ "$LIBERO_TYPE" == "pro" ]; then
     export LIBERO_PERTURBATION="all"  # all,swap,object,lan
-    echo "Evaluation Mode: LIBERO-PRO | Perturbation: $LIBERO_PERTURBATION"
 elif [ "$LIBERO_TYPE" == "plus" ]; then
     export LIBERO_SUFFIX="all"
-    echo "Evaluation Mode: LIBERO-PLUS | Suffix: $LIBERO_SUFFIX"
-else
-    echo "Evaluation Mode: Standard LIBERO"
 fi
 
 echo "Using ROBOT_PLATFORM=$ROBOT_PLATFORM"

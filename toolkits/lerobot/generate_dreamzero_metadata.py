@@ -33,6 +33,12 @@ Examples:
     --output-metadata /path/to/output/metadata.json \
     --merge
 
+  # Franka real-world pick-and-place (simple state/actions columns)
+  python toolkits/lerobot/generate_dreamzero_metadata.py \
+    --preset franka_pnp \
+    --dataset-root /path/franka_pnp \
+    --output-metadata /path/to/output/franka_pnp_metadata.json
+
   # Both presets in one metadata.json
   python toolkits/lerobot/generate_dreamzero_metadata.py \
     --preset libero_sim oxe_droid \
@@ -66,6 +72,17 @@ PRESETS: dict[str, dict[str, Any]] = {
         "action_key": "action",
         "video_keys": None,
         "use_modality_json": True,
+        "default_dataset_root": None,
+    },
+    "franka_pnp": {
+        "embodiment_tag": "franka_pnp",
+        "state_key": "state",
+        "action_key": "actions",
+        "video_keys": [
+            "observation.images.image",
+            "observation.images.wrist_image",
+        ],
+        "use_modality_json": False,
         "default_dataset_root": None,
     },
     "real_panda_single_arm": {

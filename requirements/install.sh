@@ -8,7 +8,11 @@ MODEL=""
 ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
+LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
+SGLANG_VERSION=""
+TRANSFORMERS_VERSION=""
+XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
 # PEP 440 local-version segment (including the leading '+') that
@@ -43,6 +47,8 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 # so the user can skip flash-attn on platforms where it would otherwise
 # install (e.g. when build deps aren't available on the host).
 DISABLE_FLASH_ATTN=0
+# User-level opt-out for apex, set by --no-apex. Wins over the platform default.
+DISABLE_APEX=0
 # Whether apply_torch_override should rewrite the pyproject.toml `torchcodec`
 # pin from ==0.2 to >=0.5. The ==0.2 line in override-dependencies has wheels
 # only for x86_64 + torch 2.5/2.6, so it breaks on AMD (torch 2.8 from rocm
@@ -74,8 +80,8 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "frankasim" "robotwin" "habitat" "opensora" "wan" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -101,6 +107,10 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
+    --sglang <version>    Override sglang version (e.g., 0.5.4). xgrammar is
+                           auto-derived from the sglang version.
+    --transformers <version> Override transformers version (e.g., 4.57.1). Patches
+                           the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
                            ROCm), or ascend (experimental, NPU). Sets UV_TORCH_BACKEND
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
@@ -115,6 +125,8 @@ Common options:
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
                            toolchain or when the platform has no flash-attn support (Ascend).
+    --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
+                           CUDA toolchain mismatch prevents download apex of the right version.
     --install-rlinf        Install RLinf itself into the python.
 EOF
 }
@@ -153,6 +165,22 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                shift 2
+                ;;
+            --sglang)
+                if [ -z "${2:-}" ]; then
+                    echo "--sglang requires a version argument (e.g. 0.5.4)." >&2
+                    exit 1
+                fi
+                SGLANG_VERSION="${2:-}"
+                shift 2
+                ;;
+            --transformers)
+                if [ -z "${2:-}" ]; then
+                    echo "--transformers requires a version argument (e.g. 4.57.1)." >&2
+                    exit 1
+                fi
+                TRANSFORMERS_VERSION="${2:-}"
                 shift 2
                 ;;
             --platform)
@@ -201,6 +229,10 @@ parse_args() {
                 ;;
             --no-flash-attn)
                 DISABLE_FLASH_ATTN=1
+                shift
+                ;;
+            --no-apex)
+                DISABLE_APEX=1
                 shift
                 ;;
             --*)
@@ -511,7 +543,7 @@ EOF
         return 0
     fi
     echo "[install.sh] Installing triton==${triton_ver} to match pytorch-triton-rocm"
-    uv pip install "triton==${triton_ver}"
+    uv pip install "triton==${triton_ver}" amdsmi
 }
 
 install_ascend_extras() {
@@ -560,6 +592,62 @@ restore_pyproject() {
     if [ -n "$PYPROJECT_BACKUP" ] && [ -f "$PYPROJECT_BACKUP" ]; then
         mv -f "$PYPROJECT_BACKUP" "$PYPROJECT_FILE"
         PYPROJECT_BACKUP=""
+    fi
+}
+
+apply_sglang_override() {
+    if [ -z "$SGLANG_VERSION" ] && [ -z "$TRANSFORMERS_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$PYPROJECT_FILE" ]; then
+        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
+        exit 1
+    fi
+
+    # Reuse an existing backup if apply_torch_override already created one.
+    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
+        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-sglang-bak.$$"
+        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
+        trap 'restore_pyproject' EXIT INT TERM HUP
+    fi
+
+    if [ -n "$SGLANG_VERSION" ]; then
+        sed -i \
+            -e "s/\"sglang\[all\]==[^\"]*\"/\"sglang[all]==${SGLANG_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: sglang[all]==${SGLANG_VERSION}"
+    fi
+
+    if [ -n "$TRANSFORMERS_VERSION" ]; then
+        sed -i \
+            -e "s/\"transformers==[^\"]*\"/\"transformers==${TRANSFORMERS_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml optional-dependencies: transformers==${TRANSFORMERS_VERSION}"
+    fi
+
+    # Auto-derive xgrammar from sglang version when not explicitly set.
+    # Mapping derived from each sglang release's python/pyproject.toml.
+    if [ -n "$SGLANG_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
+        case "${SGLANG_VERSION}" in
+            0.4.6) XGRAMMAR_VERSION="0.1.17" ;;
+            0.4.7|0.4.8|0.4.9) XGRAMMAR_VERSION="0.1.19" ;;
+            0.5.0|0.5.0rc*) XGRAMMAR_VERSION="0.1.22" ;;
+            0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
+            0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
+            0.5.4) XGRAMMAR_VERSION="0.1.25" ;;
+            *)
+                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
+                exit 1
+                ;;
+        esac
+    fi
+
+    if [ -n "$XGRAMMAR_VERSION" ]; then
+        sed -i \
+            -e "s/\"xgrammar==[^\"]*\"/\"xgrammar==${XGRAMMAR_VERSION}\"/" \
+            "$PYPROJECT_FILE"
+        echo "[install.sh] Patched pyproject.toml override-dependencies: xgrammar==${XGRAMMAR_VERSION}"
     fi
 }
 
@@ -740,11 +828,13 @@ install_uv() {
 
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
+        export USE_MIRRORS
         export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
         export GITHUB_PREFIX="https://ghfast.top/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
+        trap 'unset_mirror' EXIT INT TERM HUP
     fi
 }
 
@@ -753,7 +843,8 @@ unset_mirror() {
         unset UV_PYTHON_INSTALL_MIRROR
         unset UV_DEFAULT_INDEX
         unset HF_ENDPOINT
-        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf
+        git config --global --unset url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/" || true
+        unset GITHUB_PREFIX
     fi
 }
 
@@ -877,9 +968,15 @@ EOF
     local cu_tag="cu${cuda_major}"            # e.g. cu12
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
 
-    # We currently assume cxx11 abi FALSE and linux x86_64
+    # Match flash-attn wheel ABI to the currently installed torch build.
     local platform_tag="linux_x86_64"
-    local cxx_abi="cxx11abiFALSE"
+    local cxx_abi
+    cxx_abi=$(python - <<'EOF'
+import torch
+
+print("cxx11abiTRUE" if torch._C._GLIBCXX_USE_CXX11_ABI else "cxx11abiFALSE")
+EOF
+)
 
     uv pip uninstall flash-attn || true
     local prebuilt_ver base_url wheel_name
@@ -897,6 +994,10 @@ EOF
 }
 
 install_apex() {
+    if [ "$DISABLE_APEX" -eq 1 ]; then
+        echo "[install.sh] --no-apex was specified; skipping apex install."
+        return 0
+    fi
     if [ "$PLATFORM" != "nvidia" ]; then
         echo "[install.sh] Skipping apex install on platform=${PLATFORM} (CUDA-only)."
         return 0
@@ -940,7 +1041,10 @@ EOF
 
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
-    # - If ENV_VAR_NAME is set, verify it points to an existing directory and reuse it (no pull).
+    # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
+    #   already exists (no pull), otherwise clone GIT_URL into it. This lets a single
+    #   path be shared across multiple venvs/models — clone once, reuse everywhere
+    #   (e.g. set LIBERO_PATH so every model in an env image reuses one LIBERO clone).
     # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
     # If env var is not set and the directory already exists as a git repo, check if it is intact and re-clone it if not.
     # The resolved directory path is printed to stdout.
@@ -955,11 +1059,13 @@ clone_or_reuse_repo() {
 
     local target_dir
     if [ -n "$env_value" ]; then
-        if [ ! -d "$env_value" ]; then
-            echo "$env_var_name is set to '$env_value' but the directory does not exist." >&2
-            exit 1
-        fi
         target_dir="$env_value"
+        if [ ! -d "$target_dir" ]; then
+            echo "$env_var_name=$target_dir does not exist yet; cloning $git_url into it..." >&2
+            git clone "$@" "$git_url" "$target_dir" >&2
+        else
+            echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
+        fi
     else
         target_dir="$default_dir"
         if [ ! -d "$target_dir" ]; then
@@ -986,7 +1092,7 @@ install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
-        bash $SCRIPT_DIR/embodied/sys_deps.sh "$PLATFORM"
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
     if [ ${#PLATFORM_VENV_EXPORTS[@]} -gt 0 ]; then
         printf '%s\n' "${PLATFORM_VENV_EXPORTS[@]}" >> "$VENV_DIR/bin/activate"
@@ -1023,6 +1129,9 @@ install_openvla_oft_model() {
             install_common_embodied_deps
             uv pip install git+${GITHUB_PREFIX}https://github.com/moojink/openvla-oft.git  --no-build-isolation
             install_behavior_env
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1099,6 +1208,9 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_behavior_env
             uv pip install protobuf==6.33.0
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
             ;;
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1151,11 +1263,32 @@ install_openpi_model() {
             install_flash_attn
             install_roboverse_env
             ;;
+        franka-franky)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv sync --extra franka --inexact --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            ;;
+        polaris)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_polaris_env
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
             exit 1
             ;;
     esac
+
+    # Enforce RLinf-compatible runtime pins to avoid known breakages.
+    # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
 
     # Replace transformers models with OpenPI's modified versions
     local py_major_minor
@@ -1214,7 +1347,7 @@ install_gr00t_model() {
     install_common_embodied_deps
 
     local gr00t_path
-    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/RLinf/Isaac-GR00T.git)
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git -b n1.5-release)
     uv pip install -e "$gr00t_path" --no-deps
     uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
     case "$ENV_NAME" in
@@ -1233,6 +1366,52 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
+    uv pip uninstall pynvml || true
+}
+
+install_gr00t_n1d6_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.6.1-release)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t 1.6." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip uninstall pynvml || true
+}
+
+install_gr00t_n1d7_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    local gr00t_path
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.7-release)
+    uv pip install -e "$gr00t_path" --no-deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d7.txt"
+
+    case "$ENV_NAME" in
+        maniskill_libero)
+            install_maniskill_libero_env
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not yet validated for Gr00t N1.7." >&2
+            exit 1
+            ;;
+    esac
+
     uv pip uninstall pynvml || true
 }
 
@@ -1267,8 +1446,8 @@ install_lingbot_vla_model() {
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/lingbot-depth/ --no-deps
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
-    uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
+    install_lerobot
+    env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
 
     case "$ENV_NAME" in
         robotwin)
@@ -1289,8 +1468,8 @@ install_abot_m0_model() {
 
     local abot_path
     local vggt_path
-    abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/amap-cvlab/ABot-Manipulation.git)
-    vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/facebookresearch/vggt.git)
+    abot_path=$(clone_or_reuse_repo ABOT_PATH "$VENV_DIR/abot" https://github.com/RLinf/ABot-Manipulation.git)
+    vggt_path=$(clone_or_reuse_repo VGGT_PATH "$VENV_DIR/vggt" https://github.com/RLinf/vggt.git)
 
     uv pip install -e "$vggt_path"
 
@@ -1324,20 +1503,43 @@ install_abot_m0_model() {
 
     uv pip uninstall pynvml || true
 }
-    
+
+install_dreamzero_deps() {
+    local dreamzero_path
+    dreamzero_path=$(clone_or_reuse_repo DREAMZERO_PATH "$VENV_DIR/dreamzero" https://github.com/dreamzero0/dreamzero.git)
+    if [ -z "${DREAMZERO_PATH:-}" ]; then
+        git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
+    fi
+
+    uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+    python -m pip install -e "$dreamzero_path" --no-deps --ignore-requires-python
+}
+
 install_dreamzero_model() {
     case "$ENV_NAME" in
+        behavior)
+            # BEHAVIOR/OmniGibson currently requires Python 3.10 and installs
+            # its own Torch 2.5.1 stack inside install_behavior_env.
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_behavior_env
+            install_dreamzero_deps
+            pushd ~ >/dev/null
+            install_flash_attn
+            popd >/dev/null
+            ;;
         maniskill_libero|libero)
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         "")
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+            install_dreamzero_deps
             install_flash_attn
             ;;
         *)
@@ -1366,8 +1568,14 @@ install_qwen3_vl_model() {
     install_flash_attn
 }
 
+install_lerobot() {
+    env -u UV_TORCH_BACKEND uv pip install \
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
+}
+
 install_franka_realworld_env() {
     uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh
@@ -1396,6 +1604,13 @@ install_env_only() {
             install_franka_realworld_env
             install_franka_dexhand_deps
             ;;
+        franka-franky)
+            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            if [ "$NO_ROOT" -eq 0 ]; then
+                bash $SCRIPT_DIR/embodied/franky_install.sh
+            fi
+            install_franka_franky_env
+            ;;
         xsquare_turtle2)
             uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
@@ -1403,6 +1618,10 @@ install_env_only() {
         habitat)
             install_common_embodied_deps
             install_habitat_env
+            ;;
+        genesis)
+            install_common_embodied_deps
+            install_genesis_env
             ;;
         embodichain)
             install_common_embodied_deps
@@ -1413,6 +1632,9 @@ install_env_only() {
             ;;
         dosw1)
             install_dosw1_env
+            ;;
+        polaris)
+            install_polaris_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -1428,11 +1650,13 @@ install_dummy_env() {
 }
 
 install_libero_env() {
-    # Prefer an existing checkout if LIBERO_PATH is provided; otherwise clone into the venv.
+    # Use LIBERO_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local libero_dir
     libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
     uv pip install -e "$libero_dir"
+    uv pip install "mujoco<=3.9.0"
     echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 }
 
@@ -1515,6 +1739,7 @@ install_liberopro_env() {
     local libero_pro_dir
     libero_pro_dir=$(clone_or_reuse_repo LIBERO_PRO_PATH "$VENV_DIR/libero_pro" https://github.com/RLinf/LIBERO-PRO.git)
     uv pip install -e "$libero_pro_dir"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_liberoplus_env() {
@@ -1526,10 +1751,12 @@ install_liberoplus_env() {
     libero_plus_dir=$(clone_or_reuse_repo LIBERO_PLUS_PATH "$VENV_DIR/libero_plus" https://github.com/RLinf/LIBERO-plus.git)
     uv pip install -r $libero_plus_dir/extra_requirements.txt
     uv pip install -e "$libero_plus_dir"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_behavior_env() {
-    # Prefer an existing checkout if BEHAVIOR_PATH is provided; otherwise clone into the venv.
+    # Use BEHAVIOR_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local behavior_dir
     behavior_dir=$(clone_or_reuse_repo BEHAVIOR_PATH "$VENV_DIR/BEHAVIOR-1K" https://github.com/RLinf/BEHAVIOR-1K.git -b RLinf/v3.7.2 --depth 1)
 
@@ -1542,9 +1769,9 @@ install_behavior_env() {
     uv pip uninstall flash-attn || true
     uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
     uv pip install click==8.2.1
+    uv pip install llvmlite==0.47.0 numba==0.65.1
     pushd ~ >/dev/null
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    install_flash_attn
     popd >/dev/null
 }
 
@@ -1563,6 +1790,24 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
     uv pip install --upgrade hydra-core==1.3.2
+}
+
+install_polaris_env() {
+    local polaris_dir
+    polaris_dir=$(clone_or_reuse_repo POLARIS_PATH "$VENV_DIR/polaris" https://github.com/RLinf/polaris.git --recurse-submodules)
+    export OMNI_KIT_ACCEPT_EULA=YES
+    if ! grep -q '^export OMNI_KIT_ACCEPT_EULA=' "$VENV_DIR/bin/activate" 2>/dev/null; then
+        echo "export OMNI_KIT_ACCEPT_EULA=YES" >> "$VENV_DIR/bin/activate"
+    fi
+
+    uv pip install "setuptools<82"
+    uv pip install "flatdict==4.0.1" --no-build-isolation
+    uv pip install sympy==1.13.3
+    uv pip install -e "$polaris_dir"
+    
+    python - <<'EOF'
+import isaacsim
+EOF
 }
 
 install_isaaclab_env() {
@@ -1642,11 +1887,30 @@ install_franka_env() {
     echo "source $ROS_CATKIN_PATH/devel/setup.bash" >> "$VENV_DIR/bin/activate"
 }
 
+install_franka_franky_env() {
+    # Prebuilt franky-control wheel (libfranka bundled), published per
+    # libfranka version by the Brunch-Life/franky fork.  LIBFRANKA_VERSION
+    # must match your Franka firmware (compatibility matrix:
+    # https://frankarobotics.github.io/docs/compatibility.html); defaults
+    # to 0.19.0.  Override FRANKY_WHEEL (URL / local path / PyPI spec) when
+    # the host cannot reach github.com.
+    local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
+    local PYTAG
+    PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
+    local FRANKY_WHEEL="${FRANKY_WHEEL:-https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
+    echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
+    # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
+    # re-resolve them breaks Ray pickling across nodes.
+    uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
+    install_lerobot
+}
+
 install_franka_dexhand_deps() {
     uv pip install "RLinf-dexterous-hands[glove]"
 }
 
 install_xsquare_turtle2_env() {
+    install_lerobot
     uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/xsquare_turtle_basics.git
 }
 
@@ -1761,7 +2025,7 @@ install_dosw1_env() {
 
 install_habitat_env() {
     local habitat_sim_dir
-    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3,3 --recurse-submodules)
+    habitat_sim_dir=$(clone_or_reuse_repo HABITAT_SIM_PATH "$VENV_DIR/habitat" https://github.com/facebookresearch/habitat-sim.git -b v0.3.3 --recurse-submodules)
     if [ -d "$habitat_sim_dir/build" ]; then
         rm -rf $habitat_sim_dir/build
     fi
@@ -1776,13 +2040,27 @@ install_habitat_env() {
     uv pip install -e $habitat_lab_dir/habitat-baselines
 }
 
+install_genesis_env() {
+    echo "Installing Genesis environment dependencies..."
+    uv pip install "transformers==4.57.6"
+    uv pip install "cuda-python==12.9.6"
+    uv pip install "genesis-world==0.4.5"
+    uv pip install "pyglet==2.1.14"
+    uv pip install "matplotlib==3.10.8"
+
+    uv pip install "torch==2.8.0"
+    uv pip install "torchvision==0.23.0"
+    uv pip install "torchaudio==2.8.0"
+    uv pip install "torchcodec==0.6"
+}
+
 install_opensora_world_model() {
     # Clone opensora repository
     local opensora_dir
     opensora_dir=$(clone_or_reuse_repo OPENSORA_PATH "$VENV_DIR/opensora" ${GITHUB_PREFIX}https://github.com/RLinf/opensora.git)
     
     uv pip install -e "$opensora_dir"
-
+    
     # xformers 0.0.29.post2 only has wheels for torch<=2.5, but we pin
     # torch==2.6.0. UV_TORCH_BACKEND=auto rejects mismatched torch-version
     # labels, so unset UV_TORCH_BACKEND entirely for this install so uv
@@ -1823,9 +2101,13 @@ install_roboverse_env() {
 install_agentic() {
     uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
     uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    if [ "$NO_ROOT" -eq 0 ]; then
+        bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
+    fi
 
     # Megatron-LM
-    # Prefer an existing checkout if MEGATRON_PATH is provided; otherwise clone into the venv.
+    # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
+    # otherwise clone into the venv.
     local megatron_dir
     megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0)
 
@@ -1857,6 +2139,7 @@ main() {
     configure_platform
     setup_mirror
     apply_torch_override
+    apply_sglang_override
 
     case "$TARGET" in
         embodied)
@@ -1894,6 +2177,12 @@ main() {
                 gr00t)
                     install_gr00t_model
                     ;;
+                gr00t_n1d6)
+                    install_gr00t_n1d6_model
+                    ;;
+                gr00t_n1d7)
+                    install_gr00t_n1d7_model
+                    ;;
                 dexbotic)
                     install_dexbotic_model
                     ;;
@@ -1930,7 +2219,6 @@ main() {
     esac
 
     install_platform_extras
-    unset_mirror
 }
 
 main "$@"

@@ -21,6 +21,10 @@ from typing import Optional
 
 import numpy as np
 
+from rlinf.utils.logging import get_logger
+
+_logger = get_logger()
+
 
 @dataclass
 class CameraInfo:
@@ -64,9 +68,9 @@ class BaseCamera(ABC):
     def close(self):
         """Stop the capture thread and release hardware resources."""
         self._frame_capturing_start = False
-        if self._frame_capturing_thread.is_alive():
-            self._frame_capturing_thread.join()
         self._close_device()
+        if self._frame_capturing_thread.is_alive():
+            self._frame_capturing_thread.join(timeout=2.0)
 
     def get_frame(self, timeout: int = 5) -> np.ndarray:
         """Return the most recent frame (blocks up to *timeout* seconds).
@@ -84,8 +88,21 @@ class BaseCamera(ABC):
     def _capture_frames(self):
         while self._frame_capturing_start:
             time.sleep(1 / self._camera_info.fps)
-            has_frame, frame = self._read_frame()
+            try:
+                has_frame, frame = self._read_frame()
+            except Exception as e:
+                _logger.error(
+                    "[%s] _read_frame raised %s: %s — exiting capture thread.",
+                    self._camera_info.name,
+                    type(e).__name__,
+                    e,
+                )
+                break
             if not has_frame:
+                _logger.error(
+                    "[%s] _read_frame returned (False, None) — exiting capture thread.",
+                    self._camera_info.name,
+                )
                 break
             if not self._frame_queue.empty():
                 try:

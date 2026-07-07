@@ -1,14 +1,51 @@
 RECAP: Offline Advantage-Based Policy Optimization
 =====================================================
 
-This document provides a complete guide to the **RECAP (RL with Experience and Corrections via Advantage-conditioned Policies)** pipeline in the RLinf framework.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png
+   :align: center
+   :width: 80%
+
+   The RECAP offline pipeline.
+
+Run the **RECAP (RL with Experience and Corrections via Advantage-conditioned Policies)** pipeline in RLinf.
 RECAP is an offline policy optimization method that requires no online environment interaction. It computes returns from existing datasets,
 trains a value model, estimates advantages, and finally uses **Classifier-Free Guidance (CFG) training** to optimize the policy.
 
 This pipeline is especially suited for real-robot scenarios where large-scale online sampling is impractical.
 
-Pipeline Overview
---------------------
+Overview
+--------
+
+Improve a π₀.₅ policy offline (no new rollouts) by scoring existing data with a value model and steering with classifier-free guidance.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      RECAP (CFG)
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      π₀.₅
+
+   .. grid-item-card:: Environments / Data
+      :text-align: center
+
+      LeRobot datasets
+
+   .. grid-item-card:: Training
+      :text-align: center
+
+      Offline · 4 stages
+
+| **You'll do:** compute returns → SFT a value model → compute advantages → CFG-train the policy → evaluate.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SigLIP2 + Gemma3 + π₀.₅ checkpoints · LeRobot-format datasets (steps below).
+
+Pipeline
+--------
 
 RECAP consists of four sequential stages:
 
@@ -33,8 +70,8 @@ RECAP consists of four sequential stages:
 
 4. **CFG Training**: Train the policy model using advantage labels — positive (high-advantage) samples serve as conditional inputs and negative (low-advantage) samples as unconditional inputs, enabling classifier-free guidance for policy optimization.
 
-Algorithm
------------
+How RECAP Works
+---------------
 
 **RECAP Core Components**
 
@@ -63,8 +100,8 @@ Algorithm
    - Positive samples are randomly dropped to unconditional with probability ``unconditional_prob`` (default :math:`0.1`) for dropout regularization
    - At inference time, ``cfgrl_guidance_scale`` controls the guidance strength
 
-Dependency Installation
---------------------------
+Installation
+------------
 
 1. Clone RLinf Repository
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -88,9 +125,9 @@ Dependency Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
 
@@ -108,8 +145,8 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
    source .venv/bin/activate
 
 
-Model Download
------------------
+Download the Model
+------------------
 
 The RECAP pipeline requires the following pretrained models:
 
@@ -215,7 +252,7 @@ This step computes discounted cumulative returns for each trajectory in reverse 
 
 **Configuration**
 
-The configuration file is located at ``examples/recap/process/config/compute_returns.yaml``:
+The configuration file is located at ``examples/offline_rl/config/recap_compute_returns.yaml``:
 
 .. code:: yaml
 
@@ -257,7 +294,7 @@ The configuration file is located at ``examples/recap/process/config/compute_ret
 
 .. code:: bash
 
-   bash examples/recap/process/run_compute_returns.sh compute_returns
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
 
 **Output Files**
 
@@ -293,7 +330,7 @@ The output is a Categorical Value Distribution over 201 bins spanning :math:`[-1
 
 **Configuration**
 
-The configuration file is located at ``examples/recap/value/config/libero_sft_value.yaml``. Key fields:
+The configuration file is located at ``examples/offline_rl/config/recap_value_model_sft.yaml``. Key fields:
 
 .. code:: yaml
 
@@ -364,7 +401,7 @@ The training script automatically initializes the Ray cluster:
 
 .. code:: bash
 
-   bash examples/recap/value/run_value_sft.sh libero_sft_value
+   bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh recap_value_model_sft
 
 **Output**
 
@@ -401,7 +438,7 @@ where :math:`N` is the lookahead steps (``advantage_lookahead_step``) and :math:
 
 **Configuration**
 
-The configuration file is located at ``examples/recap/process/config/compute_advantages.yaml``:
+The configuration file is located at ``examples/offline_rl/config/recap_compute_advantages.yaml``:
 
 .. code:: yaml
 
@@ -452,7 +489,7 @@ Supports multi-GPU distributed inference:
 
 .. code:: bash
 
-   bash examples/recap/process/run_compute_advantages.sh compute_advantages
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh recap_compute_advantages
 
 **Output Files**
 
@@ -485,7 +522,7 @@ Using the advantage labels from Step 3, train the OpenPI policy model with class
 
 **Configuration**
 
-The configuration file is located at ``examples/recap/cfg/config/libero_cfg_openpi.yaml``:
+The configuration file is located at ``examples/offline_rl/config/cfg_rl_openpi.yaml``:
 
 .. code:: yaml
 
@@ -548,7 +585,7 @@ The configuration file is located at ``examples/recap/cfg/config/libero_cfg_open
 
 .. code:: bash
 
-   bash examples/recap/cfg/run_cfg_sft.sh libero_cfg_openpi
+   bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
 
 **Key Metrics**
 
@@ -559,7 +596,7 @@ The configuration file is located at ``examples/recap/cfg/config/libero_cfg_open
 Visualize Advantages
 -------------------------
 
-After Step 3, use ``examples/recap/process/visualize_advantage_dataset.py`` to analyze the advantage distribution,
+After Step 3, use ``examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py`` to analyze the advantage distribution,
 including advantage histograms, value prediction distributions, per-episode positive rates, and episode replay videos with advantage annotations.
 
 **Basic Usage**
@@ -568,7 +605,7 @@ Generate distribution plots and episode videos:
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -578,7 +615,7 @@ Distribution plot only (no videos):
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -588,7 +625,7 @@ Visualize specific episodes:
 
 .. code:: bash
 
-   python examples/recap/process/visualize_advantage_dataset.py \
+   python examples/offline_rl/advantage_labeling/recap/process/visualize_advantage_dataset.py \
        --dataset /path/to/your/dataset \
        --output outputs/advantage_viz \
        --tag "fail300_N10_ckpt18000_q30" \
@@ -631,8 +668,16 @@ Visualize specific episodes:
 - ``episode_{N}_summary.png``: Key frames + value/advantage time series for each episode (frames above threshold highlighted with green border)
 - ``episode_{N}.mp4``: Per-frame replay video with advantage annotations
 
+Run It
+------
+
+Follow the numbered RECAP stages above to generate returns, train the value model, compute advantages, and train the CFG policy.
+
 Visualization and Results
-----------------------------
+-------------------------
+
+For metric definitions, see :doc:`Training metrics <../../reference/metrics>`.
+
 
 **TensorBoard Logging**
 
@@ -687,7 +732,7 @@ After one iteration of the RECAP pipeline on LIBERO-10 Task 0, the success rate 
 
    <div style="display: flex; justify-content: center; margin: 20px 0;">
      <div style="flex: 0.5; text-align: center;">
-       <img src="https://github.com/RLinf/misc/raw/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap_libero10_task0.png" style="width: 100%;"/>
        <p><em>RECAP results on LIBERO-10 Task 0</em></p>
      </div>
    </div>
@@ -699,12 +744,12 @@ Threshold Relabeling
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 To adjust the quantile threshold (e.g., from 30% to 20%) without rerunning the full Step 3,
-use ``recompute_advantages_from_value_reward.py`` for threshold-only relabeling:
+use ``relabel_advantages.py`` for threshold-only relabeling:
 
 .. code:: bash
 
-   cd examples/recap/process
-   python recompute_advantages_from_value_reward.py \
+   cd examples/offline_rl/advantage_labeling/recap/process
+   python relabel_advantages.py \
        --dataset_paths /path/to/sft_dataset /path/to/rollout_dataset \
        --source_tag "fail300_N10_ckpt18000_q30" \
        --new_tag "fail300_N10_ckpt18000_q20" \
@@ -714,7 +759,7 @@ You can also use ``--dataset_root`` to specify a root directory containing multi
 
 .. code:: bash
 
-   python recompute_advantages_from_value_reward.py \
+   python relabel_advantages.py \
        --dataset_root /path/to/dataset_root \
        --advantage_lookahead_step 20 \
        --positive_quantile 0.3
@@ -737,27 +782,34 @@ File Structure
 
 .. code-block:: text
 
-   examples/
-   └── recap/
-       ├── process/
-       │   ├── compute_returns.py               # Step 1: compute returns
-       │   ├── compute_advantages.py            # Step 3: compute advantages
-       │   ├── recompute_advantages_from_value_reward.py  # threshold relabeling
-       │   ├── visualize_advantage_dataset.py    # advantage visualization
-       │   ├── run_compute_returns.sh            # Step 1 launch script
-       │   ├── run_compute_advantages.sh         # Step 3 launch script
-       │   └── config/
-       │       ├── compute_returns.yaml
-       │       └── compute_advantages.yaml
-       ├── value/
-       │   ├── train_value.py                # Step 2: value model training
-       │   ├── run_value_sft.sh              # Step 2 launch script
-       │   └── config/
-       │       ├── libero_sft_value.yaml
-       │       └── model/
-       │           └── value.yaml            # value model config
-       └── cfg/
-           ├── train_cfg.py                  # Step 4: CFG policy training
-           ├── run_cfg_sft.sh                # Step 4 launch script
-           └── config/
-               └── libero_cfg_openpi.yaml
+   examples/offline_rl/
+   ├── config/                                  # shared production configs
+   │   ├── recap_compute_returns.yaml           # Step 1
+   │   ├── recap_value_model_sft.yaml           # Step 2
+   │   ├── recap_compute_advantages.yaml        # Step 3
+   │   ├── cfg_rl_openpi.yaml                   # Step 4
+   │   └── model/
+   │       └── recap_value_model.yaml           # value model architecture defaults
+   ├── advantage_labeling/
+   │   └── recap/
+   │       ├── train_value.py                    # Step 2: value model training
+   │       ├── run_value_sft.sh                  # Step 2 launch script
+   │       └── process/
+   │           ├── compute_returns.py            # Step 1: returns logic + Hydra entry
+   │           ├── compute_advantages.py         # Step 3: advantage logic + Hydra entry
+   │           ├── relabel_advantages.py         # threshold relabeling (CPU)
+   │           ├── visualize_advantage_dataset.py    # advantage visualization
+   │           ├── run_compute_returns.sh        # Step 1 launch script
+   │           └── run_compute_advantages.sh     # Step 3 launch script
+   └── policy_optimization/
+       └── cfg_rl/
+           ├── train_cfg.py                      # Step 4: CFG policy training
+           └── run_cfg_rl.sh                     # Step 4 launch script
+
+   rlinf/
+   ├── models/embodiment/value_model/recap/     # value critic, config, checkpoint utils
+   ├── data/datasets/recap/                     # value_dataset.py, cfg_model.py, ...
+   └── data/process/                            # shared, model-agnostic (RECAP + STEAM)
+       ├── advantage.py                          # quantile threshold + boolean label
+       ├── distributed.py                        # sharded-inference helpers
+       └── mixture_config.py                     # meta/mixture_config.yaml tag I/O

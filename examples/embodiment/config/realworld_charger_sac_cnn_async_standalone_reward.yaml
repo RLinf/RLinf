@@ -69,7 +69,6 @@ algorithm:
   agg_q: min # or mean
   actor_agg_q: mean
 
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -98,21 +97,6 @@ algorithm:
   
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
@@ -140,7 +124,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -156,7 +140,7 @@ actor:
   enable_drq: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 19
     action_dim: 6
 

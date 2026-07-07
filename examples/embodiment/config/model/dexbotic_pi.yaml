@@ -23,10 +23,10 @@ safe_get_logprob: False  # Use simplified logprob calculation (False = full Gaus
 dexbotic:
   num_images_in_input: 2  # Number of camera views
   noise_level: 0.5  # Noise level for flow matching
-  action_chunk: ${actor.model.num_action_chunks}
-  num_steps: ${actor.model.num_steps}
+  action_chunk: ${..num_action_chunks}
+  num_steps: ${..num_steps}
   train_expert_only: True  # Whether to only train action expert
-  action_env_dim: ${actor.model.action_dim}
+  action_env_dim: ${..action_dim}
   noise_method: "flow_sde"  # Flow matching method
-  add_value_head: ${actor.model.add_value_head}
+  add_value_head: ${..add_value_head}
   detach_critic_input: False

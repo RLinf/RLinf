@@ -42,8 +42,6 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: action_level
   logprob_type: token_level
   entropy_type: token_level
@@ -61,37 +59,22 @@ algorithm:
   value_clip: 0.2
   huber_delta: 10.0
 
-
   gamma: 0.99
   gae_lambda: 0.95
-
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
 
 env:
   group_name: "EnvGroup"
 
   # Override the default values in env/maniskill_put_on_plate_in_scene_25_main and env/maniskill_ood_template
   train:
+    rollout_epoch: 1
     total_num_envs: 128
     auto_reset: True
     use_fixed_reset_state_ids: False
     max_episode_steps: 80 # max episode steps for truncation
     max_steps_per_rollout_epoch: 160
   eval:
+    rollout_epoch: 1
     total_num_envs: 16
     auto_reset: True
     ignore_terminations: True
@@ -104,13 +87,21 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     precision: ${actor.model.precision}
 
 actor:
@@ -123,7 +114,7 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
@@ -132,8 +123,7 @@ actor:
 
     is_lora: True
     lora_rank: 32
-    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-    lora_path: /path/to/models/oft-sft/lora_004000/
+    lora_path: /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Lora # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     max_prompt_length: 30
 
   optim:

@@ -52,6 +52,7 @@ class DreamZeroEmbodimentTransform(Protocol):
         tokenizer_path: str,
         cfg: Any,
         embodiment_tag_mapping: dict[str, int],
+        transform_on_gpu: bool = False,
     ) -> ComposedModalityTransform: ...
 
     @staticmethod

@@ -185,15 +185,17 @@ def cat_list_of_dict_tensor(list_of_dict: list, dim=0):
 def split_dict(
     batch: dict[str, Any],
     split_sizes: list[int],
+    dim: int = 0,
 ) -> list[dict[str, Any]]:
-    """Split one batch dict into size-specified sub-batches along dim-0.
+    """Split one batch dict into size-specified sub-batches.
 
-    Tensor values are chunked on dim-0; list values are sliced proportionally;
+    Tensor values are chunked on ``dim``; list values are sliced proportionally;
     nested dict values are split recursively.
 
     Args:
         batch: Dict.
         split_sizes: Batch sizes for each destination rank.
+        dim: Tensor dimension to split. Defaults to 0.
 
     Returns:
         A list of splited batches, one item per destination rank.
@@ -203,13 +205,15 @@ def split_dict(
     splitted_batches = [{} for _ in range(count)]
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
-            assert value.shape[0] == total_size, (
-                f"Tensor field '{key}' expected batch size {total_size}, got {value.shape[0]}."
+            assert value.shape[dim] == total_size, (
+                f"Tensor field '{key}' expected split dim size {total_size}, "
+                f"got {value.shape[dim]} on dim {dim}."
             )
-            splitted_values = torch.split(value, split_sizes, dim=0)
+            splitted_values = torch.split(value, split_sizes, dim=dim)
             for i in range(count):
                 splitted_batches[i][key] = splitted_values[i].contiguous()
         elif isinstance(value, list):
+            assert dim == 0, f"List field '{key}' only supports dim=0, got {dim}."
             length = len(value)
             assert length == total_size, (
                 f"List field '{key}' expected length {total_size}, got {length}."
@@ -219,7 +223,7 @@ def split_dict(
                 splitted_batches[i][key] = value[begin : begin + size]
                 begin += size
         elif isinstance(value, dict):
-            splitted_sub_batches = split_dict(value, split_sizes)
+            splitted_sub_batches = split_dict(value, split_sizes, dim=dim)
             for i in range(count):
                 splitted_batches[i][key] = splitted_sub_batches[i]
         else:

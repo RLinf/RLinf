@@ -21,6 +21,7 @@ from omegaconf.dictconfig import DictConfig
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
@@ -132,6 +133,24 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
 
+    def evaluate(self):
+        env_handle: Handle = self.env.evaluate(
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+        )
+        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        if not env_decoupled_mode:
+            rollout_handle: Handle = self.rollout.evaluate(
+                input_channel=self.rollout_channel,
+                output_channel=self.env_channel,
+            )
+        env_results = env_handle.wait()
+        if not env_decoupled_mode:
+            rollout_handle.wait()
+        eval_metrics_list = [results for results in env_results if results is not None]
+        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
+        return eval_metrics
+
     def run(self):
         start_step = self.global_step
         start_time = time.time()
@@ -159,6 +178,15 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         )
 
         while self.global_step < self.max_steps:
+            # Use the step we're ABOUT to run as the profiling key, mirroring
+            # ``EmbodiedRunner.run`` which gates before ``self.global_step += 1``.
+            profiled_step = (
+                self.global_step
+                if self._should_profile_step(self.global_step)
+                else None
+            )
+            if profiled_step is not None:
+                self._open_profiling_window(profiled_step)
             skip_step = False
             with self.timer("step"):
                 actor_training_handle: Handle = self.actor.run_training()
@@ -198,6 +226,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
             if skip_step:
                 self.timer.consume_durations()
+                if profiled_step is not None:
+                    self._close_profiling_window(profiled_step)
                 time.sleep(1.0)
                 continue
 
@@ -268,6 +298,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
                 logging_metrics,
                 start_step,
             )
+
+            if profiled_step is not None:
+                self._close_profiling_window(profiled_step)
 
         self.env.stop().wait()
         self.rollout.stop().wait()

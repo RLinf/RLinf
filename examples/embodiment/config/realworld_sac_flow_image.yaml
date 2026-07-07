@@ -63,9 +63,7 @@ algorithm:
 
   backup_entropy: False    # True -> False for real world RLPD
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
 
-  rollout_epoch: 1
 
   reward_type: action_level
   logprob_type: action_level
@@ -111,25 +109,11 @@ algorithm:
   num_updates_per_step: 64  # Number of gradient updates per training step
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     ignore_terminations: False
     total_num_envs: 1
     override_cfg:
@@ -138,8 +122,8 @@ env:
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
   
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
-
 
 rollout:
   group_name: "RolloutGroup"
@@ -151,7 +135,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -170,7 +154,7 @@ actor:
     
     # Actually used as directory/
     # In policy, there is: ckpt_path = os.path.join(self.model_path, self.encoder_config["ckpt_name"])
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
     state_dim: 19 # 29 -> 19 for real world
     action_dim: 6 # 4 -> 6 for real world

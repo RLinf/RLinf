@@ -16,9 +16,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor: 0-3
-    env: 0-1
-    rollout: 2-3
+    rollout: 0-1
+    env: 2-3
+    actor: all
 
 runner:
   task_type: embodied
@@ -42,8 +42,6 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
-  rollout_epoch: 8
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -60,11 +58,36 @@ algorithm:
   value_clip: 0.2
   huber_delta: 10.0
 
-
   gamma: 0.99
   gae_lambda: 0.95
 
-  # params for rollout
+env:
+  group_name: "EnvGroup"
+
+  train:
+    rollout_epoch: 8
+    total_num_envs: 8
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/train
+      fps: 15
+    num_env_subprocess: 2
+    enable_offload: True
+    enable_init_offload: False
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 8
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
+    num_env_subprocess: 2
+
+rollout:
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -73,30 +96,6 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
 
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
-env:
-  group_name: "EnvGroup"
-
-  # Override the default values in env/behavior_r1pro
-  train:
-    total_num_envs: 2
-    max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
-  eval:
-    total_num_envs: 2
-    max_episode_steps: 2000 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 2000
-    video_cfg:
-      save_video: True
-      video_base_dir: ${runner.logger.log_path}/video/eval
-
-rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
@@ -110,7 +109,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 2
-  global_batch_size: 160
+  global_batch_size: 16
   seed: 1234
   enable_offload: True
 

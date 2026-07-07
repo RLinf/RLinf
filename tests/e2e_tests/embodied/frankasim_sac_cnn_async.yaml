@@ -41,7 +41,6 @@ algorithm:
   actor_agg_q: mean
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
   target_entropy: -2
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -70,27 +69,11 @@ algorithm:
     auto_save: False
 
   target_update_freq: 1  # Frequency of target network updates
-
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     obs_format: tensor
     total_num_envs: 1
     max_episode_steps: 2
@@ -100,6 +83,7 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
   eval:
+    rollout_epoch: 1
     obs_format: tensor
     total_num_envs: 1
     video_cfg:
@@ -139,7 +123,6 @@ actor:
     action_dim: 4
     num_q_heads: 10
     image_num: 2
-
 
   optim:
     clip_grad: 10.0

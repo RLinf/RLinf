@@ -20,7 +20,7 @@ rl_head_config:
   noise_method: "flow_sde"
   noise_level: 0.5
   ignore_last: false
-  add_value_head: ${actor.model.add_value_head}
+  add_value_head: ${..add_value_head}
   t_eps: 5.0e-2
   disable_dropout: True
   prediction_type: "x1"

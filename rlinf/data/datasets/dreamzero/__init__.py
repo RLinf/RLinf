@@ -12,6 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.data.datasets.dreamzero.dreamzero import build_dreamzero_sft_dataloader
+from rlinf.data.datasets.dreamzero.dataloader import (
+    DreamZeroCollator,
+    build_dreamzero_sft_dataloader,
+)
+from rlinf.data.datasets.dreamzero.lerobot_dataset import (
+    DreamZeroLeRobotDataset,
+    DreamZeroLeRobotMixtureDataset,
+)
 
-__all__ = ["build_dreamzero_sft_dataloader"]
+__all__ = [
+    "DreamZeroCollator",
+    "DreamZeroLeRobotDataset",
+    "DreamZeroLeRobotMixtureDataset",
+    "build_dreamzero_sft_dataloader",
+]

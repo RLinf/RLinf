@@ -32,6 +32,9 @@ from rlinf.models.embodiment.openpi.dataconfig.behavior_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
     LeRobotCalvinDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
+    DualFrankaTcpRot6dDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
     LeRobotFrankaEEDataConfig,
 )
@@ -52,6 +55,9 @@ from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
 )
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
+)
+from rlinf.models.embodiment.openpi.dataconfig.polaris_dataconfig import (
+    LeRobotPolarisDroidDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
     LeRobotRealworldDataConfig,
@@ -156,6 +162,33 @@ _CONFIGS = [
                 assets_dir="checkpoints/torch/pi05_franka_pretrained/assets"
             ),
             output_action_dim=6,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=16,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=8,
+        num_train_steps=5_000,
+        log_interval=5,
+        save_interval=250,
+    ),
+    TrainConfig(
+        name="pi05_franka_state",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, discrete_state_input=True
+        ),
+        data=LeRobotFrankaEEDataConfig(
+            repo_id="physical-intelligence/real_rl",  # Not important
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_franka_pretrained/assets"
+            ),
+            output_action_dim=7,
+            pad_state=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "checkpoints/jax/pi05_base"
@@ -396,6 +429,46 @@ _CONFIGS = [
             "checkpoints/jax/pi05_base/params"
         ),
         pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi05_dualfranka_tcp_rot6d",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=20, discrete_state_input=False
+        ),
+        data=DualFrankaTcpRot6dDataConfig(
+            repo_id="",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=True,
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
+        name="pi0_droid_polaris",
+        model=pi0_config.Pi0Config(
+            action_horizon=10,
+            max_token_len=48,
+        ),
+        data=LeRobotPolarisDroidDataConfig(
+            repo_id="physical-intelligence/droid",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="assets/droid"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi0_droid_polaris",
+    ),
+    TrainConfig(
+        name="pi05_droid_polaris",
+        model=pi0_config.Pi0Config(
+            action_horizon=15,
+            pi05=True,
+            max_token_len=200,
+        ),
+        data=LeRobotPolarisDroidDataConfig(
+            repo_id="physical-intelligence/droid",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="assets/droid"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
     ),
 ]
 

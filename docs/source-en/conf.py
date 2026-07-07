@@ -43,6 +43,7 @@ extensions = [
     "sphinx.ext.napoleon",  # Google & NumPy style docstrings
     "sphinx_sitemap",  # Sitemap generation
     "sphinxcontrib.video",
+    "sphinx_design",  # grids/cards for "At a glance" boxes
     # "sphinx.ext.viewcode", # Source code links (optional)
 ]
 
@@ -53,7 +54,9 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = []
+exclude_patterns = [
+    "**/_*.rst"
+]  # underscore-prefixed files are reusable includes, not standalone pages
 default_role = "code"
 autosummary_generate = True
 autodoc_mock_imports = ["sglang", "megatron", "prismatic", "libero", "lerobot"]
@@ -78,7 +81,11 @@ language = "en"
 html_search_language = "en"
 html_theme = "pydata_sphinx_theme"
 html_show_sourcelink = False  # Hide “View page source” link
-html_baseurl = "https://rlinf.readthedocs.io/en/latest/index.html"
+html_baseurl = os.environ.get(
+    "READTHEDOCS_CANONICAL_URL",
+    "https://rlinf.readthedocs.io/en/latest/",
+)
+sitemap_url_scheme = "{link}"
 html_favicon = "_static/favicon.ico"
 html_static_path = ["_static"]
 html_css_files = [
@@ -89,14 +96,26 @@ html_css_files = [
 html_js_files = [
     "typesense.min.js",
     "js/config-manager.js",
+    "js/assistant-utils.js",
     "js/typesense-client.js",
     "js/message-manager.js",
     "js/ai-chat-service.js",
     "js/mode-badge.js",
     "js/mode-panel.js",
+    "js/github-stars.js",
+    "js/sidebar-nav.js",
+    "js/lang-switcher.js",
+    "js/theme-toggle.js",
     "sphinx-modal-widget.js",
 ]
-html_sidebars = {"**": ["sidebar-nav-bs.html"]}
+html_sidebars = {
+    "**": [
+        "sidebar-brand",
+        "search-field",
+        "sidebar-tools",
+        "global-sidebar-nav",
+    ]
+}
 
 
 # -- Theme Options -------------------------------------------------------------
@@ -113,17 +132,18 @@ def render_svg_logo(path, width="4rem", height="auto"):
 
 html_theme_options = {
     "logo": {"svg": render_svg_logo("_static/svg/logo.svg")},
-    "navbar_start": ["navbar-logo"],
-    "navbar_center": ["navbar-nav"],
-    "navbar_end": ["version-switcher", "navbar-icon-links", "askai"],
+    "search_bar_text": "Search docs…",
+    "navbar_start": [],
+    "navbar_center": [],
+    "navbar_end": [],
     "navbar_align": "left",
     "secondary_sidebar_items": {
         "**": ["page-toc"],
         "index": [],
     },
-    "collapse_navigation": True,
-    "show_nav_level": 2,
-    "navigation_depth": 4,
+    "collapse_navigation": False,
+    "show_nav_level": 1,
+    "navigation_depth": 5,
     "header_links_before_dropdown": 10,
     "icon_links": [
         {
@@ -165,6 +185,10 @@ def setup_html_context(app, pagename, templatename, context, doctree):
             "typesense_protocol": getattr(cfg, "typesense_protocol", "http"),
             "typesense_api_key": getattr(cfg, "typesense_api_key", ""),
             "typesense_collection": getattr(cfg, "typesense_collection", "sphinx_docs"),
+            "typesense_enable_vector_search": getattr(
+                cfg, "typesense_enable_vector_search", "true"
+            ),
+            "typesense_stopwords_set": getattr(cfg, "typesense_stopwords_set", ""),
             "sphinx_env": getattr(cfg, "sphinx_env", "development"),
             "sphinx_debug": getattr(cfg, "sphinx_debug", "false"),
         }
@@ -175,16 +199,46 @@ def setup(app):
     """Register custom config values and connect context setup."""
     # Allow overriding via -D flags
     app.add_config_value(
-        "typesense_host", "typesense.product-team-dev.infini-ai.com", "html"
+        "typesense_host",
+        os.environ.get(
+            "RLINF_TYPESENSE_HOST", "typesense.product-team-dev.infini-ai.com"
+        ),
+        "html",
     )
-    app.add_config_value("typesense_port", 9443, "html")
-    app.add_config_value("typesense_protocol", "https", "html")
     app.add_config_value(
-        "typesense_api_key", "hAvqOEYEbtQwuFvm0SeclKHmCX4QXgs3", "html"
+        "typesense_port", int(os.environ.get("RLINF_TYPESENSE_PORT", "9443")), "html"
     )
-    app.add_config_value("typesense_collection", "infini-RL", "html")
-    app.add_config_value("sphinx_env", "development", "html")
-    app.add_config_value("sphinx_debug", "false", "html")
+    app.add_config_value(
+        "typesense_protocol",
+        os.environ.get("RLINF_TYPESENSE_PROTOCOL", "https"),
+        "html",
+    )
+    app.add_config_value(
+        "typesense_api_key",
+        os.environ.get("RLINF_TYPESENSE_SEARCH_API_KEY", ""),
+        "html",
+    )
+    app.add_config_value(
+        "typesense_collection",
+        os.environ.get("RLINF_TYPESENSE_COLLECTION", "infini-RL"),
+        "html",
+    )
+    app.add_config_value(
+        "typesense_enable_vector_search",
+        os.environ.get("RLINF_TYPESENSE_ENABLE_VECTOR_SEARCH", "true"),
+        "html",
+    )
+    app.add_config_value(
+        "typesense_stopwords_set",
+        os.environ.get("RLINF_TYPESENSE_STOPWORDS_SET", ""),
+        "html",
+    )
+    app.add_config_value(
+        "sphinx_env", os.environ.get("RLINF_DOCS_ENV", "development"), "html"
+    )
+    app.add_config_value(
+        "sphinx_debug", os.environ.get("RLINF_DOCS_DEBUG", "false"), "html"
+    )
 
     app.connect("html-page-context", setup_html_context)
     app.add_css_file("css/custom.css")

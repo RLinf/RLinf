@@ -5,11 +5,12 @@ set -euo pipefail
 DOWNLOAD_DIR=${DOWNLOAD_DIR:-$HOME}
 SUPPORT_LIST=("maniskill" "openpi")
 GITHUB_PREFIX=${GITHUB_PREFIX:-""}
+USE_MIRRORS=${USE_MIRRORS:-0}
 ASSETS=()
 
 print_help() {
 	cat <<EOF
-Usage: bash download_assets.sh [--dir DIR] [--assets NAMES]
+Usage: bash download_assets.sh [--dir DIR] [--assets NAMES] [--use-mirror]
 
 Options:
   --dir DIR         Root directory to store all downloaded assets.
@@ -17,10 +18,25 @@ Options:
 
   --assets NAMES    Comma-separated list of assets to download.
 
+  --use-mirror      Use mirrors (HuggingFace / GitHub) for faster downloads.
+					Mirrors are also picked up automatically when HF_ENDPOINT /
+					GITHUB_PREFIX are already exported (e.g. by install.sh).
+
 Examples:
   bash requirements/embodied/download_assets.sh --assets maniskill
   bash requirements/embodied/download_assets.sh --dir /opt/.assets --assets maniskill,openpi
+  bash requirements/embodied/download_assets.sh --use-mirror --assets maniskill,openpi
 EOF
+}
+
+# Configure HuggingFace / GitHub mirrors when requested. This is needed when the
+# script is run on its own (e.g. a standalone Docker RUN) and does not inherit the
+# mirror env vars that install.sh's setup_mirror exports. Values mirror install.sh.
+setup_mirror() {
+	if [ "$USE_MIRRORS" -eq 1 ]; then
+		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://ghfast.top/}
+	fi
 }
 
 download_maniskill_assets() {
@@ -37,8 +53,34 @@ download_maniskill_assets() {
             echo "mani_skill is not installed. Please install it first." >&2
             exit 1
         fi
-		python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
-		python -m mani_skill.utils.download_asset widowx250s -y
+		if [ "$USE_MIRRORS" -eq 1 ]; then
+			# mani_skill.utils.download_asset hardcodes huggingface.co / github.com
+			# URLs in DATA_SOURCES and fetches them with urllib, which ignores
+			# HF_ENDPOINT and git's insteadOf. Rewrite the in-memory URLs to the
+			# mirrors before downloading instead of calling the module directly.
+			for uid in bridge_v2_real2sim widowx250s; do
+				python - "$uid" <<'PYEOF'
+import os, sys
+from mani_skill.utils.download_asset import main, parse_args
+from mani_skill.utils.assets import data as ds
+
+hf = os.environ.get("HF_ENDPOINT", "").rstrip("/")
+gh = os.environ.get("GITHUB_PREFIX", "")
+for src in ds.DATA_SOURCES.values():
+    url = getattr(src, "url", None)
+    if not url:
+        continue
+    if hf and url.startswith("https://huggingface.co"):
+        src.url = hf + url[len("https://huggingface.co"):]
+    elif gh and url.startswith("https://github.com"):
+        src.url = gh + url
+main(parse_args([sys.argv[1], "-y"]))
+PYEOF
+			done
+		else
+			python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
+			python -m mani_skill.utils.download_asset widowx250s -y
+		fi
 	fi
 
 	# SAPIEN assets (PhysX)
@@ -89,6 +131,10 @@ parse_args() {
 				IFS=',' read -r -a ASSETS <<<"$2"
 				shift 2
 				;;
+			--use-mirror)
+				USE_MIRRORS=1
+				shift
+				;;
 			--*)
 				echo "Unknown option: $1" >&2
 				echo "Use --help to see available options." >&2
@@ -110,6 +156,8 @@ main() {
 		echo "No assets specified. See --help for usage." >&2
 		exit 1
 	fi
+
+	setup_mirror
 
 	mkdir -p "$DOWNLOAD_DIR"
 

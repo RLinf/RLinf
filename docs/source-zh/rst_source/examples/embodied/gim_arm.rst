@@ -1,52 +1,84 @@
-GimArm真机强化学习
-============================
+GimArm 真机强化学习
+========================================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/gim-arm.png
+   :align: center
+   :width: 80%
 
-本文档介绍如何在 RLinf 框架中集成 GimArm 六自由度机械臂，内容涵盖硬件配置、依赖安装以及实验运行步骤。
+   用于 SocketCAN 控制、电机校准和 peg-insertion 训练的 GimArm 六自由度机械臂。
 
-环境
------------
+通过 SocketCAN 在 GimArm 六自由度机械臂上运行 RLinf。你将安装 CAN 控制 SDK，校准电机，设置目标末端位姿，采集示教，并启动真机训练。
 
-**真实世界环境**
+概览
+----------------------------------------
 
-- **Environment**: 真机设置
+使用基于 CAN 的控制在 GimArm 上训练真机插块策略。
 
-  - GimArm 六自由度机械臂（``gim_arm`` 或 ``gim_arm_xl`` 变体）
-  - 达妙（Damiao）伺服电机（J1-3 使用 DM4340 / DM6248P，J4-6 使用 DM4310）
-  - CAN-USB 适配器（通过 SocketCAN 接口通信）
-  - Intel RealSense 相机（默认）或 Stereolabs ZED 相机
-  - 可选夹爪（平行夹爪或单侧夹爪，内置达妙电机）
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-- **Task**: 目前支持 Peg-Insertion（插块）任务（``GimArmPegInsertionEnv-v1``）。
-- **Observation**:
+   .. grid-item-card:: 模型
+      :text-align: center
 
-  - 腕部相机的 RGB 图像（128×128）。
-  - 状态字典，包含：``tcp_pose`` (7,)、``tcp_vel`` (6,)、``arm_joint_position`` (6,)、``gripper_position`` (1,)、``tcp_force`` (3,)、``tcp_torque`` (3,)。
+      CNN policy
 
-- **Action Space**: 7 维连续动作：
+   .. grid-item-card:: 算法
+      :text-align: center
 
-  - 6 维绝对关节角度（弧度），受配置的关节限位约束。
-  - 1 维二值夹爪指令（``[-1, 1]`` 范围，代表开/合）。
+      SAC · RLPD
 
-- **Reward**: 在笛卡尔空间中通过 FK（正运动学）计算当前 TCP 位姿与 ``target_ee_pose`` 的差值。默认使用稀疏奖励（0/1），也可选用指数衰减的稠密奖励。
+   .. grid-item-card:: 任务
+      :text-align: center
 
-Peg Insertion 任务
-~~~~~~~~~~~~~~~~~~~~
+      Peg insertion
 
-Peg Insertion 任务（``GimArmPegInsertionEnv``，注册名为 ``GimArmPegInsertionEnv-v1``）实现在
-``rlinf/envs/realworld/gim_arm/tasks/peg_insertion.py``。它继承自 ``GimArmEnv``，额外定义了任务相关的
-reset 与奖励逻辑：
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-- **Reset**: 夹爪先夹住 peg，随后机械臂回缩到 ``safe_retract_qpos`` 以远离插孔，再移动至 ``reset_joint_qpos``。
-  当 ``enable_random_reset`` 打开（默认开启）时，会在 reset 关节角上施加由 ``random_joint_noise``
-  （默认 0.02 rad）控制的小幅扰动，以增加数据多样性。
+      GimArm · CAN FD · gripper
 
-- **Reward**: 在笛卡尔空间中，将 FK 推出的 TCP 位姿与 ``target_ee_pose`` 逐轴比较。成功判定依据
-  ``reward_threshold``\ （默认：位置 1 cm）。``reward_threshold`` 配置接受
-  6 元素数组 ``[x, y, z, rx, ry, rz]``\ （与 Franka API 对齐），但当前仅使用 XYZ 位置分量；
-  姿态分量保留给未来使用。
+| **你将完成:** 安装 gim_arm_control → 初始化 CAN → 校准零位 → 设置目标位姿 → 训练.
+| **前置条件:** :doc:`安装 </rst_source/start/installation>` · GimArm hardware · CAN adapter · ``gim_arm_control`` SDK.
+
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24 24
+
+   * - 任务
+     - 配置 / 入口
+     - 说明
+   * - Hardware check
+     - ``test_gim_arm_env.py``
+     - 验证控制器启动、状态读取、运动、重置和夹爪命令。
+   * - Data collection
+     - ``gim_arm_teleop``
+     - 采集 VR 遥操作示教。
+   * - Training
+     - GimArm real-world config
+     - 用目标位姿奖励训练插块任务。
+
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - 字段
+     - 说明
+   * - Observation
+     - 相机帧加 GimArm 关节/TCP 状态。
+   * - Action
+     - 根据配置输出 6-DoF 机械臂控制与夹爪命令。
+   * - Reward
+     - 到 ``target_ee_pose`` 的 FK 距离，稀疏或稠密形式。
+   * - Prompt
+     - env config 中的 peg-insertion 任务文本。
 
 硬件准备
-----------------
+----------------------------------------
 
 .. warning::
 
@@ -54,19 +86,19 @@ reset 与奖励逻辑：
   GimArm 机械臂通过 CAN 总线连接至控制节点，而不是以太网。
 
 
-依赖安装
--------------------------
+安装
+----------------------------------------
 
 控制节点与训练/采样节点需要安装不同的软件依赖。
 
 机器人控制节点
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. 安装
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-a. 克隆 RLinf 仓库
-__________________________
+A. 克隆 RLinf 仓库
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
@@ -76,7 +108,7 @@ __________________________
    cd RLinf
 
 b. 安装 RLinf 依赖
-________________________________
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
@@ -86,7 +118,7 @@ ________________________________
    source .venv/bin/activate
 
 c. 安装 gim_arm_control SDK
-________________________________
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``gim_arm_control`` 包提供了用于控制 GimArm 机械臂的底层 CAN 通信驱动与 Python 绑定。
 它同时附带了下一步需要使用的辅助脚本（``sh/init_can.sh``、``sh/set_zero.sh``），
@@ -117,7 +149,7 @@ ________________________________
       pip install -e ".[pin270]"
 
 2. CAN 接口初始化
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 CAN 总线需要在使用机械臂之前完成初始化。
 ``gim_arm_control`` SDK（在上一步中安装）提供了方便脚本，或者也可以手动执行相关命令。
@@ -148,7 +180,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
      ip link show can0
 
 3. 电机零点校准
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 首次使用（或更换电机后）需要对达妙电机进行零点校准。
 校准会把电机当前的物理位置设为零参考点。
@@ -169,13 +201,13 @@ CAN 总线需要在使用机械臂之前完成初始化。
   错误的校准会导致机械臂执行意料之外的动作。
   该操作依赖 ``can-utils``（使用 ``sudo apt install can-utils`` 安装）。
 
-训练/采样节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+训练 / Rollout 节点
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 首先像上面一样克隆 RLinf 仓库，然后安装相关依赖。
 
 安装依赖
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **选项 1：Docker 镜像**
 
@@ -188,9 +220,9 @@ CAN 总线需要在使用机械臂之前完成初始化。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # 中国大陆用户可使用下面的镜像以获得更好的下载速度：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 **选项 2：自建环境**
 
@@ -207,11 +239,11 @@ CAN 总线需要在使用机械臂之前完成初始化。
    # bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
 
-运行实验
------------------------
+运行
+----------------------------------------
 
 前置条件
-~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **获取任务的目标位姿**
 
@@ -228,7 +260,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
 把四元数转换为 Euler XYZ 角度后，即可用于 ``target_ee_pose`` 配置项。
 
 数据采集
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 可参考我们提供的 VR 遥操作代码 `gim_arm_teleop <https://github.com/RLinf/gim_arm_teleop>`_ ，
 用于 GimArm 机械臂的数据采集。推荐按以下流程完成部署：
@@ -267,7 +299,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
    将 VR 控制数据与机械臂状态同步记录为数据集。
 
 配置文件
-~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在开始实验之前，需要创建或修改一个配置 YAML 文件。
 关键部分是 cluster 硬件配置，用于指定 GimArm 机器人：
@@ -332,7 +364,7 @@ CAN 总线需要在使用机械臂之前完成初始化。
    这适用于纯状态策略，或尚未完成相机配置的情形。
 
 安装后测试（可选）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 我们提供了若干测试脚本，便于在正式实验前验证硬件与环境是否就绪。
 这一步是可选的，但推荐执行。
