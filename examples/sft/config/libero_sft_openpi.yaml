@@ -1,6 +1,6 @@
 defaults:
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -59,7 +59,7 @@ actor:
     lr_warmup_steps: 1000  
     total_training_steps: 30000  # for lr scheduler cosine decay
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"

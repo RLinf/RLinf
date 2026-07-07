@@ -2,7 +2,7 @@ defaults:
   - env/robotwin_pick_dual_bottles@env.train
   - env/robotwin_pick_dual_bottles@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -151,7 +151,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

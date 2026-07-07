@@ -2,7 +2,7 @@ defaults:
   - env/realworld_dex_pnp@env.train
   - env/realworld_dex_pnp@env.eval
   - model/cnn_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
