@@ -25,6 +25,7 @@ from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.rlt.transition import update_rlt_transitions
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
+    EmbodiedLerobotRolloutResult,
     EmbodiedRolloutResult,
     EnvOutput,
     RolloutResult,
@@ -36,6 +37,7 @@ from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
+from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
@@ -123,10 +125,19 @@ class EnvWorker(Worker):
             else False
         )
         if self.enable_train:
+            self.enable_online_lerobot = bool(
+                OmegaConf.select(
+                    self.cfg,
+                    "algorithm.dagger.online_lerobot.enabled",
+                    default=False,
+                )
+            )
             self.train_num_envs_per_stage = (
                 self.cfg.env.train.total_num_envs // self._world_size // self.stage_num
             )
             self.train_batch_size = self.cfg.env.train.total_num_envs // self.stage_num
+        else:
+            self.enable_online_lerobot = False
         if self.enable_eval:
             self.eval_num_envs_per_stage = (
                 self.cfg.env.eval.total_num_envs // self._world_size // self.stage_num
@@ -171,6 +182,36 @@ class EnvWorker(Worker):
             ) >= self._component_placement.get_world_size("rollout"), (
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
+
+    def _prepare_rollout_results(self, rollout_results: list | None = None) -> list:
+        if self.enable_online_lerobot and rollout_results is not None:
+            for stage_rollout in rollout_results:
+                stage_rollout.rewards.clear()
+            return rollout_results
+
+        collect_only_success = bool(
+            OmegaConf.select(
+                self.cfg,
+                "algorithm.dagger.online_lerobot.only_success",
+                default=False,
+            )
+        )
+        max_episode_length = self.cfg.env.train.max_episode_steps
+        if self.enable_online_lerobot:
+            return [
+                EmbodiedLerobotRolloutResult(
+                    max_episode_length=max_episode_length,
+                    num_envs=self.train_num_envs_per_stage,
+                    only_success=collect_only_success,
+                    num_action_chunks=self.model_cfg.num_action_chunks,
+                    action_dim=self.model_cfg.action_dim,
+                )
+                for _ in range(self.stage_num)
+            ]
+        return [
+            EmbodiedRolloutResult(max_episode_length=max_episode_length)
+            for _ in range(self.stage_num)
+        ]
 
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
@@ -393,12 +434,14 @@ class EnvWorker(Worker):
     @Worker.timer("env_interact_step")
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
-    ) -> tuple[EnvOutput, dict[str, Any]]:
+    ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """
         This function is used to interact with the environment.
         """
-        chunk_actions = prepare_actions(
-            raw_chunk_actions=chunk_actions,
+        exec_actions = prepare_actions(
+            raw_chunk_actions=chunk_actions["raw_actions"]
+            if isinstance(chunk_actions, dict)
+            else chunk_actions,
             env_type=self.cfg.env.train.env_type,
             model_type=self.model_cfg.model_type,
             num_action_chunks=self.model_cfg.num_action_chunks,
@@ -406,6 +449,10 @@ class EnvWorker(Worker):
             policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.train.get("wm_env_type", None),
         )
+        if isinstance(chunk_actions, dict):
+            chunk_actions["actions"] = exec_actions
+        else:
+            chunk_actions = exec_actions
         env_info = {}
 
         obs_list, chunk_rewards, chunk_terminations, chunk_truncations, infos_list = (
@@ -466,7 +513,14 @@ class EnvWorker(Worker):
             intervene_flags=intervene_flags,
             rlt_switch_flags=rlt_switch_flags,
         )
-        return env_output, env_info
+        chunk_step_payload = {
+            "chunk_actions": exec_actions,
+            "obs_list": obs_list,
+            "terminations": chunk_terminations,
+            "truncations": chunk_truncations,
+            "infos_list": infos_list,
+        }
+        return env_output, env_info, chunk_step_payload
 
     def env_evaluate_step(
         self, raw_actions: torch.Tensor, stage_id: int
@@ -822,6 +876,10 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 self.env_list[stage_id].is_start = True
                 extracted_obs, infos = self.env_list[stage_id].reset()
+                if self.enable_online_lerobot:
+                    rollout_results = getattr(self, "rollout_results", None)
+                    if rollout_results is not None:
+                        rollout_results[stage_id].reset_episode_buffers()
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
@@ -927,6 +985,25 @@ class EnvWorker(Worker):
         del trajectories
         gc.collect()
 
+    @Worker.timer("env/send_lerobot_episodes")
+    async def send_lerobot_episodes(
+        self, episodes: list[list[dict]], channel: Channel
+    ) -> None:
+        if not episodes:
+            return
+        if self.actor_split_num <= 1:
+            chunks = [episodes]
+        else:
+            chunks = split_list(
+                episodes,
+                self.actor_split_num,
+                enforce_divisible_batch=False,
+            )
+        for chunk in chunks:
+            if not chunk:
+                continue
+            channel.put(chunk, async_op=True)
+
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
         self,
@@ -937,12 +1014,9 @@ class EnvWorker(Worker):
         *,
         cooperative_yield: bool,
     ) -> dict[str, torch.Tensor]:
-        self.rollout_results: list[EmbodiedRolloutResult] = [
-            EmbodiedRolloutResult(
-                max_episode_length=self.cfg.env.train.max_episode_steps,
-            )
-            for _ in range(self.stage_num)
-        ]
+        self.rollout_results = self._prepare_rollout_results(
+            getattr(self, "rollout_results", None)
+        )
         env_metrics = defaultdict(list)
         rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
@@ -1011,7 +1085,12 @@ class EnvWorker(Worker):
                         terminations=env_output.terminations,
                         rewards=rewards,
                     )
+
                     self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                    if rollout_result.save_flags is not None:
+                        self.rollout_results[stage_id].mark_last_step_with_flags(
+                            rollout_result.save_flags
+                        )
                     if (
                         self.reward_mode == "history_buffer"
                         and self.history_reward_assign
@@ -1031,9 +1110,15 @@ class EnvWorker(Worker):
                             cache_current=True,
                         )
 
-                    env_output, env_info = self.env_interact_step(
+                    env_output, env_info, chunk_step_payload = self.env_interact_step(
                         rollout_result.actions, stage_id
                     )
+                    stage_rollout = self.rollout_results[stage_id]
+                    if isinstance(stage_rollout, EmbodiedLerobotRolloutResult):
+                        stage_rollout.append_chunk_episode_data(
+                            rollout_result=rollout_result,
+                            **chunk_step_payload,
+                        )
                     env_batch = env_output.to_dict()
                     data = {
                         "obs": env_batch["obs"],
@@ -1071,6 +1156,7 @@ class EnvWorker(Worker):
                     )
                     if should_record:
                         self.record_env_metrics(env_metrics, env_info)
+
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
@@ -1135,24 +1221,23 @@ class EnvWorker(Worker):
                 await self.send_rollout_trajectories_pipeline(
                     self.rollout_results, actor_channel
                 )
-                self.rollout_results: list[EmbodiedRolloutResult] = [
-                    EmbodiedRolloutResult(
-                        max_episode_length=self.cfg.env.train.max_episode_steps,
-                    )
-                    for _ in range(self.stage_num)
-                ]
+                self.rollout_results = self._prepare_rollout_results(
+                    getattr(self, "rollout_results", None)
+                )
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
 
         if not self.use_training_pipeline and actor_channel is not None:
-            for stage_id in range(self.stage_num):
-                await self.send_rollout_trajectories(
-                    self.rollout_results[stage_id], actor_channel
-                )
-            # reduce memory peak
-            self.rollout_results = []
-            gc.collect()
+            if self.enable_online_lerobot:
+                for stage_id in range(self.stage_num):
+                    episodes = self.rollout_results[stage_id].drain_episodes()
+                    await self.send_lerobot_episodes(episodes, actor_channel)
+            else:
+                for stage_id in range(self.stage_num):
+                    await self.send_rollout_trajectories(
+                        self.rollout_results[stage_id], actor_channel
+                    )
 
         for key, value in env_metrics.items():
             env_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()
