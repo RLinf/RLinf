@@ -183,14 +183,11 @@ class EnvWorker(Worker):
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
 
-    def _prepare_rollout_results(self) -> None:
-        if (
-            self.enable_online_lerobot
-            and getattr(self, "rollout_results", None) is not None
-        ):
-            for stage_rollout in self.rollout_results:
+    def _prepare_rollout_results(self, rollout_results: list | None = None) -> list:
+        if self.enable_online_lerobot and rollout_results is not None:
+            for stage_rollout in rollout_results:
                 stage_rollout.rewards.clear()
-            return
+            return rollout_results
 
         collect_only_success = bool(
             OmegaConf.select(
@@ -201,7 +198,7 @@ class EnvWorker(Worker):
         )
         max_episode_length = self.cfg.env.train.max_episode_steps
         if self.enable_online_lerobot:
-            self.rollout_results = [
+            return [
                 EmbodiedLerobotRolloutResult(
                     max_episode_length=max_episode_length,
                     num_envs=self.train_num_envs_per_stage,
@@ -211,11 +208,10 @@ class EnvWorker(Worker):
                 )
                 for _ in range(self.stage_num)
             ]
-        else:
-            self.rollout_results = [
-                EmbodiedRolloutResult(max_episode_length=max_episode_length)
-                for _ in range(self.stage_num)
-            ]
+        return [
+            EmbodiedRolloutResult(max_episode_length=max_episode_length)
+            for _ in range(self.stage_num)
+        ]
 
     def init_worker(self):
         # This is a barrier to ensure all envs' initial setup upon import is done
@@ -1015,7 +1011,9 @@ class EnvWorker(Worker):
         *,
         cooperative_yield: bool,
     ) -> dict[str, torch.Tensor]:
-        self._prepare_rollout_results()
+        self.rollout_results = self._prepare_rollout_results(
+            getattr(self, "rollout_results", None)
+        )
         env_metrics = defaultdict(list)
         rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
@@ -1219,7 +1217,9 @@ class EnvWorker(Worker):
                 await self.send_rollout_trajectories_pipeline(
                     self.rollout_results, actor_channel
                 )
-                self._prepare_rollout_results()
+                self.rollout_results = self._prepare_rollout_results(
+                    getattr(self, "rollout_results", None)
+                )
 
             self.store_last_obs_and_intervened_info(env_outputs)
             self.finish_rollout()
