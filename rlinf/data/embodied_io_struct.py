@@ -59,6 +59,7 @@ class EnvOutput:
 
     intervene_actions: Optional[torch.Tensor] = None  # [B]
     intervene_flags: Optional[torch.Tensor] = None  # [B]
+    rlt_switch_flags: Optional[torch.Tensor] = None  # [B] or [B, action_chunk]
 
     def __post_init__(self):
         self.obs = put_tensor_device(self.obs, "cpu")
@@ -94,6 +95,11 @@ class EnvOutput:
         self.intervene_flags = (
             self.intervene_flags.cpu().contiguous()
             if self.intervene_flags is not None
+            else None
+        )
+        self.rlt_switch_flags = (
+            self.rlt_switch_flags.cpu().contiguous()
+            if self.rlt_switch_flags is not None
             else None
         )
 
@@ -233,6 +239,11 @@ class EnvOutput:
             allow_partial_none=True,
             fill_value=False,
         )
+        merged_rlt_switch_flags = _merge_optional_tensor_field(
+            "rlt_switch_flags",
+            allow_partial_none=True,
+            fill_value=False,
+        )
         # turn to EnvOutput and turn to dict to call post init for tensor processing
         return EnvOutput(
             obs=merged_obs,
@@ -243,6 +254,7 @@ class EnvOutput:
             rewards=merged_rewards,
             intervene_actions=merged_intervene_actions,
             intervene_flags=merged_intervene_flags,
+            rlt_switch_flags=merged_rlt_switch_flags,
         ).to_dict()
 
     def to_dict(self) -> dict[str, Any]:
@@ -261,6 +273,7 @@ class EnvOutput:
         env_output_dict["env_infos"] = self.env_infos
         env_output_dict["intervene_actions"] = self.intervene_actions
         env_output_dict["intervene_flags"] = self.intervene_flags
+        env_output_dict["rlt_switch_flags"] = self.rlt_switch_flags
 
         return env_output_dict
 

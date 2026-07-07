@@ -2,7 +2,7 @@ defaults:
   - env/calvin_abc@env.train
   - env/calvin_d@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
