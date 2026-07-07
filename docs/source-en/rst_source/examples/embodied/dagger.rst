@@ -107,6 +107,22 @@ The classic configs above store expert-labeled trajectories in an in-memory
 format, sends them to the actor in memory, and the actor trains from a rolling
 window via :class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset`.
 
+**Classic replay buffer vs online LeRobot**
+
+Both methods optimize the same DAgger objective; they differ only in how data
+are stored and sampled.
+
+- **Classic replay buffer** — stores full trajectories in an in-memory buffer
+  and samples them with a trajectory-level sliding window.
+- **Online LeRobot** — collects complete episodes in LeRobot format and samples
+  with a frame-level rolling window, with native Pi0 action-chunk supervision
+  and optional success-only filtering.
+
+The online LeRobot path yields cleaner labels, emphasizes recent data, and
+aligns with SFT and real-robot pipelines. Prefer it when training Pi0 or another
+chunk-based model, when you need success-only filtering, or when you want to
+bridge online DAgger with offline SFT or real-robot datasets.
+
 **Online LeRobot pipeline**
 
 1. **Mixed rollout and expert relabeling** — same ``beta`` scheduling and

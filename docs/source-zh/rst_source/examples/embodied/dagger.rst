@@ -102,6 +102,18 @@ DAgger 工作原理
 以 LeRobot 格式收集完整 episode，经内存发送给 actor，actor 通过
 :class:`~rlinf.data.datasets.dagger.RollingLeRobotDataset` 滑动窗口训练。
 
+**经典 replay buffer vs 在线 LeRobot**
+
+两种方法优化相同的 DAgger 目标，区别仅在于数据的存储与采样方式。
+
+- **经典 replay buffer** — 将完整轨迹存入内存 buffer，通过轨迹级滑动窗口采样。
+- **在线 LeRobot** — 以 LeRobot 格式收集完整 episode，通过帧级 rolling window
+  采样，原生支持 Pi0 action-chunk 监督，并可选择仅保留成功 episode。
+
+在线 LeRobot 路径标签更干净、更强调近期数据，并与 SFT 及真机数据管线对齐。
+在训练 Pi0 或其他 chunk-based 模型、需要 success-only 过滤，或希望将在线 DAgger
+与离线 SFT / 真机数据衔接时，推荐使用该路径。
+
 **在线 LeRobot 流程**
 
 1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
