@@ -9,6 +9,7 @@ ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+USER_SET_PYTHON=0
 TORCH_VERSION=""
 SGLANG_VERSION=""
 TRANSFORMERS_VERSION=""
@@ -60,6 +61,14 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Extra uv sync flags applied by platform hooks. MUSA uses this to keep the
+# training-suite-provided torch/torch-musa stack intact instead of resolving
+# CUDA/ROCm/CPU torch wheels into the venv.
+PLATFORM_UV_SYNC_ARGS=()
+# Whether uv-created venvs should expose system site packages. This is needed
+# for MUSA training-suite containers where torch-musa and adapted packages are
+# installed globally by the image.
+PLATFORM_SYSTEM_SITE_PACKAGES=0
 # Default torch-backend per platform; user can override by exporting
 # UV_TORCH_BACKEND before invoking this script.
 DEFAULT_BACKEND_NVIDIA="auto"
@@ -70,7 +79,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa")
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -112,10 +121,12 @@ Common options:
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
-                           ROCm), or ascend (experimental, NPU). Sets UV_TORCH_BACKEND
+                           ROCm), ascend (experimental, NPU), or musa (experimental, Moore
+                           Threads MUSA). Sets UV_TORCH_BACKEND where applicable
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
                            bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI
-                           and adds torch-npu in install_ascend_extras.
+                           and adds torch-npu in install_ascend_extras. MUSA expects a training
+                           suite/container with torch-musa already installed globally.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
@@ -124,7 +135,8 @@ Common options:
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
-                           toolchain or when the platform has no flash-attn support (Ascend).
+                           toolchain or when the platform has no flash-attn support
+                           (Ascend/MUSA).
     --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
                            CUDA toolchain mismatch prevents download apex of the right version.
     --install-rlinf        Install RLinf itself into the python.
@@ -157,6 +169,7 @@ parse_args() {
                     exit 1
                 fi
                 PYTHON_VERSION="${2:-}"
+                USER_SET_PYTHON=1
                 shift 2
                 ;;
             --torch)
@@ -408,6 +421,8 @@ configure_nvidia() {
     PLATFORM_FLASH_ATTN_PREBUILT=1
     PLATFORM_RELAX_TORCHCODEC=0
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
     fi
@@ -457,6 +472,8 @@ configure_amd() {
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="rocm${ROCM_VERSION}"
     fi
@@ -477,6 +494,8 @@ configure_ascend() {
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         # `cpu` keeps `uv pip install torch ...` calls fetching the CPU build
         # from download.pytorch.org/whl/cpu instead of PyPI's CUDA wheel.
@@ -490,6 +509,69 @@ configure_ascend() {
     if [ -f /usr/include/linux/input-event-codes.h ]; then
         export CFLAGS="${CFLAGS:+$CFLAGS }-include /usr/include/linux/input-event-codes.h"
     fi
+}
+
+configure_musa() {
+    # MUSA wheels are not available from PyPI/PyTorch's public torch indexes in
+    # the same way CUDA/ROCm wheels are. The supported path is to run inside a
+    # Moore Threads training-suite container that already provides torch-musa
+    # and MUSA-adapted packages globally. The venv exposes those packages and
+    # uv is asked not to resolve torch-family packages into the venv.
+    if [ "$USER_SET_PYTHON" -eq 0 ]; then
+        PYTHON_VERSION=$(python - <<'EOF'
+import sys
+
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+EOF
+)
+        echo "[install.sh] MUSA platform defaulting --python to current interpreter: ${PYTHON_VERSION}"
+        validate_python_version
+    fi
+    PLATFORM_TORCH_STR=""
+    PLATFORM_TORCH_INDEX=""
+    PLATFORM_TORCH_PACKAGES=()
+    PLATFORM_VENV_EXPORTS=(
+        "export RAY_EXPERIMENTAL_NOSET_MUSA_VISIBLE_DEVICES=1"
+        "export LD_LIBRARY_PATH=/usr/local/musa/lib:/usr/local/openmpi/lib:\${LD_LIBRARY_PATH:-}"
+    )
+    PLATFORM_FLASH_ATTN_INSTALL=0
+    PLATFORM_FLASH_ATTN_PREBUILT=0
+    PLATFORM_RELAX_TORCHCODEC=1
+    PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    PLATFORM_UV_SYNC_ARGS=(
+        "--inexact"
+        "--no-install-package" "torch"
+        "--no-install-package" "torchvision"
+        "--no-install-package" "torchaudio"
+        "--no-install-package" "torchcodec"
+        "--no-install-package" "vllm"
+        "--no-install-package" "sglang"
+        "--no-install-package" "deepspeed"
+        "--no-install-package" "flash-attn"
+        "--no-install-package" "torch-memory-saver"
+        "--no-install-package" "transformer-engine"
+        "--no-install-package" "xgrammar"
+        "--no-install-package" "liger-kernel"
+        "--no-install-package" "triton"
+        "--no-install-package" "ray"
+        "--no-install-package" "mate"
+        "--no-install-package" "mtt-torch-ext"
+        "--no-install-package" "torch-c-dlpack-ext"
+        "--no-install-package" "nvidia-cublas-cu12"
+        "--no-install-package" "nvidia-cuda-cupti-cu12"
+        "--no-install-package" "nvidia-cuda-nvrtc-cu12"
+        "--no-install-package" "nvidia-cuda-runtime-cu12"
+        "--no-install-package" "nvidia-cudnn-cu12"
+        "--no-install-package" "nvidia-cufft-cu12"
+        "--no-install-package" "nvidia-curand-cu12"
+        "--no-install-package" "nvidia-cusolver-cu12"
+        "--no-install-package" "nvidia-cusparse-cu12"
+        "--no-install-package" "nvidia-cusparselt-cu12"
+        "--no-install-package" "nvidia-nccl-cu12"
+        "--no-install-package" "nvidia-nvjitlink-cu12"
+        "--no-install-package" "nvidia-nvtx-cu12"
+    )
+    PLATFORM_SYSTEM_SITE_PACKAGES=1
 }
 
 configure_platform() {
@@ -507,8 +589,9 @@ configure_platform() {
         nvidia)  configure_nvidia ;;
         amd)     configure_amd ;;
         ascend)  configure_ascend ;;
+        musa)    configure_musa ;;
     esac
-    echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND}"
+    echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
 
 #=======================PLATFORM EXTRAS=======================
@@ -577,11 +660,69 @@ EOF
     fi
 }
 
+install_musa_extras() {
+    uv pip install "numpy==1.26.4"
+    python - <<'EOF'
+import importlib.metadata as metadata
+import sys
+
+try:
+    import torch
+    import torch_musa  # noqa: F401
+except Exception as exc:
+    print(
+        "[install.sh] MUSA platform requires torch and torch_musa to be "
+        f"available from the training-suite container: {exc}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if not hasattr(torch, "musa"):
+    print("[install.sh] torch_musa imported, but torch.musa is unavailable.", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    is_available = torch.musa.is_available()
+    device_count = torch.musa.device_count()
+except Exception as exc:
+    print(f"[install.sh] Failed to query MUSA devices: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+print(f"[install.sh] MUSA backend available={is_available}, device_count={device_count}")
+if not is_available:
+    sys.exit(1)
+
+preserved = [
+    "torch",
+    "torch_musa",
+    "deepspeed",
+    "vllm",
+    "sglang",
+    "flash-attn",
+    "transformer-engine",
+    "torch-memory-saver",
+    "xgrammar",
+    "mate",
+    "mtt_torch_ext",
+    "torch_c_dlpack_ext",
+    "ray",
+]
+for package in preserved:
+    try:
+        dist = metadata.distribution(package)
+    except metadata.PackageNotFoundError:
+        print(f"[install.sh] MUSA preserved package not found: {package}")
+        continue
+    print(f"[install.sh] MUSA preserved {package}=={dist.version}")
+EOF
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
         amd)     install_amd_extras ;;
         ascend)  install_ascend_extras ;;
+        musa)    install_musa_extras ;;
     esac
 }
 
@@ -851,6 +992,10 @@ unset_mirror() {
 create_and_sync_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
+    local venv_args=()
+    if [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 1 ]; then
+        venv_args+=("--system-site-packages")
+    fi
 
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
         echo "Found existing venv at $VENV_DIR; validating Python version compatibility..."
@@ -871,7 +1016,17 @@ EOF
 
             # Create new venv
             install_uv
-            uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+            uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
+            # shellcheck disable=SC1090
+            source "$VENV_DIR/bin/activate"
+        elif [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 1 ] \
+            && ! grep -qi '^include-system-site-packages = true$' "$VENV_DIR/pyvenv.cfg"; then
+            echo "Venv at $VENV_DIR was not created with system site packages; recreating for platform=${PLATFORM}..." >&2
+            deactivate || true
+            rm -rf "$VENV_DIR"
+
+            install_uv
+            uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
         else
@@ -881,11 +1036,11 @@ EOF
     else
         # Create new venv
         install_uv
-        uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+        uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
-    uv sync --active $NO_INSTALL_RLINF_CMD
+    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -1089,8 +1244,13 @@ clone_or_reuse_repo() {
 
 #=======================EMBODIED INSTALLERS=======================
 install_common_embodied_deps() {
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    if [ "$PLATFORM" = "musa" ]; then
+        grep -Ev '^[[:space:]]*nvidia-' "$SCRIPT_DIR/embodied/envs/common.txt" \
+            | uv pip install -r -
+    else
+        uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    fi
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -1200,12 +1360,140 @@ install_openvla_oft_model() {
 }
 
 install_openpi_model() {
+    install_lerobot_package_for_musa() {
+        local lerobot_path="${LEROBOT_PATH:-/workspace/lerobot}"
+        if [ -d "$lerobot_path/lerobot" ]; then
+            lerobot_path="$(realpath "$lerobot_path")"
+        else
+            lerobot_path=$(clone_or_reuse_repo LEROBOT_PATH "$VENV_DIR/lerobot" https://github.com/huggingface/lerobot.git -b "${LEROBOT_GIT_REF:-main}" --depth 1)
+        fi
+        echo "[install.sh] Installing MUSA-adapted LeRobot from ${lerobot_path}"
+
+        local lerobot_deps
+        lerobot_deps="$(mktemp)"
+        PROJECT_PATH="$lerobot_path" python - "$lerobot_deps" <<'EOF'
+import os
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+project_file = pathlib.Path(os.environ["PROJECT_PATH"]) / "pyproject.toml"
+
+excluded_prefixes = (
+    "torch",
+    "torchvision",
+    "torchcodec",
+    "opencv-python",
+    "opencv-python-headless",
+    "av",
+    "pymunk",
+    "pynput",
+    "rerun-sdk",
+)
+
+deps = []
+in_dependencies = False
+for raw_line in project_file.read_text().splitlines():
+    line = raw_line.strip()
+    if line == "dependencies = [":
+        in_dependencies = True
+        continue
+    if in_dependencies and line == "]":
+        break
+    if not in_dependencies or not line or line.startswith("#"):
+        continue
+    dep = line.split("#", 1)[0].strip().rstrip(",").strip()
+    if len(dep) >= 2 and dep[0] == dep[-1] and dep[0] in {"\"", "'"}:
+        dep = dep[1:-1]
+    if not dep:
+        continue
+    normalized = dep.lower().replace("_", "-")
+    if normalized.startswith(excluded_prefixes):
+        continue
+    deps.append(dep)
+
+output.write_text("\n".join(deps) + "\n")
+EOF
+        uv pip install -r "$lerobot_deps"
+        rm -f "$lerobot_deps"
+        uv pip install --no-deps "$lerobot_path"
+    }
+
+    install_openpi_package() {
+        if [ "$PLATFORM" != "musa" ]; then
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            return
+        fi
+
+        local openpi_path="${OPENPI_PATH:-/workspace/openpi}"
+        if [ -d "$openpi_path/src/openpi" ]; then
+            openpi_path="$(realpath "$openpi_path")"
+        else
+            openpi_path=$(clone_or_reuse_repo OPENPI_PATH "$VENV_DIR/openpi" ${GITHUB_PREFIX}https://github.com/RLinf/openpi)
+        fi
+        echo "[install.sh] Installing MUSA-adapted OpenPI from ${openpi_path}"
+        install_lerobot_package_for_musa
+
+        local openpi_deps
+        openpi_deps="$(mktemp)"
+        OPENPI_PATH="$openpi_path" python - "$openpi_deps" <<'EOF'
+import os
+import pathlib
+import sys
+
+output = pathlib.Path(sys.argv[1])
+project_file = pathlib.Path(os.environ["OPENPI_PATH"]) / "pyproject.toml"
+
+deps = []
+in_dependencies = False
+for raw_line in project_file.read_text().splitlines():
+    line = raw_line.strip()
+    if line == "dependencies = [":
+        in_dependencies = True
+        continue
+    if in_dependencies and line == "]":
+        break
+    if not in_dependencies or not line or line.startswith("#"):
+        continue
+    dep = line.split("#", 1)[0].strip().rstrip(",").strip()
+    if len(dep) >= 2 and dep[0] == dep[-1] and dep[0] in {"\"", "'"}:
+        dep = dep[1:-1]
+    if not dep:
+        continue
+    normalized = dep.lower().replace("_", "-")
+    if normalized.startswith(
+        (
+            "torch",
+            "openpi-client",
+            "lerobot",
+            "gym-aloha",
+            "opencv-python",
+            "opencv-python-headless",
+        )
+    ):
+        continue
+    if normalized.startswith("jax[cuda"):
+        deps.append(dep.replace("jax[cuda12]", "jax").replace("jax[cuda]", "jax"))
+        continue
+    deps.append(dep)
+
+output.write_text("\n".join(deps) + "\n")
+EOF
+        uv pip install -r "$openpi_deps"
+        rm -f "$openpi_deps"
+
+        if [ -d "$openpi_path/packages/openpi-client" ]; then
+            uv pip install --no-deps "$openpi_path/packages/openpi-client"
+        fi
+        uv pip install --no-deps "$openpi_path"
+    }
+
     case "$ENV_NAME" in
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_behavior_env
             uv pip install protobuf==6.33.0
             pushd ~ >/dev/null
@@ -1216,41 +1504,41 @@ install_openpi_model() {
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             ;;
         metaworld)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_metaworld_env
             ;;
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_calvin_env
             ;;
         robocasa)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_robocasa_env
             ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_robotwin_env
             ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_isaaclab_env
             # Torch is modified in Isaac Lab, install flash-attn afterwards
             install_flash_attn
@@ -1259,14 +1547,14 @@ install_openpi_model() {
         roboverse)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_roboverse_env
             ;;
         franka-franky)
             create_and_sync_venv
             install_common_embodied_deps
-            uv sync --extra franka --inexact --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra franka --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
@@ -1574,7 +1862,7 @@ install_lerobot() {
 }
 
 install_franka_realworld_env() {
-    uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
@@ -1605,14 +1893,14 @@ install_env_only() {
             install_franka_dexhand_deps
             ;;
         franka-franky)
-            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
             install_franka_franky_env
             ;;
         xsquare_turtle2)
-            uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra xsquare_turtle2 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
             ;;
         habitat)
@@ -1628,7 +1916,7 @@ install_env_only() {
             install_embodichain_env
             ;;
         gim_arm)
-            uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra gim_arm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             ;;
         dosw1)
             install_dosw1_env
@@ -1646,7 +1934,7 @@ install_env_only() {
 #=======================ENV INSTALLERS=======================
 
 install_dummy_env() {
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_libero_env() {
@@ -1670,7 +1958,7 @@ install_maniskill_libero_env() {
 
 install_d4rl_env() {
     # Install base embodied dependencies first (gym/gymnasium/transformers stack).
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 
     uv pip install "cython<3.0"
     uv pip install "gym==0.23.1"
@@ -1932,9 +2220,17 @@ install_robotwin_env() {
 
     uv pip install mplib==0.2.1 gymnasium==0.29.1 av open3d zarr openai
 
-    uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9  --no-build-isolation
     uv pip install warp-lang==1.11.1
-    uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git  --no-build-isolation
+    if [[ "${RLINF_INSTALL_ROBOTWIN_PYTORCH3D:-0}" == "1" ]]; then
+        uv pip install git+${GITHUB_PREFIX}https://github.com/facebookresearch/pytorch3d.git@v0.7.9 --no-build-isolation
+    else
+        echo "Skipping optional RobotWin dependency pytorch3d. Set RLINF_INSTALL_ROBOTWIN_PYTORCH3D=1 to install it."
+    fi
+    if [[ "${RLINF_INSTALL_ROBOTWIN_CUROBO:-0}" == "1" ]]; then
+        uv pip install git+${GITHUB_PREFIX}https://github.com/NVlabs/curobo.git@v0.7.8 --no-build-isolation
+    else
+        echo "Skipping optional RobotWin dependency curobo. Set RLINF_INSTALL_ROBOTWIN_CUROBO=1 to install it."
+    fi
 
     # patch sapien and mplib for robotwin
     SAPIEN_LOCATION=$(uv pip show sapien | grep 'Location' | awk '{print $2}')/sapien
@@ -1986,7 +2282,7 @@ install_embodichain_env() {
 install_dosw1_env() {
     # Reuse the standard embodied extra so dosw1 picks up the same
     # transformers/imageio/gymnasium dependency set as other embodied envs.
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     # The default patch_syncer uses nvcomp_lz4. Keep DOSW1 lightweight by
     # installing only this shared compression runtime instead of the full
     # common simulator dependency set.
@@ -2098,11 +2394,82 @@ install_roboverse_env() {
 
 #=======================AGENTIC INSTALLER=======================
 
+configure_musa_megatron() {
+    local megatron_dir
+    megatron_dir="$(printenv MEGATRON_PATH 2>/dev/null || true)"
+    if [ -z "$megatron_dir" ]; then
+        local candidate
+        for candidate in /home/Megatron-LM /opt/Megatron-LM; do
+            if [ -d "$candidate/megatron" ]; then
+                megatron_dir="$candidate"
+                break
+            fi
+        done
+    fi
+
+    if [ -n "$megatron_dir" ]; then
+        if [ ! -d "$megatron_dir" ]; then
+            echo "MEGATRON_PATH is set to '$megatron_dir' but the directory does not exist." >&2
+            exit 1
+        fi
+        local megatron_patch_dir
+        megatron_patch_dir="$(printenv MUSA_MEGATRON_PATCH_PATH 2>/dev/null || true)"
+        if [ -z "$megatron_patch_dir" ]; then
+            for candidate in /home/megatron-lm-musa-patch /opt/megatron-lm-musa-patch; do
+                if [ -d "$candidate/musa_patch" ]; then
+                    megatron_patch_dir="$candidate"
+                    break
+                fi
+            done
+        fi
+
+        local megatron_pythonpath
+        megatron_pythonpath="$(realpath "$megatron_dir")"
+        if [ -n "$megatron_patch_dir" ]; then
+            if [ ! -d "$megatron_patch_dir" ]; then
+                echo "MUSA_MEGATRON_PATCH_PATH is set to '$megatron_patch_dir' but the directory does not exist." >&2
+                exit 1
+            fi
+            megatron_pythonpath="${megatron_pythonpath}:$(realpath "$megatron_patch_dir")"
+        fi
+
+        echo "export PYTHONPATH=${megatron_pythonpath}:\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
+        export PYTHONPATH="${megatron_pythonpath}:${PYTHONPATH:-}"
+        echo "[install.sh] Reusing MUSA Megatron from $megatron_dir"
+        if [ -n "$megatron_patch_dir" ]; then
+            echo "[install.sh] Reusing MUSA Megatron patch from $megatron_patch_dir"
+        fi
+        return 0
+    fi
+
+    if python - <<'EOF'
+import importlib.util
+import sys
+
+sys.exit(0 if importlib.util.find_spec("megatron") is not None else 1)
+EOF
+    then
+        echo "[install.sh] Found importable Megatron in the current MUSA Python environment."
+        return 0
+    fi
+
+    echo "[install.sh] WARNING: No Megatron installation was found for MUSA." >&2
+    echo "[install.sh] Set MEGATRON_PATH to your MUSA-adapted Megatron-LM checkout before running agentic training." >&2
+}
+
 install_agentic() {
-    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-vllm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-sglang --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
+    fi
+
+    if [ "$PLATFORM" = "musa" ]; then
+        configure_musa_megatron
+        install_apex
+        install_flash_attn
+        uv pip uninstall pynvml || true
+        return 0
     fi
 
     # Megatron-LM
@@ -2126,9 +2493,9 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra embodied --active --inexact $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-vllm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic-sglang --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/docs/requirements.txt
     uv pip uninstall pynvml || true
 }
