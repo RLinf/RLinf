@@ -368,7 +368,6 @@ def step2_change_index(
     Raises:
         RuntimeError: If ``new_idx`` is not contiguous, or a required column
             is missing from a parquet.
-        AssertionError: If the post-write self-check fails.
     """
     header("STEP 2  rewrite episode_index + index inside parquet")
 
@@ -776,10 +775,9 @@ def step7_verify(out_dir: Path) -> None:
         out_dir: Merged dataset root (parent of ``data/`` and ``meta/``).
 
     Raises:
-        AssertionError: If any of the structural invariants is violated.
-        RuntimeError: If any parquet has wrong ``episode_index`` /
-            ``frame_index`` / ``index`` values, or ``stats.index`` is not
-            contiguous across episodes.
+        RuntimeError: If any of the structural invariants is violated, any
+            parquet has wrong ``episode_index`` / ``frame_index`` / ``index``
+            values, or ``stats.index`` is not contiguous across episodes.
     """
     header("STEP 7  end-to-end verification of merged directory")
     info = json.loads((out_dir / "meta" / "info.json").read_text(encoding="utf-8"))

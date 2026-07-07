@@ -232,12 +232,12 @@ def step0_precheck(
     Raises:
         ValueError: If required directories or files are missing or validation fails.
     """
-    header("STEP 0  预检：目录结构 + 删除列表校验")
+    header("STEP 0  pre-check: directory structure + deletion list validation")
     id_dirs = find_id_dirs(data_dir)
 
     id_dir_map = {d.name: d for d in id_dirs}
 
-    for id_name, indices in delete_map.items():
+    for id_name in delete_map:
         if id_name not in id_dir_map:
             raise ValueError(
                 f"--delete specified {id_name} does not exist in {data_dir}"
@@ -307,11 +307,11 @@ def step1_delete_parquets(affected: dict[str, dict[str, Any]], dry_run: bool) ->
         affected: Dictionary with deletion information for each id.
         dry_run: If True, log actions without executing them.
     """
-    header("STEP 1  删除低质量 parquet 文件")
+    header("STEP 1  delete low-quality parquet files")
     for id_name, info in affected.items():
         to_del = info["to_del"]
         if not to_del:
-            logger.info("  %s: 无需删除", id_name)
+            logger.info("  %s: nothing to delete", id_name)
             continue
         for old_idx in sorted(to_del):
             p = info["all_parquets"][old_idx]
@@ -336,12 +336,11 @@ def step2_renumber_and_reindex(
     Raises:
         ValueError: If parquet schema is invalid or metadata is corrupted.
     """
-    header("STEP 2  剩余 parquet 重命名 + 重写 episode_index / index 列")
+    header("STEP 2  rename remaining parquets + rewrite episode_index / index columns")
 
     all_mappings: dict[str, dict[str, Any]] = {}
 
     for id_name, info in affected.items():
-        id_dir = info["id_dir"]
         keep = info["keep"]
         all_parquets = info["all_parquets"]
 
@@ -427,7 +426,9 @@ def step2_renumber_and_reindex(
             )
             running += n
 
-        logger.info("  %s: 保留 %d 个 episode，累计 %d 帧", id_name, len(keep), running)
+        logger.info(
+            "  %s: kept %d episodes, %d frames total", id_name, len(keep), running
+        )
         all_mappings[id_name] = {"mapping": mapping, "total_frames": running}
 
     return all_mappings
@@ -448,7 +449,7 @@ def step3_update_meta_jsonl(
     Raises:
         ValueError: If JSONL structure is invalid.
     """
-    header("STEP 3  重写 episodes.jsonl + episodes_stats.jsonl")
+    header("STEP 3  rewrite episodes.jsonl + episodes_stats.jsonl")
 
     for id_name, info in affected.items():
         id_dir = info["id_dir"]
@@ -457,7 +458,7 @@ def step3_update_meta_jsonl(
 
         ep_path = id_dir / "meta" / "episodes.jsonl"
         if not ep_path.exists():
-            logger.info("    [SKIP] %s 不存在", ep_path)
+            logger.info("    [SKIP] %s does not exist", ep_path)
         else:
             lines = read_jsonl(ep_path)
             ep_by_idx = {obj["episode_index"]: obj for obj in lines}
@@ -487,11 +488,11 @@ def step3_update_meta_jsonl(
 
             if not dry_run:
                 write_jsonl_atomic(ep_path, new_lines)
-                logger.info("    [WRITE] %s  (%d 行)", ep_path, len(new_lines))
+                logger.info("    [WRITE] %s  (%d rows)", ep_path, len(new_lines))
 
         st_path = id_dir / "meta" / "episodes_stats.jsonl"
         if not st_path.exists():
-            logger.info("    [SKIP] %s 不存在", st_path)
+            logger.info("    [SKIP] %s does not exist", st_path)
         else:
             lines = read_jsonl(st_path)
             st_by_idx = {obj["episode_index"]: obj for obj in lines}
@@ -547,7 +548,7 @@ def step3_update_meta_jsonl(
 
             if not dry_run:
                 write_jsonl_atomic(st_path, new_lines)
-                logger.info("    [WRITE] %s  (%d 行)", st_path, len(new_lines))
+                logger.info("    [WRITE] %s  (%d rows)", st_path, len(new_lines))
 
 
 def step4_update_info(
@@ -562,7 +563,7 @@ def step4_update_info(
         all_mappings: Dictionary with mapping information from step2.
         dry_run: If True, log actions without executing them.
     """
-    header("STEP 4  更新 info.json")
+    header("STEP 4  update info.json")
 
     for id_name, info in affected.items():
         id_dir = info["id_dir"]
@@ -625,7 +626,7 @@ def step5_verify(
     Raises:
         ValueError: If verification fails.
     """
-    header("STEP 5  端到端校验")
+    header("STEP 5  end-to-end verification")
     all_ok = True
 
     for id_name, info in affected.items():
@@ -670,7 +671,7 @@ def step5_verify(
             ok_ix = ix == list(range(running, running + n))
             if not (ok_ei and ok_fi and ok_ix):
                 logger.error(
-                    "    FAIL %s  ep=%s (期望 %d)  index=[%d..%d] (期望 [%d..%d])",
+                    "    FAIL %s  ep=%s (expected %d)  index=[%d..%d] (expected [%d..%d])",
                     p.name,
                     set(ei),
                     expect_ei,
@@ -683,9 +684,9 @@ def step5_verify(
             running += n
 
         if running != total_frames_expected:
-            raise ValueError(f"累计帧 {running} != {total_frames_expected}")
+            raise ValueError(f"cumulative frames {running} != {total_frames_expected}")
         logger.info(
-            "    parquet: episode_index/frame_index/index 正确 ✓ (累计 %d 帧)",
+            "    parquet: episode_index/frame_index/index correct ✓ (%d frames total)",
             running,
         )
 
@@ -696,7 +697,7 @@ def step5_verify(
                 raise ValueError(
                     f"episodes.jsonl {len(ep)} != {total_episodes_expected}"
                 )
-            logger.info("    episodes.jsonl       行数=%d ✓", len(ep))
+            logger.info("    episodes.jsonl       rows=%d ✓", len(ep))
 
         st_path = id_dir / "meta" / "episodes_stats.jsonl"
         if st_path.exists():
@@ -711,7 +712,7 @@ def step5_verify(
                 mx = r["stats"]["index"]["max"][0]
                 if mn != prev_max + 1:
                     raise ValueError(
-                        f"stats.index 不连续：ep {r['episode_index']} min={mn} 期望 {prev_max + 1}"
+                        f"stats.index discontinuous: ep {r['episode_index']} min={mn} expected {prev_max + 1}"
                     )
                 prev_max = mx
             if prev_max + 1 != total_frames_expected:
@@ -719,44 +720,46 @@ def step5_verify(
                     f"stats.index final value {prev_max + 1} != {total_frames_expected}"
                 )
             logger.info(
-                "    episodes_stats.jsonl 行数=%d ✓  stats.index 连续 ✓",
+                "    episodes_stats.jsonl rows=%d ✓  stats.index continuous ✓",
                 len(es),
             )
 
     if not all_ok:
-        raise ValueError("校验失败，见上方 FAIL 行")
-    logger.info("\n  >>> 端到端校验全部通过 <<<")
+        raise ValueError("verification failed, see FAIL lines above")
+    logger.info("\n  >>> end-to-end verification passed <<<")
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    ap = argparse.ArgumentParser(description="删除低质量 episode 并重新编号")
+    ap = argparse.ArgumentParser(
+        description="Delete low-quality episodes and renumber the rest"
+    )
     ap.add_argument(
         "--data-dir",
         required=True,
-        help="包含 id_X 子目录的数据根目录",
+        help="Root data directory containing id_X subdirectories",
     )
     ap.add_argument(
         "--delete",
         required=True,
         nargs="+",
         metavar="ID:EP[,EP...]",
-        help="要删除的 episode，格式：id_0:3,5  可多次指定不同 id",
+        help="Episodes to delete, format: id_0:3,5. May specify different ids multiple times",
     )
     ap.add_argument(
         "--dry-run",
         action="store_true",
-        help="只打印不写文件",
+        help="Print only; do not write files",
     )
     ap.add_argument(
         "--log-file",
         default=None,
-        help="同时把日志写到此文件",
+        help="Also write logs to this file",
     )
     ap.add_argument(
         "--skip-verify",
         action="store_true",
-        help="跳过 STEP 5 端到端校验",
+        help="Skip STEP 5 end-to-end verification",
     )
     return ap.parse_args()
 
@@ -774,7 +777,7 @@ def main() -> None:
 
         logger.info("data-dir = %s", data_dir)
         logger.info("dry-run  = %s", args.dry_run)
-        logger.info("删除列表 = %s", delete_map)
+        logger.info("delete list = %s", delete_map)
         if args.log_file:
             logger.info("log-file = %s", Path(args.log_file).resolve())
 
@@ -787,7 +790,9 @@ def main() -> None:
         if not args.dry_run and not args.skip_verify:
             step5_verify(affected, all_mappings)
 
-        header("全部完成 ✓" if not args.dry_run else "Dry-run 完成（未写入）")
+        header(
+            "All done ✓" if not args.dry_run else "Dry-run finished (nothing written)"
+        )
     finally:
         if file_handler is not None:
             logger.removeHandler(file_handler)
