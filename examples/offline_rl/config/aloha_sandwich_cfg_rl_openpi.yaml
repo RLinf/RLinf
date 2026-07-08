@@ -52,6 +52,8 @@ actor:
   micro_batch_size: 32
   global_batch_size: 512
   seed: 0
+  openpi_data:
+    repo_id: pi05_sandwich_new_all
 
   model:
     precision: null
@@ -69,6 +71,8 @@ actor:
       train_expert_only: false
       guidance_type: positive
       positive_only_conditional: true
+    openpi_data:
+      repo_id: pi05_sandwich_new_all
 
   optim:
     lr: 1.0e-5
