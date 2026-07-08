@@ -55,7 +55,7 @@ data:
   pin_memory: false
   include_state: true
   gamma: 1.0
-  action_horizon: 10
+  action_horizon: 16
   normalize_to_minus_one_zero: true
   include_next_obs: false
   action_dim: 14
@@ -81,7 +81,7 @@ actor:
     tokenizer_path: /inspire/hdd/project/robot-reasoning/public/shared/hf-models/google/gemma-3-270m
     freeze_vlm: false
     action_dim: 14
-    action_horizon: 10
+    action_horizon: 16
 
   optim:
     lr: 5.0e-5

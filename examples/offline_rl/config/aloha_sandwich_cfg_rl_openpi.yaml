@@ -61,7 +61,7 @@ actor:
     model_type: cfg_model
     add_value_head: false
     action_dim: 14
-    num_action_chunks: 10
+    num_action_chunks: 16
     openpi:
       config_name: pi05_aloha_robotwin
       num_images_in_input: 3

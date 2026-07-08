@@ -31,7 +31,7 @@ data:
       type: rollout
       weight: 1.0
 
-  advantage_lookahead_step: 10
+  advantage_lookahead_step: 16
   gamma: 1.0
 
 distributed:

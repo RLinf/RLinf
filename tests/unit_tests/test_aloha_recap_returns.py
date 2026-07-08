@@ -520,24 +520,28 @@ def test_compute_returns_uses_global_hitl_transition_steps_for_single_dataset(
     assert captured_transition_steps == [7]
 
 
-def test_aloha_sandwich_compute_returns_config_enables_two_transition_chunks() -> None:
+def test_aloha_sandwich_recap_configs_use_16_step_action_chunks() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    cfg = OmegaConf.load(
-        repo_root
-        / "examples"
-        / "offline_rl"
-        / "config"
-        / "aloha_sandwich_recap_compute_returns.yaml"
+    config_dir = repo_root / "examples" / "offline_rl" / "config"
+    returns_cfg = OmegaConf.load(config_dir / "aloha_sandwich_recap_compute_returns.yaml")
+    value_cfg = OmegaConf.load(config_dir / "aloha_sandwich_recap_value_model_sft.yaml")
+    advantage_cfg = OmegaConf.load(
+        config_dir / "aloha_sandwich_recap_compute_advantages.yaml"
     )
+    cfg_rl_cfg = OmegaConf.load(config_dir / "aloha_sandwich_cfg_rl_openpi.yaml")
 
-    assert cfg.data.hitl_aware_returns is True
-    assert cfg.data.action_horizon == 10
-    assert cfg.data.hitl_transition_chunks == 2
+    assert returns_cfg.data.hitl_aware_returns is True
+    assert returns_cfg.data.action_horizon == 16
+    assert returns_cfg.data.hitl_transition_chunks == 2
+    assert value_cfg.data.action_horizon == 16
+    assert value_cfg.actor.model.action_horizon == 16
+    assert advantage_cfg.data.advantage_lookahead_step == 16
+    assert cfg_rl_cfg.actor.model.num_action_chunks == 16
     assert (
         _resolve_hitl_transition_steps(
-            hitl_transition_steps=cfg.data.get("hitl_transition_steps", None),
-            hitl_transition_chunks=cfg.data.hitl_transition_chunks,
-            action_horizon=cfg.data.action_horizon,
+            hitl_transition_steps=returns_cfg.data.get("hitl_transition_steps", None),
+            hitl_transition_chunks=returns_cfg.data.hitl_transition_chunks,
+            action_horizon=returns_cfg.data.action_horizon,
         )
-        == 20
+        == 32
     )
