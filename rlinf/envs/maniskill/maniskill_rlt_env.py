@@ -732,11 +732,15 @@ class ManiskillRLTEnv(ManiskillEnv):
                 self._persistent_done_obs, extracted_obs, newly_done
             )
 
+        infos = self._normalize_persistent_rlt_info_flags(infos)
         if self._persistent_done_infos is None:
             self._persistent_done_infos = torch_clone_dict(infos)
         else:
             self._persistent_done_infos = self._restore_frozen_values(
                 self._persistent_done_infos, infos, newly_done
+            )
+            self._persistent_done_infos = self._normalize_persistent_rlt_info_flags(
+                self._persistent_done_infos
             )
 
         self._persistent_done_mask |= newly_done
@@ -1015,9 +1019,13 @@ class ManiskillRLTEnv(ManiskillEnv):
         raw_chunk_intervene_flag = []
         for infos in infos_list:
             if "rlt_switch_flags" in infos:
-                raw_chunk_rlt_switch_flags.append(infos["rlt_switch_flags"])
+                flag = self._last_rlt_info_flag(infos["rlt_switch_flags"])
+                if flag is not None:
+                    raw_chunk_rlt_switch_flags.append(flag)
             if "intervene_flag" in infos:
-                raw_chunk_intervene_flag.append(infos["intervene_flag"])
+                flag = self._last_rlt_info_flag(infos["intervene_flag"])
+                if flag is not None:
+                    raw_chunk_intervene_flag.append(flag)
 
         if not infos_list:
             return
@@ -1030,6 +1038,25 @@ class ManiskillRLTEnv(ManiskillEnv):
         if raw_chunk_intervene_flag:
             infos_last["intervene_flag"] = torch.stack(raw_chunk_intervene_flag, dim=1)
         infos_list[-1] = infos_last
+
+    def _last_rlt_info_flag(self, value):
+        if not isinstance(value, torch.Tensor) or value.ndim == 0:
+            return None
+        if value.shape[0] != self.num_envs:
+            return None
+        return value.reshape(self.num_envs, -1)[:, -1:]
+
+    def _normalize_persistent_rlt_info_flags(self, infos):
+        if not isinstance(infos, dict):
+            return infos
+        infos = torch_clone_dict(infos)
+        for key in ("rlt_switch_flags", "intervene_flag"):
+            if key not in infos:
+                continue
+            flag = self._last_rlt_info_flag(infos[key])
+            if flag is not None:
+                infos[key] = flag
+        return infos
 
     def _sync_rlt_switch_episode_info(self, infos):
         if not isinstance(infos, dict) or "episode" not in infos:
