@@ -57,7 +57,7 @@ class RLTACLossMixin:
     def get_rollout_sync_version(self) -> int:
         """Expose learner update count when RLT warmup gates actor rollout."""
         if not self.use_rlt_schedule:
-            return super().get_rollout_sync_version()
+            return int(self.version)
         return int(self.update_step)
 
     def _ref_chunk(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
