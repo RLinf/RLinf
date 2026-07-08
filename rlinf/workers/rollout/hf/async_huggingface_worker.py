@@ -14,12 +14,8 @@
 
 import asyncio
 
-import torch
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.data.embodied_io_struct import (
-    RolloutResult,
-)
 from rlinf.scheduler import Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -182,35 +178,13 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
-                env_infos=env_output.get("env_infos", None),
                 rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                intervene_requested=env_output.get("intervene_flags", None),
             )
-            save_flags = result.get("forward_inputs", {}).get(
-                "intervention_flags", None
-            )
-            if save_flags is None and result.get("expert_label_flag", False):
-                save_flags = torch.full(
-                    (actions.shape[0], self.cfg.actor.model.num_action_chunks),
-                    True,
-                    dtype=torch.bool,
-                    device=actions.device,
-                )
-            rollout_result = RolloutResult(
-                actions=actions,
-                prev_logprobs=result["prev_logprobs"]
-                if self.collect_prev_infos
-                else None,
-                prev_values=result["prev_values"] if self.collect_prev_infos else None,
-                bootstrap_values=self.get_bootstrap_values(
-                    env_output.get("final_obs", None)
-                ),
-                save_flags=save_flags,
-                forward_inputs=result["forward_inputs"],
-                versions=torch.full_like(
-                    result["prev_logprobs"],
-                    float(self.version),
-                    dtype=torch.float32,
-                ),
+            rollout_result = self._build_rollout_result(
+                actions,
+                result,
+                final_obs=env_output.get("final_obs", None),
             )
             self.send_to_recorded_batch_routes(
                 group_name=self.cfg.env.group_name,
