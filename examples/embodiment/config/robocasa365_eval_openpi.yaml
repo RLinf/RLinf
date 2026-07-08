@@ -16,7 +16,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: all # 0
+    actor,env,rollout: 0-1 # all
 
 runner:
   task_type: embodied
@@ -93,7 +93,7 @@ env:
     reward_coef: 1.0
     group_size: 1
   eval:
-    total_num_envs: 18 # 50 # 90
+    total_num_envs: 18  # must be divisible by env_world_size, >=18 tasks
     seed: 7
     seed_strategy: openpi # global_unique
     split: pretrain
@@ -126,19 +126,19 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: /mnt/public2/wph/models/pi0_pretrain_robocasa365
+    model_path:  /path/to/checkpoints/pi0-robocasa-pretrain-human300
     precision: null
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 128
-  global_batch_size: 128
+  global_batch_size: 256  # must be divisible by micro_batch_size * actor_world_size
   seed: 42
   enable_offload: False
 
   model:
-    model_path: /mnt/public2/wph/models/pi0_pretrain_robocasa365
+    model_path:  /path/to/checkpoints/pi0-robocasa-pretrain-human300
     num_action_chunks: 5
     action_dim: 12
     num_steps: 5
