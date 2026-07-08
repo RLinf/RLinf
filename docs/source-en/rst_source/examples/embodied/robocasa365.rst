@@ -95,9 +95,13 @@ Dependency Installation
       --repo-type dataset \
       --include textures.zip generative_textures.zip fixtures.zip objaverse.zip aigen_objs.zip \
       --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
-   hf download nvidia/PhysicalAI-Kitchen-Assets \
+   hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF \
       --repo-type dataset \
-      --include "fixtures_lightwheel/*.zip" "objects_lightwheel/*.zip" \
+      --include "fixtures_lightwheel/*.zip" \
+      --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
+   hf download nvidia/PhysicalAI-Robotics-Manipulation-Objects-Kitchen-MJCF \
+      --repo-type dataset \
+      --include "objects_lightwheel/*.zip" \
       --local-dir "$ROBOCASA_ASSETS_PATH/_downloads"
 
    for item in \
@@ -165,25 +169,24 @@ Useful references:
 Model Checkpoint
 ----------------
 
-The RoboCasa365 recipe uses a separate OpenPI config name, ``pi0_robocasa365``,
-but it intentionally reuses the RoboCasa modality transform path. Provide your own
-Pi0 checkpoint path in the config:
+Download the official RoboCasa365 Pi0 checkpoint:
 
-An official RoboCasa365 Pi0 checkpoint is available at:
-https://huggingface.co/robocasa/robocasa365_checkpoints/tree/main/pi0/pi0_robocasa_pretrain_human300
+.. code:: bash
 
-Download the checkpoint locally and point both rollout and actor model paths to
-that directory:
+   hf download ppppper/pi0-robocasa-pretrain-human300 \
+     --local-dir /path/to/pi0-robocasa-pretrain-human300
+
+Point the config to the downloaded directory:
 
 .. code:: yaml
 
    rollout:
      model:
-       model_path: "/path/to/pi0_robocasa_pretrain_human300"
+       model_path: "/path/to/pi0-robocasa-pretrain-human300"
 
    actor:
      model:
-       model_path: "/path/to/pi0_robocasa_pretrain_human300"
+       model_path: "/path/to/pi0-robocasa-pretrain-human300"
 
 Training
 --------
