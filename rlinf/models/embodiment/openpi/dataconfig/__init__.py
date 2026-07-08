@@ -53,6 +53,9 @@ from rlinf.models.embodiment.openpi.dataconfig.libero_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.maniskill_dataconfig import (
     LeRobotManiSkillDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.maniskill_rlt_dataconfig import (
+    LeRobotRLTManiSkillJointDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.metaworld_dataconfig import (
     LeRobotMetaworldDataConfig,
 )
@@ -61,9 +64,6 @@ from rlinf.models.embodiment.openpi.dataconfig.polaris_dataconfig import (
 )
 from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
     LeRobotRealworldDataConfig,
-)
-from rlinf.models.embodiment.openpi.dataconfig.maniskill_rlt_dataconfig import (
-    LeRobotRLTManiSkillJointDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
     LeRobotRobocasaDataConfig,
