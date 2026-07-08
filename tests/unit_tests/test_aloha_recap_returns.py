@@ -237,6 +237,48 @@ def test_process_single_parquet_accepts_lerobot_column_teleop_mask(tmp_path) -> 
     ]
 
 
+def test_process_single_parquet_applies_hitl_transition_steps(tmp_path) -> None:
+    pq_file = tmp_path / "episode.parquet"
+    table = pa.table(
+        {
+            "episode_index": pa.array([0, 0, 0, 0, 0, 0], type=pa.int64()),
+            "frame_index": pa.array([0, 1, 2, 3, 4, 5], type=pa.int64()),
+            "is_success": pa.array([True, True, True, True, True, True]),
+            "teleop_mask": pa.array([[0], [0], [0], [1], [1], [0]]),
+            "task_index": pa.array([0, 0, 0, 0, 0, 0], type=pa.int64()),
+            "task": pa.array(["pick"] * 6),
+        }
+    )
+    pq.write_table(table, pq_file)
+
+    result = _process_single_parquet(
+        str(pq_file),
+        dataset_type="rollout",
+        gamma=1.0,
+        failure_reward=-300.0,
+        tasks={},
+        hitl_aware_returns=True,
+        hitl_transition_steps=2,
+    )
+
+    np.testing.assert_allclose(
+        result.column("return").to_numpy(),
+        np.asarray([-302.0, -151.5, -2.0, -2.0, -1.0, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        result.column("reward").to_numpy(),
+        np.asarray([-1.0, -1.0, -300.0, -1.0, -1.0, 0.0], dtype=np.float32),
+    )
+    assert result.column("done").to_pylist() == [
+        False,
+        False,
+        True,
+        False,
+        False,
+        True,
+    ]
+
+
 def test_process_single_parquet_normalizes_singleton_list_is_success(
     tmp_path,
 ) -> None:
@@ -350,3 +392,53 @@ def test_compute_returns_uses_per_entry_hitl_aware_override(
     returns_module.compute_returns(cfg)
 
     assert captured_hitl_values == [True, False]
+
+
+def test_compute_returns_resolves_per_entry_hitl_transition_settings(
+    tmp_path, monkeypatch
+) -> None:
+    first_dataset = tmp_path / "first"
+    second_dataset = tmp_path / "second"
+    first_dataset.mkdir()
+    second_dataset.mkdir()
+    captured_transition_steps = []
+
+    def fake_process_dataset(**kwargs):
+        captured_transition_steps.append(kwargs["hitl_transition_steps"])
+        return {"return": {"min": 0.0, "max": 0.0}, "reward": {}}
+
+    monkeypatch.setattr(returns_module, "process_dataset", fake_process_dataset)
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "data_root": None,
+                "train_data_paths": [
+                    {
+                        "dataset_path": str(first_dataset),
+                        "type": "rollout",
+                        "hitl_transition_chunks": 2,
+                        "action_horizon": 10,
+                    },
+                    {
+                        "dataset_path": str(second_dataset),
+                        "type": "rollout",
+                        "hitl_transition_steps": 3,
+                        "hitl_transition_chunks": 2,
+                        "action_horizon": 10,
+                    },
+                ],
+                "dataset_type": "rollout",
+                "gamma": 1.0,
+                "failure_reward": -300.0,
+                "hitl_aware_returns": True,
+                "hitl_transition_chunks": 0,
+                "action_horizon": None,
+                "num_workers": 1,
+                "tag": None,
+            }
+        }
+    )
+
+    returns_module.compute_returns(cfg)
+
+    assert captured_transition_steps == [20, 3]

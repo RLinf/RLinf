@@ -301,6 +301,7 @@ def _process_single_parquet(
     failure_reward: float,
     tasks: dict[int, str],
     hitl_aware_returns: bool = False,
+    hitl_transition_steps: int = 0,
 ) -> pa.Table | None:
     """Process a single parquet file: read only metadata columns, compute returns.
 
@@ -372,6 +373,7 @@ def _process_single_parquet(
                 teleop_mask=teleop_col[ep_start:ep_end],
                 gamma=gamma,
                 failure_reward=failure_reward,
+                hitl_transition_steps=hitl_transition_steps,
             )
         else:
             ep_returns, ep_rewards = compute_returns_for_episode(
@@ -419,6 +421,7 @@ def process_dataset(
     num_workers: int = 8,
     tag: str | None = None,
     hitl_aware_returns: bool = False,
+    hitl_transition_steps: int = 0,
 ) -> dict:
     """Process a LeRobot dataset and compute return/reward/prompt.
 
@@ -436,6 +439,8 @@ def process_dataset(
         tag: Optional tag for the sidecar filename
         hitl_aware_returns: Whether to split successful HITL episodes at the
             first teleop frame
+        hitl_transition_steps: Number of pre-teleop frames to smooth into the
+            post-intervention return scale
 
     Returns:
         Statistics dict with return/reward stats
@@ -443,7 +448,8 @@ def process_dataset(
     logger.info(f"Processing dataset: {dataset_path}")
     logger.info(
         f"  Type: {dataset_type}, Gamma: {gamma}, "
-        f"Failure reward: {failure_reward}, HITL-aware returns: {hitl_aware_returns}"
+        f"Failure reward: {failure_reward}, HITL-aware returns: {hitl_aware_returns}, "
+        f"HITL transition steps: {hitl_transition_steps}"
     )
 
     if output_path is None:
@@ -485,6 +491,7 @@ def process_dataset(
                 failure_reward,
                 tasks,
                 hitl_aware_returns,
+                hitl_transition_steps,
             )
             if tbl is not None:
                 result_tables.append(tbl)
@@ -501,6 +508,7 @@ def process_dataset(
                     failure_reward,
                     tasks,
                     hitl_aware_returns,
+                    hitl_transition_steps,
                 )
                 futures[fut] = pq_file
 
@@ -632,6 +640,9 @@ def compute_returns(cfg: DictConfig) -> None:
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
     hitl_aware_returns = cfg.data.get("hitl_aware_returns", False)
+    default_hitl_transition_steps = cfg.data.get("hitl_transition_steps", None)
+    default_hitl_transition_chunks = cfg.data.get("hitl_transition_chunks", 0)
+    default_action_horizon = cfg.data.get("action_horizon", None)
 
     datasets_list = cfg.data.get("train_data_paths", None)
 
@@ -651,6 +662,16 @@ def compute_returns(cfg: DictConfig) -> None:
             if output_path and data_root and not Path(output_path).is_absolute():
                 output_path = str(Path(data_root) / output_path)
 
+            entry_hitl_transition_steps = _resolve_hitl_transition_steps(
+                hitl_transition_steps=entry.get(
+                    "hitl_transition_steps", default_hitl_transition_steps
+                ),
+                hitl_transition_chunks=entry.get(
+                    "hitl_transition_chunks", default_hitl_transition_chunks
+                ),
+                action_horizon=entry.get("action_horizon", default_action_horizon),
+            )
+
             datasets_to_process.append(
                 {
                     "dataset_path": ds_path,
@@ -663,6 +684,7 @@ def compute_returns(cfg: DictConfig) -> None:
                     "hitl_aware_returns": entry.get(
                         "hitl_aware_returns", hitl_aware_returns
                     ),
+                    "hitl_transition_steps": entry_hitl_transition_steps,
                 }
             )
     else:
@@ -679,6 +701,12 @@ def compute_returns(cfg: DictConfig) -> None:
         if output_path and data_root and not Path(output_path).is_absolute():
             output_path = str(Path(data_root) / output_path)
 
+        hitl_transition_steps = _resolve_hitl_transition_steps(
+            hitl_transition_steps=default_hitl_transition_steps,
+            hitl_transition_chunks=default_hitl_transition_chunks,
+            action_horizon=default_action_horizon,
+        )
+
         datasets_to_process.append(
             {
                 "dataset_path": dataset_path,
@@ -687,6 +715,7 @@ def compute_returns(cfg: DictConfig) -> None:
                 "gamma": default_gamma,
                 "failure_reward": default_failure_reward,
                 "hitl_aware_returns": hitl_aware_returns,
+                "hitl_transition_steps": hitl_transition_steps,
             }
         )
 
@@ -715,6 +744,7 @@ def compute_returns(cfg: DictConfig) -> None:
             num_workers=num_workers,
             tag=tag,
             hitl_aware_returns=ds_config["hitl_aware_returns"],
+            hitl_transition_steps=ds_config["hitl_transition_steps"],
         )
         all_stats.append(
             {
