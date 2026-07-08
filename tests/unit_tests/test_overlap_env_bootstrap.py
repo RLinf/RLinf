@@ -91,6 +91,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.train_num_envs_per_stage = 2
         self.worker.n_train_chunk_steps = 2
         self.worker.rollout_epoch = 1
+        self.worker.enable_online_lerobot = False
         self.worker.enable_offload = False
         self.worker.train_enable_offload = False
         self.worker.use_training_pipeline = False
@@ -144,6 +145,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
                     truncations=torch.zeros(2, 4, dtype=torch.bool),
                     terminations=torch.zeros(2, 4, dtype=torch.bool),
                 ),
+                {},
                 {},
             )
         )
@@ -253,6 +255,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
                     terminations=torch.zeros(2, 4, dtype=torch.bool),
                 ),
                 {"episode_len": torch.tensor([1, 2])},
+                {},
             )
         )
         self.worker.send_env_batch = MagicMock()
