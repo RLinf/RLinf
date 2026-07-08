@@ -26,8 +26,7 @@ export FORCE_REBUILD=1
 
 # Virtual environment configuration
 # Override via environment: export VENV_BASE_DIR=/your/venvs/path
-# export VENV_BASE_DIR="${VENV_BASE_DIR:-/path/to/venvs}"
-export VENV_BASE_DIR=/mnt/public2/zhouyiming/RLinf_autotest_pr/venv
+export VENV_BASE_DIR="${VENV_BASE_DIR:-/path/to/venvs}"
 
 # Pre-flight check: ensure VENV_BASE_DIR has been configured
 if [ "$VENV_BASE_DIR" = "/path/to/venvs" ]; then
