@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from rlinf.utils.nested_dict_process import (
     cat_list_of_dict_tensor,
     put_tensor_device,
+    split_dict,
     split_dict_to_chunk,
     stack_list_of_dict_tensor,
 )
@@ -750,6 +751,36 @@ class EmbodiedRolloutResult:
 
         del all_trajectory
         return splited_trajectories
+
+    def to_splited_trajectories_by_sizes(
+        self, split_sizes: list[int]
+    ) -> list[Trajectory]:
+        trajectory = self.to_trajectory()
+        trajectories = [Trajectory() for _ in split_sizes]
+
+        for field_name in trajectory.__dataclass_fields__:
+            value = getattr(trajectory, field_name)
+            if value is None:
+                continue
+            if isinstance(value, (int, str)):
+                for split_trajectory in trajectories:
+                    setattr(split_trajectory, field_name, value)
+            elif isinstance(value, torch.Tensor):
+                for split_trajectory, split_value in zip(
+                    trajectories, torch.split(value, split_sizes, dim=1)
+                ):
+                    setattr(split_trajectory, field_name, split_value.contiguous())
+            elif isinstance(value, dict):
+                for split_trajectory, split_value in zip(
+                    trajectories, split_dict(value, split_sizes, dim=1)
+                ):
+                    setattr(split_trajectory, field_name, split_value)
+            else:
+                raise ValueError(
+                    f"Unsupported value type: {type(value)} for field_name: {field_name}"
+                )
+
+        return trajectories
 
 
 def convert_trajectories_to_batch(

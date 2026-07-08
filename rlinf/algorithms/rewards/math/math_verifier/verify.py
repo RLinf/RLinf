@@ -347,7 +347,9 @@ def call_with_timeout(func, *args, timeout=3, **kwargs):
 def process_results(answer, solution):
     try:
         extracted_answer = extract_answer(answer, "math", use_last_number=False)
-        extracted_solution = extract_answer(solution, "math", use_last_number=True)
+        extracted_solution = extract_answer(
+            solution, "math", use_last_number=False, must_match_pattern=False
+        )
 
         if extracted_answer is None or extracted_answer.strip() in ["None", "none", ""]:
             retval = False
@@ -398,8 +400,12 @@ def math_verify_call(
     all_jobs = []
     for solutions, gen in zip(references, responses):
         jobs = []
-        for sol in solutions:
-            job = global_executor.submit(verify_math_solution, gen, sol)
+        if isinstance(solutions, list):
+            for sol in solutions:
+                job = global_executor.submit(verify_math_solution, gen, sol)
+                jobs.append(job)
+        else:
+            job = global_executor.submit(verify_math_solution, gen, solutions)
             jobs.append(job)
         all_jobs.append(jobs)
 

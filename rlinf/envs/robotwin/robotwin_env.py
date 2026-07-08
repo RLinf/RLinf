@@ -23,6 +23,7 @@ import torch.multiprocessing as mp
 from omegaconf import OmegaConf
 from PIL import Image
 
+from rlinf.envs.robotwin.seed_utils import partition_success_seeds
 from rlinf.envs.utils import center_crop_image, list_of_dict_to_dict_of_list
 
 __all__ = ["RoboTwinEnv"]
@@ -40,6 +41,7 @@ class RoboTwinEnv(gym.Env):
     ):
         env_seed = cfg.seed
         self.seed = env_seed + seed_offset
+        self.base_seed = env_seed
         self.num_envs = num_envs
         self.seed_offset = seed_offset
         self.total_num_processes = total_num_processes
@@ -421,16 +423,13 @@ class RoboTwinEnv(gym.Env):
             success_seeds = data[self.task_name].get("success_seeds", None)
             if success_seeds is not None:
                 success_seeds = torch.as_tensor(success_seeds, dtype=torch.long)
-                self._generator = torch.Generator()
-                self._generator.manual_seed(self.seed)
-                shuffled_indices = torch.randperm(
-                    success_seeds.numel(), generator=self._generator
+                self.success_seeds = partition_success_seeds(
+                    success_seeds,
+                    base_seed=self.base_seed,
+                    seed_offset=self.seed_offset,
+                    total_num_processes=self.total_num_processes,
+                    num_group=self.num_group,
                 )
-                shuffled_seeds = success_seeds[shuffled_indices]
-                # Drop last to make total divisible by num_group
-                total_seeds = shuffled_seeds.numel()
-                keep_count = (total_seeds // self.num_group) * self.num_group
-                self.success_seeds = shuffled_seeds[:keep_count]
                 self._current_seed_index = 0
             else:
                 self.success_seeds = None

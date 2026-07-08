@@ -15,26 +15,37 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 
 import torch
 from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import Worker
-
-from .base import (
-    RecvFn,
-    SendFn,
-    WeightSyncer,
+from rlinf.utils.utils import (
     materialize_tensor,
     normalize_device,
+    tensors_record_stream,
 )
+
+from .base import RecvFn, SendFn, WeightSyncer
 from .bucket_syncer import BucketWeightSyncer, iter_named_tensor_buckets
 from .compressor import PatchCompressor
 
 
 def downscale_nonnegative_indices(tensor: torch.Tensor) -> torch.Tensor:
+    """Cast nonnegative index tensors to the smallest supported integer dtype.
+
+    Empty tensors are encoded as ``torch.uint8``. Non-empty tensors are cast to
+    ``torch.uint8``, ``torch.int32``, or ``torch.int64`` according to the maximum
+    value they contain. Callers must only pass nonnegative indices.
+
+    Args:
+        tensor: Index tensor whose values are expected to be nonnegative.
+
+    Returns:
+        A tensor with the same values stored in the smallest supported integer
+        dtype.
+    """
     if tensor.numel() == 0:
         return tensor.to(torch.uint8)
     max_value = int(tensor.max().item())
@@ -46,6 +57,24 @@ def downscale_nonnegative_indices(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def as_coo_2d_view(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
+    """View a tensor as a 2-D COO indexing target.
+
+    Scalars are viewed as shape ``(1, 1)``, vectors as ``(1, N)``, matrices are
+    returned as-is, and higher-rank tensors are viewed as
+    ``(shape[0], prod(shape[1:]))``. Higher-rank tensors must be flattenable as a
+    view, so non-contiguous layouts that require a copy are rejected.
+
+    Args:
+        tensor: Tensor to expose as a 2-D view for COO row/column indexing.
+
+    Returns:
+        A tuple ``(view, original_shape)`` where ``view`` is the 2-D tensor view
+        and ``original_shape`` is the input tensor shape.
+
+    Raises:
+        ValueError: If a tensor with rank three or higher cannot flatten its
+            trailing dimensions as a view.
+    """
     original_shape = tensor.shape
     if tensor.ndim == 0:
         view = tensor.unsqueeze(0).unsqueeze(0)
@@ -67,19 +96,65 @@ def as_coo_2d_view(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Size]:
 
 @dataclass
 class EmptyWeightPatch:
+    """
+    Patch payload used when no synchronized tensor values changed.
+
+    Attributes:
+        version: Weight version represented by this empty patch.
+    """
+
     version: torch.Tensor
 
     def to(
         self, device: torch.device | str, non_blocking: bool = False
     ) -> "EmptyWeightPatch":
+        """
+        Move the empty patch metadata to a device.
+
+        Args:
+            device: Target device for the version tensor.
+            non_blocking: Whether to request non-blocking tensor movement.
+
+        Returns:
+            A new ``EmptyWeightPatch`` whose tensor fields are on ``device``.
+        """
         device = normalize_device(device)
         return EmptyWeightPatch(
             version=self.version.to(device=device, non_blocking=non_blocking),
         )
 
+    def tensors(self) -> list[torch.Tensor]:
+        """
+        Return a list of all tensor fields in the empty patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [self.version]
+
 
 @dataclass
 class WeightPatch:
+    """Sparse patch payload for changed state dict entries.
+
+    The patch stores changed tensors in COO-like form. ``ordinals`` identifies
+    which state dict entries changed, ``nnz_per_tensor`` stores how many changed
+    values belong to each ordinal, ``rows`` and ``cols`` store the changed
+    positions in each entry's 2-D view, and ``values`` stores the raw bytes of
+    the changed values.
+
+    Attributes:
+        version: Weight version represented by this patch.
+        ordinals: State dict key ordinals for tensors with at least one changed
+            value.
+        nnz_per_tensor: Number of changed values for each ordinal.
+        rows: Row indices for changed values, concatenated across tensors.
+        cols: Column indices for changed values, concatenated across tensors.
+        values: Raw byte representation of changed values, concatenated across
+            tensors.
+    """
+
     version: torch.Tensor
     ordinals: torch.Tensor
     nnz_per_tensor: torch.Tensor
@@ -90,6 +165,15 @@ class WeightPatch:
     def to(
         self, device: torch.device | str, non_blocking: bool = False
     ) -> "WeightPatch":
+        """Move all patch tensors to a device.
+
+        Args:
+            device: Target device for every tensor field.
+            non_blocking: Whether to request non-blocking tensor movement.
+
+        Returns:
+            A new ``WeightPatch`` whose tensor fields are on ``device``.
+        """
         device = normalize_device(device)
         return WeightPatch(
             version=self.version.to(device=device, non_blocking=non_blocking),
@@ -102,9 +186,44 @@ class WeightPatch:
             values=self.values.to(device=device, non_blocking=non_blocking),
         )
 
+    def tensors(self) -> list[torch.Tensor]:
+        """Return a list of all tensor fields in the patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [
+            self.version,
+            self.ordinals,
+            self.nnz_per_tensor,
+            self.rows,
+            self.cols,
+            self.values,
+        ]
+
 
 @dataclass
 class CompressedWeightPatch:
+    """Compressed sparse patch payload.
+
+    This payload mirrors ``WeightPatch`` but stores the row indices, column
+    indices, and raw value bytes in compressed byte tensors. The dtype-code
+    tensors record the original dtypes needed by the compressor to reconstruct
+    each compressed field.
+
+    Attributes:
+        version: Weight version represented by this patch.
+        ordinals: State dict key ordinals for tensors with changed values.
+        nnz_per_tensor: Number of changed values for each ordinal.
+        rows_compressed: Compressed representation of the row-index tensor.
+        cols_compressed: Compressed representation of the column-index tensor.
+        values_compressed: Compressed representation of the raw value bytes.
+        rows_dtype_code: Encoded dtype metadata for decompressed rows.
+        cols_dtype_code: Encoded dtype metadata for decompressed columns.
+        values_dtype_code: Encoded dtype metadata for decompressed values.
+    """
+
     version: torch.Tensor
     ordinals: torch.Tensor
     nnz_per_tensor: torch.Tensor
@@ -115,6 +234,25 @@ class CompressedWeightPatch:
     cols_dtype_code: torch.Tensor
     values_dtype_code: torch.Tensor
 
+    def tensors(self) -> list[torch.Tensor]:
+        """Return a list of all tensor fields in the compressed patch.
+
+        Returns:
+            A list of all tensor fields in the order they are defined in the
+            dataclass.
+        """
+        return [
+            self.version,
+            self.ordinals,
+            self.nnz_per_tensor,
+            self.rows_compressed,
+            self.cols_compressed,
+            self.values_compressed,
+            self.rows_dtype_code,
+            self.cols_dtype_code,
+            self.values_dtype_code,
+        ]
+
 
 WeightPatchTransport = EmptyWeightPatch | WeightPatch | CompressedWeightPatch
 
@@ -124,18 +262,49 @@ class PatchBuilder(ABC):
         self,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         delta_encoding: bool,
     ):
         self.snapshot = snapshot
         self.ordered_keys = ordered_keys
+        self.param_names_need_sync = param_names_need_sync
+        self.param_names_need_sync_set = set(param_names_need_sync)
         self.original_shapes = original_shapes
         self.delta_encoding = delta_encoding
+        self.param_names_need_sync_ordinals: dict[str, int] = {
+            name: ordinal
+            for ordinal, name in enumerate(self.ordered_keys)
+            if name in self.param_names_need_sync_set
+        }
+
+        if not self.param_names_need_sync:
+            raise ValueError("param_names_need_sync must not be empty")
+
+        if not self.ordered_keys:
+            raise ValueError("ordered_keys must not be empty")
 
     @staticmethod
     def delta_encode(
         rows: torch.Tensor, cols: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Delta-encode COO row and column indices for compact transport.
+
+        The input indices are expected to be ordered as produced by
+        ``Tensor.nonzero(as_tuple=True)`` on a 2-D view: rows are nondecreasing,
+        and columns are ordered within each row. Row indices are encoded as
+        first-order deltas. Column indices are encoded as deltas within the same
+        row and reset to the absolute column value when a new row starts.
+
+        Args:
+            rows: One-dimensional row indices for changed values.
+            cols: One-dimensional column indices for changed values. Must have
+                the same number of elements as ``rows``.
+
+        Returns:
+            A tuple ``(row_deltas, col_deltas)`` with the same shapes and dtypes
+            as the input tensors.
+        """
         assert rows.numel() > 0, "No indices to encode"
         assert rows.numel() == cols.numel(), (
             "Rows and columns must have the same number of elements"
@@ -157,8 +326,27 @@ class PatchBuilder(ABC):
     def delta_decode(
         rows_delta: torch.Tensor, cols_delta: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        assert rows_delta.numel() > 0
-        assert rows_delta.numel() == cols_delta.numel()
+        """Decode row and column deltas produced by ``delta_encode``.
+
+        Row indices are reconstructed with a cumulative sum. Column deltas are
+        accumulated within each row segment and reset whenever the decoded row
+        changes. The returned tensors use ``torch.int64`` so they can be used
+        directly as PyTorch advanced-indexing inputs after transport dtypes have
+        been downscaled.
+
+        Args:
+            rows_delta: One-dimensional row deltas produced by ``delta_encode``.
+            cols_delta: One-dimensional column deltas produced by
+                ``delta_encode``. Must have the same number of elements as
+                ``rows_delta``.
+
+        Returns:
+            A tuple ``(rows, cols)`` containing decoded ``torch.int64`` indices.
+        """
+        if rows_delta.numel() == 0:
+            raise ValueError("No indices to decode")
+        if rows_delta.numel() != cols_delta.numel():
+            raise ValueError("Rows and columns must have the same number of elements")
 
         rows = torch.cumsum(rows_delta, dim=0, dtype=torch.int64)
 
@@ -182,6 +370,7 @@ class PatchBuilder(ABC):
         cls,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         snapshot_device: torch.device,
         delta_encoding: bool,
@@ -190,6 +379,7 @@ class PatchBuilder(ABC):
             return CPUSnapshotPatchBuilder(
                 snapshot,
                 ordered_keys,
+                param_names_need_sync,
                 original_shapes,
                 delta_encoding,
             )
@@ -197,6 +387,7 @@ class PatchBuilder(ABC):
             return GPUSnapshotPatchBuilder(
                 snapshot,
                 ordered_keys,
+                param_names_need_sync,
                 original_shapes,
                 delta_encoding,
             )
@@ -210,30 +401,15 @@ class PatchBuilder(ABC):
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch: ...
 
-    def _validate_state_dict_keys(
-        self,
-        state_dict: dict[str, torch.Tensor | DTensor],
-    ) -> None:
-        if set(state_dict.keys()) != set(self.ordered_keys):
-            raise ValueError("State dict keys do not match snapshot keys")
-
 
 @dataclass
 class _PrefetchedCPUSnapshot:
     ordinal: int
+    global_ordinal: int
     key: str
     state_2dview: torch.Tensor
     snapshot_value: torch.Tensor
     snapshot_on_state_device: torch.Tensor
-    copy_done: torch.Event
-
-
-@dataclass
-class _PendingSnapshotUpdate:
-    snapshot_value: torch.Tensor
-    rows: torch.Tensor
-    cols: torch.Tensor
-    values: torch.Tensor
     copy_done: torch.Event
 
 
@@ -242,47 +418,37 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         self,
         snapshot: dict[str, torch.Tensor],
         ordered_keys: list[str],
+        param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         delta_encoding: bool,
     ):
         super().__init__(
             snapshot=snapshot,
             ordered_keys=ordered_keys,
+            param_names_need_sync=param_names_need_sync,
             original_shapes=original_shapes,
             delta_encoding=delta_encoding,
         )
         self._copy_streams: dict[torch.device, torch.Stream] = {}
-        self._snapshot_flush_executor = ThreadPoolExecutor(
-            max_workers=1,
-            thread_name_prefix="patch-snapshot-flush",
-        )
-        self._pending_snapshot_flush: Future[None] | None = None
 
     def create_patch(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
-        self._wait_pending_snapshot_flush()
-        self._validate_state_dict_keys(state_dict)
-
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []
         col_chunks: list[torch.Tensor] = []
         value_byte_chunks: list[torch.Tensor] = []
-        pending_snapshot_updates: list[_PendingSnapshotUpdate] = []
         patch_device: torch.device | None = None
 
-        if not self.ordered_keys:
-            raise RuntimeError("Snapshot contains no tensors")
-
         prefetched = self._prefetch_snapshot(state_dict, 0)
-        for ordinal in range(len(self.ordered_keys)):
+        for ordinal in range(len(self.param_names_need_sync)):
             current = prefetched
             prefetched = (
                 self._prefetch_snapshot(state_dict, ordinal + 1)
-                if ordinal + 1 < len(self.ordered_keys)
+                if ordinal + 1 < len(self.param_names_need_sync)
                 else None
             )
 
@@ -317,13 +483,11 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             cols = cols.to(torch.int64)
             values = compare_value[rows, cols]
 
-            pending_snapshot_updates.append(
-                self._stage_snapshot_update(
-                    snapshot_value=current.snapshot_value,
-                    rows=rows,
-                    cols=cols,
-                    values=values,
-                )
+            self._update_snapshot(
+                snapshot_value=current.snapshot_value,
+                rows=rows,
+                cols=cols,
+                values=values,
             )
 
             if self.delta_encoding:
@@ -332,7 +496,9 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 patch_rows, patch_cols = rows, cols
 
             ordinals.append(
-                torch.tensor(current.ordinal, dtype=torch.int32, device=rows.device)
+                torch.tensor(
+                    current.global_ordinal, dtype=torch.int32, device=rows.device
+                )
             )
             nnz_per_tensor.append(
                 torch.tensor(values.numel(), dtype=torch.int32, device=rows.device)
@@ -356,7 +522,6 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
                 cols=cols_tensor,
                 values=torch.cat(value_byte_chunks, dim=0),
             )
-            self._submit_snapshot_updates(pending_snapshot_updates)
             return patch
 
         if patch_device is None:
@@ -364,25 +529,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         patch = EmptyWeightPatch(
             version=torch.tensor(version, dtype=torch.int64, device=patch_device)
         )
-        self._submit_snapshot_updates(pending_snapshot_updates)
         return patch
-
-    def _wait_pending_snapshot_flush(self) -> None:
-        if self._pending_snapshot_flush is None:
-            return
-        self._pending_snapshot_flush.result()
-        self._pending_snapshot_flush = None
-
-    def _submit_snapshot_updates(
-        self,
-        pending_snapshot_updates: list[_PendingSnapshotUpdate],
-    ) -> None:
-        if not pending_snapshot_updates:
-            return
-        self._pending_snapshot_flush = self._snapshot_flush_executor.submit(
-            self._flush_snapshot,
-            pending_snapshot_updates,
-        )
 
     def _get_copy_stream(self, device: torch.device | None) -> torch.Stream:
         if device.index is None:
@@ -398,7 +545,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         ordinal: int,
     ) -> _PrefetchedCPUSnapshot:
-        key = self.ordered_keys[ordinal]
+        key = self.param_names_need_sync[ordinal]
         value = materialize_tensor(state_dict[key])
         expected_shape = self.original_shapes[key]
         if value.shape != expected_shape:
@@ -432,6 +579,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
 
         return _PrefetchedCPUSnapshot(
             ordinal=ordinal,
+            global_ordinal=self.param_names_need_sync_ordinals[key],
             key=key,
             state_2dview=state_2dview,
             snapshot_value=snapshot_value,
@@ -439,40 +587,17 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             copy_done=copy_done,
         )
 
-    def _stage_snapshot_update(
+    def _update_snapshot(
         self,
         snapshot_value: torch.Tensor,
         rows: torch.Tensor,
         cols: torch.Tensor,
         values: torch.Tensor,
-    ) -> _PendingSnapshotUpdate:
-        rows_cpu = torch.empty_like(rows, device="cpu", pin_memory=True)
-        cols_cpu = torch.empty_like(cols, device="cpu", pin_memory=True)
-        values_cpu = torch.empty_like(values, device="cpu", pin_memory=True)
-
-        with Worker.torch_platform.device(values.device):
-            stream = Worker.torch_platform.current_stream(values.device)
-            rows_cpu.copy_(rows, non_blocking=True)
-            cols_cpu.copy_(cols, non_blocking=True)
-            values_cpu.copy_(values, non_blocking=True)
-            copy_done = Worker.torch_platform.Event()
-            copy_done.record(stream)
-
-        return _PendingSnapshotUpdate(
-            snapshot_value=snapshot_value,
-            rows=rows_cpu,
-            cols=cols_cpu,
-            values=values_cpu,
-            copy_done=copy_done,
-        )
-
-    def _flush_snapshot(
-        self,
-        pending_snapshot_updates: list[_PendingSnapshotUpdate],
     ) -> None:
-        for update in pending_snapshot_updates:
-            update.copy_done.synchronize()
-            update.snapshot_value[update.rows, update.cols] = update.values
+        rows_cpu = rows.to(device="cpu", non_blocking=False)
+        cols_cpu = cols.to(device="cpu", non_blocking=False)
+        values_cpu = values.to(device="cpu", non_blocking=False)
+        snapshot_value[rows_cpu, cols_cpu] = values_cpu
 
 
 class GPUSnapshotPatchBuilder(PatchBuilder):
@@ -481,8 +606,6 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
-        self._validate_state_dict_keys(state_dict)
-
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []
@@ -490,31 +613,32 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         value_byte_chunks: list[torch.Tensor] = []
         patch_device: torch.device | None = None
 
-        for ordinal, key in enumerate(self.ordered_keys):
-            value = materialize_tensor(state_dict[key])
-            expected_shape = self.original_shapes[key]
+        for param_name in self.param_names_need_sync:
+            ordinal = self.param_names_need_sync_ordinals[param_name]
+            value = materialize_tensor(state_dict[param_name])
+            expected_shape = self.original_shapes[param_name]
             if value.shape != expected_shape:
                 raise ValueError(
-                    f"Shape mismatch for key {key}: "
+                    f"Shape mismatch for key {param_name}: "
                     f"expected {expected_shape}, got {value.shape}"
                 )
             value_2dview, _ = as_coo_2d_view(value)
             if value_2dview.device.type != Worker.torch_device_type:
                 raise ValueError(
                     "GPUSnapshotPatchBuilder requires sender state_dict tensors "
-                    f"to be on accelerator. Got key={key}, device={value_2dview.device}."
+                    f"to be on accelerator. Got key={param_name}, device={value_2dview.device}."
                 )
 
-            snapshot_value = self.snapshot[key]
+            snapshot_value = self.snapshot[param_name]
             if snapshot_value.device.type != Worker.torch_device_type:
                 raise ValueError(
                     "GPUSnapshotPatchBuilder requires snapshots to be on accelerator. "
-                    f"Got key={key}, device={snapshot_value.device}."
+                    f"Got key={param_name}, device={snapshot_value.device}."
                 )
             if snapshot_value.device != value_2dview.device:
                 raise ValueError(
                     "GPU snapshot and state tensor must be on the same accelerator. "
-                    f"Got key={key}, snapshot={snapshot_value.device}, "
+                    f"Got key={param_name}, snapshot={snapshot_value.device}, "
                     f"state={value_2dview.device}."
                 )
             if patch_device is None:
@@ -660,7 +784,8 @@ class PatchWeightSyncer(WeightSyncer):
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         bucket: dict[str, torch.Tensor],
-    ) -> None:
+    ) -> list[torch.Tensor]:
+        fallback_keepalive: list[torch.Tensor] = []
         for key, value in bucket.items():
             if key not in state_dict:
                 raise ValueError(
@@ -672,23 +797,25 @@ class PatchWeightSyncer(WeightSyncer):
                     "Patch init sync receiver does not support DTensor state_dict values"
                 )
             target.copy_(value, non_blocking=True)
+        if self.transport_device.type == Worker.torch_device_type:
+            fallback_keepalive.extend(tensors_record_stream(bucket.values()))
+        return fallback_keepalive
 
     async def _apply_init_weights(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
         recv: RecvFn,
     ) -> None:
-        first_bucket = await recv()
-        if not isinstance(first_bucket, dict):
+        bucket = await recv()
+        if not isinstance(bucket, dict):
             raise TypeError(
                 "Patch init sync receiver expected a bucket payload dictionary"
             )
 
-        total_buckets = int(
-            first_bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item()
-        )
-        first_bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
-        self._apply_init_weight_bucket(state_dict, first_bucket)
+        total_buckets = int(bucket.pop(BucketWeightSyncer._TOTAL_BUCKETS_KEY).item())
+        bucket.pop(BucketWeightSyncer._SYNCER_VERSION_KEY)
+        fallback_keepalive: list[torch.Tensor] = []
+        fallback_keepalive.extend(self._apply_init_weight_bucket(state_dict, bucket))
 
         for _ in range(total_buckets - 1):
             bucket = await recv()
@@ -696,11 +823,16 @@ class PatchWeightSyncer(WeightSyncer):
                 raise TypeError(
                     "Patch init sync receiver expected a bucket payload dictionary"
                 )
-            self._apply_init_weight_bucket(state_dict, bucket)
+            fallback_keepalive.extend(
+                self._apply_init_weight_bucket(state_dict, bucket)
+            )
+        Worker.torch_platform.current_stream().synchronize()
+        fallback_keepalive.clear()
 
     async def init_sender(
         self,
         state_dict: dict[str, torch.Tensor | DTensor],
+        param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
     ) -> None:
@@ -711,7 +843,9 @@ class PatchWeightSyncer(WeightSyncer):
         metadata = await recv()
         self.ordered_keys = metadata["ordered_keys"]
         self.original_shapes = metadata["original_shapes"]
+        self.param_names_need_sync = param_names_need_sync
         receiver_dtypes = metadata["receiver_dtypes"]
+
         if set(state_dict.keys()) != set(self.ordered_keys):
             raise ValueError("Sender state dict keys do not match receiver keys")
 
@@ -720,7 +854,7 @@ class PatchWeightSyncer(WeightSyncer):
 
         with torch.no_grad():
             snapshot: dict[str, torch.Tensor] = {}
-            for key in self.ordered_keys:
+            for key in self.param_names_need_sync:
                 value_2dview, original_shape = as_coo_2d_view(
                     materialize_tensor(state_dict[key])
                 )
@@ -746,7 +880,6 @@ class PatchWeightSyncer(WeightSyncer):
                 snapshot_value = value_2dview.detach().to(
                     device=snapshot_device,
                     dtype=receiver_dtypes[key],
-                    non_blocking=self.snapshot_device.type != "cpu",
                     copy=True,
                 )
                 snapshot[key] = (
@@ -759,6 +892,7 @@ class PatchWeightSyncer(WeightSyncer):
         self.patch_builder = PatchBuilder.create(
             self.snapshot,
             self.ordered_keys,
+            self.param_names_need_sync,
             self.original_shapes,
             self.snapshot_device,
             self.delta_encoding,
@@ -797,16 +931,6 @@ class PatchWeightSyncer(WeightSyncer):
             await self._apply_init_weights(state_dict, recv)
         self._receiver_initialized = True
 
-    def delta_encode(
-        self, rows: torch.Tensor, cols: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return PatchBuilder.delta_encode(rows, cols)
-
-    def delta_decode(
-        self, rows_delta: torch.Tensor, cols_delta: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return PatchBuilder.delta_decode(rows_delta, cols_delta)
-
     @torch.no_grad()
     def create_patch(
         self,
@@ -815,6 +939,10 @@ class PatchWeightSyncer(WeightSyncer):
     ) -> EmptyWeightPatch | WeightPatch:
         if self.patch_builder is None:
             raise RuntimeError("Snapshot not initialized")
+        if self.ordered_keys is None:
+            raise RuntimeError("Snapshot metadata not initialized")
+        if set(state_dict.keys()) != set(self.ordered_keys):
+            raise ValueError("State dict keys do not match snapshot keys")
         return self.patch_builder.create_patch(state_dict, version)
 
     async def sync(
@@ -839,9 +967,16 @@ class PatchWeightSyncer(WeightSyncer):
             "Snapshot info not initialized"
         )
 
-        payload = await recv()
+        payload: WeightPatchTransport = await recv()
+
+        fallback_keepalive: list[torch.Tensor] = []
+        if self.transport_device.type == Worker.torch_device_type:
+            fallback_keepalive = tensors_record_stream(payload.tensors())
 
         if isinstance(payload, EmptyWeightPatch):
+            if fallback_keepalive:
+                Worker.torch_platform.current_stream().synchronize()
+                fallback_keepalive.clear()
             return int(payload.version.item())
         patch = self.compressor.decompress(payload)
         applied_version = int(patch.version.item())
@@ -915,4 +1050,9 @@ class PatchWeightSyncer(WeightSyncer):
             )
 
         assert offset == patch.rows.numel(), "Patch offsets do not match payload size"
+
+        if fallback_keepalive:
+            Worker.torch_platform.current_stream().synchronize()
+            fallback_keepalive.clear()
+
         return applied_version

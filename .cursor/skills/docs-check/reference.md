@@ -13,15 +13,24 @@ Detailed checklists for doc-code cross-check.
 
 ## Doc layout
 
+Docs use a sidebar-only IA with eight top-level axes (Get Started · Examples ·
+Evaluation · Concepts · Guides · Reference · Extending · Resources). Each axis
+owns its pages directly; the legacy `tutorials/`, `apis/`, `blog/`, and
+`publications/` trees were removed and their pages relocated into the axes.
+
 | Area | EN path | ZH path |
 |------|---------|---------|
 | Root index | `docs/source-en/index.rst` | `docs/source-zh/index.rst` |
-| Start | `docs/source-en/rst_source/start/` | `docs/source-zh/rst_source/start/` |
-| Tutorials | `docs/source-en/rst_source/tutorials/` | `docs/source-zh/rst_source/tutorials/` |
+| Get Started | `docs/source-en/rst_source/start/` | `docs/source-zh/rst_source/start/` |
 | Examples (embodied) | `docs/source-en/rst_source/examples/embodied/` | `docs/source-zh/rst_source/examples/embodied/` |
 | Examples (agentic) | `docs/source-en/rst_source/examples/agentic/` | `docs/source-zh/rst_source/examples/agentic/` |
-| APIs | `docs/source-en/rst_source/apis/` | `docs/source-zh/rst_source/apis/` |
-| FAQ | `docs/source-en/rst_source/faq.rst` | `docs/source-zh/rst_source/faq.rst` |
+| Evaluation | `docs/source-en/rst_source/evaluations/` | `docs/source-zh/rst_source/evaluations/` |
+| Concepts | `docs/source-en/rst_source/concepts/` | `docs/source-zh/rst_source/concepts/` |
+| Guides | `docs/source-en/rst_source/guides/` | `docs/source-zh/rst_source/guides/` |
+| Reference (API) | `docs/source-en/rst_source/reference/api/` | `docs/source-zh/rst_source/reference/api/` |
+| Reference (algorithms) | `docs/source-en/rst_source/reference/algorithms/` | `docs/source-zh/rst_source/reference/algorithms/` |
+| Extending | `docs/source-en/rst_source/extending/` | `docs/source-zh/rst_source/extending/` |
+| Resources (blog, publications, release, FAQ) | `docs/source-en/rst_source/resources/` | `docs/source-zh/rst_source/resources/` |
 
 ---
 

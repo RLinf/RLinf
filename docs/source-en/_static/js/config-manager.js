@@ -13,13 +13,15 @@ function getSphinxAIConfig() {
         protocol: window.SPHINX_AI_CONFIG?.typesense?.protocol || 'http',
         apiKey: window.SPHINX_AI_CONFIG?.typesense?.apiKey || '',
         collectionName: window.SPHINX_AI_CONFIG?.typesense?.collectionName || 'sphinx_docs',
+        enableVectorSearch: window.SPHINX_AI_CONFIG?.typesense?.enableVectorSearch !== false,
+        stopwordsSet: window.SPHINX_AI_CONFIG?.typesense?.stopwordsSet || '',
         connectionTimeoutSeconds: 60
       },
       
       // Chat configuration
       chat: {
         maxMessages: 50,
-        enableTypesenseStreaming: false, // Controls Typesense streaming behavior - disabled by default
+        enableTypesenseStreaming: true,
         defaultMode: 'quick',
         modes: {
           quick: {
@@ -248,4 +250,4 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Sphinx AI Environment:', environment);
     console.log('Sphinx AI Configuration Validation:', validation);
   }
-}); 
+});

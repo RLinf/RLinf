@@ -1,38 +1,75 @@
-Supervised Fine-Tuning
-=======================
+OpenPI Supervised Fine-Tuning
+=============================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+   :align: center
+   :width: 40%
 
-This page explains how to run **full-parameter supervised fine-tuning (SFT)** and **LoRA fine-tuning** with the RLinf framework. SFT is typically the first stage before reinforcement learning: the model imitates high-quality examples so RL can continue optimization with a strong prior.
+   OpenPI π₀ / π₀.₅ vision-language-action models.
 
-Contents
-----------
+Run **full-parameter** or **LoRA** supervised fine-tuning on OpenPI (π₀ / π₀.₅) models
+with RLinf. SFT is the first stage before reinforcement learning: the model imitates
+high-quality demonstrations so RL can keep optimizing from a strong prior.
 
-- How to configure full-parameter SFT and LoRA SFT in RLinf
-- How to launch training on a single machine or multi-node cluster
-- How to monitor and evaluate results
+Overview
+--------
 
+Fine-tune π₀ / π₀.₅ on a LeRobot-format dataset — full-parameter or LoRA — on a single node or a multi-node cluster.
 
-Supported datasets
---------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-RLinf currently supports datasets in the LeRobot format, selected via **config_type**.
+   .. grid-item-card:: Models
+      :text-align: center
 
-Supported formats include:
+      π₀ · π₀.₅
 
-- pi0_maniskill
-- pi0_libero
-- pi0_aloha_robotwin
-- pi0_realworld
-- pi05_libero
-- pi05_maniskill
-- pi05_metaworld
-- pi05_calvin
+   .. grid-item-card:: Methods
+      :text-align: center
 
-You can also train with a custom dataset format. Refer to the files below:
+      Full SFT · LoRA
+
+   .. grid-item-card:: Data
+      :text-align: center
+
+      LeRobot format
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      1+ nodes · GPUs
+
+| **You'll do:** install OpenPI → prepare a LeRobot dataset → compute norm stats → launch ``run_vla_sft.sh`` → watch the training loss.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · a LeRobot-format dataset.
+
+Supported Datasets
+~~~~~~~~~~~~~~~~~~~
+
+RLinf supports LeRobot-format datasets, selected via the ``config_name`` field. Built-in formats:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 56
+
+   * - ``config_name``
+     - Dataset / environment
+   * - ``pi0_maniskill`` · ``pi05_maniskill``
+     - ManiSkill
+   * - ``pi0_libero`` · ``pi05_libero``
+     - LIBERO
+   * - ``pi0_aloha_robotwin``
+     - RoboTwin (ALOHA)
+   * - ``pi0_realworld``
+     - Real-world Franka
+   * - ``pi05_metaworld``
+     - MetaWorld
+   * - ``pi05_calvin``
+     - CALVIN
+
+Custom Dataset
+~~~~~~~~~~~~~~
+
+You can also train on a custom LeRobot dataset format. Refer to the files below:
 
 1. In ``examples/sft/config/custom_sft_openpi.yaml``, set the data format.
 
@@ -42,7 +79,7 @@ You can also train with a custom dataset format. Refer to the files below:
     openpi:
       config_name: "pi0_custom"
 
-2. In ``rlinf/models/embodiment/openpi/__init__.py``, set the data format to ``pi0_custom``.
+2. In ``rlinf/models/embodiment/openpi/__init__.py``, register the data format ``pi0_custom``.
 
 .. code:: python
 
@@ -76,44 +113,77 @@ You can also train with a custom dataset format. Refer to the files below:
             self.extra_delta_transform = True
             self.action_train_with_rotation_6d = False
 
-Normalization statistics for new LeRobot datasets
--------------------------------------------------
+Normalization Statistics
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When you train OpenPI on a newly collected LeRobot dataset, compute dataset
 normalization statistics before launching SFT. This is especially important for
-a realworld collected dataset.
+a real-world collected dataset.
 
 RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
 
 .. code:: bash
 
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   # Local dataset directory (contains meta/info.json):
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id /path/to/realworld_franka_bin_relocation
+
+   # Or a Hugging Face repo id cached under ~/.cache/huggingface/lerobot by default:
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
-Notes:
+.. note::
 
-- ``HF_LEROBOT_HOME`` must be set before running the script.
-- ``config_name`` must match your custom openpi dataconfig used by training.
-- ``repo_id`` must match your lerobot-format dataset name.
+   - ``--repo-id`` accepts a local dataset path or a LeRobot Hugging Face repo id.
+   - Optionally set ``HF_LEROBOT_HOME`` to change the cache parent for repo ids (default: ``~/.cache/huggingface/lerobot``).
+   - ``config_name`` must match your custom openpi dataconfig used by training.
 
-The script writes the generated stats under ``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``.
+The script writes the generated stats under ``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``.
+The OpenPI loader later reads the normalization stats from ``<model_path>/<repo_id>`` at runtime.
 
-The OpenPI loader later reads the normalization stats from the ``<model_path>/<repo_id>`` at runtime.
+A practical tip for stable training is to manually check the normalization statistics for very small standard deviations or narrow q99–q01 ranges. Increasing the standard deviation or widening the q99–q01 gap can help stabilize training, especially in two-stage pipelines that transition from SFT to online training.
 
-Another practical tip for stable training is to manually check the normalization statistics for very small standard deviations or narrow q99–q01 ranges. Increasing the standard deviation or widening the q99–q01 gap can help stabilize training, especially in two-stage pipelines that transition from SFT to online training.
+Installation
+------------
 
+.. include:: _setup_common.rst
 
-Training configuration
-----------------------
+**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
+
+.. code:: bash
+
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+
+   # Inside the container, switch to the OpenPI virtual environment:
+   source switch_env openpi
+
+**Option 2: Custom environment** — install bundle ``--env maniskill_libero``:
+
+.. code:: bash
+
+   # Add --use-mirror for faster downloads in mainland China.
+   bash requirements/install.sh embodied --model openpi --env maniskill_libero
+   source .venv/bin/activate
+
+Run It
+------
+
+**1. Configuration**
 
 Full examples live in:
 
 - ``examples/sft/config/libero_sft_openpi.yaml``
 - ``examples/sft/config/realworld_sft_openpi.yaml``
 
-A generic OpenPI SFT example looks like this:
+A generic OpenPI SFT config looks like this:
 
 .. code:: yaml
 
@@ -122,7 +192,7 @@ A generic OpenPI SFT example looks like this:
         component_placement:         # component → GPU mapping
             actor: 0-3
 
-To enable LoRA fine-tuning, set ``actor.model.is_lora`` to True and configure ``actor.model.lora_rank``.
+To enable LoRA fine-tuning, set ``actor.model.is_lora: True`` and configure ``actor.model.lora_rank``:
 
 .. code:: yaml
 
@@ -131,65 +201,23 @@ To enable LoRA fine-tuning, set ``actor.model.is_lora`` to True and configure ``
             is_lora: True
             lora_rank: 32
 
-Dependency Installation
------------------------
+**2. Launch**
 
-This section describes the dependency for the SFT of OpenPI model. 
-For other models, please refer to the ``Dependency Installation`` section of the corresponding examples.
-
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Start the Ray cluster, then run the helper script:
 
 .. code:: bash
 
-    # For mainland China users, you can use the following for better download speed:
-    # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
-
-.. code:: bash
-
-    docker run -it --rm --gpus all \
-        --shm-size 20g \
-        --network host \
-        --name rlinf \
-        -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-        # For mainland China users, you can use the following for better download speed:
-        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-
-Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
-
-.. code:: bash
-
-   source switch_env openpi
-
-**Option 2: Custom Environment**
-
-Install dependencies directly in your environment by running the following command:
-
-.. code:: bash
-
-    # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
-
-    bash requirements/install.sh embodied --model openpi --env maniskill_libero
-    source .venv/bin/activate
-
-Launch scripts
-----------------
-
-First start the Ray cluster, then run the helper script:
-
-.. code:: bash
-
-   # return to repo root
    bash examples/sft/run_vla_sft.sh libero_sft_openpi
 
 The same script works for generic text SFT; just swap the config file.
+
+Visualization and Results
+-------------------------
+
+Monitor the **training loss** to confirm the model is imitating the demonstrations. For
+every logged metric, see :doc:`Training metrics <../../reference/metrics>`.
+
+.. code-block:: bash
+
+   # Launch TensorBoard
+   tensorboard --logdir ./logs

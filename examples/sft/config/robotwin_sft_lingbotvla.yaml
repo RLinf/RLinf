@@ -31,9 +31,6 @@
   data:
     train_data_paths: "/path/to/robotwin-data"
 
-  algorithm:
-    adv_type: gae
-
   actor:
     group_name: "ActorGroup"
     training_backend: "fsdp"
@@ -56,7 +53,6 @@
 
     optim:
       lr: 2.5e-5
-      value_lr: 1.55e-4
       adam_beta1: 0.9
       adam_beta2: 0.95
       adam_eps: 1.0e-08

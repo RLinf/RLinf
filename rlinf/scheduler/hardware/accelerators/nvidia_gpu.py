@@ -15,16 +15,163 @@
 # Override Ray's NvidiaGPUAcceleratorManager
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py
 
+import logging
 import os
+import shlex
 import warnings
-from typing import TYPE_CHECKING, Optional
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar, Optional
 
+from omegaconf import ListConfig
 from ray._private.accelerators.nvidia_gpu import NvidiaGPUAcceleratorManager
 
-from .accelerator import AcceleratorManager, AcceleratorType
+from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level profiling state — toggled by the runner around gated steps.
+# Workers read this via NvidiaGPUManager.is_profiling_active().
+# ---------------------------------------------------------------------------
+
+_nv_profiling_active: bool = False
+
+
+# ---------------------------------------------------------------------------
+# NsightConfig — NVIDIA-specific profiling configuration
+# ---------------------------------------------------------------------------
+
+
+@AcceleratorManager.register_profiling_config(AcceleratorType.NV_GPU)
+@dataclass
+class NsightConfig(ProfileConfig):
+    """Configuration for profiling worker processes with Nsight Systems."""
+
+    BACKEND_TYPE: ClassVar[str] = "nsight"
+
+    backend: str = "nsight"
+    """Profiling backend identifier — always ``"nsight"`` for this class."""
+
+    options: Optional[dict[str, str]] = None
+    """Additional ``nsys profile`` options keyed by flag name."""
+
+    flags: Optional[list[str] | str] = None
+    """Additional bare ``nsys profile`` flags emitted without values."""
+
+    @staticmethod
+    def _stringify_option_value(option_value: object) -> str:
+        if isinstance(option_value, bool):
+            return str(option_value).lower()
+        return str(option_value)
+
+    @staticmethod
+    def _normalize_capture_range_end_alias(option_value: object) -> str:
+        assert option_value is not None, (
+            "Nsight option 'stop-on-range-end' must have an explicit value."
+        )
+        normalized_value = str(option_value).strip().lower()
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return "stop"
+        if normalized_value in {"false", "0", "no", "off"}:
+            return "none"
+        return str(option_value)
+
+    def __post_init__(self):
+        """Normalize Nsight options and flags after parsing YAML."""
+        super().__post_init__()
+
+        if self.flags is not None:
+            flags = self.flags
+            if isinstance(flags, str):
+                self.flags = [flags]
+            else:
+                assert isinstance(flags, (list, ListConfig)), (
+                    "flags must be a list of strings or a single string "
+                    "in cluster profiling config. "
+                    f"But got {type(flags)}: {flags}"
+                )
+                self.flags = [str(flag_name) for flag_name in flags]
+            assert all(flag_name != "" for flag_name in self.flags), (
+                "Nsight flags must not contain empty names."
+            )
+
+        if self.options is not None:
+            assert hasattr(self.options, "keys"), (
+                "Nsight options must be a dictionary in cluster profiling config. "
+                f"But got {type(self.options)}: {self.options}"
+            )
+            self.options = {
+                str(option_name): self._stringify_option_value(option_value)
+                for option_name, option_value in self.options.items()
+            }
+            if "stop-on-range-end" in self.options:
+                assert "capture-range-end" not in self.options, (
+                    "Nsight options must not specify both 'stop-on-range-end' "
+                    "and 'capture-range-end'."
+                )
+                self.options["capture-range-end"] = (
+                    self._normalize_capture_range_end_alias(
+                        self.options.pop("stop-on-range-end")
+                    )
+                )
+            assert not ("o" in self.options and "output" in self.options), (
+                "Nsight options must not specify both 'o' and 'output'."
+            )
+
+        if self.steps is not None:
+            # Auto-add the nsys flags that make step gating actually work.
+            # cudaProfilerApi capture-range honors torch.cuda.profiler.start()/stop()
+            # calls from the runner; without it, nsys ignores those API calls and
+            # records the whole process, producing huge traces that mask the gating.
+            # ``setdefault`` lets a user who knows what they want override these.
+            self.options = self.options or {}
+            self.options.setdefault("capture-range", "cudaProfilerApi")
+            self.options.setdefault("capture-range-end", "stop")
+
+        if self.flags is not None and self.options is not None:
+            overlapping_names = sorted(set(self.flags).intersection(self.options))
+            assert not overlapping_names, (
+                "Nsight flags and options must not specify the same names. "
+                f"Got duplicates: {overlapping_names}"
+            )
+
+    def check(self) -> bool:
+        """Return ``True`` if the ``nsys`` executable is available on PATH."""
+        import shutil
+
+        return shutil.which("nsys") is not None
+
+    def to_cli_tokens(self, default_output_prefix: Optional[str] = None) -> list[str]:
+        """Render ``nsys profile`` options into CLI tokens."""
+        flags = list(self.flags or [])
+        options = dict(self.options or {})
+        if default_output_prefix is not None:
+            options.setdefault("o", default_output_prefix)
+
+        option_tokens = []
+        for flag_name in flags:
+            if flag_name == "":
+                raise ValueError("Nsight option names must not be empty.")
+            option_tokens.append(
+                f"--{flag_name}" if len(flag_name) > 1 else f"-{flag_name}"
+            )
+        for option_name, option_value in options.items():
+            if option_name == "":
+                raise ValueError("Nsight option names must not be empty.")
+            if len(option_name) > 1:
+                option_tokens.append(f"--{option_name}={option_value}")
+            else:
+                option_tokens.extend([f"-{option_name}", option_value])
+        return option_tokens
+
+
+# ---------------------------------------------------------------------------
+# NvidiaGPUManager
+# ---------------------------------------------------------------------------
 
 
 @AcceleratorManager.register_manager(AcceleratorType.NV_GPU)
@@ -201,3 +348,70 @@ class NvidiaGPUManager(AcceleratorManager):
             )
 
             return pg_options
+
+    # ------------------------------------------------------------------
+    # Profiling API — NVIDIA-specific implementation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def modify_profiling_context(
+        py_executable: str,
+        profiling_cfg: "NsightConfig",
+        output_prefix: str,
+    ) -> str:
+        """Wrap ``py_executable`` with ``nsys profile`` using the given config."""
+        nsight_cmd = [
+            "nsys",
+            "profile",
+            *profiling_cfg.to_cli_tokens(default_output_prefix=output_prefix),
+            py_executable,
+        ]
+        return " ".join(shlex.quote(token) for token in nsight_cmd)
+
+    @staticmethod
+    def start_profiling(step_idx: Optional[int] = None) -> None:
+        """Open an nsys capture window via the CUDA profiler API."""
+        global _nv_profiling_active
+        if _nv_profiling_active:
+            return
+        import torch
+
+        _nv_profiling_active = True
+        torch.cuda.profiler.start()
+        if step_idx is not None:
+            logger.info("Nsight profiler window opened at step %d", step_idx)
+
+    @staticmethod
+    def stop_profiling() -> None:
+        """Close the current nsys capture window."""
+        global _nv_profiling_active
+        if not _nv_profiling_active:
+            return
+        import torch
+
+        torch.cuda.profiler.stop()
+        _nv_profiling_active = False
+
+    @staticmethod
+    def is_profiling_active() -> bool:
+        """Check if the NVIDIA GPU is profiling."""
+        return _nv_profiling_active
+
+    @staticmethod
+    @contextmanager
+    def profiling_range(
+        label: str,
+        color: Optional[str] = None,
+        domain: Optional[str] = None,
+    ):
+        """Emit an NVTX range around the enclosed block when profiling is active."""
+        if not _nv_profiling_active:
+            yield
+            return
+        import torch
+
+        torch.cuda.nvtx.range_push(label)
+        try:
+            yield
+        finally:
+            torch.cuda.nvtx.range_pop()

@@ -25,6 +25,7 @@ from torch.utils.data.distributed import DistributedSampler
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
 from rlinf.scheduler import Worker
+from rlinf.utils.utils import collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -221,6 +222,8 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             obs_dim, action_dim, type_name="critic"
         )
         value_module = self.model_provider_func(obs_dim, action_dim, type_name="value")
+
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         if initialize_target:
             target_module = self.model_provider_func(
@@ -786,34 +789,19 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             ).async_wait()
 
         async def recv_func():
-            if self._is_weight_sender:
-                metadata = await self.recv(
-                    src_group_name=self._rollout_group_name,
-                    src_rank=0,
-                    async_op=True,
-                    options=self._sync_weight_comm_options,
-                ).async_wait()
-            else:
-                metadata = None
-            if self._actor_world_size > 1:
-                metadata = await self.broadcast(
-                    metadata,
-                    groups=[
-                        (
-                            self._group_name,
-                            list(range(self._actor_world_size)),
-                        )
-                    ],
-                    src=(self._group_name, 0),
-                    async_op=True,
-                ).async_wait()
-            return metadata
+            return await self.recv(
+                src_group_name=self._rollout_group_name,
+                src_rank=0,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         if not self.weight_syncer.sender_initialized():
             await self.weight_syncer.init_sender(
                 state_dict=state_dict,
                 send=send_func,
                 recv=recv_func,
+                param_names_need_sync=self.param_names_need_sync,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)

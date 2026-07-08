@@ -224,6 +224,7 @@ class ReasoningRunner:
                     worker is not None
                     and worker_cfg.training_backend == "megatron"
                     and worker_cfg.megatron.use_hf_ckpt
+                    and not getattr(worker_cfg.megatron, "mbridge", False)
                 ):
                     from rlinf.utils.ckpt_convertor.megatron_convertor.convert_hf_to_mg import (
                         convert_hf_to_mg,
@@ -437,7 +438,7 @@ class ReasoningRunner:
             initial=self.global_steps,
             total=self.max_steps,
             desc="Global Step",
-            ncols=1280,
+            ncols=1650,
         )
 
         self.run_timer.start_time()

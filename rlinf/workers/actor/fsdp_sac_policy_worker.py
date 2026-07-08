@@ -43,7 +43,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.utils import clear_memory
+from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
 
 
@@ -90,6 +90,10 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 target_module.gradient_checkpointing_enable()
         else:
             self.logger.info("[FSDP] Gradient checkpointing is disabled")
+
+        # Record the original trainable parameter names before FSDP wrapping.
+        # Persistent buffer names are also recorded for selective weight syncing.
+        self.param_names_need_sync = collect_param_names_need_sync(module)
 
         # build model, optimizer, lr_scheduler, grad_scaler
         self.model = self._strategy.wrap_model(
@@ -306,6 +310,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                         )
                         target_param.data.copy_(shadow.to(target_param.data.dtype))
 
+    @Worker.timer("actor/recv_traj")
     async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
         """
         Receive rollout trajectories from rollout workers.
@@ -366,7 +371,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 SupportedModel.OPENVLA_OFT,
             ]:
                 kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
             if use_dsrl:
                 kwargs["train"] = True
@@ -478,7 +483,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         curr_obs = batch["curr_obs"]
         kwargs = {}
         if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
-            kwargs["temperature"] = self.cfg.algorithm.sampling_params.temperature_train
+            kwargs["temperature"] = self.cfg.rollout.sampling_params.temperature_train
         if self.use_dsrl:
             kwargs["train"] = True
         pi, log_pi, shared_feature = self.model(
@@ -528,7 +533,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             kwargs = {}
             if self.cfg.actor.model.model_type in ["openvla", "openvla_oft"]:
                 kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
             if self.use_dsrl:
                 kwargs["train"] = True
@@ -741,6 +746,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         torch.cuda.empty_cache()
         return mean_metric_dict
 
+    @Worker.timer("actor/compute_adv")
     def compute_advantages_and_returns(self):
         """
         SAC doesn't compute advantages/returns like PPO.
