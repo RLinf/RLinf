@@ -114,6 +114,32 @@ For PPO, use the PPO config from the original LIBERO page:
    ROBOT_PLATFORM=LIBERO \
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
+GR00T N1.5 on Ascend
+--------------------
+
+GR00T N1.5 also runs on Ascend. Install it with the ``gr00t`` model and the
+``maniskill_libero`` environment, which covers the LIBERO tasks:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
+
+On Ascend, ``install.sh`` builds ``decord`` from source (no aarch64 wheel is
+published) and applies a TensorFlow build pinned for GR00T. flash-attention is
+skipped, and GR00T switches to NPU kernels automatically at load time, so no
+config changes are required.
+
+Launch a GR00T LIBERO run with OSMesa rendering, using the configs from
+:doc:`the GR00T example <../examples/embodied/gr00t>`:
+
+.. code-block:: bash
+
+   MUJOCO_GL=osmesa \
+   PYOPENGL_PLATFORM=osmesa \
+   ROBOT_PLATFORM=LIBERO \
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
 What Stays the Same
 -------------------
 

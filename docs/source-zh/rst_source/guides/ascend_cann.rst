@@ -108,6 +108,31 @@ Ascend 芯片运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以
    ROBOT_PLATFORM=LIBERO \
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
 
+Ascend 上的 GR00T N1.5
+----------------------
+
+GR00T N1.5 同样可以在 Ascend 上运行。使用 ``gr00t`` 模型和涵盖 LIBERO 任务的
+``maniskill_libero`` 环境进行安装：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
+
+在 Ascend 上，``install.sh`` 会从源码编译 ``decord``\ （aarch64 没有官方 wheel），
+并固定一个为 GR00T 验证过的 TensorFlow 版本。flash-attention 会被跳过，GR00T 在
+加载时自动切换到 NPU 算子，因此无需修改配置。
+
+使用 OSMesa 渲染启动 GR00T 的 LIBERO 训练，配置见
+:doc:`GR00T 示例 <../examples/embodied/gr00t>`\ ：
+
+.. code-block:: bash
+
+   MUJOCO_GL=osmesa \
+   PYOPENGL_PLATFORM=osmesa \
+   ROBOT_PLATFORM=LIBERO \
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
+
 保持不变的部分
 --------------
 
