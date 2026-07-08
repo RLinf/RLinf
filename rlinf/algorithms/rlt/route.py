@@ -62,6 +62,26 @@ def _info_bool(
     return value.reshape(batch_size, -1).to(torch.bool).any(dim=1)
 
 
+def _last_info_bool(
+    value: torch.Tensor | None,
+    *,
+    batch_size: int,
+    device: torch.device,
+    default: bool,
+) -> torch.Tensor:
+    if value is None:
+        return torch.full((batch_size,), bool(default), dtype=torch.bool, device=device)
+    value = torch.as_tensor(value, device=device)
+    if value.numel() == 1:
+        return torch.full(
+            (batch_size,),
+            bool(value.reshape(-1)[0].item()),
+            dtype=torch.bool,
+            device=device,
+        )
+    return value.reshape(batch_size, -1).to(torch.bool)[:, -1]
+
+
 def _flatten_action_chunk(actions: torch.Tensor) -> torch.Tensor:
     if actions.dim() <= 2:
         return actions
@@ -138,6 +158,9 @@ class RealworldRLTRoute(RLTRoute):
         result["forward_inputs"]["record_transition"] = rlt_switch_flags.reshape(
             actions.shape[0], -1
         )[:, :1].to(torch.bool)
+        result["forward_inputs"]["actor_switch"] = result["forward_inputs"][
+            "record_transition"
+        ]
         return RLTRouteOutput(actions=routed_actions, result=result)
 
 
@@ -157,12 +180,13 @@ class SimulatorRLTRoute(RLTRoute):
         batch_size, chunk_len, action_dim = actions.shape
         ready_for_online = self._ready_for_online(ctx.version)
 
-        actor_switch = _info_bool(
+        critical_phase = _last_info_bool(
             ctx.rlt_switch_flags,
             batch_size=batch_size,
             device=actions.device,
             default=False,
         )
+        actor_switch = critical_phase
         if self.use_schedule:
             actor_switch = actor_switch & torch.full(
                 (batch_size,),
@@ -171,17 +195,14 @@ class SimulatorRLTRoute(RLTRoute):
                 device=actions.device,
             )
 
-        requested_expert_takeover = _info_bool(
+        requested_expert_takeover = _last_info_bool(
             ctx.intervene_requested,
             batch_size=batch_size,
             device=actions.device,
             default=False,
         )
         expert_takeover = (
-            requested_expert_takeover
-            & ready_for_online
-            & (ctx.mode == "train")
-            & (ctx.expert_model is not None)
+            requested_expert_takeover & ready_for_online & (ctx.mode == "train")
         )
 
         base_actions = _base_ref_actions(
@@ -225,7 +246,8 @@ class SimulatorRLTRoute(RLTRoute):
 
         forward_inputs = result["forward_inputs"]
         forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
-        forward_inputs["record_transition"] = actor_switch[:, None]
+        forward_inputs["record_transition"] = critical_phase[:, None]
+        forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
         forward_inputs["intervention_requested"] = requested_expert_takeover[:, None]
         result["intervene_flags"] = intervene_flags
         return RLTRouteOutput(actions=routed_actions, result=result)

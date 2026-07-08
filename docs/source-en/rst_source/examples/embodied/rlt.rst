@@ -219,8 +219,8 @@ For the ManiSkill joint config, ``env.*.rlt_policy_switch`` automatically
 produces ``rlt_switch_flags`` (actor/ref phase) and ``intervene_flag`` (expert
 takeover request) from task information. The HF rollout route uses those flags
 to choose the actor action, VLA ``ref_chunk``, or expert action at whole-chunk
-granularity, then writes ``record_transition`` and ``intervention_requested`` into
-``forward_inputs`` for replay and monitoring.
+granularity, then writes ``record_transition``, ``actor_switch``, and
+``intervention_requested`` into ``forward_inputs`` for replay and monitoring.
 
 The critic is trained with a TD target over chunked rewards. Rewards inside
 the action chunk are discounted and then bootstrapped with the next-state Q
@@ -725,7 +725,8 @@ Useful RLT signals:
 
   ManiSkill rollout / replay diagnostics (logged from trajectories received by the actor):
 
-  - ``train/replay/actor_switch_rate``: fraction of collected steps where the route executed the actor instead of VLA ``ref_chunk`` (from ``forward_inputs.record_transition``; includes schedule warmup masking).
+  - ``train/replay/record_transition_rate``: fraction of collected steps saved as RLT transitions (from ``forward_inputs.record_transition``).
+  - ``train/replay/actor_switch_rate``: fraction of collected steps where the actor/student action actually controlled the env (from ``forward_inputs.actor_switch``).
   - ``train/replay/intervention_requested_rate``: fraction of steps where the env requested expert takeover (from ``forward_inputs.intervention_requested``).
   - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.

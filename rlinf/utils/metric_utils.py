@@ -95,9 +95,17 @@ def collect_trajectory_replay_metrics(
     metrics: dict[str, float] = {}
     rate_specs = (
         (
-            "replay/actor_switch_rate",
+            "replay/record_transition_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "record_transition"
+            ),
+            "record_transition_sum",
+            "record_transition_count",
+        ),
+        (
+            "replay/actor_switch_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actor_switch"
             ),
             "actor_switch_sum",
             "actor_switch_count",

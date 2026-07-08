@@ -79,15 +79,6 @@ class RLTACLossMixin:
         self._require_twin_q(all_q_values)
         return all_q_values[..., 0:1]
 
-    def _aggregate_q(self, all_q_values: torch.Tensor, agg_q: str) -> torch.Tensor:
-        if agg_q == "q1":
-            return self._q1(all_q_values)
-        if agg_q == "min":
-            return self._min_twin_q(all_q_values)
-        if agg_q == "mean":
-            return torch.mean(all_q_values, dim=-1, keepdim=True)
-        raise NotImplementedError(f"{agg_q=} is not supported for RLT Stage 2.")
-
     def _discounted_chunk_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
         rewards = rewards.reshape(rewards.shape[0], -1)
         rewards = rewards.to(self.torch_dtype)
@@ -237,8 +228,11 @@ class RLTACLossMixin:
         next_obs = batch["next_obs"]
         actions = batch["actions"]
         rewards = batch["rewards"]
-        terminations = batch["terminations"].to(self.torch_dtype)
-        not_done = ~terminations.reshape(terminations.shape[0], -1).bool().any(
+        done_source = batch["terminations"]
+        if use_simulator_transition_replay(self.cfg):
+            done_source = batch["dones"]
+        done_source = done_source.to(self.torch_dtype)
+        not_done = ~done_source.reshape(done_source.shape[0], -1).bool().any(
             dim=-1, keepdim=True
         )
 
@@ -336,11 +330,7 @@ class RLTACLossMixin:
             f"q_value_{q_id}": all_qf_pi[..., q_id].mean().item()
             for q_id in range(num_q_values)
         }
-        actor_agg_q = self.cfg.algorithm.get(
-            "actor_agg_q",
-            self.cfg.algorithm.get("agg_q", "min"),
-        )
-        qf_pi = self._aggregate_q(all_qf_pi, str(actor_agg_q))
+        qf_pi = self._q1(all_qf_pi)
         metrics["q_pi"] = qf_pi.mean().item()
 
         ref_chunk = self._ref_chunk(curr_obs)
@@ -437,22 +427,6 @@ class RLTACReplayMixin:
                 row_dict[key] = self._row_tensor(value, idx)
         return row_dict
 
-    def _rlt_obs_from_flat_forward_inputs(
-        self,
-        flat: dict,
-        idx: int,
-    ) -> dict[str, torch.Tensor] | None:
-        forward_inputs = flat.get("forward_inputs")
-        if not isinstance(forward_inputs, dict):
-            return None
-        obs = {}
-        for key in ("z_rl", "proprio", "ref_chunk"):
-            value = forward_inputs.get(key)
-            if not isinstance(value, torch.Tensor) or idx >= value.shape[0]:
-                return None
-            obs[key] = self._row_tensor(value, idx)
-        return obs
-
     def _rlt_obs_from_flat_dict(
         self,
         flat: dict,
@@ -540,9 +514,12 @@ class RLTACReplayMixin:
 
                 curr_obs = self._rlt_obs_from_flat_dict(flat, "curr_obs", idx)
                 if curr_obs is None:
-                    curr_obs = self._rlt_obs_from_flat_forward_inputs(flat, idx)
-                if curr_obs is not None:
-                    transition.curr_obs = curr_obs
+                    raise ValueError(
+                        "RLT transition replay requires curr_obs. Ensure "
+                        "update_rlt_transitions() populated transition obs "
+                        f"before replay ingestion, got row index {idx}."
+                    )
+                transition.curr_obs = curr_obs
 
                 # Dones have one extra initial slot, so transition t reads
                 # terminal flags from t+1. Rewards are already action-aligned
@@ -577,6 +554,12 @@ class RLTACReplayMixin:
                     next_obs = self._rlt_obs_from_flat_dict(flat, "next_obs", idx)
                 if next_obs is not None:
                     transition.next_obs = next_obs
+                else:
+                    raise ValueError(
+                        "RLT transition replay requires next_obs for non-terminal "
+                        "transitions. Ensure update_rlt_transitions() populated "
+                        f"transition obs before replay ingestion, got row index {idx}."
+                    )
 
                 replay_trajectories.append(transition)
                 if is_done:

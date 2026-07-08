@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -128,7 +128,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         self._is_peg_insertion_side = is_peg_insertion_side_env_id(self.task_id)
         self._rlt_switch_cfg = getattr(cfg, "rlt_policy_switch", None)
         self._rlt_switch_state: dict[str, torch.Tensor] | None = None
-        self._rlt_hole_radii: torch.Tensor | None = None
+        self._rlt_hole_radius_values: torch.Tensor | None = None
 
         with open_dict(cfg):
             cfg.init_params.num_envs = num_envs
@@ -175,7 +175,9 @@ class ManiskillRLTEnv(ManiskillEnv):
             raise ValueError(
                 "ManiSkill RLT policy switch is only supported for peg-insertion tasks."
             )
-        self._rlt_hole_radii = getattr(self.env.unwrapped, "box_hole_radii", None)
+        self._rlt_hole_radius_values = getattr(
+            self.env.unwrapped, "box_hole_radii", None
+        )
         self._rlt_switch_state = self._init_rlt_switch_state(self.num_envs)
 
     def _init_rlt_switch_state(self, batch_size: int) -> dict[str, torch.Tensor]:
@@ -487,7 +489,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         hole_x = self._rlt_info_float(infos, "peg_head_hole_x", device)
         abs_y = self._rlt_info_float(infos, "peg_head_hole_abs_y", device)
         abs_z = self._rlt_info_float(infos, "peg_head_hole_abs_z", device)
-        hole_radii = self._rlt_hole_radii(abs_y, gate_cfg, device)
+        hole_radii = self._resolve_rlt_hole_radii(abs_y, gate_cfg, device)
 
         near_hole_x_min = float(gate_cfg.get("near_hole_x_min", -0.10))
         yz_margin = float(gate_cfg.get("near_hole_yz_margin", 2.0))
@@ -550,7 +552,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         hole_x = self._rlt_info_float(infos, "peg_head_hole_x", device)
         abs_y = self._rlt_info_float(infos, "peg_head_hole_abs_y", device)
         abs_z = self._rlt_info_float(infos, "peg_head_hole_abs_z", device)
-        hole_radii = self._rlt_hole_radii(abs_y, gate_cfg, device)
+        hole_radii = self._resolve_rlt_hole_radii(abs_y, gate_cfg, device)
 
         near_hole_x_min = float(gate_cfg.get("near_hole_x_min", -0.05))
         yz_margin = float(gate_cfg.get("near_hole_yz_margin", 1.25))
@@ -645,7 +647,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         hole_x = self._rlt_info_float(infos, "peg_head_hole_x", device)
         abs_y = self._rlt_info_float(infos, "peg_head_hole_abs_y", device)
         abs_z = self._rlt_info_float(infos, "peg_head_hole_abs_z", device)
-        hole_radii = self._rlt_hole_radii(abs_y, auto_gate, device)
+        hole_radii = self._resolve_rlt_hole_radii(abs_y, auto_gate, device)
 
         near_hole_x_min = float(auto_gate.get("near_hole_x_min", -0.16))
         yz_margin = float(auto_gate.get("near_hole_yz_margin", 1.5))
@@ -662,14 +664,14 @@ class ManiskillRLTEnv(ManiskillEnv):
             enter_actor = enter_actor & (~success)
         return enter_actor
 
-    def _rlt_hole_radii(
+    def _resolve_rlt_hole_radii(
         self,
         like: torch.Tensor,
         auto_gate: DictConfig | dict,
         device: torch.device,
     ) -> torch.Tensor:
-        if self._rlt_hole_radii is not None:
-            return self._rlt_hole_radii.to(device, dtype=torch.float32)
+        if self._rlt_hole_radius_values is not None:
+            return self._rlt_hole_radius_values.to(device, dtype=torch.float32)
         fallback_hole_radius = auto_gate.get("fallback_hole_radius", 0.03)
         return torch.full_like(like, float(fallback_hole_radius))
 
