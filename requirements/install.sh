@@ -1099,6 +1099,59 @@ install_common_embodied_deps() {
     fi
 }
 
+is_aarch64_platform() {
+    case "$(uname -m)" in
+        aarch64|arm64)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+maybe_build_decord_from_source() {
+    is_aarch64_platform || return 0
+
+    local installed_version
+    installed_version=$(python - <<'EOF'
+try:
+    import importlib.metadata as metadata
+    print(metadata.version("decord"))
+except Exception:
+    pass
+EOF
+)
+    if [ "$installed_version" = "0.6.0" ]; then
+        echo "[install.sh] decord ${installed_version} already installed; skipping source build."
+        return 0
+    fi
+
+    # The build needs cmake + a C/C++ toolchain from sys_deps.sh, which is
+    # skipped under --no-root. Fail early with an actionable message instead of
+    # a cryptic mid-build error.
+    local tool
+    for tool in cmake make cc; do
+        if ! command -v "$tool" &>/dev/null; then
+            echo "[install.sh] '$tool' not found, required to build decord from source on $(uname -m)." >&2
+            echo "[install.sh] Install the build toolchain (run sys_deps.sh, i.e. drop --no-root) or set DECORD_PATH to a pre-built decord checkout." >&2
+            return 1
+        fi
+    done
+
+    echo "[install.sh] Building decord==0.6.0 from source on $(uname -m)..."
+    local decord_path
+    decord_path=$(clone_or_reuse_repo DECORD_PATH "$VENV_DIR/decord" https://github.com/dmlc/decord.git -b v0.6.0 --recurse-submodules)
+
+    mkdir -p "$decord_path/build"
+    (
+        cd "$decord_path/build"
+        cmake .. -DUSE_CUDA=0 -DCMAKE_BUILD_TYPE=Release
+        make -j"$(nproc)"
+    )
+    uv pip install "$decord_path/python" --no-build-isolation
+}
+
 install_openvla_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1349,7 +1402,12 @@ install_gr00t_model() {
     local gr00t_path
     gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" https://github.com/NVIDIA/Isaac-GR00T.git -b n1.5-release)
     uv pip install -e "$gr00t_path" --no-deps
-    uv pip install -r $SCRIPT_DIR/embodied/models/gr00t.txt
+    maybe_build_decord_from_source
+    uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
+    if [ "$PLATFORM" = "ascend" ]; then
+        echo "[install.sh] Applying Ascend GR00T compatibility pins"
+        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/gr00t.txt"
+    fi
     case "$ENV_NAME" in
         maniskill_libero|libero)
             install_${ENV_NAME}_env
@@ -1511,7 +1569,8 @@ install_dreamzero_deps() {
         git -C "$dreamzero_path" checkout "${DREAMZERO_GIT_REF:-ab790c198fbce33503358efbbd4187ce9a89adf3}" >&2
     fi
 
-    uv pip install -r $SCRIPT_DIR/embodied/models/dreamzero.txt
+    maybe_build_decord_from_source
+    uv pip install -r "$SCRIPT_DIR/embodied/models/dreamzero.txt"
     python -m pip install -e "$dreamzero_path" --no-deps --ignore-requires-python
 }
 

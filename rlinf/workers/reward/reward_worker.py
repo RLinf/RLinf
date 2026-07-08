@@ -25,7 +25,6 @@ from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models.embodiment.reward import get_reward_model_class
 from rlinf.scheduler import (
     Channel,
     Cluster,
@@ -252,6 +251,8 @@ class EmbodiedRewardWorker(Worker):
             }
 
     def model_provider_func(self):
+        from rlinf.models.embodiment.reward import get_reward_model_class
+
         reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
 
         model_cfg = self.cfg.reward.model
@@ -422,6 +423,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
 
     def model_provider_func(self):
+        from rlinf.models.embodiment.reward import get_reward_model_class
+
         reward_cls = get_reward_model_class(self.cfg.actor.model.model_type)
 
         model_cfg = self.cfg.actor.model
