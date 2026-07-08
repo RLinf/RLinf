@@ -202,7 +202,10 @@ class SimulatorRLTRoute(RLTRoute):
             default=False,
         )
         expert_takeover = (
-            requested_expert_takeover & ready_for_online & (ctx.mode == "train")
+            requested_expert_takeover
+            & ready_for_online
+            & (ctx.mode == "train")
+            & (ctx.expert_model is not None)
         )
 
         base_actions = _base_ref_actions(
