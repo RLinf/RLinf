@@ -1090,9 +1090,10 @@ class EnvWorker(Worker):
                     )
 
                     self.rollout_results[stage_id].append_step_result(chunk_step_result)
-                    if rollout_result.save_flags is not None:
+                    save_flags = getattr(rollout_result, "save_flags", None)
+                    if isinstance(save_flags, torch.Tensor):
                         self.rollout_results[stage_id].mark_last_step_with_flags(
-                            rollout_result.save_flags
+                            save_flags
                         )
                     if (
                         self.reward_mode == "history_buffer"

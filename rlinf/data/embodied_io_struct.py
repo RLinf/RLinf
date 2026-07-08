@@ -290,6 +290,7 @@ class RolloutResult:
 
     bootstrap_values: torch.Tensor = None  # [B, 1]
     intervene_flags: torch.Tensor = None  # [B, num_action_chunks]
+    save_flags: torch.Tensor = None  # [B, num_action_chunks]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
     versions: torch.Tensor = None  # [B, 1]
 
@@ -304,6 +305,8 @@ class RolloutResult:
             self.bootstrap_values = self.bootstrap_values.cpu().contiguous()
         if self.intervene_flags is not None:
             self.intervene_flags = self.intervene_flags.cpu().contiguous()
+        if self.save_flags is not None:
+            self.save_flags = self.save_flags.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
         if self.versions is not None:
@@ -331,6 +334,7 @@ class RolloutResult:
         merged_prev_values = _merge_optional_tensor("prev_values")
         merged_bootstrap_values = _merge_optional_tensor("bootstrap_values")
         merged_intervene_flags = _merge_optional_tensor("intervene_flags")
+        merged_save_flags = _merge_optional_tensor("save_flags")
         merged_versions = _merge_optional_tensor("versions")
 
         forward_inputs_list = [
@@ -347,6 +351,7 @@ class RolloutResult:
             prev_values=merged_prev_values,
             bootstrap_values=merged_bootstrap_values,
             intervene_flags=merged_intervene_flags,
+            save_flags=merged_save_flags,
             forward_inputs=merged_forward_inputs,
             versions=merged_versions,
         )
@@ -579,22 +584,23 @@ class EmbodiedRolloutResult:
         if result.forward_inputs:
             self.forward_inputs.append(result.forward_inputs)
 
-    def mark_last_step_with_intervene_flags(self, intervene_flags: torch.Tensor):
+    def mark_last_step_with_flags(self, save_flags: torch.Tensor):
         if not self.intervene_flags:
             return
 
-        if intervene_flags.dim() == 1:
-            intervene_flags = intervene_flags[:, None]
-        assert intervene_flags.dim() == 2, (
-            f"Expected 2D tensor, got {intervene_flags.shape=}"
-        )
+        if save_flags.dim() == 1:
+            save_flags = save_flags[:, None]
+        assert save_flags.dim() == 2, f"Expected 2D tensor, got {save_flags.shape=}"
 
         last_action = self.actions[-1]
-        bsz, num_action_chunks = intervene_flags.shape
-        expanded_flags = intervene_flags.reshape(bsz, num_action_chunks, 1).expand_as(
+        bsz, num_action_chunks = save_flags.shape
+        expanded_flags = save_flags.reshape(bsz, num_action_chunks, 1).expand_as(
             last_action.reshape(bsz, num_action_chunks, -1)
         )
         self.intervene_flags[-1] = expanded_flags.reshape(bsz, -1).to(torch.bool)
+
+    def mark_last_step_with_intervene_flags(self, intervene_flags: torch.Tensor):
+        self.mark_last_step_with_flags(intervene_flags)
 
     def update_last_actions(
         self, intervene_actions: torch.Tensor, intervene_flags: torch.Tensor
