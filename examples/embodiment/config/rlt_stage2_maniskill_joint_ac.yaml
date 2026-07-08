@@ -32,7 +32,6 @@ runner:
   only_eval: False
   weight_sync_interval: 1
   val_check_interval: 25
-  eval_before_train: False
   save_interval: 50
   resume_dir: null
   ckpt_path: null

@@ -42,26 +42,6 @@ class RLTRouteOutput:
     result: dict[str, Any]
 
 
-def _info_bool(
-    value: torch.Tensor | None,
-    *,
-    batch_size: int,
-    device: torch.device,
-    default: bool,
-) -> torch.Tensor:
-    if value is None:
-        return torch.full((batch_size,), bool(default), dtype=torch.bool, device=device)
-    value = torch.as_tensor(value, device=device)
-    if value.numel() == 1:
-        return torch.full(
-            (batch_size,),
-            bool(value.reshape(-1)[0].item()),
-            dtype=torch.bool,
-            device=device,
-        )
-    return value.reshape(batch_size, -1).to(torch.bool).any(dim=1)
-
-
 def _last_info_bool(
     value: torch.Tensor | None,
     *,
