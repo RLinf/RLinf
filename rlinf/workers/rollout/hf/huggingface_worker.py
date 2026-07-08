@@ -611,10 +611,7 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            actions, result = self._predict_rollout_actions(
-                final_obs,
-                mode="eval",
-            )
+            actions, result = self._predict_rollout_actions(final_obs)
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
             else:
