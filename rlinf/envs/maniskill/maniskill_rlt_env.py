@@ -925,9 +925,7 @@ class ManiskillRLTEnv(ManiskillEnv):
                 continue
             value = restored[key]
             if isinstance(value, torch.Tensor) and isinstance(prev_value, torch.Tensor):
-                if value.ndim > 0 and value.shape[0] == self.num_envs:
-                    value_mask = mask.to(device=value.device)
-                    value[value_mask] = prev_value.to(value.device)[value_mask]
+                self._restore_frozen_tensor_value(value, prev_value, mask)
             elif isinstance(value, dict) and isinstance(prev_value, dict):
                 restored[key] = self._restore_frozen_values(value, prev_value, mask)
             elif isinstance(value, list) and isinstance(prev_value, list):
@@ -940,6 +938,22 @@ class ManiskillRLTEnv(ManiskillEnv):
                     ):
                         value[env_idx] = prev_value[env_idx]
         return restored
+
+    def _restore_frozen_tensor_value(self, value, prev_value, mask):
+        if value.ndim == 0 or value.shape[0] != self.num_envs:
+            return
+        prev_value = prev_value.to(device=value.device)
+        if (
+            prev_value.ndim == value.ndim + 1
+            and prev_value.shape[0] == self.num_envs
+            and prev_value.shape[2:] == value.shape[1:]
+        ):
+            prev_value = prev_value[:, -1]
+        if prev_value.shape != value.shape:
+            return
+
+        value_mask = mask.to(device=value.device)
+        value[value_mask] = prev_value[value_mask]
 
     def _restore_frozen_info_values(self, infos, previous_infos, mask):
         return self._restore_frozen_values(infos, previous_infos, mask)
