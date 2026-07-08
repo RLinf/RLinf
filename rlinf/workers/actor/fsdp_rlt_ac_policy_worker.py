@@ -61,7 +61,11 @@ class RLTACLossMixin:
         return int(self.update_step)
 
     def _ref_chunk(self, obs: dict[str, torch.Tensor]) -> torch.Tensor:
-        return self._flatten_chunk(obs["ref_chunk"])
+        chunk_len, action_dim = self._chunk_shape()
+        ref_chunk = self._flatten_chunk(obs["ref_chunk"]).reshape(
+            obs["ref_chunk"].shape[0], -1, action_dim
+        )
+        return ref_chunk[:, :chunk_len].reshape(ref_chunk.shape[0], -1)
 
     @staticmethod
     def _require_twin_q(all_q_values: torch.Tensor) -> None:
