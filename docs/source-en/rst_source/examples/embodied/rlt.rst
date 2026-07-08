@@ -66,16 +66,16 @@ Provided Configuration Files
      - Config
      - Purpose
    * - Franka Stage 1
-     - ``examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml``
+     - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
      - SFT π₀.₅ together with the RLT token transformer on Franka demonstrations.
    * - Franka Stage 2
-     - ``examples/embodiment/config/rlt_stage2_ac_mlp.yaml``
+     - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
      - Run real-world RLT actor-critic training with the frozen Stage 1 feature model.
    * - ManiSkill Stage 1
-     - ``examples/sft/config/rlt_stage1_maniskill_joint_alpha1.yaml``
+     - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - Jointly train the ManiSkill OpenPI base policy and RLT token transformer.
    * - ManiSkill Stage 2
-     - ``examples/embodiment/config/rlt_stage2_maniskill_joint_ac.yaml``
+     - ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``
      - Run simulated RLT actor-critic training with automatic ``rlt_policy_switch`` and transition replay.
 
 Installation
@@ -149,7 +149,7 @@ Important Stage 1 fields:
 
 .. code:: yaml
 
-   # examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml
+   # examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml
    data:
      train_data_paths: "/path/to/data"
 
@@ -237,7 +237,7 @@ Important Stage 2 fields:
 
 .. code:: yaml
 
-   # examples/embodiment/config/rlt_stage2_ac_mlp.yaml
+   # examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml
    algorithm:
      loss_type: rlt_ac
      q_weight: 0.1
@@ -366,7 +366,7 @@ Launch SFT:
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh rlt_stage1_sft_openpi_pi05
+   bash examples/sft/run_vla_sft.sh realworld_rlt_stage1_sft_openpi_pi05
 
 The saved checkpoint directory should look like:
 
@@ -419,7 +419,7 @@ Launch the async run from the master node:
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_async.sh rlt_stage2_ac_mlp
+   bash examples/embodiment/run_realworld_async.sh realworld_rlt_stage2_ac_mlp
 
 The default keyboard module implements the key phase switch used by RLT: press
 ``b`` to enter the Stage 2 actor-controlled phase. Other behavior can be
@@ -515,7 +515,7 @@ Stage 1: Jointly Train the ManiSkill OpenPI + RLT Feature Model
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Edit the data path in
-``examples/sft/config/rlt_stage1_maniskill_joint_alpha1.yaml``:
+``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``:
 
 .. code:: yaml
 
@@ -537,7 +537,7 @@ Launch training:
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh rlt_stage1_maniskill_joint_alpha1
+   bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
 
 Stage 2 uses this Stage 1 actor directory as
 ``rollout.rlt_feature_model.model_path``. The directory must contain VLA
@@ -547,7 +547,7 @@ Stage 2: Run ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Edit the Stage 1 checkpoint in
-``examples/embodiment/config/rlt_stage2_maniskill_joint_ac.yaml``:
+``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``:
 
 .. code:: yaml
 
@@ -567,7 +567,7 @@ Edit the Stage 1 checkpoint in
 
    rollout:
      rlt_feature_model:
-       model_path: /path/to/rlt_stage1_maniskill_joint_alpha1/checkpoints/global_step_<step>/actor
+       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
        openpi:
@@ -582,7 +582,7 @@ Launch training:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh rlt_stage2_maniskill_joint_ac
+   bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.rlt_feature_model`` and only synchronizes the Stage 2 MLP

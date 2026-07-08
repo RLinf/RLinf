@@ -19,7 +19,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf-rlt
-    experiment_name: "rlt_stage1_sft_pi05_realworld_peg_insertion_state"
+    experiment_name: "realworld_rlt_stage1_sft_openpi_pi05"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1

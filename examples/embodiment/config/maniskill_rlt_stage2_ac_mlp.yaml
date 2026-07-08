@@ -1,6 +1,6 @@
 defaults:
-  - env/maniskill_rlt_joint@env.train
-  - env/maniskill_rlt_joint@env.eval
+  - env/maniskill_rlt@env.train
+  - env/maniskill_rlt@env.eval
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "rlt_stage2_maniskill_joint_ac"
+    experiment_name: "maniskill_rlt_stage2_ac_mlp"
     logger_backends: ["wandb"]
 
   max_epochs: 5000
@@ -244,7 +244,7 @@ rollout:
 
   rlt_feature_model:
     model_type: "openpi"
-    model_path: "/path/to/rlt_stage1_maniskill_joint_alpha1/checkpoints/global_step_<step>/actor"
+    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
     precision: null
     num_action_chunks: 10
     action_dim: 8

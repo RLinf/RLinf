@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "rlt_stage1_maniskill_joint_alpha1"
+    experiment_name: "maniskill_rlt_stage1_sft_openpi_pi05"
     logger_backends: ["wandb"]
 
   max_epochs: -1

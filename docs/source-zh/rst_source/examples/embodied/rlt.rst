@@ -57,16 +57,16 @@ RLT 将表示学习和在线 RL 控制拆开。
      - 配置
      - 作用
    * - Franka Stage 1
-     - ``examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml``
+     - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
      - 在 Franka 示范数据上联合 SFT π₀.₅ 和 RLT token transformer。
    * - Franka Stage 2
-     - ``examples/embodiment/config/rlt_stage2_ac_mlp.yaml``
+     - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
      - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
    * - ManiSkill Stage 1
-     - ``examples/sft/config/rlt_stage1_maniskill_joint_alpha1.yaml``
+     - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - 联合训练 ManiSkill OpenPI 基座和 RLT token transformer。
    * - ManiSkill Stage 2
-     - ``examples/embodiment/config/rlt_stage2_maniskill_joint_ac.yaml``
+     - ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``
      - 使用自动 ``rlt_policy_switch`` 和 transition replay 训练仿真 RLT actor-critic。
 
 安装
@@ -136,7 +136,7 @@ Stage 1 中比较关键的字段：
 
 .. code:: yaml
 
-   # examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml
+   # examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml
    data:
      train_data_paths: "/path/to/data"
 
@@ -215,7 +215,7 @@ Stage 2 中比较关键的字段：
 
 .. code:: yaml
 
-   # examples/embodiment/config/rlt_stage2_ac_mlp.yaml
+   # examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml
    algorithm:
      loss_type: rlt_ac
      q_weight: 0.1
@@ -339,7 +339,7 @@ Stage 1：训练 RLT 特征模型
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh rlt_stage1_sft_openpi_pi05
+   bash examples/sft/run_vla_sft.sh realworld_rlt_stage1_sft_openpi_pi05
 
 保存出的检查点目录通常形如：
 
@@ -392,7 +392,7 @@ Stage 2：运行 RLT Actor-Critic
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_async.sh rlt_stage2_ac_mlp
+   bash examples/embodiment/run_realworld_async.sh realworld_rlt_stage2_ac_mlp
 
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
@@ -479,7 +479,7 @@ motion-planning solver 生成成功轨迹，再把 ``pd_joint_pos`` solver actio
 Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 ``examples/sft/config/rlt_stage1_maniskill_joint_alpha1.yaml`` 中的数据路径：
+修改 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` 中的数据路径：
 
 .. code:: yaml
 
@@ -501,7 +501,7 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh rlt_stage1_maniskill_joint_alpha1
+   bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
 
 Stage 2 使用这个 Stage 1 actor 目录作为
 ``rollout.rlt_feature_model.model_path``。该目录需要同时包含 VLA 权重、
@@ -510,7 +510,7 @@ RLT token transformer 权重和对应的 OpenPI assets。
 Stage 2：运行 ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 ``examples/embodiment/config/rlt_stage2_maniskill_joint_ac.yaml`` 中的
+修改 ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml`` 中的
 Stage 1 checkpoint：
 
 .. code:: yaml
@@ -531,7 +531,7 @@ Stage 1 checkpoint：
 
    rollout:
      rlt_feature_model:
-       model_path: /path/to/rlt_stage1_maniskill_joint_alpha1/checkpoints/global_step_<step>/actor
+       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
        openpi:
@@ -546,7 +546,7 @@ Stage 1 checkpoint：
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh rlt_stage2_maniskill_joint_ac
+   bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
 
 这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
 ``rollout.rlt_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route
