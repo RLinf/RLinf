@@ -7,6 +7,8 @@ export SRC_FILE="${EMBODIED_PATH}/eval_embodied_agent.py"
 export MUJOCO_GL="osmesa"
 export PYOPENGL_PLATFORM="osmesa"
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+# Disable numba JIT to avoid LLVM segfault when multiple env subprocesses
+export NUMBA_DISABLE_JIT=1
 
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
