@@ -541,4 +541,3 @@ def test_aloha_sandwich_compute_returns_config_enables_two_transition_chunks() -
         )
         == 20
     )
-
