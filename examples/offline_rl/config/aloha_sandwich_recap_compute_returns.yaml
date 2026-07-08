@@ -9,8 +9,10 @@ data:
 
   dataset_type: rollout
   gamma: 1.0
+  action_horizon: 10
   failure_reward: -300.0
   hitl_aware_returns: true
+  hitl_transition_chunks: 2
   tag: sandwich_fail300
   num_workers: 128
 

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -516,3 +518,27 @@ def test_compute_returns_uses_global_hitl_transition_steps_for_single_dataset(
     returns_module.compute_returns(cfg)
 
     assert captured_transition_steps == [7]
+
+
+def test_aloha_sandwich_compute_returns_config_enables_two_transition_chunks() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg = OmegaConf.load(
+        repo_root
+        / "examples"
+        / "offline_rl"
+        / "config"
+        / "aloha_sandwich_recap_compute_returns.yaml"
+    )
+
+    assert cfg.data.hitl_aware_returns is True
+    assert cfg.data.action_horizon == 10
+    assert cfg.data.hitl_transition_chunks == 2
+    assert (
+        _resolve_hitl_transition_steps(
+            hitl_transition_steps=cfg.data.get("hitl_transition_steps", None),
+            hitl_transition_chunks=cfg.data.hitl_transition_chunks,
+            action_horizon=cfg.data.action_horizon,
+        )
+        == 20
+    )
+
