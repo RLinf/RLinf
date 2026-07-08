@@ -557,12 +557,7 @@ class EnvWorker(Worker):
             )
         )
 
-        current_dones = chunk_dones[:, -1]  # [num_envs] bool
-        if (
-            str(self.cfg.env.eval.env_type) == "maniskill_rlt"
-            and not self.cfg.env.eval.auto_reset
-        ):
-            current_dones = chunk_dones.any(dim=1)
+        current_dones = chunk_dones.any(dim=1)  # [num_envs] bool
         if self.cfg.env.eval.auto_reset:
             newly_done = current_dones
         else:

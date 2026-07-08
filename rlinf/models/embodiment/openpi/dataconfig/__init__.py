@@ -62,7 +62,7 @@ from rlinf.models.embodiment.openpi.dataconfig.polaris_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.realworld_dataconfig import (
     LeRobotRealworldDataConfig,
 )
-from rlinf.models.embodiment.openpi.dataconfig.rlt_maniskill_joint_dataconfig import (
+from rlinf.models.embodiment.openpi.dataconfig.maniskill_rlt_dataconfig import (
     LeRobotRLTManiSkillJointDataConfig,
 )
 from rlinf.models.embodiment.openpi.dataconfig.robocasa_dataconfig import (
