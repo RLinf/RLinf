@@ -442,3 +442,77 @@ def test_compute_returns_resolves_per_entry_hitl_transition_settings(
     returns_module.compute_returns(cfg)
 
     assert captured_transition_steps == [20, 3]
+
+
+def test_compute_returns_uses_global_hitl_transition_chunks_for_list_entry(
+    tmp_path, monkeypatch
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    captured_transition_steps = []
+
+    def fake_process_dataset(**kwargs):
+        captured_transition_steps.append(kwargs["hitl_transition_steps"])
+        return {"return": {"min": 0.0, "max": 0.0}, "reward": {}}
+
+    monkeypatch.setattr(returns_module, "process_dataset", fake_process_dataset)
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "data_root": None,
+                "train_data_paths": [
+                    {
+                        "dataset_path": str(dataset),
+                        "type": "rollout",
+                    },
+                ],
+                "dataset_type": "rollout",
+                "gamma": 1.0,
+                "failure_reward": -300.0,
+                "hitl_aware_returns": True,
+                "hitl_transition_chunks": 2,
+                "action_horizon": 10,
+                "num_workers": 1,
+                "tag": None,
+            }
+        }
+    )
+
+    returns_module.compute_returns(cfg)
+
+    assert captured_transition_steps == [20]
+
+
+def test_compute_returns_uses_global_hitl_transition_steps_for_single_dataset(
+    tmp_path, monkeypatch
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    captured_transition_steps = []
+
+    def fake_process_dataset(**kwargs):
+        captured_transition_steps.append(kwargs["hitl_transition_steps"])
+        return {"return": {"min": 0.0, "max": 0.0}, "reward": {}}
+
+    monkeypatch.setattr(returns_module, "process_dataset", fake_process_dataset)
+    cfg = OmegaConf.create(
+        {
+            "data": {
+                "data_root": None,
+                "dataset_path": str(dataset),
+                "dataset_type": "rollout",
+                "gamma": 1.0,
+                "failure_reward": -300.0,
+                "hitl_aware_returns": True,
+                "hitl_transition_steps": 7,
+                "hitl_transition_chunks": 2,
+                "action_horizon": 10,
+                "num_workers": 1,
+                "tag": None,
+            }
+        }
+    )
+
+    returns_module.compute_returns(cfg)
+
+    assert captured_transition_steps == [7]

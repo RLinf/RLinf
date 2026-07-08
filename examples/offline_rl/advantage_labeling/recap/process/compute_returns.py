@@ -490,8 +490,8 @@ def process_dataset(
                 gamma,
                 failure_reward,
                 tasks,
-                hitl_aware_returns,
-                hitl_transition_steps,
+                hitl_aware_returns=hitl_aware_returns,
+                hitl_transition_steps=hitl_transition_steps,
             )
             if tbl is not None:
                 result_tables.append(tbl)
@@ -507,8 +507,8 @@ def process_dataset(
                     gamma,
                     failure_reward,
                     tasks,
-                    hitl_aware_returns,
-                    hitl_transition_steps,
+                    hitl_aware_returns=hitl_aware_returns,
+                    hitl_transition_steps=hitl_transition_steps,
                 )
                 futures[fut] = pq_file
 
