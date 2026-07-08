@@ -184,7 +184,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         task_mode = str(self._rlt_switch_cfg.get("task_mode", self._RLT_FULL_TASK))
         start_active = task_mode == self._RLT_CRITICAL_PHASE
         return {
-            "rlt_use_actor": torch.full(
+            "rlt_switch_flags": torch.full(
                 (batch_size,),
                 start_active,
                 dtype=torch.bool,
@@ -250,14 +250,14 @@ class ManiskillRLTEnv(ManiskillEnv):
                 f"{task_mode=} {trigger_mode=}."
             )
 
-        previous_use_actor = state["rlt_use_actor"]
+        previous_rlt_switch_flags = state["rlt_switch_flags"]
         latch_until_done = bool(self._rlt_switch_cfg.get("latch_until_done", True))
         if latch_until_done:
-            use_actor = previous_use_actor | enter_actor
+            rlt_switch_flags = previous_rlt_switch_flags | enter_actor
         else:
-            use_actor = enter_actor
+            rlt_switch_flags = enter_actor
 
-        switched_now = (~previous_use_actor) & use_actor
+        switched_now = (~previous_rlt_switch_flags) & rlt_switch_flags
         elapsed_steps = self._rlt_elapsed_steps(infos, device)
         state["actor_switch_step"] = torch.where(
             switched_now,
@@ -265,9 +265,9 @@ class ManiskillRLTEnv(ManiskillEnv):
             state["actor_switch_step"],
         )
         state["entered_actor_phase_once"] = (
-            state["entered_actor_phase_once"] | use_actor | switched_now
+            state["entered_actor_phase_once"] | rlt_switch_flags | switched_now
         )
-        state["rlt_use_actor"] = use_actor
+        state["rlt_switch_flags"] = rlt_switch_flags
         self._update_rlt_expert_takeover_state(infos=infos, device=device)
 
         return self._export_rlt_switch_info(
@@ -285,7 +285,7 @@ class ManiskillRLTEnv(ManiskillEnv):
     ) -> dict[str, torch.Tensor]:
         state = self._rlt_switch_state_to(device)
         intervene_flag = self._rlt_expert_takeover_mask(infos=infos, device=device)
-        rlt_switch_flags = state["rlt_use_actor"]
+        rlt_switch_flags = state["rlt_switch_flags"]
         if chunk_dones is not None:
             chunk_done_mask = torch.as_tensor(
                 chunk_dones,
@@ -318,15 +318,15 @@ class ManiskillRLTEnv(ManiskillEnv):
         trigger_mode = str(expert_cfg.get("trigger_mode", "critical_phase"))
         state = self._rlt_switch_state_to(device)
         if trigger_mode == "critical_phase":
-            return state["rlt_use_actor"].clone()
+            return state["rlt_switch_flags"].clone()
         if trigger_mode == self._RLT_INTERVENTION_GATE_TRIGGER:
-            return state["rlt_use_actor"] & self._rlt_expert_intervention_gate(
+            return state["rlt_switch_flags"] & self._rlt_expert_intervention_gate(
                 infos=infos,
                 expert_cfg=expert_cfg,
                 device=device,
             )
         if trigger_mode == self._RLT_STALLED_PROGRESS_TRIGGER:
-            takeover = state["rlt_use_actor"] & state["expert_takeover_active"]
+            takeover = state["rlt_switch_flags"] & state["expert_takeover_active"]
             if infos is not None:
                 takeover = takeover & (
                     ~self._rlt_info_bool(infos, "success_current", device)
@@ -379,7 +379,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         state = self._rlt_switch_state_to(device)
         gate_cfg = expert_cfg.get("gate", {})
 
-        in_critical_phase = state["rlt_use_actor"]
+        in_critical_phase = state["rlt_switch_flags"]
         success = self._rlt_info_bool(infos, "success_current", device)
         active_before = state["expert_takeover_active"] & in_critical_phase & (~success)
         progress_guard = self._rlt_stalled_progress_guard(
