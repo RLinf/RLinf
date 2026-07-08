@@ -21,6 +21,7 @@ from omegaconf import OmegaConf
 import examples.offline_rl.advantage_labeling.recap.process.compute_returns as returns_module
 from examples.offline_rl.advantage_labeling.recap.process.compute_returns import (
     _process_single_parquet,
+    _resolve_hitl_transition_steps,
     compute_hitl_aware_returns_for_episode,
     compute_returns_for_episode,
 )
@@ -43,6 +44,77 @@ def test_successful_episode_split_at_first_teleop_frame() -> None:
         returns,
         np.asarray([-302.0, -301.0, -300.0, -2.0, -1.0, 0.0], dtype=np.float32),
     )
+
+
+def test_successful_hitl_transition_steps_ramp_pre_teleop_returns_only() -> None:
+    returns, rewards = compute_hitl_aware_returns_for_episode(
+        episode_length=6,
+        is_success=True,
+        teleop_mask=np.asarray([0, 0, 0, 1, 1, 0], dtype=np.int64),
+        gamma=1.0,
+        failure_reward=-300.0,
+        hitl_transition_steps=2,
+    )
+
+    np.testing.assert_allclose(
+        returns,
+        np.asarray([-302.0, -151.5, -2.0, -2.0, -1.0, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        rewards,
+        np.asarray([-1.0, -1.0, -300.0, -1.0, -1.0, 0.0], dtype=np.float32),
+    )
+
+
+def test_successful_hitl_transition_clamps_to_short_prefix() -> None:
+    returns, rewards = compute_hitl_aware_returns_for_episode(
+        episode_length=4,
+        is_success=True,
+        teleop_mask=np.asarray([0, 1, 1, 0], dtype=np.int64),
+        gamma=1.0,
+        failure_reward=-300.0,
+        hitl_transition_steps=5,
+    )
+
+    np.testing.assert_allclose(
+        returns,
+        np.asarray([-2.0, -2.0, -1.0, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        rewards,
+        np.asarray([-300.0, -1.0, -1.0, 0.0], dtype=np.float32),
+    )
+
+
+def test_resolve_hitl_transition_steps_prefers_explicit_steps() -> None:
+    assert (
+        _resolve_hitl_transition_steps(
+            hitl_transition_steps=3,
+            hitl_transition_chunks=2,
+            action_horizon=10,
+        )
+        == 3
+    )
+
+
+def test_resolve_hitl_transition_steps_uses_chunks_and_action_horizon() -> None:
+    assert (
+        _resolve_hitl_transition_steps(
+            hitl_transition_steps=None,
+            hitl_transition_chunks=2,
+            action_horizon=10,
+        )
+        == 20
+    )
+
+
+def test_resolve_hitl_transition_steps_requires_action_horizon_for_chunks() -> None:
+    with pytest.raises(ValueError, match="hitl_transition_chunks requires"):
+        _resolve_hitl_transition_steps(
+            hitl_transition_steps=None,
+            hitl_transition_chunks=2,
+            action_horizon=None,
+        )
 
 
 def test_successful_episode_without_teleop_uses_standard_returns() -> None:

@@ -150,12 +150,70 @@ def compute_returns_for_episode(
     return returns, rewards
 
 
+def _resolve_hitl_transition_steps(
+    hitl_transition_steps: int | None = None,
+    hitl_transition_chunks: int | None = None,
+    action_horizon: int | None = None,
+) -> int:
+    """Resolve HITL transition config to a non-negative frame count."""
+    if hitl_transition_steps is not None:
+        steps = int(hitl_transition_steps)
+        if steps < 0:
+            raise ValueError("data.hitl_transition_steps must be >= 0")
+        return steps
+
+    chunks = 0 if hitl_transition_chunks is None else int(hitl_transition_chunks)
+    if chunks < 0:
+        raise ValueError("data.hitl_transition_chunks must be >= 0")
+    if chunks == 0:
+        return 0
+    if action_horizon is None:
+        raise ValueError(
+            "data.hitl_transition_chunks requires data.action_horizon when "
+            "data.hitl_transition_steps is not set"
+        )
+
+    horizon = int(action_horizon)
+    if horizon <= 0:
+        raise ValueError(
+            "data.action_horizon must be > 0 when HITL transition chunks are used"
+        )
+    return chunks * horizon
+
+
+def _smooth_pre_teleop_returns(
+    prefix_returns: np.ndarray,
+    suffix_returns: np.ndarray,
+    hitl_transition_steps: int,
+) -> np.ndarray:
+    """Apply a linear return ramp over the final pre-teleop prefix frames."""
+    if (
+        hitl_transition_steps <= 0
+        or len(prefix_returns) == 0
+        or len(suffix_returns) == 0
+    ):
+        return prefix_returns
+
+    start = max(0, len(prefix_returns) - hitl_transition_steps)
+    window = len(prefix_returns) - start
+    if window <= 0:
+        return prefix_returns
+
+    smoothed = prefix_returns.astype(np.float32, copy=True)
+    alpha = np.linspace(1.0 / window, 1.0, num=window, dtype=np.float32)
+    target_end = float(suffix_returns[0])
+    source = smoothed[start:]
+    smoothed[start:] = ((1.0 - alpha) * source + alpha * target_end).astype(np.float32)
+    return smoothed
+
+
 def compute_hitl_aware_returns_for_episode(
     episode_length: int,
     is_success: bool,
     teleop_mask: np.ndarray,
     gamma: float,
     failure_reward: float,
+    hitl_transition_steps: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute returns that mark pre-intervention prefixes as failed.
 
@@ -202,6 +260,11 @@ def compute_hitl_aware_returns_for_episode(
         is_success=True,
         gamma=gamma,
         failure_reward=failure_reward,
+    )
+    prefix_returns = _smooth_pre_teleop_returns(
+        prefix_returns=prefix_returns,
+        suffix_returns=suffix_returns,
+        hitl_transition_steps=hitl_transition_steps,
     )
     return (
         np.concatenate([prefix_returns, suffix_returns]).astype(np.float32),
