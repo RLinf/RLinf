@@ -42,9 +42,7 @@ RLT 将表示学习和在线 RL 控制拆开。
       Franka 真机 / ManiSkill 仿真
 
 | **你将完成：** 准备示范数据 -> 训练 Stage 1 -> 在 Stage 2 中加载 Stage 1 检查点 -> 启动 actor-critic 训练 -> 观察 replay buffer 与任务成功率指标。
-| **前置条件：** 下载或准备
-  `OpenPI π₀.₅ checkpoint <https://huggingface.co/lerobot/pi05_base>`__，并准备
-  :doc:`Franka 真机环境 <../embodied/franka>` 或 :doc:`ManiSkill 仿真环境 <../embodied/maniskill>`。
+| **前置条件：** 准备好 `OpenPI π₀.₅ <https://huggingface.co/lerobot/pi05_base>`__ 基座模型，并按所选示例配置 :doc:`Franka 真机环境 <../embodied/franka>` 或 :doc:`ManiSkill 仿真环境 <../embodied/maniskill>` （二选一）。
 
 提供的配置文件
 ~~~~~~~~~~~~~~
@@ -141,9 +139,9 @@ Stage 1 中比较关键的字段：
      train_data_paths: "/path/to/data"
 
    actor:
-     openpi_data:
-       repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
+       openpi_data:
+         repo_id: "realworld_peg_insertion_rlt_stage1"
        model_type: "openpi"
        is_lora: False
        model_path: "/path/to/model"
@@ -157,7 +155,8 @@ Stage 1 中比较关键的字段：
          rlt_image_only: False
          rlt_use_mask: True
 
-``repo_id`` 和 ``config_name`` 需要与归一化统计和 Stage 2 特征模型配置保持一致。
+``repo_id``、``config_name`` 和归一化统计需要与 Stage 2 特征模型配置保持一致。
+``openpi_data`` 应写在 ``actor.model`` 下。
 
 .. note::
 
@@ -239,6 +238,7 @@ Stage 2 中比较关键的字段：
        model_path: "/path/to/stage1/checkpoint"
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
+         norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -313,7 +313,7 @@ LeRobot 格式数据：
        --config-name pi05_franka_state \
        --repo-id realworld_peg_insertion_rlt_stage1
 
-后续将 Stage 1 配置中的 ``data.train_data_paths`` 指向该 LeRobot 数据集目录。
+后续将 Stage 1 配置中的 ``data.train_data_paths`` 指向该 LeRobot 数据集目录。若 checkpoint 未包含 norm stats，可在 ``openpi_data`` 中设置 ``norm_stats_path`` 指向 ``norm_stats.json``。
 
 Stage 1：训练 RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -473,8 +473,7 @@ motion-planning solver 生成成功轨迹，再把 ``pd_joint_pos`` solver actio
 
    Stage 1 checkpoint、Stage 2 ``rollout.rlt_feature_model`` 和 OpenPI assets
    必须使用同一套 ``norm_stats.json``。如果 SFT 基座和 Stage 2 加载了不同
-   ``repo_id`` 下的 norm stats，VLA reference action 的尺度会发生偏移。
-
+   ``repo_id`` 下的 norm stats，VLA reference action 的尺度会发生偏移。可通过 ``openpi_data.norm_stats_path`` 显式指定上述 ``norm_stats.json`` 路径。
 
 Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -493,9 +492,10 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
        model_path: /path/to/pi05_base
        openpi:
          config_name: pi05_rlt_maniskill_joint
-     openpi_data:
-       repo_id: maniskill_peginsertionside_joint
-       default_prompt: insert the peg in the hole
+       openpi_data:
+         repo_id: maniskill_peginsertionside_joint
+         default_prompt: insert the peg in the hole
+         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
 
 启动训练：
 
@@ -503,9 +503,29 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
    bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
 
-Stage 2 使用这个 Stage 1 actor 目录作为
-``rollout.rlt_feature_model.model_path``。该目录需要同时包含 VLA 权重、
-RLT token transformer 权重和对应的 OpenPI assets。
+保存出的 FSDP 检查点通常形如：
+
+.. code:: text
+
+   logs/<run-name>/checkpoints/global_step_<step>/actor/model_state_dict/full_weights.pt
+
+将 Stage 1 FSDP 检查点转换为 HuggingFace 格式
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Stage 2 rollout worker 通过 HuggingFace 后端加载冻结特征模型，因此需要先把 Stage 1
+的 ``full_weights.pt`` 转换为 HuggingFace safetensors 目录，再把该目录填到
+``rollout.rlt_feature_model.model_path``。
+
+.. code:: bash
+
+   export REPO_PATH=/path/to/RLinf
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       --config-path ${REPO_PATH}/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+       --config-name fsdp_openpi_convertor \
+       convertor.train_config_path=${REPO_PATH}/examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml \
+       convertor.ckpt_path=/path/to/global_step_<step>/actor/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/hf_stage1_actor \
+       convertor.strict_load=false
 
 Stage 2：运行 ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -531,9 +551,10 @@ Stage 1 checkpoint：
 
    rollout:
      rlt_feature_model:
-       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
+       model_path: /path/to/hf_stage1_actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
+         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
        openpi:
          config_name: pi05_rlt_maniskill_joint
      expert_model:
@@ -717,5 +738,6 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
 - ``keyboard_reward_wrapper: rlt_policy_switch`` 只在需要人工控制关键阶段切换时使用。
 - ManiSkill joint 示例使用 ``env.*.rlt_policy_switch``，不要再使用真机的 keyboard wrapper。
 - ManiSkill 的 ``proprio`` 来自 OpenPI processed ``observation.state``。如果新建仿真 dataconfig，需要同时检查数据集 ``state``、OpenPI transform 和 Stage 2 ``proprio_dim``。
-- Stage 1、Stage 2 和 checkpoint assets 中的 ``norm_stats.json`` 必须来自同一套数据语义和同一个 ``repo_id``。
+- Stage 1、Stage 2 和 checkpoint assets 中的 ``norm_stats.json`` 必须来自同一套数据语义和同一个 ``repo_id``。推荐通过 ``openpi_data.norm_stats_path`` 显式指定，避免 Stage 1 checkpoint 未写入 norm stats 时加载失败。
+- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 转换后的 HuggingFace 目录，而不是 FSDP ``actor/`` 原始检查点目录。
 - 添加仿真示例时，可以新建仿真环境配置，保留 ``loss_type: rlt_ac`` 和 ``rollout.rlt_feature_model``，再把真机阶段切换逻辑替换成适合仿真的逻辑。
