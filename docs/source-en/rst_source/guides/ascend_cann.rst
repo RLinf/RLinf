@@ -29,11 +29,26 @@ mounted into the container:
       --shm-size 20g \
       --network host \
       --name rlinf-ascend-libero \
+      -v /usr/local/dcmi:/usr/local/dcmi \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+      -v /etc/ascend_install.info:/etc/ascend_install.info \
+      -v /var/log/npu:/usr/slog \
+      -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
+
+If you don't want to use privileged flag, then you need to add serval devices, and manually add NPU:
+
+.. code-block:: bash
+
+      # adding text below to the above command
+      --device=/dev/davinci_manager \
+      --device=/dev/devmm_svm \
+      --device=/dev/hisi_hdc \
+      --device=/dev/davinci0 # first npu for example
 
 Inside the container, switch to the OpenVLA-OFT environment:
 
