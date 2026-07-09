@@ -34,7 +34,7 @@ cluster:
         configs:
           - robot_ip: ROBOT_IP
             node_rank: 1
-            controller_node_rank: 1  
+            controller_node_rank: 1
             disable_validate: false
 
 runner:
@@ -42,7 +42,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf-rlt
-    experiment_name: "rlt_stage2_ac_mlp_realworld_peg_insertion"
+    experiment_name: "realworld_rlt_stage2_ac_mlp"
     logger_backends: ["tensorboard"]
 
   max_epochs: 8000
@@ -181,7 +181,7 @@ rollout:
     model_type: "openpi"
     precision: null
     is_lora: False
-    # Checkpoint produced by examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml.
+    # Checkpoint produced by examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml.
     model_path: "/path/to/stage1/checkpoint"
     openpi_data:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.

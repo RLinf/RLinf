@@ -11,3 +11,25 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from rlinf.algorithms.rlt.expert import build_expert_model_config
+from rlinf.algorithms.rlt.rollout import predict_rlt_actions
+from rlinf.algorithms.rlt.route import (
+    RealworldRLTRoute,
+    RLTRoute,
+    RLTRouteContext,
+    SimulatorRLTRoute,
+    build_rlt_route,
+)
+from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
+
+__all__ = [
+    "RLTRoute",
+    "RLTRouteContext",
+    "RealworldRLTRoute",
+    "SimulatorRLTRoute",
+    "build_expert_model_config",
+    "build_rlt_route",
+    "predict_rlt_actions",
+    "use_simulator_transition_replay",
+]

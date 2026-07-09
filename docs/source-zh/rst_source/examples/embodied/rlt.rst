@@ -6,7 +6,10 @@ RL Token：借助视觉-语言-动作模型启动在线强化学习
 1. 在示范数据上联合训练 VLA 检查点和 RLT token transformer。
 2. 冻结第一阶段得到的特征模型，用提取出的 RLT 状态训练一个轻量级 off-policy actor-critic。
 
-当前仓库中的示例配置面向 Franka peg insertion，但 pipeline 本身并不绑定这个任务。后续如果添加仿真环境，只需要替换环境配置、动作维度、状态选择和数据路径，仍然可以复用相同的两阶段结构。
+当前仓库中的示例配置面向 Franka peg insertion 和 ManiSkill
+``PegInsertionSideWideClearance-v1`` joint-control 仿真。pipeline 本身不绑定
+具体任务；只要示范数据、环境配置、动作维度、状态语义和 OpenPI dataconfig 对齐，
+就可以复用相同的两阶段结构。
 
 官方项目页：`Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_。
 
@@ -36,10 +39,10 @@ RLT 将表示学习和在线 RL 控制拆开。
    .. grid-item-card:: 部署
       :text-align: center
 
-      当前是真机示例，结构可扩展到仿真
+      Franka 真机 / ManiSkill 仿真
 
 | **你将完成：** 准备示范数据 -> 训练 Stage 1 -> 在 Stage 2 中加载 Stage 1 检查点 -> 启动 actor-critic 训练 -> 观察 replay buffer 与任务成功率指标。
-| **前置条件：** 准备 OpenPI π₀.₅ checkpoint，并准备 :doc:`Franka 真机环境 <../embodied/franka>`。
+| **前置条件：** 准备好 `OpenPI π₀.₅ <https://huggingface.co/lerobot/pi05_base>`__ 基座模型，并按所选示例配置 :doc:`Franka 真机环境 <../embodied/franka>` 或 :doc:`ManiSkill 仿真环境 <../embodied/maniskill>` （二选一）。
 
 提供的配置文件
 ~~~~~~~~~~~~~~
@@ -51,12 +54,18 @@ RLT 将表示学习和在线 RL 控制拆开。
    * - 阶段
      - 配置
      - 作用
-   * - Stage 1
-     - ``examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml``
-     - 联合 SFT pi0.5 和 RLT token transformer。
-   * - Stage 2
-     - ``examples/embodiment/config/rlt_stage2_ac_mlp.yaml``
-     - 使用冻结的 Stage 1 特征模型训练 RLT Stage 2 actor-critic。
+   * - Franka Stage 1
+     - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
+     - 在 Franka 示范数据上联合 SFT π₀.₅ 和 RLT token transformer。
+   * - Franka Stage 2
+     - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
+     - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
+   * - ManiSkill Stage 1
+     - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
+     - 联合训练 ManiSkill OpenPI 基座和 RLT token transformer。
+   * - ManiSkill Stage 2
+     - ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``
+     - 使用自动 ``rlt_policy_switch`` 和 transition replay 训练仿真 RLT actor-critic。
 
 安装
 ----
@@ -125,14 +134,14 @@ Stage 1 中比较关键的字段：
 
 .. code:: yaml
 
-   # examples/sft/config/rlt_stage1_sft_openpi_pi05.yaml
+   # examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml
    data:
      train_data_paths: "/path/to/data"
 
    actor:
-     openpi_data:
-       repo_id: "realworld_peg_insertion_rlt_stage1"
      model:
+       openpi_data:
+         repo_id: "realworld_peg_insertion_rlt_stage1"
        model_type: "openpi"
        is_lora: False
        model_path: "/path/to/model"
@@ -146,7 +155,15 @@ Stage 1 中比较关键的字段：
          rlt_image_only: False
          rlt_use_mask: True
 
-``repo_id`` 和 ``config_name`` 需要与归一化统计和 Stage 2 特征模型配置保持一致。
+``repo_id``、``config_name`` 和归一化统计需要与 Stage 2 特征模型配置保持一致。
+``openpi_data`` 应写在 ``actor.model`` 下。
+
+.. note::
+
+   ManiSkill joint 示例不依赖 ``state_indices`` 手工切片。``pi05_rlt_maniskill_joint``
+   dataconfig 将 LeRobot 数据中的 ``state`` 映射到 OpenPI ``observation.state``；
+   Stage 2 rollout 也使用 OpenPI 处理后的 ``observation.state`` 作为 ``proprio``。
+   这样 Stage 1、Stage 2 和 OpenPI normalization 看到的是同一种状态语义。
 
 Stage 2：训练 Actor-Critic 策略
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -175,7 +192,15 @@ rollout 时：
    action   = 实际发送给环境的动作
    next_obs = {next_z_rl, next_proprio, next_ref_chunk}
 
-当前真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会额外提供 ``rlt_switch_flags`` 标记。在操作员按下 ``b`` 之前，实际执行 VLA 的 ``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。仿真配置可以不使用这个 wrapper，也可以替换成自动切换逻辑。
+Franka 真机配置中，``keyboard_reward_wrapper: rlt_policy_switch`` 会提供
+``rlt_switch_flags`` 标记。在操作员按下 ``b`` 之前，实际执行 VLA 的
+``ref_chunk``；按下 ``b`` 之后，实际执行 Stage 2 actor 的动作。
+
+ManiSkill joint 配置中，``env.*.rlt_policy_switch`` 使用任务信息自动产生
+``rlt_switch_flags``（actor/ref 阶段）和 ``intervene_flag``（expert 接管请求）。
+HF rollout route 根据这些标记在整 chunk 级别选择 actor action、VLA
+``ref_chunk`` 或 expert action，并把 ``record_transition``、``actor_switch`` 和
+``intervention_requested`` 写入 ``forward_inputs``，供 replay 和监控使用。
 
 critic 使用 chunked rewards 上的 TD target。一个 action chunk 内的奖励会先按折扣累计，然后用下一状态 Q 值 bootstrap：
 
@@ -189,7 +214,7 @@ Stage 2 中比较关键的字段：
 
 .. code:: yaml
 
-   # examples/embodiment/config/rlt_stage2_ac_mlp.yaml
+   # examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml
    algorithm:
      loss_type: rlt_ac
      q_weight: 0.1
@@ -213,6 +238,7 @@ Stage 2 中比较关键的字段：
        model_path: "/path/to/stage1/checkpoint"
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
+         norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
        openpi:
          config_name: "pi05_franka_state"
          num_images_in_input: 1
@@ -248,7 +274,9 @@ Stage 2 的 actor loss 为：
 
    actor_loss = -q_weight * Q(obs, pi(obs)) + bc_weight * BC(pi(obs), target_action)
 
-普通 policy step 中，BC target 是 VLA reference action。如果某一步存了 human intervention action，那么这一步的 BC target 会切换成人类动作。
+普通 policy step 中，BC target 是 VLA reference action。如果某一步存了
+human intervention action，那么这一步的 BC target 会切换成人类动作。ManiSkill
+默认关闭 ``expert_takeover``，因此默认路线只使用 VLA reference 和 actor action。
 
 运行当前 Franka 示例
 --------------------
@@ -285,7 +313,7 @@ LeRobot 格式数据：
        --config-name pi05_franka_state \
        --repo-id realworld_peg_insertion_rlt_stage1
 
-后续将 Stage 1 配置中的 ``data.train_data_paths`` 指向该 LeRobot 数据集目录。
+后续将 Stage 1 配置中的 ``data.train_data_paths`` 指向该 LeRobot 数据集目录。若 checkpoint 未包含 norm stats，可在 ``openpi_data`` 中设置 ``norm_stats_path`` 指向 ``norm_stats.json``。
 
 Stage 1：训练 RLT 特征模型
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -311,7 +339,7 @@ Stage 1：训练 RLT 特征模型
 
 .. code:: bash
 
-   bash examples/sft/run_vla_sft.sh rlt_stage1_sft_openpi_pi05
+   bash examples/sft/run_vla_sft.sh realworld_rlt_stage1_sft_openpi_pi05
 
 保存出的检查点目录通常形如：
 
@@ -364,21 +392,288 @@ Stage 2：运行 RLT Actor-Critic
 
 .. code:: bash
 
-   bash examples/embodiment/run_realworld_async.sh rlt_stage2_ac_mlp
+   bash examples/embodiment/run_realworld_async.sh realworld_rlt_stage2_ac_mlp
 
 当前默认键盘模块实现了 RLT 算法中的关键阶段切换：按 ``b`` 进入 Stage 2 actor
 控制阶段。其他功能可根据具体任务需求进行定制
 （``rlinf/envs/realworld/common/wrappers/keyboard_rlt_policy_switch_wrapper.py``）。
 
+运行 ManiSkill Joint 示例
+-------------------------
+
+ManiSkill joint 示例使用 ``PegInsertionSideWideClearance-v1``、RGB 双视角观测、
+Panda 前 9 维 qpos 和 8 维 ``pd_joint_delta_pos`` action。每个 Stage 2 action
+是 10-step chunk，语言指令固定为 ``insert the peg in the hole``。
+
+数据：准备 joint-control LeRobot 数据
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Stage 1 和 Stage 2 的 OpenPI feature model 使用
+``pi05_rlt_maniskill_joint`` dataconfig。LeRobot 数据集至少需要包含：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 72
+
+   * - 字段
+     - 含义
+   * - ``image``
+     - 主视角 RGB 图像。
+   * - ``wrist_image``
+     - wrist RGB 图像。
+   * - ``state``
+     - Panda joint proprio，当前示例使用 9 维状态。
+   * - ``actions``
+     - 8 维 ``pd_joint_delta_pos`` action。
+   * - ``task``
+     - 语言指令；也可以通过 ``default_prompt`` 固定为 ``insert the peg in the hole``。
+
+可以直接使用参考数据集
+`RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ
+<https://huggingface.co/datasets/RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ>`__。
+它包含 ManiSkill ``PegInsertionSideWideClearance-v1`` 的成功演示，动作空间为
+``pd_joint_delta_pos``，并使用上表中的 joint-control LeRobot 字段。
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   huggingface-cli download RLinf/rlt-maniskill-PegInsertionSide-v1-400-succ \
+       --repo-type dataset \
+       --local-dir ${HF_LEROBOT_HOME}/maniskill_peginsertionside_joint
+
+也可以用当前仓库中的采集脚本重新生成数据。该脚本会先调用 ManiSkill Panda
+motion-planning solver 生成成功轨迹，再把 ``pd_joint_pos`` solver action 转成
+``pd_joint_delta_pos`` action，并只保存 replay 成功的 episode：
+
+.. code:: bash
+
+   python toolkits/lerobot/collect_maniskill_peg_lerobot_joint.py \
+       --repo-id maniskill_peginsertionside_joint \
+       --num-episodes 400 \
+       --seed 0 \
+       --max-attempts 4000 \
+       --overwrite
+
+.. note::
+
+   采集脚本位于 ``toolkits/lerobot``，用于 RLT joint 数据准备。
+   它依赖 ManiSkill 的 PegInsertionSide Panda motion-planning solver；如果运行时报
+   solver import 错误，请先确认当前 ManiSkill 安装包含 motion-planning 示例。
+
+计算归一化统计时，``--config-name`` 和 ``--repo-id`` 要与训练配置保持一致：
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi05_rlt_maniskill_joint \
+       --repo-id maniskill_peginsertionside_joint
+
+.. warning::
+
+   Stage 1 checkpoint、Stage 2 ``rollout.rlt_feature_model`` 和 OpenPI assets
+   必须使用同一套 ``norm_stats.json``。如果 SFT 基座和 Stage 2 加载了不同
+   ``repo_id`` 下的 norm stats，VLA reference action 的尺度会发生偏移。可通过 ``openpi_data.norm_stats_path`` 显式指定上述 ``norm_stats.json`` 路径。
+
+Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+修改 ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml`` 中的数据路径：
+
+.. code:: yaml
+
+   data:
+     train_data_paths:
+       - dataset_path: /path/to/maniskill_peginsertionside_joint
+         weight: 1.0
+
+   actor:
+     model:
+       model_path: /path/to/pi05_base
+       openpi:
+         config_name: pi05_rlt_maniskill_joint
+       openpi_data:
+         repo_id: maniskill_peginsertionside_joint
+         default_prompt: insert the peg in the hole
+         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
+
+启动训练：
+
+.. code:: bash
+
+   bash examples/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
+
+保存出的 FSDP 检查点通常形如：
+
+.. code:: text
+
+   logs/<run-name>/checkpoints/global_step_<step>/actor/model_state_dict/full_weights.pt
+
+将 Stage 1 FSDP 检查点转换为 HuggingFace 格式
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Stage 2 rollout worker 通过 HuggingFace 后端加载冻结特征模型，因此需要先把 Stage 1
+的 ``full_weights.pt`` 转换为 HuggingFace safetensors 目录，再把该目录填到
+``rollout.rlt_feature_model.model_path``。
+
+.. code:: bash
+
+   export REPO_PATH=/path/to/RLinf
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       --config-path ${REPO_PATH}/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+       --config-name fsdp_openpi_convertor \
+       convertor.train_config_path=${REPO_PATH}/examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml \
+       convertor.ckpt_path=/path/to/global_step_<step>/actor/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/hf_stage1_actor \
+       convertor.strict_load=false
+
+Stage 2：运行 ManiSkill RLT Actor-Critic
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+修改 ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml`` 中的
+Stage 1 checkpoint：
+
+.. code:: yaml
+
+   env:
+     train:
+       wrap_obs_mode: rlt_openpi_joint
+       rlt_policy_switch:
+         enable: True
+         task_mode: full_task
+         trigger_mode: auto
+     eval:
+       wrap_obs_mode: rlt_openpi_joint
+       rlt_policy_switch:
+         enable: True
+         task_mode: full_task
+         trigger_mode: auto
+
+   rollout:
+     rlt_feature_model:
+       model_path: /path/to/hf_stage1_actor
+       openpi_data:
+         repo_id: maniskill_peginsertionside_joint
+         norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
+       openpi:
+         config_name: pi05_rlt_maniskill_joint
+     expert_model:
+       model_path: /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_<step>/actor
+       precision: null
+       openpi:
+         use_rlt: False
+
+启动训练：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
+
+这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
+``rollout.rlt_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route
+在 ``ready_for_online`` 之前执行 VLA ``ref_chunk``；达到
+``algorithm.rlt_schedule.warmup_post_collect_updates`` 后，才允许 actor 在自动
+critical phase 中接管。
+
+调节 ManiSkill Critical Phase 和 Intervention
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ManiSkill 的切换逻辑是仿真专用的。它读取 peg insertion 任务信息来打开
+``rlt_switch_flags`` / ``in_critical_phase``；如果启用 expert takeover，它还会在
+actor 连续几个 chunk 没有进展时请求 expert 接管。下面的注释只用于文档说明，
+不要写进实际 YAML 文件。
+
+.. code:: yaml
+
+   algorithm:
+     rlt_schedule:
+       enable: True                    # 使用 ManiSkill rollout / update budget。
+       warmup_post_collect_updates: 30000  # actor 上线前需要完成的 update 数。
+       train_every_transitions: 5       # 每 N 条已记录 transition 增加训练预算。
+     actor_weight_schedule:
+       enable: True                    # 使用 BC/Q 权重 ramp，而不是固定权重。
+       warmup_updates: 20000           # warmup BC/Q 权重保持的 update 数。
+       ramp_updates: 50000             # 逐步过渡到 online BC/Q 权重。
+
+   env:
+     train:
+       rlt_policy_switch:
+         task_mode: full_task          # critical phase 前用 VLA，里面用 actor。
+         trigger_mode: auto            # 根据任务信息自动计算 critical phase。
+         latch_until_done: True        # 一旦进入 critical phase 就保持 actor 控制。
+         auto_gate:
+           require_grasp: True         # 抓住 peg 后才允许进入。
+           require_not_success: True   # 已成功时不再切到 actor。
+           near_hole_x_min: -0.16      # 值越大，x 方向进入门控越窄。
+           near_hole_yz_margin: 1.5    # 值越大，y/z 进入窗口越宽。
+         expert_takeover:
+           enable: True                # 只在 train rollout 中启用仿真 expert 干预。
+           trigger_mode: stalled_progress  # 连续无进展 chunk 后才接管。
+           gate:
+             near_hole_x_min: -0.10    # 足够靠近洞口后才检查是否卡住。
+             near_hole_yz_margin: 2.0  # y/z 足够接近后才检查是否卡住。
+             stuck_chunks_before_takeover: 3  # 接管前需要的无进展 chunk 数。
+             min_x_progress: 0.003     # 能重置 stall 计数的前向进展。
+             min_yz_progress: 0.0015   # 能重置 stall 计数的对齐进展。
+             min_score_progress: 0.002 # 能重置 stall 的综合分数进展。
+             progress_yz_weight: 1.0   # 综合进展分数里的 y/z 惩罚权重。
+
+     eval:
+       rlt_policy_switch:
+         expert_takeover:
+           enable: False               # eval 只测 base policy + actor，不用 expert。
+
+可选：启用 ManiSkill Expert Takeover
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ManiSkill expert takeover 默认关闭。需要在 critical phase 中用更强的 SFT expert
+替换 actor action，并把 expert action 作为 intervention target 写入 replay 时，
+再打开这个路径：
+
+.. code:: yaml
+
+   rollout:
+     expert_model:
+       model_path: /path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_<step>/actor
+       precision: null
+       openpi:
+         use_rlt: False
+
+   env:
+     train:
+       rlt_policy_switch:
+         expert_takeover:
+           enable: True
+           trigger_mode: stalled_progress
+           gate:
+             stuck_chunks_before_takeover: 3
+             min_x_progress: 0.003
+             min_yz_progress: 0.0015
+             min_score_progress: 0.002
+             progress_yz_weight: 1.0
+
+也可以把 ``rollout.expert_model.model_path`` 换成你自己训练得更充分的
+joint-control SFT checkpoint。expert 的 OpenPI dataconfig 和 norm stats 需要和
+Stage 2 数据保持一致。expert 只用于 train rollout；eval rollout 不会执行 expert takeover，评测的是学到的 actor。
+
 Replay Buffer 逻辑
 ------------------
 
-当 ``loss_type: rlt_ac`` 时，replay buffer 不会把原始图像观测当作 RL 状态存储。env worker 会等待 rollout worker 返回 RLT 特征，并把这些特征组装成 transition。
+当 ``loss_type: rlt_ac`` 时，replay buffer 不会把原始图像观测当作 RL 状态存储。
+rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transition：
+
+.. code:: text
+
+   curr_obs = {z_rl, proprio, ref_chunk}
+   action   = 实际发送给环境的 action chunk
+   next_obs = {next_z_rl, next_proprio, next_ref_chunk}
 
 这意味着：
 
 - 真机切换前的 step 仍然会用于训练。这些 step 的执行动作是 VLA reference action，transition 也会进入同一个 replay buffer。
 - 切换后的 step 执行 actor action，并以相同的 RLT observation 格式存储。
+- ManiSkill route 在整 chunk 级别选择 actor action 或 VLA ``ref_chunk``，replay 中的 ``action`` 始终是实际执行的动作。
+- ManiSkill learner 会把 rollout chunk 切成 1-sample transition trajectory，再放进 RLinf ``TrajectoryReplayBuffer``。
 - ``sample_window_size`` 控制从 replay buffer 近期窗口中采样的范围，不需要和 ``max_steps_per_rollout_epoch`` 一致。
 - ``max_steps_per_rollout_epoch`` 控制一次 rollout flush 到训练侧之前收集多少环境 step。
 
@@ -394,12 +689,29 @@ Replay Buffer 逻辑
 
 - Stage 2 actor-critic：
 
-  - ``train/sac/critic_loss``：Q 函数 TD loss。
-  - ``train/sac/actor_loss``：组合后的 ``-Q + BC`` actor 目标。
+  - ``critic/critic_loss``：Q 函数 TD loss。
+  - ``actor/actor_loss``：组合后的 ``-Q + BC`` actor 目标。
   - ``q_pi`` 和 ``q_value_*``：actor 和 critic heads 上的 Q 值。
-  - ``bc_loss``、``bc_ref_loss``、``bc_human_loss``：BC 正则相关损失。
+  - ``actor/bc_loss``、``actor/bc_ref_loss``、``actor/bc_human_loss``：BC 正则相关损失。
+  - ``actor/human_mask_ratio``：当前训练 batch 中被标记为 expert 干预的比例（来自 ``trajectory.intervene_flags``）。
   - ``train/replay_buffer/size``：当前 replay transitions 数量。
   - ``env/success_once`` 和 ``env/episode_len``：任务结果指标。
+  - ``eval/success_once``：固定 eval reset ids 上的成功率。
+
+  ManiSkill rollout / replay 诊断（由 actor 收到 trajectory 后统计）：
+
+  - ``train/replay/record_transition_rate``：收集到的 step 中被保存为 RLT transition 的比例（来自 ``forward_inputs.record_transition``）。
+  - ``train/replay/actor_switch_rate``：收集到的 step 中实际由 actor/student action 控制环境的比例（来自 ``forward_inputs.actor_switch``）。
+  - ``train/replay/intervention_requested_rate``：env 请求 expert 接管的比例（来自 ``forward_inputs.intervention_requested``）。
+  - ``train/replay/intervention_rate``：route 实际应用 expert action 的比例（来自 ``trajectory.intervene_flags``）。
+  - ``train/replay/transition_count``、``train/replay/reward_mean``、``train/replay/reward_positive_rate``、``train/replay/done_rate``：当前 collect step 的 ManiSkill transition-replay 入库统计。
+
+  RLT schedule / learner backlog（ManiSkill ``algorithm.rlt_schedule.enable``）：
+
+  - ``train/rlt/ready_for_online``：learner ``update_step`` 是否已超过 ``warmup_post_collect_updates``。
+  - ``train/rlt/actor_updates_run``、``train/rlt/critic_updates_run`` 和 ``train/rlt/pending_update_budget``：本 step 执行的 actor/critic 更新次数，以及剩余 learner backlog。
+  - ``train/rlt/updates_to_run``、``train/rlt/should_train`` 和 ``train/rlt/skip_reason``：本 step 计划训练量，以及跳过训练的原因。
+  - ``train/rlt/global_transitions_since_train`` 和 ``train/rlt/global_total_transitions_added``：自上次训练 burst 以来的全局 replay 入库计数。
 
 实验结果
 --------
@@ -422,5 +734,10 @@ Replay Buffer 逻辑
 - ``rollout.rlt_feature_model`` 指向 Stage 1 检查点；``actor.model`` 是 actor-critic worker 会更新的 Stage 2 MLP 策略。
 - ``rollout.model`` 是 Stage 2 MLP 在 rollout worker 上的同步副本。Stage 2 从头训练时保持 ``rollout.model.model_path: null``；恢复 Stage 2 训练使用 ``runner.resume_dir``，加载单个 Stage 2 权重文件使用 ``runner.ckpt_path``。
 - 不要配置 ``actor.model.model_path`` 来加载 Stage 1；``actor.model`` 只描述 Stage 2 MLP 的输入输出维度和 Q-head 设置。
+- Stage 2 MLP 配置直接内联在各个 Stage 2 YAML 的 ``actor.model`` 下，不再使用单独的 model defaults 文件。
 - ``keyboard_reward_wrapper: rlt_policy_switch`` 只在需要人工控制关键阶段切换时使用。
+- ManiSkill joint 示例使用 ``env.*.rlt_policy_switch``，不要再使用真机的 keyboard wrapper。
+- ManiSkill 的 ``proprio`` 来自 OpenPI processed ``observation.state``。如果新建仿真 dataconfig，需要同时检查数据集 ``state``、OpenPI transform 和 Stage 2 ``proprio_dim``。
+- Stage 1、Stage 2 和 checkpoint assets 中的 ``norm_stats.json`` 必须来自同一套数据语义和同一个 ``repo_id``。推荐通过 ``openpi_data.norm_stats_path`` 显式指定，避免 Stage 1 checkpoint 未写入 norm stats 时加载失败。
+- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 转换后的 HuggingFace 目录，而不是 FSDP ``actor/`` 原始检查点目录。
 - 添加仿真示例时，可以新建仿真环境配置，保留 ``loss_type: rlt_ac`` 和 ``rollout.rlt_feature_model``，再把真机阶段切换逻辑替换成适合仿真的逻辑。
