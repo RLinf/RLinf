@@ -34,7 +34,6 @@ from rlinf.data.embodied_io_struct import (
 )
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.scheduler import Channel
-from rlinf.utils.comm_mapping import CommMapper
 from rlinf.workers.env.env_worker import EnvWorker
 
 
@@ -73,14 +72,15 @@ class RTCEnvWorker(EnvWorker):
     ) -> None:
         """Send an RTC bootstrap/replan request to the mapped rollout worker."""
         assert mode == "eval", "RTC requests are only supported in eval mode."
-        dst_ranks_and_sizes = self.dst_rank_map[f"rollout_{mode}"]
-        assert len(dst_ranks_and_sizes) == 1, (
-            "RTC real-world evaluation currently supports a single env->rollout route."
-        )
-        dst_rank, _ = dst_ranks_and_sizes[0]
-        rollout_channel.put(
-            item=rtc_request,
-            key=CommMapper.build_channel_key(self._rank, dst_rank, extra=f"{mode}_rtc"),
+        self.send_to(
+            group_name=self.cfg.rollout.group_name,
+            channel=rollout_channel,
+            data=rtc_request,
+            mode=mode,
+            tag="rtc",
+            route_key=0,
+            batch_size=1,
+            split_fn=lambda data, sizes: [data],
         )
 
     def recv_rtc_response(
@@ -88,15 +88,19 @@ class RTCEnvWorker(EnvWorker):
     ):
         """Receive an RTC action response from the mapped rollout worker."""
         assert mode == "eval", "RTC responses are only supported in eval mode."
-        src_ranks_and_sizes = self.src_rank_map[f"rollout_{mode}"]
-        assert len(src_ranks_and_sizes) == 1, (
-            "RTC real-world evaluation currently supports a single rollout->env route."
+        work = self.recv_from(
+            group_name=self.cfg.rollout.group_name,
+            channel=input_channel,
+            tag=f"{mode}_rtc",
+            route_key=0,
+            async_op=True,
+            batch_size=1,
+            merge_fn=lambda items: items[0],
+            infer_batch_size_fn=lambda data: 1,
         )
-        src_rank, _ = src_ranks_and_sizes[0]
-        return input_channel.get(
-            key=CommMapper.build_channel_key(src_rank, self._rank, extra=f"{mode}_rtc"),
-            async_op=async_op,
-        )
+        if async_op:
+            return work
+        return work.wait()
 
     def _copy_rtc_obs(self, obs):
         if isinstance(obs, torch.Tensor):
@@ -117,7 +121,7 @@ class RTCEnvWorker(EnvWorker):
             return chunk_actions
 
         # Keep the gripper command stable within a chunk. If the policy predicts
-        # at least two close commands, close for the whole chunk; otherwise open.
+        # fewer than two open commands, close for the whole chunk; otherwiseopen.
         gripper = chunk_actions[..., -1]
         if isinstance(gripper, torch.Tensor):
             gripper_binary = (gripper > 0.5).to(dtype=gripper.dtype)

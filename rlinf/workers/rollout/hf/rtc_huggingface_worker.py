@@ -26,7 +26,6 @@ from tqdm import tqdm
 
 from rlinf.data.embodied_io_struct import RTCActionResponse, RTCRequest
 from rlinf.scheduler import Channel, Worker
-from rlinf.utils.comm_mapping import CommMapper
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -110,28 +109,27 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
 
     async def recv_rtc_request(self, input_channel: Channel) -> RTCRequest:
         """Receive the single real-world RTC request mapped to this rollout rank."""
-        src_ranks_and_sizes = self.src_ranks["eval"]
-        assert len(src_ranks_and_sizes) == 1, (
-            "RTC real-world evaluation currently supports a single env->rollout route."
-        )
-        src_rank, _ = src_ranks_and_sizes[0]
-        rtc_request = await input_channel.get(
-            key=CommMapper.build_channel_key(src_rank, self._rank, extra="eval_rtc"),
+        return await self.recv_from(
+            group_name=self.cfg.env.group_name,
+            channel=input_channel,
+            tag="eval_rtc",
+            route_key=0,
             async_op=True,
+            batch_size=1,
+            merge_fn=lambda items: items[0],
+            infer_batch_size_fn=lambda data: 1,
         ).async_wait()
-        return rtc_request
 
     def send_rtc_response(
         self, output_channel: Channel, rtc_response: RTCActionResponse
     ) -> None:
         """Send the RTC action response back to the matching env rank."""
-        dst_ranks_and_sizes = self.dst_ranks["eval"]
-        assert len(dst_ranks_and_sizes) == 1, (
-            "RTC real-world evaluation currently supports a single rollout->env route."
-        )
-        dst_rank, _ = dst_ranks_and_sizes[0]
-        output_channel.put(
-            rtc_response,
-            key=CommMapper.build_channel_key(self._rank, dst_rank, extra="eval_rtc"),
-            async_op=True,
+        self.send_to(
+            group_name=self.cfg.env.group_name,
+            channel=output_channel,
+            data=rtc_response,
+            tag="eval_rtc",
+            route_key=0,
+            batch_size=1,
+            split_fn=lambda data, sizes: [data],
         )
