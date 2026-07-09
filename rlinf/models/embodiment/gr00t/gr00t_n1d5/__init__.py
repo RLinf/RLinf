@@ -15,6 +15,8 @@
 import torch
 from omegaconf import DictConfig
 
+from .npu_patches import apply_npu_patches, restore_npu_patches
+
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
     from pathlib import Path
@@ -30,47 +32,57 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
         "gr00t.data.embodiment_tags.EMBODIMENT_TAG_MAPPING",
         "rlinf.models.embodiment.gr00t.embodiment_tags.EMBODIMENT_TAG_MAPPING",
     )
+
+    # Register the Ascend-specific patches (no-op off NPU) before applying, and
+    # restore the process-global ones once model construction finishes.
+    npu_patch_state = apply_npu_patches(Patcher)
     Patcher.apply()
+    try:
+        from gr00t.experiment.data_config import load_data_config
 
-    from gr00t.experiment.data_config import load_data_config
-
-    from rlinf.models.embodiment.gr00t.gr00t_n1d5.gr00t_action_model import (
-        GR00T_N1_5_ForRLActionPrediction,
-    )
-    from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
-
-    if cfg.embodiment_tag == "libero_franka" or cfg.embodiment_tag == "isaaclab_franka":
-        data_config = load_data_config(
-            "rlinf.models.embodiment.gr00t.gr00t_n1d5.modality_config:LiberoFrankaDataConfig"
+        from rlinf.models.embodiment.gr00t.gr00t_n1d5.gr00t_action_model import (
+            GR00T_N1_5_ForRLActionPrediction,
         )
-    elif cfg.embodiment_tag == "maniskill_widowx":
-        data_config = load_data_config(
-            "rlinf.models.embodiment.gr00t.gr00t_n1d5.modality_config:ManiskillWidowXDataConfig"
+        from rlinf.models.embodiment.gr00t.utils import replace_dropout_with_identity
+
+        if (
+            cfg.embodiment_tag == "libero_franka"
+            or cfg.embodiment_tag == "isaaclab_franka"
+        ):
+            data_config = load_data_config(
+                "rlinf.models.embodiment.gr00t.gr00t_n1d5.modality_config:LiberoFrankaDataConfig"
+            )
+        elif cfg.embodiment_tag == "maniskill_widowx":
+            data_config = load_data_config(
+                "rlinf.models.embodiment.gr00t.gr00t_n1d5.modality_config:ManiskillWidowXDataConfig"
+            )
+        else:
+            raise ValueError(f"Invalid embodiment tag: {cfg.embodiment_tag}")
+        modality_config = data_config.modality_config()
+        modality_transform = data_config.transform()
+
+        # The transformer registration is done in gr00t/model/gr00t_n1.py
+        model_path = Path(cfg.model_path)
+        if not model_path.exists():
+            # raise error or it triggers auto download from hf(It's cool but we don't have internet connection.)
+            raise FileNotFoundError(f"Model path does not exist: {model_path}")
+
+        model = GR00T_N1_5_ForRLActionPrediction.from_pretrained(
+            model_path,
+            torch_dtype=torch_dtype,
+            embodiment_tag=cfg.embodiment_tag,  # This tag determines the state encoder and action head to use
+            modality_config=modality_config,
+            modality_transform=modality_transform,
+            denoising_steps=cfg.denoising_steps,
+            output_action_chunks=cfg.num_action_chunks,
+            obs_converter_type=cfg.obs_converter_type,  # TODO(lx): unify the embodiment data format and obs converter
+            tune_visual=False,
+            tune_llm=False,
+            rl_head_config=cfg.rl_head_config,
         )
-    else:
-        raise ValueError(f"Invalid embodiment tag: {cfg.embodiment_tag}")
-    modality_config = data_config.modality_config()
-    modality_transform = data_config.transform()
+    finally:
+        restore_npu_patches(Patcher, npu_patch_state)
 
-    # The transformer rigisteration is done in gr00t/model/gr00t_n1.py
-    model_path = Path(cfg.model_path)
-    if not model_path.exists():
-        # raise error or it triggers auto download from hf(It's cool but we don't have internet connection.)
-        raise FileNotFoundError(f"Model path does not exist: {model_path}")
-
-    model = GR00T_N1_5_ForRLActionPrediction.from_pretrained(
-        model_path,
-        torch_dtype=torch_dtype,
-        embodiment_tag=cfg.embodiment_tag,  # This tag determines the state encoder and action head to use
-        modality_config=modality_config,
-        modality_transform=modality_transform,
-        denoising_steps=cfg.denoising_steps,
-        output_action_chunks=cfg.num_action_chunks,
-        obs_converter_type=cfg.obs_converter_type,  # TODO(lx): unify the embodiment data format and obs converter
-        tune_visual=False,
-        tune_llm=False,
-        rl_head_config=cfg.rl_head_config,
-    )
     model.to(torch_dtype)
     if cfg.rl_head_config.add_value_head:
         # reinitialize the value head after model loading, or there are nan values in the value head after model loading.
