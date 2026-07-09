@@ -507,25 +507,11 @@ Stage 1：联合训练 ManiSkill OpenPI + RLT 特征模型
 
 .. code:: text
 
-   logs/<run-name>/checkpoints/global_step_<step>/actor/model_state_dict/full_weights.pt
+   logs/<run-name>/checkpoints/global_step_<step>/actor
 
-将 Stage 1 FSDP 检查点转换为 HuggingFace 格式
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Stage 2 rollout worker 通过 HuggingFace 后端加载冻结特征模型，因此需要先把 Stage 1
-的 ``full_weights.pt`` 转换为 HuggingFace safetensors 目录，再把该目录填到
-``rollout.rlt_feature_model.model_path``。
-
-.. code:: bash
-
-   export REPO_PATH=/path/to/RLinf
-   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path ${REPO_PATH}/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-       --config-name fsdp_openpi_convertor \
-       convertor.train_config_path=${REPO_PATH}/examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml \
-       convertor.ckpt_path=/path/to/global_step_<step>/actor/model_state_dict/full_weights.pt \
-       convertor.save_path=/path/to/hf_stage1_actor \
-       convertor.strict_load=false
+Stage 2 中需要将这个 ``actor`` 目录直接填到
+``rollout.rlt_feature_model.model_path``，例如
+``/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor``。
 
 Stage 2：运行 ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -551,7 +537,7 @@ Stage 1 checkpoint：
 
    rollout:
      rlt_feature_model:
-       model_path: /path/to/hf_stage1_actor
+       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
          norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
@@ -739,5 +725,5 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
 - ManiSkill joint 示例使用 ``env.*.rlt_policy_switch``，不要再使用真机的 keyboard wrapper。
 - ManiSkill 的 ``proprio`` 来自 OpenPI processed ``observation.state``。如果新建仿真 dataconfig，需要同时检查数据集 ``state``、OpenPI transform 和 Stage 2 ``proprio_dim``。
 - Stage 1、Stage 2 和 checkpoint assets 中的 ``norm_stats.json`` 必须来自同一套数据语义和同一个 ``repo_id``。推荐通过 ``openpi_data.norm_stats_path`` 显式指定，避免 Stage 1 checkpoint 未写入 norm stats 时加载失败。
-- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 转换后的 HuggingFace 目录，而不是 FSDP ``actor/`` 原始检查点目录。
+- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 FSDP 检查点下的 ``actor`` 目录，例如 ``.../checkpoints/global_step_<step>/actor``。
 - 添加仿真示例时，可以新建仿真环境配置，保留 ``loss_type: rlt_ac`` 和 ``rollout.rlt_feature_model``，再把真机阶段切换逻辑替换成适合仿真的逻辑。

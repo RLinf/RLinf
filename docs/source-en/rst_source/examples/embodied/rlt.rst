@@ -541,26 +541,11 @@ The saved FSDP checkpoint usually looks like:
 
 .. code:: text
 
-   logs/<run-name>/checkpoints/global_step_<step>/actor/model_state_dict/full_weights.pt
+   logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Convert the Stage 1 FSDP Checkpoint to HuggingFace Format
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Stage 2 rollout workers load the frozen feature model through the HuggingFace
-backend. Convert Stage 1 ``full_weights.pt`` into a HuggingFace safetensors
-directory first, then point ``rollout.rlt_feature_model.model_path`` at that
-directory.
-
-.. code:: bash
-
-   export REPO_PATH=/path/to/RLinf
-   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
-       --config-path ${REPO_PATH}/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
-       --config-name fsdp_openpi_convertor \
-       convertor.train_config_path=${REPO_PATH}/examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml \
-       convertor.ckpt_path=/path/to/global_step_<step>/actor/model_state_dict/full_weights.pt \
-       convertor.save_path=/path/to/hf_stage1_actor \
-       convertor.strict_load=false
+Point this ``actor`` directory directly at
+``rollout.rlt_feature_model.model_path`` in Stage 2, for example
+``/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor``.
 
 Stage 2: Run ManiSkill RLT Actor-Critic
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -586,7 +571,7 @@ Edit the Stage 1 checkpoint in
 
    rollout:
      rlt_feature_model:
-       model_path: /path/to/hf_stage1_actor
+       model_path: /path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor
        openpi_data:
          repo_id: maniskill_peginsertionside_joint
          norm_stats_path: /path/to/maniskill_peginsertionside_joint/norm_stats.json
@@ -798,7 +783,7 @@ Practical Notes
   When you add a new simulator dataconfig, check the dataset ``state``, OpenPI
   transform, and Stage 2 ``proprio_dim`` together.
 - Stage 1, Stage 2, and checkpoint assets must load ``norm_stats.json`` from the same data semantics and ``repo_id``. Prefer setting ``openpi_data.norm_stats_path`` explicitly so Stage 1 runs still work when the checkpoint does not embed norm stats.
-- ``rollout.rlt_feature_model.model_path`` should point to the converted HuggingFace Stage 1 directory, not the raw FSDP ``actor/`` checkpoint directory.
+- ``rollout.rlt_feature_model.model_path`` should point to the Stage 1 FSDP ``actor`` directory, for example ``.../checkpoints/global_step_<step>/actor``.
 - To add a simulator example, create a simulator environment config, keep
   ``loss_type: rlt_ac`` and ``rollout.rlt_feature_model``, and replace the
   real-robot phase-switching logic with simulator-appropriate behavior.
