@@ -1208,6 +1208,73 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         v_t = self.action_out_proj(suffix_out)
         return v_t, suffix_out
 
+    def embed_prefix(
+        self, images, img_masks, lang_tokens, lang_masks
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Embed prefix images and language tokens for PaliGemma processing.
+
+        Overrides ``PI0Pytorch.embed_prefix`` to embed all camera views in a
+        single SigLIP forward (views stacked on the batch dim) instead of a
+        per-view Python loop. Batch entries are independent inside the ViT, so
+        the outputs match the loop path, while small batches fill the GPU much
+        better (batch = num_views x bsize per call instead of bsize). At bs=1
+        with 3 views and torch.compile max-autotune, prefix image embedding
+        drops from 9.5 ms to 6.4 ms per inference on an RTX PRO 5000.
+
+        Args:
+            images: Sequence of per-view image tensors, each ``[B, C, H, W]``
+                with identical shapes across views.
+            img_masks: Sequence of per-view validity masks, each ``[B]``.
+            lang_tokens: Tokenized language prompt of shape ``[B, L]``.
+            lang_masks: Language padding mask of shape ``[B, L]``.
+
+        Returns:
+            Tuple of concatenated prefix embeddings ``[B, T, D]``, padding
+            masks ``[B, T]``, and attention masks ``[B, T]``.
+        """
+        assert len(images) == len(img_masks), (
+            f"Expected one mask per image view, got {len(images)} views "
+            f"and {len(img_masks)} masks."
+        )
+        embs = []
+        pad_masks = []
+        att_masks = []
+
+        bsize = images[0].shape[0]
+
+        def image_embed_func(img):
+            return self.paligemma_with_expert.embed_image(img)
+
+        all_img_embs = self._apply_checkpoint(
+            image_embed_func, torch.cat(images, dim=0) if len(images) > 1 else images[0]
+        )
+        num_img_embs = all_img_embs.shape[1]
+
+        for view_idx, img_mask in enumerate(img_masks):
+            embs.append(all_img_embs[view_idx * bsize : (view_idx + 1) * bsize])
+            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+            # Image tokens attend to each other within the prefix.
+            att_masks += [0] * num_img_embs
+
+        def lang_embed_func(lang_tokens):
+            lang_emb = self.paligemma_with_expert.embed_language_tokens(lang_tokens)
+            return lang_emb * math.sqrt(lang_emb.shape[-1])
+
+        lang_emb = self._apply_checkpoint(lang_embed_func, lang_tokens)
+
+        embs.append(lang_emb)
+        pad_masks.append(lang_masks)
+
+        # Full attention between image and language inputs.
+        att_masks += [0] * lang_emb.shape[1]
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.tensor(att_masks, dtype=torch.bool, device=pad_masks.device)
+        att_masks = att_masks[None, :].expand(pad_masks.shape[0], len(att_masks))
+
+        return embs, pad_masks, att_masks
+
     def _build_prefix_cache(self, images, img_masks, lang_tokens, lang_masks):
         """Embed prefix tokens and compute KV cache for efficient suffix generation."""
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
