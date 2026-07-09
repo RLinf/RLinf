@@ -83,7 +83,7 @@ class AsyncEmbodiedSACFSDPPolicy(EmbodiedSACFSDPPolicy):
     async def _wait_for_replay_buffer_ready(self, min_buffer_size: int):
         while True:
             self._drain_received_trajectories(
-                max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 256)
+                max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
             )
             if await self.replay_buffer.is_ready_async(min_buffer_size):
                 return

@@ -189,7 +189,7 @@ def test_rollout_result_split_merge_invariant():
         prev_logprobs=torch.arange(12, dtype=torch.float32).view(6, 2),
         prev_values=torch.arange(6, dtype=torch.float32).view(6, 1),
         bootstrap_values=torch.arange(6, dtype=torch.float32).view(6, 1),
-        save_flags=torch.ones((6, 3), dtype=torch.bool),
+        intervene_flags=torch.ones((6, 3), dtype=torch.bool),
         forward_inputs={
             "action": torch.arange(12, dtype=torch.float32).view(6, 2),
             "states": torch.arange(18, dtype=torch.float32).view(6, 3),
@@ -205,7 +205,7 @@ def test_rollout_result_split_merge_invariant():
     assert torch.equal(merged.prev_logprobs, rollout_result.prev_logprobs)
     assert torch.equal(merged.prev_values, rollout_result.prev_values)
     assert torch.equal(merged.bootstrap_values, rollout_result.bootstrap_values)
-    assert torch.equal(merged.save_flags, rollout_result.save_flags)
+    assert torch.equal(merged.intervene_flags, rollout_result.intervene_flags)
     assert torch.equal(
         merged.forward_inputs["action"], rollout_result.forward_inputs["action"]
     )

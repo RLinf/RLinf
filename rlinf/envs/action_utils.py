@@ -294,7 +294,10 @@ def prepare_actions(
             )
         else:
             raise NotImplementedError(f"Env type {wm_env_type} not implemented")
-    elif env_type == SupportedEnvType.MANISKILL:
+    elif (
+        env_type == SupportedEnvType.MANISKILL
+        or env_type == SupportedEnvType.MANISKILL_RLT
+    ):
         chunk_actions = prepare_actions_for_maniskill(
             raw_chunk_actions=raw_chunk_actions,
             num_action_chunks=num_action_chunks,
