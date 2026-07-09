@@ -85,13 +85,6 @@ env:
         width: 224
         height: 224
 
-    # ── pickle format ───────────────────────────────────────────────
-    data_collection:
-      enabled: False
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "pickle"
-      only_success: True       # set True to discard failed episodes
-
   eval:
     rollout_epoch: 1
     total_num_envs: 32
@@ -174,9 +167,3 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False

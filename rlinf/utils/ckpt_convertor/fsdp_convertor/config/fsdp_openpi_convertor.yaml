@@ -1,0 +1,19 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+convertor:
+  # SFT Hydra yaml or RLinf tensorboard/config.yaml with actor.model.
+  train_config_path: null
+  auto_find_train_config: true
+
+  ckpt_path: /path/to/checkpoints/global_step_<step>/actor/model_state_dict/full_weights.pt
+  save_path: /path/to/hf_actor
+  merge_lora_weighs: true
+  strict_load: false
+  torch_dtype: null
+  model_overrides: null

@@ -592,7 +592,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         ref_chunk = self.output_transform(
             {"actions": outputs["actions"], "state": observation.state}
         )["actions"]
-        proprio = self._select_configured_state(env_obs["states"])
+        raw_proprio = self._select_configured_state(env_obs["states"])
+        if (
+            isinstance(self.config.config_name, str)
+            and "maniskill" in self.config.config_name.lower()
+        ):
+            state_dim = (
+                raw_proprio.shape[-1]
+                if hasattr(raw_proprio, "shape")
+                else np.asarray(raw_proprio).shape[-1]
+            )
+            proprio = observation.state[..., :state_dim]
+        else:
+            proprio = raw_proprio
         if not torch.is_tensor(proprio):
             proprio = torch.as_tensor(proprio)
 
