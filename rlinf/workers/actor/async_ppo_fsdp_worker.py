@@ -110,9 +110,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
     def _accept_received_trajectory(self, trajectory: Trajectory) -> None:
         """Apply the common staleness filter to a received trajectory."""
-        self.log_info(
-            f"recv trajectory versions.shape={trajectory.versions.shape}"
-        )
+        self.log_info(f"recv trajectory versions.shape={trajectory.versions.shape}")
         if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
             "staleness_threshold", None
         ):

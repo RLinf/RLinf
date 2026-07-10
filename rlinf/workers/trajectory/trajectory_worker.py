@@ -491,9 +491,7 @@ class TrajectoryChannelWorker(ChannelWorker):
                     current_epoch=data.current_epoch,
                     gamma=float(self.cfg.algorithm.get("gamma", 1.0)),
                     auto_reset=bool(self.cfg.env.train.auto_reset),
-                    bootstrap_type=self.cfg.algorithm.get(
-                        "bootstrap_type", "standard"
-                    ),
+                    bootstrap_type=self.cfg.algorithm.get("bootstrap_type", "standard"),
                 )
             self._seal_if_complete(data.global_step, storage)
 
@@ -514,9 +512,7 @@ class TrajectoryChannelWorker(ChannelWorker):
                     current_epoch=data.current_epoch,
                     gamma=float(self.cfg.algorithm.get("gamma", 1.0)),
                     auto_reset=bool(self.cfg.env.train.auto_reset),
-                    bootstrap_type=self.cfg.algorithm.get(
-                        "bootstrap_type", "standard"
-                    ),
+                    bootstrap_type=self.cfg.algorithm.get("bootstrap_type", "standard"),
                 )
             self._seal_if_complete(data.global_step, storage)
 
@@ -556,9 +552,7 @@ class TrajectoryChannelWorker(ChannelWorker):
                     current_epoch=data.current_epoch,
                     gamma=float(self.cfg.algorithm.get("gamma", 1.0)),
                     auto_reset=bool(self.cfg.env.train.auto_reset),
-                    bootstrap_type=self.cfg.algorithm.get(
-                        "bootstrap_type", "standard"
-                    ),
+                    bootstrap_type=self.cfg.algorithm.get("bootstrap_type", "standard"),
                 )
             self._seal_if_complete(data.global_step, storage)
 

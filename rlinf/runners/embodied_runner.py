@@ -94,15 +94,15 @@ class EmbodiedRunner:
 
         # Data channels. A trajectory channel preserves the ordinary Channel
         # API and records protocol messages as they pass through.
-        if self.trajectory is not None:
+        def create_channel(name: str) -> Channel:
+            if self.trajectory is None:
+                return Channel.create(name)
             from rlinf.workers.trajectory import TrajectoryChannel
 
-            create_channel = lambda name: TrajectoryChannel.create(
+            return TrajectoryChannel.create(
                 name=name,
                 trajectory_group_name=self.cfg.trajectory.group_name,
             )
-        else:
-            create_channel = Channel.create
 
         self.env_channel = create_channel("Env")
         self.rollout_channel = create_channel("Rollout")
