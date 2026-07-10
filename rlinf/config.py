@@ -923,6 +923,18 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
+    use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
+    standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
+    if use_reward_model and not standalone_realworld:
+        assert stage_num == 1, (
+            "use_reward_model requires rollout.pipeline_stage_num to be 1"
+        )
+
+    if cfg.runner.get("enable_decoupled_mode", False):
+        assert stage_num == 1, (
+            "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
+        )
+
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
             "env.eval config is required when runner.val_check_interval > 0, "
