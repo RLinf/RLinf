@@ -54,9 +54,6 @@ class RTCEnvWorker(EnvWorker):
         rtc_cfg = self.cfg.runner.get("rtc", {})
         if not rtc_cfg.get("enabled", False):
             return
-        assert self.cfg.env.eval.env_type == "realworld", (
-            "RTC evaluation is currently only integrated for real-world envs."
-        )
         assert str(self.cfg.actor.model.model_type) == "openpi", (
             "RTC real-world evaluation is currently integrated for the OpenPI policy path."
         )
@@ -79,7 +76,7 @@ class RTCEnvWorker(EnvWorker):
             mode=mode,
             tag="rtc",
             route_key=0,
-            batch_size=1,
+            batch_size=self.cfg.env.eval.total_num_envs,
             split_fn=lambda data, sizes: [data],
         )
 
@@ -94,7 +91,7 @@ class RTCEnvWorker(EnvWorker):
             tag=f"{mode}_rtc",
             route_key=0,
             async_op=True,
-            batch_size=1,
+            batch_size=self.cfg.env.eval.total_num_envs,
             merge_fn=lambda items: items[0],
             infer_batch_size_fn=lambda data: 1,
         )
@@ -141,9 +138,7 @@ class RTCEnvWorker(EnvWorker):
     ) -> tuple[EnvOutput, dict[str, Any]]:
         """Execute exactly one real-world action during RTC evaluation."""
         extracted_obs, step_reward, terminations, truncations, infos = (
-            self.eval_env_list[stage_id].step(
-                env_action, auto_reset=self.cfg.env.eval.auto_reset
-            )
+            self.eval_env_list[stage_id].step(env_action)
         )
 
         env_info = {}
@@ -191,10 +186,10 @@ class RTCEnvWorker(EnvWorker):
         chunk_actions = prepare_actions(
             raw_chunk_actions=rtc_response.actions,
             env_type=self.cfg.env.eval.env_type,
-            model_type=self.cfg.actor.model.model_type,
-            num_action_chunks=self.cfg.actor.model.num_action_chunks,
-            action_dim=self.cfg.actor.model.action_dim,
-            policy=self.cfg.actor.model.get("policy_setup", None),
+            model_type=self.model_cfg.model_type,
+            num_action_chunks=self.model_cfg.num_action_chunks,
+            action_dim=self.model_cfg.action_dim,
+            policy=self.model_cfg.get("policy_setup", None),
             wm_env_type=self.cfg.env.eval.get("wm_env_type", None),
         )
         return self._maybe_rewrite_eval_chunk_gripper(chunk_actions)
@@ -219,7 +214,7 @@ class RTCEnvWorker(EnvWorker):
             self.cfg.runner.get("stop_eval_on_keyboard_success", False)
         )
 
-        for eval_rollout_epoch in range(self.cfg.algorithm.eval_rollout_epoch):
+        for eval_rollout_epoch in range(self.eval_rollout_epoch):
             self.eval_env_list[stage_id].is_start = True
 
             extracted_obs, infos = self.eval_env_list[stage_id].reset()

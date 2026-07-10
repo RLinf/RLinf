@@ -300,7 +300,7 @@ class RTCRequest:
 class RTCActionResponse:
     """RTC response carrying a fresh action chunk."""
 
-    actions: torch.Tensor
+    actions: torch.Tensor = None
     model_actions: torch.Tensor | None = None
     chunk_id: int = 0
     guidance_applied: bool = False
@@ -308,7 +308,8 @@ class RTCActionResponse:
     def __post_init__(self):
         # Actions are executed by the env worker, while model_actions are kept
         # for the next RTC overlap constraint.
-        self.actions = self.actions.cpu().contiguous()
+        if self.actions is not None:
+            self.actions = self.actions.cpu().contiguous()
         if self.model_actions is not None:
             self.model_actions = self.model_actions.cpu().contiguous()
 

@@ -115,7 +115,7 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
             tag="eval_rtc",
             route_key=0,
             async_op=True,
-            batch_size=1,
+            batch_size=self.total_num_eval_envs,
             merge_fn=lambda items: items[0],
             infer_batch_size_fn=lambda data: 1,
         ).async_wait()
@@ -130,6 +130,6 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
             data=rtc_response,
             tag="eval_rtc",
             route_key=0,
-            batch_size=1,
+            batch_size=self.total_num_eval_envs,
             split_fn=lambda data, sizes: [data],
         )
