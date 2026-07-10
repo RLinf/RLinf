@@ -19,7 +19,6 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
@@ -117,13 +116,42 @@ def main(cfg) -> None:
             cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
         )
 
-    runner = EmbodiedRunner(
-        cfg=cfg,
-        actor=actor_group,
-        rollout=rollout_group,
-        env=env_group,
-        reward=reward_group,
-    )
+    trajectory_group = None
+    trajectory_enabled = bool(cfg.get("trajectory", {}).get("enabled", False))
+    if trajectory_enabled and cfg.runner.get("only_eval", False):
+        raise ValueError(
+            "trajectory.enabled=True is only supported for training runs. "
+            "Disable trajectory.enabled when runner.only_eval=True."
+        )
+    if trajectory_enabled:
+        from rlinf.runners.test_embodied_runner import TestEmbodiedRunner
+        from rlinf.workers.trajectory import TrajectoryChannelWorker
+
+        trajectory_placement = component_placement.get_strategy("trajectory")
+        trajectory_group = TrajectoryChannelWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.trajectory.group_name,
+            placement_strategy=trajectory_placement,
+            # Channel get/put calls may block while the worker continues to
+            # service other logical queues and storage tasks.
+            max_concurrency=2**31 - 1,
+        )
+        runner_cls = TestEmbodiedRunner
+    else:
+        from rlinf.runners.embodied_runner import EmbodiedRunner
+
+        runner_cls = EmbodiedRunner
+
+    runner_kwargs = {
+        "cfg": cfg,
+        "actor": actor_group,
+        "rollout": rollout_group,
+        "env": env_group,
+        "reward": reward_group,
+    }
+    if trajectory_group is not None:
+        runner_kwargs["trajectory"] = trajectory_group
+    runner = runner_cls(**runner_kwargs)
 
     runner.init_workers()
     runner.run()

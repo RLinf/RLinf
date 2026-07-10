@@ -103,12 +103,25 @@ def main(cfg) -> None:
             cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
         )
 
+    trajectory_group = None
+    if cfg.get("trajectory", {}).get("enabled", False):
+        from rlinf.workers.trajectory import TrajectoryChannelWorker
+
+        trajectory_placement = component_placement.get_strategy("trajectory")
+        trajectory_group = TrajectoryChannelWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.trajectory.group_name,
+            placement_strategy=trajectory_placement,
+            max_concurrency=2**31 - 1,
+        )
+
     runner = runner_cls(
         cfg=cfg,
         actor=actor_group,
         rollout=rollout_group,
         env=env_group,
         reward=reward_group,
+        trajectory=trajectory_group,
     )
 
     runner.init_workers()

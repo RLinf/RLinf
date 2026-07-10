@@ -15,7 +15,7 @@
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.trajectory import HistoryManager
 
 
 def _history_cfg():

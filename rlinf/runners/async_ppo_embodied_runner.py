@@ -44,13 +44,15 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         env: "AsyncEnvWorker",
         critic=None,
         reward=None,
+        trajectory=None,
     ):
-        super().__init__(cfg, actor, rollout, env, critic, reward)
+        super().__init__(cfg, actor, rollout, env, reward, critic, trajectory)
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.recompute_logprobs = bool(
             self.cfg.rollout.get("recompute_logprobs", False)
         )
+        self.trajectory_loop_handle: Handle | None = None
 
         if self.cfg.runner.val_check_interval > 0:
             self.logger.warning(
@@ -109,6 +111,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
     def run(self) -> None:
         start_step = self.global_step
         start_time = time.time()
+
+        if self.trajectory is not None:
+            self.trajectory_loop_handle = self.trajectory.run_loop()
 
         self.actor.set_global_step(self.global_step).wait()
         self.rollout.set_global_step(self.global_step).wait()
@@ -277,6 +282,10 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
         self.env.stop().wait()
         self.rollout.stop().wait()
+        if self.trajectory is not None:
+            self.trajectory.stop().wait()
+            if self.trajectory_loop_handle is not None:
+                self.trajectory_loop_handle.wait()
 
         env_handle.wait()
         rollout_handle.wait()

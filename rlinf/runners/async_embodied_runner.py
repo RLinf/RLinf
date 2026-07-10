@@ -47,8 +47,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         env: "AsyncEnvWorker",
         reward: "EmbodiedRewardWorker",
         critic=None,
+        trajectory=None,
     ):
-        super().__init__(cfg, actor, rollout, env, reward, critic)
+        super().__init__(cfg, actor, rollout, env, reward, critic, trajectory)
 
         # Data channels
         self.env_metric_channel = Channel.create("EnvMetric")
@@ -58,6 +59,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         self._weight_sync_coalesced_total = 0
         self._weight_sync_request_total = 0
         self.sync_weight_no_wait = self.cfg.actor.get("sync_weight_no_wait", False)
+        self.trajectory_loop_handle: Handle | None = None
 
     def get_env_metrics(self) -> tuple[dict, list[dict], list[dict]]:
         results: list[dict] = []
@@ -158,6 +160,9 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         start_step = self.global_step
         start_time = time.time()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+
+        if self.trajectory is not None:
+            self.trajectory_loop_handle = self.trajectory.run_loop()
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
@@ -314,6 +319,10 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         if self.reward is not None:
             self.reward.stop().wait()
             reward_handle.wait()
+        if self.trajectory is not None:
+            self.trajectory.stop().wait()
+            if self.trajectory_loop_handle is not None:
+                self.trajectory_loop_handle.wait()
         env_handle.wait()
         rollout_handle.wait()
         actor_handle.wait()

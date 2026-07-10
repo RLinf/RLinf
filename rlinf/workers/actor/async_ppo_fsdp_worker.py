@@ -91,17 +91,33 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             self._recv_rollout_thread.start()
 
     def _recv_rollout_thread_main(self, input_channel):
+        if self.use_trajectory_worker:
+            trajectory_ranks = self.trajectory_comm.assigned_trajectory_ranks(
+                self._actor_world_size,
+                self._component_placement.get_world_size("trajectory"),
+            )
+            while not self.should_stop:
+                for trajectory_rank in trajectory_ranks:
+                    trajectory = self.trajectory_comm.recv_trajectory_sync(
+                        trajectory_rank
+                    )
+                    self._accept_received_trajectory(trajectory)
+            return
+
         while not self.should_stop:
             trajectory: Trajectory = input_channel.get()
-            self.log_info(
-                f"recv trajectory versions.shape={trajectory.versions.shape} "
-                f"input_channel.qsize={input_channel.qsize()}"
-            )
-            if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
-                "staleness_threshold", None
-            ):
-                continue
-            self._recv_queue.put(trajectory)
+            self._accept_received_trajectory(trajectory)
+
+    def _accept_received_trajectory(self, trajectory: Trajectory) -> None:
+        """Apply the common staleness filter to a received trajectory."""
+        self.log_info(
+            f"recv trajectory versions.shape={trajectory.versions.shape}"
+        )
+        if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
+            "staleness_threshold", None
+        ):
+            return
+        self._recv_queue.put(trajectory)
 
     @Worker.timer("drain_received_trajectories")
     def _drain_received_trajectories(self):

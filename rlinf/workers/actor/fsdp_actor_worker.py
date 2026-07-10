@@ -83,6 +83,7 @@ from rlinf.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
+from rlinf.workers.trajectory import ActorTrajectoryComm
 
 
 def process_nested_dict_for_adv(nested_dict, rollout_epoch):
@@ -1058,6 +1059,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self._rollout_all_ranks = list(
             range(self._component_placement.get_world_size("rollout"))
         )
+        self.use_trajectory_worker = bool(
+            self.cfg.get("trajectory", {}).get("enabled", False)
+        )
+        if self.use_trajectory_worker:
+            self.trajectory_comm = ActorTrajectoryComm(self)
 
     def init_worker(self) -> None:
         """
@@ -1160,6 +1166,25 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.rollout_batch = convert_trajectories_to_batch(recv_list)
 
+        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+
+    @Worker.timer("actor/recv_trajectory_worker_traj")
+    async def recv_trajectory_worker_trajectories(self) -> None:
+        clear_memory(sync=False)
+
+        trajectory_world_size = self._component_placement.get_world_size("trajectory")
+        actor_world_size = self._component_placement.get_world_size("actor")
+        trajectory_ranks = self.trajectory_comm.assigned_trajectory_ranks(
+            actor_world_size,
+            trajectory_world_size,
+        )
+
+        recv_list = []
+        for trajectory_rank in trajectory_ranks:
+            trajectory = await self.trajectory_comm.recv_trajectory(trajectory_rank)
+            recv_list.append(trajectory)
+
+        self.rollout_batch = convert_trajectories_to_batch(recv_list)
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
 
     def _process_received_rollout_batch(

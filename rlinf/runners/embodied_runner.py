@@ -63,6 +63,7 @@ class EmbodiedRunner:
         env: Union["EnvWorker", "AsyncEnvWorker"],
         reward: Union["EmbodiedRewardWorker"] = None,
         critic=None,
+        trajectory=None,
     ):
         self.cfg = cfg
         self.actor = actor
@@ -70,6 +71,7 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+        self.trajectory = trajectory
         self.weight_sync_interval = self.cfg.runner.weight_sync_interval
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
@@ -90,12 +92,23 @@ class EmbodiedRunner:
             else None
         )
 
-        # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        # Data channels. A trajectory channel preserves the ordinary Channel
+        # API and records protocol messages as they pass through.
+        if self.trajectory is not None:
+            from rlinf.workers.trajectory import TrajectoryChannel
+
+            create_channel = lambda name: TrajectoryChannel.create(
+                name=name,
+                trajectory_group_name=self.cfg.trajectory.group_name,
+            )
+        else:
+            create_channel = Channel.create
+
+        self.env_channel = create_channel("Env")
+        self.rollout_channel = create_channel("Rollout")
+        self.actor_channel = create_channel("Actor")
         if self.reward is not None:
-            self.reward_channel = Channel.create("Reward")
+            self.reward_channel = create_channel("Reward")
         else:
             self.reward_channel = None
 
@@ -167,6 +180,9 @@ class EmbodiedRunner:
 
         if self.reward is not None:
             self.reward.init_worker().wait()
+
+        if self.trajectory is not None:
+            self.trajectory.init_worker().wait()
 
         rollout_handle.wait()
         env_handle.wait()

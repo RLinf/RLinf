@@ -290,10 +290,19 @@ class Channel:
             return self._current_worker._cluster_node_rank
         return 0  # Default to rank 0 if not in a worker context
 
-    def _get_channel_rank_by_key(self, key: Any) -> int:
+    def _get_channel_rank_by_key(
+        self, key: Any, channel_rank: Optional[int] = None
+    ) -> int:
         """Get the rank of the channel actor that should handle the given key."""
         if self._local_channel is not None:
             return -1
+        if channel_rank is not None:
+            if not 0 <= channel_rank < len(self._channel_actors_by_rank):
+                raise ValueError(
+                    f"Invalid channel rank {channel_rank}; expected a rank in "
+                    f"[0, {len(self._channel_actors_by_rank)})."
+                )
+            return channel_rank
         if not self._distributed:
             return 0
         if key not in self._key_to_channel_rank_cache:
@@ -364,6 +373,7 @@ class Channel:
         weight: int = 0,
         key: Any = DEFAULT_KEY,
         async_op: bool = False,
+        channel_rank: Optional[int] = None,
     ) -> Optional[AsyncWork]:
         """Put an item into the channel queue.
 
@@ -374,6 +384,8 @@ class Channel:
             When a key is given, the channel will put the item in the queue associated with that key.
             If the queue associated with the key does not exist, it will be created.
             async_op (bool): Whether to perform the operation asynchronously.
+            channel_rank (Optional[int]): Explicit channel replica rank. If omitted,
+                the channel uses normal key-based routing.
 
         """
         if self._local_channel is not None:
@@ -381,7 +393,7 @@ class Channel:
             self._local_channel.put(item, weight, key)
             return
 
-        target_rank = self._get_channel_rank_by_key(key)
+        target_rank = self._get_channel_rank_by_key(key, channel_rank)
         target_actor = self._get_channel_actor(target_rank)
 
         # First run async put to avoid send blocking put
@@ -471,13 +483,20 @@ class Channel:
             except asyncio.QueueFull:
                 raise asyncio.QueueFull
 
-    def get(self, key: Any = DEFAULT_KEY, async_op: bool = False) -> AsyncWork | Any:
+    def get(
+        self,
+        key: Any = DEFAULT_KEY,
+        async_op: bool = False,
+        channel_rank: Optional[int] = None,
+    ) -> AsyncWork | Any:
         """Get an item from the channel queue.
 
         Args:
             key (Any): The key to get the item from. A unique identifier for a specific set of items.
             When a key is given, the channel will look for the item in the queue associated with that key.
             async_op (bool): Whether to perform the operation asynchronously.
+            channel_rank (Optional[int]): Explicit channel replica rank. If omitted,
+                the channel uses normal key-based routing.
 
         Returns:
             Any: The item retrieved from the channel queue.
@@ -487,7 +506,7 @@ class Channel:
             assert async_op is False, "Local channel does not support async get."
             return self._local_channel.get(key)
 
-        target_rank = self._get_channel_rank_by_key(key)
+        target_rank = self._get_channel_rank_by_key(key, channel_rank)
         target_actor = self._get_channel_actor(target_rank)
 
         if self._current_worker is not None:

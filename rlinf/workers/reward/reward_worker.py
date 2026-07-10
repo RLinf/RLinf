@@ -41,6 +41,7 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     clear_memory,
 )
+from rlinf.workers.trajectory import Rewards, RewardTrajectoryComm
 
 
 class RewardWorker(Worker):
@@ -242,6 +243,11 @@ class EmbodiedRewardWorker(Worker):
         self._use_reward_prob = self.cfg.reward.get("use_reward_prob", False)
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        self.use_trajectory_worker = bool(
+            self.cfg.get("trajectory", {}).get("enabled", False)
+        )
+        if self.use_trajectory_worker:
+            self.trajectory_comm = RewardTrajectoryComm(self)
 
         if self.env_decoupled_mode:
             # save the run-time imformation in communicate channel for decoupled mode
@@ -314,6 +320,48 @@ class EmbodiedRewardWorker(Worker):
 
         if self.enable_offload:
             self.model.to("cpu")
+
+    async def compute_trajectory_rewards(self):
+        assert self._interact_task is None or self._interact_task.done(), (
+            "Previous reward task is still running while a new task is made."
+        )
+        self._interact_task = asyncio.current_task()
+        if self.enable_offload:
+            self.model.to(self.device)
+
+        trajectory_world_size = self.placement.get_world_size("trajectory")
+        tasks = [
+            asyncio.create_task(self._trajectory_reward_loop(trajectory_rank))
+            for trajectory_rank in range(trajectory_world_size)
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if self.enable_offload:
+                self.model.to("cpu")
+
+    async def _trajectory_reward_loop(self, trajectory_rank: int) -> None:
+        while True:
+            request = await self.trajectory_comm.recv_request(trajectory_rank)
+            rewards = self.compute_image_rewards(observations=request.observations)
+            if isinstance(rewards, torch.Tensor):
+                rewards = rewards.contiguous()
+            await self.trajectory_comm.send_rewards(
+                Rewards(
+                    global_step=request.global_step,
+                    rank=request.source_rank,
+                    current_epoch=request.current_epoch,
+                    current_step=request.current_step,
+                    rewards=rewards,
+                    reward_mode=request.reward_mode,
+                    history_lengths=request.history_lengths,
+                ),
+                trajectory_rank,
+                async_op=True,
+            ).async_wait()
 
     @Worker.timer("compute_image_rewards")
     def compute_image_rewards(

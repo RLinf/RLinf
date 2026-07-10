@@ -52,7 +52,12 @@ from rlinf.utils.utils import (
     pack_batch,
     preprocess_embodied_batch,
 )
-from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.trajectory import (
+    Actions,
+    EnvBootstrap,
+    HistoryManager,
+    Observations,
+)
 
 
 class EnvWorker(Worker):
@@ -172,6 +177,10 @@ class EnvWorker(Worker):
                 for _ in range(self.stage_num)
             ]
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        self.use_trajectory_worker = bool(
+            self.cfg.get("trajectory", {}).get("enabled", False)
+        )
+        self.global_step = 0
 
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
@@ -248,7 +257,9 @@ class EnvWorker(Worker):
                 ), "eval envs must have an offload method to enable offload!"
 
         if self.enable_train:
-            if self.reward_mode == "history_buffer":
+            if self.reward_mode == "history_buffer" and not getattr(
+                self, "use_trajectory_worker", False
+            ):
                 self.train_history_managers = [
                     HistoryManager(self.cfg.reward, self.train_num_envs_per_stage)
                     for _ in range(self.stage_num)
@@ -300,6 +311,9 @@ class EnvWorker(Worker):
                     self.cfg.env.eval, "override_cfg", OmegaConf.create(base_eval_cfg)
                 )
             self._inject_realworld_reward_cfg(self.cfg.env.eval)
+
+    def set_global_step(self, global_step: int):
+        self.global_step = int(global_step)
 
     def _init_pipeline_params(self):
         actor_ws = self._component_placement.get_world_size("actor")
@@ -652,7 +666,7 @@ class EnvWorker(Worker):
 
     @staticmethod
     def _infer_rollout_batch_size(data: Any) -> int:
-        """Infer batch dim for routed shards; supports RolloutResult and plain tensor payloads.
+        """Infer batch dim for routed shards and action protocol messages.
 
         When the channel carries a non-``RolloutResult`` shard (e.g. reward tensor or eval
         actions) into a rollout recv, avoid assuming dataclass fields and delegate or use
@@ -661,7 +675,7 @@ class EnvWorker(Worker):
 
         if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
             return int(data.shape[0])
-        if isinstance(data, RolloutResult):
+        if isinstance(data, (RolloutResult, Actions)):
             for field_name in (
                 "actions",
                 "prev_logprobs",
@@ -918,15 +932,86 @@ class EnvWorker(Worker):
 
         return env_outputs
 
-    def _build_rollout_input_data(self, env_batch: dict[str, Any]) -> dict[str, Any]:
-        data = {
-            "obs": env_batch["obs"],
-            "final_obs": env_batch["final_obs"],
-        }
-        if self.enable_rlt:
-            data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
-            data["intervene_flags"] = env_batch.get("intervene_flags", None)
-        return data
+    def _build_rollout_input_data(
+        self,
+        env_batch: dict[str, Any],
+        *,
+        current_epoch: int = 0,
+        current_step: int = 0,
+        stage_id: int = 0,
+        mode: str = "train",
+        storage_env_batch: dict[str, Any] | None = None,
+    ) -> Observations:
+        final_obs = env_batch.get("final_obs")
+        storage_next_obs = (
+            final_obs
+            if final_obs is not None and self.cfg.env.train.auto_reset
+            else env_batch["obs"]
+        )
+        storage_final_obs = (
+            storage_env_batch.get("final_obs")
+            if storage_env_batch is not None
+            else None
+        )
+        return Observations(
+            global_step=self.global_step,
+            rank=self._rank,
+            current_step=current_step,
+            current_epoch=current_epoch,
+            mode=mode,
+            stage_id=stage_id,
+            obs=env_batch["obs"],
+            next_obs=final_obs or {},
+            rlt_switch_flags=env_batch.get("rlt_switch_flags"),
+            intervene_actions=env_batch.get("intervene_actions"),
+            intervene_flags=env_batch.get("intervene_flags"),
+            dones=env_batch.get("dones"),
+            terminations=env_batch.get("terminations"),
+            truncations=env_batch.get("truncations"),
+            storage_obs=(
+                storage_env_batch["obs"] if storage_env_batch is not None else None
+            ),
+            storage_next_obs=storage_next_obs,
+            storage_reward_obs=(
+                storage_final_obs
+                if storage_final_obs is not None
+                else (
+                    storage_env_batch["obs"] if storage_env_batch is not None else None
+                )
+            ),
+            storage_env_infos=(
+                storage_env_batch.get("env_infos")
+                if storage_env_batch is not None
+                else None
+            ),
+            storage_has_final_obs=storage_final_obs is not None,
+            storage_rewards=(
+                storage_env_batch.get("rewards")
+                if storage_env_batch is not None
+                else None
+            ),
+            storage_dones=(
+                storage_env_batch.get("dones")
+                if storage_env_batch is not None
+                else None
+            ),
+            storage_terminations=(
+                storage_env_batch.get("terminations")
+                if storage_env_batch is not None
+                else None
+            ),
+            storage_truncations=(
+                storage_env_batch.get("truncations")
+                if storage_env_batch is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _split_rollout_input(
+        data: EnvBootstrap | Observations, sizes: list[int]
+    ) -> list[EnvBootstrap | Observations]:
+        return data.split(sizes)
 
     def _send_train_bootstrap(
         self, rollout_channel: Channel, env_outputs: list[EnvOutput]
@@ -937,11 +1022,23 @@ class EnvWorker(Worker):
             self.send_to(
                 group_name=self.cfg.rollout.group_name,
                 channel=rollout_channel,
-                data=self._build_rollout_input_data(env_batch),
+                data=EnvBootstrap(
+                    global_step=self.global_step,
+                    rank=self._rank,
+                    current_epoch=0,
+                    observations=env_batch["obs"],
+                    env_infos=env_batch.get("env_infos"),
+                    has_final_obs=env_batch.get("final_obs") is not None,
+                    dones=env_batch.get("dones"),
+                    terminations=env_batch.get("terminations"),
+                    truncations=env_batch.get("truncations"),
+                ),
                 mode="train",
                 tag="rollout_results",
                 route_key=stage_id if not self.env_decoupled_mode else None,
                 decoupled_mode=self.env_decoupled_mode,
+                batch_size=self.train_batch_size,
+                split_fn=self._split_rollout_input,
             )
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
@@ -1036,6 +1133,7 @@ class EnvWorker(Worker):
                         await asyncio.sleep(0)
 
                     env_output = env_outputs[stage_id]
+                    previous_env_output = env_output
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
                         self.rollout_results[stage_id].update_last_actions(
@@ -1062,7 +1160,7 @@ class EnvWorker(Worker):
                         tag="train_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.train_batch_size,
-                        merge_fn=RolloutResult.merge_rollout_results,
+                        merge_fn=Actions.merge_actions,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
                         decoupled_mode=self.env_decoupled_mode,
                     )
@@ -1111,8 +1209,8 @@ class EnvWorker(Worker):
                             cache_current=True,
                         )
 
-                    env_output, env_info, chunk_step_payload = self.env_interact_step(
-                        rollout_result.actions, stage_id
+                    next_env_output, env_info, chunk_step_payload = (
+                        self.env_interact_step(rollout_result.actions, stage_id)
                     )
                     stage_rollout = self.rollout_results[stage_id]
                     if isinstance(stage_rollout, EmbodiedLerobotRolloutResult):
@@ -1120,27 +1218,36 @@ class EnvWorker(Worker):
                             rollout_result=rollout_result,
                             **chunk_step_payload,
                         )
-                    env_batch = env_output.to_dict()
+                    env_batch = next_env_output.to_dict()
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
+                        data=self._build_rollout_input_data(
+                            env_batch,
+                            current_epoch=epoch,
+                            current_step=chunk_step_idx + 1,
+                            stage_id=stage_id,
+                            mode="train",
+                            storage_env_batch=previous_env_output.to_dict(),
+                        ),
                         mode="train",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        batch_size=self.train_batch_size,
+                        split_fn=self._split_rollout_input,
                     )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
-                            env_output.final_obs
-                            if env_output.dones.any() and self.cfg.env.train.auto_reset
-                            else env_output.obs
+                            next_env_output.final_obs
+                            if next_env_output.dones.any()
+                            and self.cfg.env.train.auto_reset
+                            else next_env_output.obs
                         )
                         self.rollout_results[stage_id].append_transitions(
                             curr_obs, next_obs
                         )
-
-                    env_outputs[stage_id] = env_output
+                    env_outputs[stage_id] = next_env_output
                     should_record = (
                         self.cfg.env.train.auto_reset
                         or self.cfg.env.train.ignore_terminations
@@ -1177,7 +1284,7 @@ class EnvWorker(Worker):
                     tag="train_rollout_results",
                     route_key=stage_id if not self.env_decoupled_mode else None,
                     batch_size=self.train_batch_size,
-                    merge_fn=RolloutResult.merge_rollout_results,
+                    merge_fn=Actions.merge_actions,
                     infer_batch_size_fn=self._infer_rollout_batch_size,
                     decoupled_mode=self.env_decoupled_mode,
                 )
@@ -1281,11 +1388,19 @@ class EnvWorker(Worker):
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
+                        data=self._build_rollout_input_data(
+                            env_batch,
+                            current_epoch=eval_rollout_epoch,
+                            current_step=0,
+                            stage_id=stage_id,
+                            mode="eval",
+                        ),
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        batch_size=self.eval_batch_size,
+                        split_fn=self._split_rollout_input,
                     )
 
             for eval_step in range(self.n_eval_chunk_steps):
@@ -1330,11 +1445,19 @@ class EnvWorker(Worker):
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
+                        data=self._build_rollout_input_data(
+                            env_batch,
+                            current_epoch=eval_rollout_epoch,
+                            current_step=eval_step + 1,
+                            stage_id=stage_id,
+                            mode="eval",
+                        ),
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        batch_size=self.eval_batch_size,
+                        split_fn=self._split_rollout_input,
                     )
 
             self.finish_rollout(mode="eval")
