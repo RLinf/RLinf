@@ -26,14 +26,14 @@ Environment
 
 - **Environment**: RoboCasa365 kitchen simulation benchmark
 - **Selection API**: official RoboCasa dataset registry via ``split`` + ``task_soup``
-- **Robot**: mobile Panda configuration (``PandaMobile`` by default)
+- **Robot**: mobile Panda configuration (``PandaOmron`` by default)
 - **Observation**: multi-view RGB images + configurable proprioceptive state extractor
 - **Action Space**: configurable RoboCasa mobile-manipulation action schema
 
 The default RLinf recipe uses:
 
 - ``split=pretrain`` for training
-- ``split=target`` for evaluation
+- ``split=pretrain`` for the lightweight evaluation config
 - ``task_soup=atomic_seen`` as the first benchmark slice
 
 You can switch to other official task soups, for example ``composite_seen`` or
@@ -155,7 +155,7 @@ command pattern from the RoboCasa docs is what the RLinf wrapper mirrors interna
 
    task_names = get_ds_soup(
        task_soup="atomic_seen",
-       split="target",
+       split="pretrain",
        source="human",
    )
 
@@ -163,8 +163,6 @@ Useful references:
 
 - RoboCasa dataset usage:
   https://robocasa.ai/docs/build/html/datasets/using_datasets.html
-- RoboCasa dataset-registry API:
-  https://robocasa.ai/docs/build/html/modules/robocasa.utils.dataset_registry.html
 
 Model Checkpoint
 ----------------
@@ -210,13 +208,14 @@ The lightweight evaluation config is ``robocasa365_eval_openpi``:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh robocasa365_eval_openpi
+   bash evaluations/run_eval.sh robocasa365_eval_openpi
 
 This config evaluates on:
 
-- ``env.eval.split=target``
+- ``env.eval.split=pretrain``
 - ``env.eval.task_soup=atomic_seen``
 - ``env.eval.task_mode=atomic``
+- no ``env.eval.task_filter`` by default, so the selected pretrain slice is not narrowed
 
 To evaluate a different benchmark slice, override the YAML fields directly:
 
@@ -232,7 +231,7 @@ For example:
 
 .. code:: bash
 
-   bash examples/embodiment/eval_embodiment.sh robocasa365_eval_openpi \
+   bash evaluations/run_eval.sh robocasa365_eval_openpi \
       env.eval.task_soup=composite_unseen \
       env.eval.task_mode=composite
 
