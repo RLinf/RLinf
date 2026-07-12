@@ -253,10 +253,4 @@ For example:
    bash evaluations/run_eval.sh robocasa365_eval_openpi \
       env.eval.task_soup=composite_unseen \
       env.eval.task_mode=composite
-
-Notes
------
-
-- The legacy :doc:`RoboCasa <robocasa>` page and ``robocasa`` env remain unchanged.
-- ``robocasa365`` is a separate env type and folder on purpose, to keep old recipes stable.
-- The first RLinf integration targets OpenPI / Pi0. Additional model-specific recipes can be added later on top of the same env.
+      
