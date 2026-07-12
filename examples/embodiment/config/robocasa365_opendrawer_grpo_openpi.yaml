@@ -3,7 +3,7 @@ defaults:
   - env/robocasa365@env.eval
   - model/pi0@actor.model
   - weight_syncer/patch_syncer@weight_syncer
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - _self_
   - override hydra/job_logging: stdout
 
@@ -17,7 +17,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 2-3
+    actor,env,rollout: all
 
 runner:
   task_type: embodied
@@ -27,8 +27,8 @@ runner:
     experiment_name: "robocasa365_grpo_openpi_opendrawer"
     logger_backends: ["tensorboard"]
 
-  max_epochs: 1000
-  max_steps: 80
+  max_epochs: 100
+  max_steps: -1
   only_eval: False
   val_check_interval: 10
   save_interval: 10
@@ -75,13 +75,13 @@ env:
     task_filter: ["OpenDrawer"]
     task_mode: atomic
     task_sampling_strategy: random
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 400
     reward_coef: ${algorithm.reward_coef}
     group_size: ${algorithm.group_size}
   eval:
     rollout_epoch: 1
-    total_num_envs: 16
+    total_num_envs: 32
     split: pretrain
     task_soup: atomic_seen
     task_filter: ["OpenDrawer"]
@@ -123,7 +123,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 128
-  global_batch_size: 768
+  global_batch_size: 1024
   seed: 42
   enable_offload: False
 

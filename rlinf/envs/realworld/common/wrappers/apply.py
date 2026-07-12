@@ -31,10 +31,14 @@ from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
 from rlinf.envs.realworld.common.wrappers.keyboard_eval_control_wrapper import (
     KeyboardEvalControlWrapper,
 )
+from rlinf.envs.realworld.common.wrappers.keyboard_rlt_policy_switch_wrapper import (
+    KeyboardRLTPolicySwitchWrapper,
+)
 from rlinf.envs.realworld.common.wrappers.keyboard_start_end_wrapper import (
     KeyboardStartEndWrapper,
 )
 from rlinf.envs.realworld.common.wrappers.pico_intervention import (
+    DualFrankaTcpPicoIntervention,
     PicoIntervention,
 )
 from rlinf.envs.realworld.common.wrappers.relative_frame import RelativeFrame
@@ -64,15 +68,12 @@ def _load_dexhand_intervention():
     return DexHandIntervention
 
 
-def _validate_teleop_mode(
-    use_spacemouse: bool,
-    use_gello: bool,
-    use_pico: bool,
-) -> None:
-    if sum((bool(use_spacemouse), bool(use_gello), bool(use_pico))) > 1:
+def _validate_teleop_mode(**modes: bool) -> None:
+    active_modes = [name for name, enabled in modes.items() if bool(enabled)]
+    if len(active_modes) > 1:
         raise ValueError(
             "Only one teleop mode can be active at a time. "
-            "Set exactly one of use_spacemouse, use_gello, use_pico to True."
+            f"Active modes: {', '.join(active_modes)}."
         )
 
 
@@ -88,6 +89,8 @@ def _apply_keyboard_wrapper(env: gym.Env, mode: Optional[str]) -> gym.Env:
         return KeyboardStartEndWrapper(env)
     if mode == "eval_control":
         return KeyboardEvalControlWrapper(env)
+    if mode == "rlt_policy_switch":
+        return KeyboardRLTPolicySwitchWrapper(env)
     return env
 
 
@@ -105,7 +108,11 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     use_spacemouse = cfg.get("use_spacemouse", True)
     use_gello = cfg.get("use_gello", False)
     use_pico = cfg.get("use_pico", False)
-    _validate_teleop_mode(use_spacemouse, use_gello, use_pico)
+    _validate_teleop_mode(
+        use_spacemouse=use_spacemouse,
+        use_gello=use_gello,
+        use_pico=use_pico,
+    )
 
     gripper_enabled = not no_gripper
 
@@ -157,14 +164,16 @@ def apply_dual_franka_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gy
         )
 
     use_pico = cfg.get("use_pico", False)
-
+    use_gello_joint = cfg.get("use_gello_joint", False)
     if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
         raise ValueError(
-            "Dual-arm franky envs only support GELLO-joint teleop "
-            "(set use_gello_joint=True)."
+            "Dual-arm Franka envs do not support use_spacemouse=True or "
+            "use_gello=True. Use use_gello_joint=True for GELLO-joint teleop "
+            "or use_pico=True for dual-arm PICO teleop."
         )
+    _validate_teleop_mode(use_gello_joint=use_gello_joint, use_pico=use_pico)
 
-    if not config.is_dummy and cfg.get("use_gello_joint", False):
+    if not config.is_dummy and use_gello_joint:
         left_port = cfg.get("left_gello_port", None)
         right_port = cfg.get("right_gello_port", None)
         if left_port is None or right_port is None:
@@ -183,10 +192,17 @@ def apply_dual_franka_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gy
             stream_period=cfg.get("gello_joint_stream_period", 0.001),
         )
 
-    if not env.config.is_dummy and use_pico:
-        raise NotImplementedError(
-            "use_pico=True is implemented for single-arm Franka envs only. "
-            "Add a dual-arm PicoIntervention before enabling it for DualFrankaEnv."
+    if not config.is_dummy and use_pico:
+        if getattr(env.unwrapped, "PER_ARM_ACTION_DIM", None) != 10:
+            raise ValueError(
+                "use_pico=True for dual-arm Franka is implemented for "
+                "DualFrankaTcpEnv-v1 only. Use env/realworld_dual_franka_tcp_rot6d."
+            )
+        pico_cfg = dict(cfg.get("pico", {}))
+        env = DualFrankaTcpPicoIntervention(
+            env,
+            gripper_enabled=True,
+            **pico_cfg,
         )
 
     env = _apply_keyboard_wrapper(env, cfg.get("keyboard_reward_wrapper", None))

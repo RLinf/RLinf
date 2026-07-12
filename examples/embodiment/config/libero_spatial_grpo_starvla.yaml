@@ -2,7 +2,7 @@ defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
   - model/starvla@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -111,7 +111,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: /path/to/model # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
+    model_path: /path/to/Qwen2.5-VL-OFT-LIBERO-4in1 # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
     precision: ${actor.model.precision}
 
 actor:
@@ -123,7 +123,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: /path/to/model # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
+    model_path: /path/to/Qwen2.5-VL-OFT-LIBERO-4in1 # https://huggingface.co/StarVLA/Qwen2.5-VL-OFT-LIBERO-4in1
     action_dim: 7
     num_action_chunks: 8
     unnorm_key: franka # starVLA action-stats key for LIBERO Franka tasks.

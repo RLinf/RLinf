@@ -86,10 +86,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-embodichain
+      rlinf/rlinf:agentic-rlinf0.3-embodichain
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-embodichain
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-embodichain
 
 Switch to the EmbodiChain virtual environment inside the image:
 

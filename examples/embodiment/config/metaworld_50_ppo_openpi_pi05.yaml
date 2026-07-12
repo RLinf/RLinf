@@ -2,7 +2,7 @@ defaults:
   - env/metaworld_50@env.train
   - env/metaworld_50@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -94,7 +94,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
+    model_path: "/path/to/model/RLinf-Pi05-MetaWorld-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -107,7 +107,7 @@ actor:
 
   # Override the default values in model/pi0_5
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
+    model_path: "/path/to/model/RLinf-Pi05-MetaWorld-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-MetaWorld-SFT
     num_action_chunks: 5 # interface for the env
     action_dim: 4
     add_value_head: True
@@ -131,7 +131,7 @@ actor:
     lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
     num_cycles: 0.5
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

@@ -103,7 +103,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
 
 .. code:: bash
 
@@ -112,9 +112,9 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -190,11 +190,20 @@ SFT model downloads for other tasks:
 
 **N1.6: GR00T-N1.6 SFT Model**
 
-You need to run the RLinf-provided GR00T-N1.6 SFT first, obtain the format-converted model, and configure the model path in the designated YAML file.
+We currently support LIBERO task Spatial and regard it as the RLinf demo for Gr00t N1.6
 
-RLinf SFT models will be released soon — stay tuned!
+.. code:: bash
 
-Currently supports four LIBERO tasks: Spatial, Object, Goal, 10.
+   # Method 1: Using git clone
+   git lfs install
+   git clone https://huggingface.co/RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
+
+   # Method 2: Using huggingface-hub
+   # For mainland China users, you can use the following for better download speed:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   pip install huggingface-hub
+   hf download RLinf/RLinf-Gr00t-N1.6-SFT-Spatial --local-dir RLinf/RLinf-Gr00t-N1.6-SFT-Spatial
+
 
 **N1.7: Temporary official release checkpoint usage**
 

@@ -30,6 +30,8 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
+- [2026/06] 🔥 RLinf supports STEAM for offline advantage estimation and policy optimization. Doc: [STEAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.7](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.7](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning with the Polaris simulator. Doc: [RL on Polaris](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/polaris.html).
 - [2026/06] 🔥 RLinf supports reinforcement learning fine-tuning for [GR00T-N1.6](https://github.com/NVIDIA/Isaac-GR00T). Doc: [RL on GR00T-N1.6](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html).
@@ -196,6 +198,8 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>

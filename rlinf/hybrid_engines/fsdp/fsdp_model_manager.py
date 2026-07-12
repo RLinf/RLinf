@@ -441,13 +441,17 @@ class FSDPModelManager:
             if self.optimizer_steps >= self.critic_warmup_steps:
                 self.optimizer = self.build_optimizer(model=self.model)
                 self.critic_warmup_steps = 0
+                self.lr_scheduler = self.build_lr_scheduler(
+                    optimizer=self.optimizer,
+                    optim_config=self._cfg.optim,
+                )
         else:
             lr_list = [group["lr"] for group in self.optimizer.param_groups]
 
         return grad_norm, lr_list
 
     def build_lr_scheduler(
-        self, optimizer: Optimizer, optim_config: DictConfig
+        self, optimizer: Optimizer, optim_config: DictConfig, last_epoch: int = -1
     ) -> LRScheduler:
         """
         Build the learning rate scheduler based on the configuration.
@@ -456,6 +460,7 @@ class FSDPModelManager:
         Args:
             optimizer (Optimizer): The optimizer for which to schedule the learning rate.
             optim_config (DictConfig): The optimizer config.
+            last_epoch (int): The scheduler epoch to resume from.
 
         Returns:
             LRScheduler: The learning rate scheduler.
@@ -478,6 +483,7 @@ class FSDPModelManager:
             num_cycles=num_cycles,
             min_lr=min_lr,
             min_lr_rate=min_lr_rate,
+            last_epoch=last_epoch,
         )
 
     def build_optimizer(
@@ -539,11 +545,31 @@ class FSDPModelManager:
                     "betas": betas,
                 }
             )
-        optimizer = torch.optim.AdamW(
-            param_groups,
-            eps=adam_eps,
-            weight_decay=weight_decay,
+
+        # Fused AdamW avoids a large foreach temp buffer during warmup_optimizer_state
+        # for NO_SHARD models (e.g. STEAM ensemble SFT). It is unsafe with sharded
+        # FSDP params + grad_scaler.step() and can fail at runtime with:
+        # "output with shape [] doesn't match the broadcast shape [1]".
+        all_params = [p for group in param_groups for p in group["params"]]
+        use_fused_adamw = (
+            self._cfg.fsdp_config.get("sharding_strategy", "full_shard") == "no_shard"
+            and Worker.torch_device_type == "cuda"
+            and Worker.torch_platform.is_available()
+            and not any(p.dim() == 0 for p in all_params)
         )
+        try:
+            optimizer = torch.optim.AdamW(
+                param_groups,
+                eps=adam_eps,
+                weight_decay=weight_decay,
+                fused=use_fused_adamw,
+            )
+        except (RuntimeError, TypeError):
+            optimizer = torch.optim.AdamW(
+                param_groups,
+                eps=adam_eps,
+                weight_decay=weight_decay,
+            )
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict
