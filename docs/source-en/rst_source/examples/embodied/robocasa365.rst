@@ -189,17 +189,33 @@ Point the config to the downloaded directory:
 Training
 --------
 
-The benchmark-aligned training recipe is:
+The OpenDrawer training recipe is:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh robocasa365_grpo_openpi
+   bash examples/embodiment/run_embodiment.sh robocasa365_opendrawer_grpo_openpi
 
-This config trains on:
+This config trains a single RoboCasa365 task with OpenPI and GRPO:
 
 - ``env.train.split=pretrain``
 - ``env.train.task_soup=atomic_seen``
+- ``env.train.task_filter=["OpenDrawer"]``
 - ``env.train.task_mode=atomic``
+
+OpenDrawer Batch Divisibility
+
+Use this check when changing GPU placement, rollout size, or actor batch size in
+``examples/embodiment/config/robocasa365_opendrawer_grpo_openpi.yaml``.
+
+.. code:: text
+
+   chunk_steps = env.train.max_steps_per_rollout_epoch / actor.model.num_action_chunks
+   rollout_size_per_actor_rank = (
+       env.train.total_num_envs * env.train.rollout_epoch / actor_world_size
+   ) * chunk_steps
+
+   rollout_size_per_actor_rank % (actor.global_batch_size / actor_world_size) == 0
+   actor.global_batch_size % (actor.micro_batch_size * actor_world_size) == 0
 
 Evaluation
 ----------

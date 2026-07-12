@@ -14,7 +14,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env,rollout: 0-1
+    env,rollout: all
 
 runner:
   task_type: embodied_eval
@@ -40,7 +40,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 18  # must be divisible by env_world_size, >=18 tasks
     seed: 7
-    seed_strategy: openpi # global_unique
+    seed_strategy: openpi
     split: pretrain
     task_soup: atomic_seen
     task_mode: atomic
@@ -108,5 +108,5 @@ rollout:
       use_dsrl: False
     openpi_data:
       state_space: "16d"
-      image_space: "2views" # "3views"
+      image_space: "2views"
       action_space: "12d"
