@@ -4,6 +4,7 @@ defaults:
   - model/pi0@actor.model
   - weight_syncer/patch_syncer@weight_syncer
   - training_backend/fsdp@actor.fsdp_config
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
@@ -41,8 +42,6 @@ algorithm:
   kl_penalty: kl
   group_size: 2
   reward_coef: 1.0
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: token_level
@@ -65,24 +64,11 @@ algorithm:
   filter_rewards: False
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     total_num_envs: 8
     split: pretrain
     task_soup: atomic_seen
@@ -93,6 +79,7 @@ env:
     reward_coef: 1.0
 
   eval:
+    rollout_epoch: 1
     total_num_envs: 8
     split: target
     task_soup: atomic_seen
@@ -115,9 +102,18 @@ rollout:
   unnorm_key: robocasa
   enable_offload: False
   pipeline_stage_num: 1
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+    max_new_tokens: null
 
   model:
-    model_path: "/workspace/dataset/RLinf-Pi0-RoboCasa365/"
+    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/workspace/dataset/RLinf-Pi0-RoboCasa365/}
     precision: null
 
 actor:
@@ -129,17 +125,21 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/workspace/dataset/RLinf-Pi0-RoboCasa365/"
+    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/workspace/dataset/RLinf-Pi0-RoboCasa365/}
     model_type: "openpi"
     num_action_chunks: 10
     action_dim: 12
     num_steps: 5
     add_value_head: False
     openpi:
-      config_name: "pi0_robocasa365"
+      config_name: "pi0_robocasa365_pretrain_human300"
       num_images_in_input: 2
       num_steps: 5
       detach_critic_input: False
+    openpi_data:
+      state_space: "16d"
+      image_space: "2views"
+      action_space: "12d"
 
   optim:
     lr: 5.0e-6

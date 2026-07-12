@@ -1,9 +1,7 @@
 defaults:
-  - env/robocasa365@env.train
   - env/robocasa365@env.eval
-  - model/pi0@actor.model
-  - weight_syncer/patch_syncer@weight_syncer
-  - training_backend/fsdp@actor.fsdp_config
+  - model/pi0@rollout.model
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
@@ -16,83 +14,30 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-1 # all
+    env,rollout: 0-1
 
 runner:
-  task_type: embodied
+  task_type: embodied_eval
   logger:
     log_path: "../results"
     project_name: rlinf
     experiment_name: "robocasa365_eval_openpi"
-    logger_backends: []
+    logger_backends: ["tensorboard"]
 
   max_epochs: 1
   max_steps: -1
   only_eval: True
   val_check_interval: -1
-  save_interval: 50
+  save_interval: -1
 
   resume_dir: null
   ckpt_path: null
 
-algorithm:
-  normalize_advantages: True
-  kl_penalty: kl
-  group_size: 1
-  reward_coef: 1.0
-
-  rollout_epoch: 1
-  eval_rollout_epoch: 50 # 1
-  reward_type: chunk_level
-  logprob_type: chunk_level
-  entropy_type: token_level
-
-  update_epoch: 1
-  adv_type: gae
-  loss_type: actor
-  loss_agg_func: "token-mean"
-  kl_beta: 0.0
-  entropy_bonus: 0
-  clip_ratio_high: 0.2
-  clip_ratio_low: 0.2
-  clip_ratio_c: 3.0
-  value_clip: 0.2
-  huber_delta: 10.0
-
-  gamma: 0.99
-  gae_lambda: 0.95
-
-  filter_rewards: False
-  rewards_lower_bound: 0.1
-  rewards_upper_bound: 0.9
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
-  train:
-    total_num_envs: 64
-    split: pretrain
-    task_soup: atomic_seen
-    task_mode: atomic
-    task_sampling_strategy: random
-    max_episode_steps: 700
-    max_steps_per_rollout_epoch: 700
-    reward_coef: 1.0
-    group_size: 1
   eval:
+    rollout_epoch: 1
     total_num_envs: 18  # must be divisible by env_world_size, >=18 tasks
     seed: 7
     seed_strategy: openpi # global_unique
@@ -112,7 +57,11 @@ env:
     video_cfg:
       save_video: True
       info_on_video: True
-      video_base_dir: "../results/video/eval"
+      extra_info_on_video:
+        - episode.success_once
+        - episode.success_at_end
+        - episode.episode_len
+      video_base_dir: ${runner.logger.log_path}/video/eval
     init_params:
       camera_heights: 256
       camera_widths: 256
@@ -124,56 +73,40 @@ rollout:
   unnorm_key: robocasa
   enable_offload: False
   pipeline_stage_num: 1
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+    max_new_tokens: null
 
   model:
-    model_path:  /path/to/checkpoints/pi0-robocasa-pretrain-human300
+    model_type: "openpi"
+    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/mnt/public/huzhipeng/yangtingyuan/RLinf_yty/checkpoints/pi0-robocasa-pretrain-human300}
     precision: null
-
-actor:
-  group_name: "ActorGroup"
-  training_backend: "fsdp"
-  micro_batch_size: 128
-  global_batch_size: 256  # must be divisible by micro_batch_size * actor_world_size
-  seed: 42
-  enable_offload: False
-
-  model:
-    model_path:  /path/to/checkpoints/pi0-robocasa-pretrain-human300
     num_action_chunks: 5
     action_dim: 12
+    is_lora: False
+    lora_rank: 32
+    use_proprio: True
     num_steps: 5
     add_value_head: False
     openpi:
       config_name: "pi0_robocasa365_pretrain_human300"
-      num_images_in_input: 2 # 3
-      num_steps: 5
+      num_images_in_input: 2
+      noise_level: 0.5
+      action_chunk: ${..num_action_chunks}
+      num_steps: ${..num_steps}
+      train_expert_only: True
+      action_env_dim: ${..action_dim}
+      noise_method: "flow_sde"
+      add_value_head: ${..add_value_head}
       detach_critic_input: False
+      use_dsrl: False
     openpi_data:
       state_space: "16d"
       image_space: "2views" # "3views"
       action_space: "12d"
-
-  optim:
-    lr: 1.0e-5
-    value_lr: 1.0e-4
-    adam_beta1: 0.9
-    adam_beta2: 0.95
-    adam_eps: 1.0e-08
-    weight_decay: 0.01
-    clip_grad: 1.0
-    critic_warmup_steps: 0
-
-  fsdp_config:
-    strategy: "fsdp"
-    sharding_strategy: "no_shard"
-    gradient_checkpointing: False
-    mixed_precision:
-      param_dtype: null
-      reduce_dtype: null
-      buffer_dtype: null
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False
