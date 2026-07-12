@@ -27,8 +27,8 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with examples/reward/preprocess_qwentrend_success_dataset.py
-# and point DUALVIEW_SFT_DATA_ROOT to the output root.
+# Build this dataset with run_preprocess_success_dataset.sh. The validated
+# checkpoint is global_step_100; max_steps=220 permits comparison at step 200.
 data:
   type: vlm
   dataset_name: "qwentrend_progress_sft"
@@ -43,7 +43,7 @@ data:
   image_keys: []
   max_prompt_length: 4096
   lazy_loading: true
-  num_workers: 32
+  num_workers: 16
   video_nframes: 5
   video_fps: null
   video_max_pixels: 200704
@@ -93,7 +93,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     lr_scheduler: cosine
-    total_training_steps: ${runner.max_steps}
+    total_training_steps: 1000
     lr_warmup_steps: 50
 
   fsdp_config:

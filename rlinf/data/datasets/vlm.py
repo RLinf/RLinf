@@ -1029,7 +1029,33 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         main_frames = payload.get("main_frames")
         extra_view_frames = payload.get("extra_view_frames")
         if main_frames is None or extra_view_frames is None:
-            raise ValueError(f"Sample {idx} pkl missing dual-view frame arrays")
+            observations = payload.get("observations")
+            metadata = raw.get("segment_metadata", {})
+            start = metadata.get("start_step")
+            end = metadata.get("end_step")
+            if observations is None or start is None or end is None:
+                raise ValueError(
+                    f"Sample {idx} pkl missing dual-view frames or episode window metadata"
+                )
+            selected = observations[int(start) : int(end) + 1]
+            main_frames = [observation.get("main_images") for observation in selected]
+            extra_view_frames = []
+            for observation in selected:
+                extra = observation.get("third_view_images")
+                if extra is None:
+                    extra = observation.get("extra_view_images")
+                    if extra is not None and getattr(extra, "ndim", 0) == 4:
+                        extra = extra[0]
+                extra_view_frames.append(extra)
+            expected = int(end) - int(start) + 1
+            if (
+                len(selected) != expected
+                or any(frame is None for frame in main_frames)
+                or any(frame is None for frame in extra_view_frames)
+            ):
+                raise ValueError(
+                    f"Sample {idx} has an invalid dual-view episode window"
+                )
         return (
             question,
             answer_text,

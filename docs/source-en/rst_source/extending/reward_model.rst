@@ -34,18 +34,19 @@ early success cannot silently produce a short negative example.
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_success_dataset.py \
-       --raw-data-path /path/to/qwentrend_uniform_collection \
-       --output-dir /path/to/qwentrend_success_sft \
-       --window-size 5 \
-       --min-failure-steps 50 \
-       --hard-negative-margin 5 \
-       --negative-positive-ratio 3
+   export UNIFORM_DATA_ROOT=/path/to/qwentrend_uniform_collection
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
+   bash examples/embodiment/qwentrend_success/run_preprocess_success_dataset.sh
 
-A successful terminal window receives ``1``. Complete failed terminal windows and
-nonterminal hard negatives receive ``0``. The script splits by source episode,
-not by window, and writes self-contained per-window pickle files. Only load
-pickle data that you trust because Python pickle can execute code while loading.
+A completed successful episode contributes its final 5-frame window with label
+``1``. Completed failed episodes contribute a terminal ``0``; both complete and
+partial episodes can contribute up to three nonterminal ``0`` hard negatives.
+For successful episodes, hard negatives end at least eight steps before the final
+window. The deterministic source-episode split and global RNG reproduce the
+validated 119 dataset: 3,673/11,019 train positives/negatives and 405/1,215 eval
+positives/negatives. Manifests reference the original episode pickle and frame
+range instead of copying images. Only load trusted pickle data because Python
+pickle can execute code during deserialization.
 
 3. Fine-tune Qwen3-VL-4B with the validated LoRA recipe:
 
