@@ -154,10 +154,13 @@ command pattern from the RoboCasa docs is what the RLinf wrapper mirrors interna
    from robocasa.utils.dataset_registry import get_ds_soup
 
    task_names = get_ds_soup(
-       task_soup="atomic_seen",
+       task_set="atomic_seen",
        split="pretrain",
        source="human",
    )
+
+RoboCasa names this argument ``task_set``; it corresponds to RLinf's
+``task_soup`` YAML field.
 
 Useful references:
 

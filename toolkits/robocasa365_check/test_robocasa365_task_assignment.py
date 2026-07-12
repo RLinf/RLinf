@@ -1129,7 +1129,7 @@ def parse_args() -> argparse.Namespace:
         / "examples"
         / "embodiment"
         / "config"
-        / "robocasa365_grpo_openpi.yaml",
+        / "robocasa365_opendrawer_grpo_openpi.yaml",
         help="用于检查 group_size 一致性的 RoboCasa365 GRPO 顶层配置。",
     )
     parser.add_argument(
