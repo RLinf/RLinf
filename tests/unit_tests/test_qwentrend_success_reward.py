@@ -40,3 +40,20 @@ def test_terminal_success_builder_matches_sft_prompt(monkeypatch):
             "videos show the same 5-frame history from two camera views."
         ]
     ]
+
+
+def test_history_vlm_returns_zero_before_first_window(monkeypatch):
+    from rlinf.models.embodiment.reward.vlm_reward_model import HistoryVLMRewardModel
+
+    model = object.__new__(HistoryVLMRewardModel)
+    model.interval_reward = 0.0
+    monkeypatch.setattr(model, "apply_gt_success_bonus", lambda rewards, _: rewards)
+
+    rewards = model.compute_reward(
+        {
+            "dones": torch.zeros(3, dtype=torch.bool),
+            "history_input": {"history_window": {}},
+        }
+    )
+
+    torch.testing.assert_close(rewards, torch.zeros(3))
