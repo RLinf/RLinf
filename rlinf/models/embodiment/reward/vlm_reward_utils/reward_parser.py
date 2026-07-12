@@ -142,3 +142,31 @@ class QwentrendRewardParser(BaseRewardParser):
                     invalid_examples,
                 )
         return torch.tensor(rewards, dtype=torch.float32)
+
+
+@register_reward_parser("qwentrend_binary_digit_reward_parser")
+class QwentrendBinaryDigitRewardParser(BaseRewardParser):
+    """Map generated binary success labels to sparse rewards."""
+
+    def __init__(
+        self,
+        positive_reward: float = 1.0,
+        negative_reward: float = 0.0,
+        invalid_reward: float = 0.0,
+        **_: object,
+    ) -> None:
+        self.positive_reward = float(positive_reward)
+        self.negative_reward = float(negative_reward)
+        self.invalid_reward = float(invalid_reward)
+
+    def parse_rewards(self, outputs: list[str]) -> torch.Tensor:
+        rewards = []
+        for output in outputs:
+            labels = re.findall(r"(?<!\d)([01])(?!\d)", str(output).strip())
+            if labels and labels[-1] == "1":
+                rewards.append(self.positive_reward)
+            elif labels and labels[-1] == "0":
+                rewards.append(self.negative_reward)
+            else:
+                rewards.append(self.invalid_reward)
+        return torch.tensor(rewards, dtype=torch.float32)

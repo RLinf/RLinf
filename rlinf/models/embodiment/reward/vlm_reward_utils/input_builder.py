@@ -318,3 +318,45 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
             answer_text=None,
         )
         return processed_inputs
+
+
+@register_input_builder("qwentrend_terminal_success_input_builder")
+@dataclass
+class QwentrendTerminalSuccessInputBuilder(QwentrendInputBuilder):
+    """Build the binary terminal-success prompt used during SFT."""
+
+    include_task: bool = True
+
+    def prepare_inputs(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+        valid_input_ids: list[int],
+    ):
+        history_window = history_input.get("history_window", {})
+        videos_clip = self.extract_videos(history_window, self.video_keys)
+        videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
+        task_descriptions = observations.get(
+            "task_descriptions",
+            [self.default_task_description] * len(videos_clip),
+        )
+
+        prompt_texts_list = []
+        for env_id in valid_input_ids:
+            task = str(
+                task_descriptions[env_id] or self.default_task_description
+            ).strip()
+            task_text = f" Task: {task}." if self.include_task and task else ""
+            prompt_texts_list.append(
+                [
+                    "Estimate task-conditioned success potential for this robot "
+                    f"manipulation state.{task_text} The two synchronized videos show "
+                    "the same 5-frame history from two camera views."
+                ]
+            )
+
+        return {
+            "images_list": None,
+            "videos_list": videos_list,
+            "prompt_texts_list": prompt_texts_list,
+        }
