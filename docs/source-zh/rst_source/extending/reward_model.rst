@@ -7,6 +7,72 @@ reward，也包括 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
 
 仿真场景 Reward Model
 ---------------------
+推荐的 QwenTrend Success 流程
+----------------------------
+
+当你需要可稳定驱动 PPO 的奖励时，使用终局成功二分类。这个流程不把任务规则写进
+VLM：任务文本来自每条轨迹，标签只来自环境 success 和轨迹时序。下文原有的
+``positive`` / ``negative`` / ``unclear`` trend 流程仍可使用，但不再是推荐的 PPO 配置。
+
+1. 从覆盖策略分布的 checkpoint 各采集一轮固定 50 步轨迹：
+
+.. code-block:: bash
+
+   export CHECKPOINT_TEMPLATE='/path/to/checkpoints/step_%d/actor/model_state_dict/full_weights.pt'
+   export OUTPUT_ROOT=/path/to/qwentrend_uniform_collection
+   NUM_ENVS=1024 bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+默认 checkpoint 为 ``0, 20, ..., 200``，每个 checkpoint 使用一个 seed。采集忽略
+提前终止，并固定运行 50 个环境步，避免提前成功被错误保存为短失败样本。
+
+2. 构建双视角、5 帧窗口的二分类 SFT 数据：
+
+.. code-block:: bash
+
+   python examples/reward/preprocess_qwentrend_success_dataset.py \
+       --raw-data-path /path/to/qwentrend_uniform_collection \
+       --output-dir /path/to/qwentrend_success_sft \
+       --window-size 5 \
+       --min-failure-steps 50 \
+       --hard-negative-margin 5 \
+       --negative-positive-ratio 3
+
+成功终局窗口标为 ``1``；完整失败终局窗口和非终局 hard-negative 标为 ``0``。脚本按
+源 episode 划分 train/eval，避免窗口级数据泄漏，并写出自包含的窗口 pickle。只加载
+可信的 pickle 数据，因为 Python 在反序列化 pickle 时可能执行代码。
+
+3. 使用验证过的 LoRA 配置微调 Qwen3-VL-4B：
+
+.. code-block:: bash
+
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_success_vlm.sh
+
+配置使用 LoRA rank 16、学习率 ``1e-5``、global batch size 8、
+``format_ce_coef=2`` 和 220 个优化步。按分类别评估选择 checkpoint，尤其关注正类
+recall，不要只看整体 accuracy。
+
+4. 从策略 checkpoint 启动 PPO：
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/qwen-success-checkpoint
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/run_qwentrend_success_reward.sh \
+       runner.ckpt_path=/path/to/policy/full_weights.pt \
+       runner.max_steps=100 \
+       env.train.total_num_envs=128 \
+       env.eval.total_num_envs=128
+
+在线推理与 SFT 使用完全相同的 prompt 和 ``0`` / ``1`` 生成协议。每次生成 ``1``
+都贡献 ``+1``，``0`` 和非法输出贡献 0。环境 reward 被关闭，VLM 每 5 步推理一次，
+每条轨迹仍固定运行 50 步。在已验证的 100-step 实验中，固定 128-env 的
+``eval/success_once`` 从 ``49.22%`` 提升到 ``77.34%``，
+``eval/success_at_end`` 达到 ``74.22%``。
+
 
 完整流程包括四个阶段：
 

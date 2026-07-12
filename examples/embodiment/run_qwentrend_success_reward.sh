@@ -6,9 +6,11 @@ set -euo pipefail
 
 python examples/embodiment/train_embodied_agent.py \
   --config-name maniskill_ppo_mlp_qwentrend_reward \
+  env.train.wrap_obs_mode=simple \
   env.train.ignore_terminations=true \
   env.train.max_episode_steps=50 \
   env.train.max_steps_per_rollout_epoch=50 \
+  env.eval.wrap_obs_mode=simple \
   env.eval.ignore_terminations=true \
   env.eval.max_episode_steps=50 \
   env.eval.max_steps_per_rollout_epoch=50 \

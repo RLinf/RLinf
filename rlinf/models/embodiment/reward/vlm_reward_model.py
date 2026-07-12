@@ -288,10 +288,26 @@ class HistoryVLMRewardModel(VLMRewardModel):
         history_input: dict[str, dict[str, list[list[Any]]]] = reward_input[
             "history_input"
         ]
-        input_batch_size = len(next(iter(next(iter(history_input.values())).values())))
         observations = {
             key: value for key, value in reward_input.items() if key != "history_input"
         }
+        histories = [
+            history
+            for history_buffer in history_input.values()
+            for history in history_buffer.values()
+        ]
+        if histories:
+            input_batch_size = len(histories[0])
+        else:
+            input_batch_size = len(observations["dones"])
+
+        if not histories:
+            rewards = torch.full(
+                (input_batch_size,),
+                fill_value=self.interval_reward,
+                dtype=torch.float32,
+            )
+            return self.apply_gt_success_bonus(rewards, observations)
 
         infer_micro_batch_size = self.infer_micro_batch_size or input_batch_size
 

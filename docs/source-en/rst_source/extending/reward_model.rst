@@ -9,6 +9,77 @@ history video and convert that judgment into a scalar reward.
 
 Simulation Reward Model
 -----------------------
+Recommended QwenTrend Success Pipeline
+--------------------------------------
+
+Use terminal-success classification when you need a reward that is stable enough
+for PPO. This route keeps the VLM task-independent: the task text comes from each
+episode, while labels come only from environment success and trajectory timing.
+The older ``positive`` / ``negative`` / ``unclear`` trend route remains available
+below, but it is not the recommended PPO configuration.
+
+1. Collect one 50-step rollout from checkpoints that cover the policy distribution:
+
+.. code-block:: bash
+
+   export CHECKPOINT_TEMPLATE='/path/to/checkpoints/step_%d/actor/model_state_dict/full_weights.pt'
+   export OUTPUT_ROOT=/path/to/qwentrend_uniform_collection
+   NUM_ENVS=1024 bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+The default checkpoint steps are ``0, 20, ..., 200``. Each checkpoint uses one
+seed. Rollouts ignore early termination and run for 50 environment steps, so an
+early success cannot silently produce a short negative example.
+
+2. Build 5-frame, dual-view binary SFT samples:
+
+.. code-block:: bash
+
+   python examples/reward/preprocess_qwentrend_success_dataset.py \
+       --raw-data-path /path/to/qwentrend_uniform_collection \
+       --output-dir /path/to/qwentrend_success_sft \
+       --window-size 5 \
+       --min-failure-steps 50 \
+       --hard-negative-margin 5 \
+       --negative-positive-ratio 3
+
+A successful terminal window receives ``1``. Complete failed terminal windows and
+nonterminal hard negatives receive ``0``. The script splits by source episode,
+not by window, and writes self-contained per-window pickle files. Only load
+pickle data that you trust because Python pickle can execute code while loading.
+
+3. Fine-tune Qwen3-VL-4B with the validated LoRA recipe:
+
+.. code-block:: bash
+
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_success_vlm.sh
+
+The config uses LoRA rank 16, learning rate ``1e-5``, global batch size 8,
+``format_ce_coef=2``, and 220 optimization steps. Select checkpoints by per-class
+evaluation, especially positive recall, instead of aggregate accuracy alone.
+
+4. Run PPO from the policy checkpoint:
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/qwen-success-checkpoint
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/run_qwentrend_success_reward.sh \
+       runner.ckpt_path=/path/to/policy/full_weights.pt \
+       runner.max_steps=100 \
+       env.train.total_num_envs=128 \
+       env.eval.total_num_envs=128
+
+Online inference uses the same prompt and ``0`` / ``1`` generation contract as
+SFT. Every generated ``1`` contributes ``+1``; ``0`` and invalid output contribute
+zero. Environment reward is disabled, inference runs every five steps, and each
+trajectory still runs for 50 steps. In the validated 100-step run, fixed 128-env
+``eval/success_once`` increased from ``49.22%`` to ``77.34%`` and
+``eval/success_at_end`` reached ``74.22%``.
+
 
 The full workflow has four stages:
 
