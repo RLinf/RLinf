@@ -137,15 +137,25 @@ def collect_trajectory_replay_metrics(
             metrics[metric_key] = rate
     return metrics
 
+
+METRIC_SUM_PREFIX = "__sum__/"
+
 CRITIC_EXPLAINED_VARIANCE_KEY = "critic/explained_variance"
-CRITIC_EXPLAINED_VARIANCE_COUNT_KEY = "_critic_explained_variance/count"
-CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY = "_critic_explained_variance/returns_sum"
-CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY = (
-    "_critic_explained_variance/returns_sq_sum"
+CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX = (
+    f"{METRIC_SUM_PREFIX}_critic_explained_variance/"
 )
-CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY = "_critic_explained_variance/errors_sum"
+CRITIC_EXPLAINED_VARIANCE_COUNT_KEY = f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}count"
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}returns_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}returns_sq_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}errors_sum"
+)
 CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY = (
-    "_critic_explained_variance/errors_sq_sum"
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}errors_sq_sum"
 )
 CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
     CRITIC_EXPLAINED_VARIANCE_COUNT_KEY,
@@ -193,7 +203,9 @@ def compute_critic_explained_variance_from_stats(
     stats: dict[str, float | torch.Tensor],
 ) -> torch.Tensor:
     """Compute critic explained variance from summed sufficient statistics."""
-    tensor_value = next((v for v in stats.values() if isinstance(v, torch.Tensor)), None)
+    tensor_value = next(
+        (v for v in stats.values() if isinstance(v, torch.Tensor)), None
+    )
     device = tensor_value.device if tensor_value is not None else torch.device("cpu")
 
     def as_tensor(key: str) -> torch.Tensor:
@@ -229,7 +241,9 @@ def pop_critic_explained_variance_stats(
             if not value:
                 return torch.tensor(0.0)
             tensors = [
-                item.detach() if isinstance(item, torch.Tensor) else torch.as_tensor(item)
+                item.detach()
+                if isinstance(item, torch.Tensor)
+                else torch.as_tensor(item)
                 for item in value
             ]
             return torch.stack([tensor.float() for tensor in tensors]).sum()

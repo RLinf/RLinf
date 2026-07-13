@@ -132,17 +132,26 @@ def test_ppo_critic_loss_returns_stats_that_match_full_batch_metric():
         summed_stats
     )
     averaged_microbatch_metric = torch.stack(
-        [metrics[CRITIC_EXPLAINED_VARIANCE_KEY] for metrics in microbatch_metrics]
+        [
+            compute_critic_explained_variance_from_stats(
+                {key: metrics[key] for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS}
+            )
+            for metrics in microbatch_metrics
+        ]
     ).mean()
+    full_batch_metric = compute_critic_explained_variance_from_stats(
+        {key: full_metrics[key] for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS}
+    )
 
     assert all(key in full_metrics for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS)
+    assert CRITIC_EXPLAINED_VARIANCE_KEY not in full_metrics
     assert not torch.isclose(
         averaged_microbatch_metric,
-        full_metrics[CRITIC_EXPLAINED_VARIANCE_KEY],
+        full_batch_metric,
     )
     assert torch.isclose(
         global_from_microbatches,
-        full_metrics[CRITIC_EXPLAINED_VARIANCE_KEY],
+        full_batch_metric,
     )
 
 
