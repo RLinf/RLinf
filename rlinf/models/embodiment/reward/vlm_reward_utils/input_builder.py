@@ -323,7 +323,7 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
 @register_input_builder("qwentrend_terminal_success_input_builder")
 @dataclass
 class QwentrendTerminalSuccessInputBuilder(QwentrendInputBuilder):
-    """Build the binary terminal-success prompt used during SFT."""
+    """Build the exact binary prompt used by terminal-success SFT."""
 
     include_task: bool = True
 
@@ -341,7 +341,7 @@ class QwentrendTerminalSuccessInputBuilder(QwentrendInputBuilder):
             [self.default_task_description] * len(videos_clip),
         )
 
-        prompt_texts_list = []
+        prompt_texts_list: list[list[str]] = []
         for env_id in valid_input_ids:
             task = str(
                 task_descriptions[env_id] or self.default_task_description
@@ -352,6 +352,52 @@ class QwentrendTerminalSuccessInputBuilder(QwentrendInputBuilder):
                     "Estimate task-conditioned success potential for this robot "
                     f"manipulation state.{task_text} The two synchronized videos show "
                     "the same 5-frame history from two camera views."
+                ]
+            )
+
+        return {
+            "images_list": None,
+            "videos_list": videos_list,
+            "prompt_texts_list": prompt_texts_list,
+        }
+
+
+@register_input_builder("qwentrend_potential_input_builder")
+@dataclass
+class QwentrendPotentialInputBuilder(QwentrendInputBuilder):
+    """Build the online five-frame input used by potential SFT."""
+
+    include_task: bool = True
+    num_bins: int = 10
+
+    def prepare_inputs(
+        self,
+        observations: dict[str, Any],
+        history_input: dict[str, dict[str, list[list[Any]]]],
+        valid_input_ids: list[int],
+    ):
+        history_window = history_input.get("history_window", {})
+        videos_clip = self.extract_videos(history_window, self.video_keys)
+        videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
+        task_descriptions = observations.get(
+            "task_descriptions",
+            [self.default_task_description] * len(videos_clip),
+        )
+
+        prompt_texts_list: list[list[str]] = []
+        for env_id in valid_input_ids:
+            task = str(
+                task_descriptions[env_id] or self.default_task_description
+            ).strip()
+            task_text = f" Task: {task}." if self.include_task and task else ""
+            prompt_texts_list.append(
+                [
+                    "You are estimating task-conditioned success potential for a "
+                    f"robot manipulation state.{task_text} The two synchronized "
+                    "videos show the same 5-frame history from two camera views. "
+                    "Predict the final state's potential as exactly one digit from "
+                    f"0 to {self.num_bins - 1}, where 0 is furthest from eventual "
+                    f"success and {self.num_bins - 1} is closest."
                 ]
             )
 

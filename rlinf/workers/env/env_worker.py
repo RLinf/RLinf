@@ -412,15 +412,6 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
-                    target_success_ratio=getattr(
-                        env_cfg.data_collection, "target_success_ratio", None
-                    ),
-                    ratio_tolerance=getattr(
-                        env_cfg.data_collection, "ratio_tolerance", 0.0
-                    ),
-                    ratio_warmup_episodes=getattr(
-                        env_cfg.data_collection, "ratio_warmup_episodes", 0
-                    ),
                 )
             env_list.append(env)
         return env_list

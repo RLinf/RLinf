@@ -18,6 +18,7 @@ import os
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
@@ -160,7 +161,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
 
     def get_eval_model_output(self, batch: dict[str, Any]):
         # hundle the input batch
-        correct = 0
+        counts = {
+            "correct": 0,
+            "total": 0,
+            "positive_correct": 0,
+            "positive_total": 0,
+            "negative_correct": 0,
+            "negative_total": 0,
+        }
+        binary_labels = True
         input_ids = batch["prompt"].to(self.device)
         answers = batch["answer"]
         attention_mask = batch["attention_mask"].to(self.device)
@@ -203,11 +212,64 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
             gold_text = answers[i]
 
-            if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
-                correct += 1
+            normalized_pred = vlm_normalize_text(pred_text)
+            normalized_gold = vlm_normalize_text(gold_text)
+            is_correct = normalized_pred == normalized_gold
+            counts["total"] += 1
+            counts["correct"] += int(is_correct)
+            binary_labels &= normalized_gold in {"0", "1"}
+            class_name = "positive" if normalized_gold == "1" else "negative"
+            counts[f"{class_name}_total"] += 1
+            counts[f"{class_name}_correct"] += int(is_correct)
 
-        # eval model return the correct number of answers
-        return correct
+        return counts if binary_labels else counts["correct"]
+
+    def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
+        """Compute class-aware metrics for binary VLM evaluation."""
+        positive_accuracy = counts["positive_correct"] / max(
+            1, counts["positive_total"]
+        )
+        negative_accuracy = counts["negative_correct"] / max(
+            1, counts["negative_total"]
+        )
+        return {
+            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
+            "positive_recall": positive_accuracy,
+            "negative_accuracy": negative_accuracy,
+            "balanced_accuracy": (positive_accuracy + negative_accuracy) / 2,
+            "positive_total": counts["positive_total"],
+            "negative_total": counts["negative_total"],
+        }
+
+    def weighted_answer_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        answers: list[str],
+        success_weight: float,
+        non_success_weight: float,
+    ) -> torch.Tensor:
+        """Compute answer-token CE with normalized per-sample class weights."""
+        shift_logits = logits[:, :-1].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        token_losses = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.shape[-1]),
+            shift_labels.view(-1),
+            ignore_index=-100,
+            reduction="none",
+        ).view_as(shift_labels)
+        valid_tokens = shift_labels.ne(-100)
+        token_counts = valid_tokens.sum(dim=1).clamp_min(1)
+        sample_losses = (token_losses * valid_tokens).sum(dim=1) / token_counts
+        weights = torch.tensor(
+            [
+                success_weight if str(answer).strip() == "1" else non_success_weight
+                for answer in answers
+            ],
+            device=sample_losses.device,
+            dtype=sample_losses.dtype,
+        )
+        return (sample_losses * weights).sum() / weights.sum().clamp_min(1e-8)
 
     def get_train_model_output(
         self, batch: dict[str, Any]
@@ -235,5 +297,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 **multi_modal_inputs,
             )
 
-        loss = outputs.loss
+        reweight_cfg = self.cfg.actor.model.get("sample_reweight", {})
+        if reweight_cfg.get("enabled", False):
+            loss = self.weighted_answer_loss(
+                outputs.logits,
+                labels,
+                batch["answer"],
+                float(reweight_cfg.get("success_weight", 1.0)),
+                float(reweight_cfg.get("non_success_weight", 1.0)),
+            )
+        else:
+            loss = outputs.loss
         return loss, {"loss": loss.detach().item()}

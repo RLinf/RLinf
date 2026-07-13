@@ -18,8 +18,8 @@ runner:
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
-  max_epochs: 220
-  max_steps: 220
+  max_epochs: 500
+  max_steps: 500
   val_check_interval: 100
   save_interval: 100
   experiment_name: qwen3_vl_4b_dualview_terminal_success
@@ -27,8 +27,8 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with run_preprocess_success_dataset.sh. The validated
-# checkpoint is global_step_100; max_steps=220 permits comparison at step 200.
+# Build this dataset with run_preprocess_success_dataset.sh and evaluate all
+# checkpoints before selecting the model for PPO.
 data:
   type: vlm
   dataset_name: "qwentrend_progress_sft"
@@ -73,17 +73,8 @@ actor:
       - lm_head
     sample_reweight:
       enabled: false
-      target_label_ratio:
-        positive: 1.0
-        negative: 1.0
-        unclear: 1.0
       success_weight: 1.0
       non_success_weight: 1.0
-      use_meta_sample_weight: false
-    success_head:
-      enabled: false
-    extra_label_loss:
-      enabled: false
 
   optim:
     lr: 1.0e-05

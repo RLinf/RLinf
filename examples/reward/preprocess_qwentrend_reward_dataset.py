@@ -173,7 +173,6 @@ def load_episodes_with_labels(
     keep_last_window: bool = True,
     task_description: Optional[str] = None,
     load_workers: int = 256,
-    score_source: str = "auto",
 ) -> list[dict]:
     """Load episodes with per-window labels from collected data."""
     pkl_files = sorted(glob(os.path.join(data_path, "*.pkl")))
@@ -188,24 +187,11 @@ def load_episodes_with_labels(
                 episode = pickle.load(f)
 
             observations = episode.get("observations", [])
-            if score_source == "gae":
-                score_values = episode.get("gae", None)
-                selected_score_source = "gae"
-            elif score_source == "rewards":
-                score_values = episode.get("rewards", None)
-                selected_score_source = "rewards"
-            elif score_source == "auto":
-                score_values = episode.get("gae", None)
-                selected_score_source = "gae"
-                if score_values is None or len(score_values) == 0:
-                    score_values = episode.get("rewards", None)
-                    selected_score_source = "rewards"
-            else:
-                raise ValueError(f"Unsupported score_source: {score_source}")
-
+            score_values = episode.get("gae", None)
+            score_source = "gae"
             if score_values is None or len(score_values) == 0:
-                return None
-
+                score_values = episode.get("rewards", [])
+                score_source = "rewards"
             seq_len = min(len(observations), len(score_values))
             if seq_len < window_size:
                 return None
@@ -256,7 +242,7 @@ def load_episodes_with_labels(
                         "score": score,
                         "start_gae": start_score,
                         "end_gae": end_score,
-                        "score_source": selected_score_source,
+                        "score_source": score_source,
                         "start_idx": start_idx,
                         "end_idx": end_idx,
                         "main_frames": main_frames,
@@ -447,7 +433,6 @@ def preprocess_and_save_reward_datasets(
     random_seed: Optional[int] = None,
     load_workers: int = 256,
     write_workers: int = 512,
-    score_source: str = "auto",
 ) -> dict:
     """Build train/eval Qwen trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
@@ -460,7 +445,6 @@ def preprocess_and_save_reward_datasets(
         keep_last_window=keep_last_window,
         task_description=task_description,
         load_workers=load_workers,
-        score_source=score_source,
     )
     if len(episodes) == 0:
         raise ValueError(f"No episodes loaded from raw data path: {raw_data_path}")
@@ -580,7 +564,6 @@ def preprocess_and_save_reward_datasets(
         "window_size": window_size,
         "stride": stride,
         "delta_threshold": delta_threshold,
-        "score_source": score_source,
         "tail_unclear_ratio": tail_unclear_ratio,
         "num_samples_per_episode": num_samples_per_episode,
         "keep_last_window": keep_last_window,
@@ -642,16 +625,7 @@ def parse_args() -> argparse.Namespace:
         "--delta-threshold",
         type=float,
         default=0.05,
-        help="Absolute score-delta threshold used to label windows as unclear.",
-    )
-    parser.add_argument(
-        "--score-source",
-        choices=("auto", "gae", "rewards"),
-        default="auto",
-        help=(
-            "Score sequence used for window trend labels. auto preserves the "
-            "original behavior: prefer gae and fall back to rewards."
-        ),
+        help="Absolute GAE-delta threshold used to label windows as unclear.",
     )
     parser.add_argument(
         "--tail-unclear-ratio",
@@ -781,7 +755,6 @@ def main() -> None:
         random_seed=args.seed,
         load_workers=args.load_workers,
         write_workers=args.write_workers,
-        score_source=args.score_source,
     )
 
     print("=" * 80)

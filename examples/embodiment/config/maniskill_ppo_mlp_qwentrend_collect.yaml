@@ -137,9 +137,6 @@ env:
       save_dir: ${runner.logger.log_path}/collected_data/eval
       export_format: pickle
       only_success: false
-      target_success_ratio: null
-      ratio_tolerance: 0.05
-      ratio_warmup_episodes: 0
       gae_gamma: 0.8
       gae_lambda: 0.9
       collect_env_stride: 1

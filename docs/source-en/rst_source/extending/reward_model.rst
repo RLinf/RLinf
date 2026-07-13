@@ -22,13 +22,22 @@ below, but it is not the recommended PPO configuration.
 
 .. code-block:: bash
 
-   export CHECKPOINT_TEMPLATE='/path/to/checkpoints/step_%d/actor/model_state_dict/full_weights.pt'
+   export CHECKPOINT_TEMPLATE_EARLY='/path/to/clean_gt_0_120/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
+   export CHECKPOINT_TEMPLATE_LATE='/path/to/clean_gt_0_200/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
    export OUTPUT_ROOT=/path/to/qwentrend_uniform_collection
-   NUM_ENVS=1024 bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+   export CUDA_DEVICES=0,1,2,3
+   export PLACEMENT=0-3
+   NUM_ENVS=1024 SEED=0 \
+       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
 
-The default checkpoint steps are ``0, 20, ..., 200``. Each checkpoint uses one
-seed. Rollouts ignore early termination and run for 50 environment steps, so an
-early success cannot silently produce a short negative example.
+The default checkpoint steps are ``0, 20, ..., 200``. Step 0 uses a randomly
+initialized policy; steps 20--120 use the early template and steps 140--200 use
+the late template. Each checkpoint uses seed 0 and one four-GPU Ray evaluation
+job. Rollouts use ``simple`` observations, ignore early termination, and run for
+50 environment steps, so an early success cannot silently produce a short
+negative example. To replace a failed checkpoint, rerun the same collection
+command with, for example,
+``STEPS="80 120 160"``; matching episode filenames are overwritten.
 
 2. Build 5-frame, dual-view binary SFT samples:
 
@@ -38,15 +47,12 @@ early success cannot silently produce a short negative example.
    export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
    bash examples/embodiment/qwentrend_success/run_preprocess_success_dataset.sh
 
-A completed successful episode contributes its final 5-frame window with label
-``1``. Completed failed episodes contribute a terminal ``0``; both complete and
-partial episodes can contribute up to three nonterminal ``0`` hard negatives.
-For successful episodes, hard negatives end at least eight steps before the final
-window. The deterministic source-episode split and global RNG reproduce the
-validated 119 dataset: 3,673/11,019 train positives/negatives and 405/1,215 eval
-positives/negatives. Manifests reference the original episode pickle and frame
-range instead of copying images. Only load trusted pickle data because Python
-pickle can execute code during deserialization.
+The preprocessor splits by source episode before creating windows and exits
+nonzero if any episode appears in both train and eval. The default online-aligned
+mode emits one 5-frame window at each post-action observation index ``5, 10, ..., 50``. Index 0 is the reset observation and is never used as the first online window. Each window is labeled from ``infos[end_step]["success"]``; the natural class ratio is preserved and no near-terminal positive or sampled hard negative is added. Set ``UNIFORM_STEPS`` to preprocess a subset while debugging; the default remains checkpoints 0 through 200. A validated step-100 pilot produced 2,700/6,560 train positives/negatives and 221/759 eval positives/negatives.
+Manifests reference the original episode pickle and frame range instead of
+copying images. Only load trusted pickle data because Python pickle can execute
+code during deserialization.
 
 3. Fine-tune Qwen3-VL-4B with the validated LoRA recipe:
 
@@ -54,32 +60,49 @@ pickle can execute code during deserialization.
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export PLACEMENT=0-3
    CUDA_VISIBLE_DEVICES=0,1,2,3 \
        bash examples/embodiment/qwentrend_success/run_train_success_vlm.sh
 
-The config uses LoRA rank 16, learning rate ``1e-5``, global batch size 8,
-``format_ce_coef=2``, and 220 optimization steps. Select checkpoints by per-class
-evaluation, especially positive recall, instead of aggregate accuracy alone.
+The launcher uses LoRA rank 16, learning rate ``1e-5``, micro batch size 4,
+global batch size 256, ``format_ce_coef=2``, class-ratio-weighted success loss,
+and 400 optimization steps. It evaluates and saves every 100 steps. Select the
+checkpoint with the highest balanced accuracy while checking positive recall
+and negative accuracy separately; do not use aggregate accuracy alone.
 
 4. Run PPO from the policy checkpoint:
 
 .. code-block:: bash
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/qwen-success-checkpoint
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/run_qwentrend_success_reward.sh \
-       runner.ckpt_path=/path/to/policy/full_weights.pt \
-       runner.max_steps=100 \
-       env.train.total_num_envs=128 \
-       env.eval.total_num_envs=128
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/global_step_300
+   export QWENTREND_POTENTIAL_CHECKPOINT=/path/to/potential/global_step_400
+   export QWENTREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
+   export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
+   export PPO_OUTPUT_ROOT=/path/to/ppo-output
+   CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=128 MAX_STEPS=160 \
+       INFER_BATCH_SIZE=32 \
+       bash examples/embodiment/run_qwentrend_success_reward.sh
 
 Online inference uses the same prompt and ``0`` / ``1`` generation contract as
-SFT. Every generated ``1`` contributes ``+1``; ``0`` and invalid output contribute
-zero. Environment reward is disabled, inference runs every five steps, and each
-trajectory still runs for 50 steps. In the validated 100-step run, fixed 128-env
-``eval/success_once`` increased from ``49.22%`` to ``77.34%`` and
-``eval/success_at_end`` reached ``74.22%``.
+SFT. The potential checkpoint and scalar head produce the bounded dense shaping
+term, while the independently trained success LoRA generates the sparse success
+term. A generated ``1`` contributes a one-shot ``+1`` bonus; ``0`` and invalid
+output contribute zero. Environment reward is disabled, inference runs every
+five steps, and fixed-50-step training keeps the online distribution aligned
+with preprocessing.
+
+The PPO reward combines bounded Qwen potential differences with the generated
+success bonus. To continue a run, set ``RESUME_DIR`` to a saved
+``checkpoints/global_step_N`` directory and set ``MAX_STEPS`` to the desired
+total step, for example 160 when resuming from step 60.
+
+The launcher evaluates every 5 steps and saves every 20 steps. It fixes actor,
+rollout, environment, and reward placement to GPUs 0-3 by default. Override
+``PLACEMENT`` only when the hardware layout differs.
+The online Qwen micro-batch defaults to 32. The launcher uses the main-branch
+``history_buffer`` dispatch mode; the binary parser still makes the effective
+reward sparse by mapping only generated ``1`` to ``+1``.
 
 
 The full workflow has four stages:
@@ -427,6 +450,7 @@ windows and sends them to the reward worker only when a valid window is availabl
              - main_images
              - extra_view_images
            input_on_done: false
+           input_on_done_full_window: false
        interval_reward: 0.0
        infer_micro_batch_size: 64
        max_new_tokens: 16
@@ -437,6 +461,7 @@ windows and sends them to the reward worker only when a valid window is availabl
 Important fields:
 
 - ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
+- ``input_on_done_full_window`` makes a done-triggered request use the last full history window; it is disabled by default for compatibility.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.

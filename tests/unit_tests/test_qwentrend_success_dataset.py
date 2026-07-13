@@ -21,6 +21,10 @@ def _write_episode(path, *, observation_count, success=False, complete=True):
         "success": success,
         "terminated": [False] * (observation_count - 2) + [complete],
         "truncated": [False] * (observation_count - 1),
+        "infos": [
+            {"success": success and step == observation_count - 1}
+            for step in range(observation_count)
+        ],
         "task": "test task",
     }
     with path.open("wb") as stream:
@@ -36,6 +40,8 @@ def _args(root):
         negative_positive_ratio=3.0,
         hard_negatives_per_episode=3,
         success_exclusion_steps=8,
+        near_terminal_positives_per_episode=1,
+        success_positive_lead_steps=4,
         workers=2,
         seed=42,
     )
@@ -49,12 +55,20 @@ def test_success_dataset_reproduces_terminal_and_hard_negative_rules(tmp_path):
     rows_by_split, stats = build_rows(_args(tmp_path))
     rows = rows_by_split["train"]
 
-    positive = next(row for row in rows if row["answer"] == "1")
-    assert positive["segment_metadata"]["target_type"] == "success_terminal"
+    positive = [row for row in rows if row["answer"] == "1"]
+    assert len(positive) == 2
+    terminal = next(
+        row
+        for row in positive
+        if row["segment_metadata"]["target_type"] == "success_observed"
+    )
     assert (
-        positive["segment_metadata"]["start_step"],
-        positive["segment_metadata"]["end_step"],
-    ) == (17, 21)
+        terminal["segment_metadata"]["start_step"],
+        terminal["segment_metadata"]["end_step"],
+    ) == (18, 22)
+    near_terminal = next(row for row in positive if row is not terminal)
+    assert near_terminal["segment_metadata"]["target_type"] == "success_near_observed"
+    assert 18 <= near_terminal["segment_metadata"]["end_step"] < 22
     assert (
         sum(
             row["segment_metadata"]["target_type"] == "failure_terminal" for row in rows
@@ -66,10 +80,11 @@ def test_success_dataset_reproduces_terminal_and_hard_negative_rules(tmp_path):
             row["segment_metadata"]["target_type"] == "nonterminal_hard_negative"
             for row in rows
         )
-        == 2
+        == 5
     )
     assert stats["complete_episodes"] == 2
     assert stats["partial_episodes"] == 1
+    assert stats["splits"]["train"]["positive"] == 2
 
 
 def test_global_seed_makes_manifest_rows_deterministic(tmp_path):
@@ -120,3 +135,30 @@ def test_qwentrend_loader_slices_raw_episode_window(tmp_path):
     assert int(np.asarray(videos[0][0])[0, 0, 0]) == 10
     assert int(np.asarray(videos[1][-1])[0, 0, 0]) == 14
     assert image_data == [str(path), str(path)]
+
+
+def test_online_interval_matches_inference_window_ends(tmp_path):
+    _write_episode(tmp_path / "success.pkl", observation_count=21, success=True)
+    _write_episode(tmp_path / "failure.pkl", observation_count=21)
+    args = _args(tmp_path)
+    args.online_interval = 5
+
+    rows_by_split, stats = build_rows(args)
+    rows = rows_by_split["train"]
+
+    assert sorted(row["segment_metadata"]["end_step"] for row in rows) == [
+        5,
+        5,
+        10,
+        10,
+        15,
+        15,
+        20,
+        20,
+    ]
+    assert sum(row["answer"] == "1" for row in rows) == 1
+    assert stats["splits"]["train"] == {
+        "positive": 1,
+        "negative": 7,
+        "online_interval": 5,
+    }
