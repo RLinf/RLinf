@@ -396,6 +396,36 @@ class SubprocEnvWorker(EnvWorker):
     def set_env_attr(self, key: str, value: Any) -> None:
         self.parent_remote.send(["setattr", {"key": key, "value": value}])
 
+    def get_camera_meta(self, camera_name: str = "agentview",
+                        height: int = 256, width: int = 256) -> Any:
+        """Fetch static camera calibration (intrinsics, cam->world extrinsics,
+        depth near/far) for the named camera. Handled by the libero worker
+        loop, which has access to the robosuite sim."""
+        self.parent_remote.send([
+            "get_camera_meta",
+            {"camera_name": camera_name, "height": height, "width": width},
+        ])
+        return self.parent_remote.recv()
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> Any:
+        """Render an arbitrary LIBERO camera from the worker subprocess."""
+        self.parent_remote.send([
+            "render_camera",
+            {
+                "camera_name": camera_name,
+                "height": height,
+                "width": width,
+                "depth": depth,
+            },
+        ])
+        return self.parent_remote.recv()
+
     def _decode_obs(self) -> Union[dict, tuple, np.ndarray]:
         def decode_obs(
             buffer: Optional[Union[dict, tuple, ShArray]]
