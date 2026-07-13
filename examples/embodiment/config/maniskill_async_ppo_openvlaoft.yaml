@@ -98,7 +98,7 @@ rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
 
   model:
@@ -111,7 +111,7 @@ actor:
   micro_batch_size: 40
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   # Override the default values in model/openvla_oft
   model:
