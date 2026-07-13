@@ -244,10 +244,10 @@ def sft_collate_fn(data_list: list["DatasetItem"]) -> dict[str, Any]:
     if multi_modal_list:
         for k in multi_modal_list[0].keys():
             vals = [m[k] for m in multi_modal_list]
-            if k == "pixel_values":
+            if k in ("pixel_values", "pixel_values_videos"):
                 # pixel_values is a list of torch.Tensor, for get_iterator_k_split to divide
                 multi_modal_inputs[k] = vals
-            elif k == "image_grid_thw":
+            elif k in ("image_grid_thw", "video_grid_thw"):
                 multi_modal_inputs[k] = (
                     torch.cat(vals, dim=0)
                     if isinstance(vals[0], torch.Tensor)

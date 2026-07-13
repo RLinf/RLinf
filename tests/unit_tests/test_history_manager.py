@@ -75,3 +75,25 @@ def test_build_history_input_emits_on_interval_tick():
         torch.tensor([12]),
         torch.tensor([13]),
     ]
+
+
+def test_build_history_input_emits_full_window_on_done():
+    cfg = _history_cfg()
+    cfg.model.history_buffers.main.history_size = 2
+    cfg.model.history_buffers.main.input_interval = 5
+    cfg.model.history_buffers.main.input_on_done_full_window = True
+    manager = HistoryManager(cfg, num_envs=2)
+    _append_step(manager, 1)
+    _append_step(manager, 2)
+    _append_step(manager, 3)
+
+    history_input, history_length = manager.build_history_input(
+        torch.tensor([True, False])
+    )
+
+    assert history_length == {"main": [2, 0]}
+    assert history_input["main"]["main_images"][0] == [
+        torch.tensor([2]),
+        torch.tensor([3]),
+    ]
+    assert manager.history_counts == [0, 3]
