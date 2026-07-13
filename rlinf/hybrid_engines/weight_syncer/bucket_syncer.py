@@ -209,7 +209,9 @@ class BucketWeightSyncer(WeightSyncer):
         """
 
         has_visual = any(
-            "visual." in key for key in self.param_names_need_sync if key in state_dict
+            "visual." in key
+            for key in self.param_names_need_sync_set
+            if key in state_dict
         )
 
         def iter_named_items() -> Iterator[tuple[str, torch.Tensor | DTensor]]:
@@ -235,6 +237,7 @@ class BucketWeightSyncer(WeightSyncer):
         param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
+        is_sender: bool = True,
     ) -> None:
         """
         Initialize the sender for weight synchronization.
@@ -245,11 +248,14 @@ class BucketWeightSyncer(WeightSyncer):
             - param_names_need_sync (list[str]): A list of parameter names that need to be synchronized.
             - send (SendFn): The function for sender to communicate with the receiver.
             - recv (RecvFn | None): The function for receiver to communicate with the sender.
+            - is_sender (bool): Whether this worker is the active weight sender. BucketWeightSyncer ignores
+                this flag because the caller's send function already handles sender selection.
         """
 
-        del state_dict, send, recv
-        self.param_names_need_sync = sorted(set(param_names_need_sync))
-        if not self.param_names_need_sync:
+        del state_dict, send, recv, is_sender
+        self.param_names_need_sync = param_names_need_sync
+        self.param_names_need_sync_set = set(param_names_need_sync)
+        if not self.param_names_need_sync_set:
             raise ValueError("param_names_need_sync must not be empty")
         self._sender_initialized = True
 
