@@ -19,8 +19,6 @@ import torch
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
 from rlinf.utils.metric_utils import (
-    CRITIC_EXPLAINED_VARIANCE_KEY,
-    compute_critic_explained_variance_from_stats,
     compute_critic_explained_variance_stats,
 )
 from rlinf.utils.utils import masked_mean, masked_mean_ratio
@@ -370,15 +368,11 @@ def compute_ppo_critic_loss(
         values=values,
         loss_mask=loss_mask,
     )
-    explained_variance = compute_critic_explained_variance_from_stats(
-        explained_variance_stats
-    )
 
     # Compile metrics for logging
     metrics_data = {
         "critic/value_loss": value_loss.detach(),
         "critic/value_clip_ratio": value_clip_ratio.detach(),
-        CRITIC_EXPLAINED_VARIANCE_KEY: explained_variance.detach(),
     }
     metrics_data.update(
         {key: value.detach() for key, value in explained_variance_stats.items()}
