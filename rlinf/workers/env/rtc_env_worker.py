@@ -48,6 +48,8 @@ class RTCEnvWorker(EnvWorker):
 
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        rtc_cfg = self.cfg.runner.get("rtc", {})
+        self.eval_chunk_pause_seconds = float(rtc_cfg.get("chunk_pause_seconds", 0.0))
         self._assert_rtc_eval_supported()
 
     def _assert_rtc_eval_supported(self):
@@ -63,6 +65,26 @@ class RTCEnvWorker(EnvWorker):
         assert self.eval_num_envs_per_stage == 1, (
             "RTC real-world evaluation currently supports a single env per worker."
         )
+
+        env_type = self.cfg.env.eval.env_type
+        chunk_pause_seconds = float(rtc_cfg.get("chunk_pause_seconds", 0.0))
+        inject_delay_ms = float(rtc_cfg.get("inject_delay_ms", 0.0))
+        fixed_delay_steps = int(rtc_cfg.get("fixed_delay_steps", 0))
+
+        if env_type == "realworld":
+            assert chunk_pause_seconds == 0.0, (
+                f"RTC real-world evaluation: chunk_pause_seconds must be 0.0 "
+                f"(real robot has real execution time), got {chunk_pause_seconds}."
+            )
+            assert fixed_delay_steps == 0, (
+                f"RTC real-world evaluation: fixed_delay_steps must be 0 "
+                f"(only available in simulation with chunk_pause_seconds), got {fixed_delay_steps}."
+            )
+        else:
+            assert inject_delay_ms == 0.0, (
+                f"RTC simulation evaluation: inject_delay_ms must be 0.0 "
+                f"(use chunk_pause_seconds to simulate delay instead), got {inject_delay_ms}."
+            )
 
     def send_rtc_request(
         self, rollout_channel: Channel, rtc_request: RTCRequest, mode: str = "eval"
@@ -111,9 +133,7 @@ class RTCEnvWorker(EnvWorker):
         return obs
 
     def _maybe_rewrite_eval_chunk_gripper(self, chunk_actions):
-        rewrite_chunk_gripper = bool(
-            self.cfg.actor.model.get("rewrite_chunk_gripper", False)
-        )
+        rewrite_chunk_gripper = bool(self.model_cfg.get("rewrite_chunk_gripper", False))
         if not rewrite_chunk_gripper:
             return chunk_actions
 
@@ -254,6 +274,9 @@ class RTCEnvWorker(EnvWorker):
 
             max_eval_steps = self.cfg.env.eval.max_steps_per_rollout_epoch
             while episode_step < max_eval_steps:
+                if self.eval_chunk_pause_seconds > 0:
+                    step_start = time.time()
+
                 if pending_rtc_response is not None and pending_rtc_response.done():
                     rtc_response = pending_rtc_response.wait()
                     observed_delay_steps = max(episode_step - request_start_step, 0)
@@ -292,8 +315,6 @@ class RTCEnvWorker(EnvWorker):
 
                 env_action = current_chunk_actions[:, action_index]
                 env_output, env_info = self._evaluate_rtc_action(env_action, stage_id)
-                if self.eval_chunk_pause_seconds > 0:
-                    time.sleep(self.eval_chunk_pause_seconds)
 
                 for key, value in env_info.items():
                     eval_metrics[key].append(value)
@@ -305,6 +326,13 @@ class RTCEnvWorker(EnvWorker):
                 episode_done = env_output.dones is not None and bool(
                     env_output.dones.any()
                 )
+
+                if self.eval_chunk_pause_seconds > 0:
+                    step_elapsed = time.time() - step_start
+                    remaining = self.eval_chunk_pause_seconds - step_elapsed
+                    if remaining > 0:
+                        time.sleep(remaining)
+
                 if episode_done:
                     break
 
@@ -313,23 +341,19 @@ class RTCEnvWorker(EnvWorker):
                 pending_rtc_response = None
 
             if not episode_done:
-                eval_metrics["success_once"].append(
-                    torch.tensor([0.0], dtype=torch.float32)
-                )
-                eval_metrics["return"].append(torch.tensor([0.0], dtype=torch.float32))
-                eval_metrics["episode_len"].append(
-                    torch.tensor([episode_step], dtype=torch.float32)
-                )
-                eval_metrics["reward"].append(torch.tensor([0.0], dtype=torch.float32))
-                eval_metrics["intervened_once"].append(
-                    torch.tensor([0.0], dtype=torch.float32)
-                )
-                eval_metrics["intervened_steps"].append(
-                    torch.tensor([0.0], dtype=torch.float32)
-                )
-                eval_metrics["success_no_intervened"].append(
-                    torch.tensor([0.0], dtype=torch.float32)
-                )
+                existing_keys = set(eval_metrics.keys())
+                default_values = {
+                    "success_once": 0.0,
+                    "return": 0.0,
+                    "episode_len": float(episode_step),
+                    "reward": 0.0,
+                    "intervened_once": 0.0,
+                    "intervened_steps": 0.0,
+                    "success_no_intervened": 0.0,
+                }
+                for key in existing_keys:
+                    value = default_values.get(key, 0.0)
+                    eval_metrics[key].append(torch.tensor([value], dtype=torch.float32))
             self.finish_rollout(mode="eval")
             if stop_eval_on_success and episode_success:
                 break

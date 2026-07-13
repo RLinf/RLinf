@@ -19,6 +19,8 @@ requests from the env worker, applying flow-matching guidance so each new
 action chunk stays consistent with the unexecuted tail of the previous one.
 """
 
+import time
+
 import numpy as np
 import torch
 from omegaconf.omegaconf import DictConfig
@@ -40,6 +42,10 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
         self._rtc_eval_model_actions: torch.Tensor | None = None
+        rtc_cfg = self.cfg.runner.get("rtc", {})
+        self.inject_delay_ms = float(rtc_cfg.get("inject_delay_ms", 0.0))
+        self.fixed_delay_steps = int(rtc_cfg.get("fixed_delay_steps", 0))
+        self.eval_chunk_pause_seconds = float(rtc_cfg.get("chunk_pause_seconds", 0.0))
 
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         """Serve RTC requests until the env worker sends an explicit stop."""
@@ -67,6 +73,8 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
     @Worker.timer("predict_rtc")
     def _predict_rtc(self, rtc_request: RTCRequest) -> RTCActionResponse:
         """Run one OpenPI inference for a bootstrap or replanning RTC request."""
+        if self.eval_chunk_pause_seconds > 0 or self.inject_delay_ms > 0:
+            start_time = time.time()
         rtc_context = None
         guidance_applied = False
         if (
@@ -75,8 +83,6 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
         ):
             from rlinf.models.embodiment.openpi.rtc_guidance import RTCGuidanceContext
 
-            # The previous model-space chunk is used to softly constrain the
-            # overlap between already scheduled actions and the new plan.
             rtc_context = RTCGuidanceContext(
                 prev_model_actions=self._rtc_eval_model_actions,
                 executed_horizon=rtc_request.executed_horizon,
@@ -90,6 +96,24 @@ class RTCMultiStepRolloutWorker(MultiStepRolloutWorker):
                 mode="eval",
                 rtc_context=rtc_context,
             )
+
+        if rtc_request.request_type == "replan":
+            if (
+                self.cfg.env.eval.env_type != "realworld"
+                and self.eval_chunk_pause_seconds > 0
+            ):
+                delay_steps = max(
+                    self.fixed_delay_steps, rtc_request.predicted_delay_steps
+                )
+                target_time = (delay_steps - 1) * self.eval_chunk_pause_seconds
+                elapsed = time.time() - start_time
+                if elapsed < target_time:
+                    time.sleep(target_time - elapsed)
+            elif self.cfg.env.eval.env_type == "realworld" and self.inject_delay_ms > 0:
+                target_time = self.inject_delay_ms / 1000.0
+                elapsed = time.time() - start_time
+                if elapsed < target_time:
+                    time.sleep(target_time - elapsed)
 
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)

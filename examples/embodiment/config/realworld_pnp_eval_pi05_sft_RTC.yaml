@@ -33,6 +33,7 @@ runner:
   task_type: embodied
   rtc:
     enabled: True
+    inject_delay_ms: 0
     min_exec_horizon: 2
     initial_delay_steps: 1
     delay_buffer_size: 8
@@ -166,6 +167,7 @@ rollout:
   model:
     model_path: /path/to/model
     precision: ${actor.model.precision}
+    rewrite_chunk_gripper: True
 
 actor:
   group_name: "ActorGroup"
@@ -180,6 +182,7 @@ actor:
     model_type: "openpi"
     add_value_head: True
     num_action_chunks: 8 # interface for the env
+    rewrite_chunk_gripper: False
     num_steps: 4
     openpi:
       value_after_vlm: True

@@ -158,9 +158,6 @@ class EnvWorker(Worker):
         self.actor_split_num = (
             1 if not self.enable_train else self.get_actor_split_num()
         )
-        self.eval_chunk_pause_seconds = float(
-            self.cfg.env.eval.get("chunk_pause_seconds", 0.0)
-        )
         if self.use_training_pipeline and self.enable_train:
             self._init_pipeline_params()
 
