@@ -1342,7 +1342,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         teacher_model_config = build_expert_model_config(self.cfg, self.cfg.actor.model)
         teacher_model = get_model(teacher_model_config)
         if self.cfg.runner.get("expert_ckpt_path", None):
-            teacher_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+            teacher_model_dict = torch.load(
+                self.cfg.runner.expert_ckpt_path, map_location="cpu"
+            )
             teacher_model.load_state_dict(teacher_model_dict)
         teacher_model.eval()
         teacher_model.requires_grad_(False)

@@ -1367,6 +1367,13 @@ class EnvWorker(Worker):
         # Advantages/returns are rollout-level quantities, so compute them before
         # splitting. After this point each channel item is an actor micro-batch that can
         # be trained directly without reconstructing the full rollout batch on actor.
+        assert not (
+            self.use_training_pipeline and self.cfg.algorithm.adv_type == "opd"
+        ), (
+            "OPD does not support runner.use_training_pipeline=True because "
+            "teacher_logprobs are computed on actor workers after rollout."
+        )
+
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
