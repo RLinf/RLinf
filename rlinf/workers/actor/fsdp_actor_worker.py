@@ -24,6 +24,7 @@ from torch.distributed.tensor import DTensor
 from torch.multiprocessing.reductions import reduce_tensor
 
 import rlinf.algorithms  # noqa: F401
+from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.algorithms.utils import (
     kl_penalty,
@@ -120,6 +121,46 @@ def process_nested_dict_for_train(nested_dict, shuffle_id):
         elif isinstance(value, dict):
             ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
     return ret_dict
+
+
+def trim_nested_tensor_time_dim(value, target_steps: int, key_path=()):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        assert value.shape[0] in {target_steps, target_steps + 1}, (
+            f"Cannot trim field {'.'.join(key_path)!r} with shape "
+            f"{tuple(value.shape)} to {target_steps} OPD training steps."
+        )
+        return value[:target_steps]
+    if isinstance(value, dict):
+        return {
+            key: trim_nested_tensor_time_dim(
+                nested_value, target_steps, (*key_path, key)
+            )
+            for key, nested_value in value.items()
+        }
+    raise TypeError(
+        f"Unsupported field {'.'.join(key_path)!r} type {type(value)} for OPD trimming."
+    )
+
+
+def flatten_nested_tensor_time_batch(value, key_path=()):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        assert value.dim() >= 2, (
+            f"Cannot flatten field {'.'.join(key_path)!r} with shape "
+            f"{tuple(value.shape)} across time and batch."
+        )
+        return value.reshape(-1, *value.shape[2:])
+    if isinstance(value, dict):
+        return {
+            key: flatten_nested_tensor_time_batch(nested_value, (*key_path, key))
+            for key, nested_value in value.items()
+        }
+    raise TypeError(
+        f"Unsupported field {'.'.join(key_path)!r} type {type(value)} for flattening."
+    )
 
 
 def compute_rollout_train_kl(
@@ -1244,12 +1285,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         """
         Compute the advantages and returns.
         """
+        if self.cfg.algorithm.adv_type == "opd":
+            self.compute_opd_teacher_logprobs()
+
         kwargs = {
             "task_type": self.cfg.runner.task_type,
             "adv_type": self.cfg.algorithm.adv_type,
             "rewards": self.rollout_batch["rewards"],
             "dones": self.rollout_batch["dones"],
             "values": self.rollout_batch.get("prev_values", None),
+            "prev_logprobs": self.rollout_batch.get("prev_logprobs", None),
+            "teacher_logprobs": self.rollout_batch.get("teacher_logprobs", None),
+            "num_action_chunks": self.cfg.actor.model.num_action_chunks,
             "gamma": self.cfg.algorithm.get("gamma", 1),
             "gae_lambda": self.cfg.algorithm.get("gae_lambda", 1),
             "group_size": self.cfg.algorithm.get("group_size", 8),
@@ -1268,6 +1315,77 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
         return rollout_metrics
+
+    @Worker.timer("actor/compute_opd_teacher_logprobs")
+    def compute_opd_teacher_logprobs(self) -> None:
+        assert self.rollout_batch.get("teacher_logprobs", None) is None, (
+            "OPD teacher_logprobs must be computed after rollout on actor workers."
+        )
+        assert self.cfg.rollout.get("expert_model", None) is not None, (
+            "OPD requires rollout.expert_model as teacher model config."
+        )
+        assert "forward_inputs" in self.rollout_batch, (
+            "OPD teacher logprob computation requires rollout forward_inputs."
+        )
+        assert "prev_logprobs" in self.rollout_batch, (
+            "OPD teacher logprob computation requires student prev_logprobs."
+        )
+        assert SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENVLA,
+            SupportedModel.OPENVLA_OFT,
+        ], "OPD teacher logprob computation currently supports OpenVLA models."
+
+        prev_logprobs = self.rollout_batch["prev_logprobs"]
+        time_dim, batch_dim = prev_logprobs.shape[:2]
+        flat_batch_size = time_dim * batch_dim
+
+        teacher_model_config = build_expert_model_config(self.cfg, self.cfg.actor.model)
+        teacher_model = get_model(teacher_model_config)
+        if self.cfg.runner.get("expert_ckpt_path", None):
+            teacher_model_dict = torch.load(self.cfg.runner.expert_ckpt_path)
+            teacher_model.load_state_dict(teacher_model_dict)
+        teacher_model.eval()
+        teacher_model.requires_grad_(False)
+        teacher_model.to(self.device)
+
+        flat_forward_inputs = flatten_nested_tensor_time_batch(
+            self.rollout_batch["forward_inputs"], ("forward_inputs",)
+        )
+        num_chunks = (
+            flat_batch_size + self.cfg.actor.micro_batch_size - 1
+        ) // self.cfg.actor.micro_batch_size
+        teacher_logprobs = []
+        kwargs = {
+            "temperature": self.cfg.rollout.sampling_params.temperature_train,
+            "top_k": self.cfg.rollout.sampling_params.top_k,
+        }
+        with torch.no_grad():
+            for micro_batch in split_dict_to_chunk(flat_forward_inputs, num_chunks):
+                micro_batch = put_tensor_device(micro_batch, self.device)
+                with self.amp_context:
+                    teacher_output = teacher_model(
+                        forward_inputs=micro_batch,
+                        compute_logprobs=True,
+                        compute_entropy=False,
+                        compute_values=False,
+                        use_cache=False,
+                        **kwargs,
+                    )
+                teacher_logprobs.append(teacher_output["logprobs"].detach().cpu())
+
+        teacher_logprobs = torch.cat(teacher_logprobs, dim=0)
+        expected_shape = (flat_batch_size, *prev_logprobs.shape[2:])
+        assert teacher_logprobs.shape == expected_shape, (
+            f"teacher_logprobs shape {teacher_logprobs.shape} must match "
+            f"flattened student logprobs shape {expected_shape}."
+        )
+        self.rollout_batch["teacher_logprobs"] = teacher_logprobs.reshape(
+            time_dim, batch_dim, *teacher_logprobs.shape[1:]
+        )
+
+        teacher_model.to("cpu")
+        del teacher_model
+        clear_memory()
 
     def _build_sft_data_loader(self):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
@@ -1354,6 +1472,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
+        if self.cfg.algorithm.loss_type == "opd":
+            target_steps = int(self.rollout_batch["advantages"].shape[0])
+            for key in [
+                "prev_logprobs",
+                "forward_inputs",
+                "loss_mask",
+                "loss_mask_sum",
+            ]:
+                assert key in self.rollout_batch, f"OPD training requires {key}."
+                self.rollout_batch[key] = trim_nested_tensor_time_dim(
+                    self.rollout_batch[key], target_steps, (key,)
+                )
+
         self.model.train()
         rollout_size = (
             self.rollout_batch["prev_logprobs"].shape[0]
@@ -1363,9 +1494,36 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         g.manual_seed(self.cfg.actor.seed + self._rank)
         shuffle_id = torch.randperm(rollout_size, generator=g)
 
+        actor_train_keys = {
+            "advantages",
+            "forward_inputs",
+            "prev_logprobs",
+            "returns",
+        }
+        if self.cfg.algorithm.loss_type == "opd":
+            actor_train_keys.update(
+                {
+                    "loss_mask",
+                    "loss_mask_sum",
+                }
+            )
+        else:
+            actor_train_keys.update(
+                {
+                    "loss_mask",
+                    "loss_mask_sum",
+                    "prev_values",
+                }
+            )
+        train_rollout_batch = {
+            key: value
+            for key, value in self.rollout_batch.items()
+            if key in actor_train_keys
+        }
+
         with torch.no_grad():
             self.rollout_batch = process_nested_dict_for_train(
-                self.rollout_batch, shuffle_id
+                train_rollout_batch, shuffle_id
             )
 
         # Split to make minibatch iterator for updating the actor

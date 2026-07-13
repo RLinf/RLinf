@@ -274,6 +274,8 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         if loss_mask is None:
             return values.reshape(-1)
         mask = loss_mask.to(device=values.device, dtype=torch.bool)
+        if mask.ndim == values.ndim - 1:
+            mask = mask.unsqueeze(-1)
         if mask.shape != values.shape:
             mask = torch.broadcast_to(mask, values.shape)
         return values[mask]
