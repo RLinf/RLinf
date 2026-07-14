@@ -96,7 +96,7 @@
          <a href="embodied/robocasa365.html" style="text-decoration: underline; color: blue;">
            <b>基于RoboCasa365的强化学习</b>
          </a><br>
-         支持RoboCasa365 + π₀ + GRPO训练
+         支持RoboCasa365 + π₀ + PPO训练
        </p>
      </div>
 

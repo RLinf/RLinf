@@ -196,9 +196,9 @@ The OpenDrawer training recipe is:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh robocasa365_opendrawer_grpo_openpi
+   bash examples/embodiment/run_embodiment.sh robocasa365_opendrawer_ppo_openpi
 
-This config trains a single RoboCasa365 task with OpenPI and GRPO:
+This config trains a single RoboCasa365 task with OpenPI and PPO:
 
 - ``env.train.split=pretrain``
 - ``env.train.task_soup=atomic_seen``
@@ -208,7 +208,7 @@ This config trains a single RoboCasa365 task with OpenPI and GRPO:
 OpenDrawer Batch Divisibility
 
 Use this check when changing GPU placement, rollout size, or actor batch size in
-``examples/embodiment/config/robocasa365_opendrawer_grpo_openpi.yaml``.
+``examples/embodiment/config/robocasa365_opendrawer_ppo_openpi.yaml``.
 
 .. code:: text
 

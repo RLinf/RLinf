@@ -190,9 +190,9 @@ RoboCasa 将这个参数命名为 ``task_set``；它对应 RLinf YAML 中的
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh robocasa365_opendrawer_grpo_openpi
+   bash examples/embodiment/run_embodiment.sh robocasa365_opendrawer_ppo_openpi
 
-该配置使用 OpenPI 和 GRPO 训练 RoboCasa365 单任务 OpenDrawer：
+该配置使用 OpenPI 和 PPO 训练 RoboCasa365 单任务 OpenDrawer：
 
 - ``env.train.split=pretrain``
 - ``env.train.task_soup=atomic_seen``
@@ -201,7 +201,7 @@ RoboCasa 将这个参数命名为 ``task_set``；它对应 RLinf YAML 中的
 
 OpenDrawer Batch 整除关系
 
-修改 ``examples/embodiment/config/robocasa365_opendrawer_grpo_openpi.yaml`` 中的
+修改 ``examples/embodiment/config/robocasa365_opendrawer_ppo_openpi.yaml`` 中的
 GPU placement、rollout 数量或 actor batch size 时，先按下面的关系检查。
 
 .. code:: text

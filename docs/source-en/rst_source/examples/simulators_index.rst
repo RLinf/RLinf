@@ -96,7 +96,7 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
          <a href="embodied/robocasa365.html" style="text-decoration: underline; color: blue;">
            <b>RL with RoboCasa365 Benchmark</b>
          </a><br>
-         Support RoboCasa365 + π₀ + GRPO training
+         Support RoboCasa365 + π₀ + PPO training
        </p>
      </div>
 

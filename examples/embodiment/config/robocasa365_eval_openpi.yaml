@@ -85,7 +85,7 @@ rollout:
 
   model:
     model_type: "openpi"
-    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/mnt/public/huzhipeng/yangtingyuan/RLinf_yty/checkpoints/pi0-robocasa-pretrain-human300}
+    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/path/to/pi0-robocasa-pretrain-human300}
     precision: null
     num_action_chunks: 5
     action_dim: 12
