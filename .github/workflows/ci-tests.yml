@@ -181,6 +181,7 @@ jobs:
               - *unit
               - *scheduler
               - *toolkits_no_ci
+              - 'tests/parity_tests/**'
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
