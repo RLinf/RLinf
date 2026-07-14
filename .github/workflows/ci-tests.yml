@@ -89,6 +89,7 @@ jobs:
               - 'rlinf/workers/actor/async_fsdp_sac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_dagger_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_nft_policy_worker.py'
+              - 'rlinf/workers/actor/fsdp_rlt_ac_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_sac_policy_worker.py'
               - 'rlinf/workers/env/**'
               - 'rlinf/workers/rollout/hf/**'
@@ -101,14 +102,15 @@ jobs:
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/evaluations/**'
-              - 'tests/e2e_tests/training_backend/**'
               - 'evaluations/**'
+              - '.github/workflows/embodied-e2e-tests.yml'
+            toolkits_no_ci_filter: &toolkits_no_ci
               - 'toolkits/standalone_eval_scripts/**'
               - 'toolkits/realworld_check/**'
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
-              - '.github/workflows/embodied-e2e-tests.yml'
+              - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
               - 'rlinf/agents/**'
@@ -178,6 +180,8 @@ jobs:
               - *offline_rl
               - *unit
               - *scheduler
+              - *toolkits_no_ci
+              - 'tests/parity_tests/**'
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'

@@ -1,6 +1,6 @@
 defaults:
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -57,10 +57,6 @@ actor:
   micro_batch_size: 16
   global_batch_size: 128
   seed: 0
-  openpi_data:
-    # Full repo id of the backfilled tcp_rot6d dataset.
-    # Must match calculate_norm_stats.py --repo-id.
-    repo_id: SFT_DATASET_REPO_ID  # Replace: <repo_id>/tcp_rot6d_v1
 
   model:
     precision: null
@@ -77,7 +73,8 @@ actor:
       # view-inplace error. SFT here trains the full model.
       train_expert_only: False
     openpi_data:
-      # Same full repo id as actor.openpi_data.repo_id.
+      # Full repo id of the backfilled tcp_rot6d dataset.
+      # Must match calculate_norm_stats.py --repo-id.
       repo_id: SFT_DATASET_REPO_ID  # Replace: <repo_id>/tcp_rot6d_v1
 
   optim:

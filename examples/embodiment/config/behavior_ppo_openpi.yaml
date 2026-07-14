@@ -2,7 +2,7 @@ defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -69,9 +69,8 @@ env:
   train:
     rollout_epoch: 8
     total_num_envs: 8
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
-    reward_coef: ${algorithm.reward_coef}
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/train
@@ -82,8 +81,8 @@ env:
   eval:
     rollout_epoch: 1
     total_num_envs: 8
-    max_episode_steps: 4096
-    max_steps_per_rollout_epoch: 4096
+    max_episode_steps: 4000
+    max_steps_per_rollout_epoch: 4000
     video_cfg:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -132,7 +131,7 @@ actor:
     weight_decay: 0.01
     critic_warmup_steps: 0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

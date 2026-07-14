@@ -59,8 +59,9 @@ class WeightSyncer(ABC):
         param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
+        is_sender: bool = True,
     ) -> None:
-        del state_dict, send, recv, param_names_need_sync
+        del state_dict, send, recv, param_names_need_sync, is_sender
         self._sender_initialized = True
 
     async def init_receiver(

@@ -500,7 +500,8 @@ Use the existing replay-buffer visualizer to inspect trajectories in
 
 Use ``toolkits/lerobot/visualize_lerobot_dataset.py`` to expand a LeRobot
 dataset into per-episode folders containing ``.jpg`` images and ``.txt`` step
-metadata:
+metadata. You can optionally export ``.mp4`` videos (requires
+``opencv-python``):
 
 .. code-block:: bash
 
@@ -508,6 +509,31 @@ metadata:
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 
+Enable MP4 export (default 30 FPS, override with ``--mp4-fps``):
+
+.. code-block:: bash
+
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
+       --dataset-path logs/{timestamp}/collected_data \
+       --output-dir logs/{timestamp}/collected_data_visualized \
+       --export-mp4 --mp4-fps 30
+
 The tool reads ``meta/info.json`` plus each ``episode_*.parquet`` file, then
 creates output like ``episode_000000/step_000003_image.jpg`` and
 ``episode_000000/step_000003.txt`` for quick inspection.
+
+With ``--export-mp4``, each episode folder also contains:
+
+- ``episode_{image_key}.mp4``: one video per image field
+- ``episode_merged.mp4`` (only when there are 2+ image fields): a stitched
+  multi-view video
+
+Multi-view layout (panels are resized to a common height and labeled with field
+names):
+
+- 2 views: horizontal strip (non-wrist left, wrist right)
+- 3–4 views: 2-column grid (row-major)
+- 5+ views: horizontal strip
+
+``episode.txt`` records ``mp4_videos``, ``mp4_merged_video``, and
+``mp4_layout`` when MP4 export is enabled.

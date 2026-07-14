@@ -29,11 +29,26 @@ mounted into the container:
       --shm-size 20g \
       --network host \
       --name rlinf-ascend-libero \
+      -v /usr/local/dcmi:/usr/local/dcmi \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+      -v /etc/ascend_install.info:/etc/ascend_install.info \
+      -v /var/log/npu:/usr/slog \
+      -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
       rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # For mainland China users, you can use the following for better download speed:
       # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
+
+If you don't want to use privileged flag, then you need to add serval devices, and manually add NPU:
+
+.. code-block:: bash
+
+      # adding text below to the above command
+      --device=/dev/davinci_manager \
+      --device=/dev/devmm_svm \
+      --device=/dev/hisi_hdc \
+      --device=/dev/davinci0 # first npu for example
 
 Inside the container, switch to the OpenVLA-OFT environment:
 
@@ -113,6 +128,32 @@ For PPO, use the PPO config from the original LIBERO page:
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
+
+GR00T N1.5 on Ascend
+--------------------
+
+GR00T N1.5 also runs on Ascend. Install it with the ``gr00t`` model and the
+``maniskill_libero`` environment, which covers the LIBERO tasks:
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
+
+On Ascend, ``install.sh`` builds ``decord`` from source (no aarch64 wheel is
+published) and applies a TensorFlow build pinned for GR00T. flash-attention is
+skipped, and GR00T switches to NPU kernels automatically at load time, so no
+config changes are required.
+
+Launch a GR00T LIBERO run with OSMesa rendering, using the configs from
+:doc:`the GR00T example <../examples/embodied/gr00t>`:
+
+.. code-block:: bash
+
+   MUJOCO_GL=osmesa \
+   PYOPENGL_PLATFORM=osmesa \
+   ROBOT_PLATFORM=LIBERO \
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
 
 What Stays the Same
 -------------------
