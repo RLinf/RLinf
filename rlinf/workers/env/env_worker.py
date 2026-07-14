@@ -496,7 +496,7 @@ class EnvWorker(Worker):
             )
             return
 
-        delay_second = self.delay_sampler.sample(1)[0]
+        delay_second = self.delay_sampler.sample_one()
         await self._sleep_and_send_env_batch(
             send_func,
             channel,
@@ -1288,8 +1288,7 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    if self.cfg.actor.get("data_source", "buffer") == "buffer":
-                        self.rollout_results[stage_id].update_last_actions(
+                    self.rollout_results[stage_id].update_last_actions(
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
@@ -1330,8 +1329,7 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                if self.cfg.actor.get("data_source", "buffer") == "buffer":
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                self.rollout_results[stage_id].append_step_result(chunk_step_result)  
                 if (
                     self.reward_mode == "history_buffer"
                     and self.history_reward_assign
@@ -1490,17 +1488,6 @@ class EnvWorker(Worker):
         recv_num = self._component_placement.get_world_size("actor")
         split_num = compute_split_num(recv_num, send_num)
         return split_num
-
-    @staticmethod
-    def _find_collect_wrapper(env):
-        """Traverse env wrappers to find a CollectEpisode instance, or None."""
-        from rlinf.envs.wrappers.collect_episode import CollectEpisode
-
-        while env is not None:
-            if isinstance(env, CollectEpisode):
-                return env
-            env = getattr(env, "env", None)
-        return None
 
     def compute_advantages_and_returns(
         self, rollout_batch: dict[str, torch.Tensor]

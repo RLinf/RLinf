@@ -63,8 +63,6 @@ def test_constant_sampler_uses_seconds_helpers():
 
     assert sampler.sample(3) == [0.25, 0.25, 0.25]
     assert sampler.sample_one() == 0.25
-    assert sampler.sample_seconds(2) == [0.25, 0.25]
-    assert sampler.sample_one_seconds() == pytest.approx(0.25)
 
 
 def test_gaussian_sampler_never_returns_negative_seconds():

@@ -61,14 +61,6 @@ class DelaySampler(ABC):
         """Return one delay sample in seconds."""
         return self.sample(1)[0]
 
-    def sample_seconds(self, num_samples: int) -> list[float]:
-        """Return ``num_samples`` delays in seconds."""
-        return self.sample(num_samples)
-
-    def sample_one_seconds(self) -> float:
-        """Return one delay sample in seconds."""
-        return self.sample_one()
-
     @classmethod
     def create(cls, delay_config: DictConfig | None) -> "DelaySampler | None":
         """Build a sampler from a Hydra config block."""

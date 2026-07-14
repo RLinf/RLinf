@@ -112,13 +112,6 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 return
             await asyncio.sleep(1)
 
-    async def _wait_for_lerobot_dataset_ready(self):
-        while True:
-            if self.dataset.is_ready():
-                self._ensure_lerobot_loader()
-                return
-            await asyncio.sleep(1)
-
     @Worker.timer("run_training")
     async def run_training(self):
         """Run async DAgger updates with replay-buffer samples."""
