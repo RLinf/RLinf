@@ -842,9 +842,7 @@ class FSDPActor(FSDPModelManager, Worker):
         rollout_train_kl = compute_rollout_train_kl(m_batch, loss_mask)
 
         # aggregate metrics across micro-batches
-        explained_variance_stats = pop_critic_explained_variance_stats(
-            mbs_metrics_list
-        )
+        explained_variance_stats = pop_critic_explained_variance_stats(mbs_metrics_list)
         mean_metric_dict = {
             key: torch.mean(torch.stack(value))
             for key, value in mbs_metrics_list.items()
