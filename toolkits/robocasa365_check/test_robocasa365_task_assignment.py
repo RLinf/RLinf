@@ -321,9 +321,10 @@ class ProbeRobocasa365Env(Robocasa365Env):
         )
 
     def _load_task_specs(self) -> list[dict[str, Any]]:
-        horizons = self._mock_task_horizons or [
-            int(self.cfg.get("max_episode_steps", 8))
-        ] * self._mock_num_tasks
+        horizons = (
+            self._mock_task_horizons
+            or [int(self.cfg.get("max_episode_steps", 8))] * self._mock_num_tasks
+        )
         if len(horizons) != self._mock_num_tasks:
             raise ValueError(
                 "mock_task_horizons length must equal mock_num_tasks, got "
@@ -913,9 +914,7 @@ def _check_ppo_grpo_group_semantics(
     )
 
 
-def _first_truncation_steps(
-    env: ProbeRobocasa365Env, max_steps: int
-) -> np.ndarray:
+def _first_truncation_steps(env: ProbeRobocasa365Env, max_steps: int) -> np.ndarray:
     env.reset()
     first_steps = np.zeros(env.num_envs, dtype=np.int32)
     seen = np.zeros(env.num_envs, dtype=bool)
@@ -930,9 +929,7 @@ def _first_truncation_steps(
     return first_steps
 
 
-def _check_episode_horizon_sources(
-    suite: CheckSuite, args: argparse.Namespace
-) -> None:
+def _check_episode_horizon_sources(suite: CheckSuite, args: argparse.Namespace) -> None:
     print("\n[episode horizon 来源]")
     registry_horizons = [3, 5]
 
@@ -1038,51 +1035,37 @@ def _check_yaml_group_size_consistency(
     suite: CheckSuite, args: argparse.Namespace
 ) -> None:
     print("\n[YAML group_size 一致性]")
-    for label, path, expect_grpo in [
-        ("GRPO", args.grpo_config, True),
-        ("PPO/GAE", args.ppo_config, False),
-    ]:
-        data = _load_yaml(path)
-        algorithm = data.get("algorithm", {})
-        env = data.get("env", {})
-        train_env = env.get("train", {})
-        eval_env = env.get("eval", {})
-        alg_group_size = int(algorithm.get("group_size", -1))
-        train_group_size = int(train_env.get("group_size", -1))
-        eval_group_size = int(eval_env.get("group_size", -1))
-        adv_type = str(algorithm.get("adv_type", ""))
+    data = _load_yaml(args.ppo_config)
+    algorithm = data.get("algorithm", {})
+    env = data.get("env", {})
+    train_env = env.get("train", {})
+    eval_env = env.get("eval", {})
+    alg_group_size = int(algorithm.get("group_size", -1))
+    train_group_size = int(train_env.get("group_size", -1))
+    eval_group_size = int(eval_env.get("group_size", -1))
+    adv_type = str(algorithm.get("adv_type", ""))
+    loss_type = str(algorithm.get("loss_type", ""))
 
-        if expect_grpo:
-            suite.check(
-                f"{label} 配置使用 GRPO，且 algorithm.group_size > 1",
-                adv_type in {"grpo", "grpo_dynamic", "reinpp_baseline"}
-                and alg_group_size > 1,
-                f"adv_type={adv_type}, algorithm.group_size={alg_group_size}",
-            )
-            suite.check(
-                f"{label} 配置中 env.train.group_size 与 algorithm.group_size 一致",
-                train_group_size == alg_group_size,
-                (
-                    f"env.train.group_size={train_group_size}, "
-                    f"algorithm.group_size={alg_group_size}"
-                ),
-            )
-            suite.check(
-                f"{label} 配置中 eval 保持 group_size=1",
-                eval_group_size == 1,
-                f"env.eval.group_size={eval_group_size}",
-            )
-        else:
-            suite.check(
-                f"{label} 配置使用非 GRPO，且 group_size=1",
-                adv_type not in {"grpo", "grpo_dynamic", "reinpp_baseline"}
-                and alg_group_size == 1
-                and train_group_size == 1,
-                (
-                    f"adv_type={adv_type}, algorithm.group_size={alg_group_size}, "
-                    f"env.train.group_size={train_group_size}"
-                ),
-            )
+    suite.check(
+        "PPO/GAE 配置使用非 GRPO，且 train group_size=1",
+        adv_type not in {"grpo", "grpo_dynamic", "reinpp_baseline"}
+        and alg_group_size == 1
+        and train_group_size == 1,
+        (
+            f"adv_type={adv_type}, algorithm.group_size={alg_group_size}, "
+            f"env.train.group_size={train_group_size}"
+        ),
+    )
+    suite.check(
+        "PPO/GAE 配置使用 GAE actor_critic",
+        adv_type == "gae" and loss_type == "actor_critic",
+        f"adv_type={adv_type}, loss_type={loss_type}",
+    )
+    suite.check(
+        "PPO/GAE 配置中 eval 保持 group_size=1",
+        eval_group_size == 1,
+        f"env.eval.group_size={eval_group_size}",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -1123,24 +1106,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--grpo-config",
-        type=pathlib.Path,
-        default=REPO_ROOT
-        / "examples"
-        / "embodiment"
-        / "config"
-        / "robocasa365_opendrawer_grpo_openpi.yaml",
-        help="用于检查 group_size 一致性的 RoboCasa365 GRPO 顶层配置。",
-    )
-    parser.add_argument(
         "--ppo-config",
         type=pathlib.Path,
         default=REPO_ROOT
         / "examples"
         / "embodiment"
         / "config"
-        / "robocasa365_eval_openpi.yaml",
-        help="用于检查 group_size 的 RoboCasa365 PPO/GAE 风格顶层配置。",
+        / "robocasa365_opendrawer_ppo_openpi.yaml",
+        help="用于检查 group_size 一致性的 RoboCasa365 PPO/GAE 顶层配置。",
     )
     return parser.parse_args()
 

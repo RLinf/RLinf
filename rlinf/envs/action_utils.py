@@ -192,8 +192,8 @@ def prepare_actions_for_robocasa(
 
         if SupportedModel(model_type) == SupportedModel.OPENPI:
             start_idx, end_idx = openpi_valid_action_slice
-            actions_env = raw_chunk_actions[..., start_idx:end_idx].copy().astype(
-                np.float32
+            actions_env = (
+                raw_chunk_actions[..., start_idx:end_idx].copy().astype(np.float32)
             )
 
             if actions_env.shape[-1] != env_action_dim:

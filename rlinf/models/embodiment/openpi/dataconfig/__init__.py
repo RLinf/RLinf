@@ -361,7 +361,9 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi0_robocasa365_pretrain_human300",
-        model=pi0_config.Pi0Config(max_token_len=96,),
+        model=pi0_config.Pi0Config(
+            max_token_len=96,
+        ),
         data=LeRobotRobocasaDataConfig(
             repo_id="physical-intelligence/robocasa",
             base_config=DataConfig(prompt_from_task=True),
@@ -376,7 +378,10 @@ _CONFIGS = [
     ),
     TrainConfig(
         name="pi05_robocasa365_pretrain_human300",
-        model=pi0_config.Pi0Config(pi05=True, max_token_len=200,),
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            max_token_len=200,
+        ),
         data=LeRobotRobocasaDataConfig(
             repo_id="physical-intelligence/robocasa",
             base_config=DataConfig(prompt_from_task=True),

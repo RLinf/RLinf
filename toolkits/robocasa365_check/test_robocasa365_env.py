@@ -186,7 +186,9 @@ def _validate_obs(
 
 def _validate_step_output(
     suite: CheckSuite,
-    output: tuple[dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]],
+    output: tuple[
+        dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]
+    ],
     *,
     num_envs: int,
     camera_size: int,
@@ -298,7 +300,9 @@ def main() -> None:
     cfg = _load_cfg(args)
     action_dim = int(cfg.action_space.env_action_dim)
     expected_state_dim = sum(
-        int(part.split(":", 1)[1]) if str(part).startswith("zeros:") else {
+        int(part.split(":", 1)[1])
+        if str(part).startswith("zeros:")
+        else {
             "eef_pos": 3,
             "eef_quat": 4,
             "gripper_qpos": 2,
