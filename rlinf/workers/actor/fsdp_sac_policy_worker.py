@@ -74,7 +74,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 self.model, mode="default"
             )  # max-autotune-no-cudagraphs
             self.target_model = torch.compile(self.target_model, mode="default")
-        self._setup_rollout_weight_dst_ranks()
 
     def setup_model_and_optimizer(self, initialize_target=False) -> None:
         """Setup model, lr_scheduler, optimizer and grad_scaler."""

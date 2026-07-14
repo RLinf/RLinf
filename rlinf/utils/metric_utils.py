@@ -137,6 +137,7 @@ def collect_trajectory_replay_metrics(
             metrics[metric_key] = rate
     return metrics
 
+
 INTERACT_DELAY_METRIC_KEYS = {"interact_delay"}
 
 

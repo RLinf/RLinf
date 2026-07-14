@@ -44,7 +44,6 @@ from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
     copy_dict_tensor,
-    split_dict,
     split_dict_to_chunk,
     update_nested_cfg,
 )
@@ -56,7 +55,7 @@ from rlinf.utils.utils import (
 )
 from rlinf.workers.env.history_manager import HistoryManager
 
-INTERACT_DELAY_METRIC_KEY = "interact_delay"
+INTERACT_DELAY_METRIC_KEY = "time/interact_delay"
 
 
 class EnvWorker(Worker):
@@ -168,6 +167,8 @@ class EnvWorker(Worker):
         self.delay_sampler = DelaySampler.create(
             self.cfg.env.get("delay_sampler", None)
         )
+        self.train_num_envs_per_send = 0
+        self.eval_num_envs_per_send = 0
 
         if self.enable_train:
             self.train_prev_done: list[torch.Tensor] = [
@@ -262,6 +263,11 @@ class EnvWorker(Worker):
                     for _ in range(self.stage_num)
                 ]
                 self.history_lengths = [{} for _ in range(self.stage_num)]
+
+        if not self.only_eval:
+            self.train_num_envs_per_send = self.train_num_envs_per_stage
+        if self.enable_eval:
+            self.eval_num_envs_per_send = self.eval_num_envs_per_stage
 
         self._init_env()
 
@@ -490,33 +496,21 @@ class EnvWorker(Worker):
             )
             return
 
-        num_envs = (
-            self.train_num_envs_per_send
-            if mode == "train"
-            else self.eval_num_envs_per_send
+        delay_second = self.delay_sampler.sample(1)[0]
+        await self._sleep_and_send_env_batch(
+            send_func,
+            channel,
+            data,
+            delay_second,
+            mode=mode,
+            tag=tag,
+            route_key=route_key,
+            decoupled_mode=True,
         )
-        env_batches = split_dict(data, [1 for _ in range(num_envs)])
-        delay_seconds_list = self.delay_sampler.sample(num_envs)
 
-        send_tasks = [
-            asyncio.create_task(
-                self._sleep_and_send_env_batch(
-                    send_func,
-                    channel,
-                    env_batch_i,
-                    delay_seconds,
-                    mode=mode,
-                    tag=tag,
-                    route_key=route_key,
-                    decoupled_mode=True,
-                )
-            )
-            for env_batch_i, delay_seconds in zip(env_batches, delay_seconds_list)
-        ]
-        await asyncio.gather(*send_tasks)
         self._record_interact_delay_samples(
             env_metrics=env_metrics,
-            delay_seconds_list=delay_seconds_list,
+            delay_seconds_list=[delay_second],
         )
 
     def _init_env(self):
@@ -1154,9 +1148,12 @@ class EnvWorker(Worker):
                 self._prefetched_train_bootstrap = None
             else:
                 env_outputs = self.bootstrap_step()
-                await self._send_train_bootstrap_with_delay(
-                    rollout_channel, env_outputs, env_metrics
-                )
+                if not self._use_delayed_per_env_send(mode="train"):
+                    self._send_train_bootstrap(rollout_channel, env_outputs)
+                else:
+                    await self._send_train_bootstrap_with_delay(
+                        rollout_channel, env_outputs, env_metrics
+                    )
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1183,7 +1180,6 @@ class EnvWorker(Worker):
                             env_metrics["reward_model_output"].append(
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
-
                     rollout_result = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
@@ -1249,11 +1245,12 @@ class EnvWorker(Worker):
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
+                    data = self._build_rollout_input_data(env_batch)
                     if not self._use_delayed_per_env_send(mode="train"):
                         self.send_to(
                             group_name=self.cfg.rollout.group_name,
                             channel=rollout_channel,
-                            data=self._build_rollout_input_data(env_batch),
+                            data=data,
                             mode="train",
                             tag="rollout_results",
                             route_key=stage_id if not self.env_decoupled_mode else None,

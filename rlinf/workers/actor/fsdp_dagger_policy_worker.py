@@ -28,8 +28,6 @@ from rlinf.data.datasets.dagger import (
 )
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
-from rlinf.data.rolling_lerobot_dataset import build_rolling_lerobot_dataset
-from rlinf.data.utils import build_dataloader_from_dataset
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -251,7 +249,6 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self.offload_optimizer()
         if self.cfg.actor.get("compile_model", False):
             self.model = torch.compile(self.model, mode="default")
-        self._setup_rollout_weight_dst_ranks()
 
     def setup_dagger_components(self):
         """Initialize DAgger-specific replay buffer state."""

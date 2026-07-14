@@ -35,7 +35,6 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
         value_granularity="action_level",
         critic_obs_dim=None,
-        value_granularity="action_level",
     ):
         super().__init__()
         self.obs_dim = obs_dim
