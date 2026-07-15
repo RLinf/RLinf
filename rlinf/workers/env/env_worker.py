@@ -32,6 +32,7 @@ from rlinf.data.embodied_io_struct import (
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
+from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
@@ -185,9 +186,9 @@ class EnvWorker(Worker):
                 num_envs_per_stage=self.train_num_envs_per_stage,
             )
             if self.train_enable_offload:
-                assert all(hasattr(env, "offload") for env in self.env_list), (
-                    "train envs must have an offload method to enable offload!"
-                )
+                assert all(
+                    callable(get_env_attr(env, "offload")) for env in self.env_list
+                ), "train envs must have an offload method to enable offload!"
 
         if self.enable_eval:
             eval_env_cls = get_env_cls(self.cfg.env.eval.env_type, self.cfg.env.eval)
@@ -197,9 +198,9 @@ class EnvWorker(Worker):
                 num_envs_per_stage=self.eval_num_envs_per_stage,
             )
             if self.eval_enable_offload:
-                assert all(hasattr(env, "offload") for env in self.eval_env_list), (
-                    "eval envs must have an offload method to enable offload!"
-                )
+                assert all(
+                    callable(get_env_attr(env, "offload")) for env in self.eval_env_list
+                ), "eval envs must have an offload method to enable offload!"
 
         if self.enable_train:
             if self.reward_mode == "history_buffer":
@@ -380,10 +381,10 @@ class EnvWorker(Worker):
                 if self.train_enable_offload and self.cfg.env.train.get(
                     "enable_init_offload", True
                 ):
-                    self.env_list[i].offload()
+                    get_env_attr(self.env_list[i], "offload")()
             if self.enable_eval:
                 if self.eval_enable_offload:
-                    self.eval_env_list[i].offload()
+                    get_env_attr(self.eval_env_list[i], "offload")()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -659,17 +660,17 @@ class EnvWorker(Worker):
         # reset
         if mode == "train":
             for i in range(self.stage_num):
-                if self.cfg.env.train.video_cfg.save_video and isinstance(
-                    self.env_list[i], RecordVideo
-                ):
-                    self.env_list[i].flush_video()
+                if self.cfg.env.train.video_cfg.save_video:
+                    flush_video = get_env_attr(self.env_list[i], "flush_video")
+                    if callable(flush_video):
+                        flush_video()
                 self.env_list[i].update_reset_state_ids()
         elif mode == "eval":
             for i in range(self.stage_num):
-                if self.cfg.env.eval.video_cfg.save_video and isinstance(
-                    self.eval_env_list[i], RecordVideo
-                ):
-                    self.eval_env_list[i].flush_video()
+                if self.cfg.env.eval.video_cfg.save_video:
+                    flush_video = get_env_attr(self.eval_env_list[i], "flush_video")
+                    if callable(flush_video):
+                        flush_video()
                 if not self.cfg.env.eval.auto_reset:
                     self.eval_env_list[i].update_reset_state_ids()
 
@@ -859,6 +860,7 @@ class EnvWorker(Worker):
                 },
                 mode="train",
                 tag="rollout_results",
+                route_key=stage_id if not self.env_decoupled_mode else None,
                 decoupled_mode=self.env_decoupled_mode,
             )
 
@@ -925,13 +927,11 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
 
         for epoch in range(self.rollout_epoch):
-            env_outputs = self.bootstrap_step()
-            for stage_id in range(self.stage_num):
-                if epoch == 0 and self._prefetched_train_bootstrap is not None:
-                    env_outputs = self._prefetched_train_bootstrap
-                    self._prefetched_train_bootstrap = None
-                else:
-                    env_outputs = self._bootstrap_and_send_train(rollout_channel)
+            if epoch == 0 and self._prefetched_train_bootstrap is not None:
+                env_outputs = self._prefetched_train_bootstrap
+                self._prefetched_train_bootstrap = None
+            else:
+                env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -963,6 +963,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="train_rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.train_batch_size,
                         merge_fn=RolloutResult.merge_rollout_results,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
@@ -1015,6 +1016,7 @@ class EnvWorker(Worker):
                         },
                         mode="train",
                         tag="rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     if self.collect_transitions:
@@ -1061,6 +1063,7 @@ class EnvWorker(Worker):
                     group_name=self.cfg.rollout.group_name,
                     channel=input_channel,
                     tag="train_rollout_results",
+                    route_key=stage_id if not self.env_decoupled_mode else None,
                     batch_size=self.train_batch_size,
                     merge_fn=RolloutResult.merge_rollout_results,
                     infer_batch_size_fn=self._infer_rollout_batch_size,
@@ -1132,7 +1135,7 @@ class EnvWorker(Worker):
 
         for env in self.env_list:
             if self.train_enable_offload:
-                env.offload()
+                get_env_attr(env, "offload")()
 
         return env_metrics
 
@@ -1165,6 +1168,7 @@ class EnvWorker(Worker):
                         },
                         mode="eval",
                         tag="rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
@@ -1174,6 +1178,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
                         infer_batch_size_fn=self._infer_rollout_batch_size
                         if self.env_decoupled_mode
@@ -1215,13 +1220,14 @@ class EnvWorker(Worker):
                         },
                         mode="eval",
                         tag="rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
 
             self.finish_rollout(mode="eval")
         for stage_id in range(self.stage_num):
             if self.eval_enable_offload:
-                self.eval_env_list[stage_id].offload()
+                get_env_attr(self.eval_env_list[stage_id], "offload")()
 
         for key, value in eval_metrics.items():
             eval_metrics[key] = torch.cat(value, dim=0).contiguous().cpu()

@@ -103,6 +103,8 @@ jobs:
           export UV_LINK_MODE=copy
           source .venv/bin/activate
           uv pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator" "openai==2.32.0"
+          # tensorboard 2.21+ requires protobuf>=6.31.1; autogen pins protobuf~=5.29.x
+          uv pip install "tensorboard<2.21"
 
       - name: AgentLightning calc_x multiturn 
         timeout-minutes: 20
@@ -613,7 +615,7 @@ jobs:
         run: |
           source .venv/bin/activate
           cd FUSCO
-          uv pip install .
+          uv pip install . --no-build-isolation
           mkdir -p lib
           apt-get update -y && apt-get install curl -y
           curl -L -o lib/libfusco.so https://ghfast.top/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so
