@@ -29,6 +29,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
         self.sync_rollout_weight_time = (
             self.num_pipeline_stages * self.n_train_chunk_steps * self.rollout_epoch
         )
+
         assert not self.enable_offload, (
             "Offload not supported in AsyncMultiStepRolloutWorker"
         )

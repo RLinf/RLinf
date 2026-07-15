@@ -426,7 +426,6 @@ class EnvWorker(Worker):
                     finalize_interval=getattr(
                         env_cfg.data_collection, "finalize_interval", 100
                     ),
-                    defer_write=getattr(env_cfg.data_collection, "defer_write", False),
                 )
             env_list.append(env)
         return env_list
@@ -1180,6 +1179,7 @@ class EnvWorker(Worker):
                             env_metrics["reward_model_output"].append(
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
+
                     rollout_result = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
@@ -1289,9 +1289,9 @@ class EnvWorker(Worker):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
                     self.rollout_results[stage_id].update_last_actions(
-                            env_output.intervene_actions,
-                            env_output.intervene_flags,
-                        )
+                        env_output.intervene_actions,
+                        env_output.intervene_flags,
+                    )
 
                 reward_model_output = None
                 if reward_channel is not None:
@@ -1329,7 +1329,7 @@ class EnvWorker(Worker):
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)  
+                self.rollout_results[stage_id].append_step_result(chunk_step_result)
                 if (
                     self.reward_mode == "history_buffer"
                     and self.history_reward_assign

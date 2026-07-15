@@ -44,6 +44,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled
       
+      - name: ManiSkill Async SAC test with env decoupled mode and real simulator delay
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled_with_delay
+
       - name: ManiSkill Async SAC eval test with env decoupled mode
         timeout-minutes: 20
         run: |

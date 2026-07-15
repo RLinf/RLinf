@@ -13,44 +13,46 @@
 # limitations under the License.
 
 
-import torch
+from omegaconf import OmegaConf
 
-from rlinf.utils.comm_mapping import CommMapper
-from rlinf.utils.utils import _build_channel_message
 from rlinf.workers.env.env_worker import EnvWorker
 
 
-class _DummyChannel:
-    def __init__(self):
-        self.items = []
-
-    def put(self, item, key, async_op=False):
-        del async_op
-        self.items.append((item, key))
-
-
-def test_send_env_batch_shard_to_channel_sends_presplit_batch():
+def _make_worker(delay_sampler=None, enable_decoupled=True):
     worker = EnvWorker.__new__(EnvWorker)
-    worker._rank = 2
-    channel = _DummyChannel()
-    env_batch = {
-        "obs": {
-            "main_images": torch.zeros((1, 3, 4), dtype=torch.float32),
-            "task_descriptions": ["task-0"],
-        },
-        "final_obs": None,
-    }
+    cfg = {"env": {}}
+    if delay_sampler is not None:
+        cfg["env"]["delay_sampler"] = delay_sampler
+    worker.cfg = OmegaConf.create(cfg)
+    # _use_delayed_per_env_send checks delay_sampler + env_decoupled_mode
+    worker.env_decoupled_mode = enable_decoupled
+    worker.delay_sampler = None
+    return worker
 
-    worker.send_env_batch_shard_to_channel(
-        channel,
-        env_batch,
-        batch_idx=5,
-        mode="train",
-        last_run=True,
+
+def test_delay_disabled_when_delay_sampler_is_none():
+    worker = _make_worker(delay_sampler=None, enable_decoupled=True)
+
+    assert not worker._use_delayed_per_env_send(mode="train")
+
+
+def test_delay_disabled_when_not_decoupled():
+    worker = _make_worker(
+        delay_sampler={"type": "uniform", "min_delay": 0.1, "max_delay": 0.2},
+        enable_decoupled=False,
     )
 
-    assert len(channel.items) == 1
-    item, key = channel.items[0]
-    assert key == CommMapper.build_channel_key(None, None, extra="train_obs")
-    assert item["batch"] is env_batch
-    assert item["batch_index"] == _build_channel_message(2, 5, "train", True, "obs")
+    assert not worker._use_delayed_per_env_send(mode="train")
+
+
+def test_delay_enabled_with_sampler_and_decoupled():
+    worker = _make_worker(
+        delay_sampler={"type": "uniform", "min_delay": 0.1, "max_delay": 0.2},
+        enable_decoupled=True,
+    )
+    from rlinf.utils.delay_sampler import DelaySampler
+
+    worker.delay_sampler = DelaySampler.create(worker.cfg.env.get("delay_sampler"))
+
+    assert worker._use_delayed_per_env_send(mode="train")
+    assert not worker._use_delayed_per_env_send(mode="eval")
