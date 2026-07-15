@@ -49,11 +49,11 @@ class EmbodiedActionPolicy(ABC):
     """
 
     def __init__(self, cfg: Any, server_url: "str | None", rank: int):
-        self._cfg = cfg
-        self._cfg_rollout = cfg.rollout
-        self._model_cfg = cfg.rollout.model
-        self._server_url = server_url
-        self._rank = rank
+        self.cfg = cfg
+        self.cfg_rollout = cfg.rollout
+        self.model_cfg = cfg.rollout.model
+        self.server_url = server_url
+        self.rank = rank
         self.logger = get_logger()
 
     @abstractmethod

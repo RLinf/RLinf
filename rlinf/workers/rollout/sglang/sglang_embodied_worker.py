@@ -49,7 +49,7 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # rlinf/workers/rollout/sglang/action_policies); the policy turns env obs
         # into action chunks by calling the launched sglang serve.
         self.model_type = str(
-            getattr(getattr(self.cfg_rollout, "model", None), "model_type", "")
+            getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
         ).lower()
         self.action_policy = None
         self.sglang_server_url = None
@@ -65,7 +65,7 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # init_worker, so they're available before the serve is spawned.
         cfg = self._cfg
         self.cfg = cfg  # MultiStepRolloutWorker exposes self.cfg; mirror it
-        self.model_cfg = self.cfg_rollout.model
+        self.model_cfg = self._cfg_rollout.model
         # This worker is eval-only (spawn a serve + channel eval; no training).
         assert cfg.runner.get("only_eval", True), (
             "SGLangEmbodiedWorker is eval-only; set runner.only_eval: true"
@@ -145,12 +145,12 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # All serve-launch fields live flat under ``rollout.sglang`` (host,
         # port_base, num_gpus, tp_size, ...). 0 / null / empty = omit the flag
         # (sglang default).
-        sglang_cfg = self.cfg_rollout.get("sglang") or {}
+        sglang_cfg = self._cfg_rollout.get("sglang") or {}
 
         # Resolve the checkpoint path: prefer rollout.model_path (convenience
         # override directly under rollout:), fall back to rollout.model.model_path.
-        model_cfg = self.cfg_rollout.model
-        rollout_model_path = self.cfg_rollout.get("model_path", None)
+        model_cfg = self._cfg_rollout.model
+        rollout_model_path = self._cfg_rollout.get("model_path", None)
         model_path = rollout_model_path or model_cfg.model_path
         with _open_dict(model_cfg):
             model_cfg.model_path = model_path
