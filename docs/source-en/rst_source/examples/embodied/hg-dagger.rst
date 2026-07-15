@@ -298,9 +298,6 @@ your cluster, cameras, target pose, and checkpoints:
 
    algorithm:
      dagger:
-       init_beta: 1.0
-       beta_schedule: "exponential"
-       beta_decay: 0.99
        only_save_expert: False
        online_lerobot:
          enabled: True
@@ -343,7 +340,7 @@ your cluster, cameras, target pose, and checkpoints:
 * ``finalize_interval: 1`` writes a LeRobot shard after every successful episode;
 * ``rolling_lerobot_window_size: 50000`` limits online sampling to chunk starts within the most recent 50,000 logical frames, while older shards remain on disk.
 
-The real-world config does not define ``rollout.expert_model``, so ``init_beta`` and ``beta_decay`` do not route between model experts and the student. Human intervention is instead determined by the intervention wrapper enabled under ``env.train``.
+The real-world DAgger config intentionally omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; real-world human intervention is determined by the intervention wrapper enabled under ``env.train``.
 
 Launch HG-DAgger from the Ray head node:
 
@@ -370,7 +367,7 @@ Each successful episode is written under the current run's log directory:
    logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_1/
    ...
 
-Failed episodes do not enter the online dataset. Do not enable ``env.train.data_collection`` at the same time; the online DAgger episode collector already handles in-memory transfer and LeRobot shard archival.
+Failed episodes do not enter the online dataset.
 
 **3. Useful Monitoring Metrics**
 

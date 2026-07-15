@@ -73,11 +73,6 @@ runner:
 
 algorithm:
   dagger:
-    # With no rollout.expert_model configured, beta is not used for model-vs-model
-    # expert mixing. Human PICO intervention is collected through info["intervene_action"].
-    init_beta: 1.0
-    beta_schedule: "exponential"
-    beta_decay: 0.99
     # Train on every frame from successful episodes. Human-intervened frames
     # still carry intervene_flag=True and store the executed expert action.
     only_save_expert: False

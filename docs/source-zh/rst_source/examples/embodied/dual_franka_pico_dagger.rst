@@ -460,6 +460,8 @@ PICO 接管帧。每个成功 episode 会立即归档到
 ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``。
 ``env.eval.use_pico: False`` 表示评测阶段只看策略本身，不混入人工接管。
 
+真机 DAgger 配置不包含 beta 相关字段，因为没有配置 ``rollout.expert_model``。Beta 只用于模型 expert 和 student 之间的动作混合；这里的人工接管由 PICO intervention wrapper 决定。
+
 执行 DAgger
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -480,11 +482,6 @@ PICO 接管帧。每个成功 episode 会立即归档到
 ``grip``，松开后让策略继续运行。按住任意一侧 ``grip`` 时，该侧 PICO action 与
 另一侧 rollout action 会合成为完整 20D ``info["intervene_action"]``。成功结束后，
 整条 episode 经内存发送给 actor，并写入 online LeRobot shard；失败 episode 被丢弃。
-
-不要在同一个 ``env.train`` 上同时启用 ``env.train.data_collection``。online DAgger
-collector 已负责成功 episode 的内存传输和 LeRobot 归档；离线 PICO 示教采集仍使用
-前文独立的 ``realworld_dual_franka_collect_data_pico`` 配置和命令。
-
 
 监控
 ----------------------------------------

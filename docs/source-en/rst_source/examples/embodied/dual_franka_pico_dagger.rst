@@ -486,6 +486,8 @@ Before launch, confirm these fields:
 
 ``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: False`` trains on the complete successful episode rather than only PICO intervention frames. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.use_pico: False`` means evaluation uses the policy alone, without human intervention.
 
+The real-world DAgger config intentionally omits beta-related fields because it does not configure ``rollout.expert_model``. Beta only controls action mixing between a model expert and the student; human intervention here is determined by the PICO intervention wrapper.
+
 Run DAgger
 ~~~~~~~~~~
 
@@ -510,12 +512,6 @@ action with the other arm's rollout action into a complete 20D
 ``info["intervene_action"]``. After a successful termination, the complete
 episode is sent in memory to the actor and written as an online LeRobot shard;
 failed episodes are discarded.
-
-Do not enable ``env.train.data_collection`` at the same time. The online DAgger
-collector already handles in-memory transfer and LeRobot archival of successful
-episodes. Offline PICO demonstration collection continues to use the separate
-``realworld_dual_franka_collect_data_pico`` config and command described above.
-
 
 Monitoring
 ----------

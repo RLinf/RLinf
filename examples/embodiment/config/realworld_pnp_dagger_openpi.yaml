@@ -56,9 +56,6 @@ runner:
 
 algorithm:
   dagger:
-    init_beta: 1.0
-    beta_schedule: "exponential"
-    beta_decay: 0.99
     # Train on every frame from successful episodes. Human-intervened frames
     # still carry intervene_flag=True and store the executed expert action.
     only_save_expert: False
