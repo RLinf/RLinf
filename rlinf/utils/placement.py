@@ -95,6 +95,22 @@ class HybridComponentPlacement(ComponentPlacement):
         super().__init__(config, cluster)
         self._placement_mode = PlacementMode.HYBRID
 
+    @property
+    def is_collocated(self):
+        return False
+
+    @property
+    def is_disaggregated(self):
+        return False
+
+    @property
+    def is_auto(self):
+        return False
+
+    @property
+    def is_pipeline(self):
+        return False
+
 
 class ModelParallelComponentPlacement(ComponentPlacement):
     """Component placement for model-parallel components.

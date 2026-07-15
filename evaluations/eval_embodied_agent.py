@@ -41,11 +41,31 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    # Create rollout worker group
+    # Create rollout worker group. Select the worker by ``rollout_backend``:
+    # only ``sglang`` is supported here (vllm is intentionally not wired in);
+    # configs without a backend are HF embodied models using MultiStepRolloutWorker.
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
-    )
+    rollout_backend = cfg.rollout.get("rollout_backend", None)
+    if rollout_backend is not None:
+        assert rollout_backend == "sglang", (
+            f"only the sglang rollout_backend is supported by this eval entry "
+            f"(got {rollout_backend!r}); vllm/other backends are not wired in."
+        )
+        from rlinf.workers.rollout.utils import get_rollout_backend_worker
+
+        rollout_group = get_rollout_backend_worker(cfg).create_group(
+            cfg, component_placement, weight_reload=None
+        ).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
+    else:
+        rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+            cluster,
+            name=cfg.rollout.group_name,
+            placement_strategy=rollout_placement,
+        )
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
     env_group = EnvWorker.create_group(cfg).launch(
