@@ -1300,7 +1300,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def _train_sft_epoch(
         self, metrics_data: dict[str, torch.Tensor], loss: torch.Tensor
-    ):
+    ) -> torch.Tensor:
         """
         Train one epoch of SFT.
         """
@@ -1336,6 +1336,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
+        return loss
 
     @Worker.timer("run_training")
     def run_training(self) -> None:
@@ -1526,7 +1527,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
         if self.enable_sft_co_train:
-            self._train_sft_epoch(metrics_data, loss)
+            loss = self._train_sft_epoch(metrics_data, loss)
 
         loss /= self.gradient_accumulation
         with backward_ctx:
