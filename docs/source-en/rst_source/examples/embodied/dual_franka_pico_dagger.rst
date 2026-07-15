@@ -262,10 +262,9 @@ Replace the following fields in the collection and DAgger configs:
   RealSense / Lumos camera serials or stable ``/dev/v4l/by-id`` paths.
 * ``base_camera_type``, ``left_camera_type``, ``right_camera_type``: camera
   types, usually ``realsense``, ``lumos``, ``lumos``.
-* ``left_gripper_type`` / ``right_gripper_type``: gripper types. Use
-  ``robotiq`` for Robotiq grippers.
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: Robotiq serial
-  device paths.
+* ``left_gripper_type`` / ``right_gripper_type``: left and right gripper types.
+* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``: stable
+  ``/dev/serial/by-id`` paths for the left and right gripper adapters.
 * ``left_controller_node_rank`` / ``right_controller_node_rank``: ranks of the
   left and right arm controller nodes. The collection config usually uses
   ``0`` / ``1``; the three-node DAgger config usually uses ``1`` / ``2``.

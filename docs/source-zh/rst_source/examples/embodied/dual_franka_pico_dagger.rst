@@ -251,9 +251,9 @@ env / PICO consumer，rank ``2`` 为右臂。
   RealSense / Lumos 相机 serial 或稳定 ``/dev/v4l/by-id`` 路径。
 * ``base_camera_type``、``left_camera_type``、``right_camera_type``：相机类型，
   通常为 ``realsense``、``lumos``、``lumos``。
-* ``left_gripper_type`` / ``right_gripper_type``：夹爪类型，Robotiq 夹爪填
-  ``robotiq``。
-* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：Robotiq 串口路径。
+* ``left_gripper_type`` / ``right_gripper_type``：左右夹爪类型。
+* ``LEFT_GRIPPER_CONNECTION`` / ``RIGHT_GRIPPER_CONNECTION``：左右夹爪转接器的稳定
+  ``/dev/serial/by-id`` 路径。
 * ``left_controller_node_rank`` / ``right_controller_node_rank``：左右臂控制节点
   rank。采集配置通常为 ``0`` / ``1``；DAgger 三节点配置通常为 ``1`` / ``2``。
 * ``node_rank``：DualFranka 硬件配置所在的 env / PICO consumer 节点 rank。采集配置
