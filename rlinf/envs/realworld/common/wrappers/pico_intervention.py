@@ -538,10 +538,7 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
         new_action, replaced, pico_info = self.action(action)
 
         obs, rew, done, truncated, info = self.env.step(new_action)
-        should_record_intervention = replaced
-        if self.hand == "dual" and not self.hold_current_when_inactive:
-            should_record_intervention = bool(pico_info["pico_dual_replaced"])
-        if should_record_intervention or self.hold_current_when_inactive:
+        if replaced or self.hold_current_when_inactive:
             info["intervene_action"] = new_action
             info["intervene_flag"] = np.ones(1)
         info.update(pico_info)

@@ -6,7 +6,7 @@ Using HG-DAgger with Franka
 
    Human-Gated DAgger workflow for collecting interventions and training a Franka policy online.
 
-Train a real-world Franka policy with Human-Gated DAgger. You will collect intervention data, compute OpenPI normalization stats, run SFT, then launch online HG-DAgger with expert-only steps saved for training.
+Train a real-world Franka policy with Human-Gated DAgger. You will collect intervention data, compute OpenPI normalization stats, run SFT, and then launch online HG-DAgger. During the online stage, LeRobot stores complete successful episodes: non-intervention frames retain the actions actually executed by the policy, intervention frames store the human actions and ``intervene_flag``, and the complete successful trajectories are used for training.
 
 Overview
 --------
@@ -34,7 +34,7 @@ Use human-gated interventions to improve a real-world Franka policy online.
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · SpaceMouse/operator
+      Franka · teleoperator
 
 | **You'll do:** collect intervention data → compute norm stats → run SFT → launch HG-DAgger → monitor interventions.
 | **Prerequisites:** :doc:`franka` · :doc:`sft_openpi` · Ray cluster · trained or base OpenPI checkpoint.
@@ -57,7 +57,7 @@ Tasks
      - Train the student initialization.
    * - HG-DAgger
      - ``realworld_pnp_dagger_openpi``
-     - Run online intervention training with expert-only save mode.
+     - Aggregate complete successful trajectories with online LeRobot and run online intervention training.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -189,7 +189,7 @@ pick-and-place task, switch the env from peg insertion to bin relocation:
      - env/realworld_bin_relocation@env.eval
      - override hydra/job_logging: stdout
 
-Then fill in the robot configuration and keep LeRobot export enabled:
+Then fill in the robot configuration and keep LeRobot export enabled. The following collection config uses a SpaceMouse as an example; when using another human-intervention device, update the device fields and configuration under ``env.eval`` accordingly:
 
 .. code-block:: yaml
 
@@ -301,10 +301,21 @@ your cluster, cameras, target pose, and checkpoints:
        init_beta: 1.0
        beta_schedule: "exponential"
        beta_decay: 0.99
-       only_save_expert: True
+       only_save_expert: False
+       online_lerobot:
+         enabled: True
+         only_success: True
+         robot_type: "panda"
+         fps: 10
+         finalize_interval: 1
+         data_path: ${runner.logger.log_path}/online_lerobot
+         rolling_lerobot_window_size: 50000
+         min_frames: 1
+         lerobot_num_workers: 0
 
    env:
      train:
+       use_spacemouse: True
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -323,6 +334,17 @@ your cluster, cameras, target pose, and checkpoints:
        openpi:
          config_name: "pi0_realworld"
 
+``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
+
+``only_success: True`` discards failed episodes, while ``only_save_expert: False`` allows every frame in each successful episode to participate in training. Within a successful episode:
+
+* ``actions`` on non-intervention frames are the actions actually executed by the student;
+* ``actions`` on human-intervention frames are the actions actually executed by the intervention device, with ``intervene_flag=True``;
+* ``finalize_interval: 1`` writes a LeRobot shard after every successful episode;
+* ``rolling_lerobot_window_size: 50000`` limits online sampling to chunk starts within the most recent 50,000 logical frames, while older shards remain on disk.
+
+The real-world config does not define ``rollout.expert_model``, so ``init_beta`` and ``beta_decay`` do not route between model experts and the student. Human intervention is instead determined by the intervention wrapper enabled under ``env.train``.
+
 Launch HG-DAgger from the Ray head node:
 
 .. code-block:: bash
@@ -338,10 +360,24 @@ Visualization and Results
 
    tensorboard --logdir ./logs
 
-**2. Useful Monitoring Metrics**
+**2. Online LeRobot Data**
 
-- ``train/dagger/actor_loss``: Supervised HG-DAgger loss on buffered intervention samples.
-- ``train/replay_buffer/num_trajectories``: Number of stored trajectories.
-- ``train/replay_buffer/total_samples``: Number of available replay samples.
+Each successful episode is written under the current run's log directory:
+
+.. code-block:: text
+
+   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_0/
+   logs/<timestamp>-realworld_pnp_dagger_openpi/online_lerobot/rank_0/id_1/
+   ...
+
+Failed episodes do not enter the online dataset. Do not enable ``env.train.data_collection`` at the same time; the online DAgger episode collector already handles in-memory transfer and LeRobot shard archival.
+
+**3. Useful Monitoring Metrics**
+
+- ``train/dagger/actor_loss``: Supervised loss computed from complete successful trajectories.
+- ``train/lerobot_dataset/total_episodes``: Number of successful episodes received by the actor.
+- ``train/lerobot_dataset/physical_frames``: Number of received LeRobot physical frames.
+- ``train/lerobot_dataset/logical_samples``: Number of trainable samples in the rolling window.
+- ``train/lerobot_dataset/num_sub_datasets``: Number of currently loaded LeRobot shards.
 - ``train/actor/lr``: Learning rate.
 - ``train/actor/grad_norm``: Gradient norm.

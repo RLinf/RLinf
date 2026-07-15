@@ -67,7 +67,7 @@ Tasks
      - Collect tcp_rot6d LeRobot data with two-hand PICO teleoperation.
    * - HG-DAgger
      - ``realworld_dual_franka_dagger_openpi``
-     - Let the policy act autonomously and save PICO intervention frames into the replay buffer.
+     - Let the policy act autonomously with per-arm PICO intervention, and add complete successful trajectories to the online LeRobot dataset.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -323,8 +323,23 @@ Default controller semantics:
 
 * Collection uses ``True``: an inactive arm holds the current TCP, which is
   suitable for pure teleoperation collection.
-* DAgger uses ``False``: inactive frames keep the policy action, and only
-  intervention frames are labeled as expert data.
+* DAgger uses ``False``: an inactive arm retains its rollout action. When either
+  ``grip`` is held, only that arm's action is replaced by the corresponding
+  PICO action, while the other arm retains its rollout action.
+
+Dual-arm DAgger composes intervention records per arm. For example, when only
+the left arm is being intervened on, the 20D action that is executed and written
+to ``intervene_action`` is:
+
+.. code-block:: text
+
+   [left-arm PICO 10D action, right-arm rollout 10D action]
+
+The reverse applies when only the right arm is being intervened on. Replacing
+either arm sets ``intervene_flag=True``; no intervention record is produced only
+when neither arm is being intervened on. The online LeRobot collector still
+stores the complete successful episode, and ``intervene_flag`` identifies the
+human-correction frames within it.
 
 
 Start the PICO Data Stream
@@ -444,7 +459,17 @@ Before launch, confirm these fields:
 
    algorithm:
      dagger:
-       only_save_expert: True
+       only_save_expert: False
+       online_lerobot:
+         enabled: True
+         only_success: True
+         robot_type: "dual_FR3"
+         fps: 10
+         finalize_interval: 1
+         data_path: ${runner.logger.log_path}/online_lerobot
+         rolling_lerobot_window_size: 50000
+         min_frames: 1
+         lerobot_num_workers: 0
 
    env:
      train:
@@ -457,9 +482,9 @@ Before launch, confirm these fields:
      eval:
        use_pico: False
 
-``only_save_expert: True`` means the replay buffer only saves frames from PICO
-interventions. ``env.eval.use_pico: False`` means evaluation uses the policy
-alone, without human intervention.
+``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
+
+``only_success: True`` discards failed rollouts and keeps only successful episodes. ``only_save_expert: False`` trains on the complete successful episode rather than only PICO intervention frames. Every successful episode is archived immediately under ``${runner.logger.log_path}/online_lerobot/rank_0/id_<N>/``. ``env.eval.use_pico: False`` means evaluation uses the policy alone, without human intervention.
 
 Run DAgger
 ~~~~~~~~~~
@@ -480,8 +505,16 @@ During the run:
 
 After each episode, the env resets and waits for ``a`` again. During policy
 execution, hold ``grip`` only when you need to correct the policy, then release
-it to let the policy continue. Those intervention segments enter the
-HG-DAgger replay buffer through ``info["intervene_action"]``.
+it to let the policy continue. Holding either ``grip`` combines that arm's PICO
+action with the other arm's rollout action into a complete 20D
+``info["intervene_action"]``. After a successful termination, the complete
+episode is sent in memory to the actor and written as an online LeRobot shard;
+failed episodes are discarded.
+
+Do not enable ``env.train.data_collection`` at the same time. The online DAgger
+collector already handles in-memory transfer and LeRobot archival of successful
+episodes. Offline PICO demonstration collection continues to use the separate
+``realworld_dual_franka_collect_data_pico`` config and command described above.
 
 
 Monitoring
@@ -495,13 +528,17 @@ Start TensorBoard:
 
 Recommended metrics:
 
-* ``train/dagger/actor_loss``: supervised loss on intervention data.
-* ``train/replay_buffer/num_trajectories``: number of saved trajectories.
-* ``train/replay_buffer/total_samples``: number of trainable samples.
+* ``train/dagger/actor_loss``: supervised loss on complete successful trajectories.
+* ``train/lerobot_dataset/total_episodes``: number of successful episodes received by the actor.
+* ``train/lerobot_dataset/physical_frames``: number of received LeRobot physical frames.
+* ``train/lerobot_dataset/logical_samples``: number of trainable samples in the rolling window.
+* ``train/lerobot_dataset/num_sub_datasets``: number of currently loaded LeRobot shards.
 * ``train/actor/lr`` and ``train/actor/grad_norm``: training stability.
 
-During collection, inspect ``logs/<timestamp>/run_embodiment.log`` to confirm
-the successful episode count and the LeRobot write path.
+During collection and online DAgger, inspect ``logs/<timestamp>/run_embodiment.log``
+to confirm the successful episode count and the LeRobot write path. Online
+DAgger shards are stored under
+``logs/<timestamp>-realworld_dual_franka_dagger_openpi/online_lerobot/rank_0/``.
 
 
 Troubleshooting
