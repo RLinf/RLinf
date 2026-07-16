@@ -220,6 +220,15 @@ Use this check when changing GPU placement, rollout size, or actor batch size in
    rollout_size_per_actor_rank % (actor.global_batch_size / actor_world_size) == 0
    actor.global_batch_size % (actor.micro_batch_size * actor_world_size) == 0
 
+End-to-End Test
+----------------
+
+The shortened PPO e2e config is ``robocasa365_ppo_openpi``:
+
+.. code:: bash
+
+   bash tests/e2e_tests/embodied/run.sh robocasa365_ppo_openpi
+
 Evaluation
 ----------
 
