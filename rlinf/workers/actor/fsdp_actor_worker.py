@@ -1126,9 +1126,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 send=send_func,
                 recv=recv_func,
                 param_names_need_sync=self.param_names_need_sync,
+                is_sender=self._is_weight_sender,
             )
 
-        await self.weight_syncer.sync(state_dict, send_func, version=self.version)
+        version = (
+            self.get_rollout_sync_version()
+            if hasattr(self, "get_rollout_sync_version")
+            else self.version
+        )
+        await self.weight_syncer.sync(state_dict, send_func, version=version)
 
         if self.enable_offload:
             assert not self.is_weight_offloaded, (
@@ -1288,7 +1294,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,
                 repo_id=repo_id,
-                data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
+                data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
             )
             self.data_loader = _data.create_data_loader(
                 data_loader_config, framework="pytorch", shuffle=True
@@ -1303,7 +1309,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def _train_sft_epoch(
         self, metrics_data: dict[str, torch.Tensor], loss: torch.Tensor
-    ):
+    ) -> torch.Tensor:
         """
         Train one epoch of SFT.
         """
@@ -1339,6 +1345,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
+        return loss
 
     @Worker.timer("run_training")
     def run_training(self) -> None:
@@ -1529,7 +1536,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
         if self.enable_sft_co_train:
-            self._train_sft_epoch(metrics_data, loss)
+            loss = self._train_sft_epoch(metrics_data, loss)
 
         loss /= self.gradient_accumulation
         with backward_ctx:

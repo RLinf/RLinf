@@ -16,7 +16,89 @@ import importlib
 import inspect
 import sys
 import types
+from importlib.machinery import ModuleSpec
 from typing import Callable
+
+
+class _StubModuleFinder:
+    def find_spec(self, fullname: str, path=None, target=None):
+        if "." not in fullname:
+            return None
+
+        parent_name = fullname.rsplit(".", 1)[0]
+        parent = sys.modules.get(parent_name)
+        if isinstance(parent, _StubModule):
+            return ModuleSpec(fullname, self, is_package=True)
+        return None
+
+    def create_module(self, spec):
+        return _StubModule(spec.name)
+
+    def exec_module(self, module):
+        sys.modules[module.__name__] = module
+
+
+class _StubModule(types.ModuleType):
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.__file__ = f"<stub:{name}>"
+        self.__loader__ = None
+        self.__package__ = name.rsplit(".", 1)[0] if "." in name else name
+        self.__path__ = []
+        self.__all__ = []
+        self.__spec__ = ModuleSpec(name, None, is_package=True)
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
+
+        submodule_name = f"{self.__name__}.{name}"
+        if submodule_name not in sys.modules:
+            sys.modules[submodule_name] = _StubModule(submodule_name)
+        return sys.modules[submodule_name]
+
+    def __call__(self, *args, **kwargs):
+        return None
+
+    def __iter__(self):
+        return iter([])
+
+    def __contains__(self, item):
+        return False
+
+    def __len__(self):
+        return 0
+
+    def __bool__(self):
+        return False
+
+
+_stub_module_finder = _StubModuleFinder()
+if _stub_module_finder not in sys.meta_path:
+    sys.meta_path.insert(0, _stub_module_finder)
+
+
+def _register_stub_module(module_path: str) -> _StubModule:
+    parts = module_path.split(".")
+    for index in range(len(parts)):
+        current_path = ".".join(parts[: index + 1])
+        if current_path not in sys.modules:
+            sys.modules[current_path] = _StubModule(current_path)
+
+        if index > 0:
+            parent_path = ".".join(parts[:index])
+            parent = sys.modules.get(parent_path)
+            # Only attach children onto stub parents
+            if _is_stub_module(parent):
+                setattr(parent, parts[index], sys.modules[current_path])
+
+    return sys.modules[module_path]
+
+
+def _is_stub_module(module):
+    return isinstance(module, _StubModule)
 
 
 class _Patcher:
@@ -201,6 +283,42 @@ class _Patcher:
         if old not in self._wrappers_dict:
             self._wrappers_dict[old] = []
         self._wrappers_dict[old].append(wrapper)
+
+    def skip_import(self, *module_paths: str) -> "_Patcher":
+        """Register stub modules so ``import <path>`` succeeds without the real dep.
+
+        For each path not already imported, installs a no-op stub in
+        ``sys.modules`` (and, via the meta-path finder, for its submodules).
+        Use this to satisfy an optional/unavailable dependency's import site;
+        pair with :meth:`clear_stub_import` to remove the stub before code that
+        must observe the dependency's real (absent) state runs. Returns ``self``
+        for chaining.
+        """
+        for module_path in module_paths:
+            assert isinstance(module_path, str)
+            if module_path in sys.modules:
+                continue
+
+            _register_stub_module(module_path)
+        return self
+
+    def clear_stub_import(self, *module_paths: str) -> "_Patcher":
+        """Remove stub modules previously installed by :meth:`skip_import`.
+
+        Drops the given paths and their stubbed submodules from ``sys.modules``,
+        but only entries that are stubs — real modules imported in the meantime
+        are left untouched. Returns ``self`` for chaining.
+        """
+        for module_path in module_paths:
+            assert isinstance(module_path, str)
+            for module_name in list(sys.modules):
+                if module_name == module_path or module_name.startswith(
+                    f"{module_path}."
+                ):
+                    module = sys.modules.get(module_name)
+                    if _is_stub_module(module):
+                        sys.modules.pop(module_name, None)
+        return self
 
     def apply(self):
         for old in self._wrappers_dict:

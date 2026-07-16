@@ -57,6 +57,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_sft_openpi
 
+      - name: SFT ManiSkill RLT Stage1 OpenPI Pi05 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
+
       - name: Clean up
         run: |
           rm -rf .venv

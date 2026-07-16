@@ -444,13 +444,17 @@ class FSDPModelManager:
             if self.optimizer_steps >= self.critic_warmup_steps:
                 self.optimizer = self.build_optimizer(model=self.model)
                 self.critic_warmup_steps = 0
+                self.lr_scheduler = self.build_lr_scheduler(
+                    optimizer=self.optimizer,
+                    optim_config=self._cfg.optim,
+                )
         else:
             lr_list = [group["lr"] for group in self.optimizer.param_groups]
 
         return grad_norm, lr_list
 
     def build_lr_scheduler(
-        self, optimizer: Optimizer, optim_config: DictConfig
+        self, optimizer: Optimizer, optim_config: DictConfig, last_epoch: int = -1
     ) -> LRScheduler:
         """
         Build the learning rate scheduler based on the configuration.
@@ -459,6 +463,7 @@ class FSDPModelManager:
         Args:
             optimizer (Optimizer): The optimizer for which to schedule the learning rate.
             optim_config (DictConfig): The optimizer config.
+            last_epoch (int): The scheduler epoch to resume from.
 
         Returns:
             LRScheduler: The learning rate scheduler.
@@ -481,6 +486,7 @@ class FSDPModelManager:
             num_cycles=num_cycles,
             min_lr=min_lr,
             min_lr_rate=min_lr_rate,
+            last_epoch=last_epoch,
         )
 
     def build_optimizer(

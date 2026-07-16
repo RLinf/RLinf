@@ -89,6 +89,7 @@ SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -120,6 +121,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENPI,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
+        SupportedModel.RLT_MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -929,6 +931,18 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+
+    use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
+    standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
+    if use_reward_model and not standalone_realworld:
+        assert stage_num == 1, (
+            "use_reward_model requires rollout.pipeline_stage_num to be 1"
+        )
+
+    if cfg.runner.get("enable_decoupled_mode", False):
+        assert stage_num == 1, (
+            "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
+        )
 
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (

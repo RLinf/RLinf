@@ -615,7 +615,7 @@ jobs:
         run: |
           source .venv/bin/activate
           cd FUSCO
-          uv pip install .
+          uv pip install . --no-build-isolation
           mkdir -p lib
           apt-get update -y && apt-get install curl -y
           curl -L -o lib/libfusco.so https://ghfast.top/https://github.com/infinigence/FUSCO/releases/download/v0.1/libfusco.so

@@ -263,10 +263,11 @@ WeightPatchTransport = EmptyWeightPatch | WeightPatch | CompressedWeightPatch
 class PatchBuilder(ABC):
     def __init__(
         self,
-        snapshot: dict[str, torch.Tensor],
+        snapshot: dict[str, torch.Tensor] | None,
         ordered_keys: list[str],
         param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
+        transport_device: torch.device,
         delta_encoding: bool,
     ):
         self.snapshot = snapshot
@@ -274,6 +275,7 @@ class PatchBuilder(ABC):
         self.param_names_need_sync = param_names_need_sync
         self.param_names_need_sync_set = set(param_names_need_sync)
         self.original_shapes = original_shapes
+        self.transport_device = transport_device
         self.delta_encoding = delta_encoding
         self.param_names_need_sync_ordinals: dict[str, int] = {
             name: ordinal
@@ -371,11 +373,12 @@ class PatchBuilder(ABC):
     @classmethod
     def create(
         cls,
-        snapshot: dict[str, torch.Tensor],
+        snapshot: dict[str, torch.Tensor] | None,
         ordered_keys: list[str],
         param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
         snapshot_device: torch.device,
+        transport_device: torch.device,
         delta_encoding: bool,
     ) -> PatchBuilder:
         if snapshot_device.type == "cpu":
@@ -384,6 +387,7 @@ class PatchBuilder(ABC):
                 ordered_keys,
                 param_names_need_sync,
                 original_shapes,
+                transport_device,
                 delta_encoding,
             )
         elif snapshot_device.type == Worker.torch_device_type:
@@ -392,6 +396,7 @@ class PatchBuilder(ABC):
                 ordered_keys,
                 param_names_need_sync,
                 original_shapes,
+                transport_device,
                 delta_encoding,
             )
         else:
@@ -419,10 +424,11 @@ class _PrefetchedCPUSnapshot:
 class CPUSnapshotPatchBuilder(PatchBuilder):
     def __init__(
         self,
-        snapshot: dict[str, torch.Tensor],
+        snapshot: dict[str, torch.Tensor] | None,
         ordered_keys: list[str],
         param_names_need_sync: list[str],
         original_shapes: dict[str, torch.Size],
+        transport_device: torch.device,
         delta_encoding: bool,
     ):
         super().__init__(
@@ -430,6 +436,7 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
             ordered_keys=ordered_keys,
             param_names_need_sync=param_names_need_sync,
             original_shapes=original_shapes,
+            transport_device=transport_device,
             delta_encoding=delta_encoding,
         )
         self._copy_streams: dict[torch.device, torch.Stream] = {}
@@ -439,6 +446,26 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
+        # in case for DTensor but the snapshot is None, it still
+        # needs participate in the all-gather, but we just create
+        # empty patch for it, because this rank does not really
+        # send.
+        if self.snapshot is None:
+            if set(state_dict.keys()) != set(self.ordered_keys):
+                raise ValueError("State dict keys do not match snapshot keys")
+            for key in self.param_names_need_sync:
+                _ = materialize_tensor(state_dict[key])
+            return EmptyWeightPatch(
+                version=torch.as_tensor(
+                    version,
+                    dtype=torch.int64,
+                    device=self.transport_device,
+                )
+            )
+
+        if set(state_dict.keys()) != set(self.ordered_keys):
+            raise ValueError("State dict keys do not match snapshot keys")
+
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []
@@ -500,15 +527,31 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
 
             ordinals.append(
                 torch.tensor(
-                    current.global_ordinal, dtype=torch.int32, device=rows.device
+                    current.global_ordinal,
+                    dtype=torch.int32,
+                    device=self.transport_device,
                 )
             )
             nnz_per_tensor.append(
-                torch.tensor(values.numel(), dtype=torch.int32, device=rows.device)
+                torch.tensor(
+                    values.numel(), dtype=torch.int32, device=self.transport_device
+                )
             )
-            row_chunks.append(patch_rows.contiguous())
-            col_chunks.append(patch_cols.contiguous())
-            value_byte_chunks.append(values.contiguous().view(torch.uint8))
+            row_chunks.append(
+                patch_rows.contiguous().to(
+                    device=self.transport_device, non_blocking=False
+                )
+            )
+            col_chunks.append(
+                patch_cols.contiguous().to(
+                    device=self.transport_device, non_blocking=False
+                )
+            )
+            value_byte_chunks.append(
+                values.contiguous()
+                .view(torch.uint8)
+                .to(device=self.transport_device, non_blocking=False)
+            )
 
         if row_chunks:
             rows_tensor = downscale_nonnegative_indices(torch.cat(row_chunks, dim=0))
@@ -530,7 +573,9 @@ class CPUSnapshotPatchBuilder(PatchBuilder):
         if patch_device is None:
             raise RuntimeError("Snapshot contains no tensors")
         patch = EmptyWeightPatch(
-            version=torch.tensor(version, dtype=torch.int64, device=patch_device)
+            version=torch.tensor(
+                version, dtype=torch.int64, device=self.transport_device
+            )
         )
         return patch
 
@@ -609,6 +654,26 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         state_dict: dict[str, torch.Tensor | DTensor],
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
+        # in case for DTensor but the snapshot is None, it still
+        # needs participate in the all-gather, but we just create
+        # empty patch for it, because this rank does not really
+        # send.
+        if self.snapshot is None:
+            if set(state_dict.keys()) != set(self.ordered_keys):
+                raise ValueError("State dict keys do not match snapshot keys")
+            for param_name in self.param_names_need_sync:
+                _ = materialize_tensor(state_dict[param_name])
+            return EmptyWeightPatch(
+                version=torch.as_tensor(
+                    version,
+                    dtype=torch.int64,
+                    device=self.transport_device,
+                )
+            )
+
+        if set(state_dict.keys()) != set(self.ordered_keys):
+            raise ValueError("State dict keys do not match snapshot keys")
+
         ordinals: list[torch.Tensor] = []
         nnz_per_tensor: list[torch.Tensor] = []
         row_chunks: list[torch.Tensor] = []
@@ -668,14 +733,24 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
                 rows, cols = self.delta_encode(rows, cols)
 
             ordinals.append(
-                torch.tensor(ordinal, dtype=torch.int32, device=rows.device)
+                torch.tensor(ordinal, dtype=torch.int32, device=self.transport_device)
             )
             nnz_per_tensor.append(
-                torch.tensor(values.numel(), dtype=torch.int32, device=rows.device)
+                torch.tensor(
+                    values.numel(), dtype=torch.int32, device=self.transport_device
+                )
             )
-            row_chunks.append(rows.contiguous())
-            col_chunks.append(cols.contiguous())
-            value_byte_chunks.append(values.contiguous().view(torch.uint8))
+            row_chunks.append(
+                rows.contiguous().to(device=self.transport_device, non_blocking=False)
+            )
+            col_chunks.append(
+                cols.contiguous().to(device=self.transport_device, non_blocking=False)
+            )
+            value_byte_chunks.append(
+                values.contiguous()
+                .view(torch.uint8)
+                .to(device=self.transport_device, non_blocking=False)
+            )
 
         if row_chunks:
             rows_tensor = downscale_nonnegative_indices(torch.cat(row_chunks, dim=0))
@@ -696,7 +771,9 @@ class GPUSnapshotPatchBuilder(PatchBuilder):
         if patch_device is None:
             raise RuntimeError("Snapshot contains no tensors")
         return EmptyWeightPatch(
-            version=torch.tensor(version, dtype=torch.int64, device=patch_device)
+            version=torch.tensor(
+                version, dtype=torch.int64, device=self.transport_device
+            )
         )
 
 
@@ -716,6 +793,7 @@ class PatchWeightSyncer(WeightSyncer):
         self.original_shapes: dict[str, torch.Size] | None = None
         self.ordered_keys: list[str] | None = None
         self.patch_builder: PatchBuilder | None = None
+        self._active_sender = True
         self.delta_encoding = delta_encoding
         self.transport_device = normalize_device(transport_device)
         self.snapshot_device = normalize_device(snapshot_device)
@@ -838,11 +916,13 @@ class PatchWeightSyncer(WeightSyncer):
         param_names_need_sync: list[str],
         send: SendFn,
         recv: RecvFn | None = None,
+        is_sender: bool = True,
     ) -> None:
         assert not self.sender_initialized(), "Sender already initialized"
         if recv is None:
             raise ValueError("PatchWeightSyncer sender init requires a recv function")
 
+        self._active_sender = is_sender
         metadata = await recv()
         self.ordered_keys = metadata["ordered_keys"]
         self.original_shapes = metadata["original_shapes"]
@@ -874,6 +954,8 @@ class PatchWeightSyncer(WeightSyncer):
                         "CPU snapshot patch sync requires sender state_dict tensors "
                         f"to be on accelerator. Got key={key}, device={value_2dview.device}."
                     )
+                if not self._active_sender:
+                    continue
                 snapshot_device = (
                     value_2dview.device
                     if self.snapshot_device.type == Worker.torch_device_type
@@ -891,13 +973,14 @@ class PatchWeightSyncer(WeightSyncer):
                     else snapshot_value
                 )
 
-        self.snapshot = snapshot
+        self.snapshot = snapshot if self._active_sender else None
         self.patch_builder = PatchBuilder.create(
             self.snapshot,
             self.ordered_keys,
             self.param_names_need_sync,
             self.original_shapes,
             self.snapshot_device,
+            self.transport_device,
             self.delta_encoding,
         )
         self._sender_initialized = True
@@ -941,11 +1024,7 @@ class PatchWeightSyncer(WeightSyncer):
         version: torch.Tensor | int,
     ) -> EmptyWeightPatch | WeightPatch:
         if self.patch_builder is None:
-            raise RuntimeError("Snapshot not initialized")
-        if self.ordered_keys is None:
-            raise RuntimeError("Snapshot metadata not initialized")
-        if set(state_dict.keys()) != set(self.ordered_keys):
-            raise ValueError("State dict keys do not match snapshot keys")
+            raise RuntimeError("Sender not initialized")
         return self.patch_builder.create_patch(state_dict, version)
 
     async def sync(

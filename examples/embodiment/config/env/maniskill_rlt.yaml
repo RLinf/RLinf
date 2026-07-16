@@ -1,0 +1,70 @@
+env_type: maniskill_rlt
+
+total_num_envs: null
+
+wrap_obs_mode: rlt_openpi_joint
+use_full_state: False
+auto_reset: False
+ignore_terminations: False
+use_rel_reward: False
+reward_mode: only_success
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+max_steps_per_rollout_epoch: 500
+max_episode_steps: 500
+
+rlt_policy_switch:
+  enable: True
+  task_mode: full_task
+  trigger_mode: auto
+  latch_until_done: True
+  auto_gate:
+    require_grasp: True
+    require_not_success: True
+    near_hole_x_min: -0.16
+    near_hole_yz_margin: 1.5
+    fallback_hole_radius: 0.03
+  expert_takeover:
+    enable: False
+    # Disabled by default. When enabled for train, this mirrors real-world
+    # takeover semantics: expert is requested only after several critical-phase
+    # action chunks fail to improve insertion progress.
+    trigger_mode: stalled_progress
+    gate:
+      require_grasp: True
+      require_not_success: True
+      near_hole_x_min: -0.10
+      near_hole_yz_margin: 2.0
+      stuck_chunks_before_takeover: 3
+      min_x_progress: 0.003
+      min_yz_progress: 0.0015
+      min_score_progress: 0.002
+      progress_yz_weight: 1.0
+      fallback_hole_radius: 0.03
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  fps: 10
+  record_every: 1
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+enable_offload: False
+
+init_params:
+  id: "PegInsertionSideWideClearance-v1"
+  num_envs: null
+  obs_mode: "rgb"
+  control_mode: "pd_joint_delta_pos"
+  sim_backend: "gpu"
+  reward_mode: "sparse"
+  sim_config:
+    sim_freq: 100
+    control_freq: 10
+  max_episode_steps: ${env.train.max_episode_steps}
+  sensor_configs:
+    shader_pack: "default"
+    width: 384
+    height: 384
+  render_mode: all
