@@ -142,6 +142,8 @@ actor:
       train_expert_only: False
       detach_critic_input: True
       action_chunk: ${actor.model.num_action_chunks}
+    openpi_data:
+      repo_id: "NORM_STATS_REPO_ID"
 
   optim:
     lr: 1.0e-5
