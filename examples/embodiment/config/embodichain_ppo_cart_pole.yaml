@@ -2,7 +2,7 @@ defaults:
   - env/embodichain_cart_pole@env.train
   - env/embodichain_cart_pole@env.eval
   - model/mlp_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
   - _self_
@@ -44,8 +44,6 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   reward_type: action_level
   logprob_type: action_level
@@ -68,23 +66,11 @@ algorithm:
 
   reward_coef: 1.0
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 1
-    max_length: 1
-    min_length: 1
-
 env:
   group_name: EnvGroup
 
   train:
+    rollout_epoch: 1
     total_num_envs: 256
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 64
@@ -97,6 +83,7 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/train
 
   eval:
+    rollout_epoch: 1
     total_num_envs: 8
     group_size: ${algorithm.group_size}
     max_steps_per_rollout_epoch: 64

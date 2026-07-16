@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -76,6 +76,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_rlt_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_gr00t(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.gr00t import get_model
 
@@ -96,6 +101,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_abot_m0(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.abot_m0 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_starvla(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.starvla import get_model
 
@@ -106,13 +116,28 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_gr00t_n1d6(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.gr00t import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_gr00t_n1d7(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.gr00t import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
         return get_model(cfg, torch_dtype)
 
-    def _build_value_model(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.value_model import get_model
+    def _build_recap_value_model(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.value_model.recap import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_steam_value_model(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.value_model.steam import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -153,6 +178,12 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.RLT_MLP_POLICY.value,
+        _build_rlt_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.GR00T.value,
         _build_gr00t,
         category="embodied",
@@ -177,6 +208,12 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.ABOT_M0.value,
+        _build_abot_m0,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.STARVLA.value,
         _build_starvla,
         category="embodied",
@@ -195,8 +232,26 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.VALUE_MODEL.value,
-        _build_value_model,
+        SupportedModel.RECAP_VALUE_MODEL.value,
+        _build_recap_value_model,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.STEAM_VALUE_MODEL.value,
+        _build_steam_value_model,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.GR00T_N1D6.value,
+        _build_gr00t_n1d6,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.GR00T_N1D7.value,
+        _build_gr00t_n1d7,
         category="embodied",
         force=True,
     )

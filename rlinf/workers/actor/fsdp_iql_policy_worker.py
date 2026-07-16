@@ -789,28 +789,12 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             ).async_wait()
 
         async def recv_func():
-            if self._is_weight_sender:
-                metadata = await self.recv(
-                    src_group_name=self._rollout_group_name,
-                    src_rank=0,
-                    async_op=True,
-                    options=self._sync_weight_comm_options,
-                ).async_wait()
-            else:
-                metadata = None
-            if self._actor_world_size > 1:
-                metadata = await self.broadcast(
-                    metadata,
-                    groups=[
-                        (
-                            self._group_name,
-                            list(range(self._actor_world_size)),
-                        )
-                    ],
-                    src=(self._group_name, 0),
-                    async_op=True,
-                ).async_wait()
-            return metadata
+            return await self.recv(
+                src_group_name=self._rollout_group_name,
+                src_rank=0,
+                async_op=True,
+                options=self._sync_weight_comm_options,
+            ).async_wait()
 
         if not self.weight_syncer.sender_initialized():
             await self.weight_syncer.init_sender(
@@ -818,6 +802,7 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
                 send=send_func,
                 recv=recv_func,
                 param_names_need_sync=self.param_names_need_sync,
+                is_sender=self._is_weight_sender,
             )
 
         await self.weight_syncer.sync(state_dict, send_func, version=self.version)

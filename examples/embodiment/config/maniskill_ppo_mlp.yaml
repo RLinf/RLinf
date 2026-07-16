@@ -2,7 +2,7 @@ defaults:
   - env/maniskill_pick_cube@env.train
   - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -42,8 +42,6 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: action_level
   logprob_type: action_level
@@ -65,33 +63,19 @@ algorithm:
   gamma: 0.8
   gae_lambda: 0.9
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   # Override the default values in env/maniskill_pick_cube
   train:
+    rollout_epoch: 1
     total_num_envs: 1024
     auto_reset: True
     use_fixed_reset_state_ids: False
     max_episode_steps: 50 # max episode steps for truncation
     max_steps_per_rollout_epoch: 50
   eval:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: True
     ignore_terminations: True
@@ -137,7 +121,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 0.5
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

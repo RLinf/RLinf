@@ -17,6 +17,7 @@ from enum import Enum
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"
+    MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
     ISAACLAB = "isaaclab"
@@ -29,9 +30,11 @@ class SupportedEnvType(Enum):
     HABITAT = "habitat"
     OPENSORAWM = "opensora_wm"
     WANWM = "wan_wm"
+    GENESIS = "genesis"
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
     D4RL = "d4rl"
+    POLARIS = "polaris"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -57,6 +60,10 @@ def get_env_cls(env_type: str, env_cfg=None):
             from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             return ManiskillEnv
+    elif env_type == SupportedEnvType.MANISKILL_RLT:
+        from rlinf.envs.maniskill.maniskill_rlt_env import ManiskillRLTEnv
+
+        return ManiskillRLTEnv
     elif env_type == SupportedEnvType.LIBERO:
         from rlinf.envs.libero.libero_env import LiberoEnv
 
@@ -108,6 +115,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.frankasim.frankasim_env import FrankaSimEnv
 
         return FrankaSimEnv
+    elif env_type == SupportedEnvType.GENESIS:
+        from rlinf.envs.genesis.genesis_env import GenesisEnv
+
+        return GenesisEnv
     elif env_type == SupportedEnvType.OPENSORAWM:
         from rlinf.envs.world_model.world_model_opensora_env import OpenSoraEnv
 
@@ -128,5 +139,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.d4rl.d4rl_env import D4RLEnv
 
         return D4RLEnv
+    elif env_type == SupportedEnvType.POLARIS:
+        from rlinf.envs.polaris.polaris_env import PolarisEnv
+
+        return PolarisEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

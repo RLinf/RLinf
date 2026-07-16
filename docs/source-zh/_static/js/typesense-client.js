@@ -93,27 +93,48 @@ class SphinxTypesenseClient {
       sortBy = '_text_match:desc'
     } = options;
     
-    const searchParameters = {
-      q: query,
-      query_by: 'content,hierarchy.lvl0,hierarchy.lvl1,hierarchy.lvl2,hierarchy.lvl3',
-      sort_by: sortBy,
-      per_page: perPage,
-      page: page,
-      highlight_full_fields: 'content,hierarchy.lvl0,hierarchy.lvl1,hierarchy.lvl2,hierarchy.lvl3',
-      highlight_affix_num_tokens: 2,
-      num_typos: 2,
-      typo_tokens_threshold: 1
-    };
+    const searchParameters = this.buildDocumentSearchParameters(query, {
+      page,
+      perPage,
+      sortBy,
+      includeVectorSearch: this.config.enableVectorSearch !== false
+    });
     
     if (filters) {
       searchParameters.filter_by = filters;
     }
     
     try {
-      const response = await this.client
-        .collections(this.config.collectionName)
-        .documents()
-        .search(searchParameters);
+      let response;
+      try {
+        response = await this.client
+          .collections(this.config.collectionName)
+          .documents()
+          .search(searchParameters);
+      } catch (error) {
+        if (!searchParameters.vector_query) {
+          throw error;
+        }
+
+        if (SphinxAIConfig.debug) {
+          console.warn('Vector document search failed; retrying without vector search:', error);
+        }
+
+        const retryParameters = this.buildDocumentSearchParameters(query, {
+          page,
+          perPage,
+          sortBy,
+          includeVectorSearch: false
+        });
+        if (filters) {
+          retryParameters.filter_by = filters;
+        }
+
+        response = await this.client
+          .collections(this.config.collectionName)
+          .documents()
+          .search(retryParameters);
+      }
       
       return this.processSearchResults(response, query);
     } catch (error) {
@@ -122,6 +143,53 @@ class SphinxTypesenseClient {
       // Fallback to mock search on error
       return this.fallbackSearch(query, options);
     }
+  }
+
+  buildDocumentSearchParameters(query, options = {}) {
+    const {
+      page = 1,
+      perPage = 10,
+      sortBy = '',
+      includeVectorSearch = true
+    } = options;
+
+    const utils = window.RLinfAssistantUtils;
+    const generated = utils?.buildAIChatMultiSearchParameters
+      ? utils.buildAIChatMultiSearchParameters({
+          message: query,
+          modelId: 'document-search',
+          config: this.config,
+          includeVectorSearch
+        }).requestBody.searches[0]
+      : null;
+
+    const searchParameters = generated
+      ? { ...generated }
+      : {
+          query_by: 'content,hierarchy.lvl0,hierarchy.lvl1,hierarchy.lvl2,hierarchy.lvl3',
+          num_typos: 2,
+          drop_tokens_threshold: 2,
+          prefix: false,
+          highlight_full_fields: 'content,hierarchy.lvl0,hierarchy.lvl1,hierarchy.lvl2,hierarchy.lvl3'
+        };
+
+    delete searchParameters.collection;
+
+    searchParameters.q = query;
+    searchParameters.per_page = perPage;
+    searchParameters.page = page;
+    searchParameters.highlight_affix_num_tokens = 2;
+    searchParameters.typo_tokens_threshold = 1;
+
+    if (sortBy) {
+      searchParameters.sort_by = sortBy;
+    } else if (searchParameters.vector_query) {
+      searchParameters.sort_by = '_text_match:desc,_vector_query(embedding:([])):asc';
+    } else {
+      searchParameters.sort_by = '_text_match:desc';
+    }
+
+    return searchParameters;
   }
   
   processSearchResults(response, originalQuery) {
@@ -267,4 +335,4 @@ class SphinxTypesenseClient {
 }
 
 // Export Typesense client class
-window.SphinxTypesenseClient = SphinxTypesenseClient; 
+window.SphinxTypesenseClient = SphinxTypesenseClient;

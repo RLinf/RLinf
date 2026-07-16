@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf"
-version = "0.2.0"
+version = "0.3.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
-requires-python = ">=3.10,<=3.11.14"
+requires-python = ">=3.10"
 license = {file = "LICENSE"}
 keywords = [
     "reinforcement-learning",
@@ -24,7 +24,6 @@ classifiers = [
     "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.4",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
 ]
 
 
@@ -32,7 +31,7 @@ dependencies = [
     # Core System
     # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
-    "torch>=2.5.0,<=2.9.0",
+    "torch>=2.5.0",
     "hydra-core",
     "numpy",
 
@@ -58,12 +57,13 @@ dependencies = [
     "pip",
     "huggingface_hub",
     "icmplib",
-    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
 
     # Logging
     "wandb<0.25.1",
     "swanlab>=0.6.11",
     "tensorboard",
+
+    "sortedcontainers"
 ]
 
 [project.urls]
@@ -75,6 +75,7 @@ Documentation = "https://rlinf.readthedocs.io/"
 [project.optional-dependencies]
 agentic-sglang = [
     "sglang[all]==0.4.6.post5",
+    "sglang-router",
     "torch-memory-saver",
     "numpy==2.2",
     "transformers==4.51.1",
@@ -114,9 +115,9 @@ embodied = [
 franka = [
     "pyyaml",
     "rospkg",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "empy==3.3.4",
     "gymnasium==0.29.1",
-    "pyrealsense2",
     "pyquaternion",
     "opencv-python",
     "defusedxml",
@@ -126,23 +127,27 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    # lerobot is installed from a pinned git commit by requirements/install.sh
+    # (PyPI forbids direct-URL deps in published packages).
+    "pyzmq",
+    "websockets"
 ]
 xsquare_turtle2 = [
     "pyyaml",
     "rospkg",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "toppra==0.6.3",
     "numpy==1.26.4",
     "empy==3.3.4",
     "gymnasium==0.29.1",
-    "pyrealsense2",
     "pyquaternion",
     "opencv-python",
     "defusedxml",
     "pyspacemouse>=2.0.0",
     "imageio[ffmpeg]",
     "evdev",
-    "lerobot @ git+https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    # lerobot is installed from a pinned git commit by requirements/install.sh
+    # (PyPI forbids direct-URL deps in published packages).
 ]
 gim_arm = [
     # gim_arm_control SDK: install separately via
@@ -152,7 +157,7 @@ gim_arm = [
     "scipy",
     "gymnasium",
     "opencv-python",
-    "pyrealsense2",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "imageio[ffmpeg]",
 ]
 
@@ -178,6 +183,9 @@ override-dependencies = [
     "tensorflow-addons==0.23.0 ; platform_machine == 'x86_64'",
     "setuptools>=69.5.1,<75.9",
     "datasets==3.6.0",
+    "pywin32==306; sys_platform == 'win32'",
+    "sympy>=1.13.1",
+    "tensorflow-metadata<=1.17.3",
 ]
 
 [tool.setuptools]

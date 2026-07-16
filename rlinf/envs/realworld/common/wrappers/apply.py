@@ -20,23 +20,27 @@ from typing import Any, Mapping, Optional
 
 import gymnasium as gym
 
-from rlinf.envs.realworld.common.wrappers.dual_euler_obs import (
-    DualQuat2EulerWrapper,
-)
-from rlinf.envs.realworld.common.wrappers.dual_gello_intervention import (
-    DualGelloIntervention,
-)
-from rlinf.envs.realworld.common.wrappers.dual_relative_frame import (
-    DualRelativeFrame,
-)
-from rlinf.envs.realworld.common.wrappers.dual_spacemouse_intervention import (
-    DualSpacemouseIntervention,
+from rlinf.envs.realworld.common.wrappers.dual_gello_joint_intervention import (
+    DualGelloJointIntervention,
 )
 from rlinf.envs.realworld.common.wrappers.euler_obs import Quat2EulerWrapper
 from rlinf.envs.realworld.common.wrappers.gello_intervention import (
     GelloIntervention,
 )
 from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
+from rlinf.envs.realworld.common.wrappers.keyboard_eval_control_wrapper import (
+    KeyboardEvalControlWrapper,
+)
+from rlinf.envs.realworld.common.wrappers.keyboard_rlt_policy_switch_wrapper import (
+    KeyboardRLTPolicySwitchWrapper,
+)
+from rlinf.envs.realworld.common.wrappers.keyboard_start_end_wrapper import (
+    KeyboardStartEndWrapper,
+)
+from rlinf.envs.realworld.common.wrappers.pico_intervention import (
+    DualFrankaTcpPicoIntervention,
+    PicoIntervention,
+)
 from rlinf.envs.realworld.common.wrappers.relative_frame import RelativeFrame
 from rlinf.envs.realworld.common.wrappers.reward_done_wrapper import (
     KeyboardRewardDoneMultiStageWrapper,
@@ -64,21 +68,29 @@ def _load_dexhand_intervention():
     return DexHandIntervention
 
 
-def _validate_teleop_mode(use_spacemouse: bool, use_gello: bool) -> None:
-    if use_spacemouse and use_gello:
+def _validate_teleop_mode(**modes: bool) -> None:
+    active_modes = [name for name, enabled in modes.items() if bool(enabled)]
+    if len(active_modes) > 1:
         raise ValueError(
             "Only one teleop mode can be active at a time. "
-            "Set exactly one of use_spacemouse, use_gello to True."
+            f"Active modes: {', '.join(active_modes)}."
         )
 
 
-def _apply_keyboard_reward(env: gym.Env, mode: Optional[str]) -> gym.Env:
-    if env.config.is_dummy or not mode:
+def _apply_keyboard_wrapper(env: gym.Env, mode: Optional[str]) -> gym.Env:
+    config = env.get_wrapper_attr("config")
+    if config.is_dummy or not mode:
         return env
     if mode == "multi_stage":
         return KeyboardRewardDoneMultiStageWrapper(env)
     if mode == "single_stage":
         return KeyboardRewardDoneWrapper(env)
+    if mode == "start_end":
+        return KeyboardStartEndWrapper(env)
+    if mode == "eval_control":
+        return KeyboardEvalControlWrapper(env)
+    if mode == "rlt_policy_switch":
+        return KeyboardRLTPolicySwitchWrapper(env)
     return env
 
 
@@ -95,7 +107,12 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
 
     use_spacemouse = cfg.get("use_spacemouse", True)
     use_gello = cfg.get("use_gello", False)
-    _validate_teleop_mode(use_spacemouse, use_gello)
+    use_pico = cfg.get("use_pico", False)
+    _validate_teleop_mode(
+        use_spacemouse=use_spacemouse,
+        use_gello=use_gello,
+        use_pico=use_pico,
+    )
 
     gripper_enabled = not no_gripper
 
@@ -124,7 +141,13 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
             )
         env = GelloIntervention(env, port=gello_port, gripper_enabled=gripper_enabled)
 
-    env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
+    if not env.config.is_dummy and use_pico:
+        if is_dex_hand:
+            raise ValueError("use_pico=True is not supported for dexterous hands.")
+        pico_cfg = dict(cfg.get("pico", {}))
+        env = PicoIntervention(env, gripper_enabled=gripper_enabled, **pico_cfg)
+
+    env = _apply_keyboard_wrapper(env, cfg.get("keyboard_reward_wrapper", None))
 
     if cfg.get("use_relative_frame", True):
         env = RelativeFrame(env)
@@ -132,43 +155,55 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     return env
 
 
-def apply_dual_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
-    """Wrapper stack for dual-arm realworld envs (dual-franka today)."""
+def apply_dual_franka_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
+    config = env.get_wrapper_attr("config")
     if cfg.get("no_gripper", True):
         # No DualGripperCloseEnv yet, so a 12D action would blow up as reshape(2,7).
         raise NotImplementedError(
-            "no_gripper=True is not yet supported for dual-arm envs: "
-            "DualGripperCloseEnv is not implemented. "
-            "Set env.eval.no_gripper=False (or env.train.no_gripper=False)."
+            "no_gripper=True not supported for dual-arm envs (no DualGripperCloseEnv)."
         )
 
-    use_spacemouse = cfg.get("use_spacemouse", True)
-    use_gello = cfg.get("use_gello", False)
-    _validate_teleop_mode(use_spacemouse, use_gello)
+    use_pico = cfg.get("use_pico", False)
+    use_gello_joint = cfg.get("use_gello_joint", False)
+    if cfg.get("use_spacemouse", False) or cfg.get("use_gello", False):
+        raise ValueError(
+            "Dual-arm Franka envs do not support use_spacemouse=True or "
+            "use_gello=True. Use use_gello_joint=True for GELLO-joint teleop "
+            "or use_pico=True for dual-arm PICO teleop."
+        )
+    _validate_teleop_mode(use_gello_joint=use_gello_joint, use_pico=use_pico)
 
-    gripper_enabled = True
-
-    if not env.config.is_dummy and use_spacemouse:
-        env = DualSpacemouseIntervention(env, gripper_enabled=gripper_enabled)
-
-    if not env.config.is_dummy and use_gello:
+    if not config.is_dummy and use_gello_joint:
         left_port = cfg.get("left_gello_port", None)
         right_port = cfg.get("right_gello_port", None)
         if left_port is None or right_port is None:
             raise ValueError(
-                "use_gello=True on a dual-arm env requires both "
+                "use_gello_joint=True requires both "
                 "'left_gello_port' and 'right_gello_port' in the env config."
             )
-        env = DualGelloIntervention(
+        env = DualGelloJointIntervention(
             env,
             left_port=left_port,
             right_port=right_port,
-            gripper_enabled=gripper_enabled,
+            gripper_enabled=True,
+            use_delta=getattr(config, "joint_action_mode", None) == "delta",
+            action_scale=getattr(config, "joint_action_scale", 0.1),
+            direct_stream=getattr(config, "teleop_direct_stream", False),
+            stream_period=cfg.get("gello_joint_stream_period", 0.001),
         )
 
-    env = _apply_keyboard_reward(env, cfg.get("keyboard_reward_wrapper", None))
+    if not config.is_dummy and use_pico:
+        if getattr(env.unwrapped, "PER_ARM_ACTION_DIM", None) != 10:
+            raise ValueError(
+                "use_pico=True for dual-arm Franka is implemented for "
+                "DualFrankaTcpEnv-v1 only. Use env/realworld_dual_franka_tcp_rot6d."
+            )
+        pico_cfg = dict(cfg.get("pico", {}))
+        env = DualFrankaTcpPicoIntervention(
+            env,
+            gripper_enabled=True,
+            **pico_cfg,
+        )
 
-    if cfg.get("use_relative_frame", True):
-        env = DualRelativeFrame(env)
-    env = DualQuat2EulerWrapper(env)
+    env = _apply_keyboard_wrapper(env, cfg.get("keyboard_reward_wrapper", None))
     return env

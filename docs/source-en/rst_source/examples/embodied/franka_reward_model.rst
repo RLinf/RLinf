@@ -1,21 +1,90 @@
-Real-World RL with Franka (Reward Model)
-=========================================
+Using Reward Model with Franka
+==============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-This document describes how to use a reward model when training on a Franka robotic arm in the real world.
-The focus is on training and deploying a ResNet-based reward model from scratch to assist robotic manipulation tasks.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_reward_model.jpg
+   :align: center
+   :width: 80%
 
-Before getting started, it is strongly recommended to read the following documents:
+   Franka reward-model workflow for collecting labeled frames and training a visual success detector.
 
-1. :doc:`franka` — to familiarize yourself with the end-to-end real-world Franka training pipeline.
-2. :doc:`../../tutorials/extend/reward_model` — to understand the complete reward model workflow in RLinf's simulated environments.
+Add a learned visual reward model to the Franka real-world pipeline. You'll collect labeled frames, train a ResNet reward model, and let the environment use model predictions to decide success and resets.
 
-Prerequisites
------------------------
+Overview
+--------
+
+Use a trained reward model as the real-world success signal for Franka tasks.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      CNN policy · ResNet reward model
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      SAC/RLPD · reward-model inference
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      Charger · fixed-pose manipulation
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Franka · cameras · keyboard labels
+
+| **You'll do:** collect expert demos → collect reward labels → preprocess data → train reward model → launch real-world RL.
+| **Prerequisites:** :doc:`franka` through data collection · :doc:`Reward model tutorial <../../extending/reward_model>`.
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24 24
+
+   * - Task
+     - Config / entry point
+     - Description
+   * - Keyboard labels
+     - ``realworld_collect_dataset``
+     - Label success/failure frames during live teleoperation.
+   * - Fixed pose labels
+     - ``realworld_charger_sac_cnn_async_standalone_reward``
+     - Use target-pose reachability to generate reward-model data.
+   * - RL with reward model
+     - ``realworld_charger_sac_cnn_async_standalone_reward``
+     - Use reward-model success predictions in the Franka env.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - Field
+     - Description
+   * - Observation
+     - Camera frames used by both policy and reward model.
+   * - Action
+     - Same Franka Cartesian action as the base real-world env.
+   * - Reward
+     - Reward-model success/failure prediction replaces the hand-coded success signal.
+   * - Prompt
+     - Task-specific env text or fixed target pose, depending on config.
+
+Installation
+------------
 
 Follow all steps in the :doc:`franka` document up to and including **Data Collection** (i.e., everything before the "Running the Experiment" section).
 
@@ -47,7 +116,7 @@ Reward Model Dataset Collection
 
 Collecting reward model training and evaluation data supports two approaches.
 For full details, see the **Data Collection** section in
-:doc:`../../tutorials/extend/reward_model_realworld`.
+:doc:`../../extending/reward_model`.
 The core difference lies in the labeling method: Approach 1 uses manual keyboard labeling
 and is task-agnostic; Approach 2 uses pose-based automatic labeling and is designed for
 tasks with a fixed target pose.
@@ -82,7 +151,7 @@ labeling, and dataset generation into one end-to-end run with no separate offlin
 
 Once the target frame counts are reached, the script automatically stops, splits the data,
 and saves ``train.pt`` / ``val.pt``. See **Approach 1** in
-:doc:`../../tutorials/extend/reward_model_realworld` for full configuration details.
+:doc:`../../extending/reward_model` for full configuration details.
 
 Approach 2: Fixed-Pose (Target-Driven)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -124,12 +193,12 @@ It is recommended to set ``fail-success-ratio`` to ``3``:
 
 The resulting ``.pt`` files follow the ``RewardDatasetPayload`` schema, containing
 ``images``, ``labels`` (1 = success, 0 = fail), and ``metadata``.
-See **Approach 2** in :doc:`../../tutorials/extend/reward_model_realworld` for the full example.
+See **Approach 2** in :doc:`../../extending/reward_model` for the full example.
 
 Reward Model Training
 -----------------------
 
-This step is identical to **Section 2 — Reward Model Training** in :doc:`../../tutorials/extend/reward_model`.
+This step is identical to **Section 2 — Reward Model Training** in :doc:`../../extending/reward_model`.
 
 In particular, for real-world scenarios, it is recommended to lower the ``min_delta`` of ``early_stop``, for example:
 
@@ -140,15 +209,15 @@ In particular, for real-world scenarios, it is recommended to lower the ``min_de
       min_delta: 1e-6
 
 For real-world teleoperation with live reward model inference (SpaceMouse + GPU node, no RL loop),
-see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../tutorials/extend/reward_model_realworld`.
+see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../extending/reward_model`.
 
-Cluster Configuration
------------------------
+Cluster Setup
+-------------
 
 This step is identical to the **Cluster Configuration** section under **Running the Experiment** in :doc:`franka`.
 
 Configuration File
------------------------
+------------------
 
 This step is identical to the **Configuration File** section under **Running the Experiment** in :doc:`franka`, applied to ``examples/embodiment/config/realworld_charger_sac_cnn_async_standalone_reward.yaml``.
 In addition, enable the reward model parameters under the ``reward`` section:
@@ -173,8 +242,8 @@ Where:
 - ``reward_threshold`` applies threshold filtering on the success probability output by the reward model; values below the threshold are set to ``0``.
 - ``model_path`` points to the reward model checkpoint used for online inference.
 
-Starting the Experiment
------------------------
+Run It
+------
 
 Once training begins, the reward model directly judges task success/failure based on image observations and drives environment resets.
 The remaining steps follow the **Running the Experiment** section of :doc:`franka`.
@@ -182,7 +251,7 @@ The remaining steps follow the **Running the Experiment** section of :doc:`frank
 Worker Interaction During Rollout
 ----------------------------------------------
 
-Unlike **Section 3.2 — Worker Interaction During Rollout** and **Section 3.3 — Final Reward Computation** in :doc:`../../tutorials/extend/reward_model`:
+Unlike **Section 3.2 — Worker Interaction During Rollout** and **Section 3.3 — Final Reward Computation** in :doc:`../../extending/reward_model`:
 in real-world systems with ``standalone_realworld`` enabled, the reward model does **not** combine env rewards with reward model outputs.
 
 In other words, the reward model does **not** act as an additional reward source inside the env worker when constructing the final reward,

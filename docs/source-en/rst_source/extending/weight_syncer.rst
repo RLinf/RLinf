@@ -1,0 +1,558 @@
+Weight Synchronization
+==============================
+
+Use the ``weight_syncer`` mechanism to optimize weight synchronization from the
+actor side to the rollout-side policy model in **embodied training**, reducing
+the communication and loading overhead after each parameter update.
+
+At the moment, this capability is mainly intended for the
+**FSDP actor + HuggingFace rollout** path used by
+``examples/embodiment/train_embodied_agent.py`` and
+``examples/embodiment/train_async.py``.
+
+
+Why Weight Syncer Exists
+------------------------------
+
+In embodied RL, every actor update usually needs to be synchronized to the
+rollout workers. For large models such as OpenPI, OpenVLA, OpenVLA-OFT, and
+GR00T, full-weight synchronization can become expensive:
+
+- The model is large, so full sync can easily become a major part of step time.
+- Repeatedly loading a full ``state_dict`` on the rollout side also adds GPU and
+  CPU overhead.
+- In async settings, blocking full sync directly hurts rollout throughput and
+  policy freshness.
+
+To address this, RLinf abstracts the logic into a unified ``WeightSyncer``
+interface so different synchronization strategies can share the same sender /
+receiver workflow.
+
+
+Core Interface
+------------------------------
+
+``WeightSyncer`` has four main responsibilities:
+
+- ``init_sender(...)``: one-time sender-side initialization
+- ``init_receiver(...)``: one-time receiver-side initialization
+- ``sync(...)``: send the current version of model weights
+- ``apply(...)``: receive and apply weights, then return the applied ``version``
+
+This means rollout code does not need to care whether the underlying mechanism
+is patch-based sync or bucket-based sync. After initialization, it only needs to
+call ``apply(...)`` through the common interface.
+
+The implementation lives in ``rlinf/hybrid_engines/weight_syncer/``, while the
+YAML entry point remains the same independent ``weight_syncer`` Hydra config
+group.
+
+
+Supported Sync Strategies
+------------------------------
+
+RLinf currently provides two strategies:
+
+``patch``
+  Incremental synchronization. The sender maintains a snapshot and only sends
+  the changed positions and values relative to that snapshot. In the current
+  FSDP actor integration, the incremental patch path only tracks trainable
+  parameters plus persistent buffers; frozen parameters with
+  ``requires_grad=False`` are excluded from incremental patch construction.
+
+``bucket``
+  Bucketized tensor synchronization. Selected tensors are sent in full, bucket
+  by bucket. In the current FSDP actor integration, the selected key set is
+  typically trainable parameters plus persistent buffers, so frozen parameters
+  are also excluded here.
+
+
+State Dict Device Requirements
+------------------------------
+
+Different ``weight_syncer`` implementations have different requirements for
+the sender-side ``state_dict`` device:
+
+``bucket``
+  There is no special device requirement for the sender-side ``state_dict``
+  passed to ``sync(...)``. Parameters can live on either CPU or GPU, and the
+  bucket syncer stages them according to ``bucket_device`` and ``bucket_dtype``
+  before sending. On the receiver side, ``apply(...)`` uses ``load_state_dict``;
+  PyTorch copies input tensors to the target model parameter device and casts
+  them to the target parameter dtype. In the current actor integration,
+  ``init_sender(...)`` also provides the selected key subset, so bucket mode
+  usually transmits trainable parameters plus persistent buffers rather than the
+  entire ``state_dict``.
+
+``patch``
+  The sender-side ``state_dict`` passed to ``init_sender(...)`` and ``sync(...)``
+  is expected to be on GPU. Even when ``snapshot_device: cpu`` is used, only the
+  sender-side snapshot stays on CPU; difference comparison, ``nonzero``, and
+  new-value gathering still run on GPU. Providing a CPU sender ``state_dict``
+  would turn patch construction into CPU scanning, which cannot use the current
+  optimized path and is not the intended patch-mode design.
+
+On the receiver side, ``apply(...)`` moves patch payload tensors to the target
+model parameter device before writing them. The receiver model must still match
+the metadata required by patch mode. If ``init_sync.enabled=true`` is used,
+patch mode can also bootstrap initial ``state_dict`` values during
+``init_sender(...)`` / ``init_receiver(...)`` before the first incremental
+patch.
+
+
+Recommendation
+------------------------------
+
+For the mainstream embodied VLA configurations in RLinf, ``patch`` is the
+recommended default because:
+
+- Weight updates after each actor step are often highly sparse.
+- Pi-series and other VLM-based policies often freeze most or all of the VLM,
+  so excluding frozen weights can substantially reduce patch comparison and
+  transfer cost.
+- Actor and rollout usually start from the same checkpoint or model path.
+- Patch mode often sends far less data than full sync.
+
+But there is one critical caveat:
+
+.. warning::
+
+   The incremental patch path still sends deltas relative to the sender-side
+   snapshot, not an independent full model snapshot.
+
+   To make this safe for models that create extra modules locally, RLinf now
+   supports a one-time init bootstrap in patch mode. The recommended default is
+   to enable ``patch.init_sync.enabled=true`` and use ``prefixes: null`` so the
+   receiver is aligned with the sender before the first real patch.
+
+   If you explicitly disable init bootstrap, actor and rollout must still start
+   from the same initial weights, especially for frozen parameters that are
+   excluded from later incremental patch sync.
+
+
+How To Enable It In YAML
+------------------------------
+
+``weight_syncer`` is exposed as an independent Hydra config group.
+
+In embodied YAMLs, the recommended usage looks like this:
+
+.. code-block:: yaml
+
+   defaults:
+     - hybrid_engines/fsdp@actor.fsdp_config
+     - weight_syncer/patch_syncer@weight_syncer
+
+The corresponding config files are:
+
+- ``examples/embodiment/config/weight_syncer/patch_syncer.yaml``
+- ``examples/embodiment/config/weight_syncer/bucket_syncer.yaml``
+
+
+Shared Communication Options
+------------------------------
+
+Both ``patch`` and ``bucket`` modes also accept shared communication options at
+the top level of ``weight_syncer``:
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: patch
+     use_ring_sync: true
+     nccl_max_ctas: 16
+     nccl_min_ctas: 1
+     patch:
+       snapshot_device: cpu
+       transport_device: cpu
+       delta_encoding: true
+       compression: none
+
+``use_ring_sync``
+  When set to ``true``, force weight-sync broadcasts to use the ring broadcast
+  path in ``CollectiveGroupOptions``.
+
+``nccl_max_ctas`` / ``nccl_min_ctas``
+  Forwarded to ``CollectiveGroupOptions.accel_max_ctas`` and
+  ``CollectiveGroupOptions.accel_min_ctas`` to tune accelerator communication
+  resource usage during weight sync.
+
+These options are shared by both syncer types, so they must be placed directly
+under ``weight_syncer`` rather than under ``patch`` or ``bucket``. They only
+change the collective options passed to broadcast/send/recv calls; they do not
+change the bucket or patch payload format.
+
+
+Patch Mode
+------------------------------
+
+A typical patch configuration looks like this:
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: patch
+     patch:
+       snapshot_device: cpu
+       transport_device: cpu
+       delta_encoding: true
+       compression: none
+       init_sync:
+         enabled: true
+         prefixes: null
+         bucket_size: 134217728
+
+The fields mean:
+
+``type``
+  Fixed to ``patch`` to enable incremental synchronization.
+
+``patch.snapshot_device``
+  Device where the snapshot is stored. It can be either ``cpu`` or ``cuda``.
+  ``cpu`` is currently recommended as the default: it avoids keeping an
+  additional model-sized snapshot in GPU memory, and after GPU-side comparison,
+  asynchronous prefetching, and background snapshot flushing optimizations, its
+  synchronization latency is already close to ``snapshot_device: cuda``. If GPU
+  memory is very abundant, ``cuda`` remains the most direct low-latency path.
+
+``patch.transport_device``
+  Device used before sending the patch. The default can be ``cpu``. If you want
+  GPU-side compression or GPU transport, this is typically ``cuda``.
+
+``patch.delta_encoding``
+  Whether to delta-encode COO coordinates. Enabled by default and recommended.
+
+``patch.compression``
+  Compression algorithm. Supported values currently include:
+
+  - ``none``: no compression
+  - ``nvcomp_lz4``: GPU-side lossless compression via nvCOMP
+
+``patch.init_sync.enabled``
+  Whether to perform a one-time bootstrap during
+  ``init_sender(...)`` / ``init_receiver(...)`` before normal patch sync
+  begins. When enabled, the sender transmits a bucketized ``state_dict`` subset
+  once, then patch mode continues with the usual incremental snapshot-based
+  updates.
+
+``patch.init_sync.prefixes``
+  Which ``state_dict`` key prefixes to bootstrap. If set to ``null``, RLinf
+  bootstraps the full ``state_dict`` including parameters and persistent
+  buffers. If set to a list, RLinf only bootstraps keys matching either
+  ``prefix`` or ``prefix.``.
+
+  ``null`` is the recommended default because targeted prefixes can miss nested
+  module paths such as ``action_head.value_head``.
+
+``patch.init_sync.bucket_size``
+  Maximum size in bytes of each init bootstrap bucket. This only affects the
+  one-time init bootstrap path; the normal incremental patch payload format is
+  unchanged.
+
+
+How Patch Mode Works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Patch mode is roughly split into two stages:
+
+1. One-time initialization
+
+   - The receiver sends local model metadata in ``init_receiver(...)``.
+   - If ``init_sync.enabled=true``, the sender receives the metadata in
+     ``init_sender(...)`` and sends a one-time bucketized bootstrap of the full
+     ``state_dict`` or the configured prefix subset.
+   - The receiver applies those bootstrap weights directly to its local
+     ``state_dict``.
+   - The sender then creates its snapshot for the later incremental patch path.
+     That snapshot only covers the keys selected for incremental sync:
+     currently trainable parameters and persistent buffers.
+
+   The metadata currently includes:
+
+   - a fixed parameter order ``ordered_keys``
+   - the original shape of each tensor in ``original_shapes``
+   - the dtype of each receiver-side tensor
+
+   The receiver **does not store the sender-side snapshot**. It only stores the
+   structural information needed to apply patches correctly to its local model.
+   The sender-side snapshot uses the same dtype as the corresponding
+   receiver-side weight, so mixed-precision models with both ``bfloat16`` and
+   ``float32`` weights are handled correctly. Init bootstrap also respects the
+   receiver-side dtype for each key.
+
+2. Per-sync update
+
+   - The sender compares the current incremental-sync subset
+     (trainable parameters plus persistent buffers) with the snapshot.
+   - The changed entries are packed into a patch and sent.
+   - The receiver applies those changes directly to local model parameters.
+
+
+CPU Snapshot Optimization Path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``snapshot_device: cpu``, the sender-side snapshot stays on CPU while the
+current ``state_dict`` remains on GPU. To avoid moving the patch-building hot
+path back to CPU, RLinf applies several optimizations for this case:
+
+- The CPU snapshot is stored in pinned memory to enable asynchronous CPU-GPU copies.
+- Before comparing each tensor, the corresponding CPU snapshot tensor is
+  asynchronously prefetched to the GPU where the state tensor lives.
+- Snapshot prefetch uses a dedicated CUDA copy stream so it can overlap as much
+  as possible with GPU-side comparison of other tensors.
+- Difference comparison, ``nonzero``, and new-value gathering all run on GPU,
+  avoiding CPU-side element scanning.
+- The ``rows``, ``cols``, and ``values`` needed by the patch are asynchronously
+  copied into pinned CPU staging buffers, and ``torch.cuda.Event`` is used to
+  mark when those copies complete.
+- After patch construction finishes, the sender can return immediately and
+  continue with the following transfer steps; CPU snapshot flushing is handled
+  by a background thread.
+- Before the next patch construction starts, RLinf waits for the previous
+  background flush to finish, which preserves snapshot consistency.
+
+Therefore, ``snapshot_device: cpu`` no longer means "compare on CPU". The
+effective path is:
+
+.. code-block:: text
+
+   CPU snapshot -> GPU prefetch -> GPU compare/nonzero/gather
+   -> pinned CPU staging -> background snapshot flush
+
+This trades a small amount of extra asynchronous copy and background flushing
+for much lower GPU memory usage. In current embodied VLA training
+configurations, CPU snapshot synchronization latency can already be close to GPU
+snapshot latency. When GPU memory is tight, ``snapshot_device: cpu`` is usually
+the safer default.
+
+
+Patch Data Layout
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The current patch representation is based on flattened tensor index information.
+The main fields are:
+
+- ``ordinals``: which tensor changed
+- ``nnz_per_tensor``: number of changed entries in that tensor
+- ``rows`` / ``cols``: 2D coordinates of changed positions
+- ``values``: the new values at those positions
+- ``version``: the sync version carried by this patch
+
+These 2D coordinates come from an internal 2D COO-style view. Tensors are
+interpreted as:
+
+- scalars: ``(1, 1)``
+- 1D tensors: ``(1, N)``
+- 2D tensors: unchanged
+- 3D and higher: ``(shape[0], prod(shape[1:]))``
+
+This makes it possible to express tensors of different ranks with one uniform
+patch format.
+
+
+Delta Encoding
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``delta_encoding=true``, ``rows`` and ``cols`` do not send absolute
+coordinates directly. Instead, they send delta-encoded coordinates:
+
+- ``rows`` stores increments between adjacent row coordinates
+- if two adjacent entries stay on the same row, ``cols`` stores column deltas
+- when switching to a new row, ``cols`` stores the absolute starting column of
+  that row
+
+This helps because:
+
+- index values usually become smaller
+- they can often be downscaled to tighter dtypes such as ``uint8`` or ``int32``
+- downstream compression becomes more effective
+
+
+Compression
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Patch compression only applies to the incremental patch payload itself, not the
+full model weights. The one-time init bootstrap uses bucketized weight
+transfer and does not go through the patch compressor.
+
+RLinf currently provides these patch compressors:
+
+- ``none``: send patch tensors directly
+- ``nvcomp_lz4``: apply GPU-side lossless compression separately to
+  ``rows``, ``cols``, and ``values``
+
+If you enable ``nvcomp_lz4``, you need:
+
+- ``transport_device: cuda``
+- ``nvidia-nvcomp-cu12`` installed in the runtime environment
+
+If you install embodied environments through
+``bash requirements/install.sh embodied ...``, this dependency is installed as
+part of the common embodied requirements.
+
+
+When Patch Mode Is Not A Good Fit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Patch mode is not a good default in the following cases:
+
+- actor and rollout do not share the same ``state_dict`` structure or metadata
+- you disable init bootstrap but cannot guarantee identical initial weights
+- you need an explicit bootstrap or full sync
+- updates are not sparse enough for patching to pay off
+- you want the most conservative synchronization strategy first when debugging
+  correctness issues
+
+
+Bucket Mode
+------------------------------
+
+A typical bucket configuration looks like this:
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: bucket
+     bucket:
+       bucket_size: 536870912
+       bucket_dtype: null
+       bucket_device: cuda
+       is_agent: false
+       load_instant: true
+
+The fields mean:
+
+``type``
+  Fixed to ``bucket`` to enable full bucket-based synchronization.
+
+``bucket.bucket_size``
+  Maximum size in bytes of each bucket.
+
+``bucket.bucket_dtype``
+  Dtype used when sending bucket payloads. If set to ``null``, each tensor keeps
+  its original dtype. If set to ``bfloat16``, ``float16``, or ``float32``, only
+  floating-point tensors are converted; non-floating buffers such as ``int`` and
+  ``bool`` keep their original dtype to avoid corrupting model state.
+
+``bucket.bucket_device``
+  Device where bucket tensors are staged, typically ``cuda``.
+
+``bucket.is_agent``
+  A compatibility switch for some agent-side naming behavior. For embodied
+  training, this is usually kept as ``false``.
+
+``bucket.load_instant``
+  Whether to call ``load_state_dict`` immediately after each bucket is received.
+
+
+Characteristics Of Bucket Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Bucket mode splits the selected sync subset into multiple chunks and sends them
+in order. Its main characteristics are:
+
+- Advantage: simple semantics for full-tensor transport of the selected keys
+- Advantage: does not depend on a sender-side snapshot and does not assume sparse updates
+- Disadvantage: typically much more data is transferred than in patch mode
+
+If ``load_instant=true``, each bucket is loaded immediately after it arrives.
+If ``load_instant=false``, the receiver buffers buckets first and loads them at
+the end.
+
+
+Behavior In Async Training
+------------------------------
+
+In async embodied training, if ``actor.sync_weight_no_wait=true`` is enabled,
+rollout-side weight receiving and applying are handled in a background
+``asyncio`` task.
+
+This means:
+
+- rollout does not necessarily block immediately when actor requests a sync
+- new weights only become effective after the background task completes
+- there may be a small delay between "sync requested" and "sync applied"
+
+In this async path, version propagation matters more. ``WeightSyncer.apply(...)``
+returns the version that was actually applied on rollout, and rollout updates
+its internal version state from that result.
+
+
+Performance Suggestions
+------------------------------
+
+If your priority is to reduce synchronization overhead, a good tuning order is:
+
+1. Start with ``patch`` and keep ``init_sync.enabled=true``.
+2. Prefer ``init_sync.prefixes: null`` unless you are deliberately optimizing a
+   small, well-understood subset of keys.
+3. Prefer ``snapshot_device: cpu`` by default, which avoids an extra
+   model-sized GPU-memory snapshot while providing synchronization latency close
+   to GPU snapshot.
+4. Keep ``delta_encoding: true``.
+5. First get the workflow stable with ``compression: none``, then evaluate
+   whether ``nvcomp_lz4`` is worth enabling.
+6. If GPU memory is very abundant and you are pursuing the lowest possible sync
+   latency, evaluate ``snapshot_device: cuda``.
+7. If you want the simplest per-tensor transport path for the selected sync
+   subset, switch to ``bucket``. If you need to realign the full model
+   including frozen weights, rely on init bootstrap or another explicit full
+   weight load.
+
+Patch mode keeps an extra sender-side snapshot. When ``snapshot_device: cuda``,
+that snapshot consumes GPU memory roughly equal to the number of model
+parameters multiplied by the byte size of the corresponding receiver-side
+weight dtype. For large models or memory-tight setups, reserve enough GPU memory
+for this snapshot to avoid OOM during training or synchronization.
+
+When ``snapshot_device: cpu``, this snapshot does not consume GPU memory, but it
+does consume one model-sized CPU pinned-memory copy. Its size is also roughly the
+number of model parameters multiplied by the byte size of the corresponding
+receiver-side weight dtype.
+In this mode, patch comparison still runs on GPU, and CPU snapshot overhead is
+reduced through prefetching, event synchronization, and background flushing. For
+memory-tight training jobs, this is the currently recommended configuration. In
+addition, ``nvcomp_lz4`` requires ``transport_device`` to be ``cuda``.
+
+
+Limitations And Caveats
+------------------------------
+
+The current implementation has several constraints to keep in mind:
+
+- if ``patch.init_sync.enabled=false``, patch assumes actor and rollout start
+  from the same initial weights
+- targeted ``patch.init_sync.prefixes`` can miss nested module paths if the
+  configured prefixes are incomplete; ``null`` is the safest default
+- ``patch`` is currently designed primarily for the embodied HuggingFace rollout path
+- high-rank tensors are converted to a 2D view internally; if trailing dimensions
+  cannot be flattened as a view, patch mode will raise an error
+- compression settings in this document refer to patch payload compression, not
+  compression of the model weights themselves
+- ``bucket`` now shares the same selected-key filtering used by the current
+  actor integration, so it is not a guaranteed full-model realignment path for
+  frozen weights
+- if your immediate goal is "validate the selected-key transport path with the
+  simplest semantics", use ``bucket``; if your goal is "make weight sync fast
+  after correctness is verified", use ``patch``
+
+
+Recommended Usage Pattern
+------------------------------
+
+A simple rule of thumb is:
+
+- default training: use ``patch + init_sync.enabled=true + prefixes:null``
+- targeted bootstrap only when you know the exact ``state_dict`` key paths you
+  want to align
+- bootstrap or debug the selected-key transport path with the simplest
+  semantics: start with ``bucket``
+- high sparsity and aggressive optimization: ``patch + delta_encoding + optional nvcomp``
+
+If you are not fully sure the patch assumptions hold for your pipeline, the
+safest approach is:
+
+- first ensure actor and rollout have the same ``state_dict`` structure
+- keep patch init bootstrap enabled, or use ``bucket`` first to validate the
+  selected-key transport path
+- then switch to ``patch`` for performance optimization

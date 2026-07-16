@@ -2,7 +2,7 @@ defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/bucket_syncer@weight_syncer # use bucket_syncer to avoid OOM in training on 4090
   - override hydra/job_logging: stdout
 
@@ -16,8 +16,9 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout, actor: 0-1
+    rollout: 0-1
     env: 2-3
+    actor: all
 
 runner:
   task_type: embodied
@@ -44,8 +45,6 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl
   group_size: 1
-  rollout_epoch: 2
-  eval_rollout_epoch: 2
 
   reward_type: chunk_level
   logprob_type: token_level
@@ -65,25 +64,13 @@ algorithm:
   gamma: 0.99
   gae_lambda: 0.95
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
   reward_coef: 5.0
 
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 2
     total_num_envs: 8
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
@@ -93,7 +80,10 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/train
       fps: 15
     num_env_subprocess: 2
+    enable_offload: True
+    enable_init_offload: False
   eval:
+    rollout_epoch: 2
     total_num_envs: 8
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
@@ -101,6 +91,7 @@ env:
       save_video: True
       video_base_dir: ${runner.logger.log_path}/video/eval
       fps: 15
+    num_env_subprocess: 2
 
 rollout:
   group_name: "RolloutGroup"

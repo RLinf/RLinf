@@ -1,6 +1,6 @@
 defaults:
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -50,14 +50,13 @@ actor:
 
   optim:
     lr: 7.91e-6
-    value_lr: 1.55e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-08
     weight_decay: 0.01
     clip_grad: 1.0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"

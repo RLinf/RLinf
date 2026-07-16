@@ -17,8 +17,23 @@ from omegaconf import DictConfig
 from rlinf.scheduler.worker.worker import Worker
 
 
-def get_actor_worker(cfg: DictConfig) -> Worker:
+def get_actor_worker(cfg: DictConfig) -> type[Worker]:
     if cfg.actor.training_backend == "fsdp":
+        if cfg.runner.get("task_type", None) == "embodied" and cfg.runner.get(
+            "use_training_pipeline", False
+        ):
+            if cfg.algorithm.loss_type in {
+                "embodied_sac",
+                "embodied_dagger",
+                "embodied_nft",
+            }:
+                raise ValueError(
+                    "runner.use_training_pipeline=True is not supported for "
+                    f"loss_type={cfg.algorithm.loss_type}."
+                )
+            from .fsdp_actor_worker_pipeline import PipelineEmbodiedFSDPActor
+
+            return PipelineEmbodiedFSDPActor
         from .fsdp_actor_worker import FSDPActor
 
         return FSDPActor

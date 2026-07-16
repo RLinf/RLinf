@@ -1,5 +1,5 @@
 defaults:
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - model/dreamzero_14b@actor.model
   - override hydra/job_logging: stdout
 
@@ -65,7 +65,6 @@ actor:
 
   optim:
     lr: 1.0e-5
-    value_lr: 1.55e-4
     adam_beta1: 0.95
     adam_beta2: 0.999
     adam_eps: 1.0e-08

@@ -26,7 +26,7 @@ from peft import (
     get_peft_model,
     set_peft_model_state_dict,
 )
-from transformers import AutoConfig, AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
@@ -73,23 +73,15 @@ class VLMRewardModel(BaseRewardModel):
         self._processor = AutoProcessor.from_pretrained(
             self.model_path, trust_remote_code=True
         )
-        self._setup_subprocessor(
-            subprocessor_kwargs=self.cfg.get("subprocessor_kwargs", {})
-        )
-
-    def _setup_subprocessor(
-        self,
-        subprocessor_kwargs: dict,
-    ) -> None:
-        for subprocessor_name, subprocessor_kwargs in subprocessor_kwargs.items():
-            subprocessor_kwargs = dict(subprocessor_kwargs)
-
-            subprocessoror = getattr(self._processor, subprocessor_name, None)
-            if subprocessoror is None:
+        subprocessor_kwargs = self.cfg.get("subprocessor_kwargs", {})
+        for subprocessor_name, subprocessor_cfg in subprocessor_kwargs.items():
+            subprocessor_cfg = dict(subprocessor_cfg)
+            subprocessor = getattr(self._processor, subprocessor_name, None)
+            if subprocessor is None:
                 continue
-            for key, value in dict(subprocessor_kwargs).items():
-                if hasattr(subprocessoror, key):
-                    setattr(subprocessoror, key, value)
+            for key, value in subprocessor_cfg.items():
+                if hasattr(subprocessor, key):
+                    setattr(subprocessor, key, value)
 
     def setup_input_builder(self) -> None:
         self.input_builder = get_input_builder(
@@ -144,9 +136,20 @@ class VLMRewardModel(BaseRewardModel):
             "VLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
         )
 
-    def setup_model(self) -> None:
-        _ = AutoConfig.from_pretrained(self.model_path, trust_remote_code=True)
+    def _generate_and_parse_rewards(
+        self, batched_inputs: dict[str, Any]
+    ) -> torch.Tensor:
+        """Run model.generate and parse decoded outputs into rewards."""
+        prompt_length = batched_inputs["input_ids"].shape[-1]
+        output_ids = self._model.generate(**batched_inputs, **self.gen_kwargs)
+        outputs = self._processor.batch_decode(
+            output_ids[..., prompt_length:], skip_special_tokens=True
+        )
+        rewards = self.reward_parser.parse_rewards(outputs)
 
+        return rewards
+
+    def setup_model(self) -> None:
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             trust_remote_code=True,
@@ -211,14 +214,8 @@ class VLMRewardModel(BaseRewardModel):
         batched_inputs = self.input_builder.build_inputs(
             observations, self._model.device
         )
-        prompt_length = batched_inputs["input_ids"].shape[-1]
-        output_ids = self._model.generate(**batched_inputs, **self.gen_kwargs)
+        rewards = self._generate_and_parse_rewards(batched_inputs)
         del batched_inputs
-        outputs = self._processor.batch_decode(
-            output_ids[..., prompt_length:], skip_special_tokens=True
-        )
-        del output_ids
-        rewards = self.reward_parser.parse_rewards(outputs)
         return self.apply_gt_success_bonus(rewards, observations)
 
 
@@ -316,20 +313,10 @@ class HistoryVLMRewardModel(VLMRewardModel):
                 reward_chunks.append(reward_chunk)
                 continue
 
-            prompt_length = batched_inputs["input_ids"].shape[-1]
-            output_ids = self._model.generate(**batched_inputs, **self.gen_kwargs)
+            parsed_rewards = self._generate_and_parse_rewards(batched_inputs)
             del batched_inputs
-
-            outputs = self._processor.batch_decode(
-                output_ids[..., prompt_length:], skip_special_tokens=True
-            )
-            del output_ids
-
-            reward_chunk[valid_input_ids] = self.reward_parser.parse_rewards(
-                outputs
-            ).to(dtype=torch.float32)
+            reward_chunk[valid_input_ids] = parsed_rewards.to(dtype=torch.float32)
             reward_chunks.append(reward_chunk)
-            del outputs
 
         rewards = torch.cat(reward_chunks, dim=0)
         return self.apply_gt_success_bonus(rewards, observations)

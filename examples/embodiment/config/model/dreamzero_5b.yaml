@@ -29,8 +29,8 @@ action_head_cfg:
   config:
     _recursive_: false
     _target_: groot.vla.model.dreamzero.action_head.wan_flow_matching_action_tf.WANPolicyHeadConfig
-    action_dim: ${actor.model.action_dim}
-    action_horizon: ${actor.model.action_horizon}
+    action_dim: ${...action_dim}
+    action_horizon: ${...action_horizon}
     skip_component_loading: true
     action_loss_embodiment_ids:
     - 26
@@ -43,7 +43,7 @@ action_head_cfg:
     diffusion_model_cfg:
       _convert_: object
       _target_: groot.vla.model.dreamzero.modules.wan_video_dit_action_casual_chunk.CausalWanModel
-      diffusion_model_pretrained_path: ${actor.model.diffusion_model_pretrained_path}
+      diffusion_model_pretrained_path: ${....diffusion_model_pretrained_path}
       dim: 3072
       eps: 1.0e-06
       ffn_dim: 14336
@@ -52,7 +52,7 @@ action_head_cfg:
       in_dim: 48
       max_chunk_size: 4
       model_type: ti2v
-      num_action_per_block: ${actor.model.num_action_per_block}
+      num_action_per_block: ${....num_action_per_block}
       num_frame_per_block: 2
       num_heads: 24
       num_layers: 30
@@ -66,15 +66,15 @@ action_head_cfg:
     image_encoder_cfg:
       _convert_: object
       _target_: groot.vla.model.dreamzero.modules.wan_video_image_encoder.WanImageEncoder
-      image_encoder_pretrained_path: ${actor.model.image_encoder_pretrained_path}
+      image_encoder_pretrained_path: ${....image_encoder_pretrained_path}
     init_lora_weights: kaiming
     input_embedding_dim: 1536
     load_pretrained_det_decode_layer_path: null
     lora_alpha: 4
     lora_rank: 4
     lora_target_modules: q,k,v,o,ffn.0,ffn.2
-    max_action_dim: ${actor.model.max_action_dim}
-    max_state_dim: ${actor.model.max_state_dim}
+    max_action_dim: ${...max_action_dim}
+    max_state_dim: ${...max_state_dim}
     model_dtype: float32
     noise_beta_alpha: 1.5
     noise_beta_beta: 1.0
@@ -88,9 +88,9 @@ action_head_cfg:
     text_encoder_cfg:
       _convert_: object
       _target_: groot.vla.model.dreamzero.modules.wan_video_text_encoder.WanTextEncoder
-      text_encoder_pretrained_path: ${actor.model.text_encoder_pretrained_path}
-    target_video_height: ${actor.model.target_video_height}
-    target_video_width: ${actor.model.target_video_width}
+      text_encoder_pretrained_path: ${....text_encoder_pretrained_path}
+    target_video_height: ${...target_video_height}
+    target_video_width: ${...target_video_width}
     tile_size_height: 34
     tile_size_width: 34
     tile_stride_height: 18
@@ -105,7 +105,7 @@ action_head_cfg:
     vae_cfg:
       _convert_: object
       _target_: groot.vla.model.dreamzero.modules.wan_video_vae.WanVideoVAE38
-      vae_pretrained_path: ${actor.model.vae_pretrained_path}
+      vae_pretrained_path: ${....vae_pretrained_path}
       z_dim: 48
       dim: 160
     video_inference_final_noise: 0.8

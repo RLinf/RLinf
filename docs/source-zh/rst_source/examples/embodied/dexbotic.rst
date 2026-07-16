@@ -1,224 +1,199 @@
 Dexbotic模型强化学习训练
-====================================
+========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-本文档介绍如何使用 RLinf 框架对 **Dexbotic** VLA 模型进行强化学习微调。
-Dexbotic (`<https://github.com/dexmal/dexbotic>`__) 是 Dexmal 推出的开源 Vision-Language-Action 工具箱，
-实现了多种具身模型的统一接口。本示例以 LIBERO Spatial 基准为例，支持 Dexbotic π\ :sub:`0`\ 模型和 **DM0** 模型。
+.. figure:: https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png
+   :align: center
+   :width: 90%
 
-主要目标是让模型具备以下能力：
+   Dexbotic 模型概览（图片来源：`Dexbotic <https://github.com/dexmal/dexbotic>`__）。
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像
-2. **语言理解**：理解自然语言任务描述
-3. **动作生成**：通过基于流的扩散去噪产生精确的机器人动作
-4. **强化学习**：结合环境反馈，使用 PPO 优化策略
+`Dexbotic <https://github.com/dexmal/dexbotic>`__ 是 Dexmal 推出的开源 VLA 工具箱。
+RLinf 将 Dexbotic π\ :sub:`0`\ 和 DM0 策略作为 LIBERO 动作生成模型，并使用 PPO 进行在线强化学习微调。
 
-环境
------------
+概览
+----------------------------------------
 
-**LIBERO 环境**
+在 LIBERO 上用 PPO 微调 Dexbotic π\ :sub:`0`\ 或 DM0。
 
-- **Environment**：基于 *robosuite* （MuJoCo）的 LIBERO 仿真基准
-- **Task**：指挥 7 自由度机械臂完成家居操作技能（抓取放置、叠放、空间重排等）
-- **Observation**：工作区周围离屏相机采集的 RGB 图像（常见分辨率 128×128 或 224×224）
-- **Action Space**：7 维连续动作
-  - 末端执行器三维位置控制（x, y, z）
-  - 三维旋转控制（roll, pitch, yaw）
-  - 夹爪控制（开/合）
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**任务描述格式**
+   .. grid-item-card:: 环境
+      :text-align: center
 
-Dexbotic 直接使用环境提供的自然语言任务描述作为语言模型输入。
+      LIBERO
 
-**数据结构**
+   .. grid-item-card:: 算法
+      :text-align: center
 
-- **Images**：主视角与腕部视角 RGB 张量，形状为 ``[batch_size, 224, 224, 3]``
-- **States**：末端执行器位姿（位置 + 朝向）及夹爪状态
-- **Task Descriptions**：自然语言指令
-- **Actions**：长度为 50 的动作块（可配置）；每 N 步重新规划动作
+      PPO
 
-算法
----------
+   .. grid-item-card:: 任务
+      :text-align: center
 
-**核心算法组件**
+      LIBERO Spatial · Object · Goal · 10
 
-1. **PPO（Proximal Policy Optimization）**
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-   - 使用 GAE 进行优势估计
-   - 基于比率的策略裁剪
-   - 价值函数裁剪
-   - 熵正则化
+      1 节点 · 8 GPU
 
-2. **Dexbotic**\ （基于 π\ :sub:`0.5`\ 的 VLA）
+| **你将完成：** 安装依赖 → 下载 Dexbotic 检查点 → 运行 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 兼容 LIBERO 的 Dexbotic 检查点（见下文步骤）。
 
-   - 基于 flow-matching / flow-SDE 的动作生成
-   - 用于动作块的扩散去噪
-   - 带 Value Head 的 Critic 功能
-   - 可配置 ``noise_method``（如 ``flow_sde``）、``noise_level`` 与 ``num_steps``
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-依赖安装
------------------------
+根据环境、任务族以及配置或权重工件选择对应的模型页面。
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
+   :widths: 22 24 30 24
 
-.. code:: bash
+   * - 环境
+     - 任务 / 套件
+     - 配置 / 权重
+     - 重点
+   * - LIBERO
+     - LIBERO-Spatial
+     - ``libero_spatial_ppo_dexbotic_*``
+     - 在 spatial 操作任务上使用 Dexbotic pi0/dm0 策略。
+   * - LIBERO
+     - LIBERO-Object
+     - ``libero_object_ppo_dexbotic_pi0``
+     - 在物体操作任务上使用 Dexbotic pi0。
+   * - LIBERO
+     - LIBERO-Goal / LIBERO-10
+     - ``libero_goal_ppo_dexbotic_pi0`` / ``libero_10_ppo_dexbotic_pi0``
+     - 覆盖目标条件和长程 LIBERO 套件。
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-2. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38
 
-**选项 1：Docker 镜像**
+   * - 字段
+     - 说明
+   * - Observation
+     - 为 Dexbotic 策略打包的 LIBERO 相机流与本体状态。
+   * - Action
+     - 选定 Dexbotic 策略后端生成的分块连续动作，包括 flow-matching / flow-SDE 设置。
+   * - Reward
+     - PPO 更新使用的 LIBERO 成功信号或仿真器奖励。
+   * - Prompt
+     - 策略 processor 消费的 LIBERO 自然语言指令。
 
-使用 Docker 镜像进行 LIBERO 具身训练：
+安装
+----------------------------------------
 
-.. code:: bash
+.. include:: _setup_common.rst
+
+**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
+
+.. code-block:: bash
 
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
-请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
+   # 在容器内切换到 Dexbotic 虚拟环境：
    source switch_env dexbotic
 
-**选项 2：自定义环境**
+**选项 2：自定义环境** — 安装 ``--model dexbotic --env maniskill_libero`` 依赖组合：
 
-在本地环境中安装依赖：
+.. code-block:: bash
 
-.. code:: bash
-
+   # 国内用户可以添加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
    source .venv/bin/activate
 
-模型下载
---------------
+下载模型
+----------------------------------------
 
-**π**\ :sub:`0` **模型**
+下载一个或两个 Dexbotic 检查点（任选一种方式）：
 
-开始训练前，请从 HuggingFace 下载 Dexbotic π\ :sub:`0`\ SFT 模型：
+.. code-block:: bash
 
-.. code:: bash
-
-   # 方法 1：使用 git clone
+   # 方法 1：git clone
    git lfs install
    git clone https://huggingface.co/Dexmal/libero-db-pi0
-
-   # 方法 2：使用 huggingface-hub
-   pip install huggingface-hub
-   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
-
-然后将 ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml`` 中的
-``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地路径（如 ``./libero-db-pi0``）。
-
-**DM0 模型**
-
-从 HuggingFace 下载 DM0 SFT 模型：
-
-.. code:: bash
-
-   # 方法 1：使用 git clone
-   git lfs install
    git clone https://huggingface.co/Dexmal/DM0-libero
 
-   # 方法 2：使用 huggingface-hub
+   # 方法 2：huggingface-hub（国内用户可设置 HF_ENDPOINT=https://hf-mirror.com）
    pip install huggingface-hub
+   huggingface-cli download Dexmal/libero-db-pi0 --local-dir libero-db-pi0
    huggingface-cli download Dexmal/DM0-libero --local-dir DM0-libero
 
-然后将 ``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml`` 中的
-``rollout.model.model_path`` 和 ``actor.model.model_path`` 设为本地路径（如 ``./DM0-libero``）。
+.. include:: _model_path.rst
 
-快速开始
------------
+运行
+----------------------------------------
 
-π\ :sub:`0`\ 模型
-~~~~~~~~~~~~~~~~~~
+每个配方都是 ``examples/embodiment/config/`` 下的一个 YAML 配置：
 
-**配置文件**
+.. list-table::
+   :header-rows: 1
+   :widths: 30 26 44
 
-- ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``
+   * - 任务套件
+     - 模型
+     - 配置
+   * - LIBERO Spatial
+     - Dexbotic π₀
+     - ``libero_spatial_ppo_dexbotic_pi0.yaml``
+   * - LIBERO Spatial
+     - DM0
+     - ``libero_spatial_ppo_dexbotic_dm0.yaml``
+   * - LIBERO Object
+     - Dexbotic π₀
+     - ``libero_object_ppo_dexbotic_pi0.yaml``
+   * - LIBERO Goal
+     - Dexbotic π₀
+     - ``libero_goal_ppo_dexbotic_pi0.yaml``
+   * - LIBERO 10
+     - Dexbotic π₀
+     - ``libero_10_ppo_dexbotic_pi0.yaml``
 
-**关键配置片段**
-
-.. code:: yaml
-
-   rollout:
-     model:
-       model_path: "/path/to/model/libero-db-pi0"  # https://huggingface.co/Dexmal/libero-db-pi0
-   actor:
-     model:
-       model_path: "/path/to/model/libero-db-pi0"
-       num_action_chunks: 5
-       num_steps: 4
-       action_dim: 7
-       add_value_head: True
-       dexbotic:
-         num_images_in_input: 2
-         noise_level: 0.5
-         noise_method: "flow_sde"
-         train_expert_only: True
-         detach_critic_input: True
-
-**启动命令**
+使用 ``run_embodiment.sh`` 启动一个配置：
 
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_pi0
 
-DM0 模型
-~~~~~~~~
+**这个命令会：**
 
-**配置文件**
+1. 加载 ``examples/embodiment/config/libero_spatial_ppo_dexbotic_pi0.yaml``。
+2. 按 ``cluster.component_placement`` 构建 LIBERO actor、rollout 和 env worker。
+3. 运行 PPO，并把日志和检查点写入 ``runner.logger.log_path``。
 
-- ``examples/embodiment/config/libero_spatial_ppo_dexbotic_dm0.yaml``
+.. admonition:: 进一步配置
+   :class: note
 
-**关键配置片段**
+   - π₀ 检查点路径 → 将 ``actor.model.model_path`` 和 ``rollout.model.model_path`` 设置为 ``libero-db-pi0``。
+   - DM0 检查点路径 → 在 ``libero_spatial_ppo_dexbotic_dm0.yaml`` 中将两个 model path 设置为 ``DM0-libero``。
+   - Action chunks → π₀ 使用 ``num_action_chunks: 5``；DM0 使用 ``num_action_chunks: 10``。
+   - 指标定义和日志后端 → :doc:`训练指标 <../../reference/metrics>`
+   - 组件放置和吞吐调优 → :doc:`组件放置 <../../concepts/placement>` 与 :doc:`执行模式 <../../concepts/execution_modes>`
 
-.. code:: yaml
+独立评测
+----------------------------------------
 
-   rollout:
-     model:
-       model_path: "/path/to/model/DM0-libero"  # https://huggingface.co/Dexmal/DM0-libero
-   actor:
-     model:
-       model_path: "/path/to/model/DM0-libero"
-       num_action_chunks: 10
-       num_steps: 3
-       action_dim: 7
-       add_value_head: True
-       dexbotic:
-         num_images_in_input: 2
-         noise_level: 0.5
-         noise_method: "flow_sde"
-         train_expert_only: True
-         detach_critic_input: True
-
-**启动命令**
+对训练后的检查点运行 Dexbotic 的 LIBERO evaluator：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_dexbotic_dm0
-
-评估
-----------
-
-π\ :sub:`0`\ 模型
-~~~~~~~~~~~~~~~~~~
-
-.. code-block:: bash
-
-   python toolkits/eval_scripts_dexbotic/libero_eval.py \
+   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
       --config_name db_pi0_libero \
       --pretrained_path /path/to/checkpoint \
       --task_suite_name libero_spatial \
@@ -226,12 +201,11 @@ DM0 模型
       --action_chunk 5 \
       --num_steps 10
 
-DM0 模型
-~~~~~~~~
+如需评估 DM0，切换 evaluator 配置和 action chunk：
 
 .. code-block:: bash
 
-   python toolkits/eval_scripts_dexbotic/libero_eval.py \
+   python toolkits/standalone_eval_scripts/dexbotic/libero_eval.py \
       --config_name dm0_libero \
       --pretrained_path /path/to/checkpoint \
       --task_suite_name libero_spatial \
@@ -239,25 +213,15 @@ DM0 模型
       --action_chunk 10 \
       --num_steps 10
 
-亦可使用 RLinf 统一的 VLA 评估流程，详见
-:doc:`VLA 评估文档 <../../start/vla-eval>`。
-
-.. note::
-
-   ``--action_chunk`` 参数控制重新规划间隔（模型每隔多少步重新推理一次动作）。
-   π\ :sub:`0`\ 默认为 ``5``，DM0 默认为 ``10``，与各自训练时的 ``num_action_chunks`` 配置保持一致。
+也可以使用 RLinf 统一的 VLA 评估流程，详见 :doc:`评估 <../../evaluations/index>`。
 
 可视化与结果
--------------------------
+----------------------------------------
 
-**TensorBoard 日志**
+启动 TensorBoard 实时观察训练：
 
 .. code-block:: bash
 
    tensorboard --logdir ./logs --port 6006
 
-**关键指标**
-
-- **训练**：``train/actor/policy_loss``、``train/critic/value_loss``、
-  ``train/actor/approx_kl``
-- **环境**：``env/success_once``（回合成功率）、``env/episode_len``
+最值得关注的指标是 **``env/success_once``** —— 回合成功率。每个日志指标的含义见 :doc:`训练指标 <../../reference/metrics>`。

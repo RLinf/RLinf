@@ -1,0 +1,115 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - model/dreamzero_5b@actor.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "franka_sft_dreamzero"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 20000
+  val_check_interval: -1
+  save_interval: 2000
+  log_interval: 10
+  resume_dir: null
+
+data:
+  train_data_paths: /path/to/franka_pick_and_place
+  lazy_load: True
+  num_workers: 8
+  prefetch_factor: 8
+  video_tolerance_s: 0.1
+  parquet_cache_size: 512
+  sampling_mode: multi_anchor
+  # Short Franka episodes (~60 frames): 12-step blocks + compact video offsets.
+  macro_stride: 12
+  video_in_chunk_offsets: [0, 1, 2, 3, 4, 5, 6, 7]
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 256
+  seed: 42
+
+  model:
+    model_type: "dreamzero"
+    precision: fp32
+    model_path: null #/mnt/project_rlinf/guozhen/models/DreamZero-DROID
+    tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
+    
+    diffusion_model_pretrained_path: Wan-AI/Wan2.2-TI2V-5B # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    image_encoder_pretrained_path: Wan-AI/Wan2.1-I2V-14B-480P/models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth # https://huggingface.co/Wan-AI/Wan2.1-I2V-14B-480P
+    text_encoder_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/models_t5_umt5-xxl-enc-bf16.pth # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    vae_pretrained_path: Wan-AI/Wan2.2-TI2V-5B/Wan2.2_VAE.pth # https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B
+    
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    metadata_json_path: /path/to/metadata.json
+
+    action_horizon: 12
+    num_action_per_block: 12
+    target_video_height: 160
+    target_video_width: 320
+
+    is_lora: False
+    embodiment_tag: "franka_pnp"
+    relative_action: False
+    relative_action_per_horizon: False
+
+    action_head_cfg:
+      config:
+        action_loss_embodiment_ids:
+        - 26
+        - 21
+        - 17
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.95
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-5
+    clip_grad: 1.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 20000
+  fsdp_config:
+    strategy: "fsdp2"
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: True
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: False
+    save_full_model_weights: True
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: False
+      precision: "bf16"

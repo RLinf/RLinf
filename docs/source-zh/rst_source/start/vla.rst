@@ -1,5 +1,5 @@
-快速上手 1：在 Maniskill3 上使用 PPO 训练 VLA 模型
-==================================================================================================
+快速上手
+========
 
 本快速教程将带你使用 **RLinf** 框架，在  
 `ManiSkill3 <https://github.com/haosulab/ManiSkill>`_ 环境中训练视觉-语言-动作模型（VLA），包括  
@@ -14,7 +14,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 该基准涵盖多个领域，包括机械臂、移动操作器、人形机器人以及灵巧手，  
 支持抓取、组装、绘图、移动等多种任务。
 
-我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../tutorials/mode/hybrid`）。
+我们还针对 GPU 仿真器进行了系统级优化（详见 :doc:`../concepts/execution_modes`）。
 
 启动训练
 --------------------------
@@ -36,8 +36,8 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 .. code-block:: bash
 
    # 下载 OpenVLA-OFT 预训练模型
-   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
-   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
    
    # 下载在maniskill上lora微调过的检查点
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
@@ -64,7 +64,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 
 
-对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/Openvla-oft-SFT-libero10-trajall` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
+对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  
@@ -94,6 +94,40 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    source switch_env openvla-oft
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
+训练流水线模式
+--------------------------
+
+对于具身 FSDP 训练，可以通过 ``runner.use_training_pipeline`` 开启环境交互
+与 actor 训练之间的流水线执行路径。设置为 ``True`` 后，环境 worker 会先处理
+rollout 轨迹，将其转换为打包后的 actor micro-batch，并通过 channel 流式发送给
+actor。actor 可以在 rollout 仍在生成时训练这些已经准备好的 micro-batch。
+
+当 rollout 数据中包含嵌套 observation 或较大的 tensor 时，该模式通常更有用。
+发送打包后的 micro-batch 可以让 channel payload 更适合 tensor fast path，同时减少
+actor 侧重新组装和处理 batch 的额外开销。尤其当 env worker 和 actor worker
+部署在不同节点，并且节点之间通过广域网连接时，较小且打包后的 tensor payload
+可以降低跨节点传输开销。
+
+示例配置：
+
+.. code-block:: yaml
+
+   runner:
+     use_training_pipeline: True
+
+   algorithm:
+     adv_type: gae
+     normalize_advantages: True
+
+说明与限制：
+
+- 该模式支持 ``algorithm.normalize_advantages``。pipeline 路径会在 env worker
+  侧计算 raw advantages，聚合所有会发送到同一 actor rank 的 env worker 的 masked
+  advantage 统计量，并在流式发送 actor micro-batch 之前完成 normalization。
+- ``algorithm.adv_type`` 在该模式下目前仅支持 ``gae``。
+- 该模式面向具身 FSDP actor 训练中的 PPO/GRPO 类 actor loss；目前不支持
+  ``embodied_sac``、``embodied_dagger`` 或 ``embodied_nft``。
+
 
 查看训练结果
 --------------------------
@@ -121,7 +155,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
    ``cluster.component_placement``。
 
    根据实际资源将该项设置为 **0-3** 或 **0-7** 来使用 4/8 张 GPU。
-   查看 :doc:`../tutorials/user/yaml` 以获取有关 Placement 配置的更详细说明。
+   查看 :doc:`../guides/basic_config` 以获取有关 Placement 配置的更详细说明。
 
    .. code-block:: yaml
 

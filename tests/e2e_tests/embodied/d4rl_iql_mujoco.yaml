@@ -1,6 +1,6 @@
 defaults:
   - model/mlp_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - env/d4rl@env.eval
   - override hydra/job_logging: stdout
@@ -21,7 +21,7 @@ cluster:
 
 runner:
   task_type: "offline"
-  only_eval: true
+  only_eval: false
   logger:
     log_path: "../results"
     project_name: rlinf
@@ -44,15 +44,6 @@ runner:
 algorithm:
   loss_type: "offline_iql"
   adv_type: null
-  eval_rollout_epoch: 1
-  sampling_params:
-    do_sample: false
-    temperature_train: 1.0
-    temperature_eval: -1
-    top_k: 0
-    top_p: 1.0
-  length_params:
-    max_new_token: 1
   hidden_dims: [256, 256]
   gamma: 0.99
   tau: 0.005
@@ -71,6 +62,7 @@ data:
 env:
   group_name: "EnvGroup"
   eval:
+    rollout_epoch: 1
     task_name: ${data.task_name}
     total_num_envs: 1
     use_ordered_reset_state_ids: true

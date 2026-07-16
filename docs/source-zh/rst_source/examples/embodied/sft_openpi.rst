@@ -1,48 +1,84 @@
-监督微调训练
-=======================
+OpenPI 监督微调
+========================================
 
-.. |huggingface| image:: /_static/svg/hf-logo.svg
-   :width: 16px
-   :height: 16px
-   :class: inline-icon
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+   :align: center
+   :width: 40%
 
-本文档介绍如何在 RLinf 框架中对OpenPI模型进行 **全量监督微调（Full-parameter SFT）** 和 **LoRA 微调**。SFT 通常作为进入强化学习前的第一阶段：模型先模仿高质量示例，后续强化学习才能在良好先验上继续优化。
+   OpenPI π₀ / π₀.₅ 视觉-语言-动作模型。
 
-内容包括
---------
+使用 RLinf 对 OpenPI（π₀ / π₀.₅）模型进行 **全量监督微调（Full-parameter SFT）** 或
+**LoRA 微调**。SFT 通常作为进入强化学习前的第一阶段：模型先模仿高质量示例，后续强化学习才能在良好先验上继续优化。
 
-- 如何在 RLinf 中配置通用全量监督微调 和 LoRA微调
-- 如何在单机或多节点集群上启动训练
-- 如何监控与评估结果
+概览
+----------------------------------------
 
+在 LeRobot 格式数据集上微调 π₀ / π₀.₅——全量或 LoRA——可在单机或多节点集群上进行。
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      π₀ · π₀.₅
+
+   .. grid-item-card:: 方法
+      :text-align: center
+
+      Full SFT · LoRA
+
+   .. grid-item-card:: 数据
+      :text-align: center
+
+      LeRobot format
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1+ 节点 · GPU
+
+| **你将完成：** 安装 OpenPI → 准备 LeRobot 数据集 → 计算归一化统计 → 启动 ``run_vla_sft.sh`` → 观察训练损失。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 一个 LeRobot 格式的数据集。
 
 支持的数据集
-------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指定不同的数据集类型。
+RLinf 支持 LeRobot 格式的数据集，通过 ``config_name`` 字段指定。内置格式如下：
 
-目前支持的数据格式包括：
+.. list-table::
+   :header-rows: 1
+   :widths: 44 56
 
-- pi0_maniskill
-- pi0_libero
-- pi0_aloha_robotwin
-- pi0_realworld
-- pi05_libero
-- pi05_maniskill
-- pi05_metaworld
-- pi05_calvin
+   * - ``config_name``
+     - 数据集 / 环境
+   * - ``pi0_maniskill`` · ``pi05_maniskill``
+     - ManiSkill
+   * - ``pi0_libero`` · ``pi05_libero``
+     - LIBERO
+   * - ``pi0_aloha_robotwin``
+     - RoboTwin（ALOHA）
+   * - ``pi0_realworld``
+     - 真机 Franka
+   * - ``pi05_metaworld``
+     - MetaWorld
+   * - ``pi05_calvin``
+     - CALVIN
 
-也可通过自定义数据集格式来训练特定数据集，具体可参考以下文件
+自定义数据集
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. 在``examples/sft/config/custom_sft_openpi.yaml``中，指定数据格。
+也可通过自定义 LeRobot 数据集格式来训练特定数据集，具体可参考以下文件：
+
+1. 在 ``examples/sft/config/custom_sft_openpi.yaml`` 中，指定数据格式。
 
 .. code:: yaml
 
-    model:
+  model:
     openpi:
-        config_name: "pi0_custom"
+      config_name: "pi0_custom"
 
-2. 在``rlinf/models/embodiment/openpi/__init__.py``中，指定数据格式为 ``pi0_custom``。
+2. 在 ``rlinf/models/embodiment/openpi/__init__.py`` 中，注册数据格式 ``pi0_custom``。
 
 .. code:: python
 
@@ -61,7 +97,7 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
 
-3. 在``rlinf/models/embodiment/openpi/dataconfig/custom_dataconfig.py``中，定义自定义数据集的配置。
+3. 在 ``rlinf/models/embodiment/openpi/dataconfig/custom_dataconfig.py`` 中，定义自定义数据集的配置。
 
 .. code:: python
 
@@ -76,8 +112,8 @@ RLinf 目前支持 LeRobot 格式的数据集，可以通过 **config_type** 指
             self.extra_delta_transform = True
             self.action_train_with_rotation_6d = False
 
-新 LeRobot 数据集的归一化统计
------------------------------
+归一化统计
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 当你在新采集的 LeRobot 数据集上训练 OpenPI 时，需要在启动 SFT 之前先计算
 归一化统计。这对真实机器人采集的数据集尤其重要。
@@ -87,29 +123,61 @@ RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
 
 .. code:: bash
 
-   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   # 本地数据集目录（包含 meta/info.json）：
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_realworld \
+       --repo-id /path/to/realworld_franka_bin_relocation
+
+   # 或使用默认缓存在 ~/.cache/huggingface/lerobot 下的 Hugging Face repo id：
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
-注意事项：
+.. note::
 
-- 运行脚本前必须先设置 ``HF_LEROBOT_HOME``。
-- ``config_name`` 必须与训练时使用的自定义 OpenPI dataconfig 一致。
-- ``repo_id`` 必须与你的 LeRobot 格式数据集名称一致。
+   - ``--repo-id`` 可以是本地数据集路径，也可以是 LeRobot 的 Hugging Face repo id。
+   - 可选：通过 ``HF_LEROBOT_HOME`` 修改 repo id 的缓存父目录（默认：``~/.cache/huggingface/lerobot``）。
+   - ``config_name`` 必须与训练时使用的自定义 OpenPI dataconfig 一致。
 
-该脚本会将生成的统计信息写入
-``<assest_dir>/<exp_name>/<repo_id>/norm_stats.json``。
-
+该脚本会将生成的统计信息写入 ``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``。
 OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统计信息。
 
 另一个有助于稳定训练的实用建议是，手动检查归一化统计中是否存在非常小的标准差，
 或过窄的 q99-q01 区间。适当增大标准差，或拉宽 q99-q01 的范围，通常有助于提升
 训练稳定性，尤其是在先做 SFT 再进入在线训练的两阶段流程中。
 
+安装
+----------------------------------------
 
-训练配置
--------------
+.. include:: _setup_common.rst
+
+**方式一：使用 Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
+
+.. code:: bash
+
+    docker run -it --rm --gpus all \
+        --shm-size 20g \
+        --network host \
+        --name rlinf \
+        -v .:/workspace/RLinf \
+        rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+        # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+
+    # 进入容器后，切换到 OpenPI 虚拟环境：
+    source switch_env openpi
+
+**方式二：自建环境** —— 安装套件 ``--env maniskill_libero``：
+
+.. code:: bash
+
+    # 为提高国内依赖安装速度，可以添加 --use-mirror。
+    bash requirements/install.sh embodied --model openpi --env maniskill_libero
+    source .venv/bin/activate
+
+运行
+----------------------------------------
+
+**1. 配置**
 
 完整示例配置位于：
 
@@ -125,7 +193,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
         component_placement:         # 组件 → GPU 映射
             actor: 0-3
 
-若需要支持LoRA微调，需要将``actor.model.is_lora``设置为True，并配置``actor.model.lora_rank``参数。
+若需要 LoRA 微调，将 ``actor.model.is_lora`` 设为 ``True``，并配置 ``actor.model.lora_rank``：
 
 .. code:: yaml
 
@@ -134,62 +202,23 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
             is_lora: True
             lora_rank: 32
 
-依赖安装
------------------------
+**2. 启动**
 
-本节介绍 OpenPI 模型进行 SFT 训练所需的依赖环境。对于其他模型，请参考各自示例文档中的「依赖安装」小节。
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~
+先启动 Ray 集群，再执行训练脚本：
 
 .. code:: bash
 
-    # 为提高国内下载速度，可以使用：
-    # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-    git clone https://github.com/RLinf/RLinf.git
-    cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~~~~~~
-
-**方式一：使用 Docker 镜像**
-
-推荐直接使用预构建的 Docker 镜像运行实验。
-
-.. code:: bash
-
-    docker run -it --rm --gpus all \
-        --shm-size 20g \
-        --network host \
-        --name rlinf \
-        -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-        # 如果需要国内加速下载镜像，可以使用：
-        # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-
-进入容器后，请通过内置的 `switch_env` 工具切换到对应的虚拟环境：
-
-.. code:: bash
-
-    source switch_env openpi
-
-**方式二：自建环境**
-
-也可以在本地/集群环境中直接安装依赖，示例命令如下：
-
-.. code:: bash
-
-    # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-
-    bash requirements/install.sh embodied --model openpi --env maniskill_libero
-    source .venv/bin/activate
-
-启动脚本
--------------
-
-执行训练脚本：
-
-.. code:: bash
-
-   # return to repo root
    bash examples/sft/run_vla_sft.sh libero_sft_openpi
+
+同一脚本也适用于通用文本 SFT，只需替换配置文件即可。
+
+可视化与结果
+----------------------------------------
+
+关注 **训练损失** 即可确认模型是否在拟合示例数据。各项指标的含义见
+:doc:`训练指标 <../../reference/metrics>`。
+
+.. code-block:: bash
+
+   # 启动 TensorBoard
+   tensorboard --logdir ./logs

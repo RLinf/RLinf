@@ -62,11 +62,120 @@ def concat_multiview_video(embodiment_tag: Any, images: Any) -> np.ndarray:
 class DreamTransform(DreamTransformBase):
     """DreamTransform that delegates multi-view layout to ``data_transforms`` registry."""
 
+    def apply_single(self, data: dict) -> dict:
+        """Apply transform for one sample.
+
+        Groot's ``apply_single`` compares against ``EmbodimentTag`` members that are not
+        part of RLinf's patched enum (e.g. ``GR1_UNIFIED_SEGMENTATION``). RLinf only
+        registers standard manipulation datasets, so skip those branches here.
+        """
+        transformed_data = {}
+
+        # 1) Prepare video and language with vlm processing.
+        images = self._prepare_video(data)
+        images = images.astype(np.uint8)
+        language, is_lapa_instance, is_dream_instance, is_cotrain_instance = (
+            self._prepare_language(data)
+        )
+        batch_data = {"images": images, "language": language}
+        vlm_outputs = self._apply_vlm_processing(batch_data)
+
+        # 2) Prepare state
+        state, state_mask, _ = self._prepare_state(data)
+        transformed_data["state"] = state
+        transformed_data["state_mask"] = state_mask
+
+        if self.training:
+            # 3) Prepare actions
+            transformed_data["segmentation_target"] = np.zeros((2,))
+            transformed_data["segmentation_target_mask"] = np.zeros((1,))
+            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            actions, actions_mask, _ = self._prepare_action(data)
+            transformed_data["action"] = actions
+            transformed_data["action_mask"] = actions_mask
+
+            # default for lapa instance
+            transformed_data["lapa_action"] = np.zeros_like(transformed_data["action"])
+            transformed_data["lapa_action_mask"] = np.zeros_like(
+                transformed_data["action_mask"]
+            )
+
+        transformed_data["text_negative"] = (
+            "Vibrant colors, overexposed, static, blurry details, text, subtitles, "
+            "style, artwork, painting, image, still, grayscale, dull, worst quality, "
+            "low quality, JPEG artifacts, ugly, mutilated, extra fingers, bad hands, "
+            "bad face, deformed, disfigured, mutated limbs, fused fingers, stagnant "
+            "image, cluttered background, three legs, many people in the background, "
+            "walking backwards."
+        )
+
+        for key, value in vlm_outputs.items():
+            assert key not in transformed_data, (
+                f"Key {key} already exists in transformed_data."
+            )
+            transformed_data[key] = value
+
+        transformed_data["embodiment_id"] = self.get_embodiment_tag()
+        transformed_data["has_lapa_action"] = np.zeros((), dtype=bool)
+        transformed_data["is_cotrain_instance"] = np.array(
+            is_cotrain_instance, dtype=bool
+        )
+
+        if is_dream_instance:
+            assert "dream_actions" in data
+            transformed_data["embodiment_id"] = self.embodiment_tag_mapping["dream"]
+            transformed_data["state"] = np.zeros_like(transformed_data["state"])
+            actions_shape = transformed_data["action"].shape
+            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            transformed_data["has_lapa_action"] = np.zeros((), dtype=bool)
+            dream_actions = data["dream_actions"]
+            assert dream_actions.size == actions_shape[0] * actions_shape[1], (
+                f"dream_actions size {dream_actions.size} does not match action shape "
+                f"{actions_shape}"
+            )
+            transformed_data["action"] = dream_actions.reshape(actions_shape)
+
+        if is_lapa_instance:
+            assert "lapa_action" in data
+            transformed_data["has_real_action"] = np.ones((), dtype=bool)
+            transformed_data["has_lapa_action"] = np.zeros((), dtype=bool)
+            transformed_data["embodiment_id"] = self.embodiment_tag_mapping["lapa"]
+            transformed_data["state"] = np.zeros_like(transformed_data["state"])
+            actions_shape = transformed_data["action"].shape
+            lapa_actions = data["lapa_action"]
+            assert lapa_actions.size == actions_shape[0] * actions_shape[1], (
+                f"Cannot reshape lapa_actions of size {lapa_actions.size} to "
+                f"{actions_shape}"
+            )
+            reshaped_lapa_actions = lapa_actions.reshape(actions_shape)
+            assert np.all(reshaped_lapa_actions >= -1) and np.all(
+                reshaped_lapa_actions <= 1
+            ), "LAPA action values should be between -1 and 1"
+            transformed_data["action"] = reshaped_lapa_actions
+            transformed_data["action_mask"] = np.ones(actions_shape, dtype=bool)
+
+        if self.training:
+            action_and_mask_keys = [
+                "action",
+                "action_mask",
+                "lapa_action",
+                "lapa_action_mask",
+            ]
+            assert all(
+                transformed_data[key].shape == transformed_data["action"].shape
+                for key in action_and_mask_keys
+            ), (
+                "Shape mismatch: "
+                f"{[(key, transformed_data[key].shape) for key in action_and_mask_keys]}"
+            )
+
+        return transformed_data
+
     def apply_batch(self, data: dict, batch_size: int) -> dict:
         """Collate with RLinf prompt wrapping (supports all registered embodiments)."""
         import tree
 
-        from rlinf.data.datasets.dreamzero.dreamzero import DreamZeroCollator
+        from rlinf.data.datasets.dreamzero.dataloader import DreamZeroCollator
 
         data.pop("lapa_action", None)
         data.pop("dream_actions", None)

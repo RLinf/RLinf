@@ -25,6 +25,10 @@ from rlinf.data.datasets.dreamzero.data_transforms.base import (
     RolloutObsLayout,
     convert_rollout_env_obs_with_layout,
 )
+from rlinf.data.datasets.dreamzero.data_transforms.embodiment_tag import EmbodimentTag
+from rlinf.data.datasets.dreamzero.data_transforms.franka_pnp import (
+    FrankaPnpDataTransform,
+)
 from rlinf.data.datasets.dreamzero.data_transforms.libero_sim import (
     LiberoSimDataTransform,
 )
@@ -35,6 +39,7 @@ from rlinf.data.datasets.dreamzero.data_transforms.oxe_droid import (
 _EMBODIMENT_REGISTRY: dict[str, type[DreamZeroEmbodimentTransform]] = {
     LiberoSimDataTransform.TAG: LiberoSimDataTransform,
     OxeDroidDataTransform.TAG: OxeDroidDataTransform,
+    FrankaPnpDataTransform.TAG: FrankaPnpDataTransform,
 }
 
 DEFAULT_EMBODIMENT_TAG_MAPPING: dict[str, dict[str, int]] = {
@@ -174,12 +179,23 @@ def load_dreamzero_dataset_metadata(cfg: Any) -> DatasetMetadata:
         raise KeyError(
             f"embodiment_tag {tag!r} not found in {path} (keys: {list(blob.keys())})."
         )
-    return DatasetMetadata.model_validate(blob[tag])
+    # ``DatasetMetadata``'s top-level validator still uses the pre-patch enum schema.
+    # Validate nested fields explicitly, then construct with RLinf ``EmbodimentTag``.
+    from groot.vla.data.schema.lerobot import DatasetModalities, DatasetStatistics
+
+    raw = blob[tag]
+    return DatasetMetadata.model_construct(
+        statistics=DatasetStatistics.model_validate(raw["statistics"]),
+        modalities=DatasetModalities.model_validate(raw["modalities"]),
+        embodiment_tag=EmbodimentTag(str(tag)),
+    )
 
 
 def build_dreamzero_composed_transform(
     cfg: Any,
     tokenizer_path: str,
+    *,
+    transform_on_gpu: bool = False,
 ) -> ComposedModalityTransform:
     """Construct ``ComposedModalityTransform`` for the current ``embodiment_tag``."""
     tag = cfg.embodiment_tag
@@ -191,4 +207,5 @@ def build_dreamzero_composed_transform(
         tokenizer_path=tokenizer_path,
         cfg=cfg,
         embodiment_tag_mapping=embodiment_tag_mapping,
+        transform_on_gpu=transform_on_gpu,
     )

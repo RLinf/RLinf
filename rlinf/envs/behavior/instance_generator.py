@@ -233,13 +233,24 @@ def build_output_path(task, output_dir: Path, output_format: str) -> Path:
     return output_dir / f"{filename}{suffix}"
 
 
-def dump_tro_state(env, output_path: Path, overwrite: bool) -> None:
+def dump_tro_state(
+    env,
+    output_path: Path,
+    overwrite: bool,
+    capture_current_robot_pose: bool = False,
+) -> None:
     """Write the current task-relevant state to ``output_path``.
 
     Args:
         env: Active OmniGibson environment.
         output_path: Target ``*_template-tro_state.json`` file.
         overwrite: Whether existing files may be overwritten.
+        capture_current_robot_pose: When True, record the robot's *current*
+            base pose (so a subsequent ``load_activity_instance_tro_state``
+            restores where the robot is right now). When False (default),
+            preserve the presampled ``robot_poses`` metadata used to bootstrap
+            future resets. Offline sampling (``instance_generator.main``)
+            wants False; mid-rollout snapshots want True.
 
     Raises:
         FileExistsError: If ``output_path`` exists and ``overwrite`` is false.
@@ -251,12 +262,52 @@ def dump_tro_state(env, output_path: Path, overwrite: bool) -> None:
 
     from omnigibson.utils.config_utils import TorchEncoder
 
-    tro_state = {
-        bddl_name: bddl_inst.dump_state(serialized=False)
-        for bddl_name, bddl_inst in env.task.object_scope.items()
-        if bddl_inst.exists and getattr(bddl_inst, "synset", None) != "agent"
-    }
+    # ``dump_state`` returns root_link poses in world frame, but the loader
+    # interprets them as scene-relative when ``env.scene.idx != 0``. Rebase to
+    # scene frame here so dump/load are symmetric across scene indices.
+    rebase_to_scene = getattr(env.scene, "idx", 0) != 0
+    tro_state = {}
+    for bddl_name, bddl_inst in env.task.object_scope.items():
+        if not bddl_inst.exists or getattr(bddl_inst, "synset", None) == "agent":
+            continue
+        state = bddl_inst.dump_state(serialized=False)
+        if (
+            rebase_to_scene
+            and isinstance(state, dict)
+            and isinstance(state.get("root_link"), dict)
+            and "pos" in state["root_link"]
+            and "ori" in state["root_link"]
+        ):
+            rebased_root_link = dict(state["root_link"])
+            rebased_pos, rebased_ori = env.scene.convert_world_pose_to_scene_relative(
+                rebased_root_link["pos"],
+                rebased_root_link["ori"],
+            )
+            rebased_root_link["pos"] = rebased_pos
+            rebased_root_link["ori"] = rebased_ori
+            state = dict(state)
+            state["root_link"] = rebased_root_link
+        tro_state[bddl_name] = state
     robot_poses = env.scene.get_task_metadata(key="robot_poses")
+    if capture_current_robot_pose:
+        # Mid-rollout dump: overwrite the presampled pose entry with the
+        # robot's actual current scene-frame base pose, so a subsequent load
+        # restores where the robot is right now (otherwise the loader would
+        # teleport it back to the reset-time presampled pose).
+        try:
+            robot = env.task.get_agent(env)
+        except Exception:
+            robot = None
+        if robot is not None:
+            robot_name = getattr(robot, "model_name", getattr(robot, "model", None))
+            if robot_name is not None:
+                cur_pos, cur_ori = robot.get_position_orientation(frame="scene")
+                if robot_poses is None:
+                    robot_poses = {}
+                robot_poses = dict(robot_poses)
+                robot_poses[robot_name] = [
+                    {"position": cur_pos, "orientation": cur_ori}
+                ]
     if robot_poses is not None:
         tro_state["robot_poses"] = robot_poses
 

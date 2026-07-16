@@ -208,11 +208,15 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     Returns:
         (DictConfig): overrided OmniGibson config
     """
+    base_config_name = OmegaConf.select(
+        cfg, "base_config_name", default="r1pro_behavior"
+    )
+
     import omnigibson as og
     from omnigibson.macros import gm
 
     override_cfg = OmegaConf.select(cfg, "omni_config")
-    cfg_path = os.path.join(og.example_config_path, "r1pro_behavior.yaml")
+    cfg_path = os.path.join(og.example_config_path, f"{base_config_name}.yaml")
     with open(cfg_path, "r", encoding="utf-8") as f:
         omni_cfg = OmegaConf.create(yaml.load(f, Loader=yaml.FullLoader))
     # override env/render/camera/robots/task/scene config

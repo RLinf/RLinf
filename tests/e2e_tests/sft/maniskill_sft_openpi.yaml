@@ -1,6 +1,6 @@
 defaults:
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -29,7 +29,7 @@ runner:
   save_interval: 10
 
 data:
-  train_data_paths: "/workspace/dataset/data/sft-ci-data"
+  train_data_paths: "/workspace/dataset/data/sft-ci-data/physical-intelligence/maniskill/"
 
 actor:
   group_name: "ActorGroup"
@@ -58,7 +58,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

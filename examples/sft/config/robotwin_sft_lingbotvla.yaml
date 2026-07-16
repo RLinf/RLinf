@@ -1,6 +1,6 @@
   defaults:
     - model/lingbotvla@actor.model
-    - training_backend/fsdp@actor.fsdp_config
+    - hybrid_engines/fsdp@actor.fsdp_config
     - override hydra/job_logging: stdout
 
   hydra:
@@ -53,7 +53,6 @@
 
     optim:
       lr: 2.5e-5
-      value_lr: 1.55e-4
       adam_beta1: 0.9
       adam_beta2: 0.95
       adam_eps: 1.0e-08
@@ -66,7 +65,7 @@
       min_lr: 2.5e-6
 
 
-    # Override the default values in training_backend/fsdp
+    # Override the default values in hybrid_engines/fsdp
     fsdp_config:
       strategy: "fsdp"
       sharding_strategy: "no_shard"

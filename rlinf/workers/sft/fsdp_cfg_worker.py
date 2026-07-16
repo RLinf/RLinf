@@ -138,6 +138,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 
+        from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
         from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
         data_cfg = self.cfg.get("data", {})
@@ -166,12 +167,16 @@ class FSDPCfgWorker(FSDPSftWorker):
         datasets_with_weights = []
         for ds_config in datasets_config:
             data_path = ds_config["dataset_path"]
+            dataset_root = resolve_lerobot_dataset_root(data_path)
             episodes = ds_config.get("episodes")
             weight = ds_config.get("weight", 1.0)
 
-            dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(data_path)
+            dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(
+                data_path, root=dataset_root
+            )
             base_dataset = lerobot_dataset.LeRobotDataset(
                 data_path,
+                root=dataset_root,
                 episodes=episodes,
                 delta_timestamps={
                     key: [

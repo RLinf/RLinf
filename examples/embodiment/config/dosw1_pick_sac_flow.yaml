@@ -2,7 +2,7 @@ defaults:
   - env/dosw1_pick@env.train
   - env/dosw1_pick@env.eval
   - model/flow_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -71,9 +71,7 @@ algorithm:
 
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
 
-  rollout_epoch: 1
 
   reward_type: action_level
   logprob_type: action_level
@@ -115,23 +113,11 @@ algorithm:
   num_updates_per_step: 64
   target_update_freq: 1
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 14  # = action_dim (dual arm 14D)
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     keyboard_intervention_wrapper: True
     ignore_terminations: False
     total_num_envs: 1
@@ -154,6 +140,7 @@ env:
       enable_human_in_loop: True
 
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
 
 rollout:
@@ -166,7 +153,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -183,7 +170,7 @@ actor:
     model_type: "flow_policy"
     input_type: "mixed"  # only mixed input can be used in real world
 
-    model_path: "/path/to/model"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained"  # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
     state_dim: 14   # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper
     action_dim: 14  # DOS-W1: left 6 joints + 1 gripper + right 6 joints + 1 gripper

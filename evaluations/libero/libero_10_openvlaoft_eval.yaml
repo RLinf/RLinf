@@ -1,0 +1,72 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/openvla_oft@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_10_grpo_openvlaoft_eval"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 2
+    total_num_envs: 500
+    auto_reset: True
+    ignore_terminations: True
+    group_size: 1
+    max_episode_steps: 520 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 520
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    reset_gripper_open: False
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.6
+    temperature_eval: 1.6
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    model_path: "/path/to/model/Openvla-oft-SFT-libero10-traj1/"
+    model_type: "openvla_oft"
+    max_prompt_length: 128

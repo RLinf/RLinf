@@ -1,52 +1,94 @@
-Real-World Franka with ZED Cameras and Robotiq Gripper
-======================================================
+Using ZED + Robotiq with Franka
+===============================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robotiq_zed.jpeg
+   :align: center
+   :width: 80%
 
-This guide explains how to set up and use **Stereolabs ZED cameras** and a
-**Robotiq 2F-85/2F-140 gripper** with the Franka real-world environment in
-RLinf.  It extends the base :doc:`franka` documentation with
-hardware-specific installation, configuration, and data collection.
+   Franka setup with Stereolabs ZED cameras and a Robotiq 2F gripper for sensor-rich data collection.
 
-.. note::
+Extend the base Franka setup with Stereolabs ZED cameras and a Robotiq 2F gripper. You'll install the SDKs, wire serial devices, update YAML hardware fields, and collect data with the new sensors.
 
-   If you have not read the base Franka guide yet, please start with
-   :doc:`franka` first.  This page only covers the **additional** steps
-   required for ZED and Robotiq hardware.
+Overview
+--------
 
+Swap the default camera/gripper stack for a ZED + Robotiq deployment.
 
-Hardware Overview
------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-A typical ZED + Robotiq deployment uses **two nodes**:
+   .. grid-item-card:: Models
+      :text-align: center
+
+      Any Franka policy
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      Data collection · downstream RL/SFT
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      ZED + Robotiq collection
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Franka · ZED · Robotiq 2F
+
+| **You'll do:** install ZED SDK → configure Robotiq serial device → set camera serials → collect data.
+| **Prerequisites:** :doc:`franka` · ZED SDK 4.2.x · USB-RS485 adapter · Robotiq gripper.
+
+Tasks
+~~~~~
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 40 40
+   :widths: 24 24 24
 
-   * - Node
-     - Role
-     - Hardware
-   * - **GPU server** (node 0)
-     - Actor, rollout, env worker; camera capture
-     - NVIDIA GPU (e.g. RTX 4090), 1-3 ZED cameras
-   * - **NUC** (node 1)
-     - FrankaController, Robotiq gripper
-     - Franka arm, Robotiq 2F via USB-RS485
+   * - Task
+     - Config / entry point
+     - Description
+   * - Sensor setup
+     - ``realworld_collect_data_zed_robotiq``
+     - Capture ZED images and control the Robotiq gripper.
+   * - Data collection
+     - ``collect_data.sh realworld_collect_data_zed_robotiq``
+     - Collect SpaceMouse demonstrations with the hardware override.
+   * - Downstream training
+     - Franka real-world configs
+     - Reuse the collected data in SFT/RL configs.
 
-The GPU server runs the ZED cameras because the ZED SDK leverages GPU
-acceleration for depth and image processing.  The Robotiq gripper is
-connected to the NUC (or whichever machine is physically wired to the arm)
-via a USB-to-RS485 adapter.
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
 
-ZED Camera Installation
------------------------
+   * - Field
+     - Description
+   * - Observation
+     - ZED RGB streams, usually captured on the GPU node.
+   * - Action
+     - Franka Cartesian action plus Robotiq gripper command.
+   * - Reward
+     - Same reward source as the downstream Franka task.
+   * - Prompt
+     - Inherited from the downstream Franka task config.
+
+Installation
+------------
+
+ZED Camera Setup
+~~~~~~~~~~~~~~~~
 
 The ZED SDK and its Python API must be installed on every node that captures
 images (typically the GPU server node).  Full details are available in the
 `official ZED Python API installation guide <https://www.stereolabs.com/docs/development/python/install>`_.
 
 1. Install the ZED SDK
-^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Download the SDK installer from the
 `Stereolabs download page <https://www.stereolabs.com/developers/release>`_
@@ -70,7 +112,7 @@ Follow the on-screen prompts.  When asked
 press **Y** to install the Python bindings automatically.
 
 2. Install the Python API (if not done during SDK setup)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If you skipped the Python API during SDK installation, or need to install
 it into a different virtual environment, run the bundled helper script:
@@ -101,7 +143,7 @@ Alternatively, you can install the wheel directly:
    activate it **before** running the install script.
 
 3. Verify camera detection
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 List connected ZED cameras and note their **serial numbers**:
 
@@ -116,8 +158,8 @@ List connected ZED cameras and note their **serial numbers**:
 Record the serial numbers; they will be used in the YAML configuration.
 
 
-Robotiq Gripper Installation
------------------------------
+Robotiq Gripper Setup
+~~~~~~~~~~~~~~~~~~~~~
 
 The Robotiq gripper communicates over **Modbus RTU** through a USB-to-RS485
 adapter.  The required Python dependency ``pymodbus`` is **automatically
@@ -131,7 +173,7 @@ The following steps set up the serial device on the node that controls the
 gripper (typically the NUC).
 
 1. Set up the serial device
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Plug the USB-to-RS485 adapter into the NUC.  Identify the serial device:
 
@@ -149,7 +191,7 @@ Grant permission:
    sudo usermod -aG dialout $USER
 
 3. Verify the gripper
-^^^^^^^^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~~~~~~~~
 
 A quick sanity check (run on the NUC):
 
@@ -166,8 +208,8 @@ A quick sanity check (run on the NUC):
    "
 
 
-YAML Configuration
--------------------
+Configuration File
+------------------
 
 The key differences from a standard (RealSense + Franka gripper) config are
 the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
@@ -233,8 +275,8 @@ the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
 
 .. _franka-zed-robotiq-data-collection:
 
-Data Collection
------------------
+Run It
+------
 
 A dedicated data collection script and configuration are provided for
 collecting teleoperation demonstrations using the ZED + Robotiq hardware
@@ -335,14 +377,13 @@ Key data-collection settings in the same file:
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_data_zed_robotiq.sh
+   bash examples/embodiment/collect_data.sh realworld_collect_data_zed_robotiq
 
-The script defaults to the ``realworld_collect_data_zed_robotiq`` config.
-You can pass a different config name as an argument:
+Pass another config name if you copy the ZED + Robotiq YAML:
 
 .. code-block:: bash
 
-   bash examples/embodiment/collect_data_zed_robotiq.sh <config_name>
+   bash examples/embodiment/collect_data.sh <config_name>
 
 During collection, use the SpaceMouse to teleoperate the robot.  The script
 will terminate after the configured number of episodes and save the data
@@ -372,7 +413,7 @@ The cluster setup procedure is the same as described in
    install dependencies first, then start Ray.
 
 For multi-node Ray setup details, refer to :doc:`franka` and
-:doc:`../../tutorials/multi_nodes/hetero`.
+:doc:`../../guides/hetero`.
 
 
 Troubleshooting

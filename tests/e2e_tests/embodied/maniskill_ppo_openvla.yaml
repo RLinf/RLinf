@@ -2,7 +2,7 @@ defaults:
   - env/manikill_put_carrot_on_plate_in_scene@env.train
   - env/manikill_put_carrot_on_plate_in_scene@env.eval
   - model/openvla@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -40,9 +40,6 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-
   adv_type: gae
   loss_type: actor_critic
   reward_type: chunk_level
@@ -61,29 +58,12 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.95
-
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   # Override the default values in env/manikill_put_carrot_on_plate_in_scene
   train:
+    rollout_epoch: 1
     total_num_envs: 8
     max_episode_steps: 2
     max_steps_per_rollout_epoch: 2
@@ -91,6 +71,7 @@ env:
     ignore_terminations: True
     use_fixed_reset_state_ids: False
   eval:
+    rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
     total_num_envs: 8
     max_episode_steps: 8
     auto_reset: True
@@ -103,6 +84,16 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+    max_new_tokens: 7
+
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False
@@ -149,7 +140,7 @@ actor:
     clip_grad: 1.0
     critic_warmup_steps: 5
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

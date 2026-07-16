@@ -1,63 +1,71 @@
 基于RL的仿真-真机协同训练
-=========================
+========================================
 
-本示例展示如何利用 RLinf 框架对 $\pi_{0.5}$ 模型进行仿真-真机协同训练 (Sim-Real Co-Training)。我们将提供一个仿真环境、对应的真机与仿真数据集，以及在该环境下执行协同训练的完整流程。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/rlinf-co/overview.png
+   :align: center
+   :width: 90%
 
-协同训练的核心在于：在利用 PPO 算法通过仿真环境反馈优化策略的同时，引入真机数据进行监督微调 (SFT)，以确保模型在提升任务成功率的同时不丢失真机物理世界的先验知识。
+   仿真-真机协同训练总览。
 
-详细技术细节请参考论文: `Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models`
+仿真-真机协同训练通过在仿真中用 PPO 与在真机数据上用 SFT 相结合来训练 π₀.₅ 策略：
+在提升仿真任务成功率的同时保留真机先验，避免仅靠仿真过拟合而损害 sim-to-real 迁移。技术细节详见
+:doc:`Beyond Imitation: RL-Based Sim-Real Co-Training for VLA Models <../../resources/publications/rlinf_co>`。
 
-模型在训练后应具备以下核心能力：
+概览
+----------------------------------------
 
-1. **视觉理解**：处理来自机器人相机的 RGB 图像。
-2. **语言理解**：理解自然语言的任务描述。
-3. **动作生成**：产生精确的机器人动作（位置、旋转、夹爪控制）。
-4. **协同进化**：在仿真中通过试错（RL）提升性能，同时通过真机数据（SFT）保持动作的物理合理性。
+在 ManiSkill 数字孪生上协同训练 π₀.₅——仿真中 PPO + 50 条真机轨迹 SFT（仿真成功率约 35%→50%）。
 
-环境
------------------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-**注意：本示例提供单一演示环境。在实际应用中，请根据您的物理环境自行采集数据并构建对应的仿真场景。**
+   .. grid-item-card:: 算法
+      :text-align: center
 
-**真实世界环境**
+      PPO + SFT (RL-Co)
 
-- **Environment**：真机设置
-  - Franka Emika Panda 机械臂
-  - Realsense 相机
-- **Task**：Pick and Place 任务，将桌面上的物品放置近碗中
-- **Observation**：第三人称相机的 RGB 图像（原始图像为 640×480）
-- **Language**：环境给出的原始任务描述
-- **Action Space**：7 维连续动作，包含：
-  - 三维位置控制（x, y, z）
-  - 三维旋转控制（roll, pitch, yaw）
-  - 夹爪控制（开/合）
+   .. grid-item-card:: 模型
+      :text-align: center
 
-**仿真世界环境**
+      π₀.₅
 
-使用 ManiSkill3 仿真器构建。
+   .. grid-item-card:: 环境 / 数据
+      :text-align: center
 
-- **数字孪生**：在布局、相机视角、任务逻辑、语言指令及动作空间上与真机严格对齐。
-- **动力学**：尽可能模拟真机的物理特性。
+      ManiSkill digital twin
 
-算法
------------------------
+   .. grid-item-card:: 训练
+      :text-align: center
 
-本示例采用 RL-Co 算法，结合了以下两部分：
+      两阶段 sim-real
 
-1. **PPO（Proximal Policy Optimization）**
-   - 使用 GAE（Generalized Advantage Estimation）进行优势估计
-   - 基于比率的策略裁剪
-   - 价值函数裁剪
-   - 熵正则化
+| **你将完成：** 安装 → 下载资产与 SFT 模型 → SFT（阶段一）→ 协同 RL 训练（阶段二）→ 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · ManiSkill 资产 · SFT 检查点与真机数据（见下文步骤）。
 
-2. **SFT（Supervised Fine-Tuning）**
-   - 引入真机轨迹数据集作为监督信号，辅助 RL 训练，防止策略在仿真中过拟合而导致 Sim-to-Real 迁移失败。
+设置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-依赖安装
------------------------
+本示例仅提供单一演示环境；用于自己的机器人时，请采集数据并构建匹配的仿真场景。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 86
+
+   * - 部分
+     - 说明
+   * - 任务
+     - 抓取放置——将桌上的物体放入碗中。
+   * - 真机
+     - Franka Emika Panda + RealSense；第三人称 RGB（640×480）；7 自由度动作（x, y, z, roll, pitch, yaw, 夹爪）。
+   * - 仿真
+     - 基于 ManiSkill3 的数字孪生，在布局、相机视角、任务逻辑、语言与动作空间上与真机对齐；动力学经过调校以逼近真实物理。
+
+
+安装
+----------------------------------------
 
 1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
@@ -67,7 +75,7 @@
    cd RLinf
 
 2. 安装依赖
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **选项 1：Docker 镜像**
 
@@ -80,9 +88,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
    # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
 
@@ -100,7 +108,7 @@
    source .venv/bin/activate
 
 Maniskill 资源下载
-~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 请先参考 :doc:`ManiSkill 示例 <maniskill>` 下载基础资源。随后下载本示例所需的特定资源：
 
@@ -111,8 +119,11 @@ Maniskill 资源下载
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/RLCo-maniskill-assets --include "custom_assets/*" --local-dir .
 
+运行
+----------------------------------------
+
 Stage I：SFT 预训练
------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 第一阶段旨在通过监督学习快速注入真机与仿真知识，为后续 RL 训练奠定基础。您可以选择 **自行训练** 或 **下载权重**。
 
@@ -130,7 +141,7 @@ Stage I：SFT 预训练
 
 2. **执行训练**：
 
-训练方法请参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 RLinf 文档中的 `监督训练微调 <https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html>`_ 章节。
+训练方法请参考 `OpenPi 官方代码 <https://github.com/Physical-Intelligence/openpi>`_ 或 RLinf 文档中的 :doc:`监督训练微调 <sft_openpi>` 章节。
 
 **方法 B：使用 SFT 预训练权重**
 
@@ -149,7 +160,7 @@ Stage I：SFT 预训练
    hf download RLinf/RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT --local-dir RLinf-Pi05-RLCo-PandaPutOnPlateInScene25DigitalTwin-V1-SFT
 
 Stage II：仿真-真机协同 RL 训练
----------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 本阶段在 PPO 训练循环中加入 SFT 损失，实现协同优化。
 
@@ -165,7 +176,7 @@ Stage II：仿真-真机协同 RL 训练
 
 **关键参数配置**
 
-我们提供 ``maniskill_ppo_co_training_openpi_pi05.yaml`` 配置文件，PPO 训练相关参数可参照 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`，另外需关注以下参数：
+我们提供 ``maniskill_ppo_co_training_openpi_pi05.yaml`` 配置文件。通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`；PPO 训练相关参数可参照 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`。另外需关注以下参数：
 
 **模型加载路径**
 
@@ -189,10 +200,10 @@ Stage II：仿真-真机协同 RL 训练
        model:
            openpi:
                config_name: "pi05_maniskill_sim_real_co_training"
-       
+
        # 开启真机数据协同训练
        enable_sft_co_train: True
-       
+
        # SFT Loss 权重系数 (beta)
        sft_loss_weight: 0.2
 
@@ -223,33 +234,26 @@ Stage II：仿真-真机协同 RL 训练
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_co_training_openpi_pi05
 
 可视化与结果
------------------------
+----------------------------------------
 
-1. TensorBoard 日志
-~~~~~~~~~~~~~~~~~~~~~
+**TensorBoard**
 
 .. code:: bash
 
-   # 启动 TensorBoard
    tensorboard --logdir ./logs --port 6006
 
-2. 关键指标说明
-~~~~~~~~~~~~~~~~~~~~
+**指标**
 
-RL 训练指标可以参考 :doc:`π0 和 π0.5 模型强化学习训练 <pi0>`。
+除标准指标外（见 :doc:`训练指标 <../../reference/metrics>`），协同训练还新增以下指标：
 
-除了常规 RL 指标外，请重点关注以下 Co-Training 专属指标：
+- ``train/ppo_loss``: PPO（RL）损失。
+- ``train/sft_loss``: 真机数据上的 SFT 损失。
+- ``actor/total_loss``: :math:`\mathcal{L}_{Total} = \mathcal{L}_{RL} + \beta \mathcal{L}_{SFT}`。
+- ``train/loss_ratio``: :math:`\frac{\beta \lvert \mathcal{L}_{SFT} \rvert}{\lvert \mathcal{L}_{RL} \rvert}`。若该值持续过大（如 :math:`> 10^5`），日志会触发警告，此时应降低 ``sft_loss_weight``。
 
-- ``train/ppo_loss``: PPO 策略梯度的损失部分 (RL Loss)。
-- ``train/sft_loss``: 真机数据的监督学习损失 (SFT Loss)。
-- ``actor/total_loss``: 总损失函数，即 :math:`\mathcal{L}_{Total} = \mathcal{L}_{RL} + \beta \mathcal{L}_{SFT}`。
-- ``train/loss_ratio``: 损失比率，计算公式为 :math:`\frac{\beta \lvert \mathcal{L}_{SFT} \rvert}{\lvert \mathcal{L}_{RL} \rvert}`。
-- **监控建议**: 该值用于衡量 SFT 是否过度主导更新。如果该值持续过大（如 :math:`> 10^5`），系统会触发警告，此时应降低 ``sft_loss_weight``。
+**示例结果**
 
-3. 实验结果示例
-~~~~~~~~~~~~~~~~~~~~
+- 加载 Stage I 权重后：仿真中零样本成功率约 35%。
+- 经过 100 步协同训练后：仿真成功率约 50%。
 
-- **初始性能**: 模型加载 Stage I 权重后，在仿真环境中的零样本成功率约为 35%。
-- **训练后性能**: 经过 100 步 Co-Training 训练后，仿真成功率提升至 50%。
-
-更多关于真机部署效果及详细消融实验，请参考论文：``Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models``
+更多关于真机部署效果及消融实验，请参考论文：*Beyond Imitation: Reinforcement Learning-Based Sim-Real Co-Training for VLA Models*。

@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import os
+import queue
+import threading
 from typing import Any, Optional
 
 import numpy as np
@@ -20,6 +23,9 @@ import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
+from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
+from rlinf.data.priority_store import PriorityStore
+from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.metric_utils import append_to_dict, compute_rollout_metrics
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
@@ -59,6 +65,115 @@ def flatten_rollout_batch_for_train(
 
 class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
     """Embodied FSDP actor worker for async PPO / decoupled actor-critic training."""
+
+    should_stop = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rollout_store_size = self.cfg.algorithm.get(
+            "rollout_store_size_per_rank", 1
+        )
+        self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
+
+    async def recv_rollout_trajectories(self, input_channel):
+        # drain channel
+        if getattr(self, "_recv_queue", None) is None:
+            self._recv_queue = queue.Queue()
+        if (
+            getattr(self, "_recv_rollout_thread", None) is None
+            or not self._recv_rollout_thread.is_alive()
+        ):
+            self._recv_rollout_thread = threading.Thread(
+                target=self._recv_rollout_thread_main,
+                args=(input_channel,),
+                daemon=True,
+            )
+            self._recv_rollout_thread.start()
+
+    def _recv_rollout_thread_main(self, input_channel):
+        while not self.should_stop:
+            trajectory: Trajectory = input_channel.get()
+            self.log_info(
+                f"recv trajectory versions.shape={trajectory.versions.shape} "
+                f"input_channel.qsize={input_channel.qsize()}"
+            )
+            if trajectory.versions.min() < self.version - self.cfg.algorithm.get(
+                "staleness_threshold", None
+            ):
+                continue
+            self._recv_queue.put(trajectory)
+
+    @Worker.timer("drain_received_trajectories")
+    def _drain_received_trajectories(self):
+        while True:
+            try:
+                traj: Trajectory = self._recv_queue.get_nowait()
+                self.log_info(
+                    f"drain traj versions.shape={traj.versions.shape} "
+                    f"versions.min={traj.versions.min()} version={self.version} "
+                    f"recv_queue.size={self._recv_queue.qsize()}"
+                )
+                if traj.versions.min() < self.version - self.cfg.algorithm.get(
+                    "staleness_threshold", None
+                ):
+                    continue
+                min_v = float(traj.versions.min().item())
+                mean_v = float(traj.versions.float().mean().item())
+                self.rollout_store.add((min_v, mean_v), traj)
+                self.log_info(f"rollout_store size={len(self.rollout_store)}")
+            except queue.Empty:
+                break
+
+    @Worker.timer("wait_for_rollout_store_ready")
+    async def _wait_for_rollout_store_ready(self):
+        while getattr(self, "_recv_queue", None) is None:
+            await asyncio.sleep(1)
+
+        on_policy_min_ratio = self.cfg.algorithm.get("on_policy_min_ratio", 0.0)
+        while True:
+            self._drain_received_trajectories()
+            with self.worker_timer("remove_below"):
+                self.rollout_store.remove_below(
+                    self.version - self.cfg.algorithm.get("staleness_threshold", None)
+                )
+            if len(self.rollout_store) >= self.rollout_store_size:
+                if on_policy_min_ratio <= 0.0:
+                    break
+                metrics_data = self.rollout_store.get_metric()
+                on_policy_ratio = metrics_data.get(int(self.version), {}).get(
+                    "ratio", 0.0
+                )
+                self.log_info(
+                    f"rollout store metrics={metrics_data} "
+                    f"on_policy_ratio={on_policy_ratio:.4f} "
+                    f"on_policy_min_ratio={on_policy_min_ratio}"
+                )
+                if on_policy_ratio >= on_policy_min_ratio:
+                    break
+            await asyncio.sleep(1)
+
+    @Worker.timer("construct_rollout_batch")
+    async def construct_rollout_batch(self, max_trajectories: int | None = None):
+        # from _recv_queue to rollout_batch
+        await self._wait_for_rollout_store_ready()
+        torch.distributed.barrier()
+
+        rollout_batch = self.rollout_store.topn(self.rollout_store_size)
+        version_metrics = self.rollout_store.get_metric()
+        self.log_info(f"rollout store version metrics={version_metrics}")
+
+        staleness_metrics: dict = {}
+        for version_val, stats in version_metrics.items():
+            if version_val == "discarded_unused":
+                staleness_metrics["discarded_unused_trajs"] = stats
+                continue
+            diff = int(self.version) - int(version_val)
+            staleness_metrics[f"data_staleness_{diff}/ratio"] = stats["ratio"]
+
+        self.rollout_batch = convert_trajectories_to_batch(rollout_batch)
+        self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+        self.log_info(f"staleness metrics={staleness_metrics}")
+        return staleness_metrics
 
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
@@ -124,12 +239,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                 SupportedModel.OPENVLA_OFT,
             ]:
                 model_kwargs["temperature"] = (
-                    self.cfg.algorithm.sampling_params.temperature_train
+                    self.cfg.rollout.sampling_params.temperature_train
                 )
-                model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-            elif (
-                SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.GR00T
-            ):
+                model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
+            elif SupportedModel(self.cfg.actor.model.model_type) in [
+                SupportedModel.GR00T,
+                SupportedModel.ABOT_M0,
+            ]:
                 model_kwargs["prev_logprobs"] = micro_batch["prev_logprobs"]
 
             out = self.model(
@@ -257,13 +373,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         SupportedModel.OPENVLA_OFT,
                     ]:
                         model_kwargs["temperature"] = (
-                            self.cfg.algorithm.sampling_params.temperature_train
+                            self.cfg.rollout.sampling_params.temperature_train
                         )
-                        model_kwargs["top_k"] = self.cfg.algorithm.sampling_params.top_k
-                    elif (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                        model_kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
+                    elif SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         model_kwargs["prev_logprobs"] = old_logprobs
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
@@ -278,10 +394,10 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                             **model_kwargs,
                         )
 
-                    if (
-                        SupportedModel(self.cfg.actor.model.model_type)
-                        == SupportedModel.GR00T
-                    ):
+                    if SupportedModel(self.cfg.actor.model.model_type) in [
+                        SupportedModel.GR00T,
+                        SupportedModel.ABOT_M0,
+                    ]:
                         old_logprobs = out["prev_logprobs"]
 
                     loss_kwargs = {
