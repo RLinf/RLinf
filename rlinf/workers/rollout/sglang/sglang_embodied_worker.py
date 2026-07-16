@@ -28,7 +28,8 @@ import tempfile
 from typing import Any, Literal, Optional
 
 import torch
-from omegaconf import DictConfig, open_dict as _open_dict
+from omegaconf import DictConfig
+from omegaconf import open_dict as _open_dict
 
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
@@ -44,7 +45,20 @@ class SGLangEmbodiedWorker(SGLangWorker):
         weight_reload="sync",
         config_rollout: Optional[DictConfig] = None,
     ):
-        super().__init__(config, placement, weight_reload, config_rollout)
+        rollout_cfg = config_rollout if config_rollout is not None else config.rollout
+        model_cfg = rollout_cfg.model
+        original_model_path = model_cfg.model_path
+        tokenizer_path = model_cfg.get("tokenizer_path", None)
+        if tokenizer_path:
+            with _open_dict(model_cfg):
+                model_cfg.model_path = tokenizer_path
+        try:
+            super().__init__(config, placement, weight_reload, config_rollout)
+        finally:
+            if tokenizer_path:
+                with _open_dict(model_cfg):
+                    model_cfg.model_path = original_model_path
+        self.cfg_rollout = self._cfg_rollout
         # Embodied action-policy path. model_type selects the action policy (see
         # rlinf/workers/rollout/sglang/action_policies); the policy turns env obs
         # into action chunks by calling the launched sglang serve.
@@ -76,11 +90,11 @@ class SGLangEmbodiedWorker(SGLangWorker):
         total_eval = int(eval_env_cfg.total_num_envs) if eval_env_cfg else 0
         self.total_num_eval_envs = total_eval
         self.eval_batch_size = (
-            total_eval // self.num_pipeline_stages if self.num_pipeline_stages else total_eval
+            total_eval // self.num_pipeline_stages
+            if self.num_pipeline_stages
+            else total_eval
         )
-        self.eval_rollout_epoch = (
-            int(eval_env_cfg.rollout_epoch) if eval_env_cfg else 1
-        )
+        self.eval_rollout_epoch = int(eval_env_cfg.rollout_epoch) if eval_env_cfg else 1
         if eval_env_cfg is not None:
             self.n_eval_chunk_steps = int(
                 eval_env_cfg.max_steps_per_rollout_epoch
@@ -95,7 +109,6 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # ``rollout.sglang``), then load the model's registered action policy.
         # No worker-owned HTTP server (the eval loop is channel-based); eval
         # attrs are already set in __init__.
-        self._init_sglang_server()
         policy_cls = None
         if self.model_type:
             from rlinf.workers.rollout.sglang.action_policies import (
@@ -111,15 +124,14 @@ class SGLangEmbodiedWorker(SGLangWorker):
                 f"no action policy registered for model_type "
                 f"'{self.model_type}'; cannot run the embodied sglang path"
             )
-        self.action_policy = policy_cls(
-            self._cfg, self.sglang_server_url, self._rank
-        )
+        self._init_sglang_server(policy_cls)
+        self.action_policy = policy_cls(self._cfg, self.sglang_server_url, self._rank)
 
     def shutdown(self):
         """Kill the spawned sglang serve subprocess."""
         self.shutdown_sglang_server()
 
-    def _init_sglang_server(self) -> None:
+    def _init_sglang_server(self, policy_cls: type | None = None) -> None:
         """Spawn a ``sglang serve`` subprocess and wait for ``/health``.
 
         Driven by ``rollout.sglang`` (model-agnostic). CUDA_VISIBLE_DEVICES is
@@ -160,19 +172,28 @@ class SGLangEmbodiedWorker(SGLangWorker):
 
         # Always spawn a ``sglang serve`` subprocess (internal-only).
         host = str(getattr(sglang_cfg, "host", "127.0.0.1"))
-        port = int(getattr(sglang_cfg, "port_base", 30010))
-        master_port = int(getattr(sglang_cfg, "master_port_base", 30100))
+        port_stride = int(getattr(sglang_cfg, "port_stride", 100))
+        port = int(getattr(sglang_cfg, "port_base", 30010)) + self._rank * port_stride
+        master_port = (
+            int(getattr(sglang_cfg, "master_port_base", 30100))
+            + self._rank * port_stride
+        )
         sglang_bin = str(getattr(sglang_cfg, "sglang_bin", "sglang"))
         if not shutil.which(sglang_bin):
             # fall back to `python -m sglang` if the console script is absent
             sglang_bin = "sglang"
 
         cmd = [
-            sglang_bin, "serve",
-            "--model-path", model_path,
-            "--host", host,
-            "--port", str(port),
-            "--master-port", str(master_port),
+            sglang_bin,
+            "serve",
+            "--model-path",
+            model_path,
+            "--host",
+            host,
+            "--port",
+            str(port),
+            "--master-port",
+            str(master_port),
         ]
         if (v := int(getattr(sglang_cfg, "num_gpus", 0) or 0)) > 0:
             # GPUs the serve occupies
@@ -188,11 +209,23 @@ class SGLangEmbodiedWorker(SGLangWorker):
         if (v := int(getattr(sglang_cfg, "data_parallel_size", 0) or 0)) > 0:
             cmd += ["--data-parallel-size", str(v)]
         if isinstance(getattr(sglang_cfg, "enable_cfg_parallel", None), bool):
-            cmd += ["--enable-cfg-parallel",
-                    "true" if getattr(sglang_cfg, "enable_cfg_parallel") else "false"]
+            cmd += [
+                "--enable-cfg-parallel",
+                "true" if getattr(sglang_cfg, "enable_cfg_parallel") else "false",
+            ]
         # --- performance preset ---
-        if (v := getattr(sglang_cfg, "performance_mode", None)):
+        if v := getattr(sglang_cfg, "performance_mode", None):
             cmd += ["--performance-mode", str(v)]
+        build_policy_serve_args = getattr(policy_cls, "build_sglang_serve_args", None)
+        if callable(build_policy_serve_args):
+            cmd += build_policy_serve_args(
+                model_path=str(model_path),
+                sglang_cfg=sglang_cfg,
+                model_cfg=model_cfg,
+                tmpdir=self.obs_tmpdir,
+                rank=self._rank,
+                eval_batch_size=self.eval_batch_size,
+            )
         env = os.environ.copy()
         env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
         self.sglang_log_path = os.path.join(
@@ -298,9 +331,7 @@ class SGLangEmbodiedWorker(SGLangWorker):
     def _merge_obs_batches(obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
         if not obs_batches:
             return {}
-        obs_dicts = [
-            b["obs"] if "obs" in b else b for b in obs_batches
-        ]
+        obs_dicts = [b["obs"] if "obs" in b else b for b in obs_batches]
         merged: dict[str, Any] = {}
         for key in obs_dicts[0].keys():
             values = [d[key] for d in obs_dicts]
@@ -357,7 +388,11 @@ class SGLangEmbodiedWorker(SGLangWorker):
                         merge_fn=self._merge_obs_batches,
                         infer_batch_size_fn=self._infer_env_batch_size,
                     ).async_wait()
-                    actions, _ = self.predict(env_output["obs"], mode="eval")
+                    obs = {
+                        **env_output["obs"],
+                        "_rlinf_stage_id": stage_id,
+                    }
+                    actions, _ = self.predict(obs, mode="eval")
                     if isinstance(actions, torch.Tensor):
                         actions = actions.detach().cpu().contiguous()
                     self.send_to(

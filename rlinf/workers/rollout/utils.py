@@ -335,6 +335,12 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
         return VLLMWorker
     elif rollout_backend == "sglang":
         serving_mode = cfg.rollout.sglang.get("serving_mode", None)
+        if serving_mode == "embodied":
+            from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+                SGLangEmbodiedWorker,
+            )
+
+            return SGLangEmbodiedWorker
         if serving_mode is None:
             from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
