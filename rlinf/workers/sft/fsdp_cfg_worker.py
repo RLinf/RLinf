@@ -337,6 +337,40 @@ class FSDPCfgWorker(FSDPSftWorker):
             persistent_workers=num_workers > 0,
         )
 
+    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
+        """Save the CFG training state and its OpenPI normalization stats.
+
+        Args:
+            save_path: Actor checkpoint directory, for example
+                ``<checkpoint_root>/actor``.
+            step: Current training step.
+
+        Raises:
+            ValueError: If the data configuration does not provide an asset ID or
+                normalization stats.
+        """
+        asset_id = self.data_config.asset_id
+        norm_stats = self.data_config.norm_stats
+        if not asset_id:
+            raise ValueError(
+                "Cannot save a CFG checkpoint without data_config.asset_id."
+            )
+        if norm_stats is None:
+            raise ValueError(
+                "Cannot save a CFG checkpoint without data_config.norm_stats."
+            )
+
+        super().save_checkpoint(save_path, step)
+
+        if self._rank == 0:
+            from openpi.shared import normalize
+
+            norm_stats_dir = Path(save_path).parent / asset_id
+            normalize.save(norm_stats_dir, norm_stats)
+            self.log_info(f"Saved norm stats to {norm_stats_dir / 'norm_stats.json'}")
+
+        torch.distributed.barrier()
+
     def run_training(self):
         """Run one training step with advantage-based CFG guidance."""
         with self.worker_timer():

@@ -656,6 +656,21 @@ The configuration file is located at ``examples/offline_rl/config/cfg_rl_openpi.
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
 
+**Checkpoint Output**
+
+Every periodic, final, and best-model CFG checkpoint includes the OpenPI
+normalization stats used for training:
+
+.. code:: text
+
+   <checkpoint_root>/
+   ├── actor/model_state_dict/full_weights.pt
+   └── <asset_id>/norm_stats.json
+
+Set ``actor.model.model_path`` or ``rollout.model.model_path`` to
+``<checkpoint_root>``. The OpenPI loader reads the weights from ``actor/`` and
+the matching normalization stats from ``<asset_id>/norm_stats.json``.
+
 **Key Metrics**
 
 - ``train/actor/loss``: Policy training loss

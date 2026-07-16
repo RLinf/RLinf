@@ -1,8 +1,29 @@
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from omegaconf import OmegaConf
+
+
+def test_sandwich_cfg_uses_checkpoint_action_space():
+    """Sandwich CFG must match the source checkpoint's action representation."""
+    from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
+
+    config = get_openpi_config("pi05_sandwich_new_all")
+
+    assert config.model.action_horizon == 16
+    assert config.model.discrete_state_input is True
+    assert config.data.adapt_to_pi is False
+    assert config.data.extra_delta_transform is True
+    assert config.data.assets.asset_id == "pi05_sandwich_new_all"
+
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg = OmegaConf.load(
+        repo_root / "examples/offline_rl/config/aloha_sandwich_cfg_rl_openpi.yaml"
+    )
+    assert cfg.actor.model.openpi.config_name == "pi05_sandwich_new_all"
 
 
 class _FakeTransformGroup:
@@ -98,7 +119,9 @@ def test_cfg_dataloader_forwards_actor_openpi_data(monkeypatch, tmp_path):
     lerobot_dataset_module.LeRobotDataset = _FakeLeRobotDataset
     monkeypatch.setitem(sys.modules, "lerobot", types.ModuleType("lerobot"))
     monkeypatch.setitem(sys.modules, "lerobot.common", types.ModuleType("common"))
-    monkeypatch.setitem(sys.modules, "lerobot.common.datasets", types.ModuleType("datasets"))
+    monkeypatch.setitem(
+        sys.modules, "lerobot.common.datasets", types.ModuleType("datasets")
+    )
     monkeypatch.setitem(
         sys.modules,
         "lerobot.common.datasets.lerobot_dataset",
@@ -205,3 +228,130 @@ def test_cfg_dataloader_forwards_actor_openpi_data(monkeypatch, tmp_path):
         "repo_id": str(tmp_path / "sandwich_lerobot"),
         "data_kwargs": {"repo_id": "pi05_sandwich_new_all"},
     }
+
+
+def _make_cfg_checkpoint_worker(
+    worker_cls,
+    *,
+    asset_id="pi05_sandwich_new_all",
+    norm_stats=None,
+    rank=0,
+):
+    if norm_stats is None:
+        norm_stats = {
+            "state": {
+                "mean": [0.0],
+                "std": [1.0],
+                "q01": [-1.0],
+                "q99": [1.0],
+            }
+        }
+
+    worker = object.__new__(worker_cls)
+    worker.data_config = SimpleNamespace(
+        asset_id=asset_id,
+        norm_stats=norm_stats,
+    )
+    worker._rank = rank
+    worker.log_info = lambda message: None
+    return worker
+
+
+def test_cfg_checkpoint_saves_norm_stats_at_checkpoint_root(monkeypatch, tmp_path):
+    """Rank zero saves loadable OpenPI stats beside the actor directory."""
+    from openpi.shared import normalize
+
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.workers.sft import fsdp_cfg_worker
+    from rlinf.workers.sft.fsdp_cfg_worker import FSDPCfgWorker
+
+    parent_calls = []
+    barrier_calls = []
+    monkeypatch.setattr(
+        FSDPModelManager,
+        "save_checkpoint",
+        lambda self, save_path, step=0: parent_calls.append((save_path, step)),
+    )
+    monkeypatch.setattr(
+        fsdp_cfg_worker.torch.distributed,
+        "barrier",
+        lambda: barrier_calls.append(True),
+    )
+
+    checkpoint_root = tmp_path / "global_step_5000"
+    actor_path = checkpoint_root / "actor"
+    worker = _make_cfg_checkpoint_worker(FSDPCfgWorker)
+
+    worker.save_checkpoint(str(actor_path), step=5000)
+
+    assert parent_calls == [(str(actor_path), 5000)]
+    assert barrier_calls == [True]
+    saved_stats = normalize.load(checkpoint_root / "pi05_sandwich_new_all")
+    assert saved_stats["state"].mean.tolist() == [0.0]
+    assert saved_stats["state"].std.tolist() == [1.0]
+
+
+def test_cfg_checkpoint_only_rank_zero_saves_norm_stats(monkeypatch, tmp_path):
+    """Nonzero ranks participate in saving without writing duplicate assets."""
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.workers.sft import fsdp_cfg_worker
+    from rlinf.workers.sft.fsdp_cfg_worker import FSDPCfgWorker
+
+    parent_calls = []
+    barrier_calls = []
+    monkeypatch.setattr(
+        FSDPModelManager,
+        "save_checkpoint",
+        lambda self, save_path, step=0: parent_calls.append((save_path, step)),
+    )
+    monkeypatch.setattr(
+        fsdp_cfg_worker.torch.distributed,
+        "barrier",
+        lambda: barrier_calls.append(True),
+    )
+
+    checkpoint_root = tmp_path / "global_step_5000"
+    actor_path = checkpoint_root / "actor"
+    worker = _make_cfg_checkpoint_worker(FSDPCfgWorker, rank=1)
+
+    worker.save_checkpoint(str(actor_path), step=5000)
+
+    assert parent_calls == [(str(actor_path), 5000)]
+    assert barrier_calls == [True]
+    assert not (checkpoint_root / "pi05_sandwich_new_all").exists()
+
+
+@pytest.mark.parametrize(
+    ("asset_id", "norm_stats", "match"),
+    [
+        (None, {}, "data_config.asset_id"),
+        ("pi05_sandwich_new_all", None, "data_config.norm_stats"),
+    ],
+)
+def test_cfg_checkpoint_rejects_missing_norm_stats_metadata(
+    monkeypatch,
+    tmp_path,
+    asset_id,
+    norm_stats,
+    match,
+):
+    """CFG checkpoint saving fails before writing incomplete artifacts."""
+    from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+    from rlinf.workers.sft.fsdp_cfg_worker import FSDPCfgWorker
+
+    parent_calls = []
+    monkeypatch.setattr(
+        FSDPModelManager,
+        "save_checkpoint",
+        lambda self, save_path, step=0: parent_calls.append((save_path, step)),
+    )
+    worker = _make_cfg_checkpoint_worker(
+        FSDPCfgWorker,
+        asset_id=asset_id,
+        norm_stats=norm_stats,
+    )
+    if norm_stats is None:
+        worker.data_config.norm_stats = None
+
+    with pytest.raises(ValueError, match=match):
+        worker.save_checkpoint(str(tmp_path / "global_step_5000" / "actor"), 5000)

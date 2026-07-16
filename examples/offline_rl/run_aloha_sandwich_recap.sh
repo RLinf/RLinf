@@ -18,6 +18,7 @@ STEP_DIR="${SCRIPT_DIR}/aloha_sandwich_recap"
 source "${STEP_DIR}/common.sh"
 
 log_pipeline_header
+require_policy_checkpoint
 
 bash "${STEP_DIR}/01_convert_dataset.sh"
 bash "${STEP_DIR}/02_compute_returns.sh"

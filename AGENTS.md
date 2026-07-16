@@ -138,3 +138,74 @@ Google Python style; Ruff for lint/format; docstrings and type hints on public A
 - Tutorials: [placement / cluster / YAML](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/index.html), [hybrid / disaggregated](https://rlinf.readthedocs.io/en/latest/rst_source/concepts/execution_modes.html), [heterogeneous cluster](https://rlinf.readthedocs.io/en/latest/rst_source/guides/hetero.html), [extend (new env/model)](https://rlinf.readthedocs.io/en/latest/rst_source/extending/overview.html), [RL algorithms](https://rlinf.readthedocs.io/en/latest/rst_source/reference/index.html), [logger (metrics)](https://rlinf.readthedocs.io/en/latest/rst_source/guides/logger.html), [checkpoint resume](https://rlinf.readthedocs.io/en/latest/rst_source/guides/resume.html)
 - Evaluation: [Evaluation](https://rlinf.readthedocs.io/en/latest/rst_source/evaluations/index.html) · [LLMEvalKit](https://github.com/RLinf/LLMEvalKit)
 - [APIs](https://rlinf.readthedocs.io/en/latest/rst_source/reference/api/index.html) (actor, channel, cluster, placement, worker, env, data, …) · [FAQ](https://rlinf.readthedocs.io/en/latest/rst_source/resources/faq.html)
+
+---
+
+## ALOHA sandwich RECAP curve plotting
+
+When asked to plot value, advantage, or CFG training curves for an ALOHA
+sandwich RECAP run, use the persisted scripts under
+`examples/offline_rl/analysis/`. Prefer the all-in-one entry point:
+
+```bash
+.venv/bin/python examples/offline_rl/analysis/plot_aloha_sandwich_recap_run.py \
+  logs/aloha_sandwich_recap/<run-id>
+```
+
+The default ALOHA raw-data directory, LeRobot dataset directory, and advantage
+tag are defined in `plot_aloha_sandwich_value_curves.py`. Override them with
+`--raw-dir`, `--dataset-dir`, `--advantage-tag`, or `--advantages-path` when a
+run used different inputs. The value and advantage data come from the external
+`meta/advantages_<tag>.parquet` sidecar, not from the run directory, so verify
+the tag or pass `--advantages-path` if later runs may have replaced the sidecar.
+The positive threshold is read from `meta/mixture_config.yaml`; `--threshold`
+overrides it.
+
+The all-in-one command writes value and advantage artifacts to
+`<run-dir>/value_advantage_visualizations/` and CFG artifacts to
+`<run-dir>/cfg_rl/`. Important outputs are:
+
+- `value_curves_by_category.png` and `value_curves_category_means.png`
+- `advantage_curves_by_category.png`,
+  `advantage_curves_category_means.png`, and `advantage_distribution.png`
+- `cfg_rl_loss_curves.png` and `cfg_rl_training_curves.png`
+- CSV/JSON summaries beside the corresponding plots
+
+Individual entry points are also available:
+
+```bash
+.venv/bin/python examples/offline_rl/analysis/plot_aloha_sandwich_value_curves.py \
+  --output-dir <output-dir>
+
+.venv/bin/python examples/offline_rl/analysis/plot_aloha_sandwich_advantage_curves.py \
+  --output-dir <output-dir>
+
+.venv/bin/python examples/offline_rl/analysis/plot_cfg_rl_training_curves.py \
+  --log-dir <run-dir>/cfg_rl
+```
+
+The aggregate advantage script intentionally reads parquet and HITL metadata
+directly; do not substitute the video-oriented
+`visualize_advantage_dataset.py` for this task. That script decodes every video
+frame and can hit LeRobot v2.1/v3.0 API incompatibilities. A CFG run that fails
+while writing its final checkpoint can still have complete TensorBoard scalars;
+plot the available events and report the checkpoint failure separately.
+
+### Per-episode value/advantage plots with HITL spans
+
+To reproduce `per_episode_value_advantage/`, run:
+
+```bash
+.venv/bin/python \
+  examples/offline_rl/analysis/plot_aloha_sandwich_per_episode_curves.py \
+  --advantages-path <run-dir>/value_advantage_visualizations/value_curves_frame_values.parquet \
+  --output-dir <run-dir>/value_advantage_visualizations/per_episode_value_advantage
+```
+
+The script writes one 1920x800 two-panel PNG per episode plus CSV/JSON
+summaries. The upper panel is `value_current`, the lower panel is
+`advantage_continuous`, and every half-open human-intervention interval
+`[start, end)` is shaded on both panels. By default all episodes are plotted to
+match the existing reference directory; pass `--hitl-only` to emit only
+episodes containing intervention intervals. Prefer the run-local
+`value_curves_frame_values.parquet` snapshot when it exists.

@@ -643,6 +643,21 @@ Step 4：CFG Training
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
 
+**Checkpoint 产物**
+
+每个周期、最终和最佳 CFG checkpoint 都会包含训练时使用的 OpenPI
+归一化统计：
+
+.. code:: text
+
+   <checkpoint_root>/
+   ├── actor/model_state_dict/full_weights.pt
+   └── <asset_id>/norm_stats.json
+
+将 ``actor.model.model_path`` 或 ``rollout.model.model_path`` 设置为
+``<checkpoint_root>``。OpenPI loader 会从 ``actor/`` 读取权重，并从
+``<asset_id>/norm_stats.json`` 读取匹配的归一化统计。
+
 **关键监控指标**
 
 - ``train/actor/loss``：策略训练损失
