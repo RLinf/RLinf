@@ -98,13 +98,11 @@ jobs:
               - 'rlinf/runners/*embodied*.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
-              - 'examples/embodiment/config/*.yaml'
               - 'examples/embodiment/config/*/**'
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/evaluations/**'
               - 'evaluations/**'
-              - 'toolkits/robocasa365_check/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             toolkits_no_ci_filter: &toolkits_no_ci
               - 'toolkits/standalone_eval_scripts/**'
