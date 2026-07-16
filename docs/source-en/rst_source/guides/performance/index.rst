@@ -22,6 +22,8 @@ efficiency becomes the bottleneck.
      - Train with LoRA adapters.
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
      - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
+   * - :doc:`Real-World Simulator <real_simulator>`
+     - Emulate observation latency and network conditions in simulation.
 
 .. toctree::
    :hidden:
@@ -32,3 +34,4 @@ efficiency becomes the bottleneck.
    5D Parallelism <../5D>
    LoRA <../lora>
    Env Decoupled Mode <../env_decoupled_mode>
+   Real-World Simulator <real_simulator>
