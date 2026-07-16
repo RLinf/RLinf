@@ -1,0 +1,104 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - model/dreamzero_5b@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_spatial_eval_dreamzero_sglang"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    # LIBERO-Spatial: 10 tasks x 50 trials = 500 init states. With total_num_envs parallel envs,
+    # set max_steps_per_rollout_epoch to ceil(500/total_num_envs) * max_episode_steps so auto_reset
+    # cycles through the full suite within one env.eval.rollout_epoch (see vla-eval.rst).
+    total_num_envs: 128
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 1920  # 4 * max_episode_steps -> ~512 trajectories
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    is_eval: True
+
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+
+  group_name: "RolloutGroup"
+  rollout_backend: "sglang"
+  enable_offload: False
+  pipeline_stage_num: 1
+  return_logprobs: false
+  sampling_params:
+    do_sample: false
+    max_new_tokens: 1
+
+  sglang:
+    serving_mode: "embodied"
+    spawn_timeout: 900
+    http_timeout_s: 600
+    http_max_retries: 5
+    http_retry_backoff_s: 1.0
+    http_payload_format: "msgpack"
+    attention_backend: "TORCH_SDPA"
+    compile_components: true
+    num_gpus: 1
+    tp_size: 1
+    sp_size: 1
+    cfg_parallel_degree: 1
+    dit_cpu_offload: false
+    cfg_scale: 5.0
+    num_inference_steps: 16
+    seed: 1140
+    debug_sessions: false
+    debug_batch: false
+
+  model:
+    model_type: "dreamzero"
+    precision: bf16
+    model_path: /path/to/dreamzero_checkpoint
+    tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
+    # Dataset-generated metadata.json for normalisation statistics.
+    # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
+    #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
+    # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
+    metadata_json_path: /path/to/metadata.json
+
+    embodiment_tag: "libero_sim"
+
+    is_lora: False
+    action_horizon: 16
+    num_action_chunks: 16
+    num_action_per_block: 16
+    target_video_height: 160
+    target_video_width: 320

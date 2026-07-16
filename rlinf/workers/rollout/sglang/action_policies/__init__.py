@@ -28,6 +28,8 @@ A non-default model reuses the whole embodied design by:
      block is needed.
 """
 
+# Register built-in policies (import for its side effect).
+from rlinf.workers.rollout.sglang.action_policies import dreamzero  # noqa: F401,E401
 from rlinf.workers.rollout.sglang.action_policies.base import (
     EmbodiedActionPolicy,
 )
@@ -35,9 +37,6 @@ from rlinf.workers.rollout.sglang.action_policies.registry import (
     get_action_policy_cls,
     register_action_policy,
 )
-
-# Register built-in policies (import for its side effect).
-from rlinf.workers.rollout.sglang.action_policies import cosmos3  # noqa: F401,E401
 
 __all__ = [
     "EmbodiedActionPolicy",
