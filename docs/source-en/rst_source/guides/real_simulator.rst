@@ -5,15 +5,15 @@ Add realistic observation latency and network conditions to your embodied
 training without leaving simulation.
 
 RLinf provides two independent modules — ``delay_sampler`` and
-``net_emulation`` — each controlled by a configuration block in your YAML.
-Both are **disabled by default**: omit the corresponding block and your
+``net_emulation`` — each controlled by configuration parameters in your YAML.
+Both are **disabled by default**: omit the corresponding parameters and your
 workflow runs unchanged.
 
 
 Observation Delay (delay_sampler)
 ---------------------------------
 
-Emulate per-environment sensor latency by inserting a configurable sleep
+Emulate per-environment sensor latency by inserting a configurable delay wait
 before each observation leaves the Env Worker.
 
 Use this when you need to test how variable observation timing affects
@@ -159,3 +159,10 @@ Full worked example:
 .. code-block:: text
 
    examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml
+
+
+See also
+
+- :doc:`RoboTwin <../examples/embodied/robotwin>` — RoboTwin environment setup and configuration.
+- :doc:`DAgger <../examples/embodied/dagger>` — DAgger training with expert policy.
+- :doc:`Env Decoupled Mode <env_decoupled_mode>` — required by ``delay_sampler``.

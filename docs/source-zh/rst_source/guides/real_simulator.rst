@@ -4,13 +4,13 @@
 在仿真训练中加入真实的观测延迟和网络条件，无需部署到实际硬件。
 
 RLinf 提供两个独立模块——``delay_sampler`` 和 ``net_emulation``——各自由
-YAML 中的配置块控制。两者**默认关闭**：不配置对应块时，训练流程不受影响。
+YAML 中的对应参数控制。两者**默认关闭**：不配置对应参数时，训练流程不受影响。
 
 
 观测延迟仿真 (delay_sampler)
 ----------------------------
 
-在每条观测数据离开 Env Worker 之前插入可配置的 sleep，模拟每个真机的
+在每条观测数据离开 Env Worker 之前插入可配置的延迟等待，模拟每个真机的
 传感器延迟。
 
 适用场景：测试可变观测时序对策略训练的影响，或为真实世界部署准备策略时，
@@ -150,3 +150,10 @@ Rollout Worker 部署在不同集群或云区域时。
 .. code-block:: text
 
    examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml
+
+
+参考：
+  
+  - :doc:`RoboTwin <../examples/embodied/robotwin>` — RoboTwin 环境设置与配置。
+  - :doc:`DAgger <../examples/embodied/dagger>` — 基于专家策略的 DAgger 训练。
+  - :doc:`Env 解耦模式 <env_decoupled_mode>` — ``delay_sampler`` 的前置条件。

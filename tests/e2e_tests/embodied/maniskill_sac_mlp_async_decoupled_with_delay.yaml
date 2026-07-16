@@ -39,18 +39,21 @@ net_emulation:
 
 runner:
   task_type: embodied
-  enable_decoupled_mode: true
+  # When decoupled mode is enabled, the communication mechanism between the env
+  # worker and the rollout worker changes. The rollout and env workers are fully
+  # decoupled, removing the static mapping.
+  enable_decoupled_mode: True
   logger:
     log_path: /workspace/results/maniskill_sac_mlp_async_decoupled_with_delay
     project_name: rlinf
     experiment_name: "ci-test-real-sim-delay"
-    logger_backends: ["tensorboard"]
+    logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 5
   max_steps: -1
 
   only_eval: False
-  val_check_interval: -1
+  val_check_interval: 1
   save_interval: -1
 
 algorithm:
@@ -98,7 +101,7 @@ env:
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
-    max_episode_steps: 50
+    max_episode_steps: 50 # max episode steps for truncation
     max_steps_per_rollout_epoch: 50
 
   eval:
@@ -130,6 +133,7 @@ rollout:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
+
   micro_batch_size: 1024
   global_batch_size: 1024
   seed: 1234
@@ -147,7 +151,7 @@ actor:
 
   optim:
     clip_grad: 10.0
-    lr: 1e-3
+    lr: 3e-4
     lr_scheduler: torch_constant
 
   critic_optim:
@@ -155,6 +159,7 @@ actor:
     lr: 3e-4
     lr_scheduler: torch_constant
 
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
