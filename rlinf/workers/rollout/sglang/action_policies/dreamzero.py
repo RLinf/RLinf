@@ -478,7 +478,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
                 getattr(sglang_cfg, "compile_components", True)
             ),
             "dreamzero_sequence_parallel_size": int(
-                getattr(sglang_cfg, "sp_degree", getattr(sglang_cfg, "sp_size", 1)) or 1
+                getattr(sglang_cfg, "sp_size", 1) or 1
             ),
             "dreamzero_max_sessions": int(
                 getattr(sglang_cfg, "max_sessions", eval_batch_size) or eval_batch_size

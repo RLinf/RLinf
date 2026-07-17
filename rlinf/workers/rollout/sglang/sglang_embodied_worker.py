@@ -195,6 +195,12 @@ class SGLangEmbodiedWorker(SGLangWorker):
             "--master-port",
             str(master_port),
         ]
+        if v := getattr(sglang_cfg, "backend", None):
+            cmd += ["--backend", str(v)]
+        if v := getattr(sglang_cfg, "pipeline_class_name", None):
+            cmd += ["--pipeline", str(v)]
+        if v := getattr(sglang_cfg, "pipeline_config_path", None):
+            cmd += ["--pipeline-config-path", str(v)]
         if (v := int(getattr(sglang_cfg, "num_gpus", 0) or 0)) > 0:
             # GPUs the serve occupies
             cmd += ["--num-gpus", str(v)]
@@ -212,6 +218,20 @@ class SGLangEmbodiedWorker(SGLangWorker):
             cmd += [
                 "--enable-cfg-parallel",
                 "true" if getattr(sglang_cfg, "enable_cfg_parallel") else "false",
+            ]
+        if (v := int(getattr(sglang_cfg, "cfg_parallel_degree", 0) or 0)) > 0:
+            cmd += ["--cfg-parallel-size", str(v)]
+        if v := getattr(sglang_cfg, "attention_backend", None):
+            cmd += ["--attention-backend", str(v)]
+        if (v := getattr(sglang_cfg, "scheduler_port", None)) is not None:
+            cmd += [
+                "--scheduler-port",
+                str(int(v) + self._rank * int(getattr(sglang_cfg, "port_stride", 100))),
+            ]
+        if isinstance(getattr(sglang_cfg, "dit_cpu_offload", None), bool):
+            cmd += [
+                "--dit-cpu-offload",
+                "true" if getattr(sglang_cfg, "dit_cpu_offload") else "false",
             ]
         # --- performance preset ---
         if v := getattr(sglang_cfg, "performance_mode", None):
@@ -430,41 +450,24 @@ class SGLangEmbodiedWorker(SGLangWorker):
             DreamZeroActionPolicy,
         )
 
-        sp_degree = int(
-            getattr(sglang_cfg, "sp_degree", getattr(sglang_cfg, "sp_size", 1)) or 1
-        )
-        cfg_parallel_degree = int(getattr(sglang_cfg, "cfg_parallel_degree", 1) or 1)
-        pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
-            sglang_cfg=sglang_cfg,
-            model_cfg=model_cfg,
-            tmpdir=self.obs_tmpdir,
-            rank=self._rank,
-            eval_batch_size=self.eval_batch_size,
-        )
-        args = [
-            "--backend",
-            "sglang",
-            "--pipeline",
-            str(getattr(sglang_cfg, "pipeline_class_name", "DreamZeroPipeline")),
-            "--pipeline-config-path",
-            pipeline_config_path,
-            "--sp-degree",
-            str(sp_degree),
-            "--cfg-parallel-size",
-            str(cfg_parallel_degree),
-        ]
-        if v := getattr(sglang_cfg, "attention_backend", None):
-            args += ["--attention-backend", str(v)]
-        if (v := getattr(sglang_cfg, "scheduler_port", None)) is not None:
-            args += [
-                "--scheduler-port",
-                str(int(v) + self._rank * int(getattr(sglang_cfg, "port_stride", 100))),
-            ]
-        if isinstance(getattr(sglang_cfg, "dit_cpu_offload", None), bool):
-            args += [
-                "--dit-cpu-offload",
-                "true" if getattr(sglang_cfg, "dit_cpu_offload") else "false",
-            ]
+        args = []
+        if getattr(sglang_cfg, "backend", None) is None:
+            args += ["--backend", "sglang"]
+        if getattr(sglang_cfg, "pipeline_class_name", None) is None:
+            args += ["--pipeline", "DreamZeroPipeline"]
+        if getattr(sglang_cfg, "pipeline_config_path", None) is None:
+            pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
+                sglang_cfg=sglang_cfg,
+                model_cfg=model_cfg,
+                tmpdir=self.obs_tmpdir,
+                rank=self._rank,
+                eval_batch_size=self.eval_batch_size,
+            )
+            args += ["--pipeline-config-path", pipeline_config_path]
+        if getattr(sglang_cfg, "cfg_parallel_degree", None) is None:
+            args += ["--cfg-parallel-size", "1"]
+        if (v := int(getattr(sglang_cfg, "sp_size", 1) or 1)) > 0:
+            args += ["--sp-degree", str(v)]
         for flag in (
             "--dreamzero-dit-path",
             "--dreamzero-vae-path",
