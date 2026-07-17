@@ -42,6 +42,12 @@
 
       添加 Megatron-Bridge、权重同步或奖励模型工作流。
 
+   .. grid-item-card:: SGLang 具身模型
+      :link: sglang_embodied_model
+      :link-type: doc
+
+      把具身模型使用 sglang 后端适配到 RLinf 的 rollout worker 中，使用各式各样的仿真器来进行模型评测。
+
 .. toctree::
    :hidden:
 
@@ -51,3 +57,4 @@
    Megatron 新模型 <new_model_megatron>
    新 SFT 模型 <new_model_sft>
    高级集成 <advanced-integrations/index>
+   SGLang 具身模型 <sglang_embodied_model>
