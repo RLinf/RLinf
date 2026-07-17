@@ -78,7 +78,7 @@ class DreamZeroActionRequest:
     """Request contract used by the DreamZero SGLang action endpoint.
 
     ``normalized_input`` is the output of the local DreamZero data transform and
-    is passed to the server as ``parameters.action_input``. ``session_ids`` name
+    is passed to the server as ``input.observation``. ``session_ids`` name
     the logical env slots for the server-side video/text cache. ``reset_mask`` is
     the client-side cache invalidation handle for those logical sessions: setting
     a row to ``True`` asks the server to drop cached state for that session before
@@ -136,11 +136,13 @@ class HttpDreamZeroActionClient:
 
         payload = {
             "model": self._model,
+            "input": {
+                "prompt": request.prompt_cache_keys,
+                "observation": request.normalized_input,
+            },
             "parameters": {
-                "action_input": request.normalized_input,
                 "session_ids": request.session_ids,
                 "reset_mask": request.reset_mask,
-                "prompts": request.prompt_cache_keys,
                 "negative_prompts": request.negative_prompt_cache_keys,
                 "seed": request.seed,
             },
