@@ -545,6 +545,8 @@ def decoupled_build_recv_plan(
 
 def infer_batch_size(data: Any) -> int:
     """Infer a batch size from common routed payloads."""
+    if hasattr(data, "batch_size") and hasattr(data, "select"):
+        return int(data.batch_size)
     if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
         return int(data.shape[0])
     if isinstance(data, list):
@@ -561,6 +563,13 @@ def infer_batch_size(data: Any) -> int:
 
 def split_batch(data: Any, split_sizes: Sequence[int]) -> list[Any]:
     """Split a common batch payload on batch dimension."""
+    if hasattr(data, "batch_size") and hasattr(data, "select"):
+        begin = 0
+        shards = []
+        for size in split_sizes:
+            shards.append(data.select(range(begin, begin + size)))
+            begin += size
+        return shards
     if isinstance(data, (bool, int, float, str)):
         return [data for _ in split_sizes]
     if isinstance(data, torch.Tensor):
@@ -606,6 +615,11 @@ def merge_batches(batches: Sequence[Any]) -> Any:
         raise ValueError(
             "Cannot merge a mix of None and non-None payloads generically."
         )
+
+    if hasattr(first_non_none, "batch_size") and hasattr(first_non_none, "select"):
+        from rlinf.workers.trajectory.data import merge_trajectory_data
+
+        return merge_trajectory_data(batches)
 
     if isinstance(first_non_none, torch.Tensor):
         return torch.cat(list(batches), dim=0)

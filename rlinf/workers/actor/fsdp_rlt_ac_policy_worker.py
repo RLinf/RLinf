@@ -690,9 +690,13 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
     async def recv_rollout_trajectories(self, input_channel):
         clear_memory(sync=False)
 
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        from rlinf.workers.trajectory.channel import TrajectoryChannel
+
+        split_num = 1
+        if not isinstance(input_channel, TrajectoryChannel):
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
 
         recv_list = []
         for _ in range(split_num):

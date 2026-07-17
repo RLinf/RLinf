@@ -24,7 +24,7 @@ import time
 import traceback
 import warnings
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, TypeVar
 
 import ray
 import ray.util.state
@@ -698,6 +698,36 @@ class Worker(metaclass=WorkerMeta):
         group = self._get_collective_group(src_addr)
         return group.recv_tensor(tensor=tensor, async_op=async_op, options=options)
 
+    def send_tensor_frame(
+        self,
+        tensors: Sequence[torch.Tensor],
+        dst_group_name: str,
+        dst_rank: int | list[int],
+        async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+    ):
+        """Send a fixed-layout tensor frame without dynamic wire metadata."""
+        dst_addr = WorkerAddress(dst_group_name, ranks=dst_rank)
+        group = self._get_collective_group(dst_addr)
+        return group.send_tensor_frame(
+            tensors=tuple(tensors), async_op=async_op, options=options
+        )
+
+    def recv_tensor_frame(
+        self,
+        tensors: Sequence[torch.Tensor],
+        src_group_name: str,
+        src_rank: int | list[int],
+        async_op: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+    ):
+        """Receive a fixed-layout tensor frame into preallocated buffers."""
+        src_addr = WorkerAddress(src_group_name, ranks=src_rank)
+        group = self._get_collective_group(src_addr)
+        return group.recv_tensor_frame(
+            tensors=tuple(tensors), async_op=async_op, options=options
+        )
+
     def broadcast(
         self,
         object: Optional[Any] = None,
@@ -926,6 +956,9 @@ class Worker(metaclass=WorkerMeta):
 
         if not enable_p2p and channel is None:
             raise ValueError("send_to requires ``channel`` when enable_p2p is False.")
+
+        if not enable_p2p and hasattr(channel, "prepare_outbound"):
+            data = channel.prepare_outbound(data)
 
         world_size = get_group_world_size(self._manager_proxy, group_name)
         if batch_size is None:

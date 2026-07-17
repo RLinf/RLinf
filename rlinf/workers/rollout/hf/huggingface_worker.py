@@ -16,6 +16,7 @@ import asyncio
 import copy
 import gc
 import time
+from dataclasses import replace
 from typing import Any, Callable, Literal, Optional
 
 import numpy as np
@@ -37,6 +38,8 @@ from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.placement import HybridComponentPlacement
+from rlinf.workers.trajectory.channel import TrajectoryChannel
+from rlinf.workers.trajectory.data import Actions, Observations, RolloutBootstrap
 
 
 class MultiStepRolloutWorker(Worker):
@@ -45,6 +48,9 @@ class MultiStepRolloutWorker(Worker):
 
         self.cfg = cfg
         self.should_stop = False
+        self.global_step = 0
+        self._task_descriptions_by_slot: dict[int, str] = {}
+        self._trajectory_uses_task_descriptions: bool | None = None
 
         self.only_eval = cfg.runner.get("only_eval", False)
         self.algorithm_cfg = cfg.get("algorithm", {})
@@ -666,10 +672,16 @@ class MultiStepRolloutWorker(Worker):
         self.torch_platform.empty_cache()
 
     @Worker.timer("generate_one_epoch")
-    async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
+    async def generate_one_epoch(
+        self,
+        input_channel: Channel,
+        output_channel: Channel,
+        current_epoch: int = 0,
+    ):
         self.update_dagger_beta()
-        for _ in range(self.n_train_chunk_steps):
+        for chunk_step_idx in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
+                trajectory_channel = isinstance(input_channel, TrajectoryChannel)
                 env_output = await self.recv_from(
                     group_name=self.cfg.env.group_name,
                     channel=input_channel,
@@ -677,9 +689,13 @@ class MultiStepRolloutWorker(Worker):
                     route_key=stage_id,
                     async_op=True,
                     batch_size=self.train_batch_size,
-                    merge_fn=self._merge_obs_batches,
-                    infer_batch_size_fn=self._infer_env_batch_size,
+                    merge_fn=None if trajectory_channel else self._merge_obs_batches,
+                    infer_batch_size_fn=(
+                        None if trajectory_channel else self._infer_env_batch_size
+                    ),
                 ).async_wait()
+                if isinstance(env_output, Observations):
+                    env_output = self._trajectory_rollout_input(env_output)
                 actions, result = self._predict_rollout_actions(
                     env_output["obs"],
                     final_obs=env_output.get("final_obs", None),
@@ -692,17 +708,33 @@ class MultiStepRolloutWorker(Worker):
                     result,
                     final_obs=env_output.get("final_obs", None),
                 )
+                output_payload: RolloutResult | Actions = rollout_result
+                if isinstance(output_channel, TrajectoryChannel):
+                    output_payload = Actions.from_rollout_result(
+                        rollout_result,
+                        num_action_chunks=self.model_cfg.num_action_chunks,
+                        **self.trajectory_metadata(
+                            current_epoch=current_epoch,
+                            current_step=chunk_step_idx,
+                            stage_id=stage_id,
+                        ),
+                    )
                 self.send_to(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
-                    data=rollout_result,
+                    data=output_payload,
                     tag="train_rollout_results",
                     route_key=stage_id,
                     async_op=True,
                     batch_size=self.train_batch_size,
-                    split_fn=self._split_rollout_result,
+                    split_fn=(
+                        None
+                        if isinstance(output_channel, TrajectoryChannel)
+                        else self._split_rollout_result
+                    ),
                 )
         for stage_id in range(self.num_pipeline_stages):
+            trajectory_channel = isinstance(input_channel, TrajectoryChannel)
             env_output = await self.recv_from(
                 group_name=self.cfg.env.group_name,
                 channel=input_channel,
@@ -710,9 +742,13 @@ class MultiStepRolloutWorker(Worker):
                 route_key=stage_id,
                 async_op=True,
                 batch_size=self.train_batch_size,
-                merge_fn=self._merge_obs_batches,
-                infer_batch_size_fn=self._infer_env_batch_size,
+                merge_fn=None if trajectory_channel else self._merge_obs_batches,
+                infer_batch_size_fn=(
+                    None if trajectory_channel else self._infer_env_batch_size
+                ),
             ).async_wait()
+            if isinstance(env_output, Observations):
+                env_output = self._trajectory_rollout_input(env_output)
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
@@ -732,15 +768,30 @@ class MultiStepRolloutWorker(Worker):
                     else {}
                 ),
             )
+            output_payload: RolloutResult | RolloutBootstrap = rollout_result
+            if isinstance(output_channel, TrajectoryChannel):
+                output_payload = RolloutBootstrap(
+                    prev_values=rollout_result.prev_values,
+                    bootstrap_values=rollout_result.bootstrap_values,
+                    **self.trajectory_metadata(
+                        current_epoch=current_epoch,
+                        current_step=self.n_train_chunk_steps,
+                        stage_id=stage_id,
+                    ),
+                )
             self.send_to(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
-                data=rollout_result,
+                data=output_payload,
                 tag="train_rollout_results",
                 route_key=stage_id,
                 async_op=True,
                 batch_size=self.train_batch_size,
-                split_fn=self._split_rollout_result,
+                split_fn=(
+                    None
+                    if isinstance(output_channel, TrajectoryChannel)
+                    else self._split_rollout_result
+                ),
             )
 
     @Worker.timer("rollout/generate")
@@ -757,7 +808,9 @@ class MultiStepRolloutWorker(Worker):
             desc="Generating Rollout Epochs",
             disable=(self._rank != 0),
         ):
-            await self.generate_one_epoch(input_channel, output_channel)
+            await self.generate_one_epoch(
+                input_channel, output_channel, current_epoch=_
+            )
 
         if self.enable_offload:
             self.offload_model()
@@ -982,5 +1035,56 @@ class MultiStepRolloutWorker(Worker):
         ]
 
     def set_global_step(self, global_step: int):
+        self.global_step = global_step
         if hasattr(self.hf_model, "set_global_step"):
             self.hf_model.set_global_step(global_step)
+
+    def trajectory_metadata(
+        self,
+        *,
+        current_epoch: int,
+        current_step: int,
+        stage_id: int,
+    ) -> dict[str, int]:
+        """Return metadata shared by Rollout-originated trajectory records."""
+        return {
+            "global_step": self.global_step,
+            "rank": self._rank,
+            "current_epoch": current_epoch,
+            "current_step": current_step,
+            "stage_id": stage_id,
+        }
+
+    def _trajectory_rollout_input(self, observations: Observations) -> dict[str, Any]:
+        """Restore slot-cached task descriptions for a trajectory relay item."""
+        if observations.slot_ids is None:
+            raise ValueError("Trajectory observations must carry routed slot_ids.")
+
+        task_descriptions = observations.task_descriptions
+        if task_descriptions is not None:
+            if len(task_descriptions) != len(observations.slot_ids):
+                raise ValueError(
+                    "task_descriptions must have one entry per trajectory slot."
+                )
+            self._task_descriptions_by_slot.update(
+                zip(observations.slot_ids, task_descriptions)
+            )
+            self._trajectory_uses_task_descriptions = True
+        elif self._trajectory_uses_task_descriptions is None:
+            self._trajectory_uses_task_descriptions = False
+        elif self._trajectory_uses_task_descriptions:
+            try:
+                task_descriptions = [
+                    self._task_descriptions_by_slot[slot_id]
+                    for slot_id in observations.slot_ids
+                ]
+            except KeyError as error:
+                raise ValueError(
+                    "Received trajectory observations without a cached task "
+                    f"description for slot {error.args[0]}."
+                ) from error
+
+        if task_descriptions is None:
+            return observations.to_rollout_input()
+        observations = replace(observations, task_descriptions=task_descriptions)
+        return observations.to_rollout_input()

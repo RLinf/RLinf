@@ -283,9 +283,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         clear_memory(sync=False)
 
         if not self.enable_online_lerobot:
-            send_num = self._component_placement.get_world_size("env") * self.stage_num
-            recv_num = self._component_placement.get_world_size("actor")
-            split_num = compute_split_num(send_num, recv_num)
+            from rlinf.workers.trajectory.channel import TrajectoryChannel
+
+            split_num = 1
+            if not isinstance(input_channel, TrajectoryChannel):
+                send_num = (
+                    self._component_placement.get_world_size("env") * self.stage_num
+                )
+                recv_num = self._component_placement.get_world_size("actor")
+                split_num = compute_split_num(send_num, recv_num)
             recv_list = []
             for _ in range(split_num):
                 trajectory: Trajectory = await input_channel.get(

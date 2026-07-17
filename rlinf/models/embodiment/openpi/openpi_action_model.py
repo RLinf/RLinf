@@ -803,9 +803,9 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             processed_obs["observation/state_gripper"] = state[:, 6:7]
         else:
             processed_obs["observation/state"] = env_states
-        if env_obs["wrist_images"] is not None:
+        if env_obs.get("wrist_images") is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
-        if env_obs["extra_view_images"] is not None:
+        if env_obs.get("extra_view_images") is not None:
             processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
         return processed_obs
 
