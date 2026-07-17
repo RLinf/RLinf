@@ -17,11 +17,16 @@ This script deletes specified episodes from LeRobot datasets and renumbers
 the remaining episodes to ensure continuity across all indices.
 
 Example usage:
-    # Delete episodes 3 and 5 from id_0
+    # Preview what would be deleted (no files are written)
     python delete_lerobot.py \
         --data-dir /path/to/dataset/rank_0 \
         --delete "id_0:3,5" \
         --dry-run
+
+    # Actually delete episodes 3 and 5 from id_0
+    python delete_lerobot.py \
+        --data-dir /path/to/dataset/rank_0 \
+        --delete "id_0:3,5"
 
     # Delete episodes from multiple ids
     python delete_lerobot.py \
@@ -58,7 +63,6 @@ import argparse
 import json
 import logging
 import math
-import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -66,122 +70,18 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-try:
-    from rlinf.utils.logging import get_logger  # type: ignore[import-not-found]
+from toolkits.dual_franka.utils_lerobot import (
+    EP_RE,
+    add_log_file,
+    find_id_dirs,
+    fmt_stats,
+    get_toolkit_logger,
+    header,
+    read_jsonl,
+    write_jsonl_atomic,
+)
 
-    logger = get_logger()
-except ImportError:
-    # Allow the script to run standalone (e.g. on data nodes without RLinf
-    # installed). The fallback uses the same logger name to keep messages
-    # consistent.
-    logger = logging.getLogger("rlinf.dual_franka_delete_lerobot")
-    if not logger.handlers:
-        _handler = logging.StreamHandler()
-        _handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
-
-EP_RE = re.compile(r"^episode_(\d{6})\.parquet$")
-
-
-def add_log_file(log_path: str) -> logging.FileHandler:
-    """Attach a file handler to the module logger.
-
-    Args:
-        log_path: Destination path. Existing content is overwritten.
-
-    Returns:
-        The handler that was attached, so the caller can detach it later.
-    """
-    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
-    return handler
-
-
-def header(title: str) -> None:
-    """Log a visually distinct section banner.
-
-    Args:
-        title: The header title to log.
-    """
-    bar = "=" * 78
-    logger.info("\n%s\n%s\n%s", bar, title, bar)
-
-
-def find_id_dirs(data_dir: Path) -> list[Path]:
-    """Find all id_* directories in sorted order.
-
-    Args:
-        data_dir: Root data directory to search.
-
-    Returns:
-        List of sorted id_* subdirectories.
-
-    Raises:
-        ValueError: If no id_* directories are found.
-    """
-    id_dirs = sorted(
-        [p for p in data_dir.iterdir() if p.is_dir() and p.name.startswith("id_")],
-        key=lambda x: x.name,
-    )
-    if not id_dirs:
-        raise ValueError(f"No id_* directories found in {data_dir}")
-    return id_dirs
-
-
-def read_jsonl(p: Path) -> list[dict[str, Any]]:
-    """Read JSONL file into list of dictionaries.
-
-    Args:
-        p: Path to JSONL file.
-
-    Returns:
-        List of dictionaries parsed from each line.
-    """
-    return [
-        json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()
-    ]
-
-
-def write_jsonl_atomic(p: Path, rows: list[dict[str, Any]]) -> None:
-    """Write list of dictionaries to JSONL file atomically.
-
-    Creates parent directories if needed, writes to temporary file,
-    then atomically renames to target path for crash-safety.
-
-    Args:
-        p: Path to JSONL file.
-        rows: List of dictionaries to write.
-    """
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(p)
-
-
-def fmt_stats(d: dict[str, Any]) -> str:
-    """Format statistics dictionary as a readable string.
-
-    Args:
-        d: Dictionary containing statistics keys like 'min', 'max', 'mean', 'std', 'count'.
-
-    Returns:
-        Formatted string representation of statistics.
-    """
-    parts = []
-    for k in ("min", "max", "mean", "std", "count"):
-        if k in d:
-            v = d[k]
-            if isinstance(v, list) and len(v) == 1:
-                vv = v[0]
-                parts.append(f"{k}={vv:.4f}" if isinstance(vv, float) else f"{k}={vv}")
-            else:
-                parts.append(f"{k}={v}")
-    return "{" + ", ".join(parts) + "}"
+logger = get_toolkit_logger("rlinf.dual_franka_delete_lerobot")
 
 
 def parse_delete_args(delete_args: list[str]) -> dict[str, set[int]]:
@@ -232,8 +132,10 @@ def step0_precheck(
     Raises:
         ValueError: If required directories or files are missing or validation fails.
     """
-    header("STEP 0  pre-check: directory structure + deletion list validation")
+    header(logger, "STEP 0  pre-check: directory structure + deletion list validation")
     id_dirs = find_id_dirs(data_dir)
+    if not id_dirs:
+        raise ValueError(f"No id_* directories found in {data_dir}")
 
     id_dir_map = {d.name: d for d in id_dirs}
 
@@ -255,6 +157,12 @@ def step0_precheck(
             m = EP_RE.match(p.name)
             if m:
                 all_parquets[int(m.group(1))] = p
+            else:
+                logger.warning(
+                    "  Skipping parquet with unexpected name "
+                    "(expected episode_<digits>.parquet): %s",
+                    p,
+                )
 
         missing = to_del - set(all_parquets.keys())
         if missing:
@@ -284,6 +192,12 @@ def step0_precheck(
                 m = EP_RE.match(p.name)
                 if m:
                     all_parquets[int(m.group(1))] = p
+                else:
+                    logger.warning(
+                        "  Skipping parquet with unexpected name "
+                        "(expected episode_<digits>.parquet): %s",
+                        p,
+                    )
             keep = sorted(all_parquets.keys())
             logger.info(
                 "  %s: %d episodes total, no deletion",
@@ -307,7 +221,7 @@ def step1_delete_parquets(affected: dict[str, dict[str, Any]], dry_run: bool) ->
         affected: Dictionary with deletion information for each id.
         dry_run: If True, log actions without executing them.
     """
-    header("STEP 1  delete low-quality parquet files")
+    header(logger, "STEP 1  delete low-quality parquet files")
     for id_name, info in affected.items():
         to_del = info["to_del"]
         if not to_del:
@@ -336,7 +250,10 @@ def step2_renumber_and_reindex(
     Raises:
         ValueError: If parquet schema is invalid or metadata is corrupted.
     """
-    header("STEP 2  rename remaining parquets + rewrite episode_index / index columns")
+    header(
+        logger,
+        "STEP 2  rename remaining parquets + rewrite episode_index / index columns",
+    )
 
     all_mappings: dict[str, dict[str, Any]] = {}
 
@@ -449,7 +366,7 @@ def step3_update_meta_jsonl(
     Raises:
         ValueError: If JSONL structure is invalid.
     """
-    header("STEP 3  rewrite episodes.jsonl + episodes_stats.jsonl")
+    header(logger, "STEP 3  rewrite episodes.jsonl + episodes_stats.jsonl")
 
     for id_name, info in affected.items():
         id_dir = info["id_dir"]
@@ -563,7 +480,7 @@ def step4_update_info(
         all_mappings: Dictionary with mapping information from step2.
         dry_run: If True, log actions without executing them.
     """
-    header("STEP 4  update info.json")
+    header(logger, "STEP 4  update info.json")
 
     for id_name, info in affected.items():
         id_dir = info["id_dir"]
@@ -626,7 +543,7 @@ def step5_verify(
     Raises:
         ValueError: If verification fails.
     """
-    header("STEP 5  end-to-end verification")
+    header(logger, "STEP 5  end-to-end verification")
     all_ok = True
 
     for id_name, info in affected.items():
@@ -649,10 +566,18 @@ def step5_verify(
                 f"info.total_frames={info_data['total_frames']} != {total_frames_expected}"
             )
 
-        parquet_files = sorted(
-            (id_dir / "data").rglob("episode_*.parquet"),
-            key=lambda p: int(EP_RE.match(p.name).group(1)),
-        )
+        parquet_files: list[Path] = []
+        for p in (id_dir / "data").rglob("episode_*.parquet"):
+            m = EP_RE.match(p.name)
+            if m:
+                parquet_files.append(p)
+            else:
+                logger.warning(
+                    "  Skipping parquet with unexpected name "
+                    "(expected episode_<digits>.parquet): %s",
+                    p,
+                )
+        parquet_files.sort(key=lambda p: int(EP_RE.match(p.name).group(1)))
         if len(parquet_files) != total_episodes_expected:
             raise ValueError(
                 f"parquet count {len(parquet_files)} != {total_episodes_expected}"
@@ -769,7 +694,7 @@ def main() -> None:
     args = parse_args()
     file_handler: Optional[logging.FileHandler] = None
     if args.log_file:
-        file_handler = add_log_file(args.log_file)
+        file_handler = add_log_file(logger, args.log_file)
 
     try:
         data_dir = Path(args.data_dir).resolve()
@@ -791,7 +716,8 @@ def main() -> None:
             step5_verify(affected, all_mappings)
 
         header(
-            "All done ✓" if not args.dry_run else "Dry-run finished (nothing written)"
+            logger,
+            "All done ✓" if not args.dry_run else "Dry-run finished (nothing written)",
         )
     finally:
         if file_handler is not None:

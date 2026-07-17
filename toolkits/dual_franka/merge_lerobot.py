@@ -71,7 +71,6 @@ import argparse
 import json
 import logging
 import math
-import re
 import shutil
 from collections import defaultdict
 from pathlib import Path
@@ -81,23 +80,20 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-try:
-    from rlinf.utils.logging import get_logger  # type: ignore[import-not-found]
+from toolkits.dual_franka.utils_lerobot import (
+    EP_RE,
+    add_log_file,
+    find_id_dirs,
+    fmt_stats,
+    get_toolkit_logger,
+    header,
+    load_info,
+    read_jsonl,
+    write_jsonl_atomic,
+)
 
-    logger = get_logger()
-except ImportError:
-    # Allow the script to run standalone (e.g. on data nodes without RLinf
-    # installed). The fallback uses the same logger name to keep messages
-    # consistent.
-    logger = logging.getLogger("rlinf.dual_franka_merge_lerobot")
-    if not logger.handlers:
-        _handler = logging.StreamHandler()
-        _handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
+logger = get_toolkit_logger("rlinf.dual_franka_merge_lerobot")
 
-
-EP_RE = re.compile(r"^episode_(\d{6})\.parquet$")
 CONSISTENT_TOP_FIELDS: tuple[str, ...] = (
     "codebase_version",
     "robot_type",
@@ -106,42 +102,6 @@ CONSISTENT_TOP_FIELDS: tuple[str, ...] = (
     "data_path",
     "video_path",
 )
-
-# ============================ generic helpers ============================
-
-
-def add_log_file(log_path: str) -> logging.FileHandler:
-    """Attach a file handler to the module logger.
-
-    Args:
-        log_path: Destination path. Existing content is overwritten.
-
-    Returns:
-        The handler that was attached, so the caller can detach it later.
-    """
-    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
-    return handler
-
-
-def header(title: str) -> None:
-    """Log a visually distinct section banner."""
-    bar = "=" * 78
-    logger.info("\n%s\n%s\n%s", bar, title, bar)
-
-
-def find_id_dirs(rank_dir: Path) -> list[Path]:
-    """Return ``id_*`` subdirectories of ``rank_dir`` sorted by name."""
-    return sorted(
-        [p for p in rank_dir.iterdir() if p.is_dir() and p.name.startswith("id_")],
-        key=lambda x: x.name,
-    )
-
-
-def load_info(id_dir: Path) -> dict[str, Any]:
-    """Load ``meta/info.json`` from a per-id directory."""
-    return json.loads((id_dir / "meta" / "info.json").read_text(encoding="utf-8"))
 
 
 def load_tasks(id_dir: Path) -> list[tuple[int, str]]:
@@ -165,43 +125,6 @@ def load_tasks(id_dir: Path) -> list[tuple[int, str]]:
     return out
 
 
-def read_jsonl(p: Path) -> list[dict[str, Any]]:
-    """Read a JSONL file, ignoring blank lines."""
-    return [
-        json.loads(line)
-        for line in p.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-
-
-def write_jsonl_atomic(p: Path, rows: list[dict[str, Any]]) -> None:
-    """Atomically write ``rows`` as JSONL by going through a ``.tmp`` file."""
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(
-        "\n".join(json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
-        encoding="utf-8",
-    )
-    tmp.replace(p)
-
-
-def fmt_stats(d: dict[str, Any]) -> str:
-    """Pretty-print a stats dict (``min``/``max``/``mean``/``std``/``count``)."""
-    parts: list[str] = []
-    for k in ("min", "max", "mean", "std", "count"):
-        if k in d:
-            v = d[k]
-            if isinstance(v, list) and len(v) == 1:
-                vv = v[0]
-                parts.append(f"{k}={vv:.4f}" if isinstance(vv, float) else f"{k}={vv}")
-            else:
-                parts.append(f"{k}={v}")
-    return "{" + ", ".join(parts) + "}"
-
-
-# ============================ STEP 0: pre-flight + consistency ============================
-
-
 def step0_precheck(
     rank_dir: Path,
 ) -> tuple[list[Path], list[tuple[str, dict[str, Any]]]]:
@@ -219,7 +142,7 @@ def step0_precheck(
         RuntimeError: If a required directory is missing or any of the
             ``CONSISTENT_TOP_FIELDS`` / ``features`` differ across ids.
     """
-    header("STEP 0  pre-flight + cross-id consistency")
+    header(logger, "STEP 0  pre-flight + cross-id consistency")
     id_dirs = find_id_dirs(rank_dir)
     if not id_dirs:
         raise RuntimeError(f"No id_* subdirectory found under {rank_dir}")
@@ -269,9 +192,6 @@ def step0_precheck(
     return id_dirs, infos
 
 
-# ============================ STEP 1: globally rename parquet ============================
-
-
 def step1_renumber(id_dirs: list[Path], dry_run: bool) -> list[dict[str, Any]]:
     """Plan and execute a global rename of every ``episode_*.parquet`` file.
 
@@ -284,25 +204,32 @@ def step1_renumber(id_dirs: list[Path], dry_run: bool) -> list[dict[str, Any]]:
 
     Returns:
         A list of plan entries, one per parquet, each containing ``new_idx``,
-        ``id_name``, ``id_dir``, ``old_path``, ``new_path`` and
+        ``old_idx``, ``id_name``, ``id_dir``, ``old_path``, ``new_path`` and
         ``current_path`` (after rename).
     """
-    header("STEP 1  globally renumber parquet files")
+    header(logger, "STEP 1  globally renumber parquet files")
     records: list[tuple[str, int, Path, Path]] = []
     for id_dir in id_dirs:
         for p in (id_dir / "data").rglob("episode_*.parquet"):
             m = EP_RE.match(p.name)
             if m:
                 records.append((id_dir.name, int(m.group(1)), p, id_dir))
+            else:
+                logger.warning(
+                    "  Skipping parquet with unexpected name "
+                    "(expected episode_<digits>.parquet): %s",
+                    p,
+                )
     records.sort(key=lambda x: (x[0], x[1]))
 
     plan: list[dict[str, Any]] = []
-    for new_idx, (id_name, _, old_path, id_dir) in enumerate(records):
+    for new_idx, (id_name, old_idx, old_path, id_dir) in enumerate(records):
         new_name = f"episode_{new_idx:06d}.parquet"
         new_path = old_path.parent / new_name
         plan.append(
             {
                 "new_idx": new_idx,
+                "old_idx": old_idx,
                 "id_name": id_name,
                 "id_dir": id_dir,
                 "old_path": old_path,
@@ -343,9 +270,6 @@ def step1_renumber(id_dirs: list[Path], dry_run: bool) -> list[dict[str, Any]]:
     return plan
 
 
-# ============================ STEP 2: parquet episode_index + index ============================
-
-
 def step2_change_index(
     plan: list[dict[str, Any]], dry_run: bool
 ) -> tuple[list[dict[str, Any]], int]:
@@ -362,14 +286,14 @@ def step2_change_index(
 
     Returns:
         A tuple ``(mapping, total_frames)`` where ``mapping`` records, for
-        each parquet, ``new_idx``, ``id_dir``, ``id_name``, ``current_path``,
-        ``new_path``, ``start``, ``end`` and ``n``.
+        each parquet, ``new_idx``, ``old_idx``, ``id_dir``, ``id_name``,
+        ``current_path``, ``new_path``, ``start``, ``end`` and ``n``.
 
     Raises:
         RuntimeError: If ``new_idx`` is not contiguous, or a required column
             is missing from a parquet.
     """
-    header("STEP 2  rewrite episode_index + index inside parquet")
+    header(logger, "STEP 2  rewrite episode_index + index inside parquet")
 
     new_idxs = [e["new_idx"] for e in plan]
     if new_idxs != list(range(len(new_idxs))):
@@ -432,6 +356,7 @@ def step2_change_index(
         mapping.append(
             {
                 "new_idx": new_idx,
+                "old_idx": e["old_idx"],
                 "id_dir": e["id_dir"],
                 "id_name": e["id_name"],
                 "current_path": cur,
@@ -445,9 +370,6 @@ def step2_change_index(
 
     logger.info("\n  cumulative total_frames = %d", running)
     return mapping, running
-
-
-# ============================ STEP 3: meta jsonl ============================
 
 
 def step3_update_stats(
@@ -471,12 +393,12 @@ def step3_update_stats(
             ``length`` disagrees with rewritten ``n``, or required nested
             stats fields are missing.
     """
-    header("STEP 3  per-id episodes.jsonl + episodes_stats.jsonl")
-    groups: dict[Path, list[tuple[int, int, int, int]]] = defaultdict(list)
+    header(logger, "STEP 3  per-id episodes.jsonl + episodes_stats.jsonl")
+    groups: dict[Path, list[dict[str, Any]]] = defaultdict(list)
     for m in mapping:
-        groups[m["id_dir"]].append((m["new_idx"], m["start"], m["end"], m["n"]))
+        groups[m["id_dir"]].append(m)
     for k in groups:
-        groups[k].sort(key=lambda x: x[0])
+        groups[k].sort(key=lambda x: x["new_idx"])
 
     for id_dir in id_dirs:
         entries = groups.get(id_dir, [])
@@ -494,20 +416,28 @@ def step3_update_stats(
                 raise RuntimeError(
                     f"{ep_path} line count={len(lines)} != mapping {len(entries)}"
                 )
+            ep_by_idx = {obj["episode_index"]: obj for obj in lines}
             new_lines: list[dict[str, Any]] = []
-            for obj, (new_idx, _, _, n) in zip(lines, entries):
+            for m in entries:
+                old_idx = m["old_idx"]
+                obj = ep_by_idx.get(old_idx)
+                if obj is None:
+                    raise RuntimeError(
+                        f"episode_index={old_idx} not found in {ep_path}"
+                    )
                 old_top = obj.get("episode_index")
                 length = obj.get("length")
-                if length is not None and int(length) != int(n):
+                if length is not None and int(length) != int(m["n"]):
                     raise RuntimeError(
-                        f"{ep_path} ep={old_top} length={length} != mapping n={n}"
+                        f"{ep_path} ep={old_top} length={length} != mapping n={m['n']}"
                     )
-                obj["episode_index"] = int(new_idx)
+                obj = dict(obj)
+                obj["episode_index"] = int(m["new_idx"])
                 new_lines.append(obj)
                 logger.info(
                     "    episodes.jsonl       ep_idx: %s -> %d   length=%s",
                     old_top,
-                    new_idx,
+                    m["new_idx"],
                     length,
                 )
             if not dry_run:
@@ -523,16 +453,27 @@ def step3_update_stats(
                 raise RuntimeError(
                     f"{st_path} line count={len(lines)} != mapping {len(entries)}"
                 )
+            st_by_idx = {obj["episode_index"]: obj for obj in lines}
             new_lines = []
-            for obj, (new_idx, start, end, n) in zip(lines, entries):
+            for m in entries:
+                old_idx = m["old_idx"]
+                obj = st_by_idx.get(old_idx)
+                if obj is None:
+                    raise RuntimeError(
+                        f"episode_index={old_idx} not found in {st_path}"
+                    )
                 old_top = obj.get("episode_index")
-                stats = obj.get("stats", {})
+                stats = dict(obj.get("stats", {}))
                 if "episode_index" not in stats or "index" not in stats:
                     raise RuntimeError(
                         f"{st_path}: row missing stats.episode_index or stats.index"
                     )
                 old_ep_s = dict(stats["episode_index"])
                 old_ix_s = dict(stats["index"])
+                new_idx = m["new_idx"]
+                start = m["start"]
+                end = m["end"]
+                n = m["n"]
                 stats["episode_index"] = {
                     "min": [int(new_idx)],
                     "max": [int(new_idx)],
@@ -548,6 +489,7 @@ def step3_update_stats(
                     "std": old_ix_s.get("std", [0.0]),
                     "count": [int(n)],
                 }
+                obj = dict(obj)
                 obj["stats"] = stats
                 obj["episode_index"] = int(new_idx)
                 new_lines.append(obj)
@@ -567,9 +509,6 @@ def step3_update_stats(
             if not dry_run:
                 write_jsonl_atomic(st_path, new_lines)
                 logger.info("    [WRITE] %s  (%d rows)", st_path, len(new_lines))
-
-
-# ============================ STEP 4: merge info.json + tasks.jsonl ============================
 
 
 def step4_info_and_tasks(
@@ -603,7 +542,7 @@ def step4_info_and_tasks(
         RuntimeError: If task remapping would require rewriting parquet
             ``task_index`` columns.
     """
-    header("STEP 4  build merged info.json + tasks.jsonl")
+    header(logger, "STEP 4  build merged info.json + tasks.jsonl")
     all_tasks = {d.name: load_tasks(d) for d in id_dirs}
     seen: dict[str, int] = {}
     order: list[str] = []
@@ -689,9 +628,6 @@ def step4_info_and_tasks(
         logger.info("  [WRITE] %s", tasks_out)
 
 
-# ============================ STEP 5: merge episodes(_stats).jsonl ============================
-
-
 def step5_merge_jsonl(id_dirs: list[Path], out_meta: Path, dry_run: bool) -> None:
     """Concatenate per-id ``episodes.jsonl`` / ``episodes_stats.jsonl``.
 
@@ -702,7 +638,7 @@ def step5_merge_jsonl(id_dirs: list[Path], out_meta: Path, dry_run: bool) -> Non
         out_meta: Destination ``meta/`` directory.
         dry_run: If True, plan only — no file is written.
     """
-    header("STEP 5  merge per-id episodes.jsonl / episodes_stats.jsonl")
+    header(logger, "STEP 5  merge per-id episodes.jsonl / episodes_stats.jsonl")
     for fname in ("episodes.jsonl", "episodes_stats.jsonl"):
         merged: list[dict[str, Any]] = []
         for id_dir in id_dirs:
@@ -723,9 +659,6 @@ def step5_merge_jsonl(id_dirs: list[Path], out_meta: Path, dry_run: bool) -> Non
             logger.info("  [DRY-RUN] would write %s  (%d rows)", out, len(merged))
 
 
-# ============================ STEP 6: move parquet ============================
-
-
 def step6_move_parquets(
     mapping: list[dict[str, Any]],
     out_data_root: Path,
@@ -740,7 +673,9 @@ def step6_move_parquets(
         chunks_size: Chunk capacity from ``info.json``.
         dry_run: If True, plan only — no file is moved.
     """
-    header(f"STEP 6  move parquet to {out_data_root} (chunks_size={chunks_size})")
+    header(
+        logger, f"STEP 6  move parquet to {out_data_root} (chunks_size={chunks_size})"
+    )
     moved = 0
     skipped = 0
     for m in mapping:
@@ -765,9 +700,6 @@ def step6_move_parquets(
     logger.info("  done: moved=%d, skipped=%d", moved, skipped)
 
 
-# ============================ STEP 7: end-to-end verification ============================
-
-
 def step7_verify(out_dir: Path) -> None:
     """End-to-end sanity check on the merged output directory.
 
@@ -779,12 +711,23 @@ def step7_verify(out_dir: Path) -> None:
             parquet has wrong ``episode_index`` / ``frame_index`` / ``index``
             values, or ``stats.index`` is not contiguous across episodes.
     """
-    header("STEP 7  end-to-end verification of merged directory")
+    header(logger, "STEP 7  end-to-end verification of merged directory")
     info = json.loads((out_dir / "meta" / "info.json").read_text(encoding="utf-8"))
     total_frames: int = info["total_frames"]
     total_episodes: int = info["total_episodes"]
 
-    parquet_files = sorted((out_dir / "data").rglob("episode_*.parquet"))
+    parquet_files: list[Path] = []
+    for p in (out_dir / "data").rglob("episode_*.parquet"):
+        m = EP_RE.match(p.name)
+        if m:
+            parquet_files.append(p)
+        else:
+            logger.warning(
+                "  Skipping parquet with unexpected name "
+                "(expected episode_<digits>.parquet): %s",
+                p,
+            )
+    parquet_files.sort(key=lambda p: int(EP_RE.match(p.name).group(1)))
     logger.info(
         "  parquet files=%d, info.total_episodes=%d",
         len(parquet_files),
@@ -803,7 +746,7 @@ def step7_verify(out_dir: Path) -> None:
         fi = t.column("frame_index").to_pylist()
         ix = t.column("index").to_pylist()
         m = EP_RE.match(p.name)
-        assert m is not None, f"{p.name} does not match episode_NNNNNN.parquet"
+        assert m is not None, f"{p.name} does not match episode_<digits>.parquet"
         expect_ei = int(m.group(1))
         ok_ei = set(ei) == {expect_ei}
         ok_fi = fi == list(range(n))
@@ -864,9 +807,6 @@ def step7_verify(out_dir: Path) -> None:
     logger.info("\n  >>> merged directory passed full end-to-end verification <<<")
 
 
-# ============================ main ============================
-
-
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     ap = argparse.ArgumentParser(
@@ -897,7 +837,7 @@ def main() -> None:
     args = parse_args()
     file_handler: Optional[logging.FileHandler] = None
     if args.log_file:
-        file_handler = add_log_file(args.log_file)
+        file_handler = add_log_file(logger, args.log_file)
 
     try:
         rank_dir = Path(args.rank_dir).resolve()
@@ -927,7 +867,10 @@ def main() -> None:
         if not args.dry_run and not args.skip_verify:
             step7_verify(out_dir)
 
-        header("all done" if not args.dry_run else "dry-run finished (nothing written)")
+        header(
+            logger,
+            "all done" if not args.dry_run else "dry-run finished (nothing written)",
+        )
     finally:
         if file_handler is not None:
             logger.removeHandler(file_handler)
