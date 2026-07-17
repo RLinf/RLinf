@@ -124,14 +124,14 @@ class SGLangEmbodiedWorker(SGLangWorker):
                 f"no action policy registered for model_type "
                 f"'{self.model_type}'; cannot run the embodied sglang path"
             )
-        self._init_sglang_server(policy_cls)
+        self._init_sglang_server()
         self.action_policy = policy_cls(self._cfg, self.sglang_server_url, self._rank)
 
     def shutdown(self):
         """Kill the spawned sglang serve subprocess."""
         self.shutdown_sglang_server()
 
-    def _init_sglang_server(self, policy_cls: type | None = None) -> None:
+    def _init_sglang_server(self) -> None:
         """Spawn a ``sglang serve`` subprocess and wait for ``/health``.
 
         Driven by ``rollout.sglang`` (model-agnostic). CUDA_VISIBLE_DEVICES is
@@ -216,16 +216,11 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # --- performance preset ---
         if v := getattr(sglang_cfg, "performance_mode", None):
             cmd += ["--performance-mode", str(v)]
-        build_policy_serve_args = getattr(policy_cls, "build_sglang_serve_args", None)
-        if callable(build_policy_serve_args):
-            cmd += build_policy_serve_args(
-                model_path=str(model_path),
-                sglang_cfg=sglang_cfg,
-                model_cfg=model_cfg,
-                tmpdir=self.obs_tmpdir,
-                rank=self._rank,
-                eval_batch_size=self.eval_batch_size,
-            )
+        cmd += self._model_specific_sglang_serve_args(
+            model_path=str(model_path),
+            sglang_cfg=sglang_cfg,
+            model_cfg=model_cfg,
+        )
         env = os.environ.copy()
         env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
         self.sglang_log_path = os.path.join(
@@ -404,3 +399,77 @@ class SGLangEmbodiedWorker(SGLangWorker):
                         async_op=True,
                         batch_size=self.eval_batch_size,
                     )
+
+    def _model_specific_sglang_serve_args(
+        self,
+        *,
+        model_path: str,
+        sglang_cfg: Any,
+        model_cfg: Any,
+    ) -> list[str]:
+        """Return extra ``sglang serve`` flags required by embodied model type."""
+
+        if self.model_type == "dreamzero":
+            return self._dreamzero_sglang_serve_args(
+                model_path=model_path,
+                sglang_cfg=sglang_cfg,
+                model_cfg=model_cfg,
+            )
+        return []
+
+    def _dreamzero_sglang_serve_args(
+        self,
+        *,
+        model_path: str,
+        sglang_cfg: Any,
+        model_cfg: Any,
+    ) -> list[str]:
+        """Build DreamZero flags layered on top of generic ``sglang serve`` args."""
+
+        from rlinf.workers.rollout.sglang.action_policies.dreamzero import (
+            DreamZeroActionPolicy,
+        )
+
+        sp_degree = int(
+            getattr(sglang_cfg, "sp_degree", getattr(sglang_cfg, "sp_size", 1)) or 1
+        )
+        cfg_parallel_degree = int(getattr(sglang_cfg, "cfg_parallel_degree", 1) or 1)
+        pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
+            sglang_cfg=sglang_cfg,
+            model_cfg=model_cfg,
+            tmpdir=self.obs_tmpdir,
+            rank=self._rank,
+            eval_batch_size=self.eval_batch_size,
+        )
+        args = [
+            "--backend",
+            "sglang",
+            "--pipeline",
+            str(getattr(sglang_cfg, "pipeline_class_name", "DreamZeroPipeline")),
+            "--pipeline-config-path",
+            pipeline_config_path,
+            "--sp-degree",
+            str(sp_degree),
+            "--cfg-parallel-size",
+            str(cfg_parallel_degree),
+        ]
+        if v := getattr(sglang_cfg, "attention_backend", None):
+            args += ["--attention-backend", str(v)]
+        if (v := getattr(sglang_cfg, "scheduler_port", None)) is not None:
+            args += [
+                "--scheduler-port",
+                str(int(v) + self._rank * int(getattr(sglang_cfg, "port_stride", 100))),
+            ]
+        if isinstance(getattr(sglang_cfg, "dit_cpu_offload", None), bool):
+            args += [
+                "--dit-cpu-offload",
+                "true" if getattr(sglang_cfg, "dit_cpu_offload") else "false",
+            ]
+        for flag in (
+            "--dreamzero-dit-path",
+            "--dreamzero-vae-path",
+            "--dreamzero-text-encoder-path",
+            "--dreamzero-image-encoder-path",
+        ):
+            args += [flag, model_path]
+        return args

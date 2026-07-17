@@ -119,9 +119,9 @@ class HttpDreamZeroActionClient:
         self._max_retries = max(0, int(max_retries))
         self._retry_backoff_s = max(0.0, float(retry_backoff_s))
         self._payload_format = str(payload_format).lower()
-        if self._payload_format not in ("json", "msgpack"):
+        if self._payload_format != "msgpack":
             raise ValueError(
-                "DreamZero action HTTP payload_format must be 'json' or 'msgpack', "
+                "DreamZero action HTTP payload_format must be 'msgpack', "
                 f"got {payload_format!r}."
             )
         self._model = model
@@ -165,18 +165,14 @@ class HttpDreamZeroActionClient:
         )
 
     def _encode_payload(self, payload: dict[str, Any]) -> tuple[bytes, str]:
-        if self._payload_format == "msgpack":
-            from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                pack_msgpack,
-            )
+        from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
+            pack_msgpack,
+        )
 
-            return (
-                pack_msgpack(self._to_msgpackable(payload)),
-                "application/msgpack",
-            )
-        return json.dumps(self._to_jsonable(payload)).encode(
-            "utf-8"
-        ), "application/json"
+        return (
+            pack_msgpack(self._to_msgpackable(payload)),
+            "application/msgpack",
+        )
 
     def _post_action_request(self, body: bytes, content_type: str) -> dict[str, Any]:
         retry_statuses = {500, 502, 503, 504}
@@ -200,7 +196,10 @@ class HttpDreamZeroActionClient:
                         )
 
                         return unpack_msgpack(response_bytes)
-                    return json.loads(response_bytes.decode("utf-8"))
+                    raise RuntimeError(
+                        "DreamZero SGLang action HTTP response must be msgpack, "
+                        f"got content-type={response.headers.get('content-type')!r}"
+                    )
             except urllib_error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 if exc.code in retry_statuses and attempt < self._max_retries:
@@ -237,30 +236,6 @@ class HttpDreamZeroActionClient:
     def _sleep_before_retry(self, attempt: int) -> None:
         if self._retry_backoff_s > 0:
             time.sleep(self._retry_backoff_s * float(attempt + 1))
-
-    @staticmethod
-    def _to_jsonable(value: Any) -> Any:
-        if isinstance(value, Batch):
-            value = value.__getstate__()
-        if torch.is_tensor(value):
-            value = value.detach().cpu()
-            if value.ndim == 0:
-                return value.item()
-            return value.tolist()
-        if isinstance(value, np.ndarray):
-            if value.ndim == 0:
-                return value.item()
-            return value.tolist()
-        if isinstance(value, np.generic):
-            return value.item()
-        if isinstance(value, Mapping):
-            return {
-                str(key): HttpDreamZeroActionClient._to_jsonable(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            return [HttpDreamZeroActionClient._to_jsonable(item) for item in value]
-        return value
 
     @staticmethod
     def _to_msgpackable(value: Any) -> Any:
@@ -468,71 +443,10 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
     """DreamZero eval policy for the SGLang embodied rollout worker.
 
     ``SGLangEmbodiedWorker`` owns the server subprocess and channel loop.  This
-    policy owns only DreamZero-specific behavior: server launch arguments,
-    observation normalization, action HTTP requests and action unnormalization.
+    policy owns the DreamZero-specific action behavior: pipeline config
+    serialization, observation normalization, action HTTP requests and action
+    unnormalization.
     """
-
-    @staticmethod
-    def build_sglang_serve_args(
-        *,
-        model_path: str,
-        sglang_cfg: Any,
-        model_cfg: Any,
-        tmpdir: str | None,
-        rank: int,
-        eval_batch_size: int,
-    ) -> list[str]:
-        """Build DreamZero-specific ``sglang serve`` command-line arguments.
-
-        The returned flags are consumed by the server subprocess, not by the
-        RLinf worker.  They select the native backend, force the registered
-        ``DreamZeroPipeline`` and pass a JSON pipeline config generated from the
-        RLinf rollout/model config.
-        """
-
-        sp_degree = int(
-            getattr(sglang_cfg, "sp_degree", getattr(sglang_cfg, "sp_size", 1)) or 1
-        )
-        cfg_parallel_degree = int(getattr(sglang_cfg, "cfg_parallel_degree", 1) or 1)
-        pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
-            sglang_cfg=sglang_cfg,
-            model_cfg=model_cfg,
-            tmpdir=tmpdir,
-            rank=rank,
-            eval_batch_size=eval_batch_size,
-        )
-        args = [
-            "--backend",
-            "sglang",
-            "--pipeline",
-            str(getattr(sglang_cfg, "pipeline_class_name", "DreamZeroPipeline")),
-            "--pipeline-config-path",
-            pipeline_config_path,
-            "--sp-degree",
-            str(sp_degree),
-            "--cfg-parallel-size",
-            str(cfg_parallel_degree),
-        ]
-        if v := getattr(sglang_cfg, "attention_backend", None):
-            args += ["--attention-backend", str(v)]
-        if (v := getattr(sglang_cfg, "scheduler_port", None)) is not None:
-            args += [
-                "--scheduler-port",
-                str(int(v) + rank * int(getattr(sglang_cfg, "port_stride", 100))),
-            ]
-        if isinstance(getattr(sglang_cfg, "dit_cpu_offload", None), bool):
-            args += [
-                "--dit-cpu-offload",
-                "true" if getattr(sglang_cfg, "dit_cpu_offload") else "false",
-            ]
-        for component in (
-            "dreamzero_dit",
-            "dreamzero_vae",
-            "dreamzero_text_encoder",
-            "dreamzero_image_encoder",
-        ):
-            args += [f"--{component.replace('_', '-')}-path", model_path]
-        return args
 
     @staticmethod
     def _write_pipeline_config(
@@ -608,7 +522,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
             ),
             max_retries=int(sglang_cfg.get("http_max_retries", 5)),
             retry_backoff_s=float(sglang_cfg.get("http_retry_backoff_s", 1.0)),
-            payload_format=sglang_cfg.get("http_payload_format", "json"),
+            payload_format=sglang_cfg.get("http_payload_format", "msgpack"),
             model=sglang_cfg.get("model", str(rollout_model_config.model_path)),
         )
         self._eval_predict_calls = 0
