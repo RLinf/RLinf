@@ -70,9 +70,13 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
                 time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
+        from rlinf.workers.trajectory.channel import TrajectoryChannel
+
+        split_num = 1
+        if not isinstance(input_channel, TrajectoryChannel):
+            send_num = self._component_placement.get_world_size("env") * self.stage_num
+            recv_num = self._component_placement.get_world_size("actor")
+            split_num = compute_split_num(send_num, recv_num)
         while not self.should_stop:
             for _ in range(split_num):
                 trajectory = input_channel.get()

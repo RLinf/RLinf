@@ -27,17 +27,11 @@ from typing import Any, Callable, Optional, Protocol, TextIO
 
 import torch
 
-# Type for a single tensor field value in a dataclass (used for send/recv).
-TensorFieldValue = (
-    torch.Tensor
-    | list[torch.Tensor]
-    | tuple[torch.Tensor, ...]
-    | dict[str, torch.Tensor]
-)
-# Metadata for flatten/unflatten: (field_name, 'tensor'|'list'|'tuple'|'dict', None|length|list_of_keys).
-DataclassTensorFieldsMetadata = list[
-    tuple[str, str, Optional[int] | Optional[list[str]]]
-]
+# A path identifies a tensor leaf inside a dataclass, including nested
+# dataclasses and standard Python containers.  The accompanying skeleton keeps
+# every non-tensor value in place and replaces tensor leaves with ``None``.
+TensorPath = tuple[Any, ...]
+DataclassTensorFieldsMetadata = list[TensorPath]
 
 
 @contextlib.contextmanager
@@ -560,78 +554,87 @@ def dataclass_arg_check(
 
 def extract_dataclass_tensor_fields(
     obj: Any,
-) -> tuple[
-    dict[str, TensorFieldValue], list[torch.Tensor], DataclassTensorFieldsMetadata
-]:
-    """Extract fields of a dataclass that are tensors or list/tuple/dict of tensors.
+) -> tuple[Any, list[torch.Tensor], DataclassTensorFieldsMetadata]:
+    """Separate every nested tensor in a dataclass from its object skeleton.
 
-    Supported field types:
-        - torch.Tensor
-        - list[torch.Tensor] (all elements must be tensors)
-        - tuple[torch.Tensor, ...] (all elements must be tensors)
-        - dict[str, torch.Tensor] (all values must be tensors)
-
-    Returns:
-        (fields_dict, tensors_list, metadata): fields_dict maps field names to their value(s);
-        tensors_list is a flat list of all tensors in field order for send/wire format;
-        metadata describes each field's kind for unflatten on recv.
+    Tensor leaves may occur anywhere below a dataclass through nested
+    dataclasses, dictionaries, lists, or tuples.  Their traversal paths make
+    reconstruction independent of the container nesting shape.
     """
     if not is_dataclass(obj):
-        return {}, [], []
-    result: dict[str, TensorFieldValue] = {}
+        return obj, [], []
     tensors_list: list[torch.Tensor] = []
     metadata: DataclassTensorFieldsMetadata = []
-    for f in fields(obj):
-        val = getattr(obj, f.name)
-        if isinstance(val, torch.Tensor):
-            result[f.name] = val
-            tensors_list.append(val)
-            metadata.append((f.name, "tensor", None))
-        elif isinstance(val, (list, tuple)) and all(
-            isinstance(item, torch.Tensor) for item in val
-        ):
-            # Preserve list vs tuple; flatten/unflatten will distinguish for wire format.
-            result[f.name] = val
-            tensors_list.extend(val)
-            kind = "list" if isinstance(val, list) else "tuple"
-            metadata.append((f.name, kind, len(val)))
-        elif isinstance(val, dict) and all(
-            isinstance(v, torch.Tensor) for v in val.values()
-        ):
-            result[f.name] = val
-            keys = list(val.keys())
-            tensors_list.extend(val[k] for k in keys)
-            metadata.append((f.name, "dict", keys))
-    return result, tensors_list, metadata
+
+    def extract(value: Any, path: TensorPath) -> Any:
+        if isinstance(value, torch.Tensor):
+            tensors_list.append(value)
+            metadata.append(path)
+            return None
+        if is_dataclass(value):
+            replacements = {
+                item.name: extract(getattr(value, item.name), path + (item.name,))
+                for item in fields(value)
+            }
+            return dataclasses.replace(value, **replacements)
+        if isinstance(value, dict):
+            return {
+                key: extract(nested_value, path + (key,))
+                for key, nested_value in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                extract(nested_value, path + (index,))
+                for index, nested_value in enumerate(value)
+            ]
+        if isinstance(value, tuple):
+            return tuple(
+                extract(nested_value, path + (index,))
+                for index, nested_value in enumerate(value)
+            )
+        return value
+
+    return extract(obj, ()), tensors_list, metadata
 
 
 def unflatten_dataclass_tensor_fields(
+    skeleton: Any,
     metadata: DataclassTensorFieldsMetadata,
     flat_tensors: list[torch.Tensor],
-) -> dict[str, TensorFieldValue]:
-    """Reconstruct a dict of tensor fields from metadata and flat tensor list (from recv)."""
-    result: dict[str, TensorFieldValue] = {}
-    idx = 0
-    for name, kind, extra in metadata:
-        if kind == "tensor":
-            result[name] = flat_tensors[idx]
-            idx += 1
-        elif kind == "list":
-            n = extra if isinstance(extra, int) else 0
-            result[name] = flat_tensors[idx : idx + n]
-            idx += n
-        elif kind == "tuple":
-            n = extra if isinstance(extra, int) else 0
-            result[name] = tuple(flat_tensors[idx : idx + n])
-            idx += n
-        elif kind == "dict":
-            keys = extra if isinstance(extra, list) else []
-            result[name] = dict(zip(keys, flat_tensors[idx : idx + len(keys)]))
-            idx += len(keys)
-        else:
-            raise ValueError(f"Unknown metadata kind for field {name}: {kind}")
-    if idx != len(flat_tensors):
+) -> Any:
+    """Restore tensor leaves into a skeleton produced by the extractor."""
+    if len(metadata) != len(flat_tensors):
         raise ValueError(
-            f"Metadata consumed {idx} tensors but flat list has {len(flat_tensors)}"
+            f"Metadata contains {len(metadata)} tensor paths but received "
+            f"{len(flat_tensors)} tensors."
         )
-    return result
+
+    def replace_at_path(value: Any, path: TensorPath, tensor: torch.Tensor) -> Any:
+        if not path:
+            return tensor
+        key, *remaining = path
+        remaining_path = tuple(remaining)
+        if is_dataclass(value):
+            return dataclasses.replace(
+                value,
+                **{key: replace_at_path(getattr(value, key), remaining_path, tensor)},
+            )
+        if isinstance(value, dict):
+            result = value.copy()
+            result[key] = replace_at_path(result[key], remaining_path, tensor)
+            return result
+        if isinstance(value, list):
+            result = value.copy()
+            result[key] = replace_at_path(result[key], remaining_path, tensor)
+            return result
+        if isinstance(value, tuple):
+            result = list(value)
+            result[key] = replace_at_path(result[key], remaining_path, tensor)
+            return tuple(result)
+        raise TypeError(
+            f"Cannot restore a tensor below {type(value).__name__} at path {path}."
+        )
+
+    for path, tensor in zip(metadata, flat_tensors):
+        skeleton = replace_at_path(skeleton, path, tensor)
+    return skeleton

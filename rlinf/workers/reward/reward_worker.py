@@ -35,12 +35,15 @@ from rlinf.scheduler import (
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.down_sampling import down_sample_batch
 from rlinf.utils.metric_utils import append_to_dict
+from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor
 from rlinf.utils.placement import (
     HybridComponentPlacement,
 )
 from rlinf.utils.utils import (
     clear_memory,
 )
+from rlinf.workers.trajectory.channel import TrajectoryChannel
+from rlinf.workers.trajectory.data import Observations, Rewards, TrajectoryEnvelope
 
 
 class RewardWorker(Worker):
@@ -236,6 +239,7 @@ class EmbodiedRewardWorker(Worker):
             self.eval_batch_size = 1
 
         self.enable_offload = self.cfg.reward.get("enable_offload", False)
+        self.reward_micro_batch_size = 0
         self._interact_task = None
 
         self.reward_threshold = self.cfg.reward.get("reward_threshold", 0.6)
@@ -273,6 +277,14 @@ class EmbodiedRewardWorker(Worker):
             )
             self.local_num_train_envs = self.train_batch_size // self._world_size
 
+        self.reward_micro_batch_size = int(
+            self.cfg.reward.get("micro_batch_size", self.local_num_train_envs)
+        )
+        if self.reward_micro_batch_size < self.local_num_train_envs:
+            raise ValueError(
+                "reward.micro_batch_size must be at least the local reward batch size."
+            )
+
         self.model = self.model_provider_func()
 
         # Move to device and set eval mode
@@ -289,25 +301,56 @@ class EmbodiedRewardWorker(Worker):
 
         total_last_run_count = 0
         while True:
-            merged_data = await self.recv_from(
-                group_name=self.cfg.env.group_name,
-                channel=input_channel,
-                tag="train_reward_obs",
-                async_op=True,
-                batch_size=self.train_batch_size,
-            ).async_wait()
-            last_run = merged_data.get("last_run", None)
+            merged_data = await self._recv_reward_request(
+                input_channel, decoupled_mode=False
+            )
+            if self._records_trajectory_rewards(output_channel):
+                requests, last_run_count = await self._collect_trajectory_requests(
+                    merged_data, input_channel, decoupled_mode=False
+                )
+                self._record_trajectory_reward_batch(requests, output_channel)
+                total_last_run_count += last_run_count
+                if total_last_run_count >= self.local_num_train_envs:
+                    break
+                continue
+            trajectory_input = (
+                merged_data if isinstance(merged_data, Observations) else None
+            )
+            reward_input = (
+                trajectory_input.reward_inputs
+                if trajectory_input is not None
+                else merged_data
+            )
+            if reward_input is None:
+                raise ValueError("Trajectory observations are missing reward_inputs.")
+            last_run = reward_input.get("last_run", None)
             last_run_count = int(last_run.sum().item()) if last_run is not None else 0
-            rewards = self.compute_image_rewards(observations=merged_data)
+            rewards = self.compute_image_rewards(observations=reward_input)
             if isinstance(rewards, torch.Tensor):
                 rewards = rewards.contiguous()
-            self.send_to(
-                group_name=self.cfg.env.group_name,
-                channel=output_channel,
-                data=rewards,
-                tag="train_reward_obs",
-                async_op=True,
-            )
+            reward_payload: torch.Tensor | np.ndarray | Rewards = rewards
+            if isinstance(output_channel, TrajectoryChannel):
+                if trajectory_input is None:
+                    raise ValueError("Trajectory reward output requires Observations.")
+                reward_payload = Rewards(
+                    global_step=trajectory_input.global_step,
+                    rank=self._rank,
+                    current_epoch=trajectory_input.current_epoch,
+                    current_step=trajectory_input.current_step,
+                    stage_id=trajectory_input.stage_id,
+                    rewards=rewards,
+                    reward_mode=self.cfg.reward.get("reward_mode", "per_step"),
+                )
+            if self._records_trajectory_rewards(output_channel):
+                output_channel.record(reward_payload, async_op=True)
+            else:
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=reward_payload,
+                    tag="train_reward_obs",
+                    async_op=True,
+                )
             total_last_run_count += last_run_count
             if total_last_run_count >= self.local_num_train_envs:
                 break
@@ -371,29 +414,159 @@ class EmbodiedRewardWorker(Worker):
             output_channel: Channel used to return computed rewards to Env Workers.
         """
         while True:
-            merged_data = await self.recv_from(
-                group_name=self.cfg.env.group_name,
-                channel=input_channel,
-                tag="train_reward_obs",
-                async_op=True,
-                batch_size=self.train_batch_size,
-                decoupled_mode=self.env_decoupled_mode,
-            ).async_wait()
-            rewards = self.compute_image_rewards(observations=merged_data)
+            merged_data = await self._recv_reward_request(
+                input_channel, decoupled_mode=self.env_decoupled_mode
+            )
+            if self._records_trajectory_rewards(output_channel):
+                requests, _ = await self._collect_trajectory_requests(
+                    merged_data,
+                    input_channel,
+                    decoupled_mode=self.env_decoupled_mode,
+                )
+                self._record_trajectory_reward_batch(requests, output_channel)
+                continue
+            trajectory_input = (
+                merged_data if isinstance(merged_data, Observations) else None
+            )
+            reward_input = (
+                trajectory_input.reward_inputs
+                if trajectory_input is not None
+                else merged_data
+            )
+            if reward_input is None:
+                raise ValueError("Trajectory observations are missing reward_inputs.")
+            rewards = self.compute_image_rewards(observations=reward_input)
             if isinstance(rewards, torch.Tensor):
                 rewards = rewards.contiguous()
-            self.send_to(
-                group_name=self.cfg.env.group_name,
-                channel=output_channel,
-                data=rewards,
-                tag="train_reward_obs",
-                async_op=True,
-                decoupled_mode=self.env_decoupled_mode,
-            )
+            reward_payload: torch.Tensor | np.ndarray | Rewards = rewards
+            if isinstance(output_channel, TrajectoryChannel):
+                if trajectory_input is None:
+                    raise ValueError("Trajectory reward output requires Observations.")
+                reward_payload = Rewards(
+                    global_step=trajectory_input.global_step,
+                    rank=self._rank,
+                    current_epoch=trajectory_input.current_epoch,
+                    current_step=trajectory_input.current_step,
+                    stage_id=trajectory_input.stage_id,
+                    rewards=rewards,
+                    reward_mode=self.cfg.reward.get("reward_mode", "per_step"),
+                )
+            if self._records_trajectory_rewards(output_channel):
+                output_channel.record(reward_payload, async_op=True)
+            else:
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=reward_payload,
+                    tag="train_reward_obs",
+                    async_op=True,
+                    decoupled_mode=self.env_decoupled_mode,
+                )
 
     async def stop(self):
         if self._interact_task is not None and not self._interact_task.done():
             self._interact_task.cancel()
+
+    def _records_trajectory_rewards(self, channel: Channel) -> bool:
+        """Return whether this reward result uses storage-side per-step assembly."""
+        return (
+            isinstance(channel, TrajectoryChannel)
+            and self.cfg.reward.get("reward_mode", "per_step") == "per_step"
+        )
+
+    async def _recv_reward_request(
+        self, input_channel: Channel, *, decoupled_mode: bool
+    ) -> Any:
+        """Receive one Env-to-Reward request."""
+        return await self.recv_from(
+            group_name=self.cfg.env.group_name,
+            channel=input_channel,
+            tag="train_reward_obs",
+            async_op=True,
+            batch_size=self.train_batch_size,
+            decoupled_mode=decoupled_mode,
+        ).async_wait()
+
+    async def _collect_trajectory_requests(
+        self,
+        first_request: Any,
+        input_channel: Channel,
+        *,
+        decoupled_mode: bool,
+    ) -> tuple[list[Observations], int]:
+        """Accumulate per-step reward requests into one model micro-batch."""
+        requests = self._as_trajectory_reward_requests(first_request)
+        total_batch_size = sum(request.batch_size for request in requests)
+        last_run_count = sum(
+            self._last_run_count(request.reward_inputs) for request in requests
+        )
+
+        while total_batch_size < self.reward_micro_batch_size and last_run_count == 0:
+            next_requests = self._as_trajectory_reward_requests(
+                await self._recv_reward_request(
+                    input_channel, decoupled_mode=decoupled_mode
+                )
+            )
+            requests.extend(next_requests)
+            total_batch_size += sum(request.batch_size for request in next_requests)
+            last_run_count += sum(
+                self._last_run_count(request.reward_inputs) for request in next_requests
+            )
+        return requests, last_run_count
+
+    @classmethod
+    def _as_trajectory_reward_requests(cls, request: Any) -> list[Observations]:
+        if isinstance(request, list):
+            return [cls._as_trajectory_reward_request(item) for item in request]
+        return [cls._as_trajectory_reward_request(request)]
+
+    @staticmethod
+    def _as_trajectory_reward_request(request: Any) -> Observations:
+        if isinstance(request, TrajectoryEnvelope) or (
+            isinstance(request, dict) and set(request) == {"batch_index", "batch"}
+        ):
+            request = TrajectoryEnvelope.from_channel_item(request).record
+        if not isinstance(request, Observations) or request.reward_inputs is None:
+            raise ValueError("Trajectory reward requests must be Observations.")
+        if request.slot_ids is None:
+            raise ValueError("Trajectory reward requests must carry slot_ids.")
+        return request
+
+    @staticmethod
+    def _last_run_count(reward_input: dict[str, Any] | None) -> int:
+        if reward_input is None:
+            return 0
+        last_run = reward_input.get("last_run")
+        return int(last_run.sum().item()) if last_run is not None else 0
+
+    def _record_trajectory_reward_batch(
+        self, requests: list[Observations], output_channel: TrajectoryChannel
+    ) -> None:
+        """Run one forward pass and record its slices with original metadata."""
+        reward_inputs = [request.reward_inputs for request in requests]
+        merged_input = cat_list_of_dict_tensor(reward_inputs)
+        rewards = self.compute_image_rewards(observations=merged_input)
+        if not isinstance(rewards, torch.Tensor):
+            raise TypeError("Trajectory reward models must return a torch.Tensor.")
+        sizes = [request.batch_size for request in requests]
+        if rewards.shape[0] != sum(sizes):
+            raise ValueError(
+                "Reward model output batch size does not match accumulated requests."
+            )
+        for request, reward_slice in zip(requests, torch.split(rewards, sizes)):
+            output_channel.record(
+                Rewards(
+                    global_step=request.global_step,
+                    rank=self._rank,
+                    current_epoch=request.current_epoch,
+                    current_step=request.current_step,
+                    stage_id=request.stage_id,
+                    slot_ids=request.slot_ids,
+                    rewards=reward_slice.contiguous(),
+                    reward_mode=self.cfg.reward.get("reward_mode", "per_step"),
+                ),
+                async_op=True,
+            )
 
 
 class FSDPRewardWorker(FSDPModelManager, Worker):

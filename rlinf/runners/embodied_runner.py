@@ -70,6 +70,25 @@ class EmbodiedRunner:
         self.env = env
         self.critic = critic
         self.reward = reward
+        if self.cfg.get("trajectory", {}).get("enabled", False):
+            from rlinf.workers.trajectory.channel import TrajectoryChannels
+
+            component_groups = {"env": env, "rollout": rollout, "actor": actor}
+            if reward is not None:
+                component_groups["reward"] = reward
+            trajectory_channels = TrajectoryChannels.create(
+                cfg,
+                component_worker_groups=component_groups,
+            )
+            self.env_channel = trajectory_channels.env
+            self.rollout_channel = trajectory_channels.rollout
+            self.actor_channel = trajectory_channels.actor
+            self.reward_channel = trajectory_channels.reward if reward else None
+        else:
+            self.env_channel = Channel.create("Env")
+            self.rollout_channel = Channel.create("Rollout")
+            self.actor_channel = Channel.create("Actor")
+            self.reward_channel = Channel.create("Reward") if reward else None
         self.weight_sync_interval = self.cfg.runner.weight_sync_interval
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
@@ -89,15 +108,6 @@ class EmbodiedRunner:
             if profile_steps_raw is not None
             else None
         )
-
-        # Data channels
-        self.env_channel = Channel.create("Env")
-        self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
-        if self.reward is not None:
-            self.reward_channel = Channel.create("Reward")
-        else:
-            self.reward_channel = None
 
         # this timer checks if we should stop training
         self.run_timer = Timer(None)  # Timer that checks if we should stop training
@@ -485,6 +495,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
+            self.env.set_global_step(self.global_step)
 
             profiled_step = (
                 self.global_step
@@ -568,6 +579,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
+            self.env.set_global_step(self.global_step)
 
             profiled_step = (
                 self.global_step
