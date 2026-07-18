@@ -602,6 +602,37 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-gr00t-libero-ascend-test:
+    runs-on: ascend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create Ascend embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
+          export DECORD_PATH=/workspace/dataset/decord
+          bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
+
+      - name: Libero-Spatial PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_gr00t osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-gr00t-isaaclab-test:
     runs-on: embodied
     steps:
@@ -681,14 +712,6 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
-      - name: Maniskill PPO Pi05 test
-        timeout-minutes: 20
-        run: |
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05
-
       - name: Maniskill PPO Pi05 training pipeline test
         timeout-minutes: 20
         run: |
@@ -720,14 +743,6 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dagger_openpi
-
-      - name: Libero-Spatial PPO Pi05 test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
 
       - name: Libero-Spatial PPO Pi05 torch compile test
         timeout-minutes: 20
@@ -762,6 +777,15 @@ jobs:
           source .venv/bin/activate
           cp -r /workspace/dataset/RLCo-maniskill-assets/custom_assets ${REPO_PATH}/rlinf/envs/maniskill/assets
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_co_training_openpi_pi05
+
+      - name: ManiSkill RLT Stage2 AC MLP test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_rlt_stage2_ac_mlp
 
       - name: Clean up
         run: |

@@ -1,5 +1,5 @@
 defaults:
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -12,14 +12,14 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    actor,env,rollout: 0-0
+    actor: 0-0
 
 runner:
   task_type: sft
   logger:
     log_path: "../results"
     project_name: rlinf-rlt
-    experiment_name: "rlt_stage1_sft_pi05_realworld_peg_insertion_state"
+    experiment_name: "realworld_rlt_stage1_sft_openpi_pi05"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
@@ -38,10 +38,6 @@ actor:
   global_batch_size: 64
   seed: 42
 
-  openpi_data:
-    # Used as OpenPI's norm-stats asset id. Keep this identical in Stage2.
-    repo_id: "realworld_peg_insertion_rlt_stage1"
-
   model:
     model_type: "openpi"
     precision: null
@@ -50,7 +46,8 @@ actor:
     num_action_chunks: 20
     num_steps: 4
     openpi_data:
-      repo_id: ${actor.openpi_data.repo_id}
+      # Used as OpenPI's norm-stats asset id. Keep this identical in Stage2.
+      repo_id: "realworld_peg_insertion_rlt_stage1"
 
     openpi:
       config_name: "pi05_franka_state"

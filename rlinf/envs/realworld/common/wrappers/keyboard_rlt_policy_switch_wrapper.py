@@ -30,15 +30,15 @@ class KeyboardRLTPolicySwitchWrapper(gym.Wrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self.listener = KeyboardListener()
-        self._use_actor = False
+        self._rlt_switch_flags = False
         self._last_press_ts: dict[str, float] = {}
 
     @property
     def rlt_switch_flags(self) -> bool:
-        return self._use_actor
+        return self._rlt_switch_flags
 
     def reset(self, *, seed=None, options=None):
-        self._use_actor = False
+        self._rlt_switch_flags = False
         self._last_press_ts.clear()
         self.listener.pop_pressed_keys()
         return self.env.reset(seed=seed, options=options)
@@ -56,16 +56,16 @@ class KeyboardRLTPolicySwitchWrapper(gym.Wrapper):
             self._last_press_ts[key] = now
 
             if key == "b":
-                if not self._use_actor:
+                if not self._rlt_switch_flags:
                     event = "enter_actor"
-                    self._use_actor = True
+                    self._rlt_switch_flags = True
                     self._log_info(
                         "Pedal 'b' pressed; switching RLT rollout to Stage2 actor."
                     )
                 else:
                     event = "actor_already_active"
 
-        info["rlt_switch_flags"] = self._use_actor
+        info["rlt_switch_flags"] = self._rlt_switch_flags
         info["rlt_policy_switch_event"] = event
         return obs, reward, terminated, truncated, info
 

@@ -385,13 +385,22 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
         return chains_log_probs, chains_values
 
     def sample_noise(self, shape, device):
-        return torch.normal(
+        sample_dtype = (
+            torch.float32 if self._use_fp32_normal(device) else torch.bfloat16
+        )
+        result = torch.normal(
             mean=0.0,
             std=1.0,
             size=shape,
-            dtype=torch.bfloat16,
+            dtype=sample_dtype,
             device=device,
         )
+        return result.to(torch.bfloat16)
+
+    @staticmethod
+    def _use_fp32_normal(device):
+        device_type = torch.device(device).type
+        return device_type == "npu"
 
     def get_value(self, vl_embs, state_features):
         # TODO: add value vlm mode param

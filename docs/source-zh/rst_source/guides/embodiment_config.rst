@@ -13,7 +13,7 @@ defaults
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - training_backend/fsdp@actor.fsdp_config
+    - hybrid_engines/fsdp@actor.fsdp_config
     - weight_syncer/patch_syncer@weight_syncer
 
 ``defaults``：Hydra 配置继承。选择要组合到本次运行中的环境、模型、训练后端与权重同步器预设。
@@ -412,7 +412,7 @@ actor
 
 分词器（``actor.tokenizer.*``）与 FSDP（``actor.fsdp_config.*``）子节遵循
 :doc:`agentic_config` 与 :doc:`basic_config` 中的共享 schema；FSDP 预设从
-``training_backend/fsdp`` 挂载。
+``hybrid_engines/fsdp`` 挂载。
 
 环境专用配置
 ------------------------------------

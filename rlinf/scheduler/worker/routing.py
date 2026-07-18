@@ -561,6 +561,8 @@ def infer_batch_size(data: Any) -> int:
 
 def split_batch(data: Any, split_sizes: Sequence[int]) -> list[Any]:
     """Split a common batch payload on batch dimension."""
+    if isinstance(data, (bool, int, float, str)):
+        return [data for _ in split_sizes]
     if isinstance(data, torch.Tensor):
         return [
             chunk.contiguous() for chunk in torch.split(data, list(split_sizes), dim=0)
