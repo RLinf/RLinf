@@ -63,7 +63,6 @@ actor:
     openpi:
       assets_dir: /workspace/ci_behavior/assets
       asset_id: "behavior-1k/2025-challenge-demos"
-      paligemma_tokenizer: /workspace/ci_behavior/paligemma_tokenizer/paligemma_tokenizer.model
 
   optim:
     lr: 2.5e-5

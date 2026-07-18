@@ -12,26 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Self-contained BEHAVIOR-1K streaming LeRobot dataset for pi05 SFT.
-
-Ported from ``rlinf/models/embodiment/openpi/dataconfig/behavior_dataset.py`` with
-two changes relative to the old module:
-
-* the installed-``openpi`` import is removed (the only transform base used here,
-  :class:`DataTransformFn`, is taken from the vendored
-  ``openpi_pytorch.policies.behavior_policy`` module instead);
-* the streaming chunk partition is made *rank-aware* so that, under
-  ``torchrun``/``DistributedDataParallel``, each rank streams a disjoint slice of
-  the keyframe chunks (see :meth:`BehaviorSftDataset.__getitem__`).
-
-The video/stat utilities (``hf_transform_to_torch``, ``aggregate_stats``,
-``decode_video_frames`` and the per-camera video loaders) are the real ones from
-``omnigibson.learning.utils`` rather than local copies. They are imported lazily
-(inside the methods that use them, via :func:`_omnigibson_utils`) so that merely
-importing this module never pulls OmniGibson — config validation must not trigger
-any scene/asset load.
-"""
-
 from __future__ import annotations
 
 import bisect
@@ -73,12 +53,11 @@ from lerobot.common.datasets.utils import (
     load_jsonlines,
 )
 from lerobot.common.datasets.video_utils import get_safe_default_codec
-from torch.utils.data import Dataset, get_worker_info
 
-# The vendored, self-contained transform base (replaces openpi.transforms.DataTransformFn).
-from rlinf.models.embodiment.openpi_pytorch.policies.behavior_policy import (
-    DataTransformFn,
-)
+# Transform base for PromptFromLeRobotItem — reuse openpi's (the openpi_pytorch
+# data path is built on openpi.transforms throughout).
+from openpi.transforms import DataTransformFn
+from torch.utils.data import Dataset, get_worker_info
 
 logger = logging.getLogger("BehaviorSftDataset")
 

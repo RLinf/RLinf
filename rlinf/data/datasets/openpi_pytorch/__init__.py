@@ -12,70 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Eval-processor registry for the ``openpi_pytorch`` model.
-
-:func:`get_eval_processor` maps an environment name to its
-:class:`EvalProcessor` subclass, mirroring ``get_openpi_config`` in
-``rlinf.models.embodiment.openpi.dataconfig``. The registry values are lazy
-loaders (thunks) so that importing this package stays cheap: the heavy
-``behavior`` dataset chain (``lerobot`` / ``datasets`` / ``huggingface_hub``,
-pulled in by ``behavior/__init__.py``) is only imported when an env's processor
-is actually requested. The loaders therefore import ``behavior.processing``
-directly, never the ``behavior`` package.
-"""
-
 from __future__ import annotations
 
-from rlinf.data.datasets.openpi_pytorch.eval_processor import EvalProcessor
 
-
-def _load_behavior_processor():
-    from rlinf.data.datasets.openpi_pytorch.behavior.processing import (
-        BehaviorEvalProcessor,
+def _load_behavior_sft_dataloader():
+    from rlinf.data.datasets.openpi_pytorch.behavior import (
+        build_behavior_sft_dataloader,
     )
 
-    return BehaviorEvalProcessor
+    return build_behavior_sft_dataloader
 
 
-# env name -> zero-arg loader returning the EvalProcessor subclass.
-_EVAL_PROCESSORS = {
-    "behavior": _load_behavior_processor,
+# env name -> zero-arg loader returning the build_<env>_sft_dataloader function.
+_SFT_DATALOADER_BUILDERS = {
+    "behavior": _load_behavior_sft_dataloader,
 }
 
 
-def get_eval_processor(
-    env_type,
-    norm_stats,
-    tokenizer,
-    *,
-    action_chunk,
-    action_env_dim=23,
-    model_action_dim=32,
-    image_resolution=(224, 224),
-) -> EvalProcessor:
-    """Build the eval processor registered for ``env_type``.
+def _resolve_env(config_name: str) -> str:
+    """Resolve the registered env whose name appears in ``config_name``.
 
-    The keyword arguments mirror the env processors' constructors so the model
-    factory can forward them unchanged. Raises ``ValueError`` (with a close-match
-    suggestion) when no processor is registered for ``env_type``.
+    Mirrors the ``if "<env>" in config_name`` dispatch the eval repack uses
+    (config names look like ``pi05_behavior`` / ``pi0_libero``).
     """
-    if env_type not in _EVAL_PROCESSORS:
-        import difflib
-
-        closest = difflib.get_close_matches(
-            env_type, _EVAL_PROCESSORS.keys(), n=1, cutoff=0.0
-        )
-        hint = f" Did you mean '{closest[0]}'?" if closest else ""
-        raise ValueError(f"Eval processor for env '{env_type}' not found.{hint}")
-    processor_cls = _EVAL_PROCESSORS[env_type]()
-    return processor_cls(
-        norm_stats,
-        tokenizer,
-        action_chunk=action_chunk,
-        action_env_dim=action_env_dim,
-        model_action_dim=model_action_dim,
-        image_resolution=image_resolution,
+    for env_type in _SFT_DATALOADER_BUILDERS:
+        if env_type in config_name:
+            return env_type
+    raise ValueError(
+        f"No openpi_pytorch SFT dataloader registered matching "
+        f"config_name={config_name!r}; known envs: {list(_SFT_DATALOADER_BUILDERS)}."
     )
 
 
-__all__ = ["EvalProcessor", "get_eval_processor"]
+def build_openpi_pytorch_sft_dataloader(
+    cfg, world_size, rank, data_paths, eval_dataset=False
+):
+    """Build the openpi_pytorch SFT dataloader for the env ``config_name`` selects.
+
+    Returns ``(loader, data_config)`` — the same 2-tuple the SFT worker expects.
+    """
+    env_type = _resolve_env(str(cfg.actor.model.openpi.config_name))
+    builder = _SFT_DATALOADER_BUILDERS[env_type]()
+    return builder(cfg, world_size, rank, data_paths, eval_dataset)
+
+
+__all__ = ["build_openpi_pytorch_sft_dataloader"]

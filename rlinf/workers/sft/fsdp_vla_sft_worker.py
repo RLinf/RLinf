@@ -34,11 +34,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             SupportedModel(self.cfg.actor.model.model_type)
             == SupportedModel.OPENPI_PYTORCH
         ):
-            from rlinf.data.datasets.openpi_pytorch.behavior import (
-                build_behavior_sft_dataloader,
+            from rlinf.data.datasets.openpi_pytorch import (
+                build_openpi_pytorch_sft_dataloader,
             )
 
-            return build_behavior_sft_dataloader(
+            return build_openpi_pytorch_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:

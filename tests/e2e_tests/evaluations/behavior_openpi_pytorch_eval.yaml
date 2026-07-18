@@ -62,9 +62,6 @@ rollout:
 
   model:
     # Minimal CI fixture: the new-format eval checkpoint staged under /workspace.
+    # Norm stats resolve checkpoint-relative; tokenizer from openpi's cache.
     model_path: /workspace/ci_behavior/model
     add_value_head: False
-    openpi:
-      assets_dir: /workspace/ci_behavior/model
-      asset_id: physical-intelligence/behavior
-      paligemma_tokenizer: /workspace/ci_behavior/paligemma_tokenizer/paligemma_tokenizer.model

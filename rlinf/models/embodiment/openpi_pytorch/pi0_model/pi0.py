@@ -101,7 +101,7 @@ class Pi0(model.BaseModel):
             configs=[paligemma_config, action_expert_config],
             embed_dtype=config.dtype,
             adarms=adarms,
-            use_gradient_checkpointing=True,
+            use_gradient_checkpointing=False,
         )
 
         # SigLIP vision encoder
@@ -109,7 +109,7 @@ class Pi0(model.BaseModel):
             variant="So400m/14",
             pool_type="none",
             num_classes=paligemma_config.width,
-            remat=True,
+            use_gradient_checkpointing=False,
             dtype_mm=config.dtype,
         )
 
@@ -383,6 +383,69 @@ class Pi0(model.BaseModel):
 
         return torch.mean(torch.square(v_t - u_t), dim=-1)
 
+    def build_prefix_cache(
+        self, observation: model.Observation
+    ) -> tuple[torch.Tensor, torch.Tensor, tuple]:
+        """Embed prefix tokens and run one LLM pass to build the KV cache.
+
+        The caller is responsible for preprocessing the observation (image
+        resize/pad, mask defaults) — this method only consumes the prepared
+        observation so it can be shared between the eval Euler sampler and the
+        RL train-time forward where the observation has already been built.
+
+        Returns:
+            prefix_out:  (B, prefix_len, paligemma_width) paligemma-side hidden states.
+            prefix_mask: (B, prefix_len) bool mask of valid prefix positions.
+            kv_cache:    per-layer KV cache to feed into subsequent suffix passes.
+        """
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
+        positions = torch.cumsum(prefix_mask.int(), dim=1) - 1
+        outputs, kv_cache = self.llm(
+            [prefix_tokens, None],
+            positions=positions,
+            mask=prefix_attn_mask,
+        )
+        return outputs[0], prefix_mask, kv_cache
+
+    def run_suffix(
+        self,
+        observation: model.Observation,
+        x_t: torch.Tensor,
+        t_tensor: torch.Tensor,
+        kv_cache: tuple,
+        prefix_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """One suffix forward pass (action expert) given the prefix KV cache.
+
+        Returns the action-expert hidden states sliced to the last
+        ``action_horizon`` positions: (B, action_horizon, action_expert_width).
+        """
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
+            observation, x_t, t_tensor
+        )
+        suffix_len = suffix_tokens.shape[1]
+        suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
+        prefix_to_suffix_mask = einops.repeat(prefix_mask, "b p -> b s p", s=suffix_len)
+        full_attn_mask = torch.cat([prefix_to_suffix_mask, suffix_attn_mask], dim=-1)
+        suffix_positions = (
+            torch.sum(prefix_mask, dim=-1)[:, None]
+            + torch.cumsum(suffix_mask.int(), dim=-1)
+            - 1
+        )
+        outputs, _ = self.llm(
+            [None, suffix_tokens],
+            positions=suffix_positions,
+            mask=full_attn_mask,
+            kv_cache=kv_cache,
+            adarms_cond=[None, adarms_cond],
+        )
+        return outputs[1][:, -self.action_horizon :]
+
+    def velocity_from_suffix(self, suffix_out_act: torch.Tensor) -> torch.Tensor:
+        """Project action-expert hidden states to a velocity prediction v_t."""
+        return self.action_out_proj(suffix_out_act)
+
     def sample_actions(
         self,
         observation: model.Observation,
@@ -413,16 +476,7 @@ class Pi0(model.BaseModel):
                 B, self.action_horizon, self.action_dim, device=device, generator=rng
             )
 
-        # Pre-fill KV cache with prefix
-        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-        prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
-        positions = torch.cumsum(prefix_mask.int(), dim=1) - 1
-
-        _, kv_cache = self.llm(
-            [prefix_tokens, None],
-            positions=positions,
-            mask=prefix_attn_mask,
-        )
+        _, prefix_mask, kv_cache = self.build_prefix_cache(observation)
 
         x_t = noise
         t = 1.0
@@ -430,35 +484,10 @@ class Pi0(model.BaseModel):
         # Euler integration
         while t >= -dt / 2:
             t_tensor = torch.full((B,), t, device=device, dtype=torch.float32)
-            suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
-                observation, x_t, t_tensor
+            suffix_out_act = self.run_suffix(
+                observation, x_t, t_tensor, kv_cache, prefix_mask
             )
-
-            # Build attention mask: suffix attends to both prefix and suffix
-            suffix_len = suffix_tokens.shape[1]
-            suffix_attn_mask = make_attn_mask(suffix_mask, suffix_ar_mask)
-            prefix_to_suffix_mask = einops.repeat(
-                prefix_mask, "b p -> b s p", s=suffix_len
-            )
-            full_attn_mask = torch.cat(
-                [prefix_to_suffix_mask, suffix_attn_mask], dim=-1
-            )
-
-            suffix_positions = (
-                torch.sum(prefix_mask, dim=-1)[:, None]
-                + torch.cumsum(suffix_mask.int(), dim=-1)
-                - 1
-            )
-
-            _, suffix_out = self.llm(
-                [None, suffix_tokens],
-                positions=suffix_positions,
-                mask=full_attn_mask,
-                kv_cache=kv_cache,
-                adarms_cond=[None, adarms_cond],
-            )[0]
-
-            v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+            v_t = self.velocity_from_suffix(suffix_out_act)
             x_t = x_t + dt * v_t
             t = t + dt
 

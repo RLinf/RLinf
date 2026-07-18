@@ -107,7 +107,7 @@ class Encoder(nn.Module):
         num_heads: int,
         mlp_dim: int | None = None,
         dropout: float = 0.0,
-        use_gradient_checkpointing: bool = True,
+        use_gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.layers = nn.ModuleList(
@@ -142,8 +142,7 @@ class SigLIPViT(nn.Module):
         variant: str = "So400m/14",
         pool_type: str = "none",
         num_classes: int = 0,
-        scan: bool = True,
-        remat: bool = True,
+        use_gradient_checkpointing: bool = False,
         dtype_mm: str = "float32",
     ):
         super().__init__()
@@ -183,7 +182,7 @@ class SigLIPViT(nn.Module):
             num_heads=self.num_heads,
             mlp_dim=self.mlp_dim,
             dropout=0.0,
-            use_gradient_checkpointing=remat,
+            use_gradient_checkpointing=use_gradient_checkpointing,
         )
 
         # Output head: projects width -> num_classes (used when num_classes matches PaliGemma width)

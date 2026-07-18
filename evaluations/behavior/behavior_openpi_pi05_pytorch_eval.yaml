@@ -38,8 +38,8 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    rollout_epoch: 2
-    total_num_envs: 8
+    rollout_epoch: 4
+    total_num_envs: 4
     max_episode_steps: 4096
     max_steps_per_rollout_epoch: 4096
     video_cfg:
@@ -63,16 +63,5 @@ rollout:
     max_new_tokens: null
 
   model:
-    # NEW-format checkpoint produced by ckpt_convertor.openpi (old2new / sft2new).
-    # Set this to your local new-format eval checkpoint directory.
     model_path: /path/to/pi05_sft_pytorch_new
     add_value_head: False
-    openpi:
-      # Canonical BEHAVIOR norm stats — the SAME assets the SFT path resolves, so
-      # eval and SFT share one norm-stats distribution. Norm stats live at
-      # {assets_dir}/{asset_id}/norm_stats.json.
-      assets_dir: /path/to/pi05_sft_pytorch_new
-      asset_id: physical-intelligence/behavior
-      # PaliGemma SentencePiece tokenizer model (resolved from YAML, not hardcoded
-      # in code).
-      paligemma_tokenizer: /path/to/paligemma_tokenizer/paligemma_tokenizer.model
