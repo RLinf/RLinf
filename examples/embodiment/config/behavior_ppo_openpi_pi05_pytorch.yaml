@@ -2,7 +2,7 @@ defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
   - model/pi0_5_pytorch@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
