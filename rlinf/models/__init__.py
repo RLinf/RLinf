@@ -14,6 +14,7 @@
 
 from typing import Callable, Optional
 
+import torch
 from omegaconf import DictConfig
 
 from rlinf.config import EMBODIED_MODEL, SupportedModel, torch_dtype_from_precision
@@ -260,6 +261,78 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
+def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
+    """Attach Peft LoRA adapters when ``cfg.is_lora`` is enabled."""
+    if not cfg.get("is_lora", False):
+        return model
+
+    from peft import LoraConfig, PeftModel, get_peft_model
+
+    model_type = str(cfg.model_type)
+    if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
+        # Avoid bare "proj": on Qwen3-VL it also matches Conv3d patch_embed.proj,
+        # which Peft cannot wrap. Prefer explicit Linear module names.
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen2_5_vl"):
+            target_modules = [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "qkv",
+                "fc1",
+                "fc2",
+                "out_proj",
+                "lm_head",
+            ]
+        else:
+            target_modules = [
+                "proj",
+                "qkv",
+                "fc1",
+                "fc2",  # vision
+                "q",
+                "kv",
+                "fc3",
+                "out_proj",  # project
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "lm_head",  # llm
+            ]
+        lora_config = LoraConfig(
+            r=cfg.lora_rank,
+            lora_alpha=cfg.lora_rank,
+            lora_dropout=0.0,
+            target_modules=target_modules,
+            init_lora_weights="gaussian",
+        )
+        if SupportedModel(model_type) in (
+            SupportedModel.OPENPI,
+            SupportedModel.CFG_MODEL,
+        ):
+            module_to_lora = model.paligemma_with_expert.paligemma
+            module_to_lora = get_peft_model(module_to_lora, lora_config)
+            tag_vlm_subtree(model, False)
+            tag_vlm_subtree(module_to_lora, True)
+            model.paligemma_with_expert.paligemma = module_to_lora
+        else:
+            model = get_peft_model(model, lora_config)
+    else:
+        model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
+
+    if hasattr(model, "value_head"):
+        for param in model.value_head.parameters():
+            param.requires_grad = True
+    return model
+
+
 def get_model(cfg: DictConfig):
     model_type = str(cfg.model_type)
     model_builder = _MODEL_REGISTRY.get(model_type)
@@ -276,53 +349,7 @@ def get_model(cfg: DictConfig):
     ):
         model = model.to(Worker.torch_device_type)
 
-    if cfg.is_lora:
-        from peft import LoraConfig, PeftModel, get_peft_model
-
-        if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
-            lora_config = LoraConfig(
-                r=cfg.lora_rank,
-                lora_alpha=cfg.lora_rank,
-                lora_dropout=0.0,
-                target_modules=[
-                    "proj",
-                    "qkv",
-                    "fc1",
-                    "fc2",  # vision
-                    "q",
-                    "kv",
-                    "fc3",
-                    "out_proj",  # project
-                    "q_proj",
-                    "k_proj",
-                    "v_proj",
-                    "o_proj",
-                    "gate_proj",
-                    "up_proj",
-                    "down_proj",
-                    "lm_head",  # llm
-                ],
-                init_lora_weights="gaussian",
-            )
-            if SupportedModel(model_type) in (
-                SupportedModel.OPENPI,
-                SupportedModel.CFG_MODEL,
-            ):
-                module_to_lora = model.paligemma_with_expert.paligemma
-                module_to_lora = get_peft_model(module_to_lora, lora_config)
-                tag_vlm_subtree(model, False)
-                tag_vlm_subtree(module_to_lora, True)
-                model.paligemma_with_expert.paligemma = module_to_lora
-            else:
-                model = get_peft_model(model, lora_config)
-        else:
-            model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
-
-        if hasattr(model, "value_head"):
-            for param in model.value_head.parameters():
-                param.requires_grad = True
-
-    return model
+    return apply_lora(model, cfg)
 
 
 def tag_vlm_subtree(model, is_vlm: bool):
