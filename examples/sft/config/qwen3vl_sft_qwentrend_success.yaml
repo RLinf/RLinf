@@ -27,7 +27,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with run_preprocess_success_dataset.sh and evaluate all
+# Build this dataset with run_preprocess_sparse_success_dataset.sh and evaluate all
 # checkpoints before selecting the model for PPO.
 data:
   type: vlm

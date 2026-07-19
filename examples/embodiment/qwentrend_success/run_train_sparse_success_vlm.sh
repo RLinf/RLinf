@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+# Step 3a (sparse): LoRA-SFT Qwen3-VL for terminal success 0/1 generation.
 set -euo pipefail
 
-: "${DUALVIEW_SFT_DATA_ROOT:?Set the processed success dataset root}"
+: "${DUALVIEW_SFT_DATA_ROOT:?Set the processed sparse success dataset root}"
 : "${QWEN_MODEL_PATH:?Set the Qwen3-VL-4B-Instruct path}"
-OUTPUT_ROOT=${OUTPUT_ROOT:-"${PWD}/logs/qwentrend_success_sft"}
+OUTPUT_ROOT=${OUTPUT_ROOT:-"${PWD}/logs/qwentrend_sparse_success_sft"}
 PLACEMENT=${PLACEMENT:-0-3}
 RAY_DIR=${RAY_DIR:-/dev/shm/qsft_$$}
 PYTHON_BIN=${PYTHON_BIN:-/opt/venv/openvla/bin/python}

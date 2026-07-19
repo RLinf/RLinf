@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+# Step 2a (sparse): build dual-view 5-frame terminal-success SFT data.
 set -euo pipefail
 
 : "${UNIFORM_DATA_ROOT:?Set the root containing step0, step20, ..., step200}"
 UNIFORM_STEPS=${UNIFORM_STEPS:-"0 20 40 60 80 100 120 140 160 180 200"}
-: "${DUALVIEW_SFT_DATA_ROOT:?Set the processed dataset output root}"
+: "${DUALVIEW_SFT_DATA_ROOT:?Set the processed sparse success dataset output root}"
 
 raw_args=()
 for step in ${UNIFORM_STEPS}; do
@@ -55,3 +56,4 @@ print(
     f"episode split OK: train={len(train_episodes)} episodes/{train_rows} windows, "
     f"eval={len(eval_episodes)} episodes/{eval_rows} windows, overlap=0"
 )
+PY
