@@ -22,7 +22,6 @@ from typing import Any, Iterable, Optional
 import numpy as np
 from omegaconf import OmegaConf
 
-
 _LEGACY_TASK_DESC_MAP = {
     "OpenSingleDoor": "open cabinet or microwave door",
     "CloseSingleDoor": "close cabinet or microwave door",
