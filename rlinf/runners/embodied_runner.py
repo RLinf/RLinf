@@ -185,8 +185,6 @@ class EmbodiedRunner:
         self.global_step = int(resume_dir.split("global_step_")[-1])
 
     def update_rollout_weights(self):
-        if self.cfg.runner.get("only_eval", False):
-            return
         rollout_handle: Handle = self.rollout.sync_model_from_actor()
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         actor_handle.wait()
@@ -478,18 +476,6 @@ class EmbodiedRunner:
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
     def run(self):
-        if self.cfg.runner.get("only_eval", False):
-            start_time = time.time()
-            eval_metrics = self.evaluate()
-            eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
-            self.logger.info(str(eval_metrics))
-            self.metric_logger.log(data=eval_metrics, step=self.global_step)
-            self.print_metrics_table_async(
-                self.global_step, 1, start_time, eval_metrics, self.global_step
-            )
-            self._finish_run()
-            return
-
         if self.cfg.runner.get("use_training_pipeline", False):
             return self.run_pipeline()
 

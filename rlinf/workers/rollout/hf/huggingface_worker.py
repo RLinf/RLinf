@@ -170,7 +170,6 @@ class MultiStepRolloutWorker(Worker):
                 self.expert_model.load_state_dict(expert_model_dict)
 
         self.hf_model.eval()
-
         if self.expert_model is not None:
             self.expert_model.eval()
         if self.rlt_feature_model is not None:

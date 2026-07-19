@@ -78,9 +78,15 @@ observation:
     base_pos: robot0_base_pos
     base_quat: robot0_base_quat
 
+# Update this block only when using a different checkpoint/action layout or intentionally disabling mobile-base control.
 action_space:
+  # Number of action dimensions consumed by the RoboCasa365 environment.
   env_action_dim: 12
+  # Slice of the raw OpenPI action vector that maps to the env action vector.
   openpi_valid_action_slice: [0, 12]
+  # If true, zero base translation/rotation commands. The adapter also
+  # writes -1.0 to the action dimension selected by base_mode_index below.
   disable_base_control: False
+  # Action index that receives -1.0 when disable_base_control is true.
   base_mode_index: 11
   binarize_gripper_control: True

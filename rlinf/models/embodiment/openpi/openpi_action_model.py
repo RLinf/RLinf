@@ -748,12 +748,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             :, None
         ]  # [:,None] to align with loss-mask shape
         value_t = value_t.mean(dim=-1, keepdim=False)
-        result = {
+        return {
             "logprobs": log_probs,
             "values": value_t,
             "entropy": entropy,
         }
-        return result
 
     def nft_forward(
         self,
@@ -837,7 +836,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
-
         processed_obs = self.input_transform(
             to_process_obs, transpose=False
         )  # policy input obs -> model input obs
@@ -1199,7 +1197,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.action_horizon :]
-        return suffix_out.to(dtype=torch.float32)
+        suffix_out = suffix_out.to(dtype=torch.float32)
+        return suffix_out
 
     def get_velocity(self, state, x_t, timestep, prefix_pad_masks, past_key_values):
         """Compute velocity prediction v_t and raw suffix_out at a given timestep."""
