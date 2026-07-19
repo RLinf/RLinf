@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,10 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""VLM reward models that turn (images, task) into scalar rewards.
+
+Provides ``VLMRewardModel`` (single-shot generation or scalar-head potential)
+and ``HistoryVLMRewardModel`` (dual-view history windows with potential-based
+shaping and an optional one-shot success bonus from a separate LoRA adapter).
+"""
+
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -26,24 +32,12 @@ from peft import (
     get_peft_model,
     set_peft_model_state_dict,
 )
-
-# AutoModelForVision2Seq was renamed to AutoModelForImageTextToText in transformers >= 5.0
-try:
-    from transformers import AutoModelForVision2Seq
-except ImportError:
-    try:
-        from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
-    except ImportError:
-        AutoModelForVision2Seq = None
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
-from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
-    apply_gt_success_bonus,
-    load_vlm_processor,
-)
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    BufferedVLMInputBuilder,
+    HistoryVLMInputBuilder,
     get_input_builder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
@@ -65,6 +59,7 @@ class ScalarPotentialHead(torch.nn.Module):
         )
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
+        """Map prompt features of shape ``(batch, dim)`` to scalar logits."""
         return self.net(features).squeeze(-1)
 
 
@@ -75,7 +70,7 @@ class VLMRewardModel(BaseRewardModel):
     names. It loads by `model_path` via Auto* APIs (consistent with RLinf SFT).
     """
 
-    def __init__(self, cfg: DictConfig):
+    def __init__(self, cfg: DictConfig) -> None:
         super().__init__(cfg)
 
         self.model_path: str = cfg.get("model_path")
@@ -110,16 +105,28 @@ class VLMRewardModel(BaseRewardModel):
         }
 
     def setup_processor(self) -> None:
-        self._processor = load_vlm_processor(
-            self.model_path, self.cfg.get("subprocessor_kwargs", {})
+        """Load the HF processor and apply any ``subprocessor_kwargs`` overrides."""
+        self._processor = AutoProcessor.from_pretrained(
+            self.model_path, trust_remote_code=True
         )
+        subprocessor_kwargs = self.cfg.get("subprocessor_kwargs", {})
+        for subprocessor_name, subprocessor_cfg in subprocessor_kwargs.items():
+            subprocessor_cfg = dict(subprocessor_cfg)
+            subprocessor = getattr(self._processor, subprocessor_name, None)
+            if subprocessor is None:
+                continue
+            for key, value in subprocessor_cfg.items():
+                if hasattr(subprocessor, key):
+                    setattr(subprocessor, key, value)
 
     def setup_input_builder(self) -> None:
+        """Instantiate the configured input builder for this reward model."""
         self.input_builder = get_input_builder(
             self.cfg.get("input_builder_name", "base_vlm_input_builder")
         )(**self.cfg.get("input_builder_params", {}), _processor=self._processor)
 
     def setup_scalar_head(self) -> None:
+        """Load the scalar potential head when ``scalar_head`` inference is used."""
         self.scalar_head: ScalarPotentialHead | None = None
         if self.inference_mode != "scalar_head":
             return
@@ -163,6 +170,7 @@ class VLMRewardModel(BaseRewardModel):
         return torch.sigmoid(logits)
 
     def setup_reward_parser(self) -> None:
+        """Instantiate the configured reward parser for decoded outputs."""
         self.reward_parser = get_reward_parser(
             self.cfg.get("reward_parser_name", "base_reward_parser")
         )(**self.cfg.get("reward_parser_params", {}))
@@ -170,13 +178,51 @@ class VLMRewardModel(BaseRewardModel):
     def apply_gt_success_bonus(
         self, rewards: torch.Tensor, reward_input: dict[str, Any]
     ) -> torch.Tensor:
-        return apply_gt_success_bonus(rewards, reward_input, self.gt_success_bonus)
+        """Add ``gt_success_bonus`` for environments flagged successful.
+
+        Reads success flags from ``reward_input["env_infos"]`` (checking common
+        keys and nested ``episode`` / ``final_info`` dicts). Returns ``rewards``
+        unchanged when the bonus is disabled or no matching flag is found.
+        """
+        if rewards is None or self.gt_success_bonus == 0.0:
+            return rewards
+        env_infos = (
+            reward_input.get("env_infos") if isinstance(reward_input, dict) else None
+        )
+        if not isinstance(env_infos, dict):
+            return rewards
+
+        success = None
+        final_info = env_infos.get("final_info", {})
+        for info_dict in (
+            env_infos,
+            env_infos.get("episode"),
+            final_info,
+            final_info.get("episode") if isinstance(final_info, dict) else None,
+        ):
+            if not isinstance(info_dict, dict):
+                continue
+            for key in ("success", "success_at_end", "success_once"):
+                value = info_dict.get(key)
+                if value is not None:
+                    success = torch.as_tensor(value).reshape(-1).bool()
+                    break
+            if success is not None:
+                break
+
+        if success is None or success.shape[0] != rewards.shape[0]:
+            return rewards
+        bonus = success.to(device=rewards.device, dtype=rewards.dtype)
+        return rewards + (bonus * self.gt_success_bonus).view(
+            -1, *([1] * (rewards.dim() - 1))
+        )
 
     def forward(
-        self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
+        self, input_data: torch.Tensor, labels: torch.Tensor | None = None
     ) -> dict[str, Any]:
         raise NotImplementedError(
-            "VLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
+            "VLMRewardModel is a frozen inference-time reward model; "
+            "training via forward() is not supported."
         )
 
     def _generate_and_parse_rewards(
@@ -193,6 +239,14 @@ class VLMRewardModel(BaseRewardModel):
         return rewards
 
     def setup_model(self) -> None:
+        """Load the base VLM and attach primary/success LoRA adapters if set.
+
+        Loads ``model_path`` via ``Auto*`` APIs, then, when ``lora_path`` is
+        configured, rebuilds a Peft model from the checkpoint's ``lora_*`` keys
+        (falling back to a plain ``load_state_dict`` for merged weights). An
+        optional ``success_lora_path`` is attached as a separate ``success``
+        adapter. The model is set to eval mode.
+        """
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             trust_remote_code=True,
@@ -314,6 +368,12 @@ class VLMRewardModel(BaseRewardModel):
         self,
         observations: Any,
     ) -> torch.Tensor:
+        """Compute a reward tensor for a batch of observations.
+
+        Uses the scalar potential head when ``inference_mode == "scalar_head"``,
+        otherwise generates text and parses it. The ground-truth success bonus
+        is applied to the result.
+        """
         batched_inputs = self.input_builder.build_inputs(
             observations, self._model.device
         )
@@ -327,8 +387,15 @@ class VLMRewardModel(BaseRewardModel):
         return self.apply_gt_success_bonus(rewards, observations)
 
 
-class BufferedVLMRewardModel(VLMRewardModel):
-    def __init__(self, cfg: DictConfig):
+class HistoryVLMRewardModel(VLMRewardModel):
+    """Reward model over dual-view history windows.
+
+    Consumes per-environment history buffers, produces potential-based shaping
+    rewards (via generation or a scalar head) and, when a success LoRA adapter
+    is configured, adds a one-shot success bonus.
+    """
+
+    def __init__(self, cfg: DictConfig) -> None:
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
         self.interval_reward: float = float(cfg.get("interval_reward", 0.0))
@@ -348,16 +415,19 @@ class BufferedVLMRewardModel(VLMRewardModel):
         }
 
     def setup_input_builder(self) -> None:
+        """Build the history input builder and optional success input builder."""
         self.input_builder = get_input_builder(
-            self.cfg.get("input_builder_name", "buffered_vlm_input_builder")
+            self.cfg.get("input_builder_name", "history_vlm_input_builder")
         )(
             **self.cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
-        assert isinstance(self.input_builder, BufferedVLMInputBuilder), (
-            "BufferedVLMRewardModel only supports BufferedVLMInputBuilder"
-        )
+        if not isinstance(self.input_builder, HistoryVLMInputBuilder):
+            raise TypeError(
+                "HistoryVLMRewardModel only supports HistoryVLMInputBuilder, "
+                f"got {type(self.input_builder)!r}"
+            )
 
         self.success_input_builder: HistoryVLMInputBuilder | None = None
         self.success_reward_parser = None
@@ -372,7 +442,11 @@ class BufferedVLMRewardModel(VLMRewardModel):
                 _processor=self._processor,
                 history_buffer_names=self.history_buffer_names,
             )
-            assert isinstance(self.success_input_builder, HistoryVLMInputBuilder)
+            if not isinstance(self.success_input_builder, HistoryVLMInputBuilder):
+                raise TypeError(
+                    "success input builder must be a HistoryVLMInputBuilder, "
+                    f"got {type(self.success_input_builder)!r}"
+                )
             self.success_reward_parser = get_reward_parser(
                 self.cfg.get(
                     "success_reward_parser_name",
@@ -381,10 +455,11 @@ class BufferedVLMRewardModel(VLMRewardModel):
             )(**self.cfg.get("success_reward_parser_params", {}))
 
     def forward(
-        self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
+        self, input_data: torch.Tensor, labels: torch.Tensor | None = None
     ) -> dict[str, Any]:
         raise NotImplementedError(
-            "BufferedVLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
+            "HistoryVLMRewardModel is a frozen inference-time reward model; "
+            "training via forward() is not supported."
         )
 
     def slice_history_input(
@@ -393,6 +468,7 @@ class BufferedVLMRewardModel(VLMRewardModel):
         start: int,
         end: int,
     ) -> dict[str, dict[str, list[list[Any]]]]:
+        """Slice each per-environment history sequence to ``[start:end]``."""
         return {
             buffer_name: {
                 history_key: env_sequences[start:end]
@@ -407,6 +483,7 @@ class BufferedVLMRewardModel(VLMRewardModel):
         start: int,
         end: int,
     ) -> dict[str, Any]:
+        """Slice batched observation values (tensors/arrays/sequences) to a range."""
         return {
             key: self._slice_batch_value(value, start, end)
             for key, value in observations.items()
@@ -450,6 +527,18 @@ class BufferedVLMRewardModel(VLMRewardModel):
         self,
         reward_input: dict[str, Any],
     ) -> torch.Tensor:
+        """Compute shaping rewards for a batch of history windows.
+
+        Args:
+            reward_input: Dict with a ``history_input`` mapping (per-buffer,
+                per-key, per-environment frame sequences) plus the remaining
+                observation entries (e.g. ``dones``, ``env_infos``).
+
+        Returns:
+            A float reward tensor of shape ``(batch,)``: zeros before the first
+            valid window, otherwise potential-difference shaping plus any
+            success/ground-truth bonuses.
+        """
         history_input: dict[str, dict[str, list[list[Any]]]] = reward_input[
             "history_input"
         ]
@@ -558,7 +647,8 @@ class BufferedVLMRewardModel(VLMRewardModel):
         if self._success_fired is None or self._success_fired.shape != rewards.shape:
             self._success_fired = torch.zeros_like(rewards, dtype=torch.bool)
             self._success_streak = torch.zeros_like(rewards, dtype=torch.int32)
-        assert self._success_streak is not None
+        if self._success_streak is None:
+            raise RuntimeError("success streak state was not initialized")
         above_threshold = valid_mask & (success_probabilities >= self.success_threshold)
         self._success_streak[valid_mask & ~above_threshold] = 0
         self._success_streak[above_threshold] += 1

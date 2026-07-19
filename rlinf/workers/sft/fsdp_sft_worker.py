@@ -108,7 +108,15 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         return 0
 
     def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Convert reduced evaluation counts into metrics."""
+        """Convert reduced evaluation counts into logged metrics.
+
+        Args:
+            counts: Aggregated eval counts with at least ``correct`` and
+                ``total`` keys (subclasses may pass richer class-aware counts).
+
+        Returns:
+            A metrics dict suitable for the eval logger.
+        """
         return {
             "eval_accuracy": counts["correct"] / max(1, counts["total"]),
         }

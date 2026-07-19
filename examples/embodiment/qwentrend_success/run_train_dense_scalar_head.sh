@@ -9,10 +9,17 @@ set -euo pipefail
 : "${SCALAR_OUTPUT_ROOT:?Set the scalar-head output root}"
 
 PYTHON_BIN=${PYTHON_BIN:-/opt/venv/openvla/bin/python}
-FEATURE_WORLD_SIZE=${FEATURE_WORLD_SIZE:-4}
+CUDA_DEVICES=${CUDA_DEVICES:-0,1,2,3}
+IFS=',' read -r -a FEATURE_GPUS <<< "${CUDA_DEVICES}"
+FEATURE_WORLD_SIZE=${FEATURE_WORLD_SIZE:-${#FEATURE_GPUS[@]}}
 FEATURE_BATCH_SIZE=${FEATURE_BATCH_SIZE:-4}
 SCALAR_EPOCHS=${SCALAR_EPOCHS:-50}
 SCALAR_DEVICE=${SCALAR_DEVICE:-cuda:0}
+
+if ((FEATURE_WORLD_SIZE < 1 || FEATURE_WORLD_SIZE > ${#FEATURE_GPUS[@]})); then
+  echo "FEATURE_WORLD_SIZE must be between 1 and ${#FEATURE_GPUS[@]}" >&2
+  exit 1
+fi
 
 mkdir -p "${FEAT_ROOT}" "${SCALAR_OUTPUT_ROOT}"
 
@@ -25,7 +32,8 @@ for split in train eval; do
   for sample_type in potential progress; do
     pids=()
     for rank in $(seq 0 $((FEATURE_WORLD_SIZE - 1))); do
-      CUDA_VISIBLE_DEVICES="${rank}" "${PYTHON_BIN}" scripts/extract_qwentrend_potential_features.py \
+      gpu="${FEATURE_GPUS[$rank]}"
+      CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON_BIN}" scripts/extract_qwentrend_potential_features.py \
         --model-path "${QWEN_MODEL_PATH}" \
         --checkpoint "${QWENTREND_POTENTIAL_CHECKPOINT}" \
         --manifest "${manifest}" \
@@ -43,7 +51,7 @@ for split in train eval; do
   done
 done
 
-"${PYTHON_BIN}" scripts/train_qwentrend_scalar_head.py \
+CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" "${PYTHON_BIN}" scripts/train_qwentrend_scalar_head.py \
   --train-pattern "${FEAT_ROOT}/train_potential_rank*.pt" \
   --eval-pattern "${FEAT_ROOT}/eval_potential_rank*.pt" \
   --progress-pattern "${FEAT_ROOT}/eval_progress_rank*.pt" \
