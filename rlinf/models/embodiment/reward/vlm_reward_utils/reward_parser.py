@@ -12,20 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Reward parsers that turn VLM text outputs into scalar reward tensors.
+
+Parsers are registered by name in ``REWARD_PARSER_REGISTRY`` and looked up via
+``get_reward_parser``. Each parser maps a batch of generated strings to a float
+reward tensor according to a task-specific labeling contract.
+"""
+
 import json
-import logging
 import re
+from collections.abc import Callable
 from typing import Any
 
 import torch
 
-logger = logging.getLogger(__name__)
-
 REWARD_PARSER_REGISTRY: dict[str, type] = {}
 
 
-def register_reward_parser(name: str):
-    def decorator(cls: type):
+def register_reward_parser(name: str) -> Callable[[type], type]:
+    """Register a reward-parser class under ``name`` (case-insensitive).
+
+    Args:
+        name: Registry key used to look the parser up later.
+
+    Returns:
+        A class decorator that records the class and returns it unchanged.
+    """
+
+    def decorator(cls: type) -> type:
         REWARD_PARSER_REGISTRY[name.lower()] = cls
         return cls
 
@@ -33,6 +47,17 @@ def register_reward_parser(name: str):
 
 
 def get_reward_parser(name: str) -> type:
+    """Return the registered reward-parser class for ``name``.
+
+    Args:
+        name: Registry key (case-insensitive).
+
+    Returns:
+        The registered parser class.
+
+    Raises:
+        ValueError: If ``name`` is not registered.
+    """
     name_lower = name.lower()
     if name_lower not in REWARD_PARSER_REGISTRY:
         raise ValueError(f"RewardParser '{name}' not registered")
@@ -41,9 +66,10 @@ def get_reward_parser(name: str) -> type:
 
 @register_reward_parser("base_reward_parser")
 class BaseRewardParser:
-    def parse_rewards(
-        self, outputs: list[str]
-    ) -> torch.Tensor:  # pragma: no cover - tiny wrapper
+    """Abstract base parser; subclasses map text outputs to a reward tensor."""
+
+    def parse_rewards(self, outputs: list[str]) -> torch.Tensor:
+        """Parse a batch of generated strings into a float reward tensor."""
         raise NotImplementedError
 
 
@@ -53,7 +79,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         obj = json.loads(text)
         if isinstance(obj, dict):
             return obj
-    except Exception:
+    except json.JSONDecodeError:
         pass
 
     start = text.find("{")
@@ -64,7 +90,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
             obj = json.loads(json_text_chunk)
             if isinstance(obj, dict):
                 return obj
-        except Exception:
+        except json.JSONDecodeError:
             return None
     return None
 
@@ -83,64 +109,33 @@ def _parse_qwentrend_output(text: str) -> str | None:
 
 @register_reward_parser("qwentrend_reward_parser")
 class QwentrendRewardParser(BaseRewardParser):
+    """Map ``positive`` / ``negative`` / ``unclear`` trend labels to rewards."""
+
     def __init__(
         self,
         positive_reward: float = 1.0,
         negative_reward: float = -0.2,
         unclear_reward: float = 0.0,
         invalid_reward: float = 0.0,
-        debug_print: bool = False,
-        debug_print_every: int = 10,
-        debug_sample_texts: int = 2,
     ) -> None:
         self.positive_reward = float(positive_reward)
         self.negative_reward = float(negative_reward)
         self.unclear_reward = float(unclear_reward)
         self.invalid_reward = float(invalid_reward)
-        self.debug_print = bool(debug_print)
-        self.debug_print_every = max(1, int(debug_print_every))
-        self.debug_sample_texts = max(0, int(debug_sample_texts))
-        self._call_idx = 0
 
     def parse_rewards(self, outputs: list[str]) -> torch.Tensor:
+        """Map each output's trend label to its configured scalar reward."""
         rewards: list[float] = []
-        pos_count, neg_count, unclear_count, invalid_count = 0, 0, 0, 0
-        invalid_examples: list[str] = []
         for output in outputs:
             label = _parse_qwentrend_output(output)
             if label == "positive":
                 rewards.append(self.positive_reward)
-                pos_count += 1
             elif label == "negative":
                 rewards.append(self.negative_reward)
-                neg_count += 1
             elif label == "unclear":
                 rewards.append(self.unclear_reward)
-                unclear_count += 1
             else:
                 rewards.append(self.invalid_reward)
-                invalid_count += 1
-                if len(invalid_examples) < self.debug_sample_texts:
-                    invalid_examples.append(str(output).replace("\n", "\\n")[:220])
-
-        self._call_idx += 1
-        if self.debug_print and (
-            self._call_idx <= 10 or self._call_idx % self.debug_print_every == 0
-        ):
-            logger.info(
-                "[RMDBG_PARSE] parser=pnu call=%d batch=%d labels={positive:%d, negative:%d, unclear:%d, invalid:%d}",
-                self._call_idx,
-                len(outputs),
-                pos_count,
-                neg_count,
-                unclear_count,
-                invalid_count,
-            )
-            if invalid_examples:
-                logger.info(
-                    "[RMDBG_PARSE] invalid_samples=%s",
-                    invalid_examples,
-                )
         return torch.tensor(rewards, dtype=torch.float32)
 
 
@@ -153,13 +148,18 @@ class QwentrendBinaryDigitRewardParser(BaseRewardParser):
         positive_reward: float = 1.0,
         negative_reward: float = 0.0,
         invalid_reward: float = 0.0,
-        **_: object,
+        **ignored_params: object,
     ) -> None:
+        # Configs share one ``reward_parser_params`` shape across parsers, so
+        # tolerate (and ignore) keys such as ``unclear_reward`` that only apply
+        # to the trend parser.
+        del ignored_params
         self.positive_reward = float(positive_reward)
         self.negative_reward = float(negative_reward)
         self.invalid_reward = float(invalid_reward)
 
     def parse_rewards(self, outputs: list[str]) -> torch.Tensor:
+        """Map a trailing ``1`` to the success reward and ``0`` to non-success."""
         rewards = []
         for output in outputs:
             labels = re.findall(r"(?<!\d)([01])(?!\d)", str(output).strip())

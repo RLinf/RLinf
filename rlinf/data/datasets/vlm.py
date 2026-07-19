@@ -827,9 +827,30 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         videos: list[Any] | list[list[Any]],
         answer_text: Optional[str] | list[Optional[str]] = None,
     ) -> tuple[str | list[str], dict[str, Any], dict[str, Any]]:
+        """Build Qwen3-VL processor inputs for QwenTrend progress SFT.
+
+        Accepts both a single sample and a batch (list-of-lists) of prompts and
+        videos. Chat templates are always applied for Qwen3-VL, so
+        ``system_prompt`` and ``use_chat_template`` are accepted only for parity
+        with the shared ``process_inputs`` interface and are unused here.
+
+        Args:
+            processor: The Qwen3-VL ``AutoProcessor``.
+            system_prompt: Unused; kept for interface parity.
+            use_chat_template: Unused; kept for interface parity.
+            prompt_texts: Prompt string(s); a list of strings for a single
+                sample or a list of per-sample string lists for a batch.
+            videos: Dual-view frame data aligned with ``prompt_texts``.
+            answer_text: Optional gold answer(s); ``None`` renders an
+                inference prompt without a label turn.
+
+        Returns:
+            A tuple ``(rendered_prompt, full_inputs, label_inputs)`` where
+            ``rendered_prompt`` is a string (single) or list of strings (batch),
+            and the two dicts are processor tensor inputs for the prompt and the
+            label mask respectively.
         """
-        Build Qwen3-VL processor inputs for QwenTrend progress SFT.
-        """
+        del system_prompt, use_chat_template  # Unused; interface parity only.
 
         def _render_prompt_text(
             prompt_text: str, answer_text_i: Optional[str]
@@ -858,7 +879,13 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
                         tokenize=False,
                         add_generation_prompt=True,
                     )
-            except Exception:
+            except Exception as error:
+                # Fall back to a hand-written Qwen chat template when the
+                # processor cannot render one (e.g. missing chat template).
+                logging.warning(
+                    f"apply_chat_template failed ({error!r}); "
+                    "using manual Qwen chat template fallback."
+                )
                 rendered_prompt = (
                     f"<|im_start|>user\n{user_content}<|im_end|>\n"
                     f"<|im_start|>assistant\n"
@@ -874,9 +901,11 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
             batch_size = len(prompt_texts_batch)
 
             if isinstance(answer_text, list):
-                assert len(answer_text) == batch_size, (
-                    f"answer_text list size {len(answer_text)} does not match batch size {batch_size}"
-                )
+                if len(answer_text) != batch_size:
+                    raise ValueError(
+                        f"answer_text list size {len(answer_text)} does not "
+                        f"match batch size {batch_size}"
+                    )
                 answer_text_batch = answer_text
             else:
                 answer_text_batch = [answer_text for _ in range(batch_size)]

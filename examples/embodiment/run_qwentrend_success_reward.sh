@@ -12,6 +12,7 @@ export EMBODIED_PATH=${EMBODIED_PATH:-${SCRIPT_DIR}}
 : "${PPO_OUTPUT_ROOT:?Set the PPO output directory}"
 
 PLACEMENT=${PLACEMENT:-0-3}
+REWARD_SERVER_PLACEMENT=${REWARD_SERVER_PLACEMENT:-"${PLACEMENT}:0"}
 NUM_ENVS=${NUM_ENVS:-128}
 MAX_STEPS=${MAX_STEPS:-160}
 INFER_BATCH_SIZE=${INFER_BATCH_SIZE:-32}
@@ -27,7 +28,7 @@ export RAY_TMPDIR
   cluster.component_placement.env="${PLACEMENT}" \
   cluster.component_placement.rollout="${PLACEMENT}" \
   cluster.component_placement.reward="${PLACEMENT}" \
-  "++cluster.component_placement.reward_server=0-3:0" \
+  "++cluster.component_placement.reward_server=${REWARD_SERVER_PLACEMENT}" \
   runner.ckpt_path="${POLICY_CHECKPOINT}" \
   runner.max_steps="${MAX_STEPS}" \
   runner.resume_dir="${RESUME_DIR}" \

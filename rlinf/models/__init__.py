@@ -262,7 +262,18 @@ _register_builtin_models()
 
 
 def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
-    """Attach Peft LoRA adapters when ``cfg.is_lora`` is enabled."""
+    """Attach Peft LoRA adapters when ``cfg.is_lora`` is enabled.
+
+    Args:
+        model: The base model to wrap (or load adapters onto).
+        cfg: Model config with ``is_lora``, optional ``lora_path``,
+            ``lora_rank``, and ``model_type``.
+
+    Returns:
+        The model with LoRA adapters attached (or ``model`` unchanged when
+        ``is_lora`` is false). For Qwen3-VL family models, target modules avoid
+        the bare ``proj`` name so Conv3d ``patch_embed.proj`` is not wrapped.
+    """
     if not cfg.get("is_lora", False):
         return model
 

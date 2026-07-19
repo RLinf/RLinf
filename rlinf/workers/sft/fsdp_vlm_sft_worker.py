@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-import logging
 import os
 from typing import Any
 
@@ -64,8 +63,8 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         torch.distributed.barrier()
         if not os.path.exists(target):
             if self._rank == 0:
-                logging.warning(
-                    "Skip LoRA rewrite: full_weights.pt not found at %s", target
+                self.log_warning(
+                    f"Skip LoRA rewrite: full_weights.pt not found at {target}"
                 )
             torch.distributed.barrier()
             return
@@ -78,8 +77,8 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 break
         if peft_model is None:
             if self._rank == 0:
-                logging.warning(
-                    "Skip LoRA rewrite: model has no peft_config at %s", save_path
+                self.log_warning(
+                    f"Skip LoRA rewrite: model has no peft_config at {save_path}"
                 )
             torch.distributed.barrier()
             return
@@ -97,8 +96,8 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                     f"Peft export produced no lora_* keys for checkpoint {save_path}"
                 )
             torch.save(lora_state, target)
-            logging.info(
-                "Rewrote %s with %d LoRA adapter tensors", target, len(lora_state)
+            self.log_info(
+                f"Rewrote {target} with {len(lora_state)} LoRA adapter tensors"
             )
         torch.distributed.barrier()
 
@@ -198,12 +197,11 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 drop_last=True,
                 collate_fn=sft_collate_fn,
             )
-            logging.info(
+            self.log_info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
-            assert len(data_loader) != 0, (
-                f"data_loader is not empty, please check the data_path {data_paths}"
-            )
+            if len(data_loader) == 0:
+                raise ValueError(f"data_loader is empty; check data_path {data_paths}")
 
             data_config = {
                 "dataset_name": dataset_name,
@@ -217,8 +215,19 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def get_eval_model_output(self, batch: dict[str, Any]):
-        # hundle the input batch
+    def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int] | int:
+        """Generate answers for an eval batch and score them against gold.
+
+        Args:
+            batch: Collated eval batch with ``prompt``, ``answer``,
+                ``attention_mask`` and ``multi_modal_inputs``.
+
+        Returns:
+            When every gold answer is a binary ``0`` / ``1`` label, a dict of
+            class-aware counts (``correct``, ``total`` and per-class
+            correct/total) suitable for :meth:`compute_eval_metrics`. Otherwise
+            the scalar number of correct predictions in the batch.
+        """
         counts = {
             "correct": 0,
             "total": 0,
@@ -283,7 +292,16 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         return counts if binary_labels else counts["correct"]
 
     def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Compute class-aware metrics for binary VLM evaluation."""
+        """Compute class-aware metrics for binary VLM evaluation.
+
+        Args:
+            counts: Aggregated counts from :meth:`get_eval_model_output`
+                (``correct``, ``total`` and per-class correct/total).
+
+        Returns:
+            A dict with overall accuracy, positive-class recall, negative-class
+            accuracy, balanced accuracy and per-class totals.
+        """
         positive_accuracy = counts["positive_correct"] / max(
             1, counts["positive_total"]
         )
@@ -307,7 +325,20 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         success_weight: float,
         non_success_weight: float,
     ) -> torch.Tensor:
-        """Compute answer-token CE with normalized per-sample class weights."""
+        """Compute answer-token CE with normalized per-sample class weights.
+
+        Args:
+            logits: Model logits of shape ``(batch, seq, vocab)``.
+            labels: Target token ids of shape ``(batch, seq)`` with ``-100`` at
+                masked positions.
+            answers: Per-sample gold answer strings; ``"1"`` selects the success
+                weight, anything else the non-success weight.
+            success_weight: Per-sample weight for success (``"1"``) answers.
+            non_success_weight: Per-sample weight for non-success answers.
+
+        Returns:
+            The scalar weighted mean cross-entropy over answer tokens.
+        """
         shift_logits = logits[:, :-1].contiguous()
         shift_labels = labels[:, 1:].contiguous()
         token_losses = F.cross_entropy(
@@ -332,7 +363,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
     def get_train_model_output(
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        # hundle the input batch
+        # Move the input batch to the compute device.
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
         multi_modal_inputs = batch["multi_modal_inputs"]

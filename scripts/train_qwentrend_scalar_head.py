@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Train a scalar reward head on frozen Qwen rollout features."""
 
 from __future__ import annotations
@@ -15,29 +29,20 @@ from scipy.stats import spearmanr
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-
-class ScalarRewardHead(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, dropout: float) -> None:
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(input_dim),
-            nn.Linear(input_dim, hidden_dim),
-            nn.SiLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
-        return self.net(features).squeeze(-1)
+from rlinf.models.embodiment.reward.vlm_reward_model import ScalarPotentialHead
 
 
 def load_potential_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor]:
-    paths = sorted(Path().glob(pattern)) if not pattern.startswith("/") else sorted(
-        Path(pattern).parent.glob(Path(pattern).name)
+    paths = (
+        sorted(Path().glob(pattern))
+        if not pattern.startswith("/")
+        else sorted(Path(pattern).parent.glob(Path(pattern).name))
     )
     if not paths:
         raise ValueError(f"No feature shards match {pattern}")
-    payloads = [torch.load(path, map_location="cpu", weights_only=False) for path in paths]
+    payloads = [
+        torch.load(path, map_location="cpu", weights_only=False) for path in paths
+    ]
     return (
         torch.cat([payload["features"].float() for payload in payloads]),
         torch.cat([payload["targets"].float() for payload in payloads]),
@@ -48,7 +53,9 @@ def load_progress_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor, list
     paths = sorted(Path(pattern).parent.glob(Path(pattern).name))
     if not paths:
         raise ValueError(f"No progress shards match {pattern}")
-    payloads = [torch.load(path, map_location="cpu", weights_only=False) for path in paths]
+    payloads = [
+        torch.load(path, map_location="cpu", weights_only=False) for path in paths
+    ]
     labels = [label for payload in payloads for label in payload["labels"]]
     return (
         torch.cat([payload["features"].float() for payload in payloads]),
@@ -87,7 +94,10 @@ def evaluate(
 ) -> dict[str, Any]:
     values = predict(model, potential_features, device, batch_size)
     pair_values = predict(
-        model, progress_features.reshape(-1, progress_features.shape[-1]), device, batch_size
+        model,
+        progress_features.reshape(-1, progress_features.shape[-1]),
+        device,
+        batch_size,
     ).reshape(-1, 2)
     predicted_deltas = pair_values[:, 1] - pair_values[:, 0]
     predicted_labels = [
@@ -127,7 +137,7 @@ def train(args: argparse.Namespace) -> None:
     train_progress_features, train_progress_deltas, _ = load_progress_shards(
         args.train_progress_pattern
     )
-    model = ScalarRewardHead(
+    model = ScalarPotentialHead(
         train_features.shape[-1], args.hidden_dim, args.dropout
     ).to(device)
     optimizer = torch.optim.AdamW(
@@ -135,9 +145,7 @@ def train(args: argparse.Namespace) -> None:
     )
     dataset = TensorDataset(train_features, train_targets)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-    progress_dataset = TensorDataset(
-        train_progress_features, train_progress_deltas
-    )
+    progress_dataset = TensorDataset(train_progress_features, train_progress_deltas)
     progress_loader = DataLoader(
         progress_dataset, batch_size=args.batch_size, shuffle=True
     )
@@ -183,18 +191,15 @@ def train(args: argparse.Namespace) -> None:
                 pair_logits = model(
                     pair_features.reshape(-1, pair_features.shape[-1])
                 ).reshape(-1, 2)
-                predicted_deltas = (
-                    torch.sigmoid(pair_logits[:, 1])
-                    - torch.sigmoid(pair_logits[:, 0])
+                predicted_deltas = torch.sigmoid(pair_logits[:, 1]) - torch.sigmoid(
+                    pair_logits[:, 0]
                 )
                 delta_loss = nn.functional.smooth_l1_loss(
                     predicted_deltas, pair_targets, beta=args.delta_beta
                 )
                 local_rank_mask = pair_targets.abs() >= args.local_rank_min_gap
                 if local_rank_mask.any():
-                    local_logit_differences = (
-                        pair_logits[:, 1] - pair_logits[:, 0]
-                    )
+                    local_logit_differences = pair_logits[:, 1] - pair_logits[:, 0]
                     local_rank_loss = nn.functional.softplus(
                         -torch.sign(pair_targets[local_rank_mask])
                         * local_logit_differences[local_rank_mask]

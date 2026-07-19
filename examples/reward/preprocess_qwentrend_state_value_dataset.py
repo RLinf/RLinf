@@ -39,14 +39,6 @@ def _to_numpy(value: Any) -> np.ndarray:
     return np.asarray(value, dtype=np.float32)
 
 
-def _to_scalar(value: Any) -> float:
-    if torch.is_tensor(value):
-        return float(value.detach().cpu().item())
-    if isinstance(value, np.ndarray):
-        return float(value.item())
-    return float(value)
-
-
 def _to_uint8_rgb(image: Any) -> np.ndarray:
     if torch.is_tensor(image):
         image = image.detach().cpu().numpy()
@@ -265,7 +257,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    model, cfg, mean, std = load_value_model(args.value_checkpoint, device)  # type: ignore[attr-defined]
+    model, cfg, mean, std = load_value_model(args.value_checkpoint, device)
 
     pkl_files = sorted(glob(os.path.join(args.raw_data_path, "*.pkl")))
     if args.max_episodes is not None:
