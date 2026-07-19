@@ -170,7 +170,7 @@ RoboCasa 将这个参数命名为 ``task_set``；它对应 RLinf YAML 中的
 
 .. code:: bash
 
-   hf download ppppper/pi0-robocasa-pretrain-human300 \
+   hf download RLinf/pi0-robocasa-pretrain-human300 \
      --local-dir /path/to/pi0-robocasa-pretrain-human300
 
 在 YAML 中将 rollout 和 actor 的模型路径都指向下载目录：
