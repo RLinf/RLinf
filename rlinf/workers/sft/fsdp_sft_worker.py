@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from rlinf.data.utils import forward_set_epoch
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models import get_model
+from rlinf.models import apply_lora, get_model
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
@@ -92,7 +92,10 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         model = get_model(self.cfg.actor.model)
         if model is not None:
             return model
-        return super().model_provider_func()
+        # VLM SFT types (e.g. qwen3_vl) are loaded via the HF fallback and are
+        # not in the embodied registry — still attach LoRA when configured.
+        model = super().model_provider_func()
+        return apply_lora(model, self.cfg.actor.model)
 
     def set_global_step(self, global_step):
         self.global_step = global_step
