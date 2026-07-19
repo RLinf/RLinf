@@ -45,7 +45,7 @@ command with, for example,
 
    export UNIFORM_DATA_ROOT=/path/to/qwentrend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/qwentrend_success_sft
-   bash examples/embodiment/qwentrend_success/run_preprocess_success_dataset.sh
+   bash examples/embodiment/qwentrend_success/run_preprocess_sparse_success_dataset.sh
 
 The preprocessor splits by source episode before creating windows and exits
 nonzero if any episode appears in both train and eval. The default online-aligned
@@ -54,7 +54,7 @@ Manifests reference the original episode pickle and frame range instead of
 copying images. Only load trusted pickle data because Python pickle can execute
 code during deserialization.
 
-3. Fine-tune Qwen3-VL-4B with the validated LoRA recipe:
+3. Fine-tune Qwen3-VL-4B with the validated LoRA recipe (sparse success):
 
 .. code-block:: bash
 
@@ -62,7 +62,7 @@ code during deserialization.
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export PLACEMENT=0-3
    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_train_success_vlm.sh
+       bash examples/embodiment/qwentrend_success/run_train_sparse_success_vlm.sh
 
 The launcher uses LoRA rank 16, learning rate ``1e-5``, micro batch size 4,
 global batch size 256, ``format_ce_coef=2``, class-ratio-weighted success loss,
@@ -70,14 +70,50 @@ and 400 optimization steps. It evaluates and saves every 100 steps. Select the
 checkpoint with the highest balanced accuracy while checking positive recall
 and negative accuracy separately; do not use aggregate accuracy alone.
 
-4. Run PPO from the policy checkpoint:
+4. Build dense potential data (state-value teacher + potential/progress windows):
+
+.. code-block:: bash
+
+   export UNIFORM_DATA_ROOT=/path/to/qwentrend_uniform_collection
+   export STATE_VALUE_ROOT=/path/to/qwentrend_state_success_value
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/qwentrend_potential_sft
+   bash examples/embodiment/qwentrend_success/run_preprocess_dense_potential_dataset.sh
+
+5. Fine-tune the dense potential LoRA:
+
+.. code-block:: bash
+
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/qwentrend_potential_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export OUTPUT_ROOT=/path/to/qwentrend_potential_vlm_train
+   export PLACEMENT=0-3
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_dense_potential_vlm.sh
+
+The launcher writes the selected checkpoint path to
+``${OUTPUT_ROOT}/SELECTED_CKPT.txt`` (prefers ``global_step_${MAX_STEPS}``,
+otherwise the highest ``global_step_*``). Use that file in the next steps
+instead of hard-coding a checkpoint directory.
+
+6. Extract features and train the scalar potential head:
 
 .. code-block:: bash
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/global_step_300
-   export QWENTREND_POTENTIAL_CHECKPOINT=/path/to/potential/global_step_400
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/qwentrend_potential_sft
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/qwentrend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export FEAT_ROOT=/path/to/qwentrend_potential_features
+   export SCALAR_OUTPUT_ROOT=/path/to/qwentrend_scalar_head
+   bash examples/embodiment/qwentrend_success/run_train_dense_scalar_head.sh
+
+7. Run PPO from the policy checkpoint:
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/qwentrend_potential_vlm_train/SELECTED_CKPT.txt)"
    export QWENTREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/global_step_300
    export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
    export PPO_OUTPUT_ROOT=/path/to/ppo-output
    CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=128 MAX_STEPS=160 \
