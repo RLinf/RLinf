@@ -174,7 +174,7 @@ Download the official RoboCasa365 Pi0 checkpoint:
 
 .. code:: bash
 
-   hf download RLinf/pi0-robocasa-pretrain-human300 \
+   hf download RLinf/RLinf-pi0-robocasa-pretrain-human300 \
      --local-dir /path/to/pi0-robocasa-pretrain-human300
 
 Point the config to the downloaded directory:
