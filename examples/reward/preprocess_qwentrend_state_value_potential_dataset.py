@@ -53,6 +53,8 @@ logger = get_logger()
 
 @dataclass(frozen=True)
 class Candidate:
+    """One potential or progress window candidate pending reservoir selection."""
+
     source_path: str
     split: str
     sample_type: str
@@ -76,6 +78,7 @@ class Reservoir:
         self.items: list[Candidate] = []
 
     def add(self, item: Candidate) -> None:
+        """Insert or randomly replace an item under reservoir sampling."""
         self.seen += 1
         if len(self.items) < self.capacity:
             self.items.append(item)
@@ -86,6 +89,7 @@ class Reservoir:
 
 
 def potential_prompt(task: str, window_size: int, num_bins: int) -> str:
+    """Build the absolute potential VLM user prompt for one window."""
     return (
         "You are estimating task-conditioned success potential for a robot "
         f"manipulation state. Task: {task}. The two synchronized videos show "
@@ -96,6 +100,7 @@ def potential_prompt(task: str, window_size: int, num_bins: int) -> str:
 
 
 def progress_prompt(task: str, window_size: int, gap_steps: int | None = None) -> str:
+    """Build the relative progress VLM user prompt for a pair of windows."""
     gap_steps = window_size if gap_steps is None else gap_steps
     relation = (
         "immediately adjacent"
@@ -112,10 +117,12 @@ def progress_prompt(task: str, window_size: int, gap_steps: int | None = None) -
 
 
 def potential_bin(value: float, num_bins: int) -> int:
+    """Quantize a ``[0, 1]`` teacher value into ``0 .. num_bins-1``."""
     return int(round(np.clip(value, 0.0, 1.0) * (num_bins - 1)))
 
 
 def progress_label(delta: float, deadband: float) -> str:
+    """Map a teacher delta to ``up``, ``same``, or ``down`` using ``deadband``."""
     if delta > deadband:
         return "up"
     if delta < -deadband:
@@ -538,6 +545,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for dense potential/progress dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--raw-data-path",

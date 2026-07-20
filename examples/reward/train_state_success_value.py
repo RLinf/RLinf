@@ -46,6 +46,8 @@ logger = get_logger()
 
 @dataclass
 class ValueConfig:
+    """Hyperparameters and whitening stats stored inside a teacher checkpoint."""
+
     state_dim: int
     history_size: int
     hidden_dim: int
@@ -85,6 +87,7 @@ class StateSuccessValue(nn.Module):
         self.net = nn.Sequential(*layers)
 
     def forward(self, states: torch.Tensor) -> torch.Tensor:
+        """Return per-sample logits for success-potential BCE training."""
         return self.net(states).squeeze(-1)
 
 
@@ -129,6 +132,11 @@ def load_state_dataset(
 ) -> tuple[
     tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], dict[str, Any]
 ]:
+    """Load episode states into whitened train/eval tensors and summary metadata.
+
+    Returns:
+        ``((train_x, train_y), (val_x, val_y), metadata)``.
+    """
     pkl_files = sorted(glob(os.path.join(raw_data_path, "*.pkl")))
     if max_episodes is not None:
         pkl_files = pkl_files[:max_episodes]
@@ -208,6 +216,7 @@ def evaluate(
     loader: DataLoader,
     device: torch.device,
 ) -> dict[str, float]:
+    """Evaluate BCE loss, MSE, and MAE of sigmoid predictions on ``loader``."""
     model.eval()
     losses = []
     preds = []
@@ -235,6 +244,7 @@ def evaluate(
 
 
 def train(args: argparse.Namespace) -> None:
+    """Train the MLP state-success teacher and write ``best.pt`` / ``final.pt``."""
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -388,6 +398,7 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for state-success value teacher training."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", required=True)
     parser.add_argument("--output-dir", required=True)
