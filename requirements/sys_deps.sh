@@ -24,6 +24,11 @@ PKG_MANAGER=$(detect_pkg_manager)
 # when this script is invoked directly for backward compatibility.
 PLATFORM="${1:-nvidia}"
 
+if [ "$PLATFORM" = "musa" ]; then
+    echo "Skipping embodied system graphics dependencies on MUSA platform"
+    exit 0
+fi
+
 if [ "$PKG_MANAGER" = "unknown" ]; then
     echo "No supported package manager found (apt, dnf, yum, or pacman)."
     echo "Please install dependencies manually."
