@@ -134,6 +134,23 @@ def _worker(
                 break
             elif cmd == "render":
                 p.send(env.render(**data) if hasattr(env, "render") else None)
+            elif cmd == "render_camera":
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 1024))
+                w = int(data.get("width", 1024))
+                depth = bool(data.get("depth", False))
+                p.send(
+                    sim.render(
+                        width=w,
+                        height=h,
+                        camera_name=cam,
+                        depth=depth,
+                    )
+                )
             elif cmd == "seed":
                 if hasattr(env, "seed"):
                     p.send(env.seed(data))
@@ -159,6 +176,56 @@ def _worker(
                 env = OffScreenRenderEnv(**data)
                 env.seed(seed)
                 p.send(None)
+            elif cmd == "env_call":
+                # Generic method dispatcher (mirror of the base SubprocEnvWorker
+                # impl). Used by LiberoEnv.set_image_render_enabled to toggle
+                # robosuite observables without touching env.step.
+                target = data.get("target", "robosuite")
+                if target == "self":
+                    obj = env
+                elif target == "env":
+                    obj = env.env
+                elif target == "robosuite":
+                    obj = getattr(env, "env", env)
+                    while hasattr(obj, "env"):
+                        obj = obj.env
+                else:
+                    obj = env
+                ret = getattr(obj, data["method"])(
+                    *data.get("args", []), **data.get("kwargs", {})
+                )
+                p.send(ret)
+            elif cmd == "get_camera_meta":
+                # Compute static camera calibration (intrinsics + cam->world
+                # extrinsics) + depth near/far planes for the named camera,
+                # using the robosuite sim (only reachable in this subprocess).
+                # Returns plain lists/floats (picklable) so the driver can
+                # back-project pixels to world without GT object poses.
+                from robosuite.utils import camera_utils as _cu
+
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 256))
+                w = int(data.get("width", 256))
+                K = _cu.get_camera_intrinsic_matrix(sim, cam, h, w)
+                E = _cu.get_camera_extrinsic_matrix(sim, cam)  # cam->world 4x4
+                extent = float(sim.model.stat.extent)
+                near = float(sim.model.vis.map.znear) * extent
+                far = float(sim.model.vis.map.zfar) * extent
+                p.send(
+                    {
+                        "camera_name": cam,
+                        "height": h,
+                        "width": w,
+                        "intrinsic_K": K.tolist(),
+                        "extrinsic_cam2world": E.tolist(),
+                        "depth_near": near,
+                        "depth_far": far,
+                    }
+                )
             else:
                 p.close()
                 raise NotImplementedError
@@ -191,6 +258,27 @@ class ReconfigureSubprocEnvWorker(SubprocEnvWorker):
 
     def reconfigure_env_fn(self, env_fn_param):
         self.parent_remote.send(["reconfigure", env_fn_param])
+        return self.parent_remote.recv()
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> Any:
+        """Render an arbitrary LIBERO camera from the worker subprocess."""
+        self.parent_remote.send(
+            [
+                "render_camera",
+                {
+                    "camera_name": camera_name,
+                    "height": height,
+                    "width": width,
+                    "depth": depth,
+                },
+            ]
+        )
         return self.parent_remote.recv()
 
 
