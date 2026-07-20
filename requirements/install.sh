@@ -80,7 +80,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "dreamzero-sglang" "qwen3_vl" "abot_m0")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1608,6 +1608,26 @@ install_dreamzero_model() {
     esac
 }
 
+install_dreamzero_sglang_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            install_dreamzero_deps
+            ;;
+        "")
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_dreamzero_deps
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for DreamZero-sglang model." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -1694,6 +1714,10 @@ install_env_only() {
             ;;
         polaris)
             install_polaris_env
+            ;;
+        libero|maniskill_libero)
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
@@ -2253,6 +2277,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                dreamzero-sglang)
+                    install_dreamzero_sglang_model
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
