@@ -36,6 +36,11 @@ logger = get_logger()
 
 
 def load_potential_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load and concatenate potential feature shards matching ``pattern``.
+
+    Returns:
+        ``(features, targets)`` float tensors concatenated along the batch dim.
+    """
     paths = (
         sorted(Path().glob(pattern))
         if not pattern.startswith("/")
@@ -53,6 +58,12 @@ def load_potential_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor]:
 
 
 def load_progress_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Load and concatenate progress feature shards matching ``pattern``.
+
+    Returns:
+        ``(pair_features, teacher_deltas, labels)`` where each feature row is a
+        pair of windows and ``labels`` are ``up`` / ``same`` / ``down`` strings.
+    """
     paths = sorted(Path(pattern).parent.glob(Path(pattern).name))
     if not paths:
         raise ValueError(f"No progress shards match {pattern}")
@@ -68,6 +79,7 @@ def load_progress_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor, list
 
 
 def safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
+    """Return Spearman correlation, or ``0.0`` when the statistic is non-finite."""
     value = spearmanr(left, right).statistic
     return float(value) if np.isfinite(value) else 0.0
 
@@ -76,6 +88,7 @@ def safe_spearman(left: np.ndarray, right: np.ndarray) -> float:
 def predict(
     model: nn.Module, features: torch.Tensor, device: torch.device, batch_size: int
 ) -> torch.Tensor:
+    """Run the scalar head and return sigmoid probabilities on CPU."""
     model.eval()
     outputs = []
     for start in range(0, len(features), batch_size):
@@ -95,6 +108,12 @@ def evaluate(
     batch_size: int,
     deadband: float,
 ) -> dict[str, Any]:
+    """Evaluate potential fit and progress-direction accuracy.
+
+    Returns:
+        Metrics including MAE/MSE/Spearman on potentials and direction accuracy
+        on progress pairs using ``deadband`` for up/same/down labels.
+    """
     values = predict(model, potential_features, device, batch_size)
     pair_values = predict(
         model,
@@ -290,6 +309,7 @@ def train(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for scalar potential-head training."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--train-pattern", required=True)
     parser.add_argument("--eval-pattern", required=True)

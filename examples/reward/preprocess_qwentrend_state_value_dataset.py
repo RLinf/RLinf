@@ -123,6 +123,11 @@ def load_value_model(
     checkpoint_path: str,
     device: torch.device,
 ) -> tuple[StateSuccessValue, dict[str, Any], np.ndarray, np.ndarray]:
+    """Load a trained ``StateSuccessValue`` teacher and its normalization stats.
+
+    Returns:
+        ``(model, config, mean, std)`` with the model in eval mode on ``device``.
+    """
     checkpoint = torch.load(checkpoint_path, map_location=device)
     cfg = checkpoint["config"]
     model = StateSuccessValue(
@@ -147,6 +152,11 @@ def score_states(
     device: torch.device,
     batch_size: int,
 ) -> np.ndarray:
+    """Score each state with the teacher after history stacking and whitening.
+
+    Returns:
+        Per-timestep success probabilities of shape ``(T,)``.
+    """
     history_size = int(cfg["history_size"])
     inputs = np.stack(
         [_stack_history(states, idx, history_size) for idx in range(len(states))],
@@ -174,6 +184,11 @@ def label_from_score(
     late_negative_pos: float,
     use_outcome_rules: bool,
 ) -> str:
+    """Map a value-window delta (and optional outcome rules) to a text label.
+
+    Returns:
+        One of ``positive``, ``negative``, or ``unclear``.
+    """
     if delta >= pos_delta or (
         use_outcome_rules and episode_success and end_value >= pos_value
     ):
@@ -197,6 +212,11 @@ def infer_delta_thresholds(
     std: np.ndarray,
     device: torch.device,
 ) -> tuple[float, float, dict[str, Any]]:
+    """Resolve positive/negative delta thresholds from args or data quantiles.
+
+    Returns:
+        ``(pos_delta, neg_delta, threshold_metadata)``.
+    """
     if args.label_mode == "threshold":
         return args.pos_delta, args.neg_delta, {}
 
@@ -254,6 +274,11 @@ def infer_delta_thresholds(
 
 
 def preprocess(args: argparse.Namespace) -> dict[str, Any]:
+    """Build dual-view progress SFT manifests labeled by the state-value teacher.
+
+    Returns:
+        Dataset metadata written to ``dataset_info.json``.
+    """
     random.seed(args.seed)
     np.random.seed(args.seed)
     output_dir = Path(args.output_dir)
@@ -470,6 +495,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for state-value progress dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", required=True)
     parser.add_argument("--output-dir", required=True)

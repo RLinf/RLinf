@@ -314,6 +314,7 @@ def main(args: argparse.Namespace) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for terminal-success dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", action="append", required=True)
     parser.add_argument("--output-dir", required=True)
