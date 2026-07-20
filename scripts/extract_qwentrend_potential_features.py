@@ -37,6 +37,9 @@ from examples.reward.preprocess_qwentrend_state_value_potential_dataset import (
 )
 from rlinf.data.datasets.vlm import QwenTrendProgressSFTDataset
 from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def read_rows(path: Path, sample_type: str) -> list[dict[str, Any]]:
@@ -252,7 +255,7 @@ def main(args: argparse.Namespace) -> None:
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, output)
-    print(json.dumps(payload["metadata"], indent=2))
+    logger.info("%s", json.dumps(payload["metadata"], indent=2))
 
 
 def parse_args() -> argparse.Namespace:

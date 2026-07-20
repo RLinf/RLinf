@@ -46,6 +46,9 @@ from examples.reward.preprocess_qwentrend_state_value_dataset import (
     load_value_model,
     score_states,
 )
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 @dataclass(frozen=True)
@@ -146,20 +149,22 @@ def _bucket_capacity(args: argparse.Namespace, split: str, sample_type: str) -> 
     return int(getattr(args, f"progress_per_bucket_{suffix}"))
 
 
-def _write_sample(
-    candidate: Candidate,
-    output_dir: Path,
-    source_cache: dict[str, dict[str, Any]],
-    num_bins: int,
-    window_size: int,
-) -> dict[str, Any] | None:
-    episode = source_cache.get(candidate.source_path)
+def _cached_episode(
+    source_path: str, source_cache: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    episode = source_cache.get(source_path)
     if episode is None:
-        with open(candidate.source_path, "rb") as f:
-            episode = pickle.load(f)
+        with open(source_path, "rb") as handle:
+            episode = pickle.load(handle)
         source_cache.clear()
-        source_cache[candidate.source_path] = episode
-    observations = episode.get("observations", [])
+        source_cache[source_path] = episode
+    return episode
+
+
+def _candidate_frames(
+    candidate: Candidate, observations: list[Any], window_size: int
+) -> tuple[list[Any], list[Any]] | None:
+    """Extract dual-view frames for a potential or progress candidate."""
     if candidate.sample_type == "progress":
         earlier_frames = _extract_dual_view_frames(
             observations,
@@ -171,18 +176,26 @@ def _write_sample(
             candidate.end_idx - window_size + 1,
             candidate.end_idx,
         )
-        frames = (
-            None
-            if earlier_frames is None or later_frames is None
-            else (
-                earlier_frames[0] + later_frames[0],
-                earlier_frames[1] + later_frames[1],
-            )
+        if earlier_frames is None or later_frames is None:
+            return None
+        return (
+            earlier_frames[0] + later_frames[0],
+            earlier_frames[1] + later_frames[1],
         )
-    else:
-        frames = _extract_dual_view_frames(
-            observations, candidate.start_idx, candidate.end_idx
-        )
+    return _extract_dual_view_frames(
+        observations, candidate.start_idx, candidate.end_idx
+    )
+
+
+def _write_sample(
+    candidate: Candidate,
+    output_dir: Path,
+    source_cache: dict[str, dict[str, Any]],
+    num_bins: int,
+    window_size: int,
+) -> dict[str, Any] | None:
+    episode = _cached_episode(candidate.source_path, source_cache)
+    frames = _candidate_frames(candidate, episode.get("observations", []), window_size)
     if frames is None:
         return None
 
@@ -201,20 +214,23 @@ def _write_sample(
     pkl_dir = output_dir / candidate.split / "pkl"
     pkl_dir.mkdir(parents=True, exist_ok=True)
     sample_pkl = pkl_dir / f"{sample_id}.pkl"
-    payload = {
-        "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
-        "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
-        "label": candidate.answer,
-        "sample_type": candidate.sample_type,
-        "teacher_value": candidate.teacher_value,
-        "teacher_delta": candidate.teacher_delta,
-        "source_episode_path": candidate.source_path,
-        "start_idx": candidate.start_idx,
-        "end_idx": candidate.end_idx,
-        "progress_gap_steps": candidate.progress_gap_steps,
-    }
-    with sample_pkl.open("wb") as f:
-        pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with sample_pkl.open("wb") as handle:
+        pickle.dump(
+            {
+                "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
+                "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
+                "label": candidate.answer,
+                "sample_type": candidate.sample_type,
+                "teacher_value": candidate.teacher_value,
+                "teacher_delta": candidate.teacher_delta,
+                "source_episode_path": candidate.source_path,
+                "start_idx": candidate.start_idx,
+                "end_idx": candidate.end_idx,
+                "progress_gap_steps": candidate.progress_gap_steps,
+            },
+            handle,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
 
     if candidate.sample_type == "potential":
         prompt = potential_prompt(candidate.task, window_size, num_bins)
@@ -253,7 +269,7 @@ def _write_sample(
     }
 
 
-def preprocess(args: argparse.Namespace) -> dict[str, Any]:
+def _validate_preprocess_args(args: argparse.Namespace) -> None:
     if not 2 <= args.num_bins <= 10:
         raise ValueError("num_bins must be between 2 and 10 for single digit labels")
     if args.temporal_smoothing_window < 1 or args.temporal_smoothing_window % 2 == 0:
@@ -261,13 +277,12 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
     if any(gap < 1 for gap in args.progress_gap_steps):
         raise ValueError("progress_gap_steps must contain only positive values")
     args.progress_gap_steps = sorted(set(args.progress_gap_steps))
-    rng = random.Random(args.seed)
-    np.random.seed(args.seed)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    model, cfg, mean, std = load_value_model(args.value_checkpoint, device)
+
+def _collect_pkl_files_and_splits(
+    args: argparse.Namespace, rng: random.Random
+) -> tuple[list[str], dict[str, str]]:
+    """List episode pickles and assign train/eval splits per collection root."""
     files_by_root = {
         str(Path(root).resolve()): sorted(glob(os.path.join(root, "*.pkl")))
         for root in args.raw_data_path
@@ -296,10 +311,21 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
         pkl_files = [
             path for path in pkl_files if split_by_path[path] == args.only_split
         ]
+    return pkl_files, split_by_path
 
-    reservoirs: dict[tuple[Any, ...], Reservoir] = {}
-    episode_counts: Counter[str] = Counter()
-    skipped: Counter[str] = Counter()
+
+def _add_episode_candidates(
+    *,
+    args: argparse.Namespace,
+    pkl_path: str,
+    split: str,
+    values: np.ndarray,
+    task: str,
+    success: bool,
+    reservoirs: dict[tuple[Any, ...], Reservoir],
+    rng: random.Random,
+) -> None:
+    """Fill reservoir buckets from one scored episode."""
 
     def add_candidate(key: tuple[Any, ...], candidate: Candidate) -> None:
         if key not in reservoirs:
@@ -308,9 +334,67 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
             )
         reservoirs[key].add(candidate)
 
+    outcome = "success" if success else "failure"
+    first_end = args.window_size - 1
+    for end_idx in range(first_end, len(values), args.stride):
+        start_idx = end_idx - args.window_size + 1
+        value = float(values[end_idx])
+        bin_id = potential_bin(value, args.num_bins)
+        add_candidate(
+            (split, "potential", bin_id, outcome),
+            Candidate(
+                pkl_path,
+                split,
+                "potential",
+                task,
+                success,
+                start_idx,
+                end_idx,
+                value,
+                0.0,
+                str(bin_id),
+            ),
+        )
+        for gap_steps in args.progress_gap_steps:
+            earlier_end = end_idx - gap_steps
+            if earlier_end < first_end:
+                continue
+            delta = value - float(values[earlier_end])
+            label = progress_label(delta, args.progress_deadband)
+            add_candidate(
+                (split, "progress", gap_steps, label, outcome),
+                Candidate(
+                    pkl_path,
+                    split,
+                    "progress",
+                    task,
+                    success,
+                    earlier_end - args.window_size + 1,
+                    end_idx,
+                    value,
+                    delta,
+                    label,
+                    gap_steps,
+                ),
+            )
+
+
+def _score_episodes_into_reservoirs(
+    args: argparse.Namespace,
+    pkl_files: list[str],
+    split_by_path: dict[str, str],
+    rng: random.Random,
+) -> tuple[dict[tuple[Any, ...], Reservoir], Counter[str], Counter[str]]:
+    """Score all episodes and accumulate stratified reservoir candidates."""
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    model, cfg, mean, std = load_value_model(args.value_checkpoint, device)
+    reservoirs: dict[tuple[Any, ...], Reservoir] = {}
+    episode_counts: Counter[str] = Counter()
+    skipped: Counter[str] = Counter()
+
     for pkl_path in tqdm(pkl_files, desc="Scoring episodes", unit="episode"):
-        with open(pkl_path, "rb") as f:
-            episode = pickle.load(f)
+        with open(pkl_path, "rb") as handle:
+            episode = pickle.load(handle)
         observations = episode.get("observations", [])
         if len(observations) < args.window_size * 2:
             skipped["short_episode"] += 1
@@ -330,56 +414,33 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
         values = smooth_values(values, args.temporal_smoothing_window)
         split = split_by_path[pkl_path]
         success = bool(episode.get("success", False))
-        outcome = "success" if success else "failure"
-        episode_counts[f"{split}_{outcome}"] += 1
+        episode_counts[f"{split}_{'success' if success else 'failure'}"] += 1
         task = str(
             episode.get("task")
             or episode.get("task_description")
             or args.task_description
             or "robot manipulation progress judgment"
         )
+        _add_episode_candidates(
+            args=args,
+            pkl_path=pkl_path,
+            split=split,
+            values=values,
+            task=task,
+            success=success,
+            reservoirs=reservoirs,
+            rng=rng,
+        )
+    return reservoirs, episode_counts, skipped
 
-        first_end = args.window_size - 1
-        for end_idx in range(first_end, len(states), args.stride):
-            start_idx = end_idx - args.window_size + 1
-            value = float(values[end_idx])
-            bin_id = potential_bin(value, args.num_bins)
-            potential = Candidate(
-                pkl_path,
-                split,
-                "potential",
-                task,
-                success,
-                start_idx,
-                end_idx,
-                value,
-                0.0,
-                str(bin_id),
-            )
-            add_candidate((split, "potential", bin_id, outcome), potential)
 
-            for gap_steps in args.progress_gap_steps:
-                earlier_end = end_idx - gap_steps
-                if earlier_end < first_end:
-                    continue
-                pair_start = earlier_end - args.window_size + 1
-                delta = value - float(values[earlier_end])
-                label = progress_label(delta, args.progress_deadband)
-                progress = Candidate(
-                    pkl_path,
-                    split,
-                    "progress",
-                    task,
-                    success,
-                    pair_start,
-                    end_idx,
-                    value,
-                    delta,
-                    label,
-                    gap_steps,
-                )
-                add_candidate((split, "progress", gap_steps, label, outcome), progress)
-
+def _write_selected_rows(
+    args: argparse.Namespace,
+    reservoirs: dict[tuple[Any, ...], Reservoir],
+    output_dir: Path,
+    skipped: Counter[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Materialize selected candidates into manifests and per-sample pickles."""
     selected = [item for reservoir in reservoirs.values() for item in reservoir.items]
     selected.sort(key=lambda item: (item.source_path, item.sample_type, item.start_idx))
     rows_by_split: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -396,6 +457,47 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
             skipped["missing_frames"] += 1
             continue
         rows_by_split[candidate.split].append(row)
+    return rows_by_split
+
+
+def _split_metadata(rows: list[dict[str, Any]], manifest: Path) -> dict[str, Any]:
+    return {
+        "manifest": str(manifest),
+        "num_samples": len(rows),
+        "sample_type_counts": dict(
+            Counter(row["segment_metadata"]["sample_type"] for row in rows)
+        ),
+        "answer_counts": dict(Counter(row["answer"] for row in rows)),
+        "outcome_counts": dict(
+            Counter(
+                "success" if row["segment_metadata"]["success"] else "failure"
+                for row in rows
+            )
+        ),
+        "source_run_counts": dict(Counter(row["source_run"] for row in rows)),
+        "progress_gap_counts": dict(
+            Counter(
+                str(row["segment_metadata"]["progress_gap_steps"])
+                for row in rows
+                if row["segment_metadata"]["sample_type"] == "progress"
+            )
+        ),
+    }
+
+
+def preprocess(args: argparse.Namespace) -> dict[str, Any]:
+    """Build potential/progress SFT manifests from a state-value teacher."""
+    _validate_preprocess_args(args)
+    rng = random.Random(args.seed)
+    np.random.seed(args.seed)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pkl_files, split_by_path = _collect_pkl_files_and_splits(args, rng)
+    reservoirs, episode_counts, skipped = _score_episodes_into_reservoirs(
+        args, pkl_files, split_by_path, rng
+    )
+    rows_by_split = _write_selected_rows(args, reservoirs, output_dir, skipped)
 
     metadata: dict[str, Any] = {
         "raw_data_paths": args.raw_data_path,
@@ -425,34 +527,13 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
         split_dir = output_dir / split
         split_dir.mkdir(parents=True, exist_ok=True)
         manifest = split_dir / "segments.jsonl"
-        with manifest.open("w", encoding="utf-8") as f:
+        with manifest.open("w", encoding="utf-8") as handle:
             for row in rows:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        metadata["splits"][split] = {
-            "manifest": str(manifest),
-            "num_samples": len(rows),
-            "sample_type_counts": dict(
-                Counter(row["segment_metadata"]["sample_type"] for row in rows)
-            ),
-            "answer_counts": dict(Counter(row["answer"] for row in rows)),
-            "outcome_counts": dict(
-                Counter(
-                    "success" if row["segment_metadata"]["success"] else "failure"
-                    for row in rows
-                )
-            ),
-            "source_run_counts": dict(Counter(row["source_run"] for row in rows)),
-            "progress_gap_counts": dict(
-                Counter(
-                    str(row["segment_metadata"]["progress_gap_steps"])
-                    for row in rows
-                    if row["segment_metadata"]["sample_type"] == "progress"
-                )
-            ),
-        }
-    with (output_dir / "dataset_info.json").open("w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2, ensure_ascii=False)
-    print(json.dumps(metadata, indent=2, ensure_ascii=False))
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        metadata["splits"][split] = _split_metadata(rows, manifest)
+    with (output_dir / "dataset_info.json").open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, indent=2, ensure_ascii=False)
+    logger.info("%s", json.dumps(metadata, indent=2, ensure_ascii=False))
     return metadata
 
 

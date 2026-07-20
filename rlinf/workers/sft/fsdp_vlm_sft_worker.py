@@ -23,6 +23,7 @@ from omegaconf import DictConfig
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+from rlinf.workers.sft.lora_checkpoint import rewrite_full_weights_with_lora_adapters
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
@@ -46,60 +47,13 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         # full_weights.pt. FSDP full-state export merges Peft weights and drops
         # those keys; rewrite the file with the Peft adapter state when LoRA.
         if bool(self.cfg.actor.model.get("is_lora", False)):
-            self._rewrite_full_weights_with_lora_adapters(save_path)
-
-    def _rewrite_full_weights_with_lora_adapters(self, save_path: str) -> None:
-        """Replace merged full_weights.pt with Peft adapter tensors (lora_*).
-
-        FSDP full-state export merges adapters into base weights and drops
-        ``lora_*`` keys. Online ``HistoryVLMRewardModel`` requires those keys
-        for ``success_lora_path`` / ``lora_path``.
-        """
-        from peft import get_peft_model_state_dict
-        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-        # Actor save_path is typically .../global_step_N/actor
-        target = os.path.join(save_path, "model_state_dict", "full_weights.pt")
-        torch.distributed.barrier()
-        if not os.path.exists(target):
-            if self._rank == 0:
-                self.log_warning(
-                    f"Skip LoRA rewrite: full_weights.pt not found at {target}"
-                )
-            torch.distributed.barrier()
-            return
-
-        model = self.model
-        peft_model = None
-        for module in model.modules():
-            if hasattr(module, "peft_config"):
-                peft_model = module
-                break
-        if peft_model is None:
-            if self._rank == 0:
-                self.log_warning(
-                    f"Skip LoRA rewrite: model has no peft_config at {save_path}"
-                )
-            torch.distributed.barrier()
-            return
-
-        with FSDP.summon_full_params(model, writeback=False):
-            lora_state = get_peft_model_state_dict(peft_model)
-            lora_state = {
-                key: value.detach().cpu() for key, value in lora_state.items()
-            }
-
-        torch.distributed.barrier()
-        if self._rank == 0:
-            if not any("lora_" in key for key in lora_state):
-                raise RuntimeError(
-                    f"Peft export produced no lora_* keys for checkpoint {save_path}"
-                )
-            torch.save(lora_state, target)
-            self.log_info(
-                f"Rewrote {target} with {len(lora_state)} LoRA adapter tensors"
+            rewrite_full_weights_with_lora_adapters(
+                self.model,
+                save_path,
+                rank=self._rank,
+                log_info=self.log_info,
+                log_warning=self.log_warning,
             )
-        torch.distributed.barrier()
 
     def _load_data_state(self, load_path: str):
         path = os.path.join(load_path, "data_state.json")

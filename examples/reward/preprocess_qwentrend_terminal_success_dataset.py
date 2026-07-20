@@ -25,6 +25,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
+
 
 def _as_bool(value: Any) -> bool:
     """Convert scalar tensor/array metadata to bool."""
@@ -126,6 +130,142 @@ def make_row(
     }
 
 
+def _items_for_split(
+    items: list[dict[str, Any]], split: str, val_split: float
+) -> list[dict[str, Any]]:
+    return [item for item in items if split_for(item["path"], val_split) == split]
+
+
+def _build_online_split_rows(
+    split_items: list[dict[str, Any]],
+    args: argparse.Namespace,
+    rng: random.Random,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Sample fixed-interval windows for one split (online-matched labels)."""
+    rows: list[dict[str, Any]] = []
+    positive_count = 0
+    for item in split_items:
+        success_steps = set(item["success_steps"])
+        for end_step in range(
+            args.window_size,
+            item["end_step"] + 1,
+            args.online_interval,
+        ):
+            label = end_step in success_steps
+            positive_count += int(label)
+            rows.append(
+                make_row(
+                    item,
+                    args.window_size,
+                    end_step,
+                    label,
+                    "success_observed" if label else "online_negative",
+                )
+            )
+    rng.shuffle(rows)
+    return rows, {
+        "positive": positive_count,
+        "negative": len(rows) - positive_count,
+        "online_interval": args.online_interval,
+    }
+
+
+def _hard_negative_candidates(
+    item: dict[str, Any], args: argparse.Namespace, rng: random.Random
+) -> list[tuple[dict[str, Any], int]]:
+    """Pick hard-negative end steps far from success for one episode."""
+    candidates = list(range(args.window_size - 1, item["end_step"] + 1))
+    if item["success_steps"]:
+        candidates = [
+            end_step
+            for end_step in candidates
+            if all(
+                abs(end_step - success_step) > args.success_exclusion_steps
+                for success_step in item["success_steps"]
+            )
+        ]
+    else:
+        candidates = candidates[:-1]
+    if len(candidates) > args.hard_negatives_per_episode:
+        candidates = rng.sample(candidates, args.hard_negatives_per_episode)
+    return [(item, end_step) for end_step in candidates]
+
+
+def _build_balanced_split_rows(
+    split_items: list[dict[str, Any]],
+    args: argparse.Namespace,
+    rng: random.Random,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Balance terminal positives with terminal and hard negatives."""
+    positive = [item for item in split_items if item["is_complete"] and item["success"]]
+    terminal_negative = [
+        item for item in split_items if item["is_complete"] and not item["success"]
+    ]
+    positive = positive[: args.max_positive]
+    rng.shuffle(positive)
+    rng.shuffle(terminal_negative)
+
+    hard_negative: list[tuple[dict[str, Any], int]] = []
+    for item in split_items:
+        hard_negative.extend(_hard_negative_candidates(item, args, rng))
+    rng.shuffle(hard_negative)
+
+    positive_rows: list[dict[str, Any]] = []
+    for item in positive:
+        success_step = rng.choice(item["success_steps"])
+        positive_rows.append(
+            make_row(item, args.window_size, success_step, True, "success_observed")
+        )
+        candidates = list(
+            range(
+                max(
+                    args.window_size - 1,
+                    success_step - args.success_positive_lead_steps,
+                ),
+                success_step,
+            )
+        )
+        rng.shuffle(candidates)
+        for end_step in candidates[: args.near_terminal_positives_per_episode]:
+            positive_rows.append(
+                make_row(
+                    item, args.window_size, end_step, True, "success_near_observed"
+                )
+            )
+
+    target_negative_count = int(
+        round(len(positive_rows) * args.negative_positive_ratio)
+    )
+    terminal_negative = terminal_negative[:target_negative_count]
+    hard_limit = max(0, target_negative_count - len(terminal_negative))
+    hard_negative = hard_negative[:hard_limit]
+
+    rows = list(positive_rows)
+    rows.extend(
+        make_row(item, args.window_size, item["end_step"], False, "failure_terminal")
+        for item in terminal_negative
+    )
+    rows.extend(
+        make_row(
+            item,
+            args.window_size,
+            end_step,
+            False,
+            "nonterminal_hard_negative",
+        )
+        for item, end_step in hard_negative
+    )
+    rng.shuffle(rows)
+    return rows, {
+        "positive": len(positive_rows),
+        "terminal_negative": len(terminal_negative),
+        "hard_negative": len(hard_negative),
+        "negative_positive_ratio": (
+            (len(terminal_negative) + len(hard_negative)) / max(1, len(positive_rows))
+        ),
+    }
+
+
 def build_rows(
     args: argparse.Namespace,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
@@ -142,134 +282,16 @@ def build_rows(
     rows_by_split: dict[str, list[dict[str, Any]]] = {}
     stats: dict[str, Any] = {"input_episodes": len(paths), "splits": {}}
     online_interval = int(getattr(args, "online_interval", 0))
-    if online_interval > 0:
-        for split in ("train", "eval"):
-            rows: list[dict[str, Any]] = []
-            positive_count = 0
-            split_items = [
-                item
-                for item in items
-                if split_for(item["path"], args.val_split) == split
-            ]
-            for item in split_items:
-                success_steps = set(item["success_steps"])
-                for end_step in range(
-                    args.window_size,
-                    item["end_step"] + 1,
-                    online_interval,
-                ):
-                    label = end_step in success_steps
-                    positive_count += int(label)
-                    rows.append(
-                        make_row(
-                            item,
-                            args.window_size,
-                            end_step,
-                            label,
-                            "success_observed" if label else "online_negative",
-                        )
-                    )
-            rng.shuffle(rows)
-            rows_by_split[split] = rows
-            stats["splits"][split] = {
-                "positive": positive_count,
-                "negative": len(rows) - positive_count,
-                "online_interval": online_interval,
-            }
-        stats["complete_episodes"] = sum(item["is_complete"] for item in items)
-        stats["partial_episodes"] = sum(not item["is_complete"] for item in items)
-        return rows_by_split, stats
+
     for split in ("train", "eval"):
-        split_items = [
-            item for item in items if split_for(item["path"], args.val_split) == split
-        ]
-        positive = [
-            item for item in split_items if item["is_complete"] and item["success"]
-        ]
-        terminal_negative = [
-            item for item in split_items if item["is_complete"] and not item["success"]
-        ]
-        positive = positive[: args.max_positive]
-        rng.shuffle(positive)
-        positive_rows: list[dict[str, Any]] = []
-        rng.shuffle(terminal_negative)
-        hard_negative: list[tuple[dict[str, Any], int]] = []
-        for item in split_items:
-            candidates = list(range(args.window_size - 1, item["end_step"] + 1))
-            if item["success_steps"]:
-                candidates = [
-                    end_step
-                    for end_step in candidates
-                    if all(
-                        abs(end_step - success_step) > args.success_exclusion_steps
-                        for success_step in item["success_steps"]
-                    )
-                ]
-            else:
-                candidates = candidates[:-1]
-            if len(candidates) > args.hard_negatives_per_episode:
-                candidates = rng.sample(candidates, args.hard_negatives_per_episode)
-            hard_negative.extend((item, end_step) for end_step in candidates)
-        rng.shuffle(hard_negative)
-        for item in positive:
-            success_step = rng.choice(item["success_steps"])
-            positive_rows.append(
-                make_row(item, args.window_size, success_step, True, "success_observed")
-            )
-            candidates = list(
-                range(
-                    max(
-                        args.window_size - 1,
-                        success_step - args.success_positive_lead_steps,
-                    ),
-                    success_step,
-                )
-            )
-            rng.shuffle(candidates)
-            for end_step in candidates[: args.near_terminal_positives_per_episode]:
-                positive_rows.append(
-                    make_row(
-                        item, args.window_size, end_step, True, "success_near_observed"
-                    )
-                )
-        target_negative_count = int(
-            round(len(positive_rows) * args.negative_positive_ratio)
-        )
-        terminal_negative = terminal_negative[:target_negative_count]
-        hard_limit = max(0, target_negative_count - len(terminal_negative))
-        hard_negative = hard_negative[:hard_limit]
-        rows = list(positive_rows)
-        rows.extend(
-            make_row(
-                item,
-                args.window_size,
-                item["end_step"],
-                False,
-                "failure_terminal",
-            )
-            for item in terminal_negative
-        )
-        rows.extend(
-            make_row(
-                item,
-                args.window_size,
-                end_step,
-                False,
-                "nonterminal_hard_negative",
-            )
-            for item, end_step in hard_negative
-        )
-        rng.shuffle(rows)
+        split_items = _items_for_split(items, split, args.val_split)
+        if online_interval > 0:
+            rows, split_stats = _build_online_split_rows(split_items, args, rng)
+        else:
+            rows, split_stats = _build_balanced_split_rows(split_items, args, rng)
         rows_by_split[split] = rows
-        stats["splits"][split] = {
-            "positive": len(positive_rows),
-            "terminal_negative": len(terminal_negative),
-            "hard_negative": len(hard_negative),
-            "negative_positive_ratio": (
-                (len(terminal_negative) + len(hard_negative))
-                / max(1, len(positive_rows))
-            ),
-        }
+        stats["splits"][split] = split_stats
+
     stats["complete_episodes"] = sum(item["is_complete"] for item in items)
     stats["partial_episodes"] = sum(not item["is_complete"] for item in items)
     return rows_by_split, stats
@@ -288,7 +310,7 @@ def main(args: argparse.Namespace) -> None:
     (output_dir / "dataset_info.json").write_text(
         json.dumps(stats, indent=2), encoding="utf-8"
     )
-    print(json.dumps(stats, indent=2))
+    logger.info("%s", json.dumps(stats, indent=2))
 
 
 def parse_args() -> argparse.Namespace:
