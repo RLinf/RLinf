@@ -67,7 +67,7 @@ class AgentLightningRolloutWorker(Worker):
 
     def init_worker(
         self,
-        store: "LightningStore",
+        store_endpoint: str,
         adapter: "TraceToTripletBase",
         server_addresses: Optional[list[str]] = None,
         group_size: int = 1,
@@ -76,12 +76,13 @@ class AgentLightningRolloutWorker(Worker):
         is_eval_mode: bool = False,
     ):
         from agentlightning.llm_proxy import LLMProxy
+        from agentlightning.store import LightningStoreClient
 
-        self.store = store
+        self.store = LightningStoreClient(store_endpoint)
         self.llm_proxy = LLMProxy(
             port=self.acquire_free_port(),
             model_list=[],
-            store=store,
+            store=self.store,
         )
         self.llm_proxy.start()
         self.adapter = adapter
