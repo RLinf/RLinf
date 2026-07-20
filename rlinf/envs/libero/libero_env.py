@@ -661,13 +661,15 @@ class LiberoEnv(gym.Env):
         infos = {}
         return obs, infos
 
-    def get_camera_meta(self, camera_name: str = "agentview",
-                        height: int = 256, width: int = 256) -> dict:
+    def get_camera_meta(
+        self, camera_name: str = "agentview", height: int = 256, width: int = 256
+    ) -> dict:
         """Static camera calibration (intrinsics K, cam->world extrinsics,
         depth near/far) for the named camera, from worker 0's robosuite sim.
         Agentview is a fixed world camera, so this is constant per episode."""
         return self.env.workers[0].get_camera_meta(
-            camera_name=camera_name, height=height, width=width)
+            camera_name=camera_name, height=height, width=width
+        )
 
     def render_camera(
         self,
