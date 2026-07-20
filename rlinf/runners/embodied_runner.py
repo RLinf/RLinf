@@ -30,6 +30,7 @@ from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
+from rlinf.utils.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -276,11 +277,11 @@ class EmbodiedRunner:
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
 
-            with self.timer("step"):
-                with self.timer("sync_weights"):
+            with trace_span("step", args={"step_idx": _step}), self.timer("step"):
+                with trace_span("sync_weights"), self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
-                with self.timer("generate_rollouts"):
+                with trace_span("generate_rollouts"), self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
@@ -305,22 +306,23 @@ class EmbodiedRunner:
                         reward_handle.wait()
 
                 # compute advantages and returns.
-                with self.timer("cal_adv_and_returns"):
+                with trace_span("cal_adv_and_returns"), self.timer("cal_adv_and_returns"):
                     actor_rollout_metrics = (
                         self.actor.compute_advantages_and_returns().wait()
                     )
 
                 # actor training.
-                actor_training_handle: Handle = self.actor.run_training()
-                env_bootstrap_handle: Handle | None = None
-                if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
-                    env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                        rollout_channel=self.rollout_channel
-                    )
+                with trace_span("actor_training"):
+                    actor_training_handle: Handle = self.actor.run_training()
+                    env_bootstrap_handle: Handle | None = None
+                    if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
+                        env_bootstrap_handle = self.env.prefetch_train_bootstrap(
+                            rollout_channel=self.rollout_channel
+                        )
 
-                actor_training_metrics = actor_training_handle.wait()
-                if env_bootstrap_handle is not None:
-                    env_bootstrap_handle.wait()
+                    actor_training_metrics = actor_training_handle.wait()
+                    if env_bootstrap_handle is not None:
+                        env_bootstrap_handle.wait()
 
                 self.global_step += 1
 
@@ -335,7 +337,7 @@ class EmbodiedRunner:
 
                 eval_metrics = {}
                 if run_val:
-                    with self.timer("eval"):
+                    with trace_span("eval"), self.timer("eval"):
                         self.update_rollout_weights()
                         eval_metrics = self.evaluate()
                         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}

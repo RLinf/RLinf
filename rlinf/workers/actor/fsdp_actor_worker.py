@@ -65,6 +65,7 @@ from rlinf.utils.metric_utils import (
     compute_rollout_metrics,
     compute_split_num,
 )
+from rlinf.utils.tracing import trace_func
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
@@ -84,6 +85,7 @@ from rlinf.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
+from rlinf.utils.tracing import trace_func
 
 
 def process_nested_dict_for_adv(nested_dict, rollout_epoch):
@@ -273,6 +275,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         torch.distributed.barrier()
 
+    @trace_func(cat="actor")
     def sync_model_to_rollout(self):
         """
         Sync the model's full state dict to the rollout worker.
@@ -679,6 +682,7 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
 
+    @trace_func(cat="actor")
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
     ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
@@ -866,6 +870,7 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch
 
+    @trace_func(cat="actor")
     def run_training(
         self, input_channel: Channel, do_offload=False
     ) -> tuple[dict, list]:
@@ -935,6 +940,7 @@ class FSDPActor(FSDPModelManager, Worker):
         return rollout_metrics, training_metrics_list
 
     # Advantages and returns
+    @trace_func(cat="actor")
     def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
         """Compute the advantages and returns.
 
@@ -1021,6 +1027,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
     def get_rollout_state_dict(self) -> dict:
         return self.get_model_state_dict(cpu_offload=False, full_state_dict=False)
 
+    @trace_func(cat="actor")
     async def sync_model_to_rollout(self) -> None:
         if self.enable_offload:
             if not self.is_optimizer_offloaded:
@@ -1168,6 +1175,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         return rollout_batch
 
+    @trace_func(cat="actor")
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
         """
         Compute the advantages and returns.
@@ -1272,6 +1280,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
 
     @Worker.timer("run_training")
+    @trace_func(cat="actor")
     def run_training(self) -> None:
         """
         Run the training process using the received rollout batch.
