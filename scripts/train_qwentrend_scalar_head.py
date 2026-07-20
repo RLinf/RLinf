@@ -30,6 +30,9 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from rlinf.models.embodiment.reward.vlm_reward_model import ScalarPotentialHead
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def load_potential_shards(pattern: str) -> tuple[torch.Tensor, torch.Tensor]:
@@ -124,7 +127,91 @@ def evaluate(
     }
 
 
+def _pairwise_rank_loss(
+    logits: torch.Tensor, targets: torch.Tensor, min_gap: float
+) -> torch.Tensor:
+    """Softplus pairwise ranking loss over a random permutation of the batch."""
+    permutation = torch.randperm(len(targets), device=targets.device)
+    target_difference = targets - targets[permutation]
+    rank_mask = target_difference.abs() >= min_gap
+    if not rank_mask.any():
+        return logits.sum() * 0.0
+    logit_difference = logits - logits[permutation]
+    return nn.functional.softplus(
+        -torch.sign(target_difference[rank_mask]) * logit_difference[rank_mask]
+    ).mean()
+
+
+def _train_one_epoch(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    loader: DataLoader,
+    progress_loader: DataLoader,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> dict[str, float]:
+    """Run one optimization epoch and return mean train losses."""
+    model.train()
+    losses: list[float] = []
+    value_losses: list[float] = []
+    delta_losses: list[float] = []
+    local_rank_losses: list[float] = []
+    progress_iterator = iter(progress_loader)
+    for features, targets in loader:
+        features = features.to(device)
+        targets = targets.to(device)
+        logits = model(features)
+        value_loss = nn.functional.binary_cross_entropy_with_logits(logits, targets)
+        rank_loss = _pairwise_rank_loss(logits, targets, args.rank_min_gap)
+        try:
+            pair_features, pair_targets = next(progress_iterator)
+        except StopIteration:
+            progress_iterator = iter(progress_loader)
+            pair_features, pair_targets = next(progress_iterator)
+        pair_features = pair_features.to(device)
+        pair_targets = pair_targets.to(device)
+        pair_logits = model(pair_features.reshape(-1, pair_features.shape[-1])).reshape(
+            -1, 2
+        )
+        predicted_deltas = torch.sigmoid(pair_logits[:, 1]) - torch.sigmoid(
+            pair_logits[:, 0]
+        )
+        delta_loss = nn.functional.smooth_l1_loss(
+            predicted_deltas, pair_targets, beta=args.delta_beta
+        )
+        local_rank_mask = pair_targets.abs() >= args.local_rank_min_gap
+        if local_rank_mask.any():
+            local_logit_differences = pair_logits[:, 1] - pair_logits[:, 0]
+            local_rank_loss = nn.functional.softplus(
+                -torch.sign(pair_targets[local_rank_mask])
+                * local_logit_differences[local_rank_mask]
+            ).mean()
+        else:
+            local_rank_loss = pair_logits.sum() * 0.0
+        loss = (
+            value_loss
+            + args.rank_weight * rank_loss
+            + args.delta_weight * delta_loss
+            + args.local_rank_weight * local_rank_loss
+        )
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        losses.append(float(loss.detach().cpu()))
+        value_losses.append(float(value_loss.detach().cpu()))
+        delta_losses.append(float(delta_loss.detach().cpu()))
+        local_rank_losses.append(float(local_rank_loss.detach().cpu()))
+    return {
+        "train_loss": float(np.mean(losses)),
+        "train_value_loss": float(np.mean(value_losses)),
+        "train_delta_loss": float(np.mean(delta_losses)),
+        "train_local_rank_loss": float(np.mean(local_rank_losses)),
+    }
+
+
 def train(args: argparse.Namespace) -> None:
+    """Train the scalar potential head and write ``best.pt`` / metrics."""
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -143,11 +230,15 @@ def train(args: argparse.Namespace) -> None:
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
-    dataset = TensorDataset(train_features, train_targets)
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
-    progress_dataset = TensorDataset(train_progress_features, train_progress_deltas)
+    loader = DataLoader(
+        TensorDataset(train_features, train_targets),
+        batch_size=args.batch_size,
+        shuffle=True,
+    )
     progress_loader = DataLoader(
-        progress_dataset, batch_size=args.batch_size, shuffle=True
+        TensorDataset(train_progress_features, train_progress_deltas),
+        batch_size=args.batch_size,
+        shuffle=True,
     )
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -157,70 +248,9 @@ def train(args: argparse.Namespace) -> None:
 
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
         for epoch in range(1, args.epochs + 1):
-            model.train()
-            losses = []
-            value_losses = []
-            delta_losses = []
-            local_rank_losses = []
-            progress_iterator = iter(progress_loader)
-            for features, targets in loader:
-                features = features.to(device)
-                targets = targets.to(device)
-                logits = model(features)
-                value_loss = nn.functional.binary_cross_entropy_with_logits(
-                    logits, targets
-                )
-                permutation = torch.randperm(len(targets), device=device)
-                target_difference = targets - targets[permutation]
-                rank_mask = target_difference.abs() >= args.rank_min_gap
-                if rank_mask.any():
-                    logit_difference = logits - logits[permutation]
-                    rank_loss = nn.functional.softplus(
-                        -torch.sign(target_difference[rank_mask])
-                        * logit_difference[rank_mask]
-                    ).mean()
-                else:
-                    rank_loss = logits.sum() * 0.0
-                try:
-                    pair_features, pair_targets = next(progress_iterator)
-                except StopIteration:
-                    progress_iterator = iter(progress_loader)
-                    pair_features, pair_targets = next(progress_iterator)
-                pair_features = pair_features.to(device)
-                pair_targets = pair_targets.to(device)
-                pair_logits = model(
-                    pair_features.reshape(-1, pair_features.shape[-1])
-                ).reshape(-1, 2)
-                predicted_deltas = torch.sigmoid(pair_logits[:, 1]) - torch.sigmoid(
-                    pair_logits[:, 0]
-                )
-                delta_loss = nn.functional.smooth_l1_loss(
-                    predicted_deltas, pair_targets, beta=args.delta_beta
-                )
-                local_rank_mask = pair_targets.abs() >= args.local_rank_min_gap
-                if local_rank_mask.any():
-                    local_logit_differences = pair_logits[:, 1] - pair_logits[:, 0]
-                    local_rank_loss = nn.functional.softplus(
-                        -torch.sign(pair_targets[local_rank_mask])
-                        * local_logit_differences[local_rank_mask]
-                    ).mean()
-                else:
-                    local_rank_loss = pair_logits.sum() * 0.0
-                loss = (
-                    value_loss
-                    + args.rank_weight * rank_loss
-                    + args.delta_weight * delta_loss
-                    + args.local_rank_weight * local_rank_loss
-                )
-                optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                losses.append(float(loss.detach().cpu()))
-                value_losses.append(float(value_loss.detach().cpu()))
-                delta_losses.append(float(delta_loss.detach().cpu()))
-                local_rank_losses.append(float(local_rank_loss.detach().cpu()))
-
+            train_losses = _train_one_epoch(
+                model, optimizer, loader, progress_loader, args, device
+            )
             if epoch % args.eval_interval != 0 and epoch != args.epochs:
                 continue
             metrics = evaluate(
@@ -234,15 +264,7 @@ def train(args: argparse.Namespace) -> None:
                 args.eval_batch_size,
                 args.progress_deadband,
             )
-            metrics.update(
-                {
-                    "epoch": epoch,
-                    "train_loss": float(np.mean(losses)),
-                    "train_value_loss": float(np.mean(value_losses)),
-                    "train_delta_loss": float(np.mean(delta_losses)),
-                    "train_local_rank_loss": float(np.mean(local_rank_losses)),
-                }
-            )
+            metrics.update({"epoch": epoch, **train_losses})
             metrics_file.write(json.dumps(metrics) + "\n")
             metrics_file.flush()
             score = metrics["potential_spearman"] + metrics["delta_spearman"]
@@ -261,7 +283,7 @@ def train(args: argparse.Namespace) -> None:
                     },
                     output_dir / "best.pt",
                 )
-            print(json.dumps(metrics))
+            logger.info("%s", json.dumps(metrics))
     (output_dir / "best_metrics.json").write_text(
         json.dumps(best_metrics, indent=2), encoding="utf-8"
     )

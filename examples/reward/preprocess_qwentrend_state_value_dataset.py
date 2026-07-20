@@ -31,6 +31,9 @@ import torch
 from tqdm.auto import tqdm
 
 from examples.reward.train_state_success_value import StateSuccessValue
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -286,17 +289,13 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
         "train": Counter(),
         "eval": Counter(),
     }
-    pkl_dirs = {
-        split: output_dir / split / "pkl"
-        for split in ("train", "eval")
-    }
+    pkl_dirs = {split: output_dir / split / "pkl" for split in ("train", "eval")}
     for pkl_dir in pkl_dirs.values():
         pkl_dir.mkdir(parents=True, exist_ok=True)
 
     for pkl_path in tqdm(pkl_files, desc="Scoring episodes", unit="episode"):
         if args.max_samples_per_label_per_split and all(
-            written_by_split_label[split][label]
-            >= args.max_samples_per_label_per_split
+            written_by_split_label[split][label] >= args.max_samples_per_label_per_split
             for split in ("train", "eval")
             for label in ("positive", "negative", "unclear")
         ):
@@ -466,7 +465,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
 
     with (output_dir / "dataset_info.json").open("w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
-    print(json.dumps(metadata, indent=2, ensure_ascii=False))
+    logger.info("%s", json.dumps(metadata, indent=2, ensure_ascii=False))
     return metadata
 
 

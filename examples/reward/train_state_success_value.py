@@ -39,6 +39,10 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
+
 
 @dataclass
 class ValueConfig:
@@ -122,7 +126,9 @@ def load_state_dataset(
     val_split: float,
     seed: int,
     max_episodes: int | None,
-) -> tuple[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], dict[str, Any]]:
+) -> tuple[
+    tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray], dict[str, Any]
+]:
     pkl_files = sorted(glob(os.path.join(raw_data_path, "*.pkl")))
     if max_episodes is not None:
         pkl_files = pkl_files[:max_episodes]
@@ -138,7 +144,12 @@ def load_state_dataset(
     train_y: list[np.ndarray] = []
     val_x: list[np.ndarray] = []
     val_y: list[np.ndarray] = []
-    episode_counts = {"train_success": 0, "train_fail": 0, "val_success": 0, "val_fail": 0}
+    episode_counts = {
+        "train_success": 0,
+        "train_fail": 0,
+        "val_success": 0,
+        "val_fail": 0,
+    }
 
     state_dim = None
     for pkl_path in tqdm(pkl_files, desc="Loading state episodes", unit="episode"):
@@ -373,7 +384,7 @@ def train(args: argparse.Namespace) -> None:
             f,
             indent=2,
         )
-    print(json.dumps(final_metrics, indent=2))
+    logger.info("%s", json.dumps(final_metrics, indent=2))
 
 
 def parse_args() -> argparse.Namespace:

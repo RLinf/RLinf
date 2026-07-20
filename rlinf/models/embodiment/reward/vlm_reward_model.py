@@ -21,17 +21,11 @@ shaping and an optional one-shot success bonus from a separate LoRA adapter).
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    set_peft_model_state_dict,
-)
 from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from rlinf.config import torch_dtype_from_precision
@@ -39,6 +33,10 @@ from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
     HistoryVLMInputBuilder,
     get_input_builder,
+)
+from rlinf.models.embodiment.reward.vlm_reward_utils.lora_loading import (
+    attach_default_lora,
+    attach_named_lora_adapter,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     get_reward_parser,
@@ -254,112 +252,13 @@ class VLMRewardModel(BaseRewardModel):
         )
 
         if self.lora_path:
-            full_weights_path = os.path.join(
-                self.lora_path, "actor", "model_state_dict", "full_weights.pt"
-            )
-
-            checkpoint_state_dict = torch.load(
-                full_weights_path,
-                map_location="cpu",
-                weights_only=True,
-            )
-            lora_state_dict = {
-                key.removeprefix("module."): value
-                for key, value in checkpoint_state_dict.items()
-                if "lora_" in key
-            }
-            if lora_state_dict:
-                lora_rank = next(
-                    int(value.shape[0])
-                    for key, value in lora_state_dict.items()
-                    if "lora_A" in key
-                )
-                target_modules = sorted(
-                    {
-                        key.split(".lora_")[0].split(".")[-1]
-                        for key in lora_state_dict
-                        if ".lora_" in key
-                    }
-                )
-
-                lora_config = LoraConfig(
-                    r=lora_rank,
-                    lora_alpha=lora_rank,
-                    lora_dropout=0.0,
-                    target_modules=target_modules,
-                    init_lora_weights="gaussian",
-                )
-                self._model = get_peft_model(self._model, lora_config)
-                set_peft_model_state_dict(self._model, lora_state_dict)
-                del lora_state_dict
-                del checkpoint_state_dict
-            else:
-                checkpoint_state_dict = {
-                    key.removeprefix("module."): value
-                    for key, value in checkpoint_state_dict.items()
-                }
-                self._model.load_state_dict(checkpoint_state_dict, strict=False)
-                del checkpoint_state_dict
+            self._model = attach_default_lora(self._model, self.lora_path)
 
         self._success_adapter_name: str | None = None
         if self.success_lora_path:
-            success_weights_path = os.path.join(
-                self.success_lora_path,
-                "actor",
-                "model_state_dict",
-                "full_weights.pt",
+            self._success_adapter_name = attach_named_lora_adapter(
+                self._model, self.success_lora_path, adapter_name="success"
             )
-            success_checkpoint = torch.load(
-                success_weights_path,
-                map_location="cpu",
-                weights_only=True,
-            )
-            success_lora_state = {
-                key.removeprefix("module."): value
-                for key, value in success_checkpoint.items()
-                if "lora_" in key
-            }
-            if success_lora_state:
-                if not hasattr(self._model, "add_adapter"):
-                    raise ValueError(
-                        "A success LoRA adapter requires a primary LoRA adapter"
-                    )
-                success_lora_rank = next(
-                    int(value.shape[0])
-                    for key, value in success_lora_state.items()
-                    if "lora_A" in key
-                )
-                success_target_modules = sorted(
-                    {
-                        key.split(".lora_")[0].split(".")[-1]
-                        for key in success_lora_state
-                        if ".lora_" in key
-                    }
-                )
-                self._model.add_adapter(
-                    "success",
-                    LoraConfig(
-                        r=success_lora_rank,
-                        lora_alpha=success_lora_rank,
-                        lora_dropout=0.0,
-                        target_modules=success_target_modules,
-                        init_lora_weights="gaussian",
-                    ),
-                )
-                set_peft_model_state_dict(
-                    self._model,
-                    success_lora_state,
-                    adapter_name="success",
-                )
-                self._model.set_adapter("default")
-                self._success_adapter_name = "success"
-            else:
-                raise ValueError(
-                    "success_lora_path must point to a checkpoint containing "
-                    "LoRA weights"
-                )
-            del success_lora_state
-            del success_checkpoint
 
         self._model.eval()
 
@@ -523,6 +422,70 @@ class HistoryVLMRewardModel(VLMRewardModel):
                 return len(histories)
         return self._infer_batch_size(observations)
 
+    def _score_micro_batch(
+        self,
+        micro_observations: dict[str, Any],
+        micro_history_input: dict[str, dict[str, list[list[Any]]]],
+        batch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Score one micro-batch of history windows.
+
+        Returns:
+            ``(reward_or_potential, valid_mask, success_scores)`` tensors of
+            length ``batch_size``.
+        """
+        reward_chunk = torch.full(
+            (batch_size,), fill_value=self.interval_reward, dtype=torch.float32
+        )
+        valid_chunk = torch.zeros(batch_size, dtype=torch.bool)
+        success_chunk = torch.zeros(batch_size, dtype=torch.float32)
+
+        batched_inputs, valid_input_ids = self.input_builder.build_inputs(
+            micro_observations,
+            self._model.device,
+            micro_history_input,
+        )
+        if len(valid_input_ids) == 0:
+            return reward_chunk, valid_chunk, success_chunk
+
+        if self.inference_mode == "scalar_head":
+            potentials = self.compute_scalar_potential(batched_inputs).cpu()
+            reward_chunk[valid_input_ids] = potentials
+            valid_chunk[valid_input_ids] = True
+        else:
+            parsed_rewards = self._generate_and_parse_rewards(batched_inputs)
+            reward_chunk[valid_input_ids] = parsed_rewards.to(dtype=torch.float32)
+            valid_chunk[valid_input_ids] = True
+        del batched_inputs
+
+        if self.success_input_builder is not None:
+            success_inputs, success_input_ids = self.success_input_builder.build_inputs(
+                micro_observations,
+                self._model.device,
+                micro_history_input,
+            )
+            if success_input_ids:
+                if self._success_adapter_name is not None:
+                    self._model.set_adapter(self._success_adapter_name)
+                prompt_length = success_inputs["input_ids"].shape[-1]
+                success_output_ids = self._model.generate(
+                    **success_inputs,
+                    **self.success_gen_kwargs,
+                )
+                success_outputs = self._processor.batch_decode(
+                    success_output_ids[..., prompt_length:],
+                    skip_special_tokens=True,
+                )
+                success_chunk[success_input_ids] = (
+                    self.success_reward_parser.parse_rewards(success_outputs)
+                )
+                if self._success_adapter_name is not None:
+                    self._model.set_adapter("default")
+                del success_output_ids
+                del success_outputs
+                del success_inputs
+        return reward_chunk, valid_chunk, success_chunk
+
     def compute_reward(
         self,
         reward_input: dict[str, Any],
@@ -550,70 +513,16 @@ class HistoryVLMRewardModel(VLMRewardModel):
             return torch.zeros(input_batch_size, dtype=torch.float32)
 
         infer_micro_batch_size = self.infer_micro_batch_size or input_batch_size
-
         reward_chunks: list[torch.Tensor] = []
         valid_chunks: list[torch.Tensor] = []
         success_chunks: list[torch.Tensor] = []
         for start in range(0, input_batch_size, infer_micro_batch_size):
             end = min(start + infer_micro_batch_size, input_batch_size)
-            micro_observations = self.slice_observations(observations, start, end)
-            micro_history_input = self.slice_history_input(history_input, start, end)
-            reward_chunk = torch.full(
-                (end - start,), fill_value=self.interval_reward, dtype=torch.float32
+            reward_chunk, valid_chunk, success_chunk = self._score_micro_batch(
+                self.slice_observations(observations, start, end),
+                self.slice_history_input(history_input, start, end),
+                end - start,
             )
-            valid_chunk = torch.zeros(end - start, dtype=torch.bool)
-            success_chunk = torch.zeros(end - start, dtype=torch.float32)
-
-            batched_inputs, valid_input_ids = self.input_builder.build_inputs(
-                micro_observations,
-                self._model.device,
-                micro_history_input,
-            )
-            if len(valid_input_ids) == 0:
-                reward_chunks.append(reward_chunk)
-                valid_chunks.append(valid_chunk)
-                success_chunks.append(success_chunk)
-                continue
-
-            if self.inference_mode == "scalar_head":
-                potentials = self.compute_scalar_potential(batched_inputs).cpu()
-                reward_chunk[valid_input_ids] = potentials
-                valid_chunk[valid_input_ids] = True
-                del batched_inputs
-            else:
-                parsed_rewards = self._generate_and_parse_rewards(batched_inputs)
-                del batched_inputs
-                reward_chunk[valid_input_ids] = parsed_rewards.to(dtype=torch.float32)
-                valid_chunk[valid_input_ids] = True
-            if self.success_input_builder is not None:
-                success_inputs, success_input_ids = (
-                    self.success_input_builder.build_inputs(
-                        micro_observations,
-                        self._model.device,
-                        micro_history_input,
-                    )
-                )
-                if success_input_ids:
-                    if self._success_adapter_name is not None:
-                        self._model.set_adapter(self._success_adapter_name)
-                    prompt_length = success_inputs["input_ids"].shape[-1]
-                    success_output_ids = self._model.generate(
-                        **success_inputs,
-                        **self.success_gen_kwargs,
-                    )
-                    success_outputs = self._processor.batch_decode(
-                        success_output_ids[..., prompt_length:],
-                        skip_special_tokens=True,
-                    )
-                    success_chunk[success_input_ids] = (
-                        self.success_reward_parser.parse_rewards(success_outputs)
-                    )
-                    del success_output_ids
-                    del success_outputs
-                    if self._success_adapter_name is not None:
-                        self._model.set_adapter("default")
-                    del success_inputs
-
             reward_chunks.append(reward_chunk)
             valid_chunks.append(valid_chunk)
             success_chunks.append(success_chunk)
@@ -622,18 +531,14 @@ class HistoryVLMRewardModel(VLMRewardModel):
         if self.inference_mode == "scalar_head":
             valid_mask = torch.cat(valid_chunks, dim=0)
             dones = observations.get("dones")
-            potentials = rewards
-            rewards = self.potential_differences(
-                potentials,
-                valid_mask,
-                dones,
-            )
-            if self.success_input_builder is not None:
-                success_potentials = torch.cat(success_chunks, dim=0)
-                if self.success_bonus != 0.0:
-                    rewards = self.apply_model_success_bonus(
-                        rewards, success_potentials, valid_mask, dones
-                    )
+            rewards = self.potential_differences(rewards, valid_mask, dones)
+            if self.success_input_builder is not None and self.success_bonus != 0.0:
+                rewards = self.apply_model_success_bonus(
+                    rewards,
+                    torch.cat(success_chunks, dim=0),
+                    valid_mask,
+                    dones,
+                )
         return self.apply_gt_success_bonus(rewards, observations)
 
     def apply_model_success_bonus(
