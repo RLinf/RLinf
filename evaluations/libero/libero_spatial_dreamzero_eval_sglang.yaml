@@ -92,7 +92,7 @@ rollout:
     # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
     #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
     # Must be explicitly specified unless it exists at model_path/experiment_cfg/metadata.json.
-    metadata_json_path: ${model.model_path}/experiment_cfg/metadata.json
+    metadata_json_path: ${rollout.model.model_path}/experiment_cfg/metadata.json
 
     embodiment_tag: "libero_sim"
 
