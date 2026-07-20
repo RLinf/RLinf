@@ -8,7 +8,7 @@ reward，也包括 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
 仿真场景 Reward Model
 ---------------------
 推荐的 QwenTrend Success 流程
-----------------------------
+-----------------------------
 
 用两路信号搭 PPO reward：稀疏的终局成功 LoRA，加上稠密的 potential head。
 标签只来自环境 success 和轨迹时序，不写死任务规则。
