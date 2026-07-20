@@ -431,7 +431,6 @@ class SGLangEmbodiedWorker(SGLangWorker):
 
         if self.model_type == "dreamzero":
             return self._dreamzero_sglang_serve_args(
-                model_path=model_path,
                 sglang_cfg=sglang_cfg,
                 model_cfg=model_cfg,
             )
@@ -440,7 +439,6 @@ class SGLangEmbodiedWorker(SGLangWorker):
     def _dreamzero_sglang_serve_args(
         self,
         *,
-        model_path: str,
         sglang_cfg: Any,
         model_cfg: Any,
     ) -> list[str]:
@@ -468,11 +466,4 @@ class SGLangEmbodiedWorker(SGLangWorker):
             args += ["--cfg-parallel-size", "1"]
         if (v := int(getattr(sglang_cfg, "sp_size", 1) or 1)) > 0:
             args += ["--sp-degree", str(v)]
-        for flag in (
-            "--dreamzero-dit-path",
-            "--dreamzero-vae-path",
-            "--dreamzero-text-encoder-path",
-            "--dreamzero-image-encoder-path",
-        ):
-            args += [flag, model_path]
         return args

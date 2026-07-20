@@ -462,8 +462,8 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         ``PipelineConfig.from_kwargs`` loads this file from
         ``--pipeline-config-path`` inside the server process.  It is the bridge
         from RLinf/Hydra fields (action horizon, image size, CFG scale,
-        sequence-parallel size, compile flag) to ``server_args.pipeline_config``
-        used by the DreamZero server stages.
+        tensor/sequence-parallel size, compile flag) to
+        ``server_args.pipeline_config`` used by the DreamZero server stages.
         """
 
         if tmpdir is None:
@@ -476,6 +476,9 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         cfg = {
             "dreamzero_compile_components": bool(
                 getattr(sglang_cfg, "compile_components", True)
+            ),
+            "dreamzero_tensor_parallel_size": int(
+                getattr(sglang_cfg, "tp_size", 1) or 1
             ),
             "dreamzero_sequence_parallel_size": int(
                 getattr(sglang_cfg, "sp_size", 1) or 1
