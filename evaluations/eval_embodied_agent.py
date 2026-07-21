@@ -53,12 +53,14 @@ def main(cfg) -> None:
         )
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-        rollout_group = get_rollout_backend_worker(cfg).create_group(
-            cfg, component_placement, weight_reload=None
-        ).launch(
-            cluster,
-            name=cfg.rollout.group_name,
-            placement_strategy=rollout_placement,
+        rollout_group = (
+            get_rollout_backend_worker(cfg)
+            .create_group(cfg, component_placement, weight_reload=None)
+            .launch(
+                cluster,
+                name=cfg.rollout.group_name,
+                placement_strategy=rollout_placement,
+            )
         )
     else:
         rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(

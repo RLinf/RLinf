@@ -343,14 +343,16 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
             return SGLangEmbodiedWorker
         elif serving_mode == "worker_http":
             from rlinf.workers.rollout.sglang.sglang_worker_server import (
-                    SGLangWorkerWithHTTPServer,
-                )
+                SGLangWorkerWithHTTPServer,
+            )
+
             return SGLangWorkerWithHTTPServer
         elif serving_mode is None:
             from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+
             return SGLangWorker
         else:
-            raise ValueError(f"Unsupported sglang serving_mode: {serving_mode}.")         
+            raise ValueError(f"Unsupported sglang serving_mode: {serving_mode}.")
 
 
 class RunningStatusManager:
