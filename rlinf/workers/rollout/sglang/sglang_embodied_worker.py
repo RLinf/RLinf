@@ -78,9 +78,9 @@ class SGLangEmbodiedWorker(SGLangWorker):
         # EmbodiedEvalRunner can drive this worker). Set at construction, not in
         # init_worker, so they're available before the serve is spawned.
         cfg = self._cfg
-        self.cfg = cfg  # MultiStepRolloutWorker exposes self.cfg; mirror it
+        self.cfg = cfg
         self.model_cfg = self._cfg_rollout.model
-        # This worker is eval-only (spawn a serve + channel eval; no training).
+        # This worker now is eval-only (spawn a serve + channel eval; no training).
         assert cfg.runner.get("only_eval", True), (
             "SGLangEmbodiedWorker is eval-only; set runner.only_eval: true"
         )
@@ -233,11 +233,10 @@ class SGLangEmbodiedWorker(SGLangWorker):
                 "--dit-cpu-offload",
                 "true" if getattr(sglang_cfg, "dit_cpu_offload") else "false",
             ]
-        # --- performance preset ---
         if v := getattr(sglang_cfg, "performance_mode", None):
             cmd += ["--performance-mode", str(v)]
+        # set the special model set in sglang server
         cmd += self._model_specific_sglang_serve_args(
-            model_path=str(model_path),
             sglang_cfg=sglang_cfg,
             model_cfg=model_cfg,
         )
@@ -422,48 +421,32 @@ class SGLangEmbodiedWorker(SGLangWorker):
 
     def _model_specific_sglang_serve_args(
         self,
-        *,
-        model_path: str,
         sglang_cfg: Any,
         model_cfg: Any,
     ) -> list[str]:
         """Return extra ``sglang serve`` flags required by embodied model type."""
 
-        if self.model_type == "dreamzero":
-            return self._dreamzero_sglang_serve_args(
-                sglang_cfg=sglang_cfg,
-                model_cfg=model_cfg,
-            )
-        return []
-
-    def _dreamzero_sglang_serve_args(
-        self,
-        *,
-        sglang_cfg: Any,
-        model_cfg: Any,
-    ) -> list[str]:
-        """Build DreamZero flags layered on top of generic ``sglang serve`` args."""
-
-        from rlinf.workers.rollout.sglang.action_policies.dreamzero import (
-            DreamZeroActionPolicy,
-        )
-
         args = []
-        if getattr(sglang_cfg, "backend", None) is None:
-            args += ["--backend", "sglang"]
-        if getattr(sglang_cfg, "pipeline_class_name", None) is None:
-            args += ["--pipeline", "DreamZeroPipeline"]
-        if getattr(sglang_cfg, "pipeline_config_path", None) is None:
-            pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
-                sglang_cfg=sglang_cfg,
-                model_cfg=model_cfg,
-                tmpdir=self.obs_tmpdir,
-                rank=self._rank,
-                eval_batch_size=self.eval_batch_size,
+        if self.model_type == "dreamzero":
+            from rlinf.workers.rollout.sglang.action_policies.dreamzero import (
+                DreamZeroActionPolicy,
             )
-            args += ["--pipeline-config-path", pipeline_config_path]
-        if getattr(sglang_cfg, "cfg_parallel_degree", None) is None:
-            args += ["--cfg-parallel-size", "1"]
-        if (v := int(getattr(sglang_cfg, "sp_size", 1) or 1)) > 0:
-            args += ["--sp-degree", str(v)]
+            if getattr(sglang_cfg, "backend", None) is None:
+                args += ["--backend", "sglang"]
+            if getattr(sglang_cfg, "pipeline_class_name", None) is None:
+                args += ["--pipeline", "DreamZeroPipeline"]
+            if getattr(sglang_cfg, "pipeline_config_path", None) is None:
+                pipeline_config_path = DreamZeroActionPolicy._write_pipeline_config(
+                    sglang_cfg=sglang_cfg,
+                    model_cfg=model_cfg,
+                    tmpdir=self.obs_tmpdir,
+                    rank=self._rank,
+                    eval_batch_size=self.eval_batch_size,
+                )
+                args += ["--pipeline-config-path", pipeline_config_path]
+            if getattr(sglang_cfg, "cfg_parallel_degree", None) is None:
+                args += ["--cfg-parallel-size", "1"]
+            if (v := int(getattr(sglang_cfg, "sp_size", 1) or 1)) > 0:
+                args += ["--sp-degree", str(v)]
+
         return args
