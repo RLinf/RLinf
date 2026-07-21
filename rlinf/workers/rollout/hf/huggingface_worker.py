@@ -723,6 +723,7 @@ class MultiStepRolloutWorker(Worker):
             )
 
             if self.enable_opd:
+                # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
                 rollout_result = self._build_rollout_result(
                     actions,
                     result,

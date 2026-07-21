@@ -1509,25 +1509,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         g.manual_seed(self.cfg.actor.seed + self._rank)
         shuffle_id = torch.randperm(rollout_size, generator=g)
 
-        # Keep only fields consumed by actor loss/minibatch construction.
-        actor_train_keys = {
-            "advantages",
-            "forward_inputs",
-            "loss_mask",
-            "loss_mask_sum",
-            "prev_logprobs",
-            "prev_values",
-            "returns",
-        }
-        train_rollout_batch = {
-            key: value
-            for key, value in self.rollout_batch.items()
-            if key in actor_train_keys
-        }
-
         with torch.no_grad():
             self.rollout_batch = process_nested_dict_for_train(
-                train_rollout_batch, shuffle_id
+                self.rollout_batch, shuffle_id
             )
 
         # Split to make minibatch iterator for updating the actor
