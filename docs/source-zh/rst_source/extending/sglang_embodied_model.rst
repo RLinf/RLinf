@@ -363,9 +363,9 @@ Client 从以下位置读取 Server 返回的归一化动作：
 
 
 Server 参数和 Pipeline 配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``DreamZeroActionPolicy.build_sglang_serve_args`` 会追加以下类型的参数：
+``SGLangEmbodiedWorker._model_specific_sglang_serve_args`` 会追加以下类型的参数：
 
 .. code-block:: text
 

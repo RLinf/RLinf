@@ -365,7 +365,7 @@ These actions are still in DreamZero's normalized and padded action space and ca
 Server Parameters and Pipeline Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``DreamZeroActionPolicy.build_sglang_serve_args`` appends the following types of parameters:
+``SGLangEmbodiedWorker._model_specific_sglang_serve_args`` appends the following types of parameters:
 
 .. code-block:: text
 
