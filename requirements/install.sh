@@ -1892,13 +1892,25 @@ install_isaaclab_env() {
     popd >/dev/null
 }
 
+setup_robocasa_macros_if_needed() {
+    local robocasa_dir="$1"
+    local macros_private_path="$robocasa_dir/robocasa/macros_private.py"
+
+    if [[ -f "$macros_private_path" ]]; then
+        echo "[setup_robocasa_macros_if_needed] Reusing existing $macros_private_path" >&2
+        return
+    fi
+
+    python -m robocasa.scripts.setup_macros
+}
+
 install_robocasa_env() {
     local robocasa_dir
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
     uv pip install protobuf==6.33.0
-    python -m robocasa.scripts.setup_macros
+    setup_robocasa_macros_if_needed "$robocasa_dir"
 }
 
 install_robocasa365_env() {
@@ -1938,7 +1950,7 @@ install_robocasa365_env() {
         echo "[install_robocasa365_env] Linked $assets_path -> $ROBOCASA_ASSETS_PATH" >&2
     fi
 
-    python -m robocasa.scripts.setup_macros
+    setup_robocasa_macros_if_needed "$robocasa_dir"
 }
 
 install_franka_env() {
