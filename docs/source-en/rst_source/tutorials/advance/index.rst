@@ -42,6 +42,11 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Details the concrete implementation of auto-placement in RLinf,
    including how to configure it properly to enable auto-placement.
 
+- :doc:`distributed_tracing`
+   Explains how to use the HTTP-based distributed tracing system to
+   visualize multi-process execution and identify performance bottlenecks
+   via Chrome Trace Viewer or Perfetto.
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -54,3 +59,4 @@ offering practical guidance to help you fully optimize your RL post-training wor
    nsight
    dynamic_scheduling
    auto_placement
+   distributed_tracing

@@ -39,6 +39,10 @@
    详细介绍 RLinf 中自动放置的具体实现，
    包括如何正确配置以启用自动放置功能。
 
+- :doc:`distributed_tracing`
+   解释如何使用基于 HTTP 的分布式追踪系统，通过 Chrome Trace Viewer
+   或 Perfetto 可视化多进程执行过程并定位性能瓶颈。
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -51,3 +55,4 @@
    nsight
    dynamic_scheduling
    auto_placement
+   distributed_tracing
