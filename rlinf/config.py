@@ -1226,13 +1226,10 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             )
 
     # Distributed Tracing Configuration
-    from rlinf.utils.tracing import TRACE_SERVER_IP, TRACE_SERVER_PORT, init_tracer
+    from rlinf.utils.tracing import init_tracer
 
     with open_dict(cfg):
-        if TRACE_SERVER_IP is not None:
-            cfg.trace_server_ip = TRACE_SERVER_IP
-            cfg.trace_server_port = TRACE_SERVER_PORT
-        elif "trace_server_ip" not in cfg:
+        if "trace_server_ip" not in cfg:
             cfg.trace_server_ip = None
             cfg.trace_server_port = None
 

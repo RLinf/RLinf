@@ -56,9 +56,6 @@ async def receive_trace(request: Request):
 
     async with file_lock:
         try:
-            dir_name = os.path.dirname(trace_file_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
             with open(trace_file_path, "a") as f:
                 for event in events:
                     f.write(json.dumps(event) + "\n")
@@ -73,6 +70,12 @@ def start_server(host: str, port: int, output_file: str):
     """Starts the FastAPI server using Uvicorn."""
     global trace_file_path
     trace_file_path = os.path.abspath(output_file)
+    
+    # Ensure directory exists before starting
+    dir_name = os.path.dirname(trace_file_path)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
+        
     logger.info(f"Starting trace server on {host}:{port}")
     logger.info(f"Writing trace events to: {trace_file_path}")
     uvicorn.run(app, host=host, port=port, log_level="info")

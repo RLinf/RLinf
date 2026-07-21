@@ -27,30 +27,7 @@ from contextlib import contextmanager
 
 logger = logging.getLogger("rlinf.tracing")
 
-# 1. Hydra-safe Interception of Command Line Options at Import-Time
-TRACE_SERVER_IP = None
-TRACE_SERVER_PORT = 8888
 
-if "--trace-server-ip" in sys.argv:
-    try:
-        idx = sys.argv.index("--trace-server-ip")
-        if idx + 1 < len(sys.argv):
-            TRACE_SERVER_IP = sys.argv[idx + 1]
-            del sys.argv[idx:idx + 2]
-    except ValueError:
-        pass
-
-if "--trace-server-port" in sys.argv:
-    try:
-        idx = sys.argv.index("--trace-server-port")
-        if idx + 1 < len(sys.argv):
-            try:
-                TRACE_SERVER_PORT = int(sys.argv[idx + 1])
-            except ValueError:
-                TRACE_SERVER_PORT = 8888
-            del sys.argv[idx:idx + 2]
-    except ValueError:
-        pass
 
 
 class DistTracer:

@@ -36,32 +36,48 @@ from rlinf.utils.tracing import (
 )
 
 
-def get_free_port():
-    """Helper to find a free TCP port."""
-    s = socket.socket()
-    s.bind(("", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+class TraceServerThread(threading.Thread):
+    def __init__(self, trace_file):
+        super().__init__()
+        self.trace_file = trace_file
+        
+        # Bind socket to avoid TOCTOU
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock.bind(("127.0.0.1", 0))
+        self.port = self.sock.getsockname()[1]
+        
+        from rlinf.utils.trace_server import app
+        import uvicorn
+        config = uvicorn.Config(app, fd=self.sock.fileno(), log_level="error")
+        self.server = uvicorn.Server(config)
+        
+    def run(self):
+        import rlinf.utils.trace_server
+        import asyncio
+        rlinf.utils.trace_server.trace_file_path = self.trace_file
+        asyncio.run(self.server.serve())
+        
+    def stop(self):
+        self.server.should_exit = True
+        self.join(timeout=2.0)
+        self.sock.close()
 
 
 class TestDistributedTracing(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.trace_file = os.path.join(self.temp_dir.name, "test_traces.jsonl")
-        self.port = get_free_port()
 
-        # Start the trace server in a background daemon thread
-        self.server_thread = threading.Thread(
-            target=start_server,
-            kwargs={"host": "127.0.0.1", "port": self.port, "output_file": self.trace_file},
-            daemon=True,
-        )
+        # Start the trace server in a controlled thread
+        self.server_thread = TraceServerThread(self.trace_file)
+        self.port = self.server_thread.port
         self.server_thread.start()
-        # Give the server a moment to bind and start
+        
+        # Give the server a moment to boot the async loop
         time.sleep(0.3)
 
     def tearDown(self):
+        self.server_thread.stop()
         self.temp_dir.cleanup()
 
     def test_clock_synchronization_and_tracing(self):
