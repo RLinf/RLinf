@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import os
 import random
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,16 @@ from typing import Any, Literal
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+# Opt-in: no-op openpi's Observation @at.typecheck (jaxtyped+beartype). On the
+# eager torch rollout path it costs ~2ms/predict of GPU-idle CPU per Observation
+# build; obs shapes are stable so skipping is safe. Must run before openpi is
+# imported (the decorator fires at import). Default off.
+if os.environ.get("RLINF_DISABLE_OPENPI_TYPECHECK") == "1":
+    import openpi.shared.array_typing as _at
+
+    _at.typecheck = lambda t: t
+
 from openpi import transforms as _transforms
 from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
