@@ -930,6 +930,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         compute_values=True,
     ) -> torch.Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
+        torch.compiler.cudagraph_mark_step_begin()
+
         bsize = observation.state.shape[0]
         device = observation.state.device
         if noise is None:
@@ -1335,16 +1337,19 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             all_token_length = 816
 
         if self.config.value_vlm_mode == "mean_token":
-            prefix_mask = (
-                [True] * 256 * self.config.num_images_in_input
-                + [False] * 256 * (3 - self.config.num_images_in_input)
-                + [True] * lang_token_len
-            )
+            # Slice contiguous image and language token ranges directly —
+            # avoids boolean indexing (aten::index) which triggers D2H copy.
+            img_tokens = prefix_output[
+                :, : 256 * self.config.num_images_in_input, :
+            ]
+            lang_tokens = prefix_output[
+                :, 256 * 3 : 256 * 3 + lang_token_len, :
+            ]
+            prefix_out_value = torch.cat([img_tokens, lang_tokens], dim=1)
         elif self.config.value_vlm_mode == "last_token":
-            prefix_mask = [False] * (all_token_length - 1) + [True] * 1
+            prefix_out_value = prefix_output[:, -1:, :]
         elif self.config.value_vlm_mode == "first_token":
-            prefix_mask = [True] * 1 + [False] * (all_token_length - 1)
-        prefix_out_value = prefix_output[:, prefix_mask, :]
+            prefix_out_value = prefix_output[:, :1, :]
         prefix_out_value = prefix_out_value.mean(dim=1, keepdim=False)
         prefix_out_value = prefix_out_value.to(dtype=torch.float32)
         values_vlm = self.value_head(prefix_out_value)[:, 0]
@@ -1717,6 +1722,110 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             states = states.to(torch.bfloat16)
         return states
 
+    # We override the parent class (PI0Pytorch) `embed_suffix` method.
+    # All the code is copied verbatim from the parent, except for the construction
+    # of `att_masks`. In the original code, `att_masks` was built using list
+    # operations and converting the list to a tensor. The problem with this
+    # approach is that it triggered host-to-device (h2d) transfers and CUDA
+    # synchronization, blocking subsequent kernel launches. It has now been
+    # changed to use pure PyTorch operations, with everything staying on-device
+    # throughout.
+    def embed_suffix(self, state, noisy_actions, timestep):
+        """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
+
+        from openpi.models_pytorch.pi0_pytorch import create_sinusoidal_pos_embedding
+
+        embs = []
+        pad_masks = []
+        att_masks_parts = []
+
+        if not self.pi05:
+            if self.state_proj.weight.dtype == torch.float32:
+                state = state.to(torch.float32)
+
+            # Embed state
+            def state_proj_func(state):
+                return self.state_proj(state)
+
+            state_emb = self._apply_checkpoint(state_proj_func, state)
+
+            embs.append(state_emb[:, None, :])
+            bsize = state_emb.shape[0]
+            device = state_emb.device
+
+            state_mask = torch.ones(bsize, 1, dtype=torch.bool, device=device)
+            pad_masks.append(state_mask)
+
+            # Set attention masks so that image and language inputs do not attend to state or actions
+            att_masks_parts.append(torch.ones(1, dtype=torch.int32, device=device))
+
+        # Embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
+        time_emb = create_sinusoidal_pos_embedding(
+            timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0, device=timestep.device
+        )
+        time_emb = time_emb.type(dtype=timestep.dtype)
+
+        # Fuse timestep + action information using an MLP
+        def action_proj_func(noisy_actions):
+            return self.action_in_proj(noisy_actions)
+
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+
+        if not self.pi05:
+            time_emb = time_emb[:, None, :].expand_as(action_emb)
+            action_time_emb = torch.cat([action_emb, time_emb], dim=2)
+
+            # Apply MLP layers
+            def mlp_func(action_time_emb):
+                x = self.action_time_mlp_in(action_time_emb)
+                x = F.silu(x)  # swish == silu
+                return self.action_time_mlp_out(x)
+
+            action_time_emb = self._apply_checkpoint(mlp_func, action_time_emb)
+            adarms_cond = None
+        else:
+            # time MLP (for adaRMS)
+            def time_mlp_func(time_emb):
+                x = self.time_mlp_in(time_emb)
+                x = F.silu(x)  # swish == silu
+                x = self.time_mlp_out(x)
+                return F.silu(x)
+
+            time_emb = self._apply_checkpoint(time_mlp_func, time_emb)
+            action_time_emb = action_emb
+            adarms_cond = time_emb
+
+        # Add to input tokens
+        embs.append(action_time_emb)
+
+        bsize, action_time_dim = action_time_emb.shape[:2]
+        device = action_time_emb.device
+        action_time_mask = torch.ones(bsize, action_time_dim, dtype=torch.bool, device=device)
+        pad_masks.append(action_time_mask)
+
+        # Set attention masks so that image, language and state inputs do not attend to action tokens.
+        # Build directly on device with native torch ops to avoid Python-list H2D copy.
+        action_att_masks = torch.cat([
+            torch.ones(1, dtype=torch.int32, device=device),
+            torch.zeros(self.config.action_horizon - 1, dtype=torch.int32, device=device),
+        ])
+        att_masks_parts.append(action_att_masks)
+
+        embs = torch.cat(embs, dim=1)
+        pad_masks = torch.cat(pad_masks, dim=1)
+        att_masks = torch.cat(att_masks_parts, dim=0)
+        att_masks = att_masks.to(dtype=embs.dtype)
+        att_masks = att_masks[None, :].expand(bsize, -1)
+
+        return embs, pad_masks, att_masks, adarms_cond
+
+    def compile_mode_remove_cuda_graph(self, mode: str):
+         if mode == "max-autotune":
+             return "max-autotune-no-cudagraphs"
+         if mode == "reduce-overhead":
+             return "default"
+         return mode
+
     def enable_torch_compile(
         self,
         mode: str = "max-autotune",
@@ -1724,29 +1833,54 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if self.torch_compile_enabled:
             return
 
-        self.paligemma_with_expert.paligemma.model.vision_tower.forward = torch.compile(
-            self.paligemma_with_expert.paligemma.model.vision_tower.forward, mode=mode
-        )
+        if mode == 'cudagraph':
 
-        # NOTE: paligemma.model.language_model and gemma_expert.model share the same LLM backbone.
-        # Enabling cuda graph on both simultaneously causes mysterious crashes (likely due to
-        # tensor aliasing in the shared computation graph). We disable cuda graph for
-        # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
-        # benefits more from cuda graph.
-        self.paligemma_with_expert.paligemma.model.language_model.forward = (
-            torch.compile(
+            self.logger.info(f'compiling openpi in cudagraph mode')
+            # Parameter freezing is required so that `backend='cudagraphs'`
+            # correctly identifies model weights as static inputs — without it,
+            # all weights are treated as dynamic and copied on every replay.
+            import torch._inductor.config
+            torch._inductor.config.freezing = True
+
+            self.paligemma_with_expert.paligemma.model.vision_tower.forward = torch.compile(
+                self.paligemma_with_expert.paligemma.model.vision_tower.forward,
+                backend='cudagraphs',
+            )
+
+            self.paligemma_with_expert.paligemma.model.language_model.forward = torch.compile(
                 self.paligemma_with_expert.paligemma.model.language_model.forward,
+                backend="cudagraphs",
+            )
+
+            self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
+                self.paligemma_with_expert.gemma_expert.model.forward,
+                backend="cudagraphs",
+            )
+
+        else:
+            self.paligemma_with_expert.paligemma.model.vision_tower.forward = torch.compile(
+                self.paligemma_with_expert.paligemma.model.vision_tower.forward, mode=mode
+            )
+
+            # NOTE: paligemma.model.language_model and gemma_expert.model share the same LLM backbone.
+            # Enabling cuda graph on both simultaneously causes mysterious crashes (likely due to
+            # tensor aliasing in the shared computation graph). We disable cuda graph for
+            # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
+            # benefits more from cuda graph.
+            self.paligemma_with_expert.paligemma.model.language_model.forward = (
+                torch.compile(
+                    self.paligemma_with_expert.paligemma.model.language_model.forward,
+                    mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+                )
+            )
+            self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
+                self.paligemma_with_expert.gemma_expert.model.forward,
+                mode=mode,
+                fullgraph=True,
+            )
+            self.get_logprob_norm = torch.compile(
+                self.get_logprob_norm,
                 mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
             )
-        )
-        self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
-            self.paligemma_with_expert.gemma_expert.model.forward,
-            mode=mode,
-            fullgraph=True,
-        )
-        self.get_logprob_norm = torch.compile(
-            self.get_logprob_norm,
-            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
-        )
 
         self.torch_compile_enabled = True
