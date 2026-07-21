@@ -1068,6 +1068,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         # stage_num: default to 2, use for pipeline rollout process
         self.stage_num = cfg.rollout.pipeline_stage_num
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
+        self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
@@ -1339,15 +1340,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         time_dim, batch_dim = prev_logprobs.shape[:2]
         flat_batch_size = time_dim * batch_dim
 
-        teacher_model_config = build_expert_model_config(self.cfg, self.cfg.actor.model)
-        teacher_model = get_model(teacher_model_config)
-        if self.cfg.runner.get("expert_ckpt_path", None):
-            teacher_model_dict = torch.load(
-                self.cfg.runner.expert_ckpt_path, map_location="cpu"
-            )
-            teacher_model.load_state_dict(teacher_model_dict)
-        teacher_model.eval()
-        teacher_model.requires_grad_(False)
+        assert self.enable_offload and self.is_weight_offloaded, (
+            "OPD teacher logprob computation expects actor weights to be "
+            "offloaded before moving the teacher model to GPU."
+        )
+        teacher_model = self._get_opd_teacher_model()
         teacher_model.to(self.device)
 
         flat_forward_inputs = flatten_nested_tensor_time_batch(
@@ -1386,8 +1383,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
 
         teacher_model.to("cpu")
-        del teacher_model
         clear_memory()
+
+    def _get_opd_teacher_model(self):
+        if self._opd_teacher_model is None:
+            teacher_model_config = build_expert_model_config(
+                self.cfg, self.cfg.actor.model
+            )
+            teacher_model = get_model(teacher_model_config)
+            if self.cfg.runner.get("expert_ckpt_path", None):
+                teacher_model_dict = torch.load(
+                    self.cfg.runner.expert_ckpt_path, map_location="cpu"
+                )
+                teacher_model.load_state_dict(teacher_model_dict)
+            teacher_model.eval()
+            teacher_model.requires_grad_(False)
+            teacher_model.to("cpu")
+            self._opd_teacher_model = teacher_model
+        return self._opd_teacher_model
 
     def _build_sft_data_loader(self):
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
@@ -1496,27 +1509,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         g.manual_seed(self.cfg.actor.seed + self._rank)
         shuffle_id = torch.randperm(rollout_size, generator=g)
 
+        # Keep only fields consumed by actor loss/minibatch construction.
         actor_train_keys = {
             "advantages",
             "forward_inputs",
+            "loss_mask",
+            "loss_mask_sum",
             "prev_logprobs",
+            "prev_values",
             "returns",
         }
-        if self.cfg.algorithm.loss_type == "opd":
-            actor_train_keys.update(
-                {
-                    "loss_mask",
-                    "loss_mask_sum",
-                }
-            )
-        else:
-            actor_train_keys.update(
-                {
-                    "loss_mask",
-                    "loss_mask_sum",
-                    "prev_values",
-                }
-            )
         train_rollout_batch = {
             key: value
             for key, value in self.rollout_batch.items()
