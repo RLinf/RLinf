@@ -1,7 +1,7 @@
 # OpenPI 0.5 checkpoint convertors
 
 Consolidated convertors for the self-contained OpenPI 0.5 (`Pi0`) checkpoints
-used by the `openpi_pytorch` model package. Four conversion modes share one core
+used by the `openpi_pytorch` model package. Five conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
 wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,new2old} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,new2old,sft2deploy} ...
 ```
 
 Two checkpoint layouts are referenced throughout:
@@ -135,4 +135,30 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode new2old \
     --output-model      /path/to/pi05_sft_pytorch_new_2_old \
     --output-norm-stats /path/to/pi05_sft_pytorch_new_2_old/physical-intelligence/behavior/norm_stats.json \
     --reference-model   /path/to/pi05_base_pytorch
+```
+
+---
+
+## `sft2deploy`
+
+RLinf SFT-trained checkpoint -> legacy OpenPI deploy `full_weights.pt` only.
+This mode does not copy norm-stats or other assets.
+
+- **Input**: `--ckpt` accepts a saved SFT checkpoint directory or its
+  `full_weights.pt`.
+- **Output**: `--output` accepts a direct `.pt` path or a deploy directory. For a
+  directory, the converter writes `actor/model_state_dict/full_weights.pt`.
+- **Reference model**: `--reference-model` is the old-format OpenPI model used
+  to supply the action-expert `lm_head`, which cannot be reconstructed from the
+  new-format checkpoint.
+- **Dtype reference**: `--dtype-reference` is an existing deploy
+  `full_weights.pt` or its checkpoint directory. Its key set, shapes, and
+  per-key dtypes define the output checkpoint.
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2deploy \
+    --ckpt            /path/to/checkpoints/global_step_20000 \
+    --output          /path/to/checkpoints/global_step_20000_openpi_deploy \
+    --reference-model /path/to/pi05_base_pytorch \
+    --dtype-reference /path/to/existing_deploy/actor/model_state_dict/full_weights.pt
 ```

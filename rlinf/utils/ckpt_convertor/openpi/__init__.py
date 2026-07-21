@@ -14,7 +14,8 @@
 
 """Consolidated OpenPI 0.5 checkpoint convertors.
 
-Four modes (``jax2new``, ``old2new``, ``sft2new``, ``new2old``) over one shared
-core. See :mod:`rlinf.utils.ckpt_convertor.openpi.convert` for the unified
-``--mode`` dispatcher and the package README for per-mode layouts and examples.
+Five layout convertors (``jax2new``, ``old2new``, ``sft2new``, ``new2old``,
+``sft2deploy``) over one shared core. See
+:mod:`rlinf.utils.ckpt_convertor.openpi.convert` for the unified ``--mode``
+dispatcher and the package README for per-mode layouts and examples.
 """

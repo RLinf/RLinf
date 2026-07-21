@@ -14,8 +14,12 @@
 
 from __future__ import annotations
 
+from typing import Any, Callable
 
-def _load_behavior_sft_dataloader():
+SftDataLoaderBuilder = Callable[..., tuple[Any, Any]]
+
+
+def _load_behavior_sft_dataloader() -> SftDataLoaderBuilder:
     from rlinf.data.datasets.openpi_pytorch.behavior import (
         build_behavior_sft_dataloader,
     )
@@ -23,18 +27,23 @@ def _load_behavior_sft_dataloader():
     return build_behavior_sft_dataloader
 
 
-# env name -> zero-arg loader returning the build_<env>_sft_dataloader function.
+def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi_pytorch.dual_franka import (
+        build_dual_franka_sft_dataloader,
+    )
+
+    return build_dual_franka_sft_dataloader
+
+
+# Environment name -> lazy SFT dataloader builder.
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
+    "dualfranka": _load_dual_franka_sft_dataloader,
 }
 
 
 def _resolve_env(config_name: str) -> str:
-    """Resolve the registered env whose name appears in ``config_name``.
-
-    Mirrors the ``if "<env>" in config_name`` dispatch the eval repack uses
-    (config names look like ``pi05_behavior`` / ``pi0_libero``).
-    """
+    """Resolve the registered environment named by ``config_name``."""
     for env_type in _SFT_DATALOADER_BUILDERS:
         if env_type in config_name:
             return env_type
@@ -45,12 +54,13 @@ def _resolve_env(config_name: str) -> str:
 
 
 def build_openpi_pytorch_sft_dataloader(
-    cfg, world_size, rank, data_paths, eval_dataset=False
-):
-    """Build the openpi_pytorch SFT dataloader for the env ``config_name`` selects.
-
-    Returns ``(loader, data_config)`` — the same 2-tuple the SFT worker expects.
-    """
+    cfg: Any,
+    world_size: int,
+    rank: int,
+    data_paths: Any,
+    eval_dataset: bool = False,
+) -> tuple[Any, Any]:
+    """Build the environment-specific openpi_pytorch SFT dataloader."""
     env_type = _resolve_env(str(cfg.actor.model.openpi.config_name))
     builder = _SFT_DATALOADER_BUILDERS[env_type]()
     return builder(cfg, world_size, rank, data_paths, eval_dataset)
