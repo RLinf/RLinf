@@ -40,7 +40,9 @@ if typing.TYPE_CHECKING:
         AgentLightningRolloutWorker,
     )
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-    from rlinf.workers.rollout.sglang.sglang_agent_worker import SGLangAgentWorkerWithHTTPServer
+    from rlinf.workers.rollout.sglang.sglang_agent_worker import (
+        SGLangAgentWorkerWithHTTPServer,
+    )
 
 
 class AgentLightningRLinfRunner(ReasoningRunner):
