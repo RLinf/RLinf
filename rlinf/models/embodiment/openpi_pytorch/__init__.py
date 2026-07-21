@@ -14,34 +14,21 @@
 
 from __future__ import annotations
 
-import logging
+from typing import Any
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.utils.logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 
-def get_model(cfg, torch_dtype=None):
-    """Build the BEHAVIOR pi05 model from a model config (factory entry).
+def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
+    """Build an OpenPI PyTorch Pi0.5 model from ``actor.model`` config.
 
-    ``cfg`` is ``actor.model``; ``cfg.model_path`` points at a *new-format*
-    checkpoint directory containing ``model.safetensors``. The Pi0 model shape is
-    built entirely from YAML fields (``num_action_chunks`` plus
-    ``openpi.model_action_dim`` / ``openpi.paligemma_variant`` /
-    ``openpi.action_expert_variant``); a checkpoint ``config.json`` is never read.
-
-    The concrete wrapper class is selected by ``cfg.openpi.task``:
-
-    * ``task: sft`` → :class:`OpenPiPytorchSFTActionModel` (built by
-      :func:`_build_sft_model`). Flow-matching loss over the ``(Observation,
-      actions)`` the BEHAVIOR SFT data loader already builds through the
-      openpi transform pipeline — no processor lives on the model.
-    * ``task: rl``  → :class:`OpenPiPytorchRLActionModel` (built by
-      :func:`_build_rl_model`). Uses the openpi.transforms pipeline, adds the
-      PPO chain-collecting SDE sampler + VLM value head.
-    * ``task: eval`` → :class:`OpenPiPytorchEvalActionModel` (built by
-      :func:`_build_eval_model`). Same openpi.transforms pipeline as ``rl``,
-      but with no value head, no chain collection, no training-mode forward.
+    ``cfg.model_path`` points at a new-format checkpoint containing
+    ``model.safetensors``. Model shape comes from YAML; no checkpoint
+    ``config.json`` is read. ``cfg.openpi.task`` selects the SFT, eval, or RL
+    wrapper around the shared Pi0 core.
     """
     import pathlib
 
@@ -57,7 +44,6 @@ def get_model(cfg, torch_dtype=None):
     )
 
     model_cfg = cfg.openpi
-
     target_dtype = (
         torch_dtype
         if torch_dtype is not None
@@ -69,19 +55,29 @@ def get_model(cfg, torch_dtype=None):
     if not weights_path.exists():
         raise FileNotFoundError(f"openpi_pytorch checkpoint not found: {weights_path}")
 
-    pi0_config = Pi0Config(
-        pi05=True,
-        action_horizon=int(cfg.num_action_chunks),
-        action_dim=int(model_cfg.model_action_dim),
-        paligemma_variant=str(model_cfg.paligemma_variant),
-        action_expert_variant=str(model_cfg.action_expert_variant),
-        dtype="bfloat16",
-        pcd=False,
+    pi0_kwargs = {
+        "pi05": True,
+        "action_horizon": int(cfg.num_action_chunks),
+        "action_dim": int(model_cfg.model_action_dim),
+        "paligemma_variant": str(model_cfg.paligemma_variant),
+        "action_expert_variant": str(model_cfg.action_expert_variant),
+        "dtype": "bfloat16",
+        "pcd": False,
+    }
+    discrete_state_input = OmegaConf.select(
+        model_cfg, "discrete_state_input", default=None
     )
+    if discrete_state_input is not None:
+        pi0_kwargs["discrete_state_input"] = bool(discrete_state_input)
+    max_token_len = OmegaConf.select(model_cfg, "max_token_len", default=None)
+    if max_token_len is not None:
+        pi0_kwargs["max_token_len"] = int(max_token_len)
+
+    pi0_config = Pi0Config(**pi0_kwargs)
     model = pi0_config.create()
     state_dict = safetensors.torch.load_file(str(weights_path), device="cpu")
     model.load_state_dict(state_dict, strict=True)
-    n_params = sum(p.numel() for p in model.parameters())
+    n_params = sum(param.numel() for param in model.parameters())
     if target_dtype is not None:
         model = model.to(target_dtype)
 
@@ -92,14 +88,14 @@ def get_model(cfg, torch_dtype=None):
     task = OmegaConf.select(model_cfg, "task", default=None)
     if task is None:
         raise ValueError(
-            "actor.model.openpi.task is required: set it to 'sft', 'rl', or 'eval' "
-            "to pick the concrete OpenPI PyTorch model variant."
+            "actor.model.openpi.task is required: set it to 'sft', 'rl', or "
+            "'eval' to pick the concrete OpenPI PyTorch model variant."
         )
     task = str(task).lower()
 
     logger.info(
-        "openpi_pytorch[%s]: loaded %s (%.2fB params) strict from %s precision=%s "
-        "num_steps=%s",
+        "openpi_pytorch[%s]: loaded %s (%.2fB params) strict from %s "
+        "precision=%s num_steps=%s",
         task,
         pi0_config,
         n_params / 1e9,

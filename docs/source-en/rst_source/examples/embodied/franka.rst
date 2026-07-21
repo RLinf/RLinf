@@ -728,4 +728,5 @@ Here we provide demo videos and training curves for the task peg-insertion and c
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
    Dual-Arm <dual_franka>
+   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
    Dual PICO DAgger <dual_franka_pico_dagger>

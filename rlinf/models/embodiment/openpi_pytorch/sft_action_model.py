@@ -131,7 +131,7 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             return actions.to(device=self.device, dtype=torch.float32)
         raise ValueError(
             "SFT actions must arrive normalized + padded to the model action "
-            f"dim {model_action_dim} (the BEHAVIOR SFT data loader applies the "
+            f"dim {model_action_dim} (the openpi_pytorch SFT data loader applies the "
             f"openpi transform pipeline before collation); got last dim "
             f"{actions.shape[-1]}."
         )

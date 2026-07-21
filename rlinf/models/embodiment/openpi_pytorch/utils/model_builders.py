@@ -100,9 +100,9 @@ def _build_sft_model(
 ):
     """Build the SFT variant.
 
-    The observation/action transform is applied upstream in the BEHAVIOR SFT
-    data loader (which routes each frame through the same openpi transform
-    pipeline the eval/RL paths use), so the SFT model holds no processor and no
+    The observation/action transform is applied upstream in the environment SFT
+    data loader, which routes each frame through the same openpi transform
+    pipeline the eval/RL paths use, so the SFT model holds no processor and no
     transforms — it just computes the flow-matching loss.
     """
     from rlinf.models.embodiment.openpi_pytorch.sft_action_model import (
