@@ -27,7 +27,13 @@ from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_ba
 from rlinf.data.priority_store import PriorityStore
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
-from rlinf.utils.metric_utils import append_to_dict, compute_rollout_metrics
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
+    append_to_dict,
+    compute_critic_explained_variance_from_stats,
+    compute_rollout_metrics,
+    pop_critic_explained_variance_stats,
+)
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
@@ -474,9 +480,18 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         self.optimizer.zero_grad()
         clear_memory()
 
+        explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {k: float(np.mean(v)) for k, v in metrics.items()}
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict,
             op=torch.distributed.ReduceOp.AVG,
         )
+        if explained_variance_stats:
+            reduced_stats = all_reduce_dict(
+                explained_variance_stats,
+                op=torch.distributed.ReduceOp.SUM,
+            )
+            mean_metric_dict[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                compute_critic_explained_variance_from_stats(reduced_stats).item()
+            )
         return mean_metric_dict

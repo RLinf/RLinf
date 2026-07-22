@@ -60,6 +60,11 @@ from rlinf.utils.distributed import (
     compute_rollout_metrics,
     masked_normalization,
 )
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
+    CRITIC_EXPLAINED_VARIANCE_STAT_KEYS,
+    compute_critic_explained_variance_from_stats,
+)
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
@@ -565,11 +570,33 @@ class MegatronWorker(MegatronModelManager, Worker):
             outputs = {}
             if forward_outputs:
                 keys = forward_outputs[0].keys()
+                explained_variance_stats = {}
+                has_explained_variance_stats = any(
+                    key in keys for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
+                )
                 for key in keys:
+                    if key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                        explained_variance_stats[key] = torch.stack(
+                            [loss_reduced[key] for loss_reduced in forward_outputs]
+                        ).sum()
+                        continue
+                    if (
+                        key == CRITIC_EXPLAINED_VARIANCE_KEY
+                        and has_explained_variance_stats
+                    ):
+                        continue
                     metric_mean = torch.stack(
                         [loss_reduced[key] for loss_reduced in forward_outputs]
                     ).mean()
                     outputs[key] = metric_mean.cpu().item()
+                if explained_variance_stats:
+                    outputs[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                        compute_critic_explained_variance_from_stats(
+                            explained_variance_stats
+                        )
+                        .cpu()
+                        .item()
+                    )
             output_list = [outputs]
             torch.distributed.broadcast_object_list(output_list, get_last_rank())
             outputs = output_list[0]
