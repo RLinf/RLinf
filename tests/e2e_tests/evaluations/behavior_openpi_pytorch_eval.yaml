@@ -63,5 +63,5 @@ rollout:
   model:
     # Minimal CI fixture: the new-format eval checkpoint staged under /workspace.
     # Norm stats resolve checkpoint-relative; tokenizer from openpi's cache.
-    model_path: /workspace/ci_behavior/model
+    model_path: /workspace/dataset/ci_behavior/model
     add_value_head: False
