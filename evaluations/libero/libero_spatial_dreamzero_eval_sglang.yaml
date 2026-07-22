@@ -70,18 +70,30 @@ rollout:
     http_max_retries: 5
     http_retry_backoff_s: 1.0
     http_payload_format: "msgpack"
-    attention_backend: "TORCH_SDPA"
-    compile_components: true
-    num_gpus: 1
-    tp_size: 1
-    sp_size: 1
-    cfg_parallel_degree: 1
-    dit_cpu_offload: false
-    cfg_scale: 5.0
-    num_inference_steps: 16
     seed: 1140
     debug_sessions: false
     debug_batch: false
+    tensor_parallel_size: 1
+    pipeline_parallel_size: 1
+    launch_server: true
+    launch_router: false
+    multimodal: true
+    group_name: SGLangServerGroup
+    router_group_name: SGLangRouterGroup
+    server:
+      model_path: ${rollout.model.model_path}
+      backend: sglang
+      pipeline: DreamZeroPipeline
+      tp_size: ${..tensor_parallel_size}
+      pp_size: ${..pipeline_parallel_size}
+      num_gpus: 1
+      attention_backend: TORCH_SDPA
+      dit_cpu_offload: false
+      cfg_parallel_size: 1
+      sp_degree: 1
+      cfg_scale: 5.0
+      num_inference_steps: 16
+      compile_components: true
 
   model:
     model_type: "dreamzero"

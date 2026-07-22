@@ -74,6 +74,31 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
+    # Launch the sglang server group (multimodal; no router) before workers
+    # init: each rollout worker is assigned one server URL (rank-indexed) so
+    # N servers are consumed in parallel for throughput. Driven by the
+    # ``rollout.sglang`` launch flags (launch_server/launch_router/multimodal/...),
+    # passed as router_server_args to launch_sglang_router_and_server (mirrors
+    # the training-side launch path; all sglang knobs live in one shared block).
+    server_group = None
+    if (
+        rollout_backend == "sglang"
+        and cfg.rollout.sglang.get("launch_server", False)
+    ):
+        from rlinf.workers.rollout.sglang_server import (
+            launch_sglang_router_and_server,
+        )
+
+        server_group, _ = launch_sglang_router_and_server(
+            cfg,
+            cluster,
+            rollout_hardware_ranks=component_placement.get_hardware_ranks("rollout"),
+            router_server_args=cfg.rollout.sglang,
+        )
+        _server_urls = list(server_group.get_server_url().wait())
+        print(f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}")
+        rollout_group.set_sglang_server_urls(_server_urls).wait()
+
     runner = EmbodiedEvalRunner(
         cfg=cfg,
         rollout=rollout_group,
