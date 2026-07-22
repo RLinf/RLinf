@@ -24,6 +24,7 @@ from .ascend_npu import AscendNPUManager
 from .intel_gpu import IntelGPUManager
 from .musa_gpu import MUSAGPUManager
 from .nvidia_gpu import NsightConfig, NvidiaGPUManager
+from .kunlun_xpu import KunlunXPUManager
 
 __all__ = [
     "AcceleratorManager",
@@ -38,4 +39,5 @@ __all__ = [
     "NvidiaGPUManager",
     "NsightConfig",
     "MUSAGPUManager",
+    "KunlunXPUManager",
 ]
