@@ -24,6 +24,7 @@ def build_openpi_transforms(
     *,
     norm_stats_dir: str | None = None,
     norm_stats_asset_id: str | None = None,
+    input_prefix: Sequence | None = None,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -74,6 +75,7 @@ def build_openpi_transforms(
         )
 
     input_transforms = [
+        *(input_prefix or ()),
         transforms.InjectDefaultPrompt(None),
         *data_config.data_transforms.inputs,
         transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),

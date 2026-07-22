@@ -23,7 +23,7 @@ logger = get_logger()
 
 
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
-    """Build an OpenPI PyTorch Pi0.5 model from ``actor.model`` config.
+    """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
     ``cfg.model_path`` points at a new-format checkpoint containing
     ``model.safetensors``. Model shape comes from YAML; no checkpoint
@@ -44,6 +44,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     )
 
     model_cfg = cfg.openpi
+    # Existing Pi0.5 templates predate the explicit switch, so preserve their
+    # behavior by default. Pi0 templates set this field to False explicitly.
+    pi05 = bool(OmegaConf.select(cfg, "pi05", default=True))
     target_dtype = (
         torch_dtype
         if torch_dtype is not None
@@ -56,7 +59,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         raise FileNotFoundError(f"openpi_pytorch checkpoint not found: {weights_path}")
 
     pi0_kwargs = {
-        "pi05": True,
+        "pi05": pi05,
         "action_horizon": int(cfg.num_action_chunks),
         "action_dim": int(model_cfg.model_action_dim),
         "paligemma_variant": str(model_cfg.paligemma_variant),
