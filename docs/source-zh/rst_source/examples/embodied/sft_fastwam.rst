@@ -132,7 +132,7 @@ LIBERO-Plus 请使用 ``--env liberoplus``。还需按
    dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 FastWAM 与 RLinf 配置
---------------------
+------------------------
 
 RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状态。
 两层配置的职责分工如下：
