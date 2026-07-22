@@ -19,8 +19,9 @@
 功能介绍
 --------
 
-``openpi_pytorch`` 模型是 Pi0.5 流匹配 VLA 的自包含 PyTorch 移植版本。与基于
-JAX/LeRobot 的 OpenPI 路径（参见 :doc:`sft_openpi`）不同，它直接从一小组配置字段
+``openpi_pytorch`` 模型是 Pi0.5 流匹配 VLA 的自包含 PyTorch 移植版本。**需要特别强调的是**：官方 openpi 仓库提供的
+PyTorch 实现并未与其 JAX 参考实现对齐，而此处的移植版本在数值上与 JAX 实现严格
+对齐。与基于 JAX/LeRobot 的 OpenPI 路径（参见 :doc:`sft_openpi`）不同，它直接从一小组配置字段
 构建模型结构（构建阶段不读取 ``config.json``），并且开箱即用地适配 BEHAVIOR-1K。
 在 SFT 阶段，策略通过流匹配去噪目标，从 BEHAVIOR 示范中预测双臂 R1 Pro 机器人
 32 步、23 维的动作块（action chunk）。

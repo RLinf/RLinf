@@ -23,7 +23,10 @@ What it is
 ----------
 
 The ``openpi_pytorch`` model is a self-contained PyTorch port of the Pi0.5
-flow-matching VLA. Unlike the JAX/LeRobot-backed OpenPI path (see
+flow-matching VLA. **It is worth emphasizing that** the PyTorch implementation
+shipped in the official openpi repository is *not* numerically aligned with its
+JAX reference, whereas this port is numerically aligned with the JAX
+implementation. Unlike the JAX/LeRobot-backed OpenPI path (see
 :doc:`sft_openpi`), it builds the model shape directly from a small set of
 config fields (no ``config.json`` is read at construction time) and is wired for
 BEHAVIOR-1K out of the box. During SFT the policy is trained to predict the
