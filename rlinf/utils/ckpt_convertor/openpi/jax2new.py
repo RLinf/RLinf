@@ -53,7 +53,19 @@ def _load_jax_params(checkpoint_dir: str | pathlib.Path) -> dict:
     import orbax.checkpoint as ocp
 
     params_dir = pathlib.Path(checkpoint_dir) / "params"
-    restored = ocp.PyTreeCheckpointer().restore(str(params_dir))
+    checkpointer = ocp.PyTreeCheckpointer()
+
+    # The converter only needs host-side NumPy arrays.  Restoring without
+    # restore args makes Orbax infer JAX arrays and their saved sharding.  That
+    # fails for checkpoints produced on a different device topology (and in
+    # particular can leave the deserializer with ``sharding=None``).  Build a
+    # restore-args tree from the checkpoint metadata and explicitly request
+    # NumPy leaves, which do not require device sharding.
+    metadata = checkpointer.metadata(str(params_dir))
+    restore_args = jax.tree_util.tree_map(
+        lambda _: ocp.RestoreArgs(restore_type=np.ndarray), metadata
+    )
+    restored = checkpointer.restore(str(params_dir), restore_args=restore_args)
     restored = jax.tree_util.tree_map(
         lambda x: np.asarray(x, dtype=np.float32), restored
     )
