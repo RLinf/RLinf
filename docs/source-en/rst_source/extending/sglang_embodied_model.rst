@@ -746,6 +746,8 @@ metadata, run the following from the repository root:
      rollout.model.model_path=/path/to/dreamzero_checkpoint \
      rollout.model.metadata_json_path=/path/to/metadata.json
 
+For the detailed DreamZero SGLang evaluation workflow, see :doc:`../evaluations/guides/dreamzero_sglang`.
+
 For initial joint debugging, the number of environments can be overridden:
 
 .. code-block:: bash
