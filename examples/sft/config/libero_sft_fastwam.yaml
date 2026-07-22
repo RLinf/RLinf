@@ -7,7 +7,7 @@
 #      FastWAM's scripts/precompute_text_embeds.py
 #
 # Launch:
-#   bash examples/sft/run_sft.sh libero_sft_fastwam   (or train_vla_sft.py --config-name ...)
+#   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
 defaults:
   - training_backend/fsdp@actor.fsdp_config
   - model/fastwam@actor.model

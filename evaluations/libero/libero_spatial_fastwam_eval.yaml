@@ -47,8 +47,10 @@ env:
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     is_eval: True
-    libero_variant: ${oc.env:LIBERO_TYPE,standard}
-    perturbation_suffix: ${oc.env:LIBERO_SUFFIX,null}
+    # Static defaults; evaluations/run_eval.sh forwards LIBERO_TYPE and
+    # LIBERO_SUFFIX to LiberoEnv when selecting LIBERO-Plus at runtime.
+    libero_variant: standard
+    perturbation_suffix: null
 
     video_cfg:
       save_video: True
