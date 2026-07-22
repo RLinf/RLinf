@@ -42,8 +42,8 @@ from rlinf.scheduler import (
 )
 from rlinf.scheduler.placement import PlacementStrategy
 
-from .router_worker import SGLangRouterWorker
 from .multimodal_server_worker import SGLangMultimodalServerWorker
+from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
 
 

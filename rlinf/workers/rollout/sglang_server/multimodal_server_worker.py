@@ -107,9 +107,7 @@ class SGLangMultimodalServerWorker(SGLangServerWorker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
-        spawn_timeout = float(
-            self._cfg.rollout.sglang.get("spawn_timeout", 1800.0)
-        )
+        spawn_timeout = float(self._cfg.rollout.sglang.get("spawn_timeout", 1800.0))
         try:
             # Poll localhost for /health: the serve subprocess is local to
             # this actor, and an upstream HTTP(S)_PROXY in the launch env
@@ -126,7 +124,10 @@ class SGLangMultimodalServerWorker(SGLangServerWorker):
         self.log_info(f"multimodal sglang server ready at {self.get_server_url()}")
 
     def is_healthy(self) -> bool:
-        if getattr(self, "_serve_proc", None) is None or self._serve_proc.poll() is not None:
+        if (
+            getattr(self, "_serve_proc", None) is None
+            or self._serve_proc.poll() is not None
+        ):
             return False
         try:
             url = f"http://127.0.0.1:{self._server_port}/health"

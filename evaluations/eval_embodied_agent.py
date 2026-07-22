@@ -81,10 +81,7 @@ def main(cfg) -> None:
     # passed as router_server_args to launch_sglang_router_and_server (mirrors
     # the training-side launch path; all sglang knobs live in one shared block).
     server_group = None
-    if (
-        rollout_backend == "sglang"
-        and cfg.rollout.sglang.get("launch_server", False)
-    ):
+    if rollout_backend == "sglang" and cfg.rollout.sglang.get("launch_server", False):
         from rlinf.workers.rollout.sglang_server import (
             launch_sglang_router_and_server,
         )
