@@ -114,13 +114,9 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate
-          # This self-hosted runner is reused between jobs. Clear a stale
-          # raylet/GCS left by an interrupted test before starting a cluster,
-          # and ensure cleanup also runs when pytest fails.
-          ray stop --force || true
-          trap 'ray stop --force || true' EXIT
           for file in tests/unit_tests/test_*.py; do
               pytest "$file"
+              ray stop
           done
 
       - name: Clean up
