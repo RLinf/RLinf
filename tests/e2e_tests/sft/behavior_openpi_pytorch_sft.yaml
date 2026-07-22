@@ -1,6 +1,6 @@
 defaults:
   - model/pi0_5_pytorch@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
