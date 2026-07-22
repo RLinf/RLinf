@@ -59,10 +59,13 @@ from rlinf.utils.distributed import (
     compute_rollout_metrics as compute_math_rollout_metrics,
 )
 from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
     append_to_dict,
+    compute_critic_explained_variance_from_stats,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
+    pop_critic_explained_variance_stats,
 )
 from rlinf.utils.nested_dict_process import (
     put_tensor_device,
@@ -839,6 +842,7 @@ class FSDPActor(FSDPModelManager, Worker):
         rollout_train_kl = compute_rollout_train_kl(m_batch, loss_mask)
 
         # aggregate metrics across micro-batches
+        explained_variance_stats = pop_critic_explained_variance_stats(mbs_metrics_list)
         mean_metric_dict = {
             key: torch.mean(torch.stack(value))
             for key, value in mbs_metrics_list.items()
@@ -849,6 +853,13 @@ class FSDPActor(FSDPModelManager, Worker):
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        if explained_variance_stats:
+            reduced_stats = all_reduce_dict(
+                explained_variance_stats, op=torch.distributed.ReduceOp.SUM
+            )
+            mean_metric_dict[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                compute_critic_explained_variance_from_stats(reduced_stats).item()
+            )
 
         mean_metric_dict["actor/grad_norm"] = float(grad_norm)
         mean_metric_dict["actor/lr"] = lr_list[0]
@@ -1306,7 +1317,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
     def _train_sft_epoch(
         self, metrics_data: dict[str, torch.Tensor], loss: torch.Tensor
-    ):
+    ) -> torch.Tensor:
         """
         Train one epoch of SFT.
         """
@@ -1342,6 +1353,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 f"ppo_loss={metrics_data['ppo_loss']:.6f}, "
                 f"sft_loss_weight={self.sft_loss_weight:.6f}"
             )
+        return loss
 
     @Worker.timer("run_training")
     def run_training(self) -> None:
@@ -1423,10 +1435,18 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
+        explained_variance_stats = pop_critic_explained_variance_stats(metrics)
         mean_metric_dict = {key: np.mean(value) for key, value in metrics.items()}
         mean_metric_dict = all_reduce_dict(
             mean_metric_dict, op=torch.distributed.ReduceOp.AVG
         )
+        if explained_variance_stats:
+            reduced_stats = all_reduce_dict(
+                explained_variance_stats, op=torch.distributed.ReduceOp.SUM
+            )
+            mean_metric_dict[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                compute_critic_explained_variance_from_stats(reduced_stats).item()
+            )
 
         return mean_metric_dict
 
@@ -1532,7 +1552,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
 
         if self.enable_sft_co_train:
-            self._train_sft_epoch(metrics_data, loss)
+            loss = self._train_sft_epoch(metrics_data, loss)
 
         loss /= self.gradient_accumulation
         with backward_ctx:
