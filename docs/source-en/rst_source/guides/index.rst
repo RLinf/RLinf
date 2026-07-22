@@ -38,13 +38,19 @@ Choose a Workflow
       :link: hardware/index
       :link-type: doc
 
-      Run RLinf on AMD ROCm, Ascend CANN, or alternate SGLang versions.
+      Run RLinf on AMD ROCm or Ascend CANN.
 
    .. grid-item-card:: Agent Workflows
       :link: agent-workflows/index
       :link-type: doc
 
       Operate agentic and reasoning workloads.
+
+   .. grid-item-card:: Rollout Engines
+      :link: rollout-engines/index
+      :link-type: doc
+
+      Launch sglang servers and routers behind a single inference endpoint.
 
 .. toctree::
    :hidden:
@@ -55,3 +61,4 @@ Choose a Workflow
    Performance <performance/index>
    Hardware Backends <hardware/index>
    Agent Workflows <agent-workflows/index>
+   Rollout Engines <rollout-engines/index>

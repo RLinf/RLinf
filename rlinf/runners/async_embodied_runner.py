@@ -14,16 +14,20 @@
 
 import asyncio
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.metric_utils import compute_evaluate_metrics
 from rlinf.utils.runner_utils import check_progress
 
 if TYPE_CHECKING:
+    from rlinf.workers.actor.async_fsdp_dagger_policy_worker import (
+        AsyncEmbodiedDAGGERFSDPPolicy,
+    )
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
@@ -38,7 +42,7 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
     def __init__(
         self,
         cfg: DictConfig,
-        actor: "AsyncEmbodiedSACFSDPPolicy",
+        actor: Union["AsyncEmbodiedSACFSDPPolicy", "AsyncEmbodiedDAGGERFSDPPolicy"],
         rollout: "AsyncMultiStepRolloutWorker",
         env: "AsyncEnvWorker",
         reward: "EmbodiedRewardWorker",
@@ -132,6 +136,24 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
         actor_handle: Handle = self.actor.sync_model_to_rollout()
         self._pending_rollout_weight_sync = (rollout_handle, actor_handle)
 
+    def evaluate(self):
+        env_handle: Handle = self.env.evaluate(
+            input_channel=self.env_channel,
+            rollout_channel=self.rollout_channel,
+        )
+        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+        if not env_decoupled_mode:
+            rollout_handle: Handle = self.rollout.evaluate(
+                input_channel=self.rollout_channel,
+                output_channel=self.env_channel,
+            )
+        env_results = env_handle.wait()
+        if not env_decoupled_mode:
+            rollout_handle.wait()
+        eval_metrics_list = [results for results in env_results if results is not None]
+        eval_metrics = compute_evaluate_metrics(eval_metrics_list)
+        return eval_metrics
+
     def run(self):
         start_step = self.global_step
         start_time = time.time()
@@ -214,7 +236,10 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            training_metrics["train/replay_channel_qsize"] = self.actor_channel.qsize()
+            if self.actor_channel is not None:
+                training_metrics["train/replay_channel_qsize"] = (
+                    self.actor_channel.qsize()
+                )
             actor_training_time_metrics, actor_time_metrics_per_rank = (
                 actor_training_handle.consume_durations(return_per_rank=True)
             )

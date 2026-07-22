@@ -100,9 +100,9 @@ Franka 控制依赖的准备。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-franka
+      rlinf/rlinf:agentic-rlinf0.3-franka
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
 
 随后切换到与你的 libfranka 版本兼容的环境：
 
@@ -135,9 +135,9 @@ source 对应的 ROS / Franka controller 环境。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
 进入容器后执行：
 

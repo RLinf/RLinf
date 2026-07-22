@@ -2,7 +2,7 @@ defaults:
   - env/metaworld_45_ind@env.train
   - env/metaworld_45_ood@env.eval
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -93,7 +93,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/openpi" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+    model_path: "/path/to/model/RLinf-Pi0-MetaWorld-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -106,7 +106,7 @@ actor:
 
   # Override the default values in model/pi0
   model:
-    model_path: "/path/to/model/openpi" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
+    model_path: "/path/to/model/RLinf-Pi0-MetaWorld-SFT" # https://huggingface.co/RLinf/RLinf-Pi0-MetaWorld-SFT
     num_action_chunks: 5 # interface for the env
     action_dim: 4
     num_steps: 5
@@ -127,7 +127,7 @@ actor:
     clip_grad: 1.0
     critic_warmup_steps: 0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

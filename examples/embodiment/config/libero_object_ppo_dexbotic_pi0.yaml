@@ -2,7 +2,7 @@ defaults:
   - env/libero_object@env.train
   - env/libero_object@env.eval
   - model/dexbotic_pi@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -99,7 +99,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Dexbotic-Pi05-SFT" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/model/libero-db-pi0" # https://huggingface.co/Dexmal/libero-db-pi0
     precision: ${actor.model.precision}
 
 actor:
@@ -111,7 +111,7 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/path/to/model/Dexbotic-Pi05-SFT" # https://huggingface.co/Dexmal/libero-db-pi0
+    model_path: "/path/to/model/libero-db-pi0" # https://huggingface.co/Dexmal/libero-db-pi0
     precision: "bf16"
     num_action_chunks: 5
     num_steps: 4

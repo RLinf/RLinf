@@ -1,5 +1,5 @@
 defaults:
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - model/dreamzero_5b@actor.model
   - override hydra/job_logging: stdout
 

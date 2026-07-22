@@ -123,13 +123,45 @@ State Dict 设备要求
 .. code-block:: yaml
 
    defaults:
-     - training_backend/fsdp@actor.fsdp_config
+     - hybrid_engines/fsdp@actor.fsdp_config
      - weight_syncer/patch_syncer@weight_syncer
 
 对应的配置文件位于：
 
 - ``examples/embodiment/config/weight_syncer/patch_syncer.yaml``
 - ``examples/embodiment/config/weight_syncer/bucket_syncer.yaml``
+
+
+共享通信选项
+------------------------------
+
+``patch`` 和 ``bucket`` 两种模式都支持放在 ``weight_syncer`` 顶层的共享通信选项：
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: patch
+     use_ring_sync: true
+     nccl_max_ctas: 16
+     nccl_min_ctas: 1
+     patch:
+       snapshot_device: cpu
+       transport_device: cpu
+       delta_encoding: true
+       compression: none
+
+``use_ring_sync``
+  设为 ``true`` 时，强制权重同步 broadcast 使用 ``CollectiveGroupOptions``
+  中的 ring broadcast 路径。
+
+``nccl_max_ctas`` / ``nccl_min_ctas``
+  分别传给 ``CollectiveGroupOptions.accel_max_ctas`` 和
+  ``CollectiveGroupOptions.accel_min_ctas``，用于调整权重同步期间 accelerator
+  通信占用的计算资源。
+
+这些选项对两种 syncer 类型通用，因此必须直接放在 ``weight_syncer`` 下，而不是
+``patch`` 或 ``bucket`` 子节点下。它们只改变传给 broadcast/send/recv 调用的
+collective options，不改变 bucket 或 patch payload 的格式。
 
 
 Patch 模式

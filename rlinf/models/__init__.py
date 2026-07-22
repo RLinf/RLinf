@@ -76,6 +76,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_rlt_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_gr00t(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.gr00t import get_model
 
@@ -131,8 +136,13 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_value_model(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.value_model import get_model
+    def _build_recap_value_model(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.value_model.recap import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_steam_value_model(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.value_model.steam import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -169,6 +179,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.MLP_POLICY.value,
         _build_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_MLP_POLICY.value,
+        _build_rlt_mlp_policy,
         category="embodied",
         force=True,
     )
@@ -227,8 +243,14 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.VALUE_MODEL.value,
-        _build_value_model,
+        SupportedModel.RECAP_VALUE_MODEL.value,
+        _build_recap_value_model,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.STEAM_VALUE_MODEL.value,
+        _build_steam_value_model,
         category="embodied",
         force=True,
     )

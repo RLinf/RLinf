@@ -35,8 +35,8 @@ If using the **OpenVLA-OFT** model, run the following command:
 .. code-block:: bash
 
    # Download OpenVLA-OFT pre-trained model
-   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
-   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
    
    # Download LoRA fine-tuned checkpoint on maniskill
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
@@ -63,7 +63,7 @@ Before running the script, you need to modify the ``./examples/embodiment/config
 
 
 
-For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
+For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  

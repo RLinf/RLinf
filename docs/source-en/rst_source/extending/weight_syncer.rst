@@ -140,13 +140,47 @@ In embodied YAMLs, the recommended usage looks like this:
 .. code-block:: yaml
 
    defaults:
-     - training_backend/fsdp@actor.fsdp_config
+     - hybrid_engines/fsdp@actor.fsdp_config
      - weight_syncer/patch_syncer@weight_syncer
 
 The corresponding config files are:
 
 - ``examples/embodiment/config/weight_syncer/patch_syncer.yaml``
 - ``examples/embodiment/config/weight_syncer/bucket_syncer.yaml``
+
+
+Shared Communication Options
+------------------------------
+
+Both ``patch`` and ``bucket`` modes also accept shared communication options at
+the top level of ``weight_syncer``:
+
+.. code-block:: yaml
+
+   weight_syncer:
+     type: patch
+     use_ring_sync: true
+     nccl_max_ctas: 16
+     nccl_min_ctas: 1
+     patch:
+       snapshot_device: cpu
+       transport_device: cpu
+       delta_encoding: true
+       compression: none
+
+``use_ring_sync``
+  When set to ``true``, force weight-sync broadcasts to use the ring broadcast
+  path in ``CollectiveGroupOptions``.
+
+``nccl_max_ctas`` / ``nccl_min_ctas``
+  Forwarded to ``CollectiveGroupOptions.accel_max_ctas`` and
+  ``CollectiveGroupOptions.accel_min_ctas`` to tune accelerator communication
+  resource usage during weight sync.
+
+These options are shared by both syncer types, so they must be placed directly
+under ``weight_syncer`` rather than under ``patch`` or ``bucket``. They only
+change the collective options passed to broadcast/send/recv calls; they do not
+change the bucket or patch payload format.
 
 
 Patch Mode
