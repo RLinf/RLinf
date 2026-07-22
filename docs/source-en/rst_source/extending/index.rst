@@ -43,6 +43,12 @@ to RLinf.
 
       Add Megatron-Bridge, weight synchronization, or reward model workflows.
 
+   .. grid-item-card:: SGLang Embodied Model
+      :link: sglang_embodied_model
+      :link-type: doc
+
+      Adapt the embodied model to the RLinf rollout worker using the sglang backend, and use various simulators to evaluate the model.
+
 .. toctree::
    :hidden:
 
@@ -52,3 +58,4 @@ to RLinf.
    New Model with Megatron <new_model_megatron>
    New SFT Model <new_model_sft>
    Advanced Integrations <advanced-integrations/index>
+   SGLang Embodied Model <sglang_embodied_model>

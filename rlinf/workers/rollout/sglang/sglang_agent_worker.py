@@ -52,7 +52,7 @@ def _patch_chat_body_assistant_content(body: object) -> None:
             m["content"] = None
 
 
-class SGLangWorkerWithHTTPServer(SGLangWorker):
+class SGLangAgentWorkerWithHTTPServer(SGLangWorker):
     def __init__(
         self,
         config: DictConfig,

@@ -30,14 +30,30 @@ package_version = get_version(package_name)
 sglang_version = None
 
 if package_version is None:
-    raise ValueError(f"sglang version {package_version} not supported")
-elif package_version >= parse("0.4.4") and package_version <= parse("0.5.4"):
-    sglang_version = package_version
-    from rlinf.hybrid_engines.sglang.common import io_struct
-    from rlinf.hybrid_engines.sglang.common.sgl_engine import (
-        Engine,
+    raise ValueError(
+        "sglang is not installed. Install sglang_main (e.g. "
+        "`pip install -e <sglang>/python`)."
     )
 else:
-    raise ValueError(f"sglang version {package_version} not supported")
+    sglang_version = package_version
+    import types as _types
+
+    io_struct = _types.ModuleType("io_struct")
+    Engine = None  # noqa: F841
+    try:
+        from rlinf.hybrid_engines.sglang.common import io_struct  # noqa: F811
+        from rlinf.hybrid_engines.sglang.common.sgl_engine import (
+            Engine,
+        )
+    except Exception as _e:  # pragma: no cover - depends on sglang version
+        from rlinf.utils.logging import get_logger
+
+        get_logger().warning(
+            "SRT hybrid engine unavailable on sglang %s (%s). The legacy "
+            "SRT/LLM rollout path is disabled; the Cosmos3 evaluate path "
+            "(sglang.multimodal_gen) is unaffected.",
+            package_version,
+            _e,
+        )
 
 __all__ = ["Engine", "io_struct"]

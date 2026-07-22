@@ -42,6 +42,7 @@ from rlinf.scheduler import (
 )
 from rlinf.scheduler.placement import PlacementStrategy
 
+from .multimodal_server_worker import SGLangMultimodalServerWorker
 from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
 
@@ -130,7 +131,12 @@ def launch_sglang_router_and_server(
                 node_group=rollout_node_group,
             )
 
-        server_group = SGLangServerWorker.create_group(
+        if router_server_args.get("multimodal", False):
+            server_worker_cls = SGLangMultimodalServerWorker
+        else:
+            server_worker_cls = SGLangServerWorker
+
+        server_group = server_worker_cls.create_group(
             config=config,
             sglang_cfg=router_server_args.server,
         ).launch(
