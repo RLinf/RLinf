@@ -46,9 +46,9 @@ else:
             Engine,
         )
     except Exception as _e:  # pragma: no cover - depends on sglang version
-        import logging as _logging
+        from rlinf.utils.logging import get_logger
 
-        _logging.getLogger(__name__).warning(
+        get_logger().warning(
             "SRT hybrid engine unavailable on sglang %s (%s). The legacy "
             "SRT/LLM rollout path is disabled; the Cosmos3 evaluate path "
             "(sglang.multimodal_gen) is unaffected.",

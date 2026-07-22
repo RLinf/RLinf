@@ -14,11 +14,13 @@
 
 
 from .launcher import launch_sglang_router_and_server
+from .multimodal_server_worker import SGLangMultimodalServerWorker
 from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
 
 __all__ = [
     "SGLangRouterWorker",
     "SGLangServerWorker",
+    "SGLangMultimodalServerWorker",
     "launch_sglang_router_and_server",
 ]
