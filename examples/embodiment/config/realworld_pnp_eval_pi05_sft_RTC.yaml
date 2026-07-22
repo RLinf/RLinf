@@ -2,7 +2,6 @@ defaults:
   - env/realworld_bin_relocation@env.train
   - env/realworld_bin_relocation@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -63,7 +62,7 @@ algorithm:
   behave_weight_threshold: 2
 
   rollout_epoch: 24
-  eval_rollout_epoch: 2 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
@@ -113,8 +112,8 @@ env:
     chunk_pause_seconds: 0.4
     total_num_envs: 1
     main_image_key: wrist_1
-    max_steps_per_rollout_epoch: 200
-    max_episode_steps: 200
+    max_steps_per_rollout_epoch: 240
+    max_episode_steps: 240
     data_collection:
       enabled: False
       save_dir: "/path/to/data_collection/pnp_train" # Directory to save rollout data
@@ -123,13 +122,11 @@ env:
     override_cfg:
       is_dummy: False
       use_dense_reward: False
-      max_num_steps: 200
       target_ee_pose: TARGET_EE_POSE
       camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
-      use_state_to_grip: True
+      max_num_steps: 240
       binary_gripper_threshold: 0.1
       enable_gripper_penalty: False
-      gripper_min_switch_interval_s: 1.0
 
   eval:
     ignore_terminations: False
@@ -138,18 +135,19 @@ env:
     chunk_pause_seconds: 0.
     total_num_envs: 1
     main_image_key: wrist_2
-    max_steps_per_rollout_epoch: 200
-    max_episode_steps: 300
+    max_steps_per_rollout_epoch: 240
+    max_episode_steps: 240
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
     override_cfg:
       is_dummy: False
       use_dense_reward: False
-      max_num_steps: 300
       target_ee_pose: TARGET_EE_POSE
       camera_serials: ["CAMERA_SERIAL1", "CAMERA_SERIAL2"]
-      use_state_to_grip: True
+      max_num_steps: 240
       binary_gripper_threshold: 0.02
       enable_gripper_penalty: False
-      gripper_min_switch_interval_s: 0.3
     data_collection:
       enabled: True
       save_dir: "/path/to/dir" # Directory to save evaluation data
@@ -166,8 +164,25 @@ rollout:
 
   model:
     model_path: /path/to/model
+    model_type: "openpi"
     precision: ${actor.model.precision}
+    add_value_head: False
+    num_action_chunks: 5
+    action_dim: 7
     rewrite_chunk_gripper: True
+    num_steps: 10
+    is_lora: False
+    openpi:
+      config_name: "pi05_franka_pnp"
+      num_images_in_input: 2
+      noise_method: "flow_sde"
+      action_horizon: 5
+      action_chunk: 5
+      noise_params: [0.7, 0.3, 400]
+      joint_logprob: False
+      rtc_enabled: ${runner.rtc.enabled}
+      rtc_guidance_mode: "approx"
+      rtc_guidance_clip: 5.0
 
 actor:
   group_name: "ActorGroup"
@@ -180,18 +195,19 @@ actor:
   model:
     model_path: /path/to/model
     model_type: "openpi"
-    add_value_head: True
-    num_action_chunks: 8 # interface for the env
+    add_value_head: False
+    num_action_chunks: 5
     rewrite_chunk_gripper: False
-    num_steps: 4
+    num_steps: 10
+    is_lora: False
     openpi:
-      value_after_vlm: True
+      value_after_vlm: False
       config_name: "pi05_franka_pnp"
       num_images_in_input: 2
-      noise_method: "flow_noise"
-      action_horizon: 8
-      noise_params: [0.16, 0.12, 200]
-      joint_logprob: True # False for flow_sde, True for flow_noise
+      noise_method: "flow_sde"
+      action_horizon: 5
+      noise_params: [0.7, 0.3, 400]
+      joint_logprob: False
       rtc_enabled: ${runner.rtc.enabled}
       rtc_guidance_mode: "approx"
       rtc_guidance_clip: 5.0
