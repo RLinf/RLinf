@@ -80,7 +80,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "qwen3_vl" "abot_m0")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1608,6 +1608,42 @@ install_dreamzero_model() {
     esac
 }
 
+install_fastwam_deps() {
+    local fastwam_path
+    fastwam_path=$(clone_or_reuse_repo FASTWAM_PATH "$VENV_DIR/FastWAM" https://github.com/yuantianyuan01/FastWAM.git)
+    if [ -z "${FASTWAM_PATH:-}" ]; then
+        git -C "$fastwam_path" checkout "${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}" >&2
+    fi
+
+    # Keep RLinf's platform-specific Torch stack; install the remaining pinned
+    # FastWAM runtime dependencies and then the package itself without deps.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/fastwam.txt"
+    uv pip install -e "$fastwam_path" --no-deps
+}
+
+install_fastwam_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    case "$ENV_NAME" in
+        libero)
+            install_libero_env
+            ;;
+        liberoplus)
+            install_liberoplus_env
+            ;;
+        "")
+            # Environment-free installation supports offline FastWAM SFT.
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for FastWAM model." >&2
+            exit 1
+            ;;
+    esac
+
+    install_fastwam_deps
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -2197,6 +2233,12 @@ main() {
     validate_python_version
     configure_platform
     setup_mirror
+    # FastWAM's upstream TorchCodec 0.5 runtime requires the Torch 2.7 family.
+    # Route the default through RLinf's central override logic while preserving
+    # an explicit user-provided --torch version.
+    if [[ "$TARGET" == "embodied" && "$MODEL" == "fastwam" && -z "$TORCH_VERSION" ]]; then
+        TORCH_VERSION="2.7.1"
+    fi
     apply_torch_override
     apply_sglang_override
 
@@ -2215,7 +2257,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ]; then
+            elif [[ "$MODEL" != "dreamzero" && "$MODEL" != "fastwam" ]]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
@@ -2253,6 +2295,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                fastwam)
+                    install_fastwam_model
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model

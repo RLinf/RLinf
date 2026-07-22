@@ -231,7 +231,7 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        "fastwam",
+        SupportedModel.FASTWAM.value,
         _build_fastwam,
         category="embodied",
         force=True,

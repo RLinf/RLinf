@@ -28,12 +28,14 @@ from __future__ import annotations
 
 from typing import Any
 
-import torch
 from torch.utils.data import default_collate
 from torch.utils.data.distributed import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
-from rlinf.models.embodiment.fastwam import _compose_fastwam_cfg, _default_fastwam_config_dir
+from rlinf.models.embodiment.fastwam import (
+    _compose_fastwam_cfg,
+    _default_fastwam_config_dir,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -93,18 +95,16 @@ def build_fastwam_sft_dataloader(
     _os.makedirs(work_dir, exist_ok=True)
     _fw_misc.register_work_dir(work_dir)
 
-    overrides_kw = dict(
-        dataset_dirs=dataset_dirs,
-        is_training_set=not eval_dataset,
-        text_embedding_cache_dir=text_cache,
-    )
+    overrides_kw = {
+        "dataset_dirs": dataset_dirs,
+        "is_training_set": not eval_dataset,
+        "text_embedding_cache_dir": text_cache,
+    }
     if norm_stats:
         overrides_kw["pretrained_norm_stats"] = str(norm_stats)
 
     dataset = instantiate(data_train, **overrides_kw)
-    logger.info(
-        "FastWAM SFT dataset: %d samples from %s", len(dataset), dataset_dirs
-    )
+    logger.info("FastWAM SFT dataset: %d samples from %s", len(dataset), dataset_dirs)
 
     sampler = DistributedSampler(
         dataset,

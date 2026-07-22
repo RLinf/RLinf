@@ -5,13 +5,11 @@
 # here we only set the RLinf-facing knobs and the checkpoint / normalization paths.
 model_type: "fastwam"
 precision: bf16
-# Unused by FastWAM (kept for rollout-worker compatibility, which reads model_path).
-model_path: null
 # Required by rlinf get_model dispatcher; FastWAM is not loaded via LoRA.
 is_lora: false
 
 # Fine-tuned FastWAM checkpoint (contains the trained `mot` + `proprio_encoder`).
-checkpoint_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
+model_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
 # Action/state min-max stats shipped next to the checkpoint. If null, get_model
 # looks for `<ckpt_stem>_dataset_stats.json` and `dataset_stats.json` beside it.
 dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json

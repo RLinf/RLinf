@@ -3,7 +3,7 @@ LIBERO 评测
 
 LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA 策略并输出任务级成功率。
 
-相关训练文档：:doc:`../../examples/embodied/libero`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
+相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
 环境准备
 --------
@@ -15,7 +15,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -38,6 +38,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_dreamzero_eval.yaml``
      - Spatial
      - DreamZero
+   * - ``libero_spatial_fastwam_eval.yaml``
+     - Spatial / LIBERO-Plus
+     - FastWAM
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅

@@ -47,6 +47,8 @@ env:
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     is_eval: True
+    libero_variant: ${oc.env:LIBERO_TYPE,standard}
+    perturbation_suffix: ${oc.env:LIBERO_SUFFIX,null}
 
     video_cfg:
       save_video: True
