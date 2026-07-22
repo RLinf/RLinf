@@ -746,6 +746,8 @@ metadata 后，在仓库根目录运行：
      rollout.model.model_path=/path/to/dreamzero_checkpoint \
      rollout.model.metadata_json_path=/path/to/metadata.json
 
+详细的 DreamZero SGLang evaluation 流程见 :doc:`../evaluations/guides/dreamzero_sglang`。
+
 首次联调可以覆盖环境数量：
 
 .. code-block:: bash
