@@ -18,7 +18,7 @@
      - 推荐 ``--model``
      - 推荐 ``--env``
    * - LIBERO
-     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero``
+     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``fastwam``
      - ``maniskill_libero`` 或 ``libero``
    * - RoboTwin
      - ``openvla-oft`` / ``openpi`` / ``lingbotvla``

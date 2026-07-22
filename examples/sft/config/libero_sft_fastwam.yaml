@@ -1,0 +1,100 @@
+# FastWAM SFT on LIBERO (LeRobot format) through RLinf's FSDP SFT pipeline.
+#
+# Data + text-embedding prep (one-time):
+#   1) download a LIBERO LeRobot suite (e.g. yuanty/LIBERO-fastwam) to
+#      data.train_data_paths
+#   2) precompute T5 text embeddings into data.text_embedding_cache_dir with
+#      FastWAM's scripts/precompute_text_embeds.py
+#
+# Launch:
+#   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+defaults:
+  - training_backend/fsdp@actor.fsdp_config
+  - model/fastwam@actor.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_sft_fastwam"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 20            # smoke run; raise for real training
+  val_check_interval: -1
+  save_interval: -1
+  log_interval: 1
+  resume_dir: null
+
+data:
+  # Local LeRobot LIBERO dataset directory (override on the CLI as needed).
+  train_data_paths: /workspace/data/libero/libero_spatial_no_noops_lerobot
+  # Pre-computed T5 text-embedding cache (built by precompute_text_embeds.py).
+  text_embedding_cache_dir: /workspace/data/text_embeds_cache/libero
+  num_workers: 2
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 42
+
+  model:
+    model_type: "fastwam"
+
+  optim:
+    lr: 1.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-2
+    clip_grad: 1.0
+    lr_scheduler: "cosine"
+    lr_warmup_steps: -1
+    lr_warmup_steps_ratio: 0.05
+    total_training_steps: 20
+
+  fsdp_config:
+    strategy: "fsdp2"
+    # Whole-model FSDP2 wrap (no per-submodule sharding). The MoT performs manual
+    # cross-expert attention by reaching into the video/action DiT-block internals
+    # rather than calling block.forward, which is incompatible with per-block
+    # FSDP2 auto-wrap (sharded block params would not be all-gathered when the MoT
+    # accesses them). An empty wrap target leaves only the root module sharded, so
+    # all params are resident during the manual attention. Without this, FSDP2
+    # auto-wrap has no target and setup crashes (FastWAMPolicy defines no
+    # `_no_split_modules`).
+    wrap_policy:
+      no_split_names: ["__none__"]
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: True
+    limit_all_gathers: False
+    forward_prefetch: True
+    backward_prefetch: "pre"
+    reshard_after_forward: True
+    save_full_model_weights: False
+    grad_scaler:
+      enabled: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: bf16
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: False
+      precision: "bf16"

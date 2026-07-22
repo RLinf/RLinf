@@ -1,0 +1,78 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Real FastWAM smoke evaluation. Two environments share one rollout worker so
+# predict_action_batch executes a genuine GPU batch against the released model.
+defaults:
+  - env/libero_spatial@env.eval
+  - model/fastwam@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "/workspace/results/fastwam_eval"
+    project_name: rlinf
+    experiment_name: "libero_spatial_eval_fastwam"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 2
+    auto_reset: true
+    ignore_terminations: true
+    max_episode_steps: 10
+    # One FastWAM re-planning step is enough to cover batched inference.
+    max_steps_per_rollout_epoch: 10
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    use_ordered_reset_state_ids: true
+    is_eval: true
+    libero_variant: standard
+    perturbation_suffix: null
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: false
+  pipeline_stage_num: 1
+
+  model:
+    model_type: "fastwam"
+    model_path: /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
+    dataset_stats_path: /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json

@@ -33,6 +33,43 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  sft-fastwam-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create FastWAM SFT environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model fastwam
+
+      - name: FastWAM LIBERO FSDP SFT test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/FastWAM/models
+          test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
+          test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
+          test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.2-TI2V-5B
+          test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.1-T2V-1.3B
+          test -d /workspace/dataset/FastWAM/text_embeds_cache/libero
+          test -d /workspace/dataset/data/sft-ci-data/fastwam-libero
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_fastwam
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv
+          uv cache prune
+
   sft-maniskill-openpi-test:
     runs-on: embodied
     steps:

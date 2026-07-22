@@ -400,10 +400,11 @@ FROM embodied-common-image AS embodied-libero-image
 # (via clone_or_reuse_repo) instead of re-downloading it per venv.
 ENV LIBERO_PATH=/opt/envs/LIBERO
 
-# Install openvla, openvla-oft, and dreamzero envs
+# Install the LIBERO-supported model environments.
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero
 
 # Set default env
@@ -425,8 +426,9 @@ RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-liberoplus-image
 
-# Install openvla-oft env for LIBERO-Plus
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus
+# Install model environments for LIBERO-Plus.
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env liberoplus && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv fastwam --model fastwam --env liberoplus
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla-oft/bin/activate" >> ~/.bashrc

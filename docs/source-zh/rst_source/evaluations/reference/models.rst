@@ -22,6 +22,9 @@
    * - DreamZero
      - ``dreamzero``
      - ``libero_spatial_dreamzero_eval``、``realworld_pnp_eval_dreamzero``
+   * - FastWAM
+     - ``fastwam``
+     - ``libero_spatial_fastwam_eval``
    * - LingBotVLA
      - ``lingbotvla``
      - ``robotwin_click_bell_lingbotvla_eval``、``robotwin_place_shoe_lingbotvla_eval``

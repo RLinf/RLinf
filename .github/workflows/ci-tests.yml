@@ -137,6 +137,7 @@ jobs:
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
               - *shared
+              - 'rlinf/models/embodiment/fastwam/**'
               - 'rlinf/workers/sft/**'
               - 'rlinf/runners/sft_runner.py'
               - 'examples/sft/**'
