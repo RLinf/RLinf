@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(/mnt/public/xzxuan/.venv_pi/bin/python -c ' *)"
-    ]
-  }
-}
