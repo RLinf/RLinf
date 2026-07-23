@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import os
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from .accelerator import AcceleratorManager, AcceleratorType, ProfileConfig
+from .accelerator import AcceleratorManager, AcceleratorType
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
@@ -82,8 +81,10 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_accelerator_env_var(visible_accelerators: list[str]) -> dict[str, str]:
         """Get the environment variables related to the accelerator.
+
         Args:
             visible_accelerators (List[str]): A list of visible accelerator IDs.
+
         Returns:
             Dict[str, str]: A dictionary containing the accelerator environment variables.
         """
@@ -119,6 +120,7 @@ class KunlunXPUManager(AcceleratorManager):
     @staticmethod
     def get_ccl_socket_ifname_env_var() -> str:
         """Get the network socket interface name environment variable.
+
         Returns:
             str: The network socket interface name environment variable.
         """
