@@ -22,6 +22,7 @@ from .accelerator import (
 from .amd_gpu import AMDGPUManager, RocprofSysConfig  # Must be imported to register
 from .ascend_npu import AscendNPUManager
 from .intel_gpu import IntelGPUManager
+from .kunlun_xpu import KunlunXPUManager
 from .musa_gpu import MUSAGPUManager
 from .nvidia_gpu import NsightConfig, NvidiaGPUManager
 
@@ -38,4 +39,5 @@ __all__ = [
     "NvidiaGPUManager",
     "NsightConfig",
     "MUSAGPUManager",
+    "KunlunXPUManager",
 ]
