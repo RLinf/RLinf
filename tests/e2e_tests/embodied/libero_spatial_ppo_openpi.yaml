@@ -33,6 +33,11 @@ runner:
   val_check_interval: -1
   save_interval: -1
 
+  tracer:
+    enable: true
+    port: 8888
+    output_file: null # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
+
 algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
