@@ -1,182 +1,217 @@
 RL with RoboCasa Benchmark
-====================================
+==========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-This document provides a comprehensive guide for reinforcement learning training tasks using the RoboCasa environment in the RLinf framework.
-RoboCasa Kitchen focuses on manipulation tasks in kitchen environments, featuring diverse kitchen layouts, objects, and manipulation tasks.
-RoboCasa Kitchen combines realistic kitchen environments with diverse manipulation challenges, making it an ideal benchmark for developing generalizable robotic policies.
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+   :align: center
+   :width: 90%
 
-The main goal is to train vision-language-action models capable of performing the following tasks:
+   RoboCasa (image: `RoboCasa <https://robocasa.ai/>`__).
 
-1. **Visual Understanding**: Process RGB images from multiple camera viewpoints.
-2. **Language Understanding**: Interpret natural language task instructions.
-3. **Manipulation Skills**: Execute complex kitchen tasks such as pick-and-place, opening/closing doors, and appliance control.
+`RoboCasa <https://robocasa.ai/>`__ is a robosuite-based kitchen manipulation
+benchmark with diverse layouts, objects, and atomic tasks. You'll use RLinf to
+PPO-fine-tune an OpenPI π₀ policy on the RoboCasa ``CloseDrawer`` task.
 
-Environment
------------
+Overview
+--------
 
-**RoboCasa Simulation Platform**
+Fine-tune OpenPI π₀ on a mobile-manipulation kitchen task in RoboCasa.
 
-- **Environment**: RoboCasa Kitchen simulation environment (built on robosuite)
-- **Robot**: Panda manipulator with mobile base (PandaOmron), equipped with gripper
-- **Observation**: Multi-view RGB images (robot view + wrist camera) + proprioceptive state
-- **Action Space**: 12-dimensional continuous actions
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-  - 3D arm position delta
-  - 3D arm rotation delta
-  - 1D gripper control (open/close)
-  - 4D base control
-  - 1D mode selection (control base or arm)
+   .. grid-item-card:: Models
+      :text-align: center
 
-**Task Categories**
+      π₀
 
-RoboCasa Kitchen provides 24 atomic tasks covering multiple categories (excluding NavigateKitchen atomic task that requires base movement):
+   .. grid-item-card:: Algorithms
+      :text-align: center
 
-*Door Manipulation Tasks*:
+      PPO
 
-- ``OpenSingleDoor``: Open cabinet or microwave door
-- ``CloseSingleDoor``: Close cabinet or microwave door
-- ``OpenDoubleDoor``: Open double cabinet doors
-- ``CloseDoubleDoor``: Close double cabinet doors
-- ``OpenDrawer``: Open drawer
-- ``CloseDrawer``: Close drawer
+   .. grid-item-card:: Tasks
+      :text-align: center
 
-*Pick and Place Tasks*:
+      CloseDrawer
 
-- ``PnPCounterToCab``: Pick from counter and place into cabinet
-- ``PnPCabToCounter``: Pick from cabinet and place on counter
-- ``PnPCounterToSink``: Pick from counter and place in sink
-- ``PnPSinkToCounter``: Pick from sink and place on counter
-- ``PnPCounterToStove``: Pick from counter and place on stove
-- ``PnPStoveToCounter``: Pick from stove and place on counter
-- ``PnPCounterToMicrowave``: Pick from counter and place in microwave
-- ``PnPMicrowaveToCounter``: Pick from microwave and place on counter
+   .. grid-item-card:: Hardware
+      :text-align: center
 
-*Appliance Control Tasks*:
+      1 node · 8 GPUs
 
-- ``TurnOnMicrowave``: Turn on microwave
-- ``TurnOffMicrowave``: Turn off microwave
-- ``TurnOnSinkFaucet``: Turn on sink faucet
-- ``TurnOffSinkFaucet``: Turn off sink faucet
-- ``TurnSinkSpout``: Turn sink spout
-- ``TurnOnStove``: Turn on stove
-- ``TurnOffStove``: Turn off stove
+| **You'll do:** install → download kitchen assets + model → launch ``run_embodiment.sh`` → watch ``env/success_once``.
+| **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · RoboCasa kitchen assets · an SFT checkpoint.
 
-*Coffee Making Tasks*:
+Tasks
+~~~~~
 
-- ``CoffeeSetupMug``: Setup coffee mug
-- ``CoffeeServeMug``: Serve coffee into mug
-- ``CoffeePressButton``: Press coffee machine button
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-**Observation Structure**
+   * - Task
+     - Description
+   * - ``CloseDrawer``
+     - Close a kitchen drawer with the PandaOmron mobile manipulator.
 
-- **Base Camera Image** (``base_image``): Robot left view (224×224 RGB)
-- **Wrist Camera Image** (``wrist_image``): End-effector view camera (224×224 RGB)
-- **Wrist Camera Image** (``extra_view_image``): Robot right view (224×224 RGB, not included by default.)
-- **Proprioceptive State** (``state``): 25-dimensional vector containing:
-  - ``[0:3]`` End-effector position (x, y, z)
-  - ``[3:7]`` End-effector quaternion (w, x, y, z)
-  - ``[7:9]`` Gripper joint position
-  - ``[9:11]`` Gripper joint velocities
-  - ``[11:14]`` End-effector position relative to base (x, y, z)
-  - ``[14:18]`` End-effector quaternion relative to base (w, x, y, z)
-  - ``[18:21]`` Base position (x, y, z)
-  - ``[21:25]`` Base quaternion (w, x, y, z)
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
 
-**Data Structure**
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-- **Images**: Left camera RGB tensor ``[batch_size, 3, 224, 224]`` and wrist camera ``[batch_size, 3, 224, 224]``. Right camera RGB tensor ``[batch_size, 3, 224, 224]`` can also be included.
-- **State**: Proprioceptive state tensor ``[batch_size, 25]``. 
-- **Task Description**: Natural language instructions
-- **Actions**: 12-dimensional continuous actions
-- **Reward**: Sparse reward based on task completion
+   * - Field
+     - Specification
+   * - Observation
+     - Two RGB views by default (``base_image`` and ``wrist_image`` at 224×224) plus a 25-dim proprioceptive state.
+   * - Action
+     - 12-dim continuous action: arm position delta, arm rotation delta, gripper, base control, and mode selection.
+   * - Reward
+     - Sparse task-completion reward.
+   * - Prompt
+     - Natural-language instruction generated by the RoboCasa task.
 
-Algorithm
----------
+.. note::
 
-**Core Algorithm Components**
+   RoboCasa includes more atomic tasks, but the public RLinf recipe currently
+   targets ``CloseDrawer`` with ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``.
 
-1. **PPO (Proximal Policy Optimization)**
+Installation
+------------
 
-   - Advantage estimation using GAE (Generalized Advantage Estimation)
+.. include:: _setup_common.rst
 
-   - Policy clipping with ratio limits
-
-   - Value function clipping
-
-   - Entropy regularization
-
-2. **GRPO (Group Relative Policy Optimization)**
-
-   - For every state / prompt the policy generates *G* independent actions
-
-   - Compute the advantage of each action by subtracting the group's mean reward.
-
-Dependency Installation
------------------------
-
-1. Clone RLinf Repository
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. Install Dependencies
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Option 1: Docker Image**
-
-Use Docker image for the experiment.
+**Docker image**
 
 .. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-robocasa
-      # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-robocasa
+      rlinf/rlinf:agentic-rlinf0.3-robocasa
 
-**Option 2: Custom Environment**
+   # For mainland China users:
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-robocasa
 
-Install dependencies directly in your environment by running the following command:
+Switch to the OpenPI virtual environment inside the image:
 
 .. code:: bash
 
-   # For mainland China users, you can add the `--use-mirror` flag to the install.sh command for better download speed.
+   source switch_env openpi
 
+**Custom environment**
+
+Install RoboCasa with the OpenPI dependencies:
+
+.. code:: bash
+
+   # Mainland China users can add --use-mirror.
    bash requirements/install.sh embodied --model openpi --env robocasa
    source .venv/bin/activate
 
-Dataset Download
------------------
+Download the kitchen assets after installing RoboCasa:
 
 .. code:: bash
 
-   python -m robocasa.scripts.download_kitchen_assets   # Caution: Assets to be downloaded are around 5GB
+   python -m robocasa.scripts.download_kitchen_assets
 
-Model Download
---------------
+.. warning::
+
+   The RoboCasa kitchen assets are about 5 GB. Download them once before launching training.
+
+Download the Model
+------------------
+
+Download the OpenPI π₀ checkpoint:
 
 .. code-block:: bash
 
-   # Download the model (choose either method)
-   # Method 1: Using git clone
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
 
-   # Method 2: Using huggingface-hub
-   # For mainland China users, you can use the following for better download speed:
+   # Or use huggingface-hub:
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
+
+.. include:: _model_path.rst
+
+Run It
+------
+
+Launch the CloseDrawer recipe:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 46 26
+
+   * - Recipe
+     - Config
+     - Command suffix
+   * - OpenPI π₀ + PPO
+     - ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``
+     - ``robocasa_closedrawer_ppo_openpi``
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
+
+What this does:
+
+1. Starts the embodied training entrypoint with the RoboCasa Hydra config.
+2. Creates Ray workers for the actor, rollout, and RoboCasa env components.
+3. Runs PPO rollouts, computes sparse task rewards, and updates the OpenPI policy.
+
+For standalone evaluation, use the unified :doc:`Evaluation CLI
+<../../evaluations/reference/cli>` with config fallback and the same suffix,
+``robocasa_closedrawer_ppo_openpi``.
+
+.. note::
+
+   The default config uses ``actor,env,rollout: all``. Tune
+   ``env.train.total_num_envs``, ``env.eval.total_num_envs``, and
+   ``actor.global_batch_size`` for your GPU memory budget.
+
+Visualization and Results
+-------------------------
+
+Launch TensorBoard from the RLinf repo root:
+
+.. code:: bash
+
+   tensorboard --logdir ../results --port 6006
+
+The key signal is ``env/success_once``. For every logged metric, see
+:doc:`Training metrics <../../reference/metrics>`.
+
+Enable video in the env config when you want rollout videos:
+
+.. code:: yaml
+
+   video_cfg:
+     save_video: True
+     info_on_video: True
+     video_base_dir: ${runner.logger.log_path}/video/train
+
+Enable W&B or SwanLab by adding logger backends:
+
+.. code:: yaml
+
+   runner:
+     logger:
+       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+
+.. note::
+
+   This page does not publish a fixed RoboCasa success-rate table yet. Use
+   ``env/success_once`` and evaluation videos to compare your runs.

@@ -25,14 +25,20 @@ import torch
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.libero.utils import (
+    build_interleaved_eval_reset_state_ids,
+    distribute_reset_state_ids_round_robin,
     get_benchmark_overridden,
     get_libero_image,
     get_libero_type,
     get_libero_wrist_image,
     quat2axisangle,
+    record_completed_episode_task_stats,
 )
 from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 libero_type = get_libero_type()
 
@@ -83,6 +89,9 @@ class LiberoEnv(gym.Env):
         self.cfg = cfg
         self.total_num_processes = total_num_processes
         self.worker_info = worker_info
+
+        if seed_offset == 0:
+            self._log_evaluation_mode()
         self.seed = self.cfg.seed + seed_offset
         self._is_start = True
         self.num_envs = num_envs
@@ -96,6 +105,7 @@ class LiberoEnv(gym.Env):
 
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
+        self.is_eval = cfg.get("is_eval", False)
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
@@ -105,6 +115,11 @@ class LiberoEnv(gym.Env):
 
         self._compute_total_num_group_envs()
         self.reset_state_ids_all = self.get_reset_state_ids_all()
+        if self.is_eval:
+            pool = self.reset_state_ids_all[self.seed_offset]
+            self._eval_reset_pool = pool[pool >= 0].copy()
+        else:
+            self._eval_reset_pool = np.array([], dtype=np.int64)
         self.update_reset_state_ids()
         self._init_task_and_trial_ids()
         self._init_env()
@@ -118,6 +133,18 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
+
+    def _log_evaluation_mode(self):
+        """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
+        libero_type = get_libero_type()
+        if libero_type == "pro":
+            perturbation = os.environ.get("LIBERO_PERTURBATION", "all")
+            logger.info(f"Evaluation Mode: LIBERO-PRO | Perturbation: {perturbation}")
+        elif libero_type == "plus":
+            suffix = os.environ.get("LIBERO_SUFFIX", "all")
+            logger.info(f"Evaluation Mode: LIBERO-PLUS | Suffix: {suffix}")
+        else:
+            logger.info("Evaluation Mode: Standard LIBERO")
 
     def _init_env(self):
         env_fns = self.get_env_fns()
@@ -273,7 +300,7 @@ class LiberoEnv(gym.Env):
 
                     if all_candidates:
                         all_candidates.sort()
-                        if getattr(self.cfg, "is_eval", False):
+                        if self.is_eval:
                             idx_offset = (
                                 list(env_idx).index(env_id) if env_id in env_idx else 0
                             )
@@ -285,22 +312,31 @@ class LiberoEnv(gym.Env):
 
             elif variant == "plus":
                 plus_suffix = raw_suffix.replace(".bddl", "") if raw_suffix else None
+
+                valid_perts = [
+                    "_light",
+                    "_language",
+                    "_table",
+                    "_add",
+                    "_tb",
+                    "_sample",
+                    "_level",
+                ]
                 if plus_suffix == "all":
+                    filter_perts = valid_perts
+                elif plus_suffix is not None:
+                    normalized = (
+                        f"_{plus_suffix}"
+                        if not plus_suffix.startswith("_")
+                        else plus_suffix
+                    )
+                    filter_perts = [normalized] if normalized in valid_perts else []
+                else:
+                    filter_perts = []
+
+                if filter_perts:
                     clean_name = file_name.replace(".bddl", "")
-                    for marker in [
-                        "_view",
-                        "_initstate",
-                        "_noise",
-                        "_sample",
-                        "_light",
-                        "_table",
-                        "_add_1",
-                        "_lan",
-                        "_language",
-                        "_copy",
-                        "_level",
-                        "_tb",
-                    ]:
+                    for marker in valid_perts:
                         if marker in clean_name:
                             clean_name = clean_name.split(marker)[0]
                             break
@@ -326,12 +362,15 @@ class LiberoEnv(gym.Env):
                             f
                             for f in glob.glob(os.path.join(target_dir, "*.bddl"))
                             if clean_name in os.path.basename(f)
+                            and any(
+                                pert in os.path.basename(f) for pert in filter_perts
+                            )
                         ]
                         all_candidates.extend(matches)
 
                     if all_candidates:
                         all_candidates.sort()
-                        if getattr(self.cfg, "is_eval", False):
+                        if self.is_eval:
                             idx_offset = (
                                 list(env_idx).index(env_id) if env_id in env_idx else 0
                             )
@@ -390,7 +429,7 @@ class LiberoEnv(gym.Env):
             self._valid_reset_state_ids = None
 
     def update_reset_state_ids(self):
-        if self.cfg.is_eval or self.cfg.use_ordered_reset_state_ids:
+        if self.is_eval or self.cfg.use_ordered_reset_state_ids:
             reset_state_ids = self._get_ordered_reset_state_ids(self.num_group)
         else:
             reset_state_ids = self._get_random_reset_state_ids(self.num_group)
@@ -417,28 +456,24 @@ class LiberoEnv(gym.Env):
             )
         return reset_state_ids
 
-    def _build_interleaved_eval_reset_state_ids(self):
-        """Order (task0, trial0), (task1, trial0), ... for even parallel coverage."""
-        interleaved = []
-        num_tasks = len(self.trial_id_bins)
-        max_trials = max(self.trial_id_bins) if self.trial_id_bins else 0
-        for trial in range(max_trials):
-            for task_id in range(num_tasks):
-                if trial < self.trial_id_bins[task_id]:
-                    start = self.cumsum_trial_id_bins[task_id - 1] if task_id > 0 else 0
-                    interleaved.append(start + trial)
-        return np.array(interleaved, dtype=np.int64)
-
     def get_reset_state_ids_all(self):
+        if self.is_eval:
+            if self._valid_reset_state_ids is not None:
+                reset_state_ids = self._valid_reset_state_ids.copy()
+            else:
+                reset_state_ids = build_interleaved_eval_reset_state_ids(
+                    self.trial_id_bins, self.cumsum_trial_id_bins
+                )
+            return distribute_reset_state_ids_round_robin(
+                reset_state_ids, self.total_num_processes
+            )
+
         if self._valid_reset_state_ids is not None:
             reset_state_ids = self._valid_reset_state_ids.copy()
-        elif self.cfg.is_eval:
-            reset_state_ids = self._build_interleaved_eval_reset_state_ids()
         else:
             reset_state_ids = np.arange(self.total_num_group_envs)
 
-        if not self.cfg.is_eval:
-            self._generator_ordered.shuffle(reset_state_ids)
+        self._generator_ordered.shuffle(reset_state_ids)
 
         # Ensure we have enough IDs for all processes by tiling if needed
         if len(reset_state_ids) < self.total_num_processes:
@@ -454,17 +489,27 @@ class LiberoEnv(gym.Env):
 
     def _get_ordered_reset_state_ids(self, num_reset_states):
         if self.specific_reset_id is not None:
-            reset_state_ids = self.specific_reset_id * np.ones(
-                (self.num_group,), dtype=int
-            )
-        else:
-            if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
-                self.reset_state_ids_all = self.get_reset_state_ids_all()
-                self.start_idx = 0
-            reset_state_ids = self.reset_state_ids_all[self.seed_offset][
-                self.start_idx : self.start_idx + num_reset_states
-            ]
-            self.start_idx = self.start_idx + num_reset_states
+            return self.specific_reset_id * np.ones((num_reset_states,), dtype=int)
+
+        if self.is_eval:
+            pool = self._eval_reset_pool
+            if self.start_idx >= len(pool):
+                return np.full((num_reset_states,), -1, dtype=np.int64)
+            end = min(self.start_idx + num_reset_states, len(pool))
+            n_valid = end - self.start_idx
+            result = np.full((num_reset_states,), -1, dtype=np.int64)
+            if n_valid > 0:
+                result[:n_valid] = pool[self.start_idx : end]
+            self.start_idx = end
+            return result
+
+        if self.start_idx + num_reset_states > len(self.reset_state_ids_all[0]):
+            self.reset_state_ids_all = self.get_reset_state_ids_all()
+            self.start_idx = 0
+        reset_state_ids = self.reset_state_ids_all[self.seed_offset][
+            self.start_idx : self.start_idx + num_reset_states
+        ]
+        self.start_idx = self.start_idx + num_reset_states
         return reset_state_ids
 
     def _get_task_and_trial_ids_from_reset_state_ids(self, reset_state_ids):
@@ -514,6 +559,8 @@ class LiberoEnv(gym.Env):
         self.fail_once = np.zeros(self.num_envs, dtype=bool)
         self.returns = np.zeros(self.num_envs)
         self.success_episode_len = np.zeros(self.num_envs, dtype=np.int32)
+        self._task_success_stats: dict[int, dict[str, int]] = {}
+        self._eval_seen_trials: set[tuple[int, int]] = set()
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -608,7 +655,7 @@ class LiberoEnv(gym.Env):
             task_changed = self.task_ids[env_id] != task_ids[j]
             self.task_ids[env_id] = task_ids[j]
             self.trial_ids[env_id] = trial_ids[j]
-            if task_changed or not getattr(self.cfg, "is_eval", False):
+            if task_changed or not self.is_eval:
                 reconfig_env_idx.append(env_id)
         if reconfig_env_idx:
             env_fn_params = self.get_env_fn_params(reconfig_env_idx)
@@ -634,6 +681,13 @@ class LiberoEnv(gym.Env):
             env_idx = np.arange(self.num_envs)
 
         if self.is_start:
+            if self.is_eval:
+                self._task_success_stats = {}
+                self._eval_seen_trials = set()
+                self.start_idx = 0
+                pool = self.reset_state_ids_all[self.seed_offset]
+                self._eval_reset_pool = pool[pool >= 0].copy()
+                self.update_reset_state_ids()
             reset_state_ids = (
                 self.reset_state_ids if self.use_fixed_reset_state_ids else None
             )
@@ -683,7 +737,7 @@ class LiberoEnv(gym.Env):
         dones = terminations | truncations
         _auto_reset = auto_reset and self.auto_reset
         if dones.any() and _auto_reset:
-            obs, infos = self._handle_auto_reset(dones, obs, infos)
+            obs, infos, _ = self._handle_auto_reset(dones, obs, infos)
         return (
             obs,
             to_tensor(step_reward),
@@ -726,8 +780,10 @@ class LiberoEnv(gym.Env):
         past_truncations = raw_chunk_truncations.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
+        # eval_count_mask: per-env bool, True if this completion counts toward eval metrics.
+        eval_count_mask = None
         if past_dones.any() and self.auto_reset:
-            obs_list[-1], infos_list[-1] = self._handle_auto_reset(
+            obs_list[-1], infos_list[-1], eval_count_mask = self._handle_auto_reset(
                 past_dones.cpu().numpy(), obs_list[-1], infos_list[-1]
             )
 
@@ -737,6 +793,15 @@ class LiberoEnv(gym.Env):
 
             chunk_truncations = torch.zeros_like(raw_chunk_truncations)
             chunk_truncations[:, -1] = past_truncations
+
+            if eval_count_mask is not None:
+                eval_count_mask = torch.tensor(
+                    eval_count_mask,
+                    dtype=torch.bool,
+                    device=past_terminations.device,
+                )
+                chunk_terminations[:, -1] &= eval_count_mask
+                chunk_truncations[:, -1] &= eval_count_mask
         else:
             chunk_terminations = raw_chunk_terminations.clone()
             chunk_truncations = raw_chunk_truncations.clone()
@@ -749,24 +814,63 @@ class LiberoEnv(gym.Env):
         )
 
     def _handle_auto_reset(self, dones, _final_obs, infos):
+        if self.is_eval:
+            return self._handle_eval_auto_reset(dones, _final_obs, infos)
+        obs, infos = self._handle_train_auto_reset(dones, _final_obs, infos)
+        return obs, infos, None
+
+    def _handle_eval_auto_reset(self, dones, _final_obs, infos):
         final_obs = copy.deepcopy(_final_obs)
         env_idx = np.arange(0, self.num_envs)[dones]
         final_info = copy.deepcopy(infos)
-        if self.cfg.is_eval:
-            new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
-            self.reset_state_ids[env_idx] = new_reset_state_ids
-        elif self.use_fixed_reset_state_ids:
-            self.update_reset_state_ids()
-        obs, infos = self.reset(
-            env_idx=env_idx,
-            reset_state_ids=self.reset_state_ids[env_idx]
-            if self.use_fixed_reset_state_ids or self.cfg.is_eval
-            else None,
+
+        count_mask = record_completed_episode_task_stats(
+            env_idx,
+            final_info,
+            self.task_ids,
+            self.trial_ids,
+            self.num_envs,
+            self._eval_seen_trials,
+            self._task_success_stats,
         )
-        # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
+
+        new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
+        valid_mask = new_reset_state_ids >= 0
+        env_to_reset = env_idx[valid_mask]
+        if len(env_to_reset) > 0:
+            self.reset_state_ids[env_to_reset] = new_reset_state_ids[valid_mask]
+            obs, infos = self.reset(
+                env_idx=env_to_reset,
+                reset_state_ids=self.reset_state_ids[env_to_reset],
+            )
+        else:
+            obs = _final_obs
+            infos = {}
+
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
-        infos["_final_info"] = dones
+        infos["_final_info"] = np.asarray(dones, dtype=bool) & count_mask
+        infos["_final_observation"] = dones
+        infos["_elapsed_steps"] = dones
+        return obs, infos, count_mask
+
+    def _handle_train_auto_reset(self, dones, _final_obs, infos):
+        final_obs = copy.deepcopy(_final_obs)
+        env_idx = np.arange(0, self.num_envs)[dones]
+        final_info = copy.deepcopy(infos)
+
+        if self.use_fixed_reset_state_ids:
+            self.update_reset_state_ids()
+            obs, infos = self.reset(
+                env_idx=env_idx,
+                reset_state_ids=self.reset_state_ids[env_idx],
+            )
+        else:
+            obs, infos = self.reset(env_idx=env_idx, reset_state_ids=None)
+
+        infos["final_observation"] = final_obs
+        infos["final_info"] = final_info
+        infos["_final_info"] = np.asarray(dones, dtype=bool)
         infos["_final_observation"] = dones
         infos["_elapsed_steps"] = dones
         return obs, infos

@@ -57,47 +57,51 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_sft_openpi
 
+      - name: SFT ManiSkill RLT Stage1 OpenPI Pi05 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/sft/run_vla_sft.sh maniskill_rlt_stage1_sft_openpi_pi05
+
       - name: Clean up
         run: |
           rm -rf .venv
           uv cache prune
 
-  recap-sft-cfg-test:
+  sft-openpi-pytorch-behavior-test:
     runs-on: embodied
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Create RECAP test environment
+      - name: Create sft environment
         run: |
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          bash requirements/install.sh embodied --model openpi --env behavior
 
-      - name: RECAP value model SFT test
-        timeout-minutes: 20
+      - name: SFT BEHAVIOR OpenPI-PyTorch test
+        timeout-minutes: 30
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/sft/run_value_sft.sh libero_sft_value
-
-      - name: RECAP CFG OpenPI 0.5 test
-        timeout-minutes: 20
-        run: |
-          unset PYTHONPATH
-          export REPO_PATH=$(pwd)
-          source .venv/bin/activate
-          bash tests/e2e_tests/sft/run_cfg_sft.sh recap_cfg_openpi
+          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
+          export ISAAC_PATH=/workspace/dataset/isaac-sim
+          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_pytorch_sft
 
       - name: Clean up
         run: |
           rm -rf .venv
           uv cache prune
+          rm -rf /tmp/tmp*
 
   sft-robo2vlm-test:
     runs-on: reason

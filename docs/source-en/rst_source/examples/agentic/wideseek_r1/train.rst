@@ -1,10 +1,38 @@
-Training
-========
+WideSeek-R1 Training
+====================
 
 This page describes how to reproduce WideSeek-R1 training in RLinf.
 
 The reference configuration uses ``Qwen3-4B``, but the current pipeline is also
 compatible with other dense models in the Qwen3 family.
+
+Overview
+--------
+
+Use this page to prepare the model, data, and config for WideSeek-R1 training.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Model
+      :text-align: center
+
+      Qwen3-4B
+
+   .. grid-item-card:: Algorithm
+      :text-align: center
+
+      Hybrid multi-agent RL
+
+   .. grid-item-card:: Data
+      :text-align: center
+
+      ``hybrid_20k.jsonl`` from WideSeek-R1-train-data
+
+   .. grid-item-card:: Tools
+      :text-align: center
+
+      Offline retrieval and judge model server
 
 .. contents::
    :depth: 2
@@ -75,8 +103,8 @@ standard QA data.
 - When ``is_hybrid`` is ``False``, make sure ``data.is_markdown`` matches the
   dataset format you use (True for ``width_20k``, False for ``depth_20k``).
 
-Launch Training
----------------
+Run It
+------
 
 Before starting training, verify all of the following:
 
@@ -91,8 +119,8 @@ Then run:
 
    bash examples/agent/wideseek_r1/run_train.sh train_qwen3_hybrid
 
-Outputs
--------
+Visualization and Results
+-------------------------
 
 Training outputs are written to:
 

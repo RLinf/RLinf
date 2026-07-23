@@ -27,6 +27,7 @@
 # limitations under the License.
 
 import functools
+import math
 import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
@@ -182,12 +183,18 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
         no_split_names = _normalize_wrap_targets(
             wrap_policy_config.get("no_split_names")
         )
+
     else:
         if hasattr(module, "language_model"):
             # For VLA models, get transformer classes from language_model submodule
             default_transformer_cls_names_to_wrap = getattr(
                 module.language_model, "_no_split_modules", None
             )
+            if hasattr(module, "visual"):
+                default_transformer_cls_names_to_wrap.extend(
+                    getattr(module.visual, "_no_split_modules", [])
+                )
+
         else:
             # For standard models, get transformer classes directly from module
             default_transformer_cls_names_to_wrap = getattr(
@@ -401,6 +408,10 @@ def apply_fsdp2_to_model(
             default_transformer_cls_names_to_wrap = getattr(
                 module.language_model, "_no_split_modules", None
             )
+            if hasattr(module, "visual"):
+                default_transformer_cls_names_to_wrap.extend(
+                    getattr(module.visual, "_no_split_modules", [])
+                )
         else:
             default_transformer_cls_names_to_wrap = getattr(
                 module, "_no_split_modules", None
@@ -409,7 +420,7 @@ def apply_fsdp2_to_model(
             default_transformer_cls_names_to_wrap
         )
         module_classes_to_wrap = None
-        no_split_names = None
+        no_split_names = getattr(module, "_no_split_names", None)
         assert (
             len(fsdp_transformer_layer_cls_to_wrap) > 0
             and fsdp_transformer_layer_cls_to_wrap[0] is not None
@@ -546,6 +557,35 @@ def get_lr_scheduler(
             min_lr_rate=min_lr_rate,
             min_lr=min_lr,
         )
+    elif lr_scheduler in ("openpi_cosine", "ref_warmup_cosine"):
+        # Warmup starts at peak/(warmup+1) (not 0), ramps linearly to the peak at
+        # `num_warmup_steps`, then cosine-decays to `min_lr` over the remaining
+        # `num_training_steps - num_warmup_steps` steps. Returned as a multiplier on
+        # the optimizer's base lr (the peak).
+        from torch.optim.lr_scheduler import LambdaLR
+
+        base_lr = optimizer.param_groups[0]["lr"]
+        if min_lr_rate is not None:
+            min_mult = min_lr_rate
+        elif min_lr and base_lr > 0:
+            min_mult = min_lr / base_lr
+        else:
+            min_mult = 0.0
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                init_mult = 1.0 / (num_warmup_steps + 1)
+                return init_mult + (1.0 - init_mult) * current_step / max(
+                    1, num_warmup_steps
+                )
+            progress = (current_step - num_warmup_steps) / max(
+                1, num_training_steps - num_warmup_steps
+            )
+            progress = min(1.0, progress)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_mult + (1.0 - min_mult) * cosine
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
     # PyTorch native
     elif lr_scheduler == "torch_constant":
         from torch.optim.lr_scheduler import ConstantLR
@@ -776,6 +816,7 @@ def pack_sequences(
     idx_ends: list[int],  # [B]
     max_seq_len: int,
     pad_val,
+    pad_to_fixed_len: bool = False,
 ):
     """Concatenate valid segments of multiple sequences into one contiguous sequence (no padding).
 
@@ -786,6 +827,7 @@ def pack_sequences(
         input_tensor: [B, seq_len], may contain padding.
         idx_starts, idx_ends: Valid range per sample (length B); idx_ends is exclusive.
         max_seq_len: Target packed length. pad_val: Fill value for padding.
+        pad_to_fixed_len: Whether to pad to fixed max_seq_len.
 
     Returns:
         1D tensor of shape (max_seq_len). Use unsqueeze(0) for [1, max_seq_len].
@@ -793,19 +835,22 @@ def pack_sequences(
     assert len(input_tensor.shape) == 2
     assert input_tensor.shape[0] == len(idx_starts) == len(idx_ends)
     assert sum(idx_ends) - sum(idx_starts) <= max_seq_len
-    pad_len = max_seq_len - (sum(idx_ends) - sum(idx_starts))
 
     input_tensors_rm_pad = []
     for idx in range(input_tensor.shape[0]):
         input_tensors_rm_pad.append(input_tensor[idx, idx_starts[idx] : idx_ends[idx]])
 
-    if pad_len > 0:
-        pad_tensor = torch.full(
-            (pad_len,), pad_val, dtype=input_tensor.dtype, device=input_tensor.device
-        )
-        input_tensors_rm_pad.append(pad_tensor)
+    if pad_to_fixed_len:
+        pad_len = max_seq_len - (sum(idx_ends) - sum(idx_starts))
+        if pad_len > 0:
+            pad_tensor = torch.full(
+                (pad_len,),
+                pad_val,
+                dtype=input_tensor.dtype,
+                device=input_tensor.device,
+            )
+            input_tensors_rm_pad.append(pad_tensor)
 
-    # [1, max_seq_len]
     output_tensor = torch.cat(input_tensors_rm_pad)
     return output_tensor
 
@@ -899,6 +944,7 @@ def pack_fsdp_input(
     idx_ends,
     max_seq_len_pack,
     eos_token_id,
+    pad_to_fixed_len: bool = False,
 ):
     """Pack FSDP training input_ids and position_ids from [B, seq_len] to [1, max_seq_len_pack].
 
@@ -908,15 +954,21 @@ def pack_fsdp_input(
     Args:
         input_ids, position_ids: [B, seq_len]. idx_starts, idx_ends: From prepare_pack_fsdp.
         max_seq_len_pack: Packed length. eos_token_id: Pad value for input_ids end.
+        pad_to_fixed_len: Whether to pad to fixed max_seq_len_pack.
 
     Returns:
         input_ids, position_ids: [1, max_seq_len_pack]. attention_mask: None.
     """
     input_ids = pack_sequences(
-        input_ids, idx_starts, idx_ends, max_seq_len_pack, eos_token_id
+        input_ids,
+        idx_starts,
+        idx_ends,
+        max_seq_len_pack,
+        eos_token_id,
+        pad_to_fixed_len,
     ).unsqueeze(0)
     position_ids = pack_sequences(
-        position_ids, idx_starts, idx_ends, max_seq_len_pack, 0
+        position_ids, idx_starts, idx_ends, max_seq_len_pack, 0, pad_to_fixed_len
     ).unsqueeze(0)
     # force set attention_mask to None, and transformer will generate cu_seqlens from position_ids
     # only available in fsdp using flash-attn

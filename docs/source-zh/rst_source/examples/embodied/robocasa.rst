@@ -1,182 +1,216 @@
-基于RoboCasa评测平台的强化学习训练
-====================================
+基于 RoboCasa 的强化学习训练
+========================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
    :height: 16px
    :class: inline-icon
 
-本文档提供了在RLinf框架中使用RoboCasa环境进行强化学习训练任务的全面指南。
-RoboCasa Kitchen专注于厨房环境中的操作任务，具有多样化的厨房布局、物体和操作任务。
-RoboCasa Kitchen将真实的厨房环境与多样化的操作挑战相结合，使其成为开发可泛化机器人策略的理想基准。
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/robocasa.jpeg
+   :align: center
+   :width: 90%
 
-主要目标是训练能够执行以下任务的视觉-语言-动作模型:
+   RoboCasa（图片来源：`RoboCasa <https://robocasa.ai/>`__）。
 
-1. **视觉理解**: 处理来自多个摄像头视角的RGB图像。
-2. **语言理解**: 解释自然语言任务指令。
-3. **操作技能**: 执行复杂的厨房任务，如拾取-放置、开关门和电器控制。
+`RoboCasa <https://robocasa.ai/>`__ 是基于 robosuite 的厨房操作基准，包含多样化布局、
+物体和原子任务。你将使用 RLinf 在 RoboCasa ``CloseDrawer`` 任务上，通过 PPO 微调
+OpenPI π₀ 策略。
 
-环境
-----
+概览
+----------------------------------------
 
-**RoboCasa环境**
+在 RoboCasa 的移动操作厨房任务上微调 OpenPI π₀。
 
-- **环境**: RoboCasa Kitchen厨房仿真环境(基于robosuite构建)
-- **机器人**: Panda机械臂带移动底座(PandaOmron)，配备夹爪
-- **观测**: 多视角RGB图像(机器人视角+腕部相机) + 本体感知状态
-- **动作空间**: 12维连续动作
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-  - 3D机械臂位置增量
-  - 3D机械臂旋转增量
-  - 1D夹爪控制 (开/关)
-  - 4D底座控制
-  - 1D模式选择（控制底座/机械臂）
+   .. grid-item-card:: 模型
+      :text-align: center
 
-**任务类别**
+      π₀
 
-RoboCasa Kitchen提供了涵盖多个类别的24个原子任务（不包含需要底座移动的NavigateKitchen原子任务）:
+   .. grid-item-card:: 算法
+      :text-align: center
 
-*门操作任务*:
+      PPO
 
-- ``OpenSingleDoor``: 打开柜门或微波炉门
-- ``CloseSingleDoor``: 关闭柜门或微波炉门
-- ``OpenDoubleDoor``: 打开双开门柜子
-- ``CloseDoubleDoor``: 关闭双开门柜子
-- ``OpenDrawer``: 打开抽屉
-- ``CloseDrawer``: 关闭抽屉
+   .. grid-item-card:: 任务
+      :text-align: center
 
-*拾取和放置任务*:
+      CloseDrawer
 
-- ``PnPCounterToCab``: 从柜台拾取并放置到柜子中
-- ``PnPCabToCounter``: 从柜子拾取并放置到柜台上
-- ``PnPCounterToSink``: 从柜台拾取并放置到水槽中
-- ``PnPSinkToCounter``: 从水槽拾取并放置到柜台上
-- ``PnPCounterToStove``: 从柜台拾取并放置到炉灶上
-- ``PnPStoveToCounter``: 从炉灶拾取并放置到柜台上
-- ``PnPCounterToMicrowave``: 从柜台拾取并放置到微波炉中
-- ``PnPMicrowaveToCounter``: 从微波炉拾取并放置到柜台上
+   .. grid-item-card:: 硬件
+      :text-align: center
 
-*电器控制任务*:
+      1 节点 · 8 GPUs
 
-- ``TurnOnMicrowave``: 打开微波炉
-- ``TurnOffMicrowave``: 关闭微波炉
-- ``TurnOnSinkFaucet``: 打开水龙头
-- ``TurnOffSinkFaucet``: 关闭水龙头
-- ``TurnSinkSpout``: 旋转水槽喷嘴
-- ``TurnOnStove``: 打开炉灶
-- ``TurnOffStove``: 关闭炉灶
+| **你将完成：** 安装 → 下载厨房资产 + 模型 → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · RoboCasa 厨房资产 · SFT 检查点。
 
-*咖啡制作任务*:
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-- ``CoffeeSetupMug``: 放置咖啡杯
-- ``CoffeeServeMug``: 将咖啡倒入杯中
-- ``CoffeePressButton``: 按下咖啡机按钮
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-**观测结构**
+   * - 任务
+     - 描述
+   * - ``CloseDrawer``
+     - 使用 PandaOmron 移动机械臂关闭厨房抽屉。
 
-- **主相机图像** (``base_image``): 机器人左侧视角 (224×224 RGB)
-- **腕部相机图像** (``wrist_image``): 末端执行器视角相机 (224×224 RGB)
-- **腕部相机图像** (``extra_view_image``): 机器人右侧视角 (224×224 RGB, 默认不包含。)
-- **本体感知状态** (``state``): 25维向量，包含:
-  - ``[0:3]`` 末端执行器位置 (x, y, z)
-  - ``[3:7]`` 末端执行器四元数 (w, x, y, z)
-  - ``[7:9]`` 夹爪关节位置
-  - ``[9:11]`` 夹爪关节速度
-  - ``[11:14]`` 末端执行器相对于底座的位置 (x, y, z)
-  - ``[14:18]`` 末端执行器相对于底座的四元数 (w, x, y, z)
-  - ``[18:21]`` 底座位置 (x, y, z)
-  - ``[21:25]`` 底座四元数 (w, x, y, z)
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**数据结构**
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
 
-- **图像**: 主相机RGB张量 ``[batch_size, 3, 224, 224]`` 和腕部相机 ``[batch_size, 3, 224, 224]``。也可以包含右侧相机RGB张量 ``[batch_size, 3, 224, 224]``。
-- **状态**: 本体感知状态张量 ``[batch_size, 25]``。 
-- **任务描述**: 自然语言指令
-- **动作**: 12维连续动作
-- **奖励**: 基于任务完成的稀疏奖励
+   * - 字段
+     - 规格
+   * - 观测
+     - 默认两个 RGB 视角（224×224 的 ``base_image`` 和 ``wrist_image``）以及 25 维本体状态。
+   * - 动作
+     - 12 维连续动作：机械臂位置增量、机械臂旋转增量、夹爪、底座控制和模式选择。
+   * - 奖励
+     - 稀疏任务完成奖励。
+   * - 提示词
+     - RoboCasa 任务生成的自然语言指令。
 
-算法
-----
+.. note::
 
-**核心算法组件**
+   RoboCasa 包含更多原子任务，但当前公开的 RLinf 配方使用
+   ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml`` 训练
+   ``CloseDrawer``。
 
-1. **PPO (近端策略优化)**
+安装
+----------------------------------------
 
-   - 使用GAE(广义优势估计)进行优势估计
+.. include:: _setup_common.rst
 
-   - 带比率限制的策略裁剪
-
-   - 价值函数裁剪
-
-   - 熵正则化
-
-2. **GRPO (组相对策略优化)**
-
-   - 对于每个状态/提示，策略生成 *G* 个独立动作
-
-   - 通过减去组的平均奖励来计算每个动作的优势
-
-依赖安装
---------
-
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-   # 为提高国内下载速度，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
-
-2. 安装依赖
-~~~~~~~~~~~~~~~~
-
-**选项 1：Docker 镜像**
-
-使用 Docker 镜像运行实验。
+**Docker 镜像**
 
 .. code:: bash
 
    docker run -it --rm --gpus all \
-      --shm-size 20g \
+      --shm-size 32g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-robocasa
-      # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-robocasa
+      rlinf/rlinf:agentic-rlinf0.3-robocasa
 
-**选项 2：自建环境**
+   # 国内用户可使用：
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-robocasa
 
-通过运行以下命令在您的环境中直接安装依赖：
+在镜像中切换到 OpenPI 虚拟环境：
 
 .. code:: bash
 
-   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+   source switch_env openpi
 
+**自定义环境**
+
+安装 RoboCasa 与 OpenPI 依赖：
+
+.. code:: bash
+
+   # 国内用户可添加 --use-mirror。
    bash requirements/install.sh embodied --model openpi --env robocasa
    source .venv/bin/activate
 
-数据集下载
------------------
+安装 RoboCasa 后下载厨房资产：
 
 .. code:: bash
 
-   python -m robocasa.scripts.download_kitchen_assets   # 注意: 需要下载的资源大约有5GB
+   python -m robocasa.scripts.download_kitchen_assets
 
-模型下载
---------------
+.. warning::
+
+   RoboCasa 厨房资产约 5 GB。启动训练前只需下载一次。
+
+下载模型
+----------------------------------------
+
+下载 OpenPI π₀ 检查点：
 
 .. code-block:: bash
 
-   # 下载模型（选择任一方法）
-   # 方法 1: 使用 git clone
+   cd /path/to/save/model
+
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-Pi0-RoboCasa
 
-   # 方法 2: 使用 huggingface-hub
-   # 为提升国内下载速度，可以设置：
+   # 或使用 huggingface-hub：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-Pi0-RoboCasa --local-dir RLinf-Pi0-RoboCasa
+
+.. include:: _model_path.rst
+
+运行
+----------------------------------------
+
+启动 CloseDrawer 配方：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 46 26
+
+   * - 配方
+     - 配置
+     - 命令后缀
+   * - OpenPI π₀ + PPO
+     - ``examples/embodiment/config/robocasa_closedrawer_ppo_openpi.yaml``
+     - ``robocasa_closedrawer_ppo_openpi``
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh robocasa_closedrawer_ppo_openpi
+
+这条命令会：
+
+1. 使用 RoboCasa Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 RoboCasa env 组件创建 Ray worker。
+3. 运行 PPO rollout，计算稀疏任务奖励，并更新 OpenPI 策略。
+
+独立评测请使用统一的 :doc:`Evaluation CLI <../../evaluations/reference/cli>`，
+通过配置回退机制复用相同后缀 ``robocasa_closedrawer_ppo_openpi``。
+
+.. note::
+
+   默认配置使用 ``actor,env,rollout: all`` 共置。请根据 GPU 显存预算调整
+   ``env.train.total_num_envs``、``env.eval.total_num_envs`` 和
+   ``actor.global_batch_size``。
+
+可视化与结果
+----------------------------------------
+
+在 RLinf 仓库根目录启动 TensorBoard：
+
+.. code:: bash
+
+   tensorboard --logdir ../results --port 6006
+
+关键指标是 ``env/success_once``。完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
+
+如需保存 rollout 视频，请在环境配置中启用 video：
+
+.. code:: yaml
+
+   video_cfg:
+     save_video: True
+     info_on_video: True
+     video_base_dir: ${runner.logger.log_path}/video/train
+
+如需启用 W&B 或 SwanLab，请添加 logger backend：
+
+.. code:: yaml
+
+   runner:
+     logger:
+       logger_backends: ["tensorboard", "wandb"]  # or swanlab
+
+.. note::
+
+   本页面暂未发布固定的 RoboCasa 成功率表。请使用 ``env/success_once`` 和评估视频比较运行结果。

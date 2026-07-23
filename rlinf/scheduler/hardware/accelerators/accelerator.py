@@ -12,15 +12,104 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, ClassVar, Optional
 
 import torch
+from omegaconf import ListConfig
 
 from ..hardware import Hardware, HardwareConfig, HardwareInfo, HardwareResource
 
 if TYPE_CHECKING:
     from ...collective import CollectiveGroupOptions
+
+
+# ---------------------------------------------------------------------------
+# ProfileConfig — generic base for per-accelerator profiling configurations
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProfileConfig:
+    """Base configuration for profiling worker processes.
+
+    Concrete backends subclass this and set ``BACKEND_TYPE`` to their
+    backend name string (e.g. ``"nsight"``).  Non-profiling accelerators
+    register an empty subclass so that the registry is always complete.
+    """
+
+    BACKEND_TYPE: ClassVar[str] = ""
+    """Backend identifier.  Subclasses override this to their backend name."""
+
+    backend: str = ""
+    """Profiling backend name matching the subclass's ``BACKEND_TYPE``."""
+
+    enabled: bool = True
+    """Whether to enable profiling for matching worker groups."""
+
+    worker_groups: Optional[list[str] | str] = None
+    """Worker group names to profile.  ``None`` means no groups are profiled."""
+
+    steps: Optional[list[int]] = None
+    """Function step indices to gate profiling around.
+
+    When ``None`` (default), every training step is profiled if profiling is
+    enabled.
+    """
+
+    output_dir: Optional[str] = None
+    """Directory for profiling output files.
+
+    When ``None``, ``validate_cfg`` derives a default path under the run's log directory.
+    """
+
+    def __post_init__(self) -> None:
+        """Normalize common profiling fields."""
+        if self.worker_groups is not None:
+            worker_groups = self.worker_groups
+            if isinstance(worker_groups, str):
+                self.worker_groups = [worker_groups]
+            else:
+                assert isinstance(worker_groups, (list, ListConfig)), (
+                    "worker_groups must be a list of strings or a single string "
+                    "in profiling config. "
+                    f"But got {type(worker_groups)}: {worker_groups}"
+                )
+                self.worker_groups = [str(g) for g in worker_groups]
+
+        if self.steps is not None:
+            assert isinstance(self.steps, (list, ListConfig)), (
+                "steps must be a list of ints in profiling config. "
+                f"But got {type(self.steps)}: {self.steps}"
+            )
+            self.steps = [int(s) for s in self.steps]
+            assert all(s >= 0 for s in self.steps), (
+                f"Profiling steps must be non-negative ints. But got: {self.steps}"
+            )
+
+    def profiles_worker_group(self, worker_group_name: str) -> bool:
+        """Return whether this config should profile the given worker group."""
+        if not self.enabled or not self.worker_groups:
+            return False
+        normalized = {g.lower() for g in self.worker_groups}
+        return "all" in normalized or worker_group_name.lower() in normalized
+
+    def should_profile_step(self, step_idx: int) -> bool:
+        """Return whether the given step should be gated for profiling."""
+        if not self.enabled:
+            return False
+        if self.steps is None:
+            return True
+        return step_idx in self.steps
+
+    def check(self) -> bool:
+        """Return ``True`` if all required profiling tools are available on this node.
+
+        Subclasses override this to check backend-specific executables.
+        """
+        return True
 
 
 class AcceleratorType(str, Enum):
@@ -32,12 +121,15 @@ class AcceleratorType(str, Enum):
     NPU = "NPU"  # Huawei Ascend
     NO_ACCEL = "NO_ACCEL"
     MUSA_GPU = "MUSA_GPU"
+    KUNLUN_XPU = "KUNLUN_XPU"
 
 
 class AcceleratorManager:
     """Base Manager for accelerator-related operations."""
 
     manager_register: dict[AcceleratorType, type["AcceleratorManager"]] = {}
+    profiling_config_register: dict[AcceleratorType, type["ProfileConfig"]] = {}
+    profile_backend_register: dict[str, type["ProfileConfig"]] = {}
 
     @staticmethod
     def register_manager(accelerator_type: AcceleratorType):
@@ -48,6 +140,22 @@ class AcceleratorManager:
             return manager
 
         return manager_decorator
+
+    @staticmethod
+    def register_profiling_config(accelerator_type: AcceleratorType):
+        """Register a profiling config class for a specific accelerator type.
+
+        Also registers the class in ``profile_backend_register`` keyed by
+        ``cls.BACKEND_TYPE`` when that string is non-empty.
+        """
+
+        def decorator(cls):
+            AcceleratorManager.profiling_config_register[accelerator_type] = cls
+            if getattr(cls, "BACKEND_TYPE", ""):
+                AcceleratorManager.profile_backend_register[cls.BACKEND_TYPE] = cls
+            return cls
+
+        return decorator
 
     @staticmethod
     def get_num_devices():
@@ -125,6 +233,70 @@ class AcceleratorManager:
             Optional[dist.ProcessGroup.Options]: The accelerator CCL process group options.
         """
         raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Profiling API — no-op defaults, overridden per accelerator type.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def modify_profiling_context(
+        py_executable: str,
+        profiling_cfg,
+        output_prefix: str,
+    ) -> str:
+        """Prepend a profiling wrapper command to the Python interpreter path.
+
+        Returns the unmodified ``py_executable`` by default (no profiling).
+        NVIDIA overrides this to prepend ``nsys profile ...``.
+        """
+        return py_executable
+
+    @staticmethod
+    def start_profiling(step_idx: Optional[int] = None) -> None:
+        """Open a step-gated profiling capture window. No-op by default."""
+
+    @staticmethod
+    def stop_profiling() -> None:
+        """Close the current profiling capture window. No-op by default."""
+
+    @staticmethod
+    def is_profiling_active() -> bool:
+        """Return whether a profiling capture window is currently open."""
+        return False
+
+    @staticmethod
+    def profiling_range(
+        label: str,
+        color: Optional[str] = None,
+        domain: Optional[str] = None,
+    ):
+        """Return a context manager that annotates a code range for profiling.
+
+        The default implementation is a no-op. NVIDIA overrides this to emit
+        an NVTX range when profiling is active.
+        """
+        return contextlib.nullcontext()
+
+    @staticmethod
+    def get_profiling_env_vars(
+        profiling_cfg: "ProfileConfig",
+        output_prefix: str,
+    ) -> dict[str, str]:
+        """Return additional environment variables required by the profiling backend.
+
+        Called once per worker allocation when profiling is active.  The default
+        implementation returns an empty dict; backends that need env-var-based
+        configuration (e.g. ``ROCPROFSYS_OUTPUT_PATH``) override this.
+        """
+        return {}
+
+    @staticmethod
+    def check_profiler(profiling_cfg: "ProfileConfig") -> bool:
+        """Return ``True`` if all tools required by the profiling backend are available on this node.
+
+        Delegates to ``profiling_cfg.check()``.
+        """
+        return profiling_cfg.check()
 
 
 @Hardware.register(is_default_hw=True)
@@ -298,3 +470,37 @@ class AcceleratorUtil:
             manager = AcceleratorManager.manager_register[accelerator_type]
             return manager.get_accel_pg_options(options=options)
         raise ValueError(f"Unsupported accelerator type: {accelerator_type}")
+
+    @staticmethod
+    def start_profiling(
+        accelerator_type: AcceleratorType, step_idx: Optional[int] = None
+    ) -> None:
+        """Open a step-gated profiling capture window for the given accelerator."""
+        if accelerator_type in AcceleratorManager.manager_register:
+            AcceleratorManager.manager_register[accelerator_type].start_profiling(
+                step_idx
+            )
+
+    @staticmethod
+    def stop_profiling(accelerator_type: AcceleratorType) -> None:
+        """Close the current profiling capture window for the given accelerator."""
+        if accelerator_type in AcceleratorManager.manager_register:
+            AcceleratorManager.manager_register[accelerator_type].stop_profiling()
+
+    @staticmethod
+    def profiling_range(
+        accelerator_type: AcceleratorType,
+        label: str,
+        color: Optional[str] = None,
+        domain: Optional[str] = None,
+    ):
+        """Return a context manager that annotates a code region for profiling.
+
+        Dispatches to the registered manager for the given accelerator type.
+        Falls back to a no-op context manager when no manager is registered.
+        """
+        if accelerator_type in AcceleratorManager.manager_register:
+            return AcceleratorManager.manager_register[
+                accelerator_type
+            ].profiling_range(label, color=color, domain=domain)
+        return contextlib.nullcontext()

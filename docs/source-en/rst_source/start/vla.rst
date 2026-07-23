@@ -1,5 +1,5 @@
-Quickstart 1: PPO Training of VLAs on Maniskill3
-=================================================
+Quick Start
+===========
 
 This quick-start walks you through training the Visual-Language-Action model, including
 `OpenVLA <https://github.com/openvla/openvla>`_ and `OpenVLA-OFT <https://github.com/moojink/openvla-oft>`_ on the
@@ -13,7 +13,7 @@ focusing on complex contact manipulation and embodied intelligence tasks.
 The benchmark covers multiple domains, including robotic arms, mobile manipulators, humanoid robots, and dexterous hands,  
 supporting various tasks such as grasping, assembling, drawing, and locomotion.
 
-We have also implemented system-level optimizations for the GPU simulator (see :doc:`../tutorials/usage/execution_modes`).
+We have also implemented system-level optimizations for the GPU simulator (see :doc:`../concepts/execution_modes`).
 
 Launch Training
 --------------------------
@@ -35,8 +35,8 @@ If using the **OpenVLA-OFT** model, run the following command:
 .. code-block:: bash
 
    # Download OpenVLA-OFT pre-trained model
-   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
-   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
    
    # Download LoRA fine-tuned checkpoint on maniskill
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
@@ -63,7 +63,7 @@ Before running the script, you need to modify the ``./examples/embodiment/config
 
 
 
-For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/Openvla-oft-SFT-libero10-trajall` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
+For **OpenVLA-OFT**, modify the ``maniskill_ppo_openvlaoft_quickstart.yaml`` file. Set the following model configuration items to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` checkpoint is located. At the same time, set the LoRA path to the path where the `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` checkpoint is located.
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  
@@ -93,6 +93,45 @@ For **OpenVLA-OFT**:
    source switch_env openvla-oft
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_openvlaoft_quickstart
 
+Training Pipeline Mode
+--------------------------
+
+For embodied FSDP training, ``runner.use_training_pipeline`` enables a pipeline
+execution path between environment rollout and actor training. When it is set to
+``True``, rollout trajectories are processed on the environment worker, converted
+into packed actor micro-batches, and streamed to the actor through the channel.
+The actor can then train on ready-to-use micro-batches while rollout generation is
+still progressing.
+
+This mode is useful when rollout payloads contain nested observations or large
+tensors. Sending packed micro-batches makes the channel payload more friendly to
+the tensor fast path and reduces extra reconstruction work on the actor side. It
+is especially helpful when environment workers and actor workers are placed on
+different nodes and the inter-node connection crosses a wide-area network, where
+smaller packed tensor payloads reduce transfer overhead.
+
+Example:
+
+.. code-block:: yaml
+
+   runner:
+     use_training_pipeline: True
+
+   algorithm:
+     adv_type: gae
+     normalize_advantages: True
+
+Notes and limitations:
+
+- ``algorithm.normalize_advantages`` is supported. The pipeline path computes raw
+  advantages on the environment worker, aggregates masked advantage statistics
+  across the environment workers that feed each actor rank, and normalizes before
+  streaming actor micro-batches.
+- ``algorithm.adv_type`` currently supports only ``gae`` in this mode.
+- This mode is intended for embodied FSDP actor training with PPO/GRPO-style
+  actor losses. It is not supported for ``embodied_sac``, ``embodied_dagger``,
+  or ``embodied_nft``.
+
 
 View Training Results
 --------------------------
@@ -120,7 +159,7 @@ It is recommended to focus on the following metrics:
    ``cluster.component_placement`` in the configuration file.
 
    Set this item to **0-3** or **0-7** to use 4/8 GPUs according to your actual resources.
-   See :doc:`../tutorials/configuration/basic_config` for more detailed instructions on Placement configuration.
+   See :doc:`../guides/basic_config` for more detailed instructions on Placement configuration.
 
    .. code-block:: yaml
 

@@ -1,0 +1,95 @@
+defaults:
+  - model/pi0_5_pytorch_dual_franka@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# Dual-Franka tcp_rot6d SFT on the openpi_pytorch Pi0.5 path. The custom
+# LeRobot loader handles sampling and collation; model-facing transforms come
+# from the canonical RLinf pi05_dualfranka_tcp_rot6d data config.
+#
+# Replace the path and repository placeholders below before launching. When
+# train_data_paths points directly at a dataset, repo_id may remain empty. When
+# it points at an HF_LEROBOT_HOME-style parent, set repo_id to the dataset's
+# relative repository ID.
+#
+# Norm stats are loaded from
+# <assets_dir>/<asset_id>/norm_stats.json and should match
+# the padded model tensors (state/actions last dim = openpi.model_action_dim).
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dual_franka_tcp_rot6d_openpi_pytorch_sft"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 100
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 2000
+
+data:
+  train_data_paths: /path/to/dual_franka_dataset
+  repo_id: "<repo_id>/tcp_rot6d_v1"
+  num_workers: 4
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  eval_batch_size: 1
+  global_batch_size: 16
+  seed: 0
+
+  model:
+    model_path: /path/to/pi05_base_pytorch_new
+    openpi:
+      assets_dir: /path/to/openpi_assets
+      asset_id: "<repo_id>"
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 1000
+    lr_scheduler: "openpi_cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

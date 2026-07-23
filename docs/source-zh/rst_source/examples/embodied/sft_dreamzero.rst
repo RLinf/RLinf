@@ -1,57 +1,88 @@
-DreamZero 监督微调
-====================================
+DreamZero 监督微调和 Franka 真机部署
+========================================
 
-本文档介绍如何在 RLinf 中运行 DreamZero 监督微调（SFT），覆盖从 **模型与数据准备**、 **配置填写** 到 **启动训练**、 **评测** 与 **排错** 的完整流程。
+.. figure:: https://dreamzero0.github.io/images/project_overview.png
+   :align: center
+   :width: 90%
 
-当前支持：
+   DreamZero：由视频生成世界模型微调得到的 VLA 策略。
 
-- **数据集**: LIBERO (``libero_sim``)、OXE DROID (``oxe_droid``)、Franka 抓取放置 (``franka_pnp``)；支持多 embodiment **混合训练** (见 ``libero_franka_mix_sft_dreamzero_5b.yaml``)
-- **骨干网络**：WAN2.1（如 DreamZero-DROID 14B）、WAN2.2（如 Wan2.2-TI2V-5B 冷启动）
+在 RLinf 中运行 DreamZero 监督微调（SFT）：准备模型与 LeRobot 数据，启动训练，执行仿真评测，并将训练后的策略部署到 Franka 真机。
 
+概览
+----------------------------------------
 
-环境准备
-----------------
+将基于 WAN 的 DreamZero 世界模型微调成操作策略，在 LeRobot 数据上训练，在仿真中评测，并部署到 Franka。
 
-1. 克隆 RLinf 仓库并进入根目录：
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-.. code:: bash
+   .. grid-item-card:: 模型
+      :text-align: center
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+      WAN2.1 · WAN2.2
 
-2. 使用 ``requirements/install.sh`` 创建并安装 **DreamZero 专用 uv 虚拟环境** ：
+   .. grid-item-card:: 方法
+      :text-align: center
 
-.. code:: bash
+      SFT · Mixture SFT
 
-   # 仅做 SFT（LeRobot 离线数据，不跑仿真）— 推荐
+   .. grid-item-card:: 数据
+      :text-align: center
+
+      LIBERO · DROID · Franka PnP
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1+ 节点 · GPU
+
+| **你将完成：** 安装 → 准备模型和 LeRobot 数据 → 生成 ``metadata.json`` → 运行 ``run_vla_sft.sh`` → 在仿真或 Franka 上评测。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · `DreamZero 仓库 <https://github.com/RLinf/dreamzero>`_（``DREAMZERO_PATH``）· 一个 LeRobot 数据集。
+
+**当前支持**
+
+- **数据集：** LIBERO（``libero_sim``）、OXE DROID（``oxe_droid``）、Franka pick-and-place（``franka_pnp``）；支持跨 embodiment 的 **mixture SFT** （见 ``libero_franka_mix_sft_dreamzero_5b.yaml``）。
+- **骨干网络：** WAN2.1（如 DreamZero-DROID 14B）、WAN2.2（如 Wan2.2-TI2V-5B 冷启动）。
+
+安装
+----------------------------------------
+
+.. include:: _setup_common.rst
+
+**选项 1：仅 SFT 环境** — 安装 DreamZero，不安装仿真器依赖：
+
+.. code-block:: bash
+
+   # 国内用户可以添加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model dreamzero
-
-   # 若后续还要在 LIBERO 仿真里评测，可一并安装 libero 环境
-   bash requirements/install.sh embodied --model dreamzero --env libero
-
-说明：
-
-- 国内网络可加 ``--use-mirror`` 加速 PyPI / Python / GitHub 下载。
-- 自定义 venv 目录： ``--venv <dir>``；无 root 且系统依赖已就绪： ``--no-root``。
-
-安装完成后激活环境：
-
-.. code:: bash
-
    source .venv/bin/activate
 
-3. 单独克隆 `DreamZero 代码库 <https://github.com/RLinf/dreamzero>`_，并设置 ``DREAMZERO_PATH`` 指向其 Python 包根目录：
+**选项 2：SFT + LIBERO 评测** — 额外安装 LIBERO 仿真依赖：
 
-.. code:: bash
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model dreamzero --env libero
+   source .venv/bin/activate
+
+单独克隆 DreamZero 仓库，并在 SFT 或评测前设置 ``DREAMZERO_PATH``：
+
+.. code-block:: bash
 
    git clone https://github.com/RLinf/dreamzero.git
    export DREAMZERO_PATH=/path/to/dreamzero
 
+**这些命令会：**
+
+1. 通过 ``requirements/install.sh`` 创建 DreamZero 专用 uv 虚拟环境。
+2. 默认只安装离线 SFT 依赖；如果需要仿真评测，则额外安装 LIBERO。
+3. 通过 ``DREAMZERO_PATH`` 让外部 DreamZero 包可导入；``examples/sft/run_vla_sft.sh`` 也会将其加入 ``PYTHONPATH``。
+
 模型准备
-----------------
+----------------------------------------
 
 从 checkpoint 继续训练
-~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 设置 ``actor.model.model_path`` 为已下载的权重目录；架构与权重从该目录加载。可选 checkpoint：
 
@@ -81,7 +112,7 @@ YAML 示例（DROID + 官方 14B，见 ``droid_sft_dreamzero_14b.yaml``）：
 AgiBot 数据将 ``model_path`` 换为 ``./DreamZero-AgiBot`` 即可。
 
 从头训练（WAN2.2 组件冷启动）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 设置 ``model_path: null``，并填写各 ``*_pretrained_path``。需从 Hugging Face 下载：
 
@@ -118,18 +149,18 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 
 
 数据准备
-----------------
+----------------------------------------
 
 训练数据需为 LeRobot v2/v3 布局（含 ``meta/``、``data/`` 等）。通过 ``data.train_data_paths`` 指定本地目录或 Hugging Face 数据集 ID。
 
 数据集下载
-~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 当前支持：
 
 - LIBERO： `physical-intelligence/libero <https://huggingface.co/datasets/physical-intelligence/libero>`_ — ``embodiment_tag: libero_sim``，配置见 ``libero_sft_dreamzero_14b.yaml`` / ``libero_sft_dreamzero_5b.yaml``
 - DROID： `GEAR-Dreams/DreamZero-DROID-Data <https://huggingface.co/datasets/GEAR-Dreams/DreamZero-DROID-Data>`_ — ``embodiment_tag: oxe_droid``，配置见 ``droid_sft_dreamzero_14b.yaml``
-- Franka PnP：自定义 LeRobot 数据集 — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
+- Franka PnP：`RLinf/dreamzero-franka-pnp <https://huggingface.co/datasets/RLinf/dreamzero-franka-pnp>`_ — ``embodiment_tag: franka_pnp``，变换实现见 ``data_transforms/franka_pnp.py``（继承 ``libero_sim`` 双视角布局）
 - 混合训练：``libero_franka_mix_sft_dreamzero_5b.yaml`` 中 ``data.train_data_paths`` 为列表，每项可指定不同的 ``dataset_path`` / ``embodiment_tag`` / ``metadata_json_path`` / ``weight``
 
 下载示例：
@@ -141,9 +172,11 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    huggingface-cli download physical-intelligence/libero --repo-type dataset --local-dir ./libero
    # DROID
    huggingface-cli download GEAR-Dreams/DreamZero-DROID-Data --repo-type dataset --local-dir ./DreamZero-DROID-Data
+   # Franka PnP 真机数据
+   huggingface-cli download RLinf/dreamzero-franka-pnp --repo-type dataset --local-dir ./franka_pnp
 
 生成 metadata.json
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在新数据集或冷启动（无 ``experiment_cfg/metadata.json``）时，必须先为对应 ``embodiment_tag`` 生成归一化统计：
 
@@ -162,16 +195,22 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
      --output-metadata /path/to/metadata.json \
      --merge
 
+   # Franka PnP
+   python toolkits/lerobot/generate_dreamzero_metadata.py \
+     --preset franka_pnp \
+     --dataset-root /path/to/franka_pnp \
+     --output-metadata /path/to/franka_pnp_metadata.json
+
 然后在配置中设置 ``actor.model.metadata_json_path`` （ 或放到 ``model_path/experiment_cfg/metadata.json`` ） 。
 
 
-配置说明
----------------
+配置参考
+----------------------------------------
 
 配置文件由 Hydra 管理，入口脚本为 ``examples/sft/train_vla_sft.py``。下面按 **数据相关** 与 **模型及训练超参相关** 分别说明含义与作用。
 
 数据相关配置
-~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. list-table::
    :header-rows: 1
@@ -202,7 +241,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 - 视频时间维在预设里配置 ``action_head_cfg.config.num_frames`` （DreamZero 默认 33，对应 ``8 * max_chunk_size + 1``）；未设置时自动推导。
 
 模型与训练相关配置
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **标识与权重路径**
 
@@ -259,7 +298,7 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
    * - 字段
      - 含义与作用
    * - ``target_video_height`` / ``target_video_width``
-     - WAN 策略头目标分辨率（5B 预设如 176×320；可在 YAML 覆盖）。避免在 transform 代码里写死尺寸，以兼容 WAN2.1 / WAN2.2。
+     - WAN 策略头在 **多视角拼接后** 的目标分辨率（5B 预设如 176×320；Libero 常用 160×320）。仅作用于模型内部 resize， **不要** 用于 data transform 的单视角 resize。
    * - ``droid_view_height`` / ``droid_view_width``
      - （可选）DROID 各视角 resize 覆盖。
    * - ``relative_action`` / ``relative_action_keys`` / ``relative_action_per_horizon``
@@ -319,8 +358,8 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
        action_horizon: 24
        metadata_json_path: /path/to/metadata.json   # 若无 experiment_cfg/metadata.json
 
-启动训练
--------------
+运行
+----------------------------------------
 
 在仓库根目录执行：
 
@@ -354,79 +393,34 @@ YAML 示例（LIBERO 冷启动，见 ``libero_sft_dreamzero_5b.yaml``）：
 断点续训可设置 ``runner.resume_dir`` 指向 checkpoint 目录。
 
 
-评测
---------
+独立评测
+----------------------------------------
 
-SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **LIBERO** 仿真环境为例说明完整流程（任务套件为 LIBERO Spatial）；对应示例配置为 ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml``。其它支持 ``env.eval`` 的仿真环境亦可按相同方式编写配置并调用 ``eval_embodiment.sh``。
-
-**前置条件**
-
-1. 安装时需包含 LIBERO 仿真环境（见上文 **环境准备** 中的 ``--env libero``）。
-2. 已设置 ``DREAMZERO_PATH`` 指向 DreamZero 代码库根目录（``eval_embodiment.sh`` 会将其加入 ``PYTHONPATH``）。
-3. 已准备与训练一致的 ``metadata.json``（``actor.model.metadata_json_path``）。
-
-**配置评测 YAML**
-
-复制或编辑 ``examples/embodiment/config/libero_spatial_eval_dreamzero.yaml``，至少修改以下字段：
+独立的仿真或真机评测由统一的 Evaluation 章节负责。本 SFT 页面只保留 DreamZero
+特有的衔接点。
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 26 34 40
 
-   * - 字段
-     - 说明
-   * - ``runner.ckpt_path``
-     - 待评测的 SFT 权重（``.pt``）。训练保存路径一般为 ``{log_path}/{experiment_name}/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。若仅有 ``.distcp`` 格式，请先按 :doc:`Checkpoint 转换 <../../tutorials/usage/convertor>` 转为 ``.pt``。
-   * - ``actor.model.*_pretrained_path`` / ``tokenizer_path``
-     - 与 SFT 冷启动配置一致（``model_path: null`` 时从各预训练路径构建骨干，再由 ``ckpt_path`` 覆盖可训练权重）。
-   * - ``actor.model.metadata_json_path``
-     - LIBERO 归一化统计（``embodiment_tag: libero_sim`` 时与 SFT 使用同一份 ``metadata.json``）。
-   * - ``actor.model.embodiment_tag``
-     - 须为 ``libero_sim``，与 LIBERO 数据及 rollout 观测变换一致。
-   * - ``actor.model.action_horizon`` / ``num_action_chunks``
-     - 与 SFT 一致（LIBERO 常用 16）。
-   * - ``algorithm.eval_rollout_epoch``
-     - 评测轮数；每轮在相同种子下跑完测试集，最终指标为多轮平均。
-   * - ``env.eval.total_num_envs`` / ``auto_reset`` / ``max_steps_per_rollout_epoch``
-     - 并行环境数与是否通过 ``auto_reset`` 覆盖更大测试集；详见 :doc:`评估教程 <../../start/vla-eval>`。
-   * - ``env.eval.video_cfg.save_video``
-     - 设为 ``True`` 可在 ``{log_path}/video/eval`` 下保存评测视频。
+   * - 目标
+     - 从这里开始
+     - DreamZero 专属字段
+   * - LIBERO 仿真
+     - :doc:`LIBERO 评测指南 <../../evaluations/guides/libero>` 和 ``evaluations/libero/libero_spatial_dreamzero_eval.yaml``
+     - 将 ``runner.ckpt_path`` 指向 ``full_weights.pt``；保持 ``actor.model.metadata_json_path`` 与 ``actor.model.embodiment_tag: libero_sim`` 和 SFT 一致。
+   * - Franka 部署 / 评测
+     - :doc:`真机评测指南 <../../evaluations/guides/realworld>` 和 ``evaluations/realworld/realworld_pnp_eval_dreamzero.yaml``
+     - 设置完整 DreamZero checkpoint 目录、``embodiment_tag: franka_pnp``、机器人 IP、相机序列号和任务位姿字段。
 
-配置片段示例：
+命令格式、Hydra 覆盖、日志与结果文件见 :doc:`Evaluation CLI 参考 <../../evaluations/reference/cli>`
+和 :doc:`Evaluation 结果参考 <../../evaluations/reference/results>`。如果 SFT checkpoint 仍是
+``.distcp`` 分片格式，请先按 :doc:`checkpoint 转换指南 <../../guides/convertor>` 转换。
 
-.. code:: yaml
+.. note::
 
-   runner:
-     only_eval: True
-     ckpt_path: /path/to/logs/libero_sft_dreamzero/checkpoints/global_step_3000/actor/model_state_dict/full_weights.pt
-
-   actor:
-     model:
-       model_path: null
-       metadata_json_path: /path/to/metadata.json
-       embodiment_tag: libero_sim
-       action_horizon: 16
-       num_action_chunks: 16
-
-   env:
-     eval:
-       total_num_envs: 64
-       auto_reset: True
-       ignore_terminations: True
-       max_episode_steps: 480
-       max_steps_per_rollout_epoch: 480
-
-**启动评测**
-
-在仓库根目录、已激活 DreamZero 环境且 ``DREAMZERO_PATH`` 已设置时执行：
-
-.. code:: bash
-
-   bash examples/embodiment/eval_embodiment.sh libero_spatial_eval_dreamzero
-
-脚本会调用 ``eval_embodied_agent.py``，将日志写入 ``logs/<时间戳>-libero_spatial_eval_dreamzero/eval_embodiment.log``，并在终端输出 ``eval/success_once``、 ``eval/return`` 等指标。更多通用评测参数说明见 :doc:`评估教程 <../../start/vla-eval>`。
-
-可选：若需将 SFT 的 ``full_weights.pt`` 转为 Hugging Face ``safetensors`` 目录（便于外部推理或发布），可使用 ``fsdp_dreamzero_convertor`` 配置运行 ``convert_pt_to_hf``（见 ``rlinf/utils/ckpt_convertor/fsdp_convertor/config/fsdp_dreamzero_convertor.yaml``）。在 LIBERO 等仿真环境中评测时，只需将 ``runner.ckpt_path`` 指向 ``.pt`` 权重文件即可。
+   DreamZero rollout 评测要求 ``max_steps_per_rollout_epoch`` 能被
+   ``actor.model.num_action_chunks`` 整除。
 
 **预训练 checkpoint 评测结果**
 
@@ -453,8 +447,8 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
    * - 21000
      - 90.43%
 
-监控与 sanity check
--------------------------------
+可视化与结果
+----------------------------------------
 
 1. 查看 ``run_embodiment.log``：``time/step`` 是否稳定；``train/loss``、``train/action_loss``、``train/dynamics_loss`` 是否合理。
 
@@ -471,8 +465,8 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
    - WAN2.2 时确认输入分辨率与 ``frame_seqlen`` 与 ``config.json`` 或预设一致
 
 
-扩展：新增 ``embodiment_tag``
-------------------------------------------
+扩展 DreamZero 到新的 ``embodiment_tag``
+-------------------------------------------
 
 当要在 **新的机器人 或 新 LeRobot 数据集** 上训练 DreamZero SFT 时，需要新增一个 ``embodiment_tag``，并在 RLinf 中注册对应的数据变换与元数据生成逻辑。建议以现有实现为模板对照修改：
 
@@ -524,7 +518,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 - 训练 YAML 里的 ``video.*`` / ``state.*`` / ``action.*`` 必须与 transform 里 ``ConcatTransform`` 的 ``*_concat_order`` 一致。
 
 步骤 2：注册到 RLinf
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 1. 在 ``rlinf/data/datasets/dreamzero/data_transforms/embodiment_tag.py`` 的 ``EmbodimentTag`` 枚举中增加成员（值等于 ``TAG`` 字符串）。
 2. 编辑 ``rlinf/data/datasets/dreamzero/data_transforms/__init__.py``：
@@ -537,7 +531,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 未注册时，``build_dreamzero_composed_transform`` 会报错并列出已有 tag。
 
 步骤 3：生成 ``metadata.json``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 为新数据集计算归一化统计，输出键名必须等于 ``TAG``：
 
@@ -593,14 +587,14 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 - ``action_horizon`` × ``max_chunk_size`` 决定数据集动作长度；勿只改其一。
 - 多视角拼接顺序与 prompt 文案不一致会导致训练信号错乱。
 - 继续微调官方权重时，随意改 ``DEFAULT_TAG_MAPPING`` 的整数 ID 会导致 projector 对不上。
-- 视频 resize：优先在 transform 链或 ``target_video_height/width`` 配置，避免写死尺寸导致 WAN2.1/2.2 不兼容。
-- 推理 / 评测：``examples/embodiment/config/*_dreamzero.yaml`` 中同样需要正确的 ``embodiment_tag``。
+- 视频 resize：单视角 ``VideoResize`` 写在各 embodiment 的 ``data_transforms`` 代码中（如 ``libero_sim``、``franka_pnp`` 均为 256×256）；``target_video_height/width`` 仅用于 WAN 在多视角拼接 **之后** 的模型内 resize，二者勿混用。 **混合数据集训练** 须保证各子数据集经 ``DreamTransform`` 拼接后输出相同 ``images`` 空间形状（H×W），否则 collate 无法组 batch；若各 embodiment 拼接布局不同（如 ``oxe_droid`` 为 2×2 网格）或单视角默认尺寸不一致，请在对应 transform 模块中手动对齐 ``VideoResize`` 参数。
+- 推理 / 评测：``examples/embodiment/config/`` 下的 DreamZero 评测配置 中同样需要正确的 ``embodiment_tag``。
 
 若仅推理、不改 RLinf 代码，且 Groot/DreamZero 上游已支持该 tag，有时只需准备 ``metadata.json`` 与评测配置；**SFT 新数据** 则须完成上述枚举成员、registry 注册与 transform 实现（``get_model`` 会自动 patch Groot ``EmbodimentTag``）。
 
 
 常见问题
---------------
+----------------------------------------
 
 1. **找不到权重（No safetensors weights）**
 
@@ -625,7 +619,7 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 
 5. **DROID 视频尺寸错误**
 
-   - 勿在代码中写死分辨率；使用 ``target_video_height/width`` 或 ``droid_view_*`` 配置项
+   - 勿将 ``target_video_height/width`` 用于 data transform 的单视角 resize；DROID 视角尺寸在 ``oxe_droid`` transform 代码中调整
 
 6. **multi_anchor 报错要求 lazy_load**
 
@@ -638,9 +632,87 @@ SFT 完成后，可在数据集对应具身环境中评测策略。下文以 **L
 
 
 实践建议
-------------------
+----------------------------------------
 
 - 追求稳定收敛时，优先从已发布的 DreamZero 权重继续 SFT（设置 ``model_path``）。
 - 全量适配 WAN2.2 可冷启动，但需更大数据与更长训练；改配置后先用 50–200 step 试跑验证 shape 与 loss。
 - 每次更换数据集或 ``embodiment_tag``，务必重新生成或更新 ``metadata.json``。
 - LIBERO 与 DROID 的 ``action_horizon``、 ``embodiment_tag``、多视角拼接逻辑不同，不要混用配置模板。
+
+
+训练加速
+----------------------------------------
+
+RLinf 团队对 DreamZero 的训练管线进行了深度的系统级重构与加速。相比 DreamZero 官方提供的基线训练脚本，RLinf **实现了近 4 倍的训练吞吐加速**，同时保持甚至优化了收敛效果。
+
+
+端到端性能实测
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+以下所有测试均在 Droid 数据集（单样本含左、右、腕部三个视角，视频规格 33 frames × 480 × 640）上，使用 8×H100 GPU 完成。
+
+**DreamZero-14B**
+
+在 14B 大模型上，由于显存压力巨大，官方基线通常被迫采用 DeepSpeed ZeRO-offload 方案，这导致了严重的计算/通信浪费与 CPU 换入换出开销。我们通过工程优化，以 FSDP2 full_shard 替代 DeepSpeed ZeRO-offload 方案，并进一步结合了计算图优化（算子融合与 CUDA Graph）。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本）
+     - 18.0 s
+     - 0.055
+     - 基线
+   * - FSDP2 Base（原生支持）
+     - 9.0 s
+     - 0.111
+     - +100%（2.0x）
+   * - **RLinf 深度优化版**
+     - **6.7 s**
+     - **0.150**
+     - **+170%（2.7x）**
+
+14B 模型使用 MBS=1 和 GBS=8 进行测试。RLinf 相比原生 DeepSpeed 方案实现了 **2.7 倍**的加速；即便相比于未经优化的 FSDP2，吞吐量也进一步提升了 **35%**。
+
+**DreamZero-5B**
+
+对于 5B 中等规模模型，RLinf 的优势在于能够通过高效率的重计算逻辑稳定开启更大的 Microbatch Size，并配合计算图调优，彻底释放 GPU 算力。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 38 22 22 18
+
+   * - 实验配置
+     - 迭代耗时 (Step Time)
+     - 训练吞吐 (Samples/sec/GPU)
+     - 性能收益 (vs. 基线)
+   * - DeepSpeed ZeRO2 + Offload（官方版本，mbs=32 × 8 GPU）
+     - 30.0 s
+     - 1.10
+     - 基线
+   * - FSDP2 Base（mbs=1 × 8 GPU）
+     - 1.8 s
+     - 0.56
+     - -49%（受限于小 MBS 算子效率低、CPU 开销显著、FSDP2 通信无法掩盖）
+   * - **RLinf 深度优化版（mbs=32 + Recompute × 8 GPU）**
+     - **7.2 s**
+     - **4.44**
+     - **+300%（4.0x）**
+
+5B 模型使用 GBS=256 测试。FSDP2 Base 版本由于 PyTorch 的一些限制不能开大 MBS，导致吞吐受限；RLinf 解决了这些问题并取得了显著的吞吐增长。训练吞吐从官方代码的 1.1 samples/sec/gpu 飙升至 4.44 samples/sec/gpu，实现了约 4 倍的训练加速。
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0acctime.jpg
+   :align: center
+   :width: 45%
+
+   DreamZero 5B 与 14B 模型的加速效果对比
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dream0accthpt.jpg
+   :align: center
+   :width: 45%
+
+   DreamZero 5B 与 14B 模型的吞吐提升对比

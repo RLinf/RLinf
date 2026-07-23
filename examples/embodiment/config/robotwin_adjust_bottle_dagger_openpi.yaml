@@ -2,7 +2,7 @@ defaults:
   - env/robotwin_adjust_bottle@env.train
   - env/robotwin_adjust_bottle@env.eval
   - model/pi0@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -49,27 +49,11 @@ algorithm:
     # False enables classic DAgger: student-acted data is re-labeled by expert.
     only_save_expert: False
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
   gamma: 0.99
 
   update_epoch: 1
   adv_type: gae
   loss_type: embodied_dagger
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
 
   replay_buffer:
     enable_cache: True
@@ -82,6 +66,7 @@ env:
   group_name: "EnvGroup"
   # enable_offload: False
   train:
+    rollout_epoch: 1
     total_num_envs: 64
     reward_coef: ${algorithm.reward_coef}
     max_episode_steps: 200
@@ -106,6 +91,7 @@ env:
         random_light: false
         crazy_random_light_rate: 0
   eval:
+    rollout_epoch: 1
     total_num_envs: 64
     auto_reset: True
     ignore_terminations: True

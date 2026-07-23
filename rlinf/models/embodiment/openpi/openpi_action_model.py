@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 import math
 import random
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -87,6 +88,20 @@ class OpenPi0Config(Pi0Config):
     # ===== NFT-specific parameters =====
     is_nft: bool = False
 
+    # ===== RLT SFT parameters =====
+    use_rlt: bool = False
+    rlt_alpha: float = 1.0
+    rlt_input_dim: int = 2048
+    rlt_embed_dim: int = 2048
+    rlt_num_rl_tokens: int = 1
+    rlt_prefix_seq_len: int = 768
+    rlt_num_layers: int = 2
+    rlt_num_heads: int = 8
+    rlt_mlp_ratio: float = 4.0
+    rlt_image_only: bool = True
+    rlt_use_mask: bool = False
+    state_indices: list[int] | None = None
+
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
     """
@@ -113,6 +128,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             ]
         if self.config.noise_method == "flow_noise":
             no_split_modules.append("ExploreNoiseNet")
+        if self.config.use_rlt:
+            no_split_modules.append("RLTSelfAttentionLayer")
         return no_split_modules
 
     @property
@@ -152,7 +169,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             proj_width = 1024
         # value head
         if self.config.add_value_head:
-            if self.config.config_name in ["pi05_maniskill", "pi05_libero"]:
+            if self.config.config_name in [
+                "pi05_maniskill",
+                "pi05_libero",
+                "pi05_droid_polaris",
+            ]:
                 value_head_hidden_sizes = (1024, 512, 256)
             else:
                 value_head_hidden_sizes = (512, 256, 128)
@@ -177,6 +198,21 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 noise_logvar_range=self.config.noise_logvar_range,
                 noise_scheduler_type="learn",
             )
+
+        if self.config.use_rlt:
+            from rlinf.models.embodiment.modules.rlt_token_transformer import (
+                RLTTokenTransformer,
+            )
+
+            self.rlt_module = RLTTokenTransformer(
+                input_dim=self.config.rlt_input_dim,
+                embed_dim=self.config.rlt_embed_dim,
+                num_rl_tokens=self.config.rlt_num_rl_tokens,
+                prefix_seq_len=self.config.rlt_prefix_seq_len,
+                num_layers=self.config.rlt_num_layers,
+                num_heads=self.config.rlt_num_heads,
+                mlp_ratio=self.config.rlt_mlp_ratio,
+            ).to(dtype=torch.bfloat16)
 
         # ===== DSRL components initialization =====
         if self.config.use_dsrl:
@@ -241,6 +277,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             path_parts = name.split(".")
             setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
 
+        self.torch_compile_enabled = False
+
     def set_global_step(self, global_step):
         self.global_step = global_step
 
@@ -264,8 +302,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         # tensor -> numpy
         inputs = tree_map(_to_numpy, inputs)
         batch_size = next(v.shape[0] for v in inputs.values() if hasattr(v, "shape"))
-        # split & transform
-        transformed_samples = []
+        # split
+        batch_samples = []
         for i in range(batch_size):
             sample = tree_map(lambda x: x[i], inputs)
             if transpose:
@@ -282,8 +320,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
                 sample["prompt"] = obs["prompt"][i]
             else:
                 sample["prompt"] = "xxxx"
-            transformed_sample = self._input_transform(sample)
-            transformed_samples.append(transformed_sample)
+            batch_samples.append(sample)
+        # transform
+        with ThreadPoolExecutor(max_workers=min(len(batch_samples), 8)) as ex:
+            transformed_samples = list(ex.map(self._input_transform, batch_samples))
         # recombine
         inputs = tree_map(
             lambda *torch_arr: torch.from_numpy(np.asarray(torch_arr).copy()),
@@ -352,10 +392,216 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         actions = actions.to(dtype=torch.float32)
 
         # PI0Pytorch.forward returns per-element MSE (reduction="none").
-        loss = super().forward(observation, actions)
+        if self.config.use_rlt:
+            loss, prefix_output, prefix_mask = self._sft_forward_with_rlt_prefix(
+                observation, actions
+            )
+        else:
+            loss = super().forward(observation, actions)
         if use_action_chunk_loss:
             loss = loss[:, : self.config.action_chunk, : self.config.action_env_dim]
-        return loss.mean()
+        vla_loss = loss.mean()
+        if not self.config.use_rlt:
+            return vla_loss
+
+        rlt_param = next(self.rlt_module.parameters())
+        prefix_output = prefix_output.to(device=rlt_param.device, dtype=rlt_param.dtype)
+        rlt_mask = prefix_mask if self.config.rlt_use_mask else None
+        rlt_loss, _ = self.rlt_module(prefix_output, rlt_mask)
+        total_loss = rlt_loss + self.config.rlt_alpha * vla_loss
+        return {
+            "loss": total_loss,
+            "vla_loss": vla_loss,
+            "rlt_loss": rlt_loss,
+        }
+
+    def _sft_forward_with_rlt_prefix(self, observation, actions):
+        images, img_masks, lang_tokens, lang_masks, state = (
+            self._preprocess_observation(observation, train=True)
+        )
+
+        noise = self.sample_noise(actions.shape, actions.device)
+        time = self.sample_time(actions.shape[0], actions.device)
+
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = (
+            self.embed_suffix(state, x_t, time)
+        )
+        backbone_dtype = self.paligemma_with_expert.paligemma.language_model.layers[
+            0
+        ].self_attn.q_proj.weight.dtype
+        if prefix_embs.dtype != backbone_dtype:
+            prefix_embs = prefix_embs.to(dtype=backbone_dtype)
+        if suffix_embs.dtype != backbone_dtype:
+            suffix_embs = suffix_embs.to(dtype=backbone_dtype)
+
+        pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
+        att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
+        att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
+        position_ids = torch.cumsum(pad_masks, dim=1) - 1
+        att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
+
+        def forward_func(
+            prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
+        ):
+            (prefix_output, suffix_out), _ = self.paligemma_with_expert.forward(
+                attention_mask=att_2d_masks_4d,
+                position_ids=position_ids,
+                past_key_values=None,
+                inputs_embeds=[prefix_embs, suffix_embs],
+                use_cache=False,
+                adarms_cond=[None, adarms_cond],
+            )
+            return prefix_output, suffix_out
+
+        prefix_output, suffix_out = self._apply_checkpoint(
+            forward_func,
+            prefix_embs,
+            suffix_embs,
+            att_2d_masks_4d,
+            position_ids,
+            adarms_cond,
+        )
+
+        suffix_out = suffix_out[:, -self.config.action_horizon :]
+        suffix_out = suffix_out.to(dtype=torch.float32)
+
+        def action_out_proj_func(suffix_out):
+            return self.action_out_proj(suffix_out)
+
+        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
+        loss = F.mse_loss(u_t, v_t, reduction="none")
+
+        prefix_output, prefix_pad_masks = self._select_rlt_prefix_embeddings(
+            prefix_output.detach(), prefix_pad_masks, lang_tokens
+        )
+        return loss, prefix_output, prefix_pad_masks
+
+    def _build_rlt_prefix_cache(self, observation, *, train: bool):
+        images, img_masks, lang_tokens, lang_masks, state = (
+            self._preprocess_observation(observation, train=train)
+        )
+        device = next(self.parameters()).device
+        images = [img.to(device) for img in images]
+        img_masks = [img_mask.to(device) for img_mask in img_masks]
+        if lang_tokens is not None:
+            lang_tokens = lang_tokens.to(device)
+        if lang_masks is not None:
+            lang_masks = lang_masks.to(device)
+        state = state.to(device)
+
+        prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
+            images, img_masks, lang_tokens, lang_masks
+        )
+        return prefix_output, prefix_pad_masks, past_key_values, lang_tokens, state
+
+    def _select_rlt_prefix_embeddings(
+        self, prefix_output, prefix_pad_masks, lang_tokens
+    ):
+        if self.config.rlt_image_only and lang_tokens is not None:
+            num_image_tokens = prefix_output.shape[1] - lang_tokens.shape[1]
+            prefix_output = prefix_output[:, :num_image_tokens]
+            prefix_pad_masks = prefix_pad_masks[:, :num_image_tokens]
+        return prefix_output, prefix_pad_masks
+
+    def _extract_rlt_prefix_embeddings(self, observation, *, train: bool):
+        with torch.no_grad():
+            prefix_output, prefix_pad_masks, _, lang_tokens, _ = (
+                self._build_rlt_prefix_cache(observation, train=train)
+            )
+
+        return self._select_rlt_prefix_embeddings(
+            prefix_output, prefix_pad_masks, lang_tokens
+        )
+
+    def _select_configured_state(self, states):
+        indices = self.config.state_indices
+        if not indices:
+            return states
+        indices = list(indices)
+
+        if hasattr(states, "shape"):
+            state_dim = states.shape[-1]
+        else:
+            state_dim = np.asarray(states).shape[-1]
+        if state_dim == len(indices):
+            return states
+        if state_dim <= max(indices):
+            raise ValueError(
+                f"Cannot select state_indices={indices} from state dim {state_dim}."
+            )
+
+        if torch.is_tensor(states):
+            index_tensor = torch.as_tensor(indices, device=states.device)
+            return states.index_select(-1, index_tensor)
+        return np.asarray(states)[..., indices]
+
+    @torch.no_grad()
+    def extract_rlt_obs(
+        self,
+        env_obs: dict[str, Any],
+    ) -> dict[str, torch.Tensor]:
+        if not self.config.use_rlt or not hasattr(self, "rlt_module"):
+            raise ValueError("extract_rlt_obs requires openpi.use_rlt=True.")
+
+        to_process_obs = self.obs_processor(env_obs)
+        processed_obs = self.input_transform(to_process_obs, transpose=False)
+        processed_obs = self.precision_processor(processed_obs)
+        observation = _model.Observation.from_dict(processed_obs)
+
+        prefix_output, prefix_pad_masks, past_key_values, lang_tokens, state = (
+            self._build_rlt_prefix_cache(observation, train=False)
+        )
+        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
+            prefix_output, prefix_pad_masks, lang_tokens
+        )
+        rlt_param = next(self.rlt_module.parameters())
+        rlt_prefix_output = rlt_prefix_output.to(
+            device=rlt_param.device, dtype=rlt_param.dtype
+        )
+        rlt_mask = rlt_prefix_mask if self.config.rlt_use_mask else None
+        z_rl = self.rlt_module.encode_flat(rlt_prefix_output, rlt_mask).to(
+            dtype=torch.float32
+        )
+
+        outputs = self._sample_actions_with_prefix_cache(
+            state,
+            prefix_output,
+            prefix_pad_masks,
+            past_key_values,
+            mode="eval",
+            compute_values=False,
+        )
+        ref_chunk = self.output_transform(
+            {"actions": outputs["actions"], "state": observation.state}
+        )["actions"]
+        raw_proprio = self._select_configured_state(env_obs["states"])
+        if (
+            isinstance(self.config.config_name, str)
+            and "maniskill" in self.config.config_name.lower()
+        ):
+            state_dim = (
+                raw_proprio.shape[-1]
+                if hasattr(raw_proprio, "shape")
+                else np.asarray(raw_proprio).shape[-1]
+            )
+            proprio = observation.state[..., :state_dim]
+        else:
+            proprio = raw_proprio
+        if not torch.is_tensor(proprio):
+            proprio = torch.as_tensor(proprio)
+
+        return {
+            "z_rl": z_rl,
+            "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
+            "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
+        }
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""
@@ -394,6 +640,61 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             actions = processed_obs["actions"].clone()
             processed_obs.pop("actions")
 
+        register_pytree_dataclasses(observation)
+        observation = tree_map(
+            lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
+            observation,
+        )
+        return {
+            "observation": observation,
+            "actions": actions.to(torch.float32).to(device),
+        }
+
+    def prepare_lerobot_sft_batch(self, batch):
+        """Prepare replay-buffer samples for DAgger SFT updates."""
+        device = next(self.parameters()).device
+        obs_dict = {}
+        raw_obs_keys = [
+            k
+            for k in batch.keys()
+            if k
+            in [
+                "image",
+                "wrist_image",
+                "extra_view_image",
+                "extra_view_image-0",
+                "extra_view_image-1",
+                "state",
+            ]
+        ]
+        _merge_keys = ["extra_view_image-0", "extra_view_image-1"]
+        merge_extra = "extra_view_image" not in raw_obs_keys and all(
+            k in raw_obs_keys for k in _merge_keys
+        )
+        for key in raw_obs_keys:
+            # process other keys
+            if merge_extra and key in _merge_keys:
+                continue
+            else:
+                obs_dict[f"observation/{key}"] = batch[key]
+        if merge_extra:
+            obs_dict["observation/extra_view_image"] = []
+            for key in _merge_keys:
+                obs_dict["observation/extra_view_image"].append(batch[key])
+            obs_dict["observation/extra_view_image"] = torch.stack(
+                obs_dict["observation/extra_view_image"], dim=1
+            )
+
+        bsz = batch["actions"].shape[0]
+        obs_dict["actions"] = batch["actions"].reshape(
+            bsz, self.config.action_chunk, -1
+        )
+        obs_dict["prompt"] = batch["task"]
+        processed_obs = self.input_transform(obs_dict, transpose=False)
+        processed_obs = self.precision_processor(processed_obs)
+        observation = _model.Observation.from_dict(processed_obs)
+        actions = processed_obs["actions"].clone()
+        processed_obs.pop("actions")
         register_pytree_dataclasses(observation)
         observation = tree_map(
             lambda x: torch.as_tensor(x, device=device).contiguous().clone(),
@@ -490,26 +791,22 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         return result
 
     def obs_processor(self, env_obs):
-        # base observation
+        env_states = self._select_configured_state(env_obs["states"])
         processed_obs = {
             "observation/image": env_obs["main_images"],
             "prompt": env_obs["task_descriptions"],
         }
-        # state observation
         if "calvin" in self.config.config_name:
-            state = env_obs["states"]
+            state = env_states
             processed_obs["observation/state_ee_pos"] = state[:, :3]
             processed_obs["observation/state_ee_rot"] = state[:, 3:6]
             processed_obs["observation/state_gripper"] = state[:, 6:7]
         else:
-            processed_obs["observation/state"] = env_obs["states"]
-        # wrist image observation
+            processed_obs["observation/state"] = env_states
         if env_obs["wrist_images"] is not None:
             processed_obs["observation/wrist_image"] = env_obs["wrist_images"]
-        # extra view image observation
         if env_obs["extra_view_images"] is not None:
             processed_obs["observation/extra_view_image"] = env_obs["extra_view_images"]
-        # store used keys
         return processed_obs
 
     def precision_processor(self, processed_obs):
@@ -635,7 +932,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
         bsize = observation.state.shape[0]
         device = observation.state.device
-        num_steps = self.config.num_steps
         if noise is None:
             actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
             noise = self.sample_noise(actions_shape, device)
@@ -650,6 +946,36 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         prefix_output, prefix_pad_masks, past_key_values = self._build_prefix_cache(
             images, img_masks, lang_tokens, lang_masks
         )
+
+        return self._sample_actions_with_prefix_cache(
+            state,
+            prefix_output,
+            prefix_pad_masks,
+            past_key_values,
+            noise=noise,
+            mode=mode,
+            compute_values=compute_values,
+        )
+
+    def _sample_actions_with_prefix_cache(
+        self,
+        state,
+        prefix_output,
+        prefix_pad_masks,
+        past_key_values,
+        noise=None,
+        mode="train",
+        compute_values=True,
+    ) -> torch.Tensor:
+        bsize = state.shape[0]
+        device = state.device
+        num_steps = self.config.num_steps
+        if noise is None:
+            actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
+            noise = self.sample_noise(actions_shape, device)
+        else:
+            # DSRL: SAC provides noise, convert dtype to match action_in_proj
+            noise = noise.to(self.action_in_proj.weight.dtype)
 
         x_t = noise
         # add sde sample and traj collect
@@ -726,7 +1052,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             log_probs = log_probs.mean(dim=1)
         else:
             log_probs = log_probs[
-                torch.arange(log_probs.shape[0]),
+                torch.arange(log_probs.shape[0], device=device),
                 denoise_inds[:, 0],
             ]
         # post process for value
@@ -748,7 +1074,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
     def _get_timesteps(self, denoise_steps, device):
         timesteps = torch.linspace(1, 1 / denoise_steps, denoise_steps, device=device)
-        timesteps = torch.cat([timesteps, torch.tensor([0.0], device=device)])
+        timesteps = torch.cat([timesteps, torch.zeros((1), device=device)])
         return timesteps
 
     def sample_mean_var_val(
@@ -772,7 +1098,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         bsize = state.shape[0]
         device = state.device
         if isinstance(idx, int):
-            idx = torch.tensor(idx).expand(bsize)
+            idx = torch.full((), idx, device=device).expand(bsize)
         # build parameters
         noise_level = self._get_noise_level(device=device, dtype=x_t.dtype)
         timesteps = self._get_timesteps(denoise_steps, device)
@@ -1309,7 +1635,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
         else:
             noise_level = self.config.noise_level
-        return torch.tensor(noise_level, device=device, dtype=dtype)
+        return torch.full((), noise_level, device=device, dtype=dtype)
 
     def _preprocess_dsrl_images(self, images, train=False):
         """Preprocess images for DSRL: resize to 64x64, use only agentview camera.
@@ -1390,3 +1716,37 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if states.dtype != torch.bfloat16:
             states = states.to(torch.bfloat16)
         return states
+
+    def enable_torch_compile(
+        self,
+        mode: str = "max-autotune",
+    ):
+        if self.torch_compile_enabled:
+            return
+
+        self.paligemma_with_expert.paligemma.model.vision_tower.forward = torch.compile(
+            self.paligemma_with_expert.paligemma.model.vision_tower.forward, mode=mode
+        )
+
+        # NOTE: paligemma.model.language_model and gemma_expert.model share the same LLM backbone.
+        # Enabling cuda graph on both simultaneously causes mysterious crashes (likely due to
+        # tensor aliasing in the shared computation graph). We disable cuda graph for
+        # paligemma.model.language_model since it is not CPU-bound, while gemma_expert.model
+        # benefits more from cuda graph.
+        self.paligemma_with_expert.paligemma.model.language_model.forward = (
+            torch.compile(
+                self.paligemma_with_expert.paligemma.model.language_model.forward,
+                mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+            )
+        )
+        self.paligemma_with_expert.gemma_expert.model.forward = torch.compile(
+            self.paligemma_with_expert.gemma_expert.model.forward,
+            mode=mode,
+            fullgraph=True,
+        )
+        self.get_logprob_norm = torch.compile(
+            self.get_logprob_norm,
+            mode="max-autotune-no-cudagraphs" if mode == "max-autotune" else mode,
+        )
+
+        self.torch_compile_enabled = True

@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 import ray
 import ray.util.state
 import torch
-from omegaconf import OmegaConf
 
 from ..cluster import (
     Cluster,
@@ -40,6 +39,7 @@ from ..cluster import (
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
 from ..tracing import DistTracer
+from .routing import split_channel_message
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -372,7 +372,6 @@ class Worker(metaclass=WorkerMeta):
         self._actor = None
         self._has_initialized = False
         self._timer_metrics: dict[str, float] = {}
-        self._set_new_omegaconf_resolvers()
 
         # Load user-provided extension modules (e.g., for registering custom envs/models)
         self._load_user_extensions()
@@ -841,6 +840,396 @@ class Worker(metaclass=WorkerMeta):
 
         return Channel.connect(name=channel_name, current_worker=self)
 
+    def send_to(
+        self,
+        group_name: str,
+        channel: Any | None,
+        data: Any,
+        *,
+        route_key: Any = None,
+        mode: str | None = None,
+        tag: str | None = None,
+        async_op: bool = False,
+        batch_size: int | None = None,
+        split_fn: Optional[Callable[[Any, list[int]], list[Any]]] = None,
+        enable_p2p: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+        decoupled_mode: bool = False,
+        send_queue_size: int = 0,
+    ):
+        """Send a payload to another worker group according to a routing plan.
+
+        The payload is split into shards based on the generated send plan. Each shard
+        is then sent either through ``channel.put`` or, when ``enable_p2p`` is True,
+        through the collective ``send`` API.
+
+        In normal mode, the routing plan is built from the current worker rank and the
+        destination group size. In decoupled mode, each shard is wrapped with route
+        metadata:
+
+            {
+                "batch_index": <route metadata>,
+                "batch": <payload shard>,
+            }
+
+        When ``tag`` exists in ``self.batch_router``, the stored batch indices are used
+        to route the response back to the workers that originally sent the batches.
+        Those stored routes are cleared after the send plan is built. Otherwise, the
+        current worker rank is encoded in the generated ``batch_index`` so a later
+        receiver can return results to this worker.
+
+        Args:
+            group_name: Destination worker group name.
+            channel: Channel used for routed transfer. Required unless ``enable_p2p``
+                is True.
+            data: Payload to split and send.
+            route_key: Optional key used to separate independent routed streams.
+            mode: Optional phase name used only in decoupled routing. It is encoded in
+            ``batch_index`` so the response path can distinguish streams that share the
+            same base ``tag``. For example, ``mode="train"`` and
+            ``tag="rollout_results"`` make the return message use
+            ``"train_rollout_results"``.
+            tag: Optional routing tag used to build channel keys and decoupled
+                batch indices.
+            async_op: If True, return an ``AsyncRouteWork`` wrapping async send/put
+                operations.
+            batch_size: Total logical batch size to route. If omitted, it is inferred
+                from ``data`` and multiplied by the current worker group size.
+            split_fn: Optional custom function for splitting ``data`` by planned shard
+                sizes. If omitted, ``split_batch`` is used.
+            enable_p2p: If True, send shards with collective ``send`` instead of
+                ``channel.put``. Not supported with ``decoupled_mode``.
+            options: Optional collective options forwarded to ``send``.
+            decoupled_mode: If True, use decoupled routing and wrap each shard
+                with ``batch_index`` metadata.
+            send_queue_size: Number of send queue entries used when building the
+                decoupled send plan.
+
+        Returns:
+            ``AsyncRouteWork`` if ``async_op`` is True; otherwise ``None``.
+        """
+        from ..collective import AsyncRouteWork
+        from .routing import (
+            build_send_plan,
+            decoupled_build_send_plan,
+            get_group_world_size,
+            infer_batch_size,
+            split_batch,
+        )
+
+        if decoupled_mode:
+            assert not enable_p2p, (
+                "Now, enable_p2p dpn't support when decoupled_mode is True."
+            )
+            assert getattr(self, "batch_router", None) is not None, (
+                "batch_router must be provided when decoupled_mode is True."
+            )
+
+        if not enable_p2p and channel is None:
+            raise ValueError("send_to requires ``channel`` when enable_p2p is False.")
+
+        world_size = get_group_world_size(self._manager_proxy, group_name)
+        if batch_size is None:
+            batch_size = infer_batch_size(data) * self._world_size
+
+        if not decoupled_mode:
+            plan = build_send_plan(
+                src_group_name=self.worker_address.root_group_name,
+                dst_group_name=group_name,
+                src_rank=self._rank,
+                src_world_size=self._world_size,
+                dst_world_size=world_size,
+                tag=tag if mode is None else f"{mode}_{tag}",
+                route_key=route_key,
+                batch_size=batch_size,
+            )
+        else:
+            if tag in self.batch_router:
+                # if the batch_router has this tag
+                # The sending and receiving logic of batch_router is as follows:
+                # recv_from the worker -> Save the data's batch_index to batch_router[tag] ->
+                # Use the batch_router[tag] to get the batch_index to create the send plan ->
+                # Send data to the worker that originally sent it.
+                # the src_rank get from the batch_router[tag]
+                tag_batch_router = self.batch_router[tag]
+                src_rank = None
+            else:
+                # if the batch_router does not have this tag
+                # The sending and receiving logic is as follows:
+                # Save the send_rank in batch_index -> send the data and batch_index to channel ->
+                # Any workers can recv the data and save the batch_index -> handle the data in the worker ->
+                # Send the data to the worker that originally sent it by the batch_index.
+                # the src_rank is the current worker's rank
+                tag_batch_router = None
+                src_rank = self._rank
+
+            plan = decoupled_build_send_plan(
+                src_group_name=self.worker_address.root_group_name,
+                dst_group_name=group_name,
+                src_rank=src_rank,
+                src_world_size=self._world_size,
+                dst_world_size=world_size,
+                tag=tag,
+                route_key=route_key,
+                batch_size=batch_size,
+                tag_batch_router=tag_batch_router,
+                send_queue_size=send_queue_size,
+                mode=mode,
+            )
+            if tag_batch_router is not None:
+                # delete the used batch_router item to avoid duplicate sending
+                self.batch_router[tag] = []
+
+        split_sizes = [entry.batch_size for entry in plan.entries]
+        payloads = (
+            split_fn(data, split_sizes)
+            if split_fn is not None
+            else split_batch(data, split_sizes)
+        )
+
+        works = []
+        for entry, payload in zip(plan.entries, payloads):
+            if decoupled_mode:
+                # After enabling decoupled_mode, the data sending format is as follows:
+                # {
+                #     "batch_index": batch_index,
+                #     "batch": batch,
+                # }
+                # The batch_index is the index of the batch in the data.
+                # The batch is the data to send.
+                # batch_index: {send_rank}_{batch_idx}_{mode}_{tag}
+                # The send_rank is the rank of the worker that originally sent the data.
+                # The batch_idx is the index of the batch in the data.
+                # The tag is the tag of the data.
+                senditem = {
+                    "batch_index": entry.batch_index,
+                    "batch": payload,
+                }
+                work = channel.put(
+                    item=senditem,
+                    key=entry.key,
+                    async_op=async_op,
+                )
+            elif enable_p2p:
+                work = self.send(
+                    payload,
+                    dst_group_name=group_name,
+                    dst_rank=entry.peer_rank,
+                    async_op=async_op,
+                    options=options,
+                )
+            else:
+                work = channel.put(
+                    item=payload,
+                    key=entry.key,
+                    async_op=async_op,
+                )
+            if async_op and work is not None:
+                works.append(work)
+
+        if async_op:
+            return AsyncRouteWork(works, lambda _: None)
+        return None
+
+    def recv_from(
+        self,
+        group_name: str,
+        channel: Any | None,
+        *,
+        route_key: Any = None,
+        tag: str | None = None,
+        async_op: bool = False,
+        batch_size: int | None = None,
+        merge_fn: Optional[Callable[[list[Any]], Any]] = None,
+        infer_batch_size_fn: Optional[Callable[[Any], int]] = None,
+        enable_p2p: bool = False,
+        options: Optional["CollectiveGroupOptions"] = None,
+        decoupled_mode: bool = False,
+        recv_queue_size: int = 0,
+    ):
+        """Receive routed payload shards from another worker group.
+
+        This method builds a receive plan, receives one or more shards, validates their
+        batch sizes, and returns either a single payload or a merged payload. Shards can
+        be received through ``channel.get`` or, when ``enable_p2p`` is True, through the
+        collective ``recv`` API.
+
+        In decoupled mode, each channel item is expected to have the form:
+
+            {
+                "batch_index": <route metadata>,
+                "batch": <payload shard>,
+            }
+
+        When ``tag`` exists in ``self.batch_router``, the received ``batch_index`` values
+        are recorded in ``self.batch_router[tag]`` so a later ``send_to`` call can route
+        responses back to the original source workers. Otherwise, received shards are
+        sorted by the batch index encoded in ``batch_index`` before being merged.
+
+        Args:
+            group_name: Source worker group name.
+            channel: Channel used for routed transfer. Required unless ``enable_p2p``
+                is True.
+            route_key: Optional key used to separate independent routed streams.
+            tag: Optional routing tag used to build channel keys and decoupled
+                batch indices.
+            async_op: If True, return an ``AsyncRouteWork`` that finalizes the received
+                shards after all async receive operations complete.
+            batch_size: Expected local batch size after routing.
+            merge_fn: Optional custom function for merging received shards. If omitted,
+                ``merge_batches`` is used when more than one shard is received.
+            infer_batch_size_fn: Optional function used to infer shard batch size during
+                validation.
+            enable_p2p: If True, receive shards with collective ``recv`` instead of
+                ``channel.get``. Not supported with ``decoupled_mode``.
+            options: Optional collective options forwarded to ``recv``.
+            decoupled_mode: If True, use decoupled routing and unwrap
+                ``batch_index`` metadata from channel items.
+            recv_queue_size: Number of receive queue entries used when building the
+                decoupled receive plan.
+
+        Returns:
+            If ``async_op`` is True, an ``AsyncRouteWork``. Otherwise, returns ``None``
+            when no items are received, a single payload when one shard is received, or
+            the merged payload when multiple shards are received.
+        """
+        if decoupled_mode:
+            assert not enable_p2p, (
+                "Now, enable_p2p dpn't support when decoupled_mode is True."
+            )
+            assert getattr(self, "batch_router", None) is not None, (
+                "batch_router must be provided when decoupled_mode is True."
+            )
+
+        from ..collective import AsyncRouteWork
+        from .routing import (
+            build_recv_plan,
+            decoupled_build_recv_plan,
+            get_group_world_size,
+            merge_batches,
+            validate_batch_size,
+        )
+
+        if not enable_p2p and channel is None:
+            raise ValueError("recv_from requires ``channel`` when enable_p2p is False.")
+
+        world_size = get_group_world_size(self._manager_proxy, group_name)
+
+        if not decoupled_mode:
+            plan = build_recv_plan(
+                src_group_name=group_name,
+                dst_group_name=self.worker_address.root_group_name,
+                dst_rank=self._rank,
+                src_world_size=world_size,
+                dst_world_size=self._world_size,
+                tag=tag,
+                route_key=route_key,
+                batch_size=batch_size,
+            )
+        else:
+            if tag in self.batch_router:
+                # if the batch_router has this tag
+                # The sending and receiving logic of batch_router is as follows:
+                # recv_from the worker -> Save the data's batch_index to batch_router[tag] ->
+                # Use the batch_router[tag] to get the batch_index to create the send plan ->
+                # Send data to the worker that originally sent it.
+                # The recv_rank don't need to be provided
+                # The current worker will directly and arbitrarily fetch any data from the channel.
+                recv_rank = None
+            else:
+                # if the batch_router does not have this tag
+                # The sending and receiving logic is as follows:
+                # Save the send_rank in batch_index -> send the data and batch_index to channel ->
+                # Any workers can recv the data and save the batch_index -> handle the data in the worker ->
+                # Send the data to the worker that originally sent it by the batch_index.
+                # In this recv_from, the processed data will be received, so recv_rank needs to be set to the current worker rank
+                recv_rank = self._rank
+            plan = decoupled_build_recv_plan(
+                src_group_name=group_name,
+                dst_group_name=self.worker_address.root_group_name,
+                recv_rank=recv_rank,
+                src_world_size=self._world_size,
+                dst_world_size=world_size,
+                tag=tag,
+                route_key=route_key,
+                batch_size=batch_size,
+                recv_queue_size=recv_queue_size,
+            )
+
+        def _finalize(received_items: list[Any]):
+            if not received_items:
+                return None
+            if decoupled_mode:
+                # get the tag from the received_items
+                _, _, _, tag = split_channel_message(received_items[0]["batch_index"])
+                if tag in self.batch_router:
+                    # If the batch_router is provided,
+                    # Save the batch_index to the batch_router.
+                    list_received_items = []
+                    for item in received_items:
+                        batch_index = item["batch_index"]
+                        received_item = item["batch"]
+                        list_received_items.append(received_item)
+                        # Save the batch_index to the batch_router.
+                        self.batch_router[tag].append(batch_index)
+                    received_items = list_received_items
+                else:
+                    # Otherwise, the worker get the batch_index from the channel.
+                    # Sort the works by the batch_index.
+                    sorted_received_items = []
+                    for item in received_items:
+                        batch_index = item["batch_index"]
+                        received_item = item["batch"]
+                        # divide the batch_index into send_rank, batch_idx and tag
+                        # batch_index: {send_rank}_{batch_idx}_{mode}_{tag}
+                        _, batch_idx, _, _ = split_channel_message(batch_index)
+                        sorted_received_items.append((batch_idx, received_item))
+                    sorted_received_items.sort(key=lambda x: x[0])
+                    received_items = [x[1] for x in sorted_received_items]
+
+            for item, entry in zip(received_items, plan.entries):
+                validate_batch_size(
+                    data=item,
+                    expected_batch_size=entry.batch_size,
+                    infer_batch_size_fn=infer_batch_size_fn,
+                )
+            if merge_fn is not None:
+                return merge_fn(received_items)
+            if len(received_items) == 1:
+                return received_items[0]
+            return merge_batches(received_items)
+
+        if async_op:
+            if enable_p2p:
+                works = [
+                    self.recv(
+                        src_group_name=group_name,
+                        src_rank=entry.peer_rank,
+                        async_op=True,
+                        options=options,
+                    )
+                    for entry in plan.entries
+                ]
+            else:
+                works = [
+                    channel.get(key=entry.key, async_op=True) for entry in plan.entries
+                ]
+            return AsyncRouteWork(works, _finalize)
+
+        if enable_p2p:
+            received_items = [
+                self.recv(
+                    src_group_name=group_name,
+                    src_rank=entry.peer_rank,
+                    async_op=False,
+                    options=options,
+                )
+                for entry in plan.entries
+            ]
+        else:
+            received_items = [channel.get(key=entry.key) for entry in plan.entries]
+        return _finalize(received_items)
+
     def get_name(self) -> str:
         """Convert the WorkerAddress to a string representation.
 
@@ -960,26 +1349,39 @@ class Worker(metaclass=WorkerMeta):
 
     @staticmethod
     def timer(tag: Optional[str] = None, trace: bool = True):
-        """Decorator to time a worker function, optionally emitting a trace event."""
+        """Decorator to time a worker function, emitting a profiling annotation and optionally a trace event."""
 
         def decorator(func):
+            label = tag or func.__name__
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def wrapper(self, *args, **kwargs):
-                    with self.worker_timer(tag or func.__name__, trace=trace):
-                        return await func(self, *args, **kwargs)
+                    with self.worker_timer(label, trace=trace):
+                        with AcceleratorUtil.profiling_range(
+                            self._accelerator_type, label
+                        ):
+                            return await func(self, *args, **kwargs)
 
                 return wrapper
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                with self.worker_timer(tag or func.__name__, trace=trace):
-                    return func(self, *args, **kwargs)
+                with self.worker_timer(label, trace=trace):
+                    with AcceleratorUtil.profiling_range(self._accelerator_type, label):
+                        return func(self, *args, **kwargs)
 
             return wrapper
 
         return decorator
+
+    def start_profile(self, step_idx: int) -> None:
+        """Open a profiling capture window for the given step on this worker."""
+        AcceleratorUtil.start_profiling(self._accelerator_type, step_idx)
+
+    def stop_profile(self) -> None:
+        """Close the current profiling capture window on this worker."""
+        AcceleratorUtil.stop_profiling(self._accelerator_type)
 
     @staticmethod
     def check_worker_alive(worker_name: str) -> bool:
@@ -994,13 +1396,10 @@ class Worker(metaclass=WorkerMeta):
         try:
             with without_http_proxies():
                 actors = ray.util.state.list_actors(
-                    filters=[("NAME", "=", worker_name)]
+                    filters=[("NAME", "=", worker_name), ("STATE", "!=", "DEAD")]
                 )
 
-            if len(actors) == 0:
-                return False
-            actor_info = actors[0]
-            return actor_info.state != "DEAD"
+            return len(actors) > 0
         except Exception:
             # Simply treat the worker as alive if any unexpected error occurs during state query
             return True
@@ -1211,14 +1610,6 @@ class Worker(metaclass=WorkerMeta):
                 warnings.warn("prctl(PR_SET_PTRACER, ANY) failed!")
         except Exception as e:
             warnings.warn(f"Failed to enable ptrace from any same-UID process: {e}")
-
-    def _set_new_omegaconf_resolvers(self):
-        OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
-        OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
-        OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
-        OmegaConf.register_new_resolver(
-            "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
-        )
 
     def _get_collective_group(self, peer_addr: WorkerAddress):
         """Get a collective group for communication with a peer worker."""

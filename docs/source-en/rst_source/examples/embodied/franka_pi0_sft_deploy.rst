@@ -1,21 +1,84 @@
-Franka Real-World Pi0 SFT and Deployment
-====================================================
+Running Pi0 SFT with Franka
+===========================
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
+   :align: center
+   :width: 80%
 
-This document describes how to run the complete **Bin-relocation** demo end-to-end
-in the RLinf framework: the robot picks up an object from the starting position
-and places it into a container (success is achieved once the object lands in the
-container). It covers data collection from the real world, Pi0 SFT training,
-and real-world policy deployment.
+   OpenPI π₀ SFT and deployment workflow used for Franka bin-relocation experiments.
 
-The main pipeline consists of:
+Run the Bin-relocation pipeline end to end with OpenPI π₀: collect Franka data, convert it to a LeRobot-style dataset, compute normalization stats, fine-tune, and deploy the checkpoint on real hardware.
 
-1. **Data Collection**: Use a SpaceMouse for teleoperation to collect successful
-   demonstration data in LeRobot format.
-2. **SFT Training**: Supervised fine-tuning of the Pi0 model in full-parameter mode.
-3. **Real-World Deployment**: Run the trained policy on the real robot in eval mode.
+Overview
+--------
 
-Hardware and Software Setup
-----------------------------
+Create a real-world Franka dataset, fine-tune π₀, and deploy the result.
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      OpenPI π₀
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      SFT · eval-only deployment
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      Bin relocation · generic SFT env
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Franka · cameras · gripper
+
+| **You'll do:** get target pose → collect data → compute norm stats → run SFT → run real-world eval.
+| **Prerequisites:** :doc:`franka` · :doc:`sft_openpi` · OpenPI base checkpoint · real-world dataset path.
+
+Tasks
+~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24 24
+
+   * - Task
+     - Config / entry point
+     - Description
+   * - Data conversion
+     - ``pi0_realworld``
+     - Represent Franka data in the OpenPI data format.
+   * - SFT
+     - ``realworld_sft_openpi``
+     - Fine-tune π₀ on real-world Franka data.
+   * - Deployment
+     - ``realworld_pnp_eval`` / ``realworld_eval``
+     - Run eval-only deployment on the real robot.
+
+Observation and Action
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 24
+
+   * - Field
+     - Description
+   * - Observation
+     - Real-world camera frames mapped to OpenPI dataset keys.
+   * - Action
+     - Franka action format selected by ``pi0_realworld`` metadata.
+   * - Reward
+     - Eval success or operator-observed deployment outcome.
+   * - Prompt
+     - Task text stored in the SFT dataset/config.
+
+Installation
+------------
 
 Hardware Requirements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -63,8 +126,8 @@ This config defines key Bin-relocation task parameters such as end-effector pose
 limits and success thresholds. Adjust fields under ``override_cfg`` as needed
 for your task.
 
-Complete Pipeline
------------------
+Run It
+------
 
 The following steps cover the full Bin-relocation pipeline.
 
@@ -191,7 +254,7 @@ Then run on the training node:
 .. code:: bash
 
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   python toolkits/replay_buffer/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
@@ -250,7 +313,7 @@ See :doc:`sft_openpi` for more details on OpenPI datasets and SFT training.
 Step 5: Real-World Deployment
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Modify ``examples/embodiment/config/realworld_pnp_eval.yaml``
+Modify ``evaluations/realworld/realworld_pnp_eval.yaml``
 to match your cluster, camera, and target pose:
 
 .. code-block:: yaml
@@ -282,22 +345,18 @@ config:
        model_path: "/path/to/pi0-model"
 
 After starting the Ray cluster (see the **Cluster configuration** section in
-:doc:`franka`), run the deployment script on the head node:
-
-.. code:: bash
-
-   bash examples/embodiment/run_realworld_eval.sh realworld_pnp_eval
-
-The script runs in **eval-only mode** (``runner.only_eval: True``); the policy
+:doc:`franka`), run deployment through the :doc:`real-world evaluation guide
+<../../evaluations/guides/realworld>` with ``realworld_pnp_eval``. The policy
 will autonomously control the robot to complete the Bin-relocation task.
 
 You can control the number of evaluation episodes via the
-``eval_rollout_epoch`` parameter:
+``env.eval.rollout_epoch`` parameter:
 
 .. code:: yaml
 
-   runner:
-     eval_rollout_epoch: 20
+   env:
+     eval:
+       rollout_epoch: 20
 
 Generic Real-World SFT Environment and Deployment
 -------------------------------------------------
@@ -334,20 +393,17 @@ a class-variable ``CONFIG_CLS`` to instantiate the dataclass config (defaults to
 override ``CONFIG_CLS`` to their own dataclass while sharing the same
 constructor.
 
-Real-World Evaluation / Deployment
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Standalone Evaluation
+~~~~~~~~~~~~~~~~~~~~~
 
 A full evaluation config is provided at
-``examples/embodiment/config/realworld_eval.yaml``. It pairs the generic SFT
-env with a Pi0 actor in **eval-only mode** (``runner.only_eval: True``).
+``evaluations/realworld/realworld_eval.yaml``. It pairs the generic SFT env
+with a Pi0 actor for deployment.
 
 Before running, replace the placeholders:
 
 - ``ROBOT_IP`` — your Franka robot's IP address.
 - ``MODEL_PATH`` — path to your trained checkpoint.
 
-Then launch:
-
-.. code:: bash
-
-   bash examples/embodiment/run_realworld_eval.sh realworld_eval
+Launch and override examples are maintained in the :doc:`real-world evaluation
+guide <../../evaluations/guides/realworld>`.

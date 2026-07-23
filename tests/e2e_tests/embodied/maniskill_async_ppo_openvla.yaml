@@ -2,7 +2,7 @@ defaults:
   - env/manikill_put_carrot_on_plate_in_scene@env.train
   - env/manikill_put_carrot_on_plate_in_scene@env.eval
   - model/openvla@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -39,8 +39,6 @@ algorithm:
   group_size: 1
   staleness_threshold: 2
   behave_weight_threshold: null
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   adv_type: gae
   loss_type: decoupled_actor_critic
@@ -58,24 +56,11 @@ algorithm:
   huber_delta: 10.0
   gamma: 0.99
   gae_lambda: 0.95
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
   train:
+    rollout_epoch: 1
     total_num_envs: 4
     auto_reset: True
     ignore_terminations: True
@@ -83,6 +68,7 @@ env:
     max_episode_steps: 16
     max_steps_per_rollout_epoch: 16
   eval:
+    rollout_epoch: 1
     total_num_envs: 4
     auto_reset: True
     ignore_terminations: True
@@ -95,6 +81,16 @@ env:
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+
+    max_new_tokens: 7
+
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False

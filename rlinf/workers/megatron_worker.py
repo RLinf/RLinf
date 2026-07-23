@@ -60,6 +60,11 @@ from rlinf.utils.distributed import (
     compute_rollout_metrics,
     masked_normalization,
 )
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
+    CRITIC_EXPLAINED_VARIANCE_STAT_KEYS,
+    compute_critic_explained_variance_from_stats,
+)
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
 from rlinf.utils.resharding.reshard_config import ReshardConfig
@@ -565,11 +570,33 @@ class MegatronWorker(MegatronModelManager, Worker):
             outputs = {}
             if forward_outputs:
                 keys = forward_outputs[0].keys()
+                explained_variance_stats = {}
+                has_explained_variance_stats = any(
+                    key in keys for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
+                )
                 for key in keys:
+                    if key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                        explained_variance_stats[key] = torch.stack(
+                            [loss_reduced[key] for loss_reduced in forward_outputs]
+                        ).sum()
+                        continue
+                    if (
+                        key == CRITIC_EXPLAINED_VARIANCE_KEY
+                        and has_explained_variance_stats
+                    ):
+                        continue
                     metric_mean = torch.stack(
                         [loss_reduced[key] for loss_reduced in forward_outputs]
                     ).mean()
                     outputs[key] = metric_mean.cpu().item()
+                if explained_variance_stats:
+                    outputs[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                        compute_critic_explained_variance_from_stats(
+                            explained_variance_stats
+                        )
+                        .cpu()
+                        .item()
+                    )
             output_list = [outputs]
             torch.distributed.broadcast_object_list(output_list, get_last_rank())
             outputs = output_list[0]
@@ -688,6 +715,7 @@ class MegatronWorker(MegatronModelManager, Worker):
         batch = RolloutResult.merge_batches(batches)
         rollout_result = RolloutResult.merge_result_list(rollout_results)
 
+        assert "recomputed_logprobs" in batch or "rollout_logprobs" in batch
         # Compute advantages and returns
         if "advantages" not in batch:
             batch = self.compute_advantages_and_returns(batch)
@@ -1264,9 +1292,11 @@ class MegatronWorker(MegatronModelManager, Worker):
                     0, dtype=torch.float32, device=batch["rewards"].device
                 )
             prev_values = batch["values"].cuda() if "values" in batch else None
-            prev_logprobs = (
-                batch["prev_logprobs"].cuda() if "prev_logprobs" in batch else None
-            )
+            # Prefer recomputed_logprobs, fallback to rollout_logprobs
+            logprob = batch.get("recomputed_logprobs")
+            if logprob is None:
+                logprob = batch.get("rollout_logprobs")
+            logprobs = logprob.cuda()
             ref_logprobs = (
                 batch["ref_logprobs"].cuda() if "ref_logprobs" in batch else None
             )
@@ -1285,7 +1315,7 @@ class MegatronWorker(MegatronModelManager, Worker):
                     else self.cfg.algorithm.group_size,
                     kl_beta=self.cfg.algorithm.get("reinpp_kl_beta", 0.0),
                     kl_penalty_type=self.kl_penalty_type,
-                    logprob=prev_logprobs,
+                    logprob=logprobs,
                     ref_logprob=ref_logprobs,
                     use_reinpp_baseline=self.cfg.algorithm.get(
                         "use_reinpp_baseline", False

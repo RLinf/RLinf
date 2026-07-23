@@ -19,10 +19,43 @@ import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
 
-try:
-    import tensorflow as tf
-except ImportError:  # pragma: no cover
-    tf = None
+_tf = None
+
+
+def _get_tensorflow():
+    global _tf
+    if _tf is None:
+        try:
+            import tensorflow as tf
+        except ImportError as exc:  # pragma: no cover
+            raise ImportError("tensorflow is required for crop_and_resize") from exc
+        _tf = tf
+    return _tf
+
+
+def get_env_attr(env, name: str, default: Any = None) -> Any:
+    """Fetch an attribute from a (possibly wrapped) gym/gymnasium env.
+
+    Walks the wrapper stack so the attribute is found even when ``env`` is
+    nested, e.g. ``CollectEpisode(RecordVideo(base_env))``. This stays
+    compatible across versions: gymnasium >= 1.0 exposes ``get_wrapper_attr``
+    while older gymnasium/gym and custom wrappers rely on ``__getattr__``
+    delegation through plain ``getattr``.
+
+    Args:
+        env: The (possibly wrapped) environment.
+        name: The attribute name to look up.
+        default: Value returned when the attribute is not present.
+
+    Returns:
+        The resolved attribute, or ``default`` if it cannot be found.
+    """
+    if hasattr(env, "get_wrapper_attr"):
+        try:
+            return env.get_wrapper_attr(name)
+        except AttributeError:
+            return default
+    return getattr(env, name, default)
 
 
 def to_tensor(
@@ -279,8 +312,7 @@ def crop_and_resize(image, crop_scale, batch_size):
     to original size. We use the same logic seen in the `dlimp` RLDS datasets wrapper to avoid
     distribution shift at test time.
     """
-    if tf is None:
-        raise ImportError("tensorflow is required for crop_and_resize")
+    tf = _get_tensorflow()
 
     assert image.shape.ndims == 3 or image.shape.ndims == 4
     expanded_dims = False
@@ -318,8 +350,7 @@ def crop_and_resize(image, crop_scale, batch_size):
 
 
 def center_crop_image(image):
-    if tf is None:
-        raise ImportError("tensorflow is required for crop_and_resize")
+    tf = _get_tensorflow()
 
     batch_size = 1
     crop_scale = 0.9

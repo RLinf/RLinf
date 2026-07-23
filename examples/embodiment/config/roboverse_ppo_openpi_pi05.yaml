@@ -2,7 +2,7 @@ defaults:
   - env/roboverse_put_bowl_on_cabinet@env.train
   - env/roboverse_put_bowl_on_cabinet@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -46,8 +46,6 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
   reward_coef: 1.0
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: chunk_level
   logprob_type: chunk_level
@@ -70,27 +68,11 @@ algorithm:
   filter_rewards: False
   rewards_lower_bound: 0.1
   rewards_upper_bound: 0.9
-  # params for generation
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     total_num_envs: 32
     auto_reset: True
     zero_state_before_vla: False
@@ -102,6 +84,7 @@ env:
       info_on_video: False
       video_base_dir: ${runner.logger.log_path}/video/train
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
     auto_reset: True
     zero_state_before_vla: False
@@ -124,7 +107,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     precision: ${actor.model.precision}
 
 actor:
@@ -137,7 +120,7 @@ actor:
 
   # Override the default values in model/pi0_5
   model:
-    model_path: "/path/to/model/RLinf-Pi05-SFT"
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     model_type: "openpi"
     num_action_chunks: 4
     add_value_head: True
@@ -159,7 +142,7 @@ actor:
     min_lr_rate: 0.1
     lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

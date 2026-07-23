@@ -2,7 +2,7 @@ defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -40,9 +40,6 @@ algorithm:
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
-
   reward_type: chunk_level
   logprob_type: "action_level"
   entropy_type: "action_level"
@@ -58,11 +55,24 @@ algorithm:
   value_clip: 0.2
   huber_delta: 10.0
 
-
   gamma: 0.99
   gae_lambda: 0.95
+env:
+  group_name: "EnvGroup"
+  
+  # Override the default values in env/behavior_r1pro
+  train:
+    rollout_epoch: 1
+    total_num_envs: 2
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
+  eval:
+    rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
+    total_num_envs: 1
+    max_episode_steps: 1
+    max_steps_per_rollout_epoch: 1
 
-  # params for rollout
+rollout:
   sampling_params:
     do_sample: True
     temperature_train: 1.0
@@ -71,27 +81,6 @@ algorithm:
     top_p: 1.0
     repetition_penalty: 1.0
 
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
-env:
-  group_name: "EnvGroup"
-  
-  # Override the default values in env/behavior_r1pro
-  train:
-    total_num_envs: 2
-    max_episode_steps: 1
-    max_steps_per_rollout_epoch: 1
-  eval:
-    total_num_envs: 1
-    max_episode_steps: 1
-    max_steps_per_rollout_epoch: 1
-
-rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   enable_offload: True
@@ -133,7 +122,7 @@ actor:
     clip_grad: 10.0
     critic_warmup_steps: 0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

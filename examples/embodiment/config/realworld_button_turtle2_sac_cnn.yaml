@@ -2,7 +2,7 @@ defaults:
   - env/realworld_button@env.train
   - env/realworld_button@env.eval
   - model/cnn_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -61,8 +61,6 @@ algorithm:
   agg_q: min # or mean
   actor_agg_q: mean
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -91,25 +89,11 @@ algorithm:
     
   target_update_freq: 1  # Frequency of target network updates
 
-  # params for rollout
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   train:
+    rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
       use_arm_ids: [1]  # Use single arm (0=left, 1=right)
@@ -125,13 +109,13 @@ env:
       clip_rz_range: 0.35  # About np.pi/9
   
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
     override_cfg:
       use_arm_ids: [1]  # Use single arm (0=left, 1=right)
       use_camera_ids: [2]  # Use single camera
       use_dense_reward: True
       target_ee_pose: TARGET_EE_POSE  # Should be set according to actual robot setup
-
 
 rollout:
   group_name: "RolloutGroup"
@@ -143,7 +127,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
 
   enable_torch_compile: True
@@ -159,7 +143,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 6  # For single arm: 6 (xyz + euler after Quat2EulerWrapper); for dual arms: 12
     action_dim: 6  # For single arm: 6 (xyz_delta + rpy_delta); for dual arms: 12
 
@@ -173,7 +157,7 @@ actor:
     lr: 3e-4
     lr_scheduler: torch_constant
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

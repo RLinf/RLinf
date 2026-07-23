@@ -30,6 +30,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
+        if (
+            SupportedModel(self.cfg.actor.model.model_type)
+            == SupportedModel.OPENPI_PYTORCH
+        ):
+            from rlinf.data.datasets.openpi_pytorch import (
+                build_openpi_pytorch_sft_dataloader,
+            )
+
+            return build_openpi_pytorch_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
         if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
             repo_id = resolve_lerobot_repo_id(data_paths)
             if repo_id is None:
@@ -47,7 +58,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 model_path=self.cfg.actor.model.model_path,
                 batch_size=self.cfg.actor.micro_batch_size * self._world_size,
                 repo_id=repo_id,
-                data_kwargs=getattr(self.cfg.actor, "openpi_data", None),
+                data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
             )
             data_loader = openpi_data_loader.create_data_loader(
                 config, framework="pytorch", shuffle=True
@@ -92,13 +103,15 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             loss = output["loss"]
 
         step_metrics = {"loss": loss.detach().item()}
-        if isinstance(output, dict) and output.get("dynamics_loss", None) is not None:
-            step_metrics.update(
-                {
-                    "dynamics_loss": output["dynamics_loss"].detach().item(),
-                    "action_loss": output["action_loss"].detach().item(),
-                }
-            )
+        if isinstance(output, dict):
+            for key, value in output.items():
+                if key == "loss":
+                    continue
+                if torch.is_tensor(value):
+                    if value.numel() == 1:
+                        step_metrics[key] = value.detach().item()
+                elif isinstance(value, (float, int)):
+                    step_metrics[key] = value
         return loss, step_metrics
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
@@ -144,7 +157,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:
             return 0
-        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.OPENPI_PYTORCH:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        if model_type == SupportedModel.OPENPI:
             num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
             return max(1, num_batches // self.gradient_accumulation)
         return super().get_max_steps_per_epoch()

@@ -28,6 +28,7 @@ from rlinf.utils.distributed import (
     vocab_parallel_entropy_and_log_probs,
     vocab_parallel_log_probs_from_logits,
 )
+from rlinf.utils.metric_utils import CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
     PlacementMode,
@@ -109,13 +110,7 @@ class MegatronActor(MegatronWorker):
         self._setup_rollout_weight_dst_ranks()
 
     def process_inference_output(self, rollout_result, infer_out):
-        prev_logprobs = infer_out
-        if rollout_result.rollout_logprobs is not None:
-            # Rollout has returned logprobs, store the recomputed logprobs in recompute_prev_logprobs
-            rollout_result.recompute_prev_logprobs = prev_logprobs
-        else:
-            # Otherwise, store the logprobs in prev_logprobs (the final logprobs used for training)
-            rollout_result.prev_logprobs = prev_logprobs
+        rollout_result.recomputed_logprobs = infer_out
 
     def get_forward_step_func(self):
         """Acquire the forward step function for the model."""
@@ -195,17 +190,27 @@ class MegatronActor(MegatronWorker):
                 ].contiguous()
 
                 advantages = batch["advantages"]
-                prev_logprobs = batch["prev_logprobs"]
+                # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
+                old_logprobs = batch.get("recomputed_logprobs")
+                if old_logprobs is None:
+                    old_logprobs = batch["rollout_logprobs"]
                 ref_logprobs = None
                 if "ref_logprobs" in batch:
                     ref_logprobs = batch["ref_logprobs"]
 
                 if self.cfg.algorithm.get("importance_sampling_fix", False):
-                    rollout_prev_logprobs = prev_logprobs
-                    recompute_prev_logprobs = batch["recompute_prev_logprobs"]
+                    if (
+                        "rollout_logprobs" not in batch
+                        or "recomputed_logprobs" not in batch
+                    ):
+                        raise ValueError(
+                            "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
+                        )
+                    rollout_logprobs = batch["rollout_logprobs"]
+                    recomputed_logprobs = batch["recomputed_logprobs"]
                     advantages = advantages * torch.clamp(
-                        (recompute_prev_logprobs - rollout_prev_logprobs).exp(),
-                        min=self.cfg.algorithm.importance_sampling_clip,
+                        (recomputed_logprobs - rollout_logprobs).exp(),
+                        max=self.cfg.algorithm.importance_sampling_clip,
                     )
 
                 mask = batch["response_mask"][:, -response_len:]
@@ -215,7 +220,7 @@ class MegatronActor(MegatronWorker):
                     loss_type=self.cfg.algorithm.loss_type,
                     loss_agg_func=self.loss_agg_func,
                     logprobs=curr_logprobs,
-                    old_logprobs=prev_logprobs,
+                    old_logprobs=old_logprobs,
                     advantages=advantages,
                     clip_ratio_c=self.clip_ratio_c,
                     clip_ratio_low=self.clip_ratio_low,
@@ -281,7 +286,17 @@ class MegatronActor(MegatronWorker):
                 )
 
                 for k, v in metrics_data.items():
-                    if v is not None:
+                    if v is None:
+                        continue
+                    if k in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                        v = v.detach().clone()
+                        torch.distributed.all_reduce(
+                            v,
+                            op=torch.distributed.ReduceOp.SUM,
+                            group=parallel_state.get_data_parallel_group(),
+                        )
+                        metrics_data[k] = v
+                    else:
                         metrics_data[k] = average_losses_across_data_parallel_group([v])
 
                 return loss, metrics_data

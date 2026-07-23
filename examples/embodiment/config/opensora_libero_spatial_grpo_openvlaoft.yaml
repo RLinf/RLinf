@@ -2,7 +2,7 @@ defaults:
   - env/opensora_libero_spatial@env.train
   - env/libero_spatial@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -40,8 +40,6 @@ algorithm:
   normalize_advantages: True
   kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
   group_size: 8
-  rollout_epoch: 16
-  eval_rollout_epoch: 1 # set eval_rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
 
   reward_type: action_level  # action_level or chunk_level
   logprob_type: token_level
@@ -63,21 +61,6 @@ algorithm:
 
   reward_coef: 5.0
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.6
-    temperature_eval: 1.6
-    top_k: -1
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  # length argument for autoregressive sampling
-  # max length means max amount of tokens to generate
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
   filter_rewards: True
   rewards_lower_bound: 0.5
   rewards_upper_bound: 4.5
@@ -87,6 +70,7 @@ env:
 
   # Override the default values in env/libero_spatial
   train:
+    rollout_epoch: 16
     total_num_envs: 64
     group_size: ${algorithm.group_size}
     max_episode_steps: 256 # max episode steps for truncation
@@ -96,6 +80,7 @@ env:
     opensora_wm_hf_ckpt_path: "/path/to/model/RLinf-OpenSora-LIBERO-Spatial"
     enable_offload: True
   eval:
+    rollout_epoch: 1
     total_num_envs: 500
     auto_reset: True
     ignore_terminations: True
@@ -110,6 +95,14 @@ env:
     enable_offload: True
 
 rollout:
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.6
+    temperature_eval: 1.6
+    top_k: -1
+    top_p: 1.0
+    repetition_penalty: 1.0
+
   group_name: "RolloutGroup"
   generation_backend: "huggingface"
   enable_offload: True
@@ -144,7 +137,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

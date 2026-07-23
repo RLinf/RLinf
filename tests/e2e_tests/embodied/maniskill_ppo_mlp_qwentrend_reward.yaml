@@ -2,7 +2,7 @@ defaults:
   - env/maniskill_pick_cube@env.train
   - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -49,9 +49,6 @@ algorithm:
   kl_penalty: kl
   group_size: 1
 
-  rollout_epoch: 1
-  eval_rollout_epoch: 1
-
   reward_type: action_level
   logprob_type: action_level
   entropy_type: action_level
@@ -70,25 +67,12 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.9
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 data:
   rollout_batch_size: 32
 
 env:
   train:
+    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple
@@ -128,6 +112,7 @@ env:
       render_mode: all
     use_3rd_view_as_extra: True
   eval:
+    rollout_epoch: 1
     env_type: maniskill
     total_num_envs: 32
     wrap_obs_mode: simple

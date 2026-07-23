@@ -1,137 +1,196 @@
-基于 Genesis 仿真平台的强化学习训练
-======================================
+基于 Genesis 的强化学习训练
+========================================
 
-本文档提供了在 RLinf 框架内使用 Genesis 仿真环境启动 **MLP 策略** 训练任务的指南。
+.. figure:: https://raw.githubusercontent.com/YilingQiao/Genesis/readme-assets/videos/HeroShot_Final.png
+   :align: center
+   :width: 90%
 
-Genesis 是一个物理逼真的多物理场仿真平台，支持 GPU 并行计算高精度的接触动力学，适用于复杂的手部操作任务。
+   Genesis（图片来源：`Genesis <https://genesis-world.readthedocs.io/>`__）。
 
-环境
------------------------
+`Genesis <https://genesis-world.readthedocs.io/>`__ 是面向机器人任务的 GPU 加速多物理场
+仿真器。你将使用 RLinf 在 Franka cube-pick 任务上，通过 PPO 训练 MLP 或 CNN policy。
 
-**Genesis 环境**
+概览
+----------------------------------------
 
-- **Environment**：Genesis Simulation Platform
-- **Task**：控制 Franka Panda 机械臂抓取方块
-- **Observation**：
-  - **Images**：第三人称视角的 RGB 图像 (256×256)
-  - **States**：16 维向量（末端位姿 7 维 + 夹爪 2 维 + 方块位姿 7 维）
-- **Action Space**：9 维连续动作
-  - 7 维臂部关节位置控制
-  - 2 维夹爪位置控制
+训练 Franka Panda 策略在 Genesis 中抓取方块。
 
-依赖安装
----------------
+.. grid:: 2 4 4 4
+   :gutter: 2
 
-1. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: 模型
+      :text-align: center
+
+      MLP · CNN
+
+   .. grid-item-card:: 算法
+      :text-align: center
+
+      PPO
+
+   .. grid-item-card:: 任务
+      :text-align: center
+
+      CubePick
+
+   .. grid-item-card:: 硬件
+      :text-align: center
+
+      1 节点 · 1 GPU
+
+| **你将完成：** 安装 → 可选下载 ResNet → 启动 ``run_embodiment.sh`` → 观察 ``env/success_once``。
+| **前置条件：** :doc:`安装 </rst_source/start/installation>` · 安装步骤中的 Genesis 依赖。
+
+任务
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - 任务
+     - 描述
+   * - ``cube_pick``
+     - 控制 Franka Panda 机械臂抓取并抬起方块。
+
+观测与动作
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 82
+
+   * - 字段
+     - 规格
+   * - 观测
+     - MLP 使用 16 维状态；CNN 使用 256×256 RGB 加 16 维状态。
+   * - 动作
+     - 9 维连续动作：7 个 Franka 机械臂关节位置和 2 个夹爪位置。
+   * - 奖励
+     - 稠密 approach reward 和 grasp-success bonus。
+   * - 提示词
+     - 不使用；这是低维/CNN policy 控制配方。
+
+安装
+----------------------------------------
+
+.. include:: _setup_common.rst
+
+**Docker 镜像**
 
 .. code:: bash
 
-   git clone https://github.com/RLinf/RLinf.git
-   cd RLinf
+   docker run -it --rm --gpus all \
+      --shm-size 32g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.3-genesis
 
-2. 安装依赖
-~~~~~~~~~~~~~~~~
+   # 国内用户可使用：
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-genesis
+
+**自定义环境**
+
+安装 Genesis 依赖：
 
 .. code:: bash
 
-   # 使用 install.sh 安装 genesis 相关依赖
+   # 国内用户可添加 --use-mirror。
    bash requirements/install.sh embodied --env genesis
    source .venv/bin/activate
 
-运行脚本
--------------------
+下载模型
+----------------------------------------
 
-**1. 配置文件**
-
-- 配置文件路径：``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
-
-**2. 启动命令**
+MLP + PPO 配方可跳过本节。CNN + PPO 配方需要下载 ResNet 检查点：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
+   cd /path/to/save/model
 
-.. code-block:: bash
-
-   # 图像观测实验（CNN policy）
-   # 注意：actor.model.model_path 目录下需要包含 resnet10_pretrained.pt
-   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
-
-**获取 ``resnet10_pretrained.pt`` 并配置 ``actor.model.model_path``**
-
-.. code-block:: bash
-
-   # 方式 1：git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
-   # 方式 2：huggingface-hub（中国大陆：export HF_ENDPOINT=https://hf-mirror.com）
+   # 或使用 huggingface-hub：
+   # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
-下载完成后，把 YAML 中的 ``actor.model.model_path`` 与
-``rollout.model.model_path`` 都指向下载目录。
+然后在 ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml`` 中为 rollout 和 actor
+设置相同的检查点路径：
+
+.. code-block:: yaml
+
+   rollout:
+      model:
+         model_path: /path/to/RLinf-ResNet10-pretrained
+   actor:
+      model:
+         model_path: /path/to/RLinf-ResNet10-pretrained
+
+运行
+----------------------------------------
+
+选择一个配方并启动训练：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 48 26
+
+   * - 配方
+     - 配置
+     - 命令后缀
+   * - MLP + PPO
+     - ``examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml``
+     - ``genesis_cubepick_ppo_mlp``
+   * - CNN + PPO
+     - ``examples/embodiment/config/genesis_cubepick_ppo_cnn.yaml``
+     - ``genesis_cubepick_ppo_cnn``
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_mlp
+   bash examples/embodiment/run_embodiment.sh genesis_cubepick_ppo_cnn
+
+这条命令会：
+
+1. 使用选定的 Hydra 配置启动 embodied 训练入口。
+2. 为 actor、rollout 和 Genesis env 组件创建 Ray worker。
+3. 运行 PPO rollout，计算 cube-pick 奖励，并更新选定策略。
+
+.. note::
+
+   两个配置默认都运行在 GPU ``0``。请根据硬件调整
+   ``cluster.component_placement``、``env.train.total_num_envs`` 和 batch size。
 
 可视化与结果
--------------------------
+----------------------------------------
 
-**1. TensorBoard 日志**
+在 RLinf 仓库根目录启动 TensorBoard：
 
-.. code-block:: bash
+.. code:: bash
 
-   # 启动 TensorBoard
-   tensorboard --logdir ./logs
+   tensorboard --logdir ../results --port 6006
 
-**2. 关键监控指标**
+关键指标是 ``env/success_once``。完整指标说明见
+:doc:`训练指标 <../../reference/metrics>`。
 
-- **训练指标**：
+如需视频，请在环境配置中启用 video：
 
-  - ``train/actor/policy_loss``: PPO策略损失。
-  - ``train/actor/clip_fraction``: 触发 PPO 裁剪的样本比例。反映了新旧策略的差异程度。
-  - ``train/actor/approx_kl``: 近似 KL 散度。监控策略更新幅度，防止更新过大导致崩溃。
-  - ``train/actor/grad_norm``: 梯度范数。用于监控训练稳定性，图中显示随收敛过程梯度范数会有所上升。
-  - ``train/critic/value_loss``: 价值函数损失。衡量 Critic 对状态价值估计的准确性。
-  - ``train/critic/explained_variance``: 衡量价值函数拟合程度。越接近 1 越好。
-  - ``train/actor/total_loss``: 策略损失 + 价值损失 + 熵正则的总和。
-
-- **Rollout 指标**：
-
-  - ``rollout/returns_mean``: 优势函数的均值。
-  - ``rollout/advantages_max/mean/min``: 优势函数的最大值/最小值。
-  - ``rollout/rewards``: 一个chunk的奖励。
-
-- **环境指标**：
-
-  - ``env/success_once``: 核心指标。表示回合内是否成功抓取并抬起方块。在 400 个 Epoch 内，成功率预期可达到 90% 以上。
-  - ``env/episode_len``: 该回合实际经历的环境步数（单位：step）。
-  - ``env/return``: 回合总回报。
-  - ``env/reward``: 步级奖励均值。
-
-
-**3. 视频生成**
-
-.. code-block:: yaml
+.. code:: yaml
 
    env:
-      eval:
-         video_cfg:
-            save_video: True
-            video_base_dir: ${runner.logger.log_path}/video/eval
+     eval:
+       video_cfg:
+         save_video: True
+         video_base_dir: ${runner.logger.log_path}/video/eval
 
-**4. 训练日志工具集成**
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
 
-.. code-block:: yaml
-
-    runner:
-        task_type: embodied
-        logger:
-            log_path: "../results"
-            project_name: rlinf
-            experiment_name: "genesis_cubepick_ppo_mlp"
-            logger_backends: ["tensorboard"]
-
-Genesis 结果
-~~~~~~~~~~~~~~~~~~~
-
-在/examples/embodiment/config/genesis_cubepick_ppo_mlp.yaml中默认参数的训练下env/success_once可达到约 80% 。
+   * - 配方
+     - 结果描述
+   * - MLP + PPO
+     - 使用默认 ``genesis_cubepick_ppo_mlp`` 参数时，``env/success_once`` 可达到约 80%。

@@ -5,7 +5,7 @@ description: Reviews a pull request from a PR URL by directly fetching the URL c
 
 # Review PR (From PR URL)
 
-Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution rules referenced below.
+Reviews the changes in a specific GitHub pull request. **The primary focus is code correctness and design-pattern consistency with the existing codebase.** PR formatting, commit conventions, and user-facing documentation are checked but should not dominate the review. See [CONTRIBUTING.md](../../../CONTRIBUTING.md) for the contribution rules referenced below.
 
 ## 1. Input: PR URL
 
@@ -65,8 +65,13 @@ The PR must match how RLinf already does things. Mismatches are usually defects 
 
 Both directions matter, and EN/ZH parity must be checked explicitly:
 
+- **If this PR changes documentation**, follow the [docs-check skill](../docs-check/SKILL.md) to drive this review: it cross-checks docs against code and against each other (commands, config keys, paths, model/env names) and enforces EN↔ZH parity.
 - **Docs → code**: every config key, CLI flag, env var, file path, function/class name, and supported model/env name mentioned in changed docs must exist in `origin/main` + this PR. Verify with `git show origin/main:rlinf/...`. Stale references = finding.
 - **Code → docs**: when this PR adds, removes, or renames a public-facing config key, model, env, runner, script, env var, or supported feature, the corresponding doc page **must be updated in the same PR**. If missing, list the exact doc files (EN and ZH) that need edits.
+- **Example-config model paths ↔ docs**: for changed example configs under `examples/embodiment/config/*.yaml`, every model-weight path field (`model_path`, `lora_path`, `backbone_model_path`, `wan_wm_hf_ckpt_path`) must satisfy all three:
+  1. **Form**: it is `/path/to/<repo-name>` where the trailing path component equals the repo in its `# https://huggingface.co/<org>/<repo>` comment (the docs convention is `hf download <org>/<repo> --local-dir <repo>`, so basename == repo name). Flag stale/placeholder basenames (`RLinf-Pi0-SFT`, `model`, `openpi`, …) and a missing leading slash.
+  2. **Exists**: each distinct referenced repo resolves on Hugging Face — `curl -sL -o /dev/null -w '%{http_code}' https://huggingface.co/api/models/<org>/<repo>` returns `200` (use `/api/datasets/` for datasets). Flag 401/404. Also flag *redirecting* names: if the API's returned `id` differs from the requested name, the repo was renamed — point at the canonical `id` (a `200` via redirect is still a stale reference).
+  3. **Matches the docs' per-variant model**: the repo equals the one the corresponding env recipe page prescribes for that exact environment + task suite + model family — not just any existing repo. Cross-check the recipe doc's model table/download block (e.g. LIBERO spatial/object/goal + π₀ → `RLinf-Pi0-LIBERO-Spatial-Object-Goal-SFT`, LIBERO-10/Long + π₀ → `RLinf-Pi0-LIBERO-Long-SFT`, any LIBERO suite + π₀.₅ → `RLinf-Pi05-LIBERO-SFT`, GR00T N1.5 per-suite `RLinf-Gr00t-SFT-{Spatial,Object,Goal,10}`). Watch for base-vs-adapter mixups (`model_path` = full base model, `lora_path` = LoRA adapter) and casing drift vs the doc/canonical name. Intentional user-supplied placeholders (e.g. DAgger `student_model`/`expert_model`, "any pi05 checkpoint") are not findings — confirm against the recipe page before flagging.
 - **EN ↔ ZH parity** (do this explicitly, even when only one language was touched): paired pages under `docs/source-en/` and `docs/source-zh/` must agree on setup commands, paths, env vars, config keys, supported models/envs/algorithms, capability claims, reported numbers (metrics, table values, dataset sizes, trial counts), and section structure/order. If only one side is updated, name the matching file that also needs the change.
 - **Sibling style**: cross-check with sibling pages in the same area (e.g. `opensora.rst`) for section naming/order, code-block conventions, table/link style.
 - Each docs finding must include a concrete suggested wording / structure fix and exact file references.
@@ -74,6 +79,7 @@ Both directions matter, and EN/ZH parity must be checked explicitly:
 ### (d) Tests and CI integration
 
 - **User-facing changes** must have **tests** (unit or e2e). Reviewer must be able to validate reproducibility.
+- **If this PR changes the install script** (`requirements/install.sh`, `requirements/embodied/`, or `docker/Dockerfile`), follow the [install-check skill](../install-check/SKILL.md) to review the changes: reuse of common utilities, system deps kept in `sys_deps.sh`, pinned/forked git deps, no ad-hoc `pyproject.toml`/core-dep hacks, and a matching Dockerfile build stage for every new model/env.
 - **Dependencies / CI**: new env/model needs install-script update, Docker stage, and CI/e2e coverage — cross-check with the [add-install-docker-ci-e2e skill](../add-install-docker-ci-e2e/SKILL.md).
 - New CI-relevant YAML must be referenced in the e2e test matrix.
 - Large/new dependencies (docker, models, datasets) → maintainer ping noted.
@@ -86,6 +92,7 @@ Mention only if there are real issues; do not pad the review.
 - Public classes/methods have Google-style docstrings; type hints on parameters; return type when not deducible.
 - Assertions/exceptions have meaningful messages (no empty or `xxx != yyy` restatements).
 - `logging` / `self.log_*` not `print`.
+- **License header (newly-added files)**: every file *added* by this PR must carry the standard RLinf header (`# Copyright <YEAR> The RLinf Authors.`), and `<YEAR>` must equal the current calendar year. Determine the current year (e.g. `date +%Y`), list added files with `git diff --name-status origin/main...<pr-head>` (status `A`), and flag any new file whose header is missing or whose copyright year is not the current year. Files vendored from third parties keep their upstream copyright line — apply this only to the RLinf Authors header.
 - Every commit `Signed-off-by`; messages follow Conventional Commits `<type>(<scope>): <description>`.
 - PR title in Conventional Commits format; PR Description and Checklist sections filled; testing results if performance/stability is affected.
 
