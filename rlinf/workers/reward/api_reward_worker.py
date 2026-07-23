@@ -209,14 +209,14 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
     @torch.no_grad()
     def compute_reward(
         self,
-        reward_input: dict[str, Any],
+        observations: dict[str, Any],
     ) -> torch.Tensor:
-        history_input: dict[str, dict[str, list[list[Any]]]] = reward_input[
+        history_input: dict[str, dict[str, list[list[Any]]]] = observations[
             "history_input"
         ]
         input_batch_size = len(next(iter(next(iter(history_input.values())).values())))
-        observations = {
-            key: value for key, value in reward_input.items() if key != "history_input"
+        reward_observations = {
+            key: value for key, value in observations.items() if key != "history_input"
         }
 
         rewards = torch.full(
@@ -226,12 +226,12 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
         )
 
         valid_input_ids = self.input_builder.get_valid_input_ids(
-            observations,
+            reward_observations,
             history_input,
         )
         if len(valid_input_ids) > 0:
             prepared_inputs = self.input_builder.prepare_inputs(
-                observations,
+                reward_observations,
                 history_input,
                 valid_input_ids,
             )
@@ -251,5 +251,5 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
             )
 
         return self._format_reward_output(
-            apply_gt_success_bonus(rewards, observations, self.gt_success_bonus)
+            apply_gt_success_bonus(rewards, reward_observations, self.gt_success_bonus)
         )
