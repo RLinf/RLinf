@@ -395,6 +395,40 @@ EOF
     echo "${ver%%.*} ${ver#*.}"
 }
 
+install_nvcomp() {
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "[install.sh] Skipping nvCOMP on platform=${PLATFORM}."
+        return 0
+    fi
+    if [ "$(uname -m)" != "x86_64" ]; then
+        echo "[install.sh] Skipping nvCOMP on architecture=$(uname -m)."
+        return 0
+    fi
+
+    local cuda_major cuda_minor
+    if ! read -r cuda_major cuda_minor < <(detect_cuda_major_minor); then
+        echo "[install.sh] WARNING: CUDA was not detected; skipping nvCOMP." >&2
+        return 0
+    fi
+
+    local nvcomp_package
+    case "$cuda_major" in
+        12)
+            nvcomp_package="nvidia-nvcomp-cu12"
+            ;;
+        13)
+            nvcomp_package="nvidia-nvcomp-cu13"
+            ;;
+        *)
+            echo "[install.sh] WARNING: nvCOMP is not configured for CUDA ${cuda_major}.${cuda_minor}; skipping it." >&2
+            return 0
+            ;;
+    esac
+
+    echo "[install.sh] Installing ${nvcomp_package} for CUDA ${cuda_major}.${cuda_minor}."
+    uv pip install "${nvcomp_package}"
+}
+
 configure_nvidia() {
     PLATFORM_TORCH_STR=""
     PLATFORM_TORCH_INDEX=""
@@ -408,6 +442,13 @@ configure_nvidia() {
     PLATFORM_FLASH_ATTN_PREBUILT=1
     PLATFORM_RELAX_TORCHCODEC=0
     PLATFORM_EXTRA_OVERRIDES=()
+    if [ -z "$TORCH_VERSION" ]; then
+        local cuda_mm
+        if cuda_mm=$(detect_cuda_major_minor) && [ "${cuda_mm%% *}" = "13" ]; then
+            TORCH_VERSION="2.11.0"
+            echo "[install.sh] Auto-selected torch ${TORCH_VERSION} for CUDA 13."
+        fi
+    fi
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
     fi
@@ -965,6 +1006,17 @@ EOF
     }
     cuda_major="${cuda_mm%% *}"
 
+    if [ "$cuda_major" = "13" ] \
+        && [ "$torch_mm" = "2.11" ] \
+        && [ "$py_tag" = "cp311" ] \
+        && [ "$(uname -m)" = "x86_64" ]; then
+        local cu130_wheel="${GITHUB_PREFIX}https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.9.4/flash_attn-2.8.3+cu130torch2.11-cp311-cp311-linux_x86_64.whl"
+        echo "[install.sh] Installing the CUDA 13 / torch 2.11 flash-attn wheel..."
+        uv pip uninstall flash-attn || true
+        uv pip install "$cu130_wheel"
+        return 0
+    fi
+
     local cu_tag="cu${cuda_major}"            # e.g. cu12
     local torch_tag="torch${torch_mm}"        # e.g. torch2.6
 
@@ -1141,6 +1193,7 @@ EOF
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    install_nvcomp
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -1202,6 +1255,34 @@ EOF
     uv pip install "$decord_path/python" --no-build-isolation
 }
 
+install_openvla_package() {
+    if [ -z "$TORCH_VERSION" ]; then
+        uv pip install git+${GITHUB_PREFIX}https://github.com/openvla/openvla.git --no-build-isolation
+        return 0
+    fi
+
+    local openvla_path
+    openvla_path=$(clone_or_reuse_repo \
+        OPENVLA_PATH \
+        "$VENV_DIR/openvla-src" \
+        "${GITHUB_PREFIX}https://github.com/openvla/openvla.git")
+
+    local openvla_pyproject="$openvla_path/pyproject.toml"
+    local package
+    for package in torch torchvision torchaudio; do
+        sed -i -E "s/\"${package}==([^\"]+)\"/\"${package}>=\\1\"/" "$openvla_pyproject"
+    done
+
+    if ! grep -Fq '"torch>=2.2.0"' "$openvla_pyproject" \
+        || ! grep -Fq '"torchvision>=0.17.0"' "$openvla_pyproject" \
+        || ! grep -Fq '"torchaudio>=2.2.0"' "$openvla_pyproject"; then
+        echo "[install.sh] OpenVLA dependencies changed upstream; refusing an unreviewed install." >&2
+        exit 1
+    fi
+
+    uv pip install "$openvla_path" --no-build-isolation
+}
+
 install_openvla_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -1219,7 +1300,7 @@ install_openvla_model() {
             exit 1
             ;;
     esac
-    uv pip install git+${GITHUB_PREFIX}https://github.com/openvla/openvla.git --no-build-isolation
+    install_openvla_package
     install_flash_attn
     uv pip uninstall pynvml || true
 }
@@ -1302,13 +1383,49 @@ install_openvla_oft_model() {
     uv pip uninstall pynvml || true
 }
 
+install_openpi_package() {
+    if [ -z "$TORCH_VERSION" ]; then
+        uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+        return 0
+    fi
+
+    local openpi_path
+    openpi_path=$(clone_or_reuse_repo \
+        OPENPI_PATH \
+        "$VENV_DIR/openpi-src" \
+        "${GITHUB_PREFIX}https://github.com/RLinf/openpi.git" \
+        --recurse-submodules)
+
+    git -C "$openpi_path" submodule sync --recursive
+    git -C "$openpi_path" submodule update --init --recursive --depth 1
+
+    local openpi_pyproject="$openpi_path/pyproject.toml"
+    if grep -Fq '"jax[cuda12]==0.5.3"' "$openpi_pyproject"; then
+        sed -i 's/"jax\[cuda12\]==0\.5\.3"/"jax==0.5.3"/' "$openpi_pyproject"
+    elif ! grep -Fq '"jax==0.5.3"' "$openpi_pyproject"; then
+        echo "[install.sh] OpenPI JAX dependency changed upstream; refusing an unreviewed install." >&2
+        exit 1
+    fi
+
+    if grep -Fq '"torch==2.7.1"' "$openpi_pyproject"; then
+        sed -i 's/"torch==2\.7\.1"/"torch>=2.6.0"/' "$openpi_pyproject"
+    elif grep -Fq '"torch>=2.7.1"' "$openpi_pyproject"; then
+        sed -i 's/"torch>=2\.7\.1"/"torch>=2.6.0"/' "$openpi_pyproject"
+    elif ! grep -Fq '"torch>=2.6.0"' "$openpi_pyproject"; then
+        echo "[install.sh] OpenPI Torch dependency changed upstream; refusing an unreviewed install." >&2
+        exit 1
+    fi
+
+    uv pip install "$openpi_path"
+}
+
 install_openpi_model() {
     case "$ENV_NAME" in
         behavior)
             PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_behavior_env
             uv pip install protobuf==6.33.0
             pushd ~ >/dev/null
@@ -1319,27 +1436,27 @@ install_openpi_model() {
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             ;;
         metaworld)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_metaworld_env
             ;;
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_calvin_env
             ;;
         robocasa)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_robocasa_env
             ;;
@@ -1353,14 +1470,14 @@ install_openpi_model() {
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_robotwin_env
             ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_isaaclab_env
             # Torch is modified in Isaac Lab, install flash-attn afterwards
             install_flash_attn
@@ -1369,7 +1486,7 @@ install_openpi_model() {
         roboverse)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             install_roboverse_env
             ;;
@@ -1381,14 +1498,14 @@ install_openpi_model() {
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
             install_franka_franky_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             install_flash_attn
             ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
             install_polaris_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_openpi_package
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
@@ -1398,7 +1515,12 @@ install_openpi_model() {
 
     # Enforce RLinf-compatible runtime pins to avoid known breakages.
     # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
-    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+    local openpi_cuda_mm
+    if openpi_cuda_mm=$(detect_cuda_major_minor) && [ "${openpi_cuda_mm%% *}" = "13" ]; then
+        uv pip install jax==0.5.3 orbax-checkpoint==0.11.13 tyro==1.0.13
+    else
+        uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+    fi
 
     # Replace transformers models with OpenPI's modified versions
     local py_major_minor
@@ -2152,7 +2274,7 @@ install_dosw1_env() {
     # The default patch_syncer uses nvcomp_lz4. Keep DOSW1 lightweight by
     # installing only this shared compression runtime instead of the full
     # common simulator dependency set.
-    uv pip install nvidia-nvcomp-cu12
+    install_nvcomp
     uv pip install evdev opencv-python
 
     # Install DOSW1 SDK. The wheel / airbot_api source are pre-deployed on the

@@ -384,11 +384,14 @@ RLinf currently provides these patch compressors:
 If you enable ``nvcomp_lz4``, you need:
 
 - ``transport_device: cuda``
-- ``nvidia-nvcomp-cu12`` installed in the runtime environment
+- the nvCOMP package matching the PyTorch wheel's CUDA major
+  (``torch.version.cuda``): ``nvidia-nvcomp-cu12`` for CUDA 12 or
+  ``nvidia-nvcomp-cu13`` for CUDA 13
 
 If you install embodied environments through
 ``bash requirements/install.sh embodied ...``, this dependency is installed as
-part of the common embodied requirements.
+part of the common embodied setup. Selection uses ``torch.version.cuda`` first
+and falls back to ``nvcc`` when PyTorch cannot report a CUDA version.
 
 
 When Patch Mode Is Not A Good Fit

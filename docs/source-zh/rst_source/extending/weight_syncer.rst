@@ -338,10 +338,13 @@ init bootstrap 走的是分桶权重传输，不经过 patch compressor。
 如果你启用 ``nvcomp_lz4``，需要满足：
 
 - ``transport_device: cuda``
-- 运行环境已安装 ``nvidia-nvcomp-cu12``
+- 运行环境已安装与 PyTorch wheel 的 CUDA 主版本（``torch.version.cuda``）匹配的
+  nvCOMP 包：CUDA 12 使用 ``nvidia-nvcomp-cu12``，CUDA 13 使用
+  ``nvidia-nvcomp-cu13``
 
 如果你是通过 ``bash requirements/install.sh embodied ...`` 安装具身环境，
-该依赖会自动随具身公共依赖安装。
+安装脚本会优先根据 ``torch.version.cuda`` 自动选择；PyTorch 无法报告 CUDA 版本时，
+才回退到 ``nvcc`` 检测。
 
 
 什么时候 patch 不合适
