@@ -1,0 +1,31 @@
+model_type: "openpi_pytorch"
+
+# JAX-aligned OpenPI PyTorch Pi0.5 model for RoboTwin ALOHA SFT.
+# Filesystem paths are supplied by robotwin_sft_openpi_pytorch_pi05.yaml.
+precision: fp32
+pi05: True
+
+# The SFT master weights stay in fp32; FSDP casts parameters to bf16 for
+# compute in the experiment config.
+is_lora: False
+lora_rank: 32
+
+# RoboTwin exposes 14 action values. OpenPI pads them to model_action_dim=32.
+num_action_chunks: 50
+action_dim: 14
+use_proprio: True
+num_steps: 5
+add_value_head: False
+
+openpi:
+  task: sft
+  config_name: "pi05_aloha_robotwin"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  # Pi0.5 uses discrete state tokens and the longer prompt budget.
+  max_token_len: 200
+  discrete_state_input: True

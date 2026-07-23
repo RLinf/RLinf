@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert an RLinf RoboTwin Pi0 SFT checkpoint to the new HF-style layout.
+"""Convert an RLinf RoboTwin Pi0/Pi0.5 SFT checkpoint to the new HF layout.
 
 The output is the self-contained layout consumed by ``openpi_pytorch``::
 
@@ -20,10 +20,10 @@ The output is the self-contained layout consumed by ``openpi_pytorch``::
     config.json
     physical - intelligence / robotwin / norm_stats.json
 
-Unlike the legacy ``sft2new`` mode, this converter targets the non-Pi05
-RoboTwin Pi0 architecture (action horizon 50, model action dimension 32, and
-maximum prompt length 48). Floating-point weights are kept in fp32 by default
-to avoid introducing an additional cast after SFT; ``--dtype bf16`` is
+The ``--pi05`` flag selects the Pi0.5 architecture (adaptive RMS conditioning,
+discrete state tokens, and maximum prompt length 200). Without it, the
+converter keeps the existing non-Pi05 Pi0 behavior. Floating-point weights are
+kept in fp32 by default to preserve the SFT master weights; ``--dtype bf16`` is
 available when a smaller deployment artifact is preferred.
 """
 
@@ -55,6 +55,17 @@ _ROBOTWIN_PI0_CONFIG = {
     "pcd": False,
 }
 
+_ROBOTWIN_PI05_CONFIG = {
+    "action_dim": 32,
+    "action_horizon": 50,
+    "max_token_len": 200,
+    "paligemma_variant": "gemma_2b",
+    "action_expert_variant": "gemma_300m",
+    "pi05": True,
+    "discrete_state_input": True,
+    "pcd": False,
+}
+
 _WEIGHTS_CANDIDATES = (
     "actor/model_state_dict/full_weights.pt",
     "model_state_dict/full_weights.pt",
@@ -69,6 +80,15 @@ _REQUIRED_PI0_KEYS = (
     "state_proj.weight",
     "action_time_mlp_in.weight",
     "action_time_mlp_out.weight",
+)
+
+_REQUIRED_PI05_KEYS = (
+    "img.stem.weight",
+    "llm.embedder.embedding.weight",
+    "action_in_proj.weight",
+    "action_out_proj.weight",
+    "time_mlp_in.weight",
+    "time_mlp_out.weight",
 )
 
 _DTYPES = {
@@ -93,28 +113,43 @@ def _resolve_full_weights(ckpt: str | pathlib.Path) -> pathlib.Path:
     )
 
 
-def _validate_pi0_state_dict(state_dict: Mapping[str, torch.Tensor]) -> None:
-    """Reject checkpoints that are not the non-Pi05 RoboTwin Pi0 layout."""
-    missing = [key for key in _REQUIRED_PI0_KEYS if key not in state_dict]
+def _validate_state_dict(
+    state_dict: Mapping[str, torch.Tensor], *, pi05: bool
+) -> None:
+    """Validate the architecture-specific projection keys in an SFT checkpoint."""
+    required_keys = _REQUIRED_PI05_KEYS if pi05 else _REQUIRED_PI0_KEYS
+    missing = [key for key in required_keys if key not in state_dict]
     if missing:
         raise ValueError(
-            "The SFT checkpoint does not look like a RoboTwin Pi0 checkpoint. "
+            "The SFT checkpoint does not look like a RoboTwin "
+            f"{'Pi0.5' if pi05 else 'Pi0'} checkpoint. "
             f"Missing required bare keys: {missing}"
         )
 
-    pi05_only = ("time_mlp_in.weight", "time_mlp_out.weight")
-    present_pi05_keys = [key for key in pi05_only if key in state_dict]
-    if present_pi05_keys:
+    forbidden_keys = (
+        (
+            "state_proj.weight",
+            "action_time_mlp_in.weight",
+            "action_time_mlp_out.weight",
+        )
+        if pi05
+        else ("time_mlp_in.weight", "time_mlp_out.weight")
+    )
+    present_forbidden_keys = [key for key in forbidden_keys if key in state_dict]
+    if present_forbidden_keys:
         raise ValueError(
-            "The checkpoint contains Pi0.5-only keys "
-            f"{present_pi05_keys}; use the legacy sft2new mode for Pi0.5."
+            "The checkpoint contains architecture-incompatible keys "
+            f"{present_forbidden_keys}; check the --pi05 flag."
         )
 
 
 def _validate_against_reference(
-    state_dict: Mapping[str, torch.Tensor], reference_model: str | pathlib.Path
+    state_dict: Mapping[str, torch.Tensor],
+    reference_model: str | pathlib.Path,
+    *,
+    pi05: bool,
 ) -> None:
-    """Validate keys and shapes against a new-format Pi0 base model."""
+    """Validate keys and shapes against a matching new-format base model."""
     reference_path = resolve_model_safetensors(reference_model)
     if not reference_path.is_file():
         raise FileNotFoundError(
@@ -128,7 +163,8 @@ def _validate_against_reference(
     unexpected = sorted(actual_keys - reference_keys)
     if missing or unexpected:
         raise ValueError(
-            "SFT checkpoint keys do not match the reference Pi0 model: "
+            "SFT checkpoint keys do not match the reference "
+            f"{'Pi0.5' if pi05 else 'Pi0'} model: "
             f"missing={missing[:8]}, unexpected={unexpected[:8]}"
         )
 
@@ -139,7 +175,8 @@ def _validate_against_reference(
     ]
     if shape_mismatches:
         raise ValueError(
-            "SFT checkpoint tensor shapes do not match the reference Pi0 model: "
+            "SFT checkpoint tensor shapes do not match the reference "
+            f"{'Pi0.5' if pi05 else 'Pi0'} model: "
             f"{shape_mismatches[:8]}"
         )
 
@@ -152,8 +189,9 @@ def convert(
     *,
     dtype: str = "fp32",
     reference_model: str | pathlib.Path | None = None,
+    pi05: bool = False,
 ) -> pathlib.Path:
-    """Convert RoboTwin Pi0 SFT weights to a new-format model directory."""
+    """Convert RoboTwin Pi0/Pi0.5 SFT weights to a new-format model directory."""
     if dtype not in _DTYPES:
         raise ValueError(f"dtype must be one of {sorted(_DTYPES)}, got {dtype!r}")
 
@@ -166,13 +204,13 @@ def convert(
         state_dict,
         cast_dtype=_DTYPES[dtype][0],
     )
-    _validate_pi0_state_dict(bare_state)
+    _validate_state_dict(bare_state, pi05=pi05)
     if reference_model is not None:
-        _validate_against_reference(bare_state, reference_model)
+        _validate_against_reference(bare_state, reference_model, pi05=pi05)
 
     output_model = pathlib.Path(output_model)
     save_safetensors(bare_state, output_model / "model.safetensors")
-    config = dict(_ROBOTWIN_PI0_CONFIG)
+    config = dict(_ROBOTWIN_PI05_CONFIG if pi05 else _ROBOTWIN_PI0_CONFIG)
     config["dtype"] = _DTYPES[dtype][1]
     write_config_json(config, output_model)
     copy_norm_stats(input_norm_stats, output_norm_stats)
@@ -185,7 +223,7 @@ def convert(
 
 
 def add_arguments(parser) -> None:
-    """Register RoboTwin Pi0 SFT conversion arguments."""
+    """Register RoboTwin Pi0/Pi0.5 SFT conversion arguments."""
     parser.add_argument(
         "--ckpt",
         required=True,
@@ -213,12 +251,17 @@ def add_arguments(parser) -> None:
     parser.add_argument(
         "--reference-model",
         default=None,
-        help="optional new-format Pi0 base model used to validate keys and shapes",
+        help="optional matching new-format Pi0/Pi0.5 base model used to validate keys and shapes",
+    )
+    parser.add_argument(
+        "--pi05",
+        action="store_true",
+        help="select the Pi0.5 architecture; omit for the non-Pi05 Pi0 architecture",
     )
 
 
 def run(args) -> None:
-    """Execute the RoboTwin Pi0 SFT conversion."""
+    """Execute the RoboTwin Pi0/Pi0.5 SFT conversion."""
     convert(
         args.ckpt,
         args.input_norm_stats,
@@ -226,4 +269,5 @@ def run(args) -> None:
         args.output_norm_stats,
         dtype=args.dtype,
         reference_model=args.reference_model,
+        pi05=args.pi05,
     )

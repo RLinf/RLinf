@@ -106,14 +106,19 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
 
 ## `robotwin_sft2new`
 
-RoboTwin Pi0 (non-Pi05) RLinf SFT checkpoint -> new HF-style
-`openpi_pytorch` layout.
+RoboTwin Pi0/Pi0.5 RLinf SFT checkpoint -> new HF-style `openpi_pytorch`
+layout.
 
-Use this mode for `examples/sft/config/robotwin_sft_openpi_pytorch.yaml`. It is
-separate from `sft2new`, which keeps the legacy Pi0.5 BEHAVIOR architecture.
+Use this mode for `examples/sft/config/robotwin_sft_openpi_pytorch.yaml` and
+pass `--pi05` for `examples/sft/config/robotwin_sft_openpi_pytorch_pi05.yaml`.
+It is separate from `sft2new`, which keeps the older generic Pi0.5 SFT layout.
 
-- **Architecture**: `pi05=false`, model action dimension 32, action horizon 50,
-  maximum token length 48.
+- **Pi0 architecture** (default): `pi05=false`, model action dimension 32,
+  action horizon 50, maximum token length 48, state projection + action-time
+  MLPs.
+- **Pi0.5 architecture** (`--pi05`): `pi05=true`, model action dimension 32,
+  action horizon 50, maximum token length 200, discrete state tokens +
+  adaptive-RMS time MLPs.
 - **Input**: an SFT checkpoint directory, `actor/` directory,
   `model_state_dict/` directory, or `full_weights.pt` directly.
 - **Output**: `model.safetensors` + `config.json`; output weights are fp32 by
@@ -130,6 +135,18 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
     --output-model      /path/to/pi0_robotwin_sft_hf \
     --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
     --reference-model   /path/to/pi0_base_pytorch_new
+```
+
+For Pi0.5, use a matching Pi0.5 base model and add `--pi05`:
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+    --pi05 \
+    --ckpt              /path/to/checkpoints/global_step_30000 \
+    --input-norm-stats /path/to/pi05_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
+    --output-model      /path/to/pi05_robotwin_sft_hf \
+    --output-norm-stats /path/to/pi05_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
+    --reference-model   /path/to/pi05_base_pytorch_new
 ```
 
 The output directory can be used as `actor.model.model_path` for the matching

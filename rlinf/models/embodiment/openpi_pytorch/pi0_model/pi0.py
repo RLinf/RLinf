@@ -255,7 +255,10 @@ class Pi0(model.BaseModel):
 
         if not self.pi05:
             # Add a single state token
-            state_token = self.state_proj(obs.state)[:, None, :]
+            # Eval transforms keep state in fp32 after normalization, while
+            # the model is commonly loaded directly in bf16. Match the state
+            # projection input to its compute dtype just like actions/time.
+            state_token = self.state_proj(obs.state.to(self.embed_dtype))[:, None, :]
             tokens.append(state_token)
             input_mask.append(
                 torch.ones(B, 1, dtype=torch.bool, device=state_token.device)

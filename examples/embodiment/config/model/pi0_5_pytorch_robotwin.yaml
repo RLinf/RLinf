@@ -1,0 +1,26 @@
+model_type: "openpi_pytorch"
+
+# JAX-aligned OpenPI PyTorch Pi0.5 inference model for RoboTwin.
+precision: bf16
+pi05: True
+is_lora: False
+lora_rank: 32
+
+num_action_chunks: 50
+action_dim: 14
+use_proprio: True
+num_steps: 5
+add_value_head: False
+
+openpi:
+  task: eval
+  config_name: "pi05_aloha_robotwin"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  num_steps: ${..num_steps}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
+  discrete_state_input: True
