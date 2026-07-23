@@ -162,13 +162,66 @@ def prepare_actions_for_metaworld(
 def prepare_actions_for_robocasa(
     raw_chunk_actions,
     action_dim,
-    action_space,
+    model_type=None,
+    env_cfg=None,
+    action_space=None,
 ) -> np.ndarray:
     """
-    Prepare actions for robocasa environment.
-    Model outputs 32D actions per chunk, and model got first N valid actions defined by action_space, but robocasa expects 12D.
-    So extract the first N dimensions, fit to corresponding ids, and pad the rest to get12 dimensions (3D pos + 3D ori + 1D gripper + 5D base).
+    Prepare actions for RoboCasa-style mobile-manipulation environments.
+
+    RoboCasa365 can override the env-side action schema via ``env.action_space``.
+    The legacy RoboCasa path uses the named action-space mapping from
+    ``rlinf.envs.robocasa.utils``.
     """
+    action_space_cfg = {}
+    if env_cfg is not None:
+        action_space_cfg = getattr(env_cfg, "action_space", {})
+        if hasattr(action_space_cfg, "items"):
+            action_space_cfg = dict(action_space_cfg.items())
+
+    if action_space_cfg:
+        env_action_dim = action_space_cfg.get("env_action_dim", action_dim)
+        openpi_valid_action_slice = action_space_cfg.get(
+            "openpi_valid_action_slice", [0, env_action_dim]
+        )
+        disable_base_control = action_space_cfg.get("disable_base_control", False)
+        base_mode_index = action_space_cfg.get("base_mode_index", env_action_dim - 1)
+        binarize_gripper_control = action_space_cfg.get(
+            "binarize_gripper_control", True
+        )
+
+        if SupportedModel(model_type) == SupportedModel.OPENPI:
+            start_idx, end_idx = openpi_valid_action_slice
+            actions_env = (
+                raw_chunk_actions[..., start_idx:end_idx].copy().astype(np.float32)
+            )
+
+            if actions_env.shape[-1] != env_action_dim:
+                raise ValueError(
+                    f"RoboCasa365 OpenPI expects {env_action_dim}D action, "
+                    f"but got {actions_env.shape[-1]}D from slice "
+                    f"{openpi_valid_action_slice}. raw shape={raw_chunk_actions.shape}"
+                )
+
+            if binarize_gripper_control and env_action_dim >= 12:
+                actions_env[..., 6] = np.where(actions_env[..., 6] < 0.5, -1.0, 1.0)
+                actions_env[..., 11] = np.where(actions_env[..., 11] < 0.5, -1.0, 1.0)
+
+            if disable_base_control and env_action_dim >= 12:
+                actions_env[..., 7:10] = 0.0
+                actions_env[..., 10] = 0.0
+                if 0 <= base_mode_index < env_action_dim:
+                    actions_env[..., base_mode_index] = -1.0
+
+            return actions_env
+
+        chunk_actions = raw_chunk_actions[..., :env_action_dim].copy()
+        if disable_base_control and env_action_dim >= 12:
+            chunk_actions[..., 7:10] = 0.0
+            chunk_actions[..., 10] = 0.0
+            if 0 <= base_mode_index < env_action_dim:
+                chunk_actions[..., base_mode_index] = -1.0
+        return chunk_actions
 
     # raw_chunk_actions shape: [num_chunks, 32]
     # Extract first action_dim (<=12) dimensions as valid action chunks
@@ -272,6 +325,7 @@ def prepare_actions(
     action_scale: float = 1.0,
     policy: str = "widowx_bridge",
     wm_env_type=None,
+    env_cfg=None,
 ) -> torch.Tensor | np.ndarray:
     if isinstance(raw_chunk_actions, torch.Tensor):
         raw_chunk_actions = raw_chunk_actions.detach().cpu().contiguous()
@@ -325,6 +379,13 @@ def prepare_actions(
         chunk_actions = prepare_actions_for_isaaclab(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
+        )
+    elif env_type == SupportedEnvType.ROBOCASA365:
+        chunk_actions = prepare_actions_for_robocasa(
+            raw_chunk_actions=raw_chunk_actions,
+            action_dim=action_dim,
+            model_type=model_type,
+            env_cfg=env_cfg,
         )
     elif env_type == SupportedEnvType.ROBOCASA:
         chunk_actions = prepare_actions_for_robocasa(

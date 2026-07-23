@@ -32,6 +32,9 @@ The table below lists benchmarks that have example configs under ``evaluations/`
    * - RoboTwin
      - ``robotwin_place_empty_cup``, ``robotwin_adjust_bottle``, ``robotwin_place_shoe``, ``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml``, etc.
+   * - RoboCasa365
+     - ``robocasa365`` pretrain task slices
+     - ``robocasa365/robocasa365_eval_openpi.yaml``
 
 **LIBERO variants:** Standard LIBERO, LIBERO-PRO, and LIBERO-PLUS are supported via environment variables (see :doc:`guides/libero`).
 
