@@ -21,7 +21,6 @@
      - 使用 LoRA adapter 训练。
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
      - 解耦 Env Worker 与 Rollout Worker，用于具身任务中的动态 rollout 调度。
-     - 在仿真中模拟观测延迟和网络条件。
 
 .. toctree::
    :hidden:

@@ -158,11 +158,11 @@ Full worked example:
 
 .. code-block:: text
 
-   examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml
+   examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml
 
 
 See also
 
-- :doc:`RoboTwin <../embodied/robotwin>` — RoboTwin environment setup and configuration.
-- :doc:`DAgger <../embodied/dagger>` — DAgger training with expert policy.
+- :doc:`RoboTwin <robotwin>` — RoboTwin environment setup and configuration.
+- :doc:`DAgger <dagger>` — DAgger training with expert policy.
 - :doc:`Env Decoupled Mode <../../guides/env_decoupled_mode>` — required by ``delay_sampler``.

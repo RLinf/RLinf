@@ -149,11 +149,11 @@ Rollout Worker 部署在不同集群或云区域时。
 
 .. code-block:: text
 
-   examples/embodiment/config/robotwin_adjust_bottle_dagger_openpi.yaml
+   examples/embodiment/config/realsimulator_robotwin_adjust_bottle_dagger_openpi.yaml
 
 
 参考：
   
-  - :doc:`RoboTwin <../embodied/robotwin>` — RoboTwin 环境设置与配置。
-  - :doc:`DAgger <../embodied/dagger>` — 基于专家策略的 DAgger 训练。
+  - :doc:`RoboTwin <robotwin>` — RoboTwin 环境设置与配置。
+  - :doc:`DAgger <dagger>` — 基于专家策略的 DAgger 训练。
   - :doc:`Env 解耦模式 <../../guides/env_decoupled_mode>` — ``delay_sampler`` 的前置条件。

@@ -201,4 +201,4 @@
    PolaRiS <embodied/polaris>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
-   真机仿真器 <simulators/real_simulator>
+   真机仿真器 <embodied/real_simulator>

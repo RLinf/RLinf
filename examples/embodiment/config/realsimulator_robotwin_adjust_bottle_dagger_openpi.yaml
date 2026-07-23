@@ -20,8 +20,27 @@ cluster:
     env: 4-7
     rollout: 4-7
 
+net_emulation:
+  enabled: true
+  symmetric: true
+  proxy:
+    node_rank: 0
+    num_cpus: 1
+    name: "NetEmulationProxy"
+  crossdc_pairs:
+    - src: ["Env:0", "Env:1", "Env:2", "Env:3"]
+      dst: ["Rollout:0", "Rollout:1", "Rollout:2", "Rollout:3", "Actor:0", "Actor:1", "Actor:2", "Actor:3"]
+      delay_ms: 10
+  bandwidth_groups:
+    - members: ["Env:0", "Env:1", "Env:2", "Env:3"]
+      bandwidth_mbps: 1000
+    - members: ["Rollout:0", "Rollout:1", "Rollout:2", "Rollout:3", "Actor:0", "Actor:1", "Actor:2", "Actor:3"]
+      bandwidth_mbps: 1000
+
+
 runner:
   task_type: embodied
+  enable_decoupled_mode: True
   logger:
     log_path: "../results"
     project_name: rlinf
@@ -65,6 +84,11 @@ algorithm:
 env:
   group_name: "EnvGroup"
   # enable_offload: False
+  delay_sampler:
+    type: uniform
+    min_delay: 0.11
+    max_delay: 0.20
+
   train:
     rollout_epoch: 1
     total_num_envs: 64
