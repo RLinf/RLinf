@@ -40,6 +40,7 @@ net_emulation:
 
 runner:
   task_type: embodied
+  enable_decoupled_mode: True
   logger:
     log_path: "../results"
     project_name: rlinf

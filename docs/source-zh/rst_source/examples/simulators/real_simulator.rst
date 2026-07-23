@@ -154,6 +154,6 @@ Rollout Worker 部署在不同集群或云区域时。
 
 参考：
   
-  - :doc:`RoboTwin <../examples/embodied/robotwin>` — RoboTwin 环境设置与配置。
-  - :doc:`DAgger <../examples/embodied/dagger>` — 基于专家策略的 DAgger 训练。
-  - :doc:`Env 解耦模式 <env_decoupled_mode>` — ``delay_sampler`` 的前置条件。
+  - :doc:`RoboTwin <../embodied/robotwin>` — RoboTwin 环境设置与配置。
+  - :doc:`DAgger <../embodied/dagger>` — 基于专家策略的 DAgger 训练。
+  - :doc:`Env 解耦模式 <../../guides/env_decoupled_mode>` — ``delay_sampler`` 的前置条件。

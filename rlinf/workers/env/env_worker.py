@@ -264,7 +264,7 @@ class EnvWorker(Worker):
                 ]
                 self.history_lengths = [{} for _ in range(self.stage_num)]
 
-        if not self.only_eval:
+        if self.enable_train:
             self.train_num_envs_per_send = self.train_num_envs_per_stage
         if self.enable_eval:
             self.eval_num_envs_per_send = self.eval_num_envs_per_stage

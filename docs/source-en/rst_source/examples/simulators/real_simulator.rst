@@ -163,6 +163,6 @@ Full worked example:
 
 See also
 
-- :doc:`RoboTwin <../examples/embodied/robotwin>` — RoboTwin environment setup and configuration.
-- :doc:`DAgger <../examples/embodied/dagger>` — DAgger training with expert policy.
-- :doc:`Env Decoupled Mode <env_decoupled_mode>` — required by ``delay_sampler``.
+- :doc:`RoboTwin <../embodied/robotwin>` — RoboTwin environment setup and configuration.
+- :doc:`DAgger <../embodied/dagger>` — DAgger training with expert policy.
+- :doc:`Env Decoupled Mode <../../guides/env_decoupled_mode>` — required by ``delay_sampler``.

@@ -12,10 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+from unittest.mock import MagicMock
 
 from omegaconf import OmegaConf
 
-from rlinf.workers.env.env_worker import EnvWorker
+# Mock gymnasium and rlinf.envs.wrappers before importing EnvWorker
+# to avoid ModuleNotFoundError when gymnasium is not installed.
+# We do this here at the very top to satisfy functional requirements
+# while using # noqa for linter satisfaction if needed.
+if "gymnasium" not in sys.modules:
+    sys.modules["gymnasium"] = MagicMock()
+
+if "rlinf.envs.wrappers" not in sys.modules:
+    sys.modules["rlinf.envs.wrappers"] = MagicMock()
+
+from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 
 
 def _make_worker(delay_sampler=None, enable_decoupled=True):
