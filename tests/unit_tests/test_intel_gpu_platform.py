@@ -19,9 +19,6 @@ from __future__ import annotations
 import sys
 from types import ModuleType, SimpleNamespace
 
-if "torch" not in sys.modules:
-    sys.modules["torch"] = ModuleType("torch")
-
 from rlinf.scheduler.hardware.accelerators.intel_gpu import IntelGPUManager
 
 
