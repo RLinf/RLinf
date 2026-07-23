@@ -39,6 +39,7 @@ from ..cluster import (
 )
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
+from ..tracing import DistTracer
 
 if TYPE_CHECKING:
     from ..collective import CollectiveGroupOptions
@@ -71,43 +72,7 @@ class WorkerMeta(type):
             @functools.wraps(func)
             def sync_func(*args, **kwargs):
                 try:
-                    res = func(*args, **kwargs)
-                    if func_name == "__init__":
-                        try:
-                            from omegaconf import DictConfig
-
-                            cfg = None
-                            for arg in args:
-                                if isinstance(arg, DictConfig):
-                                    cfg = arg
-                                    break
-                            if cfg is None:
-                                for val in kwargs.values():
-                                    if isinstance(val, DictConfig):
-                                        cfg = val
-                                        break
-                            if cfg is not None and cfg.get("trace_server_ip", None) is not None:
-                                from rlinf.utils.tracing import init_tracer
-
-                                self = args[0]
-                                group_name = (
-                                    getattr(self, "_group_name", None)
-                                    or (
-                                        self._worker_address.root_group_name
-                                        if getattr(self, "_worker_address", None)
-                                        else "worker"
-                                    )
-                                )
-                                rank = getattr(self, "_rank", 0)
-                                init_tracer(
-                                    server_ip=cfg.trace_server_ip,
-                                    port=cfg.get("trace_server_port", 8888),
-                                    process_name=f"{group_name}_rank{rank}",
-                                    thread_name="main",
-                                )
-                        except Exception:
-                            pass
-                    return res
+                    return func(*args, **kwargs)
                 except SystemExit:
                     # Catch SystemExit and log the error
                     raise RuntimeError(
@@ -946,42 +911,70 @@ class Worker(metaclass=WorkerMeta):
         self._timer_metrics.clear()
         return metrics
 
+    @property
+    def _trace_category(self) -> str:
+        """The trace event category of this worker, i.e., its root group name."""
+        if getattr(self, "_worker_address", None) is not None:
+            return self._worker_address.root_group_name
+        return "worker"
+
+    def setup_tracer(self, server_ip: str, server_port: int = 8888):
+        """Initialize this worker's tracer client; called collectively by the runner.
+
+        Once initialized, all timed sections (see `worker_timer`) also emit trace events.
+        """
+        DistTracer.init(
+            server_ip,
+            server_port,
+            process_name=self._worker_name or f"worker_pid{os.getpid()}",
+            thread_name="main",
+        )
+
+    def flush_tracer(self):
+        """Flush and shut down this worker's tracer; called by the runner before exit."""
+        DistTracer.reset()
+
     @contextmanager
-    def worker_timer(self, tag: Optional[str] = None):
+    def worker_timer(self, tag: Optional[str] = None, trace: bool = True):
         """Context manager to time the execution of a worker function.
 
         Args:
             tag (str): The name of the timer to record the execution time for. Default is the current function name.
+            trace (bool): Whether to also emit a trace event; no-op if the tracer is not initialized.
         """
         if tag is None:
             frame_num = 2
             frame = inspect.stack()[frame_num]
             tag = frame.function
         assert tag is not None, "Timer tag must be provided."
+        if trace:
+            DistTracer.trace_begin(tag, cat=self._trace_category)
         try:
             start_time = time.perf_counter()
             yield
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+            if trace:
+                DistTracer.trace_end(tag, cat=self._trace_category)
 
     @staticmethod
-    def timer(tag: Optional[str] = None):
-        """Decorator to time a worker function."""
+    def timer(tag: Optional[str] = None, trace: bool = True):
+        """Decorator to time a worker function, optionally emitting a trace event."""
 
         def decorator(func):
             if inspect.iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def wrapper(self, *args, **kwargs):
-                    with self.worker_timer(tag or func.__name__):
+                    with self.worker_timer(tag or func.__name__, trace=trace):
                         return await func(self, *args, **kwargs)
 
                 return wrapper
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                with self.worker_timer(tag or func.__name__):
+                with self.worker_timer(tag or func.__name__, trace=trace):
                     return func(self, *args, **kwargs)
 
             return wrapper

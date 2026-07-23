@@ -31,7 +31,6 @@ from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker
 from rlinf.utils.comm_mapping import CommMapper
 from rlinf.utils.placement import HybridComponentPlacement
-from rlinf.utils.tracing import trace_func
 
 
 class MultiStepRolloutWorker(Worker):
@@ -247,7 +246,6 @@ class MultiStepRolloutWorker(Worker):
         )
 
     @Worker.timer("predict")
-    @trace_func(cat="rollout")
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "train"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
@@ -345,7 +343,7 @@ class MultiStepRolloutWorker(Worker):
                 final_values = torch.zeros_like(actions[:, :1], dtype=torch.float32)
         return final_values[:, :1].cpu().contiguous()
 
-    @trace_func(cat="rollout")
+    @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
 
@@ -394,7 +392,6 @@ class MultiStepRolloutWorker(Worker):
         self.torch_platform.empty_cache()
 
     @Worker.timer("generate_one_epoch")
-    @trace_func(cat="rollout")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         self.update_dagger_beta()
         for _ in range(self.n_train_chunk_steps):
@@ -443,7 +440,7 @@ class MultiStepRolloutWorker(Worker):
             )
             self.send_rollout_result(output_channel, rollout_result, mode="train")
 
-    @trace_func(cat="rollout")
+    @Worker.timer("generate")
     async def generate(
         self,
         input_channel: Channel,
@@ -462,7 +459,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
-    @trace_func(cat="rollout")
+    @Worker.timer("evaluate")
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()

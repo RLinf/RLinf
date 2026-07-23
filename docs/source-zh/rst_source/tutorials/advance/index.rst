@@ -26,9 +26,10 @@
    描述如何在不同的 SGLang 版本之间动态切换，
    以满足不同的兼容性需求或实验要求。
 
-- :doc:`nsight`
-   介绍基于 Hydra 的 ``cluster.nsight`` 配置，用于通过 ``nsys profile``
-   包装指定的 Ray worker group，并说明如何启用、关闭以及选择需要采样的 worker。
+- :doc:`profiling`
+   介绍 RLinf 内置的性能分析工具：基于 Hydra 的 ``cluster.nsight`` 配置，
+   用于通过 ``nsys profile`` 包装指定的 Ray worker group；以及基于 HTTP 的
+   分布式追踪系统，通过 Perfetto 或 Chrome Trace Viewer 可视化多进程执行时间线。
 
 - :doc:`dynamic_scheduling`
    涵盖 RLinf 的在线扩缩与动态调度机制：如何在训练过程中对资源进行
@@ -39,10 +40,6 @@
    详细介绍 RLinf 中自动放置的具体实现，
    包括如何正确配置以启用自动放置功能。
 
-- :doc:`distributed_tracing`
-   解释如何使用基于 HTTP 的分布式追踪系统，通过 Chrome Trace Viewer
-   或 Perfetto 可视化多进程执行过程并定位性能瓶颈。
-
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -52,7 +49,6 @@
    cluster
    collective
    version
-   nsight
+   profiling
    dynamic_scheduling
    auto_placement
-   distributed_tracing

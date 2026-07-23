@@ -14,53 +14,12 @@
 
 import json
 import os
-import socket
 import tempfile
-import threading
 import time
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-# Inject mock torch and omegaconf to avoid installing heavy packages for testing tracing client/server
-sys.modules["torch"] = MagicMock()
-sys.modules["omegaconf"] = MagicMock()
-
-from rlinf.utils.trace_server import start_server
-from rlinf.utils.tracing import (
-    DistTracer,
-    get_tracer,
-    init_tracer,
-    trace_span,
-    trace_func,
-)
-
-
-class TraceServerThread(threading.Thread):
-    def __init__(self, trace_file):
-        super().__init__()
-        self.trace_file = trace_file
-        
-        # Bind socket to avoid TOCTOU
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(("127.0.0.1", 0))
-        self.port = self.sock.getsockname()[1]
-        
-        from rlinf.utils.trace_server import app
-        import uvicorn
-        config = uvicorn.Config(app, fd=self.sock.fileno(), log_level="error")
-        self.server = uvicorn.Server(config)
-        
-    def run(self):
-        import rlinf.utils.trace_server
-        import asyncio
-        rlinf.utils.trace_server.trace_file_path = self.trace_file
-        asyncio.run(self.server.serve())
-        
-    def stop(self):
-        self.server.should_exit = True
-        self.join(timeout=2.0)
-        self.sock.close()
+from rlinf.scheduler.tracing import DistTracer, TraceServer
 
 
 class TestDistributedTracing(unittest.TestCase):
@@ -68,52 +27,55 @@ class TestDistributedTracing(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.trace_file = os.path.join(self.temp_dir.name, "test_traces.jsonl")
 
-        # Start the trace server in a controlled thread
-        self.server_thread = TraceServerThread(self.trace_file)
-        self.port = self.server_thread.port
-        self.server_thread.start()
-        
-        # Give the server a moment to boot the async loop
-        time.sleep(0.3)
+        # Start the trace server on an ephemeral port
+        self.server = TraceServer(host="127.0.0.1", port=0, output_file=self.trace_file)
+        self.server.start()
+        self.port = self.server.port
 
     def tearDown(self):
-        self.server_thread.stop()
+        DistTracer.reset()
+        self.server.stop()
         self.temp_dir.cleanup()
+
+    def _read_events(self) -> list[dict]:
+        with open(self.trace_file, "r") as f:
+            return [json.loads(line) for line in f.readlines()]
 
     def test_clock_synchronization_and_tracing(self):
         # 1. Initialize the global tracer
-        init_tracer(
+        DistTracer.init(
             server_ip="127.0.0.1",
             port=self.port,
             process_name="test_proc",
             thread_name="test_thread",
         )
-        tracer = get_tracer()
+        tracer = DistTracer.get()
         self.assertIsNotNone(tracer)
 
         # 2. Check if the offset was successfully synchronized
         self.assertTrue(tracer.last_sync_time > 0.0)
 
         # 3. Trace a block using trace_span
-        with trace_span("operation_a", cat="math", args={"data_len": 10}):
+        with DistTracer.trace_span("operation_a", cat="math", args={"data_len": 10}):
             time.sleep(0.1)
 
-        # 4. Trace using decorator
-        @trace_func(cat="dec")
+        # 4. Trace using explicit begin/end
+        DistTracer.trace_begin("operation_b", cat="manual")
+        DistTracer.trace_end("operation_b", cat="manual")
+
+        # 5. Trace using decorator
+        @DistTracer.trace_func(cat="dec")
         def decorated_function():
             time.sleep(0.05)
 
         decorated_function()
 
-        # 5. Flush tracer events and shutdown
+        # 6. Flush tracer events and shutdown
         tracer.shutdown()
 
-        # 6. Verify written JSONL events
+        # 7. Verify written JSONL events
         self.assertTrue(os.path.exists(self.trace_file))
-        with open(self.trace_file, "r") as f:
-            lines = f.readlines()
-
-        events = [json.loads(line) for line in lines]
+        events = self._read_events()
 
         # Verify initial metadata events
         proc_meta = [e for e in events if e.get("name") == "process_name"]
@@ -123,19 +85,44 @@ class TestDistributedTracing(unittest.TestCase):
         self.assertTrue(proc_meta[0]["args"]["name"].startswith("test_proc"))
         self.assertEqual(thread_meta[0]["args"]["name"], "test_thread")
 
-        # Verify trace span event (ph: "X")
-        span_event = [e for e in events if e.get("name") == "operation_a"]
-        self.assertEqual(len(span_event), 1)
-        self.assertEqual(span_event[0]["cat"], "math")
-        self.assertEqual(span_event[0]["ph"], "X")
-        self.assertEqual(span_event[0]["args"]["data_len"], 10)
-        self.assertTrue(span_event[0]["dur"] >= 100000)  # at least 100ms in microseconds
+        # Verify span events (ph: "B"/"E" pairs)
+        span_begin = [
+            e for e in events if e.get("name") == "operation_a" and e["ph"] == "B"
+        ]
+        span_end = [
+            e for e in events if e.get("name") == "operation_a" and e["ph"] == "E"
+        ]
+        self.assertEqual(len(span_begin), 1)
+        self.assertEqual(len(span_end), 1)
+        self.assertEqual(span_begin[0]["cat"], "math")
+        self.assertEqual(span_begin[0]["args"]["data_len"], 10)
+        # The span should last at least 100ms in microseconds
+        self.assertTrue(span_end[0]["ts"] - span_begin[0]["ts"] >= 100000)
 
-        # Verify decorated function event
-        dec_event = [e for e in events if e.get("name") == "decorated_function"]
-        self.assertEqual(len(dec_event), 1)
-        self.assertEqual(dec_event[0]["cat"], "dec")
-        self.assertEqual(dec_event[0]["ph"], "X")
+        # Verify explicit begin/end events
+        manual_phs = sorted(e["ph"] for e in events if e.get("name") == "operation_b")
+        self.assertEqual(manual_phs, ["B", "E"])
+
+        # Verify decorated function events
+        dec_events = [e for e in events if e.get("name") == "decorated_function"]
+        self.assertEqual(sorted(e["ph"] for e in dec_events), ["B", "E"])
+        self.assertEqual(dec_events[0]["cat"], "dec")
+
+    def test_disabled_tracer_is_noop(self):
+        DistTracer.reset()
+        self.assertIsNone(DistTracer.get())
+
+        # All tracing entry points must be no-ops without a tracer
+        DistTracer.trace_begin("noop")
+        DistTracer.trace_end("noop")
+        with DistTracer.trace_span("noop"):
+            pass
+
+        @DistTracer.trace_func
+        def decorated_function():
+            return 42
+
+        self.assertEqual(decorated_function(), 42)
 
     def test_daily_resync_drift_correction(self):
         tracer = DistTracer(
@@ -155,6 +142,8 @@ class TestDistributedTracing(unittest.TestCase):
 
             # Assert that sync_clock was triggered at least once due to age check
             mock_sync.assert_called()
+
+        tracer.shutdown()
 
     def test_connection_loss_and_recovery(self):
         tracer = DistTracer(
@@ -193,9 +182,7 @@ class TestDistributedTracing(unittest.TestCase):
         self.assertTrue(tracer.is_connected)
         self.assertEqual(tracer.buffer_limit, 1000)
 
-        with open(self.trace_file, "r") as f:
-            lines = f.readlines()
-        events = [json.loads(line) for line in lines]
+        events = self._read_events()
         self.assertTrue(any(e.get("name") == "failed_event" for e in events))
 
         tracer.shutdown()

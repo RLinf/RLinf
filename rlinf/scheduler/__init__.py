@@ -33,6 +33,7 @@ from .placement import (
     PackedPlacementStrategy,
     PlacementStrategy,
 )
+from .tracing import DistTracer, TraceServer
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 
 __all__ = [
@@ -59,4 +60,6 @@ __all__ = [
     "Channel",
     "ChannelWorker",
     "WeightedItem",
+    "DistTracer",
+    "TraceServer",
 ]

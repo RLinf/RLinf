@@ -16,38 +16,48 @@ import asyncio
 import atexit
 import functools
 import json
-import logging
 import os
 import random
-import sys
+import socket
 import threading
 import time
 import urllib.request
 from contextlib import contextmanager
-
-logger = logging.getLogger("rlinf.tracing")
-
-
+from typing import Optional
 
 
 class DistTracer:
-    """Distributed tracing client that sends trace events to a central HTTP server."""
+    """Distributed tracing client that sends trace events to a central HTTP server.
 
-    def __init__(self, server_ip: str, port: int = 8888, process_name: str = None, thread_name: str = None):
-        self.server_ip = server_ip
+    A process-wide singleton is managed via the `init`/`get` classmethods, and the
+    `trace_begin`/`trace_end`/`trace_span`/`trace_func` classmethods trace through
+    it (no-op when tracing is not initialized).
+    """
+
+    _instance: Optional["DistTracer"] = None
+    _instance_lock = threading.Lock()
+
+    def __init__(
+        self,
+        server_ip: Optional[str] = None,
+        port: int = 8888,
+        process_name: Optional[str] = None,
+        thread_name: Optional[str] = None,
+    ):
+        """Initialize the tracer client; server_ip defaults to the local node IP."""
+        self.server_ip = server_ip or self.detect_node_ip()
         self.port = port
-        self.server_url = f"http://{server_ip}:{port}"
-        
-        import socket
-        try:
-            import ray
-            ip_addr = ray.util.get_node_ip_address()
-        except Exception:
-            ip_addr = socket.gethostbyname(socket.gethostname())
-        hostname = socket.gethostname()
+        self.server_url = f"http://{self.server_ip}:{port}"
+        # Trace traffic is intra-cluster; bypass any configured HTTP(S) proxies
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
         # Identity labels for Chrome Trace representation
-        self.pid = f"{process_name}@{hostname}({ip_addr})" if process_name is not None else f"{os.getpid()}@{hostname}({ip_addr})"
-        self.tid = thread_name if thread_name is not None else str(threading.get_ident())
+        hostname = socket.gethostname()
+        process_name = process_name or str(os.getpid())
+        self.pid = f"{process_name}@{hostname}({self.detect_node_ip()})"
+        self.tid = (
+            thread_name if thread_name is not None else str(threading.get_ident())
+        )
 
         # Synchronization state
         self.offset = 0
@@ -83,11 +93,108 @@ class DistTracer:
         # Register exit handler for clean final flush
         atexit.register(self.shutdown)
 
+    @staticmethod
+    def logger():
+        """The logger of the current worker process (lazy to avoid a circular import)."""
+        from ..worker import Worker
+
+        return Worker.logger
+
+    @staticmethod
+    def detect_node_ip() -> str:
+        """Detect this node's IP address, preferring Ray's view of it."""
+        try:
+            import ray
+
+            return ray.util.get_node_ip_address()
+        except Exception:
+            return socket.gethostbyname(socket.gethostname())
+
+    @classmethod
+    def init(
+        cls,
+        server_ip: Optional[str] = None,
+        port: int = 8888,
+        process_name: Optional[str] = None,
+        thread_name: Optional[str] = None,
+    ):
+        """Initialize the global tracer; server_ip defaults to the local node IP."""
+        with cls._instance_lock:
+            try:
+                cls._instance = cls(server_ip, port, process_name, thread_name)
+            except Exception as e:
+                cls.logger().error(f"Failed to initialize tracer client: {e}")
+                cls._instance = None
+
+    @classmethod
+    def get(cls) -> Optional["DistTracer"]:
+        """Retrieve the global tracer instance, or None if tracing is disabled."""
+        with cls._instance_lock:
+            return cls._instance
+
+    @classmethod
+    def reset(cls):
+        """Shut down and clear the global tracer instance."""
+        with cls._instance_lock:
+            if cls._instance is not None:
+                cls._instance.shutdown()
+                cls._instance = None
+
+    @classmethod
+    def trace_begin(cls, name: str, cat: str = "default", args: Optional[dict] = None):
+        """Log the beginning of a duration event (Chrome Trace ph: B); no-op if tracing is disabled."""
+        tracer = cls.get()
+        if tracer is not None:
+            tracer.log_event(name=name, cat=cat, ph="B", args=args)
+
+    @classmethod
+    def trace_end(cls, name: str, cat: str = "default"):
+        """Log the end of a duration event (Chrome Trace ph: E); no-op if tracing is disabled."""
+        tracer = cls.get()
+        if tracer is not None:
+            tracer.log_event(name=name, cat=cat, ph="E")
+
+    @classmethod
+    @contextmanager
+    def trace_span(cls, name: str, cat: str = "default", args: Optional[dict] = None):
+        """Context manager to trace execution of a code block."""
+        cls.trace_begin(name, cat=cat, args=args)
+        try:
+            yield
+        finally:
+            cls.trace_end(name, cat=cat)
+
+    @classmethod
+    def trace_func(cls, func_or_cat=None, cat: str = "default"):
+        """Decorator to trace functions (supports @trace_func, @trace_func(), and @trace_func(cat="..."))."""
+        category = func_or_cat if isinstance(func_or_cat, str) else cat
+
+        def decorator(func):
+            if asyncio.iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(*args, **kwargs):
+                    with cls.trace_span(func.__name__, cat=category):
+                        return await func(*args, **kwargs)
+
+                return async_wrapper
+
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                with cls.trace_span(func.__name__, cat=category):
+                    return func(*args, **kwargs)
+
+            return sync_wrapper
+
+        if callable(func_or_cat):
+            return decorator(func_or_cat)
+        return decorator
+
     def check_health(self) -> bool:
-        """Sends a GET request to /health to check if the server is online."""
+        """Send a GET request to /health to check if the server is online."""
         try:
             req = urllib.request.Request(f"{self.server_url}/health", method="GET")
-            with urllib.request.urlopen(req, timeout=1.0) as response:
+            with self._opener.open(req, timeout=1.0) as response:
                 data = json.loads(response.read().decode("utf-8"))
                 return data.get("status") == "ok"
         except Exception:
@@ -95,7 +202,9 @@ class DistTracer:
 
     def sync_clock(self):
         """Synchronize time with the server using Cristian's algorithm over HTTP GET."""
-        logger.info(f"Synchronizing clock with trace server at {self.server_url}")
+        self.logger().info(
+            f"Synchronizing clock with trace server at {self.server_url}"
+        )
         best_offset = 0
         min_rtt = float("inf")
         successful_rounds = 0
@@ -105,7 +214,7 @@ class DistTracer:
             try:
                 t0 = time.time_ns() // 1000
                 req = urllib.request.Request(f"{self.server_url}/sync", method="GET")
-                with urllib.request.urlopen(req, timeout=2.0) as response:
+                with self._opener.open(req, timeout=2.0) as response:
                     data = json.loads(response.read().decode("utf-8"))
                     t_server = data["server_time_us"]
                 t1 = time.time_ns() // 1000
@@ -119,26 +228,39 @@ class DistTracer:
                 successful_rounds += 1
             except Exception as e:
                 # Log warning but don't fail completely to keep system robust
-                logger.warning(f"Clock sync round {i} failed: {e}")
+                self.logger().warning(f"Clock sync round {i} failed: {e}")
                 time.sleep(0.05)
 
         if successful_rounds > 0:
             with self.sync_lock:
                 self.offset = best_offset
                 self.last_sync_time = time.time()
-            logger.info(
+            self.logger().info(
                 f"Clock synchronized. Offset: {best_offset} us, Min RTT: {min_rtt} us"
             )
         else:
-            logger.error("Could not sync clock with trace server. Defaulting to 0 offset.")
+            self.logger().error(
+                "Could not sync clock with trace server. Defaulting to 0 offset."
+            )
 
-    def log_event(self, name: str, cat: str = "default", ph: str = "X", ts: int = None, dur: int = None, args: dict = None):
+    def _now_us(self) -> int:
+        """Return the current local time adjusted to the server epoch in microseconds."""
+        with self.sync_lock:
+            current_offset = self.offset
+        return (time.time_ns() // 1000) + current_offset
+
+    def log_event(
+        self,
+        name: str,
+        cat: str = "default",
+        ph: str = "X",
+        ts: Optional[int] = None,
+        dur: Optional[int] = None,
+        args: Optional[dict] = None,
+    ):
         """Append a trace event to the buffer thread-safely."""
         if ts is None:
-            # Adjust local time to UTC+0 synchronized server time
-            with self.sync_lock:
-                current_offset = self.offset
-            ts = (time.time_ns() // 1000) + current_offset
+            ts = self._now_us()
 
         event = {
             "name": name,
@@ -164,13 +286,10 @@ class DistTracer:
 
     def emit_metadata(self, name: str, args: dict):
         """Log a Chrome Trace metadata event (ph: M) to label processes/threads."""
-        with self.sync_lock:
-            current_offset = self.offset
-        ts = (time.time_ns() // 1000) + current_offset
         event = {
             "name": name,
             "ph": "M",
-            "ts": ts,
+            "ts": self._now_us(),
             "pid": self.pid,
             "tid": self.tid,
             "args": args,
@@ -183,7 +302,7 @@ class DistTracer:
         with self.buffer_lock:
             if not self.buffer:
                 return
-            
+
             # If currently disconnected and we haven't reached the expanded buffer limit,
             # avoid attempting to flush to prevent spamming requests.
             if not self.is_connected and len(self.buffer) < self.buffer_limit:
@@ -198,15 +317,17 @@ class DistTracer:
                 f"{self.server_url}/trace",
                 data=data,
                 headers={"Content-Type": "application/json"},
-                method="POST"
+                method="POST",
             )
-            with urllib.request.urlopen(req, timeout=5.0) as response:
+            with self._opener.open(req, timeout=5.0) as response:
                 response.read()
-            
+
             # Reset connection state on successful flush
             with self.connection_lock:
                 if not self.is_connected:
-                    logger.info("Reconnected to trace server on successful flush.")
+                    self.logger().info(
+                        "Reconnected to trace server on successful flush."
+                    )
                     self.is_connected = True
                     self.buffer_limit = self.default_buffer_limit
                     self.backoff_delay = 1.0
@@ -214,7 +335,7 @@ class DistTracer:
             # Handle failure
             with self.connection_lock:
                 if self.is_connected:
-                    logger.warning(
+                    self.logger().warning(
                         f"Disconnected from trace server: {e}. "
                         f"Entering backoff recovery (max buffer size expanded to {self.max_buffer_limit})."
                     )
@@ -232,7 +353,7 @@ class DistTracer:
             try:
                 # Sleep with +/- 20% jitter to prevent thundering herd
                 time.sleep(base_interval * random.uniform(0.8, 1.2))
-                
+
                 # Check connection status and handle backoff retries
                 with self.connection_lock:
                     is_connected = self.is_connected
@@ -243,7 +364,9 @@ class DistTracer:
                     if now - self.last_health_check >= backoff:
                         self.last_health_check = now
                         if self.check_health():
-                            logger.info("Trace server healthcheck succeeded. Restoring connection.")
+                            self.logger().info(
+                                "Trace server healthcheck succeeded. Restoring connection."
+                            )
                             with self.connection_lock:
                                 self.is_connected = True
                                 self.buffer_limit = self.default_buffer_limit
@@ -255,7 +378,9 @@ class DistTracer:
                             new_backoff = min(backoff * 2, self.max_backoff_delay)
                             with self.connection_lock:
                                 self.backoff_delay = new_backoff
-                            logger.debug(f"Trace server healthcheck failed. Next check in {new_backoff}s.")
+                            self.logger().debug(
+                                f"Trace server healthcheck failed. Next check in {new_backoff}s."
+                            )
                 else:
                     # Flush normal buffer
                     self.flush()
@@ -265,7 +390,7 @@ class DistTracer:
                 if time_since_sync >= 86400.0:
                     self.sync_clock()
             except Exception as e:
-                logger.error(f"Error in tracer background loop: {e}")
+                self.logger().error(f"Error in tracer background loop: {e}")
 
     def shutdown(self):
         """Gracefully shut down the background thread and perform a final synchronous flush."""
@@ -273,91 +398,3 @@ class DistTracer:
             self.running = False
             # Final synchronous flush of any remaining events
             self.flush()
-
-
-# Global tracer client instance
-_tracer = None
-_tracer_lock = threading.Lock()
-
-
-def init_tracer(server_ip: str, port: int = 8888, process_name: str = None, thread_name: str = None):
-    """Initialize the global distributed tracer client."""
-    global _tracer
-    with _tracer_lock:
-        if server_ip:
-            try:
-                _tracer = DistTracer(
-                    server_ip=server_ip,
-                    port=port,
-                    process_name=process_name,
-                    thread_name=thread_name
-                )
-            except Exception as e:
-                logger.error(f"Failed to initialize tracer client: {e}")
-                _tracer = None
-        else:
-            _tracer = None
-
-
-def get_tracer():
-    """Retrieve the global tracer instance, or None if disabled."""
-    global _tracer
-    with _tracer_lock:
-        return _tracer
-
-
-@contextmanager
-def trace_span(name: str, cat: str = "default", args: dict = None):
-    """Context manager to trace execution of a code block."""
-    tracer = get_tracer()
-    if tracer is None:
-        yield
-        return
-
-    # Measure start time aligned to server epoch
-    with tracer.sync_lock:
-        offset = tracer.offset
-    start_ts = (time.time_ns() // 1000) + offset
-
-    try:
-        yield
-    finally:
-        end_ts = (time.time_ns() // 1000) + offset
-        dur = end_ts - start_ts
-        tracer.log_event(name=name, cat=cat, ph="X", ts=start_ts, dur=dur, args=args)
-
-
-def trace_func(func_or_cat=None, cat: str = "default"):
-    """Decorator to trace functions (supports @trace_func, @trace_func(), and @trace_func(cat="..."))."""
-    if callable(func_or_cat):
-        func = func_or_cat
-        category = cat
-        if asyncio.iscoroutinefunction(func):
-            @functools.wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                with trace_span(func.__name__, cat=category):
-                    return await func(*args, **kwargs)
-            return async_wrapper
-        else:
-            @functools.wraps(func)
-            def sync_wrapper(*args, **kwargs):
-                with trace_span(func.__name__, cat=category):
-                    return func(*args, **kwargs)
-            return sync_wrapper
-
-    category = func_or_cat if isinstance(func_or_cat, str) else cat
-
-    def decorator(func):
-        if asyncio.iscoroutinefunction(func):
-            @functools.wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                with trace_span(func.__name__, cat=category):
-                    return await func(*args, **kwargs)
-            return async_wrapper
-        else:
-            @functools.wraps(func)
-            def sync_wrapper(*args, **kwargs):
-                with trace_span(func.__name__, cat=category):
-                    return func(*args, **kwargs)
-            return sync_wrapper
-    return decorator

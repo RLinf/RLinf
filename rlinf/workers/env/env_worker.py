@@ -21,8 +21,6 @@ import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.utils.tracing import trace_func
-
 from rlinf.data.embodied_io_struct import (
     ChunkStepResult,
     EmbodiedRolloutResult,
@@ -393,7 +391,6 @@ class EnvWorker(Worker):
                 self.env_list[i].offload()
 
     @Worker.timer("env_interact_step")
-    @trace_func
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any]]:
@@ -901,7 +898,7 @@ class EnvWorker(Worker):
             for reward_assign_step in range(2, reward_assign_length + 1):
                 rollout_rewards[-reward_assign_step][env_id] += reward[env_id]
 
-    @trace_func
+    @Worker.timer("bootstrap_step")
     def bootstrap_step(self) -> list[EnvOutput]:
         def get_zero_dones() -> torch.Tensor:
             return (
@@ -1004,7 +1001,7 @@ class EnvWorker(Worker):
             for env_output in env_output_list
         ]
 
-    @trace_func(cat="env")
+    @Worker.timer("send_rollout_trajectories")
     async def send_rollout_trajectories(
         self, rollout_result: EmbodiedRolloutResult, channel: Channel
     ):
@@ -1018,7 +1015,6 @@ class EnvWorker(Worker):
         gc.collect()
 
     @Worker.timer("run_interact_once")
-    @trace_func(cat="env")
     async def _run_interact_once(
         self,
         input_channel: Channel,
@@ -1191,7 +1187,6 @@ class EnvWorker(Worker):
         return env_metrics
 
     @Worker.timer("interact")
-    @trace_func(cat="env")
     async def interact(
         self,
         input_channel: Channel,
@@ -1213,7 +1208,7 @@ class EnvWorker(Worker):
 
         return env_metrics
 
-    @trace_func(cat="env")
+    @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
 

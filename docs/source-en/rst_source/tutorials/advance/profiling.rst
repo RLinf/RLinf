@@ -1,8 +1,16 @@
-Nsight Systems
+Profiling
 ==============================
 
-This document introduces the ``cluster.nsight`` configuration in RLinf for
-system-level profiling with NVIDIA Nsight Systems.
+This document introduces the profiling tools built into RLinf:
+
+- **Nsight Systems**: system-level GPU/CPU profiling of selected Ray worker
+  groups via ``nsys profile``, configured through ``cluster.nsight``.
+- **Distributed tracing**: a lightweight, HTTP-based tracing system that
+  records the execution timeline of the runner and all workers across nodes,
+  configured through ``runner.tracer``.
+
+Nsight Systems
+------------------------------
 
 RLinf supports wrapping selected Ray worker groups with ``nsys profile`` so you
 can collect traces for CUDA kernels, cuDNN, cuBLAS, NVTX ranges, and optionally
@@ -10,7 +18,7 @@ CPU-side runtime activity.
 
 
 How To Enable It
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In an embodied YAML, add the Nsight preset to ``defaults``:
 
@@ -27,7 +35,7 @@ The corresponding config files are:
 
 
 Default Preset
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The built-in default preset looks like this:
 
@@ -62,7 +70,7 @@ backtraces during the first profiling pass.
 
 
 The ``enabled`` Flag
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``enabled`` field is the main switch for Nsight wrapping:
 
@@ -83,7 +91,7 @@ same preset and override ``cluster.nsight.enabled: false`` in the main YAML.
 
 
 How To Override Worker Groups
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 You can override the preset directly in the main YAML:
 
@@ -125,7 +133,7 @@ channels with other names, use those exact channel names in ``worker_groups``.
 
 
 How To Override Nsight Options
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``cluster.nsight.options`` maps directly to ``nsys profile`` flags that take
 values, while ``cluster.nsight.flags`` emits bare flags:
@@ -203,7 +211,7 @@ vary between machines. If a flag is rejected on your target node, or if
 
 
 How To Emit NVTX Ranges
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 RLinf already provides a small helper for emitting NVTX ranges:
 
@@ -228,7 +236,7 @@ data.
 
 
 Output Path
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When ``cluster.nsight.enabled`` is true and you do not explicitly set ``o`` or
 ``output``, RLinf writes reports under:
@@ -254,7 +262,7 @@ If you want a custom path, set it explicitly:
 
 
 Recommended Workflow
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 For a first pass, the simplest setup is:
 
@@ -263,3 +271,94 @@ For a first pass, the simplest setup is:
 - use the preset as-is if you want both CUDA-side traces and CPU/channel-side runtime visibility
 - avoid ``capture-range: nvtx`` until you have confirmed the target workers
   really emit NVTX ranges
+
+
+Distributed Tracing
+------------------------------
+
+RLinf integrates a lightweight, HTTP-based distributed tracing system. It
+records the execution timeline of the runner and all Ray workers (environment,
+rollout, actor, etc.) across nodes without bottlenecking the training loop, and
+exports it in the Chrome Trace format for interactive visualization.
+
+How It Works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. When tracing is enabled, the runner starts a centralized **HTTP trace
+   server** in a background thread on the driver node.
+2. The runner then initializes a background **trace client** in the driver and
+   in every worker process.
+3. Clocks are automatically synchronized across nodes using Cristian's
+   algorithm to ensure precise chronological alignment of spans.
+4. Every timed section — the runner's ``ScopedTimer`` sections (e.g. ``step``,
+   ``generate_rollouts``) and workers' ``Worker.timer`` sections (e.g.
+   ``run_training``, ``interact``, ``predict``) — also emits a trace event,
+   which is asynchronously flushed to the server and appended to a JSONL trace
+   file.
+
+How To Enable It
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Tracing is controlled by the ``runner.tracer`` config section; no separate
+server process needs to be started:
+
+.. code-block:: yaml
+
+   runner:
+     tracer:
+       enable: true
+       port: 8888           # trace server port on the driver node
+       output_file: null    # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
+
+Or directly from the Hydra CLI:
+
+.. code-block:: bash
+
+    python3 examples/embodiment/train_embodied_agent.py \
+        --config-name libero_spatial_ppo_openpi_pi05 \
+        +runner.tracer.enable=true
+
+When ``output_file`` is not set, trace events are written to
+``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``
+on the driver node.
+
+How To Add Custom Spans
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Timed sections are traced automatically. In workers, ``@Worker.timer(...)`` and
+``with self.worker_timer(...)`` emit trace events by default; pass
+``trace=False`` to opt a timer out of tracing. For trace-only instrumentation,
+``DistTracer`` exposes ``trace_begin`` / ``trace_end``, the ``trace_span``
+context manager, and the ``trace_func`` decorator:
+
+.. code-block:: python
+
+   from rlinf.scheduler import DistTracer
+
+   with DistTracer.trace_span("data_preprocess", cat="actor"):
+       preprocess()
+
+All tracing APIs are no-ops when tracing is disabled, so they are safe to leave
+in code paths that also run without tracing.
+
+Visualization
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once your run completes or during execution, you can visualize the trace data:
+
+1. Locate the output JSONL file (e.g., ``trace_events.jsonl``).
+2. Use ``jq`` to convert the JSON Lines format into a single JSON array
+   (Perfetto requires this):
+
+   .. code-block:: bash
+
+       jq -s . trace_events.jsonl > trace_events.json
+
+3. Open a Chrome-based browser and navigate to
+   `Perfetto UI <https://ui.perfetto.dev/>`_ or ``chrome://tracing``.
+4. Click **Open trace file** and select your converted ``trace_events.json``
+   file.
+
+You will see an interactive Gantt chart visualizing execution layers, actor
+wait times, and system bottlenecks labeled precisely by Node IP, Hostname, and
+Process Role.

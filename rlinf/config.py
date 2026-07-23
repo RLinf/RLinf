@@ -1225,21 +1225,13 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                 )
             )
 
-    # Distributed Tracing Configuration
-    from rlinf.utils.tracing import init_tracer
-
+    # Distributed tracing defaults
     with open_dict(cfg):
-        if "trace_server_ip" not in cfg:
-            cfg.trace_server_ip = None
-            cfg.trace_server_port = None
-
-    if cfg.get("trace_server_ip", None) is not None:
-        init_tracer(
-            server_ip=cfg.trace_server_ip,
-            port=cfg.get("trace_server_port", 8888),
-            process_name="driver",
-            thread_name="main",
-        )
+        if "tracer" not in cfg.runner:
+            cfg.runner.tracer = {}
+        cfg.runner.tracer.enable = bool(cfg.runner.tracer.get("enable", False))
+        cfg.runner.tracer.port = cfg.runner.tracer.get("port", 8888)
+        cfg.runner.tracer.output_file = cfg.runner.tracer.get("output_file", None)
 
     # Init cluster
     Cluster(

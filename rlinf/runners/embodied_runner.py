@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.scheduler import Channel
+from rlinf.scheduler import Channel, DistTracer, TraceServer
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
@@ -30,7 +30,6 @@ from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 from rlinf.utils.runner_utils import check_progress
 from rlinf.utils.timers import Timer
-from rlinf.utils.tracing import trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +101,35 @@ class EmbodiedRunner:
             self.cfg.runner.get("per_worker_log", False)
         )
 
+        self.trace_server = None
+        self._setup_tracing()
+
         # Async logging setup
         self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
+
+    def _setup_tracing(self):
+        """Start the trace server and tracer clients if `runner.tracer` is enabled."""
+        tracer_cfg = self.cfg.runner.get("tracer", None)
+        if tracer_cfg is None or not tracer_cfg.get("enable", False):
+            return
+
+        output_file = tracer_cfg.get("output_file", None) or os.path.join(
+            self.cfg.runner.logger.log_path,
+            self.cfg.runner.logger.experiment_name,
+            "trace/trace_events.jsonl",
+        )
+        self.trace_server = TraceServer(
+            port=tracer_cfg.get("port", 8888), output_file=output_file
+        ).start()
+        for group in [self.actor, self.rollout, self.env, self.reward, self.critic]:
+            if group is not None:
+                group.setup_tracer(self.trace_server.ip, self.trace_server.port).wait()
+        DistTracer.init(
+            port=self.trace_server.port, process_name="driver", thread_name="main"
+        )
 
     def _log_worker(self):
         """Background thread for processing log messages."""
@@ -277,11 +300,11 @@ class EmbodiedRunner:
             self.actor.set_global_step(self.global_step)
             self.rollout.set_global_step(self.global_step)
 
-            with trace_span("step", args={"step_idx": _step}), self.timer("step"):
-                with trace_span("sync_weights"), self.timer("sync_weights"):
+            with self.timer("step", trace_args={"step_idx": _step}):
+                with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
-                with trace_span("generate_rollouts"), self.timer("generate_rollouts"):
+                with self.timer("generate_rollouts"):
                     env_handle: Handle = self.env.interact(
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
@@ -306,13 +329,13 @@ class EmbodiedRunner:
                         reward_handle.wait()
 
                 # compute advantages and returns.
-                with trace_span("cal_adv_and_returns"), self.timer("cal_adv_and_returns"):
+                with self.timer("cal_adv_and_returns"):
                     actor_rollout_metrics = (
                         self.actor.compute_advantages_and_returns().wait()
                     )
 
                 # actor training.
-                with trace_span("actor_training"):
+                with self.timer("actor_training"):
                     actor_training_handle: Handle = self.actor.run_training()
                     env_bootstrap_handle: Handle | None = None
                     if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
@@ -337,7 +360,7 @@ class EmbodiedRunner:
 
                 eval_metrics = {}
                 if run_val:
-                    with trace_span("eval"), self.timer("eval"):
+                    with self.timer("eval"):
                         self.update_rollout_weights()
                         eval_metrics = self.evaluate()
                         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
@@ -459,6 +482,13 @@ class EmbodiedRunner:
             self.print_metrics_table_async(
                 _step, self.max_steps, start_time, logging_metrics, start_step
             )
+
+        # Final tracer flush before workers are torn down
+        if self.trace_server is not None:
+            for group in [self.actor, self.rollout, self.env, self.reward, self.critic]:
+                if group is not None:
+                    group.flush_tracer().wait()
+            DistTracer.reset()
 
         self.metric_logger.finish()
 

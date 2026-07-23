@@ -27,10 +27,12 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Describes how to dynamically switch between different SGLang versions
    to accommodate varying compatibility needs or experimental requirements.
 
-- :doc:`nsight`
-   Introduces the Hydra-based ``cluster.nsight`` configuration used to wrap
-   selected Ray worker groups with ``nsys profile``, including how to enable,
-   disable, and target worker groups for system-level traces.
+- :doc:`profiling`
+   Introduces the profiling tools built into RLinf: the Hydra-based
+   ``cluster.nsight`` configuration used to wrap selected Ray worker groups
+   with ``nsys profile``, and the HTTP-based distributed tracing system that
+   visualizes multi-process execution timelines via Perfetto or Chrome Trace
+   Viewer.
 
 - :doc:`dynamic_scheduling`
    Covers online scaling and dynamic scheduling in RLinf: how resources are
@@ -42,11 +44,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    Details the concrete implementation of auto-placement in RLinf,
    including how to configure it properly to enable auto-placement.
 
-- :doc:`distributed_tracing`
-   Explains how to use the HTTP-based distributed tracing system to
-   visualize multi-process execution and identify performance bottlenecks
-   via Chrome Trace Viewer or Perfetto.
-
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -56,7 +53,6 @@ offering practical guidance to help you fully optimize your RL post-training wor
    cluster
    collective
    version
-   nsight
+   profiling
    dynamic_scheduling
    auto_placement
-   distributed_tracing
