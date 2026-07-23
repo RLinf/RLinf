@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,new2old,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,robotwin_sft2new,new2old,sft2deploy} ...
 ```
 
 Two checkpoint layouts are referenced throughout:
@@ -101,6 +101,39 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
     --output-model      /path/to/pi05_sft_pytorch_new \
     --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
 ```
+
+---
+
+## `robotwin_sft2new`
+
+RoboTwin Pi0 (non-Pi05) RLinf SFT checkpoint -> new HF-style
+`openpi_pytorch` layout.
+
+Use this mode for `examples/sft/config/robotwin_sft_openpi_pytorch.yaml`. It is
+separate from `sft2new`, which keeps the legacy Pi0.5 BEHAVIOR architecture.
+
+- **Architecture**: `pi05=false`, model action dimension 32, action horizon 50,
+  maximum token length 48.
+- **Input**: an SFT checkpoint directory, `actor/` directory,
+  `model_state_dict/` directory, or `full_weights.pt` directly.
+- **Output**: `model.safetensors` + `config.json`; output weights are fp32 by
+  default to preserve the SFT master weights. Use `--dtype bf16` for a smaller
+  artifact.
+- **Validation**: `--reference-model` optionally checks keys and tensor shapes
+  against the converted Pi0 base model before writing output.
+- **Norm-stats**: copied verbatim to the requested RoboTwin asset path.
+
+```bash
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+    --ckpt              /path/to/checkpoints/global_step_30000 \
+    --input-norm-stats /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
+    --output-model      /path/to/pi0_robotwin_sft_hf \
+    --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
+    --reference-model   /path/to/pi0_base_pytorch_new
+```
+
+The output directory can be used as `actor.model.model_path` for the matching
+RoboTwin eval config and can also be uploaded directly to Hugging Face Hub.
 
 ---
 

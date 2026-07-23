@@ -14,8 +14,7 @@
 
 """Shared core for the OpenPI 0.5 checkpoint convertors.
 
-The four convertor modes (``jax2new``, ``old2new``, ``sft2new``, ``new2old``)
-all share the same plumbing: locating the ``model.safetensors`` inside a
+The convertor modes share the same plumbing: locating the ``model.safetensors`` inside a
 checkpoint directory, loading/saving safetensors state dicts, reading/writing
 ``config.json``, copying the norm-stats asset verbatim, and stripping the
 wrapper/FSDP prefixes that a trained checkpoint carries. That plumbing lives
