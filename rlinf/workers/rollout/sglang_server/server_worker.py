@@ -164,8 +164,13 @@ class SGLangServerWorker(Worker):
             _cudart_lib = os.path.join(
                 os.path.dirname(nvidia.cuda_runtime.__file__), "lib"
             )
-            os.environ["LD_LIBRARY_PATH"] = (
-                _cudart_lib + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+            existing_paths = [
+                path
+                for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+                if path and path != _cudart_lib
+            ]
+            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [_cudart_lib, *existing_paths]
             )
         except ImportError:
             # torch built against system/conda CUDA (no bundled runtime).
