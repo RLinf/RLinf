@@ -21,7 +21,6 @@ import torch.multiprocessing as mp
 
 from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 from rlinf.envs.maniskill.utils import (
-    cleanup_cuda_tensors,
     get_batch_rng_state,
     recursive_to_own,
     set_batch_rng_state,
@@ -253,7 +252,6 @@ def _maniskill_worker_main(
     finally:
         command_queue.close()
         result_queue.close()
-        cleanup_cuda_tensors()
 
 
 class ManiskillOffloadEnv(EnvOffloadMixin):
