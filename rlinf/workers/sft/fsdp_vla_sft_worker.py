@@ -84,6 +84,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_dreamzero_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.EVO1
+        ]:
+            from rlinf.models.embodiment.evo1.sft_builder import (
+                build_evo1_sft_dataloader,
+            )
+
+            return build_evo1_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths
+            )
         else:
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."

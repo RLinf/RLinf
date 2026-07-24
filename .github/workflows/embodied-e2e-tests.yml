@@ -1256,6 +1256,39 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-evo1-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model evo1 --env libero
+
+      - name: LIBERO Evo-1 GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          # Evo-1 source is installed via evo1.pth by install.sh; derive the repo path for the wrapper
+          export EVO1_REPO_PATH=$(python -c "import scripts.Evo1 as m, os; print(os.path.dirname(os.path.dirname(m.__file__)))" 2>/dev/null || echo /workspace/dataset/Evo-1)
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_grpo_evo1
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-abot-m0-libero-test:
     runs-on: embodied
     steps:
