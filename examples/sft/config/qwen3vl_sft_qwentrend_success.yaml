@@ -1,0 +1,120 @@
+defaults:
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: ${runner.output_dir}/${runner.experiment_name}
+    project_name: rlinf
+    experiment_name: ${runner.experiment_name}
+    logger_backends: ["tensorboard"]
+  max_epochs: 500
+  max_steps: 500
+  val_check_interval: 100
+  save_interval: 100
+  experiment_name: qwen3_vl_4b_dualview_terminal_success
+  output_dir: /path/to/output/logs
+  resume_dir: null
+  per_worker_log: true
+
+# Build this dataset with run_preprocess_sparse_success_dataset.sh and evaluate all
+# checkpoints before selecting the model for PPO.
+data:
+  type: vlm
+  dataset_name: "qwentrend_progress_sft"
+  apply_chat_template: true
+  use_chat_template: true
+  train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
+  val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
+  video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+  data_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+  prompt_key: "prompt"
+  answer_key: "answer"
+  image_keys: []
+  max_prompt_length: 4096
+  lazy_loading: true
+  num_workers: 16
+  video_nframes: 5
+  video_fps: null
+  video_max_pixels: 200704
+  shuffle: true
+  seed: 42
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  eval_batch_size: 8
+  global_batch_size: 8
+  seed: 42
+
+  model:
+    model_type: qwen3_vl
+    precision: bf16
+    model_path: /path/to/Qwen3-VL-4B-Instruct
+    attn_implementation: flash_attention_2
+    is_lora: true
+    lora_rank: 16
+    format_ce_coef: 2.0
+    trainable_modules:
+      - model.visual.merger
+      - model.visual.deepstack_merger_list
+      - model.language_model
+      - lm_head
+    sample_reweight:
+      enabled: false
+      success_weight: 1.0
+      non_success_weight: 1.0
+
+  optim:
+    lr: 1.0e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.999
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    lr_scheduler: cosine
+    total_training_steps: 1000
+    lr_warmup_steps: 50
+
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    gradient_checkpointing: false
+    cpu_offload: false
+    offload_pin_memory: false
+    reshard_after_forward: true
+    enable_gradient_accumulation: true
+    forward_prefetch: false
+    limit_all_gathers: false
+    backward_prefetch: null
+    use_orig_params: false
+    use_liger_kernel: false
+    fsdp_size: -1
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: bf16
+    amp_autocast:
+      enabled: false
+      precision: bf16
+    grad_scaler:
+      enabled: false
+      init_scale: null
+      growth_interval: null
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

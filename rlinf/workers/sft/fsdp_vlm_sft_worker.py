@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import json
-import logging
 import os
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+from rlinf.workers.sft.lora_checkpoint import rewrite_full_weights_with_lora_adapters
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
@@ -42,6 +43,17 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         if self._rank == 0:
             self._save_data_state(save_path)
+        # VLMRewardModel loads success/potential adapters from lora_* keys in
+        # full_weights.pt. FSDP full-state export merges Peft weights and drops
+        # those keys; rewrite the file with the Peft adapter state when LoRA.
+        if bool(self.cfg.actor.model.get("is_lora", False)):
+            rewrite_full_weights_with_lora_adapters(
+                self.model,
+                save_path,
+                rank=self._rank,
+                log_info=self.log_info,
+                log_warning=self.log_warning,
+            )
 
     def _load_data_state(self, load_path: str):
         path = os.path.join(load_path, "data_state.json")
@@ -139,12 +151,11 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 drop_last=True,
                 collate_fn=sft_collate_fn,
             )
-            logging.info(
+            self.log_info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
-            assert len(data_loader) != 0, (
-                f"data_loader is not empty, please check the data_path {data_paths}"
-            )
+            if len(data_loader) == 0:
+                raise ValueError(f"data_loader is empty; check data_path {data_paths}")
 
             data_config = {
                 "dataset_name": dataset_name,
@@ -158,9 +169,28 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def get_eval_model_output(self, batch: dict[str, Any]):
-        # hundle the input batch
-        correct = 0
+    def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int] | int:
+        """Generate answers for an eval batch and score them against gold.
+
+        Args:
+            batch: Collated eval batch with ``prompt``, ``answer``,
+                ``attention_mask`` and ``multi_modal_inputs``.
+
+        Returns:
+            When every gold answer is a binary ``0`` / ``1`` label, a dict of
+            class-aware counts (``correct``, ``total`` and per-class
+            correct/total) suitable for :meth:`compute_eval_metrics`. Otherwise
+            the scalar number of correct predictions in the batch.
+        """
+        counts = {
+            "correct": 0,
+            "total": 0,
+            "positive_correct": 0,
+            "positive_total": 0,
+            "negative_correct": 0,
+            "negative_total": 0,
+        }
+        binary_labels = True
         input_ids = batch["prompt"].to(self.device)
         answers = batch["answer"]
         attention_mask = batch["attention_mask"].to(self.device)
@@ -203,16 +233,91 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
             gold_text = answers[i]
 
-            if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
-                correct += 1
+            normalized_pred = vlm_normalize_text(pred_text)
+            normalized_gold = vlm_normalize_text(gold_text)
+            is_correct = normalized_pred == normalized_gold
+            counts["total"] += 1
+            counts["correct"] += int(is_correct)
+            binary_labels &= normalized_gold in {"0", "1"}
+            class_name = "positive" if normalized_gold == "1" else "negative"
+            counts[f"{class_name}_total"] += 1
+            counts[f"{class_name}_correct"] += int(is_correct)
 
-        # eval model return the correct number of answers
-        return correct
+        return counts if binary_labels else counts["correct"]
+
+    def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
+        """Compute class-aware metrics for binary VLM evaluation.
+
+        Args:
+            counts: Aggregated counts from :meth:`get_eval_model_output`
+                (``correct``, ``total`` and per-class correct/total).
+
+        Returns:
+            A dict with overall accuracy, positive-class recall, negative-class
+            accuracy, balanced accuracy and per-class totals.
+        """
+        positive_accuracy = counts["positive_correct"] / max(
+            1, counts["positive_total"]
+        )
+        negative_accuracy = counts["negative_correct"] / max(
+            1, counts["negative_total"]
+        )
+        return {
+            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
+            "positive_recall": positive_accuracy,
+            "negative_accuracy": negative_accuracy,
+            "balanced_accuracy": (positive_accuracy + negative_accuracy) / 2,
+            "positive_total": counts["positive_total"],
+            "negative_total": counts["negative_total"],
+        }
+
+    def weighted_answer_loss(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        answers: list[str],
+        success_weight: float,
+        non_success_weight: float,
+    ) -> torch.Tensor:
+        """Compute answer-token CE with normalized per-sample class weights.
+
+        Args:
+            logits: Model logits of shape ``(batch, seq, vocab)``.
+            labels: Target token ids of shape ``(batch, seq)`` with ``-100`` at
+                masked positions.
+            answers: Per-sample gold answer strings; ``"1"`` selects the success
+                weight, anything else the non-success weight.
+            success_weight: Per-sample weight for success (``"1"``) answers.
+            non_success_weight: Per-sample weight for non-success answers.
+
+        Returns:
+            The scalar weighted mean cross-entropy over answer tokens.
+        """
+        shift_logits = logits[:, :-1].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        token_losses = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.shape[-1]),
+            shift_labels.view(-1),
+            ignore_index=-100,
+            reduction="none",
+        ).view_as(shift_labels)
+        valid_tokens = shift_labels.ne(-100)
+        token_counts = valid_tokens.sum(dim=1).clamp_min(1)
+        sample_losses = (token_losses * valid_tokens).sum(dim=1) / token_counts
+        weights = torch.tensor(
+            [
+                success_weight if str(answer).strip() == "1" else non_success_weight
+                for answer in answers
+            ],
+            device=sample_losses.device,
+            dtype=sample_losses.dtype,
+        )
+        return (sample_losses * weights).sum() / weights.sum().clamp_min(1e-8)
 
     def get_train_model_output(
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        # hundle the input batch
+        # Move the input batch to the compute device.
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
         multi_modal_inputs = batch["multi_modal_inputs"]
@@ -235,5 +340,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 **multi_modal_inputs,
             )
 
-        loss = outputs.loss
+        reweight_cfg = self.cfg.actor.model.get("sample_reweight", {})
+        if reweight_cfg.get("enabled", False):
+            loss = self.weighted_answer_loss(
+                outputs.logits,
+                labels,
+                batch["answer"],
+                float(reweight_cfg.get("success_weight", 1.0)),
+                float(reweight_cfg.get("non_success_weight", 1.0)),
+            )
+        else:
+            loss = outputs.loss
         return loss, {"loss": loss.detach().item()}

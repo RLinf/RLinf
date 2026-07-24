@@ -22,3 +22,5 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+.codex_node_global/*
+.cache/*
