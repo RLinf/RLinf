@@ -25,7 +25,10 @@ from typing import Any, Callable, Iterable, Literal, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.distributed.tensor import DTensor
+try:
+    from torch.distributed.tensor import DTensor
+except ImportError:
+    from torch.distributed._tensor import DTensor
 from torch.optim import Optimizer
 
 from rlinf.scheduler import Worker
