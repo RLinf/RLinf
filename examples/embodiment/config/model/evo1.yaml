@@ -1,0 +1,85 @@
+# Evo-1 (evo1-flash) model config for RLinf.
+# Evo-1 = InternVL3-1B embedder + flow-matching (DiT) action head.
+# Supports inference (eval), SFT, and RL (flow-matching SDE-replay, GRPO-first).
+
+model_type: "evo1"
+
+# Path to an Evo-1 checkpoint DIRECTORY containing:
+#   config.json, norm_stats.json, mp_rank_00_model_states.pt
+# e.g. a download of https://huggingface.co/MINT-SJTU/Evo1_LIBERO
+model_path: "/data/oss_bucket_0/data/taolin/checkpoints/Evo1/Evo1_libero"
+
+# Precision used by RLinf actor/rollout wrappers (Evo-1 runs bf16 internally).
+precision: "bf16"
+
+# Env action layout (LIBERO Franka: 6-DoF delta + 1 gripper).
+action_dim: 7
+# Number of action steps executed per inference before replanning.
+# Evo-1's LIBERO recipe executes 14 of the predicted horizon steps.
+num_action_chunks: 14
+
+# LoRA disabled for Evo-1 wrapper path.
+is_lora: False
+lora_rank: 32
+
+# RL value head unused (GRPO-first). See rl_head_config.add_value_head.
+add_value_head: False
+
+# LIBERO gripper remapping is applied inside the Evo-1 wrapper.
+policy_setup: "libero"
+
+# Evo-1-specific settings.
+evo1:
+  # Evo-1 repo root (so 'import scripts.Evo1' / 'import config' resolve).
+  # Alternatively set the EVO1_REPO_PATH environment variable.
+  repo_path: "/path/to/Evo-1"
+
+  # Model geometry (override the checkpoint's config.json if needed).
+  horizon: 50
+  per_action_dim: 24
+  state_dim: 24
+  num_inference_timesteps: 32
+  image_size: 448
+  num_view_slots: 3
+
+  # Normalization stats keys inside norm_stats.json (must match the checkpoint).
+  # For the MINT-SJTU/Evo1_LIBERO checkpoint the top-level key is "libero_robot"
+  # and it directly holds observation.state/action stats, so dataset_key is
+  # unused by the Normalizer but kept for clarity.
+  arm_key: "libero_robot"
+  dataset_key: "libero_robot"
+
+  # Threshold+binarize gripper (dim 6) to {open:+1, close:-1} for LIBERO.
+  binarize_gripper: True
+
+  # RL fine-tuning scope. Mirrors Evo-1 SFT stage1/stage2 (set_finetune_flags):
+  #   "action_head" (default): freeze the InternVL3 VLM (embedder), train only the
+  #                            flow-matching DiT action head -- the SFT stage1 recipe.
+  #                            Recommended for RL: full-finetuning a 1B VLM under
+  #                            sparse RL reward is unstable.
+  #   "all":                   full fine-tune (VLM + action head), like SFT stage2.
+  # NOTE: freezing a subset requires FSDP use_orig_params=True (set it in the
+  # launch/actor.fsdp_config), otherwise FSDP flat-params error on mixed grad.
+  rl_trainable_scope: "action_head"
+
+# RL (flow-matching SDE-replay) config. Only consumed on the RL path
+# (predict_action_batch(mode="train") + default_forward); ignored by eval/SFT.
+rl_head_config:
+  # False (default): make ONE random denoising step stochastic (SDE) and
+  # evaluate its Gaussian log-prob; all other steps stay deterministic (ODE).
+  # True: every step is stochastic; the returned log-prob is the step mean.
+  joint_logprob: False
+  # SDE noise injection method. Only "flow_sde" is implemented for Evo-1.
+  noise_method: "flow_sde"
+  # SDE noise scale (sigma = noise_level * sqrt((1-t)/t)).
+  # NOTE: 0.1 was too small -> sigma tiny -> logprob ~1/sigma^2 huge -> ratio/KL
+  # blow up (approx_kl~2, policy collapse). 0.5 is a stable default.
+  noise_level: 0.5
+  # Skip the very last denoising step when choosing the stochastic step
+  # (its (1-t)/t weight explodes near t=1).
+  ignore_last: True
+  # PPO/GAE value head -- not implemented yet (GRPO-first). Keep False.
+  add_value_head: False
+  # Number of SDE denoising steps used for RL rollout AND replay (must match).
+  # Much smaller than inference's num_inference_timesteps to keep RL affordable.
+  denoising_steps: 8

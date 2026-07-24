@@ -131,6 +131,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_evo1(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.evo1 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi_cfg(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi_cfg import get_model
 
@@ -263,6 +268,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.GR00T_N1D7.value,
         _build_gr00t_n1d7,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.EVO1.value,
+        _build_evo1,
         category="embodied",
         force=True,
     )

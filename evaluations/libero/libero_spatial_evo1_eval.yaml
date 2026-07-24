@@ -1,0 +1,92 @@
+defaults:
+  - env/libero_spatial@env.eval
+  - model/evo1@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  weight_sync_interval: 1
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "evo1_libero_spatial_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+  eval:
+    # Evo-1 was trained on 448x448 renders (see Evo-1 LIBERO client).
+    init_params:
+      camera_heights: 448
+      camera_widths: 448
+    rollout_epoch: 4
+    total_num_envs: 120
+    auto_reset: True
+    ignore_terminations: True
+    # Evo-1 executes num_action_chunks=14 sim steps per inference; the step
+    # budget must be divisible by 14. 350 = 14 x 25 matches the Evo-1 LIBERO
+    # client's per-episode budget for libero_spatial.
+    max_episode_steps: 350
+    max_steps_per_rollout_epoch: 350
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  sampling_params:
+    # Evo-1 is a flow-matching policy; token sampling params are unused, but the
+    # HF worker still reads this block. temperature_eval<=0 keeps do_sample off.
+    do_sample: False
+    temperature_train: 0.0
+    temperature_eval: 0.0
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+    max_new_tokens: 256
+
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  model:
+    # Override for your environment (or pass on the CLI).
+    model_path: /data/oss_bucket_0/data/taolin/checkpoints/Evo1/Evo1_libero
+    evo1:
+      repo_path: /data/oss_bucket_0/data/taolin/code/Evo-1
+      # norm_stats.json top-level key for this checkpoint; dataset_key is unused
+      # by the Normalizer when arm stats hold observation.state/action directly.
+      arm_key: "libero_robot"
+      dataset_key: "libero_robot"
+    action_dim: 7
+    num_action_chunks: 14
+    add_value_head: False
+    policy_setup: "libero"
