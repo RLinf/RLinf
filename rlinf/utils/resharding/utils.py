@@ -17,6 +17,7 @@ import torch
 from megatron.core import parallel_state
 
 from rlinf.config import SupportedModel
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
 
 
 def get_tp_reshard_fn(model_type: str):
@@ -277,11 +278,12 @@ def _gather_pp_group_tensor_and_reshard(
         tensor_shape = [None]
 
     torch.distributed.broadcast_object_list(tensor_shape, pp_src_idx, group=group)
+    target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
 
     if tensor_shape[0] is None:
         return None
     if torch.distributed.get_rank() != pp_src_idx:
-        tensor = torch.empty(tensor_shape[0], dtype=dtype).cuda()
+        tensor = torch.empty(tensor_shape[0], dtype=dtype, device=target_device)
 
     torch.distributed.broadcast(tensor.contiguous(), pp_src_idx, group=group)
     return tensor

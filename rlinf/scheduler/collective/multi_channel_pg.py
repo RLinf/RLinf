@@ -15,6 +15,7 @@
 import logging
 from datetime import timedelta
 from typing import Optional
+import traceback
 
 import torch
 import torch.distributed as dist
@@ -856,7 +857,11 @@ class MultiChannelProcessGroup:
                     dist_backend_opts.group_id = group_name
                     dist_backend_opts.global_ranks_in_group = global_ranks_in_group
 
-                    backend_class = creator_fn(dist_backend_opts, pg_options)
+                    try:
+                        backend_class = creator_fn(dist_backend_opts, pg_options)
+                    except BaseException as e:
+                        traceback.print_exc()
+                        raise
 
             # Set sequence numbers for gloo and nccl backends.
             if backend_str == Backend.GLOO:

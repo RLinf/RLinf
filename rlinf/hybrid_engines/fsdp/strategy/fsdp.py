@@ -39,6 +39,49 @@ from rlinf.hybrid_engines.fsdp.utils import (
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import clear_memory
 
+from functools import partial
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import MixedPrecision
+
+
+def get_local_npu_device():
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.npu.set_device(local_rank)
+    return torch.device(f"npu:{local_rank}")
+
+
+def make_meta_init_fn(target_device: torch.device, root_model: nn.Module = None):
+    """
+    FSDP1 会在 flatten/shard 前对 meta module 调用 param_init_fn。
+    这里必须把当前 module 的直接参数/ buffer materialize 到本 rank 的 NPU。
+    """
+    def init_fn(module: nn.Module):
+        has_meta_param = any(
+            p.is_meta for p in module.parameters(recurse=False)
+        )
+        has_meta_buffer = any(
+            b.is_meta for b in module.buffers(recurse=False)
+        )
+
+        if not has_meta_param and not has_meta_buffer:
+            return
+
+        # 只 materialize 当前 module 的直接 tensor，避免递归 materialize 整个模型
+        module.to_empty(device=target_device, recurse=False)
+
+        # 如果你后面会完整加载 HF checkpoint，参数值会被覆盖，
+        # 所以这里通常不需要 reset_parameters。
+        #
+        # 但如果后续发现 missing_keys 里有运行时会用到的 buffer，
+        # 可以打开下面这段，用 HF 自带初始化补齐非 checkpoint buffer。
+        #
+        # if root_model is not None and hasattr(root_model, "_init_weights"):
+        #     root_model._init_weights(module)
+        # elif hasattr(module, "reset_parameters"):
+        #     module.reset_parameters()
+
+    return init_fn
+
 
 class FSDPStrategy(FSDPStrategyBase):
     _FSDP_CACHE_ATTRS = (
@@ -185,6 +228,23 @@ class FSDPStrategy(FSDPStrategyBase):
             use_orig_params=self.cfg.fsdp_config.use_orig_params,
             cpu_offload=cpu_offload,
         )
+
+        # fsdp_model = FSDP(
+        #     module=model,
+        #     param_init_fn=init_fn,
+        #     auto_wrap_policy=auto_wrap_policy,
+        #     # 关键：NPU 上不要传 int，显式传 torch.device
+        #     device_id=target_device,
+        #     sharding_strategy=sharding_strategy,
+        #     mixed_precision=mixed_precision,
+        #     # 关键：如果你是 wrap 后再 load checkpoint，先设 False
+        #     sync_module_states=False,
+        #     device_mesh=device_mesh,
+        #     forward_prefetch=self.cfg.fsdp_config.forward_prefetch,
+        #     backward_prefetch=backward_prefetch,
+        #     limit_all_gathers=self.cfg.fsdp_config.limit_all_gathers,
+        #     use_orig_params=self.cfg.fsdp_config.use_orig_params,
+        # )
         return fsdp_model
 
     @classmethod

@@ -23,6 +23,39 @@ import numpy as np
 import torch
 from torch import distributed as dist
 
+from rlinf.scheduler import Worker
+
+
+def _get_runtime_device(batch: Union[dict, list[torch.Tensor]]) -> torch.device:
+    """Infer a suitable device for small sync tensors from the input batch."""
+    if Worker.torch_platform is not None:
+        try:
+            current_device = Worker.torch_platform.current_device()
+        except Exception:
+            current_device = None
+
+        if isinstance(current_device, torch.device):
+            return current_device
+        if isinstance(current_device, str):
+            return torch.device(current_device)
+        if isinstance(current_device, int) and Worker.torch_device_type is not None:
+            return torch.device(f"{Worker.torch_device_type}:{current_device}")
+
+    if isinstance(batch, (dict, UserDict)):
+        for value in batch.values():
+            if isinstance(value, torch.Tensor):
+                return value.device
+    else:
+        for item in batch:
+            if isinstance(item, torch.Tensor):
+                return item.device
+
+    if hasattr(torch, "npu") and torch.npu.is_available():
+        return torch.device("npu")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
 
 def concat_dict_list(list_of_dicts: list[dict[str, Any]]) -> dict[str, Any]:
     """
@@ -522,6 +555,7 @@ def get_iterator_dynamic(
         min_num_micro_batch: Minimum number of micro-batches to create
     """
     assert dist.is_initialized()
+    runtime_device = _get_runtime_device(batch)
     if isinstance(batch, (dict, UserDict)):
         # Get effective sequence length of each sample
         seq_len_effective = batch["attention_mask"].sum(dim=1)
@@ -542,7 +576,9 @@ def get_iterator_dynamic(
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
         if same_micro_num_in_dp:
-            num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
+            num_micro_batches = torch.tensor(
+                [num_micro_batches], device=runtime_device
+            )
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
         if num_batches_divided_by is not None:
@@ -586,7 +622,7 @@ def get_iterator_dynamic(
                     #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
                     # )
                     break
-            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            valid_max_token = torch.tensor([valid_max_token], device=runtime_device)
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
             valid_max_token = valid_max_token.cpu().item()
             if valid_max_token == 0:
@@ -614,7 +650,9 @@ def get_iterator_dynamic(
             # used to support pp
             num_micro_batches = max(min_num_micro_batch, num_micro_batches)
         if same_micro_num_in_dp:
-            num_micro_batches = torch.tensor([num_micro_batches], device="cuda")
+            num_micro_batches = torch.tensor(
+                [num_micro_batches], device=runtime_device
+            )
             dist.all_reduce(num_micro_batches, op=dist.ReduceOp.MAX, group=dp_group)
             num_micro_batches = num_micro_batches.cpu().item()
         if num_batches_divided_by is not None:
@@ -663,7 +701,7 @@ def get_iterator_dynamic(
                     #     f"max_tokens_per_mbs: {max_tokens_per_mbs}"
                     # )
                     break
-            valid_max_token = torch.tensor([valid_max_token], device="cuda")
+            valid_max_token = torch.tensor([valid_max_token], device=runtime_device)
             dist.all_reduce(valid_max_token, op=dist.ReduceOp.MIN, group=dp_group)
             valid_max_token = valid_max_token.cpu().item()
             if valid_max_token == 0:

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import os
 import copy
 import dataclasses
 from typing import Any, Literal, Optional
@@ -44,6 +45,7 @@ from rlinf.workers.rollout.utils import (
     RunningStatusManager,
     print_sglang_outputs,
 )
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil, AcceleratorType
 
 
 class SGLangWorker(Worker):
@@ -146,6 +148,9 @@ class SGLangWorker(Worker):
 
     def _init_engine(self):
         use_cudagraph = not self._cfg_rollout.enforce_eager
+        # NOTE: disable npu graph for ascend
+        if AcceleratorUtil.get_accelerator_type() == AcceleratorType.NPU:
+            use_cudagraph = False
 
         load_format = "dummy"  # dummy means randomize init weight
         if self.weight_reload == "sync":
@@ -170,7 +175,7 @@ class SGLangWorker(Worker):
             ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
-            enable_memory_saver=use_cudagraph,
+            enable_memory_saver=True,  # TODO: =use_cudagraph
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
             torch_compile_max_bs=min(
                 self._cfg_rollout.sglang.torch_compile_max_bs,

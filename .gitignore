@@ -22,3 +22,6 @@ rlinf/envs/maniskill/assets
 PKG-INFO
 *.egg-info/
 .claude/settings.json
+logs/
+kernel_meta/
+fusion_result.json

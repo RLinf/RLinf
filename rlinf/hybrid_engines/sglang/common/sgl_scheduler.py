@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from contextlib import nullcontext
 from importlib.metadata import version
 from typing import Any, Literal
 
@@ -37,6 +38,7 @@ from rlinf.utils.placement import (
 from rlinf.workers.rollout.utils import (
     RankMapper,
 )
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
 
 from .io_struct import (
     AbortGenerationInput,
@@ -48,6 +50,17 @@ from .io_struct import (
 )
 
 logger.setLevel(logging.WARNING)
+
+
+def _platform_call(platform, method_name: str, device=None, default=None):
+    """Call a torch platform method with optional device argument safely."""
+    if not hasattr(platform, method_name):
+        return default
+    method = getattr(platform, method_name)
+    try:
+        return method(device)
+    except TypeError:
+        return method()
 
 
 class Scheduler(_Scheduler):
@@ -81,12 +94,28 @@ class Scheduler(_Scheduler):
         self.patch_return_output_ids = sglang_version < parse("0.5.0")
 
     def cuda_info(self, text: str = ""):
-        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
-        free_gpu_memory /= 2**30
-        total_gpu_memory /= 2**30
+        platform = Worker.torch_platform
+        current_device = (
+            _platform_call(platform, "current_device")
+        )
 
-        memory_allocated = torch.cuda.memory_allocated() / 2**30
-        memory_reserved = torch.cuda.memory_reserved() / 2**30
+        free_gpu_memory, total_gpu_memory = (0.0, 0.0)
+        mem_info = _platform_call(platform, "mem_get_info", current_device)
+        if mem_info is not None:
+            free_gpu_memory, total_gpu_memory = mem_info
+            free_gpu_memory /= 2**30
+            total_gpu_memory /= 2**30
+
+        memory_allocated = (
+            _platform_call(platform, "memory_allocated", current_device, 0.0) / 2**30
+            if hasattr(platform, "memory_allocated")
+            else 0.0
+        )
+        memory_reserved = (
+            _platform_call(platform, "memory_reserved", current_device, 0.0) / 2**30
+            if hasattr(platform, "memory_reserved")
+            else 0.0
+        )
 
         self._rlinf_worker.log_info(
             f"[dp {self._rlinf_worker.get_parent_rank()}-tp {self.tp_rank}] {text} "
@@ -108,6 +137,54 @@ class Scheduler(_Scheduler):
             model.load_state_dict(self.cpu_state_dict)
 
         return result
+    
+    def _execute_with_device_injection(self, func, args, device_param_names=None, device_arg_positions=None, inject_as_object=True):
+        import inspect
+
+        accel_type = AcceleratorUtil.get_accelerator_type()
+        device_type = AcceleratorUtil.get_device_type(accel_type)  # "cuda", "npu", "cpu"
+        platform = AcceleratorUtil.get_torch_platform(accel_type)  # torch.cuda, torch.npu
+
+        device_id = _platform_call(platform, "current_device")
+        if device_type == "cpu":
+            target_device = torch.device("cpu")
+        else:
+            target_device = torch.device(f"{device_type}:{device_id}")
+
+        inject_value = target_device if inject_as_object else device_id
+
+        if device_param_names:
+            try:
+                sig = inspect.signature(func)
+                param_names = list(sig.parameters.keys())
+                kwargs = {}
+                args_list = list(args)
+                for i, param_name in enumerate(param_names):
+                    if i < len(args_list):
+                        kwargs[param_name] = args_list[i]
+                    else:
+                        break
+                device_context = (
+                    platform.device(inject_value)
+                    if hasattr(platform, "device") and device_type != "cpu"
+                    else nullcontext()
+                )
+                with device_context:
+                    new_weight = func(**kwargs)
+                # if hasattr(new_weight, 'device') and new_weight.device != inject_value:
+                #     new_weight = new_weight.to(target_device)
+                return new_weight
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        if device_arg_positions:
+            args_list = list(args)
+            for pos in device_arg_positions:
+                if 0 <= pos < len(args_list):
+                    args_list[pos] = inject_value
+            return func(*args_list).to(target_device)
+
+        return func(*args)
 
     def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
         assert self.weight_reload == "sync", (
@@ -121,11 +198,13 @@ class Scheduler(_Scheduler):
         if rollout_sync_mode_collocated:
             for name, handle in state_dict.items():
                 func, args = handle
-                list_args = list(args)
-                # NOTE: the key is to change device id to the current device id
-                # in case two processes have different CUDA_VISIBLE_DEVICES
-                list_args[6] = torch.cuda.current_device()
-                new_weight = func(*list_args)
+                new_weight = self._execute_with_device_injection(
+                    func=func,
+                    args=args,
+                    # device_param_names=['storage_device', 'map_location', 'device'],
+                    device_arg_positions=[6], 
+                    inject_as_object=False
+                )
                 batch_weight.append((name, new_weight))
         else:
             # disaggregate mode, recv tensor directly
@@ -262,6 +341,12 @@ class Scheduler(_Scheduler):
             validate_weight_first_sync = self.cfg.rollout.get(
                 "validate_weight_first_sync", False
             )
+            if self.cfg.actor.training_backend == "fsdp":
+                # FSDP rollout sync rebuilds tensors from actor-provided payloads rather
+                # than comparing two identical HF initialization paths. The first-sync
+                # norm check is therefore prone to false positives and is only reliable
+                # for the Megatron path.
+                validate_weight_first_sync = False
             if self.cfg.runner.resume_dir is not None:
                 # validate_weight_first_sync compare hf weights with megatron weights,
                 # and if resume_dir is enabled, hf weights can't equal to megatron's.
@@ -279,7 +364,7 @@ class Scheduler(_Scheduler):
             for key, value in model.state_dict().items():
                 cpu_state_dict[key] = value.to("cpu", non_blocking=True)
             self.cpu_state_dict = cpu_state_dict
-            torch.cuda.synchronize()
+            Worker.torch_platform.synchronize()
 
             self._rlinf_worker.log_info(
                 f"Running Scheduler dp rank {self._rlinf_worker.get_parent_rank()}, tp rank {self.tp_rank}, load weight from cpu"
@@ -563,7 +648,7 @@ def validate_weight_init(model):
         weight_norm_dict[key] = posi_norm(value)
 
     # avoid release memory before norm kernel launch (gpu is async from cpu)
-    torch.cuda.synchronize()
+    Worker.torch_platform.synchronize()
     return weight_norm_dict
 
 

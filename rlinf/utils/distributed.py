@@ -29,6 +29,38 @@ from typing_extensions import Self
 
 from rlinf.scheduler import Worker
 from rlinf.utils.timers import NamedTimer
+from rlinf.scheduler.hardware.accelerators import AcceleratorUtil
+
+
+def _get_metric_compute_device(
+    reference_tensor: Optional[torch.Tensor] = None,
+) -> torch.device:
+    """Choose a safe device for distributed metric computation.
+
+    Prefer an already-accelerated tensor device first, then the worker's
+    configured accelerator, and finally CPU as a safe fallback. This avoids
+    hard failures when a worker ends up in a CPU-only runtime but metrics are
+    still computed before model loading/validation.
+    """
+    if reference_tensor is not None and reference_tensor.device.type != "cpu":
+        return reference_tensor.device
+
+    if Worker.torch_platform is not None:
+        try:
+            current_device = Worker.torch_platform.current_device()
+        except Exception:
+            current_device = None
+
+        if isinstance(current_device, torch.device):
+            return current_device
+        if isinstance(current_device, str):
+            return torch.device(current_device)
+        if isinstance(current_device, int) and Worker.torch_device_type is not None:
+            return torch.device(f"{Worker.torch_device_type}:{current_device}")
+
+    if reference_tensor is not None:
+        return reference_tensor.device
+    return torch.device("cpu")
 
 
 def compute_rollout_metrics_dynamic(
@@ -56,7 +88,7 @@ def compute_rollout_metrics_dynamic(
     Returns:
         Tuple of (rollout_metrics dict, total_prompt_lengths tensor, total_decode_lengths tensor)
     """
-    device = torch.device(f"cuda:{torch.cuda.current_device()}")
+    device = _get_metric_compute_device(rollout_batch.get("advantages"))
 
     # Extract basic tensors
     advantages = rollout_batch["advantages"].to(device=device)
@@ -190,7 +222,7 @@ def compute_rollout_metrics(
     data_parallel_group: Optional[ProcessGroup] = None,
     use_critic: bool = False,
 ):
-    device = Worker.torch_platform.current_device()
+    device = _get_metric_compute_device(rollout_batch.get("advantages"))
     advantages = rollout_batch["advantages"].to(device=device)
     mask = rollout_batch["response_mask"][:, -response_len:].to(device=device)
     prompt_lengths = rollout_batch["prompt_lengths"].clone().to(device=device)
@@ -271,7 +303,7 @@ def compute_rollout_metrics(
         min_value = torch.min(values).detach().item()
         reduce_value_tensor = torch.as_tensor(
             [-min_value, max_value],
-            device=torch.cuda.current_device(),
+            device=device,
             dtype=torch.float32,
         )
         torch.distributed.all_reduce(
@@ -893,7 +925,8 @@ def masked_normalization(
             Normalized x, with the same shape as x.
     """
     dtype = torch.float64 if high_precision else torch.float32
-    x = x.to(dtype=dtype).cuda()
+    target_device = AcceleratorUtil.get_device_type(AcceleratorUtil.get_accelerator_type())
+    x = x.to(dtype=dtype).to(target_device)
     if not inplace:
         x = x.clone()
     if dim is None:
@@ -903,7 +936,7 @@ def masked_normalization(
             np.prod([x.shape[d] for d in dim]), dtype=dtype, device=x.device
         )
     else:
-        mask = mask.to(dtype=dtype).cuda()
+        mask = mask.to(dtype=dtype).to(target_device)
         assert len(mask.shape) == len(x.shape), (mask.shape, x.shape, dim)
         for i in range(len(x.shape)):
             if i in dim:
