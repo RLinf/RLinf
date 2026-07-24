@@ -312,25 +312,37 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-随后在 reward 配置中使用 ``history_vlm``。QwenTrend 示例使用
-``reward_mode: history_buffer``，因此 env worker 会按 env 维护历史窗口，
-只在窗口有效时将历史输入发送给 reward worker：
+随后在 reward 配置中使用 ``history_vlm``。本地 Hugging Face 推理时不需要设置
+``reward.worker_type``；如果要调用 OpenAI-compatible API，则设置
+``reward.worker_type: api``，并填写 ``reward.api.api_base`` 与
+``reward.api.model``。如果希望 RLinf 自动拉起 Ray 托管的 SGLang
+server/router，则将 ``reward.api.api_base`` 留空，并按
+:doc:`../guides/sglang_server` 使用顶层 ``router_server_args`` 配置。
+QwenTrend 示例使用 ``reward_mode: history_buffer``，因此 env worker 会按 env
+维护历史窗口，只在窗口有效时将历史输入发送给 reward worker：
 
 .. code-block:: yaml
 
    reward:
      use_reward_model: true
+     worker_type: api
      group_name: "RewardGroup"
      reward_mode: history_buffer
      history_reward_assign: true
      reward_weight: 1.0
      env_reward_weight: 0.0
+     api:
+       api_base: null
+       model: Qwen3-VL-4B-Instruct
+       sampling_params:
+         max_tokens: 16
+         temperature: 0.0
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -352,24 +364,28 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
              - extra_view_images
            input_on_done: false
        interval_reward: 0.0
-       infer_micro_batch_size: 64
-       max_new_tokens: 16
-       do_sample: false
-       temperature: 0.0
-       use_chat_template: true
 
 关键字段说明：
 
+- ``worker_type: api`` 选择 OpenAI-compatible API reward worker。
+- ``reward.api.api_base`` 指向外部 OpenAI-compatible endpoint；只有使用 Ray 托管 SGLang 时才留空。
+- ``router_server_args`` 使用标准 SGLang server/router 配置，由 RLinf 自动拉起 SGLang reward API。
+- ``cluster.component_placement.reward_server`` 决定使用 ``router_server_args`` 时 SGLang server worker 的放置位置。
 - ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效历史长度。
 - ``input_builder_name`` 将历史窗口转换为双视角 VLM 输入。
 - ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
 - ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
 
+当 ``reward.api.api_base`` 为空且配置了 ``router_server_args`` 时，
+``train_embodied_agent.py`` 会负责启动 Ray 托管的 SGLang server/router，
+完成 server 注册，并在创建 reward worker 之前把解析出的 endpoint 写入
+``reward.api.api_base``。
+
 启动 MLP RL：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
 4. 总结
 ^^^^^^^^^^^^

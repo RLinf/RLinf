@@ -121,9 +121,6 @@ class SGLangServerWorker(Worker):
         self._server_port: Optional[int] = None
         self._ready_pipe = None
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
@@ -154,6 +151,30 @@ class SGLangServerWorker(Worker):
             f"http=:{http_port}, dist_init={server_args.dist_init_addr}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
         )
+
+        # Pin the spawned server to torch's bundled CUDA runtime. With
+        # `enable_memory_saver`, sglang LD_PRELOADs a torch_memory_saver hook
+        # that has no RUNPATH, so it would otherwise resolve libcudart via
+        # ld.so.cache to the (older) system CUDA and crash torch with
+        # "undefined symbol: cudaGetDriverEntryPointByVersion". LD_LIBRARY_PATH
+        # is searched before ld.so.cache; the spawned child inherits it.
+        try:
+            import nvidia.cuda_runtime
+
+            _cudart_lib = os.path.join(
+                os.path.dirname(nvidia.cuda_runtime.__file__), "lib"
+            )
+            existing_paths = [
+                path
+                for path in os.environ.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+                if path and path != _cudart_lib
+            ]
+            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [_cudart_lib, *existing_paths]
+            )
+        except ImportError:
+            # torch built against system/conda CUDA (no bundled runtime).
+            pass
 
         ctx = mp.get_context("spawn")
         parent_pipe, child_pipe = ctx.Pipe(duplex=False)

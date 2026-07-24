@@ -14,8 +14,14 @@
 
 """Top-level helper that wires placement → server group → router group.
 
-Single entrypoint :func:`launch_sglang_router_and_server` keeps the
-launch script short. The function:
+Entrypoints:
+
+* :func:`launch_sglang_router_and_server` — returns the worker-group
+  handles.
+* :func:`launch_sglang_api` — same launch, but also resolves the
+  OpenAI-compatible API base URL for callers that only need an endpoint.
+
+``launch_sglang_router_and_server``:
 
 1. Takes the flat list of hardware ranks the sglang engines should
    occupy (typically ``ComponentPlacement.get_hardware_ranks("<name>")``)
@@ -172,3 +178,49 @@ def launch_sglang_router_and_server(
             router_group.register_server(url).wait()
 
     return server_group, router_group
+
+
+def get_sglang_api_url(server_group, router_group) -> str:
+    """Resolve the OpenAI-compatible API base URL from launched groups.
+
+    Prefers the router URL when a router was launched; otherwise falls
+    back to the first server URL.
+    """
+    if router_group is not None:
+        return router_group.get_router_url().wait()[0].rstrip("/")
+    if server_group is not None:
+        server_urls = server_group.get_server_url().wait()
+        if server_urls:
+            return str(server_urls[0]).rstrip("/")
+    raise RuntimeError(
+        "Unable to resolve SGLang API URL: neither router nor server group "
+        "is available."
+    )
+
+
+def launch_sglang_api(
+    config: DictConfig,
+    cluster: Cluster,
+    rollout_hardware_ranks: list[int] | None,
+    router_server_args: DictConfig,
+    *,
+    rollout_node_group: str | Sequence[str] | None = None,
+    placement_strategy: PlacementStrategy | None = None,
+    router_node_rank: int = 0,
+) -> tuple[str, "object | None", "object | None"]:
+    """Launch SGLang and return ``(api_url, server_group, router_group)``.
+
+    Same arguments as :func:`launch_sglang_router_and_server`. Use this when
+    the caller needs a ready-to-use OpenAI-compatible base URL (for example
+    ``reward.api.api_base``) rather than only the worker-group handles.
+    """
+    server_group, router_group = launch_sglang_router_and_server(
+        config=config,
+        cluster=cluster,
+        rollout_hardware_ranks=rollout_hardware_ranks,
+        router_server_args=router_server_args,
+        rollout_node_group=rollout_node_group,
+        placement_strategy=placement_strategy,
+        router_node_rank=router_node_rank,
+    )
+    return get_sglang_api_url(server_group, router_group), server_group, router_group

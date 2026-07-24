@@ -1088,6 +1088,56 @@ clone_or_reuse_repo() {
 }
 
 #=======================EMBODIED INSTALLERS=======================
+assert_transformers_version() {
+    local expected="$1"
+    python - "$expected" <<'EOF'
+from importlib.metadata import version
+import sys
+
+expected = sys.argv[1]
+actual = version("transformers")
+if actual != expected:
+    raise SystemExit(f"Expected transformers=={expected}, found {actual}.")
+EOF
+}
+
+install_qwen3_vl_sglang_deps() {
+    local missing_tags=()
+    [ -z "$TORCH_VERSION" ] && missing_tags+=("--torch 2.8.0")
+    [ -z "$SGLANG_VERSION" ] && missing_tags+=("--sglang 0.5.4")
+    [ -z "$TRANSFORMERS_VERSION" ] && missing_tags+=("--transformers 4.57.1")
+    if [ ${#missing_tags[@]} -ne 0 ]; then
+        echo "[install.sh] Qwen3-VL SGLang reward serving requires explicit install tags: ${missing_tags[*]}" >&2
+        exit 1
+    fi
+
+    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    python - "$TORCH_VERSION" "$SGLANG_VERSION" "$TRANSFORMERS_VERSION" <<'EOF'
+from importlib.metadata import version
+import sys
+
+from packaging.version import Version
+import sglang_router
+import torch
+
+expected_torch, expected_sglang, expected_transformers = sys.argv[1:4]
+actual_torch = torch.__version__.split("+", 1)[0]
+if actual_torch != expected_torch:
+    raise SystemExit(f"Expected torch=={expected_torch}, found {torch.__version__}.")
+actual_sglang = Version(version("sglang"))
+expected_sglang_version = Version(expected_sglang)
+if actual_sglang != expected_sglang_version:
+    raise SystemExit(f"Expected sglang=={expected_sglang_version}, found {actual_sglang}.")
+actual_transformers = version("transformers")
+if actual_transformers != expected_transformers:
+    raise SystemExit(
+        f"Expected transformers=={expected_transformers}, found {actual_transformers}."
+    )
+version("sglang-router")
+assert sglang_router is not None
+EOF
+}
+
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -1629,7 +1679,7 @@ install_qwen3_vl_model() {
             ;;
     esac
 
-    uv pip install --upgrade "transformers>=4.57.1,<=4.57.6" "tokenizers>=0.22,<0.23"
+    install_qwen3_vl_sglang_deps
 
     install_flash_attn
 }

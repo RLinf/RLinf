@@ -1,13 +1,13 @@
 strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
 
 # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
-# "shard_grad_op" (shard gradients and optimizer states only), 
+# "shard_grad_op" (shard gradients and optimizer states only),
 # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
 # "no_shard" (no sharding)
-sharding_strategy: "full_shard" 
+sharding_strategy: "full_shard"
 
 gradient_checkpointing: False # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
-cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
+cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use, if True, actor's enable_offload should be True too.
 offload_pin_memory: False     # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
 reshard_after_forward: True   # if True, FSDP2 will reshard parameters after forward pass to save memory
 
@@ -23,7 +23,7 @@ mixed_precision:            # mixed precision settings for fsdp/fsdp2
   reduce_dtype: null
   buffer_dtype: null
 
-amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.  
+amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.
   enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
   precision: "bf16"                 # precision for AMP, options are ["fp16" , "bf16"]
 
