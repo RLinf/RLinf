@@ -1268,6 +1268,7 @@ class EnvWorker(Worker):
 
         return env_metrics
 
+    @Worker.timer("evaluate")
     def evaluate(self, input_channel: Channel, rollout_channel: Channel):
         eval_metrics = defaultdict(list)
         for eval_rollout_epoch in range(self.eval_rollout_epoch):

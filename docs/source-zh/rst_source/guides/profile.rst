@@ -1,7 +1,18 @@
-GPU Profiling
+性能分析
 ==============================
 
-使用 ``cluster.profiling`` 配置对 Ray worker 进程进行系统级 Profiling。
+RLinf 提供两种互补的性能理解工具，面向不同层次：
+
+- **GPU Profiling**\ （``cluster.profiling``）：对\ *单个*\ worker 进程的低层系统级
+  profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker
+  group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
+  GPU/进程逐个 kernel 在做什么？”。
+- **Tracing**\ （``cluster.tracer``）：\ *跨所有 worker 和 runner*\ 的 RLinf 自身计时
+  区间的高层时间线——step、阶段，以及 ``generate``、``run_training``、``interact``
+  等 worker RPC。开销极低，用于回答“各 worker 的阶段如何重叠、关键路径在哪？”。
+  见下文 `Tracing`_。
+
+两者相互独立，可同时开启。本页其余部分介绍 GPU Profiling；Tracing 见文末。
 
 RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过必填字段 ``backend``
 来选择后端：
@@ -405,3 +416,87 @@ AMD 第一轮定位：
 
 - 确认 ``rocprof-sys-python`` 已经在每个 worker 环境的 ``PATH`` 中。
 - 运行结束后检查 ``output_dir`` 下的 ``.json`` 或二进制 trace 文件。
+
+
+Tracing
+------------------------------
+
+与 GPU Profiling 聚焦单个进程不同，Tracing 给出全局视角：它记录 RLinf 自身计时
+区间在 runner 和所有 Ray worker（环境、Rollout、Actor 等）上的执行时间线，并导出
+为 Chrome Trace 格式做交互式可视化。开销极低，是查看各阶段如何重叠、关键路径在哪的
+最快方式。
+
+工作原理
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. 启用追踪后，cluster 会在启动时把 **tracer**\ （一个调度器 manager，位于节点
+   rank 0 的单个 Ray actor）与其他 manager（``WorkerManager``、``NodeManager`` 等）
+   一起启动。
+2. 每个 worker 和 driver 都通过 ``Tracer.get_proxy()`` 自主访问它，与其他 manager
+   完全一致——没有进程级客户端、缓冲区或后台线程。
+3. 所有计时区间——runner 的 ``ScopedTimer`` 区间（如 ``step``、
+   ``generate_rollouts``）与 worker 的 ``Worker.timer`` 区间（如
+   ``run_training``、``interact``、``predict``）——都会发出追踪事件，直接发送给
+   tracer manager，由其追加写入 JSONL 追踪文件。
+
+如何启用追踪
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+由于 tracer 是一个 cluster manager，其配置位于 ``cluster.tracer``，无需单独启动
+服务器进程：
+
+.. code-block:: yaml
+
+   cluster:
+     tracer:
+       enable: true
+       output_file: null    # 默认为 <log_path>/<experiment_name>/trace/trace_events.jsonl
+
+也可以直接通过 Hydra CLI 开启：
+
+.. code-block:: bash
+
+    python3 examples/embodiment/train_embodied_agent.py \
+        --config-name libero_spatial_ppo_openpi_pi05 \
+        +cluster.tracer.enable=true
+
+若未设置 ``output_file``，追踪事件会写入节点 rank 0 上的
+``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``。
+
+如何添加自定义 Span
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+计时区间会被自动追踪。在 worker 中，``@Worker.timer(...)`` 和
+``with self.worker_timer(...)`` 默认会发出追踪事件；传入 ``trace=False``
+可以让某个 timer 不参与追踪。若只需要追踪而不需要计时，``Tracer``
+提供了 ``trace_begin`` / ``trace_end``、``trace_span`` 上下文管理器和
+``trace_func`` 装饰器：
+
+.. code-block:: python
+
+   from rlinf.scheduler import Tracer
+
+   with Tracer.trace_span("data_preprocess", cat="actor"):
+       preprocess()
+
+追踪关闭时，所有追踪 API 都是 no-op，因此这些调用可以安全地留在
+不开启追踪的代码路径中。
+
+追踪可视化
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在运行完成或执行期间，你可以对追踪数据进行可视化：
+
+1. 找到输出的 JSONL 文件（例如 ``trace_events.jsonl``）。
+2. 使用 ``jq`` 将 JSON Lines 格式转换为单一 JSON 数组（Perfetto 需要该格式）：
+
+   .. code-block:: bash
+
+       jq -s . trace_events.jsonl > trace_events.json
+
+3. 打开基于 Chrome 的浏览器并导航至 `Perfetto UI <https://ui.perfetto.dev/>`_
+   或 ``chrome://tracing``。
+4. 点击 **Open trace file** 并选择你转换后的 ``trace_events.json`` 文件。
+
+你将看到一个交互式甘特图，展示执行层次、Actor 等待时间和系统瓶颈，每个进程按其
+worker 名（如 ``ActorGroup:0``）或 ``driver`` 标注。

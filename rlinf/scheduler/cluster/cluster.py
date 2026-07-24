@@ -383,6 +383,7 @@ class Cluster:
             Manager,
             NodeManager,
             PortLockManager,
+            Tracer,
             WorkerManager,
         )
 
@@ -409,6 +410,12 @@ class Cluster:
             self._port_lock_manager = self._launch_manager_actor(
                 PortLockManager, manager_node, runtime_env
             )
+            # Optional tracer manager, launched only when tracing is enabled
+            tracer_cfg = cluster_cfg.get("tracer", None) if cluster_cfg else None
+            if tracer_cfg is not None and tracer_cfg.get("enable", False):
+                self._tracer = self._launch_manager_actor(
+                    Tracer, manager_node, runtime_env, tracer_cfg.get("output_file")
+                )
         except ValueError:
             raise Cluster.NamespaceConflictError
 
