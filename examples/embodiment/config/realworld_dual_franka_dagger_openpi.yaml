@@ -73,26 +73,25 @@ runner:
 
 algorithm:
   dagger:
-    # With no rollout.expert_model configured, beta is not used for model-vs-model
-    # expert mixing. Human PICO intervention is collected through info["intervene_action"].
-    init_beta: 1.0
-    beta_schedule: "exponential"
-    beta_decay: 0.99
-    # HG-DAgger: only human-intervened data is saved to the replay buffer.
-    only_save_expert: True
+    # Train on every frame from successful episodes. Human-intervened frames
+    # still carry intervene_flag=True and store the executed expert action.
+    only_save_expert: False
+    online_lerobot:
+      enabled: True
+      only_success: True
+      robot_type: "dual_FR3"
+      fps: 10
+      # Real-world episodes are expensive; archive every completed success.
+      finalize_interval: 1
+      data_path: ${runner.logger.log_path}/online_lerobot
+      rolling_lerobot_window_size: 50000
+      min_frames: 1
+      lerobot_num_workers: 0
 
   gamma: 0.99
   update_epoch: 1
   adv_type: gae
   loss_type: embodied_dagger
-
-  replay_buffer:
-    enable_cache: True
-    cache_size: 200
-    min_buffer_size: 4
-    sample_window_size: 200
-    auto_save: True
-    trajectory_format: "pt"
 
 env:
   group_name: "EnvGroup"
@@ -114,14 +113,6 @@ env:
     keyboard_reward_wrapper: eval_control
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000
-    data_collection:
-      enabled: True
-      save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "lerobot"
-      only_success: True
-      robot_type: "dual_FR3"
-      fps: 10
-      finalize_interval: 1
     pico:
       zmq_addr: "ipc:///tmp/vr_data.ipc"
       hand: "dual"
