@@ -449,15 +449,15 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
-          bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl
+          bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-      - name: ManiSkill VLM Reward PPO test
+      - name: ManiSkill API Reward PPO test (managed SGLang)
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_reward
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
       - name: ManiSkill ResNet Reward PPO test
         timeout-minutes: 20

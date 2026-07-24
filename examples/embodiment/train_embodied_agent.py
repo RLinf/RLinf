@@ -16,6 +16,7 @@ import json
 
 import hydra
 import torch.multiprocessing as mp
+from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
@@ -23,10 +24,12 @@ from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
-from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
+from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 mp.set_start_method("spawn", force=True)
+
+_REWARD_SERVER_COMPONENT_NAME = "reward_server"
 
 
 @hydra.main(
@@ -107,14 +110,46 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
+    # Create reward worker group
+    server_group = None
+    router_group = None
     reward_group = None
-    if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
-        "reward", {}
-    ).get("standalone_realworld", False):
-        # Create reward worker group
+    reward_cfg = cfg.get("reward", {})
+    api_base = str(reward_cfg.get("api", {}).get("api_base") or "").strip()
+    if (
+        reward_cfg.get("use_reward_model", False)
+        and str(reward_cfg.get("worker_type", "model")).lower() == "api"
+        and not api_base
+    ):
+        from rlinf.workers.rollout.sglang_server import launch_sglang_api
+
+        api_base, server_group, router_group = launch_sglang_api(
+            config=cfg,
+            cluster=cluster,
+            rollout_hardware_ranks=None,
+            router_server_args=cfg.router_server_args,
+            placement_strategy=component_placement.get_strategy(
+                _REWARD_SERVER_COMPONENT_NAME
+            ),
+        )
+        with open_dict(cfg.reward):
+            if "api" not in cfg.reward:
+                cfg.reward.api = {}
+            cfg.reward.api.api_base = api_base
+
+    if reward_cfg.get("use_reward_model", False) and not reward_cfg.get(
+        "standalone_realworld", False
+    ):
         reward_placement = component_placement.get_strategy("reward")
-        reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
-            cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
+        reward_worker_cls = (
+            EmbodiedAPIRewardWorker
+            if str(cfg.reward.get("worker_type", "model")).lower() == "api"
+            else EmbodiedRewardWorker
+        )
+        reward_group = reward_worker_cls.create_group(cfg).launch(
+            cluster,
+            name=cfg.reward.group_name,
+            placement_strategy=reward_placement,
         )
 
     runner = EmbodiedRunner(
@@ -127,6 +162,13 @@ def main(cfg) -> None:
 
     runner.init_workers()
     runner.run()
+
+    if reward_group is not None:
+        reward_group.stop().wait()
+    if router_group is not None:
+        router_group.shutdown().wait()
+    if server_group is not None:
+        server_group.shutdown().wait()
 
 
 if __name__ == "__main__":

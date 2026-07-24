@@ -14,7 +14,11 @@
 
 """Reward workers for RLinf."""
 
+from rlinf.workers.reward.api_reward_worker import (
+    EmbodiedAPIRewardWorker,
+)
 from rlinf.workers.reward.reward_worker import (
+    EmbodiedRewardWorker,
     FSDPRewardWorker,
     RewardBinaryDataset,
     RewardWorker,
@@ -22,6 +26,8 @@ from rlinf.workers.reward.reward_worker import (
 
 __all__ = [
     "RewardWorker",
+    "EmbodiedRewardWorker",
+    "EmbodiedAPIRewardWorker",
     "FSDPRewardWorker",
     "RewardBinaryDataset",
 ]
