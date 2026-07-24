@@ -128,13 +128,45 @@ class MultiStepRolloutWorker(Worker):
 
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
+        # When enabled, this rollout worker serves ONLY its bound env group
+        # (per-group fixed binding) instead of the default global decoupled pool.
+        # Defaults to False so the global-pool behavior is unchanged when absent.
+        self.enable_group_route_binding = self.cfg.rollout.get(
+            "enable_group_route_binding", False
+        )
+        self._group_id: int | None = None
+
         if self.env_decoupled_mode:
             # save the run-time imformation in communicate channel for decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
             self.batch_router = {
                 "rollout_results": [],
             }
+            if self.enable_group_route_binding:
+                env_world_size = self.placement.get_world_size("env")
+                rollout_world_size = self.placement.get_world_size("rollout")
+                assert env_world_size % rollout_world_size == 0, (
+                    f"enable_group_route_binding requires env world size ({env_world_size}) "
+                    f"to be divisible by rollout world size ({rollout_world_size}) so each "
+                    "rollout worker is bound to a whole, equal-sized env group."
+                )
+                # rollout rank k owns group k; env ranks (ratio*k .. ratio*k+ratio-1) bind to it.
+                self._group_id = self._rank
+                self.log_info(
+                    f"env_decoupled_mode group-route binding enabled: "
+                    f"rollout_rank={self._rank} -> group_id={self._group_id}"
+                )
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
+
+    def _group_route_key(self) -> Optional[str]:
+        """Return the per-group route key for decoupled binding, or None for the global pool."""
+        if not self.enable_group_route_binding:
+            return None
+        assert self._group_id is not None, (
+            "group route binding is enabled but group_id was not computed; "
+            "this requires env_decoupled_mode to be active."
+        )
+        return f"grp{self._group_id}"
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.model_cfg)
@@ -780,6 +812,7 @@ class MultiStepRolloutWorker(Worker):
                     infer_batch_size_fn=self._infer_env_batch_size,
                     timeout_time=0.02,
                     recv_queue_size=self.rollout_queue_size,
+                    route_key=self._group_route_key(),
                 )
                 actions, _ = self._predict_rollout_actions(
                     env_output["obs"],
@@ -796,6 +829,7 @@ class MultiStepRolloutWorker(Worker):
                     data=actions,
                     tag="rollout_results",
                     split_sizes=split_sizes,
+                    route_key=self._group_route_key(),
                 )
         else:
             for _ in tqdm(

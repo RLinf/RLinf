@@ -174,6 +174,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 infer_batch_size_fn=self._infer_env_batch_size,
                 timeout_time=0.02,
                 recv_queue_size=self.rollout_queue_size,
+                route_key=self._group_route_key(),
             )
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
@@ -193,4 +194,5 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 tag="rollout_results",
                 split_fn=self._split_rollout_result,
                 split_sizes=split_sizes,
+                route_key=self._group_route_key(),
             )

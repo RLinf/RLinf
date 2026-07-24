@@ -173,15 +173,46 @@ class EnvWorker(Worker):
             ]
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
+        # When enabled, each rollout worker serves ONLY the env ranks bound to it
+        # (per-group fixed binding) instead of the default global decoupled pool.
+        # Defaults to False so the global-pool behavior is unchanged when absent.
+        self.enable_group_route_binding = self.cfg.rollout.get(
+            "enable_group_route_binding", False
+        )
+        self._group_id: int | None = None
+
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
             self.batch_router = {}
-            assert self._component_placement.get_world_size(
-                "env"
-            ) >= self._component_placement.get_world_size("rollout"), (
+            env_world_size = self._component_placement.get_world_size("env")
+            rollout_world_size = self._component_placement.get_world_size("rollout")
+            assert env_world_size >= rollout_world_size, (
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
+            if self.enable_group_route_binding:
+                assert env_world_size % rollout_world_size == 0, (
+                    f"enable_group_route_binding requires env world size ({env_world_size}) "
+                    f"to be divisible by rollout world size ({rollout_world_size}) so each "
+                    "rollout worker is bound to a whole, equal-sized env group."
+                )
+                ratio = env_world_size // rollout_world_size
+                # env ranks (ratio*k .. ratio*k+ratio-1) are bound to rollout rank k.
+                self._group_id = self._rank // ratio
+                self.log_info(
+                    f"env_decoupled_mode group-route binding enabled: env_rank={self._rank} "
+                    f"-> group_id={self._group_id} (ratio={ratio})"
+                )
+
+    def _group_route_key(self) -> str | None:
+        """Return the per-group route key for decoupled binding, or None for the global pool."""
+        if not self.enable_group_route_binding:
+            return None
+        assert self._group_id is not None, (
+            "group route binding is enabled but group_id was not computed; "
+            "this requires env_decoupled_mode to be active."
+        )
+        return f"grp{self._group_id}"
 
     def _prepare_rollout_results(self, rollout_results: list | None = None) -> list:
         if self.enable_online_lerobot and rollout_results is not None:
@@ -944,6 +975,7 @@ class EnvWorker(Worker):
                 tag="rollout_results",
                 route_key=stage_id if not self.env_decoupled_mode else None,
                 decoupled_mode=self.env_decoupled_mode,
+                route_key=self._group_route_key(),
             )
 
     def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
@@ -1067,6 +1099,7 @@ class EnvWorker(Worker):
                         merge_fn=RolloutResult.merge_rollout_results,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
                         decoupled_mode=self.env_decoupled_mode,
+                        route_key=self._group_route_key(),
                     )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, rollout_result.bootstrap_values, reward_model_output
@@ -1131,6 +1164,7 @@ class EnvWorker(Worker):
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        route_key=self._group_route_key(),
                     )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
@@ -1182,6 +1216,7 @@ class EnvWorker(Worker):
                     merge_fn=RolloutResult.merge_rollout_results,
                     infer_batch_size_fn=self._infer_rollout_batch_size,
                     decoupled_mode=self.env_decoupled_mode,
+                    route_key=self._group_route_key(),
                 )
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
@@ -1288,6 +1323,7 @@ class EnvWorker(Worker):
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        route_key=self._group_route_key(),
                     )
 
             for eval_step in range(self.n_eval_chunk_steps):
@@ -1302,6 +1338,7 @@ class EnvWorker(Worker):
                         if self.env_decoupled_mode
                         else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        route_key=self._group_route_key(),
                     )
                     raw_chunk_actions = (
                         rollout_results.actions
@@ -1337,6 +1374,7 @@ class EnvWorker(Worker):
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        route_key=self._group_route_key(),
                     )
 
             self.finish_rollout(mode="eval")
