@@ -237,6 +237,66 @@ RECAP 通过 **tag** 实现各步骤之间的数据传递和版本管理：
      - 读取 ``meta/advantages_{tag}.parquet``
 
 
+ALOHA Sandwich HITL 示例
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 支持在 ALOHA sandwich HITL rollout 数据集上运行 RECAP。该路径保持
+``robot_type: aloha``，并复用已有的 ``pi05_aloha_robotwin`` OpenPI 配置。
+
+原始数据和 SFT 检查点位置如下：
+
+.. code:: text
+
+   /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_rl
+   /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all/pi05_sandwich_new_all_20260628_193430/49999
+
+先将 HDF5 episode 转换为 LeRobot v2.1：
+
+.. code:: bash
+
+   python examples/offline_rl/data/convert_aloha_hdf5_to_lerobot_v21.py \
+      --raw-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_rl \
+      --output-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/aloha-data/sandwich_lerobot_v21 \
+      --repo-id local/aloha_sandwich \
+      --task "Assemble a sandwich." \
+      --overwrite
+
+转换器会写入三个 ALOHA 相机、14 维 state/action、逐帧 ``is_success``、
+逐帧 ``teleop_mask``，以及用于审计的 ``meta/hil_segments.json``。由于数据
+同时包含成功和失败轨迹，应使用 ``type: rollout``。
+
+再将 OpenPI JAX 检查点转换为 CFG 训练需要的 PyTorch 检查点：
+
+.. code:: bash
+
+   python /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/examples/convert_jax_model_to_pytorch.py \
+      --checkpoint-dir /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all/pi05_sandwich_new_all_20260628_193430/49999 \
+      --config-name pi05_sandwich_new_all \
+      --output-path /inspire/qb-ilm/project/robot-reasoning/czxs253130583/yushun/openpi/checkpoints/pi05_sandwich_new_all_pytorch/49999
+
+依次运行四个 RECAP 阶段：
+
+.. code:: bash
+
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh \
+      aloha_sandwich_recap_compute_returns
+
+   bash examples/offline_rl/advantage_labeling/recap/run_value_sft.sh \
+      aloha_sandwich_recap_value_model_sft
+
+   export ALOHA_SANDWICH_VALUE_CHECKPOINT=/absolute/path/to/value/checkpoint
+   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_advantages.sh \
+      aloha_sandwich_recap_compute_advantages --nproc 1
+
+   bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh \
+      aloha_sandwich_cfg_rl_openpi
+
+启用 ``data.hitl_aware_returns`` 后，带有人类介入的成功 episode 会在第一个
+teleop 帧切分：自主执行前缀使用失败回报，介入后的后缀使用成功回报。优势
+标注阶段不会修改连续优势值；teleop 帧只会强制布尔 ``advantage`` 标签为正，
+并在 ``teleop_positive`` 中记录该覆盖。
+
+
 Step 1：计算回报（Compute Returns）
 ----------------------------------------
 
@@ -257,6 +317,7 @@ Step 1：计算回报（Compute Returns）
 
      gamma: 1.0              # 折扣因子
      failure_reward: -300.0   # 失败轨迹终止奖励
+     hitl_aware_returns: false  # 设为 true 后在首个 teleop 帧切分成功的 HITL episode
      tag: "fail300"           # 输出文件标签
      num_workers: 128         # 并行处理线程数
 
@@ -275,6 +336,9 @@ Step 1：计算回报（Compute Returns）
    * - ``data.failure_reward``
      - ``-300.0``
      - 失败轨迹终止步的惩罚值。值越大（绝对值），成功/失败的回报区分度越高
+   * - ``data.hitl_aware_returns``
+     - ``false``
+     - 为带有 ``teleop_mask`` 的 rollout 数据集启用 HITL-aware returns。成功 episode 会在首个 teleop 帧切分；自主执行前缀使用 failed returns，人工介入后缀使用 successful returns。``data.train_data_paths`` 中的每个条目可以覆盖该值。
    * - ``data.tag``
      - ``null``
      - 输出文件标签，生成 ``meta/returns_{tag}.parquet``
@@ -290,7 +354,7 @@ Step 1：计算回报（Compute Returns）
 
 **输出文件**
 
-- ``meta/returns_{tag}.parquet``：每行包含 ``episode_index``、``frame_index``、``return``、``reward``、``prompt``
+- ``meta/returns_{tag}.parquet``：每行包含 ``episode_index``、``frame_index``、``return``、``reward``、``done``、``prompt``
 - ``meta/stats.json``：更新回报统计信息（均值、标准差、最小值、最大值）
 
 **验证方法**
@@ -578,6 +642,21 @@ Step 4：CFG Training
 .. code:: bash
 
    bash examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh cfg_rl_openpi
+
+**Checkpoint 产物**
+
+每个周期、最终和最佳 CFG checkpoint 都会包含训练时使用的 OpenPI
+归一化统计：
+
+.. code:: text
+
+   <checkpoint_root>/
+   ├── actor/model_state_dict/full_weights.pt
+   └── <asset_id>/norm_stats.json
+
+将 ``actor.model.model_path`` 或 ``rollout.model.model_path`` 设置为
+``<checkpoint_root>``。OpenPI loader 会从 ``actor/`` 读取权重，并从
+``<asset_id>/norm_stats.json`` 读取匹配的归一化统计。
 
 **关键监控指标**
 

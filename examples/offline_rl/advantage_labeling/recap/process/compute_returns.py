@@ -15,7 +15,7 @@
 """
 Compute returns for LeRobot datasets.
 
-Writes `return`, `reward`, and `prompt` as a sidecar parquet at
+Writes `return`, `reward`, `done`, and `prompt` as a sidecar parquet at
 ``meta/returns_{tag}.parquet``. Updates meta/stats.json and meta/info.json.
 Does not modify original per-episode parquet files.
 
@@ -48,7 +48,71 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 logger = logging.getLogger(__name__)
 
 # Columns needed for computation (tiny — no images)
-_READ_COLUMNS = ["episode_index", "frame_index", "is_success", "task_index", "task"]
+_READ_COLUMNS = [
+    "episode_index",
+    "frame_index",
+    "is_success",
+    "teleop_mask",
+    "task_index",
+    "task",
+]
+
+
+def _normalize_scalar_bool(value) -> bool:
+    """Normalize scalar/list-wrapped boolean values from parquet metadata."""
+    if isinstance(value, np.ndarray):
+        if value.shape == ():
+            return bool(value.item())
+        if value.size != 1:
+            raise ValueError(
+                f"Expected scalar boolean value, got array shape {value.shape}"
+            )
+        return _normalize_scalar_bool(value.reshape(-1)[0])
+    if isinstance(value, (list, tuple)):
+        if len(value) != 1:
+            raise ValueError(
+                f"Expected singleton boolean list, got length {len(value)}"
+            )
+        return _normalize_scalar_bool(value[0])
+    return bool(value)
+
+
+def _normalize_teleop_mask(teleop_mask: np.ndarray, episode_length: int) -> np.ndarray:
+    """Normalize LeRobot teleop masks to a 1-D boolean array."""
+    mask = np.asarray(teleop_mask).astype(bool)
+    if mask.ndim == 2 and mask.shape[1] == 1:
+        mask = mask[:, 0]
+    elif mask.ndim != 1:
+        raise ValueError(f"teleop_mask must be 1-D or shape (N, 1), got {mask.shape}")
+    if mask.shape[0] != episode_length:
+        raise ValueError(
+            f"teleop_mask length {mask.shape[0]} does not match episode length {episode_length}"
+        )
+    return mask
+
+
+def _compute_done_flags_for_episode(
+    episode_length: int,
+    is_success: bool,
+    teleop_mask: np.ndarray | None = None,
+    hitl_aware_returns: bool = False,
+) -> np.ndarray:
+    """Compute terminal flags aligned with the returns sidecar rows."""
+    done = np.zeros(episode_length, dtype=bool)
+    done[-1] = True
+
+    if not hitl_aware_returns or not is_success or teleop_mask is None:
+        return done
+
+    mask = _normalize_teleop_mask(teleop_mask, episode_length)
+    teleop_indices = np.flatnonzero(mask)
+    if len(teleop_indices) == 0:
+        return done
+
+    split = int(teleop_indices[0])
+    if split > 0:
+        done[split - 1] = True
+    return done
 
 
 def compute_returns_for_episode(
@@ -86,6 +150,128 @@ def compute_returns_for_episode(
     return returns, rewards
 
 
+def _resolve_hitl_transition_steps(
+    hitl_transition_steps: int | None = None,
+    hitl_transition_chunks: int | None = None,
+    action_horizon: int | None = None,
+) -> int:
+    """Resolve HITL transition config to a non-negative frame count."""
+    if hitl_transition_steps is not None:
+        steps = int(hitl_transition_steps)
+        if steps < 0:
+            raise ValueError("data.hitl_transition_steps must be >= 0")
+        return steps
+
+    chunks = 0 if hitl_transition_chunks is None else int(hitl_transition_chunks)
+    if chunks < 0:
+        raise ValueError("data.hitl_transition_chunks must be >= 0")
+    if chunks == 0:
+        return 0
+    if action_horizon is None:
+        raise ValueError(
+            "data.hitl_transition_chunks requires data.action_horizon when "
+            "data.hitl_transition_steps is not set"
+        )
+
+    horizon = int(action_horizon)
+    if horizon <= 0:
+        raise ValueError(
+            "data.action_horizon must be > 0 when HITL transition chunks are used"
+        )
+    return chunks * horizon
+
+
+def _smooth_pre_teleop_returns(
+    prefix_returns: np.ndarray,
+    suffix_returns: np.ndarray,
+    hitl_transition_steps: int,
+) -> np.ndarray:
+    """Apply a linear return ramp over the final pre-teleop prefix frames."""
+    if (
+        hitl_transition_steps <= 0
+        or len(prefix_returns) == 0
+        or len(suffix_returns) == 0
+    ):
+        return prefix_returns
+
+    start = max(0, len(prefix_returns) - hitl_transition_steps)
+    window = len(prefix_returns) - start
+    if window <= 0:
+        return prefix_returns
+
+    smoothed = prefix_returns.astype(np.float32, copy=True)
+    alpha = np.linspace(1.0 / window, 1.0, num=window, dtype=np.float32)
+    target_end = float(suffix_returns[0])
+    source = smoothed[start:]
+    smoothed[start:] = ((1.0 - alpha) * source + alpha * target_end).astype(np.float32)
+    return smoothed
+
+
+def compute_hitl_aware_returns_for_episode(
+    episode_length: int,
+    is_success: bool,
+    teleop_mask: np.ndarray,
+    gamma: float,
+    failure_reward: float,
+    hitl_transition_steps: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute returns that mark pre-intervention prefixes as failed.
+
+    Successful HITL episodes are split at the first teleop frame. The
+    autonomous prefix receives failed-episode returns and the suffix receives
+    successful returns. Failed episodes remain failed even when they contain
+    teleop frames.
+    """
+    if not is_success:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=False,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    mask = _normalize_teleop_mask(teleop_mask, episode_length)
+    teleop_indices = np.flatnonzero(mask)
+    if len(teleop_indices) == 0:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=True,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    split = int(teleop_indices[0])
+    if split == 0:
+        return compute_returns_for_episode(
+            episode_length=episode_length,
+            is_success=True,
+            gamma=gamma,
+            failure_reward=failure_reward,
+        )
+
+    prefix_returns, prefix_rewards = compute_returns_for_episode(
+        episode_length=split,
+        is_success=False,
+        gamma=gamma,
+        failure_reward=failure_reward,
+    )
+    suffix_returns, suffix_rewards = compute_returns_for_episode(
+        episode_length=episode_length - split,
+        is_success=True,
+        gamma=gamma,
+        failure_reward=failure_reward,
+    )
+    prefix_returns = _smooth_pre_teleop_returns(
+        prefix_returns=prefix_returns,
+        suffix_returns=suffix_returns,
+        hitl_transition_steps=hitl_transition_steps,
+    )
+    return (
+        np.concatenate([prefix_returns, suffix_returns]).astype(np.float32),
+        np.concatenate([prefix_rewards, suffix_rewards]).astype(np.float32),
+    )
+
+
 def get_episode_boundaries(episode_indices: np.ndarray) -> list[tuple[int, int, int]]:
     """Extract episode boundaries from episode_index array.
 
@@ -114,13 +300,16 @@ def _process_single_parquet(
     gamma: float,
     failure_reward: float,
     tasks: dict[int, str],
+    hitl_aware_returns: bool = False,
+    hitl_transition_steps: int = 0,
 ) -> pa.Table | None:
     """Process a single parquet file: read only metadata columns, compute returns.
 
-    Only reads episode_index, frame_index, is_success, task_index — no images.
+    Only reads episode_index, frame_index, is_success, task_index, task, and
+    optional teleop_mask — no images.
 
     Returns:
-        Arrow table with (episode_index, frame_index, return, reward, prompt)
+        Arrow table with (episode_index, frame_index, return, reward, done, prompt)
         columns, or None if the file is empty.
     """
     file_size = Path(pq_file).stat().st_size
@@ -155,8 +344,19 @@ def _process_single_parquet(
             "to correctly distinguish successful and failed episodes."
         )
 
+    teleop_col = None
+    if hitl_aware_returns and "teleop_mask" in col_names:
+        teleop_col = np.asarray(table.column("teleop_mask").to_pylist(), dtype=np.int64)
+    elif hitl_aware_returns:
+        logger.warning(
+            "data.hitl_aware_returns is enabled but teleop_mask is missing in %s; "
+            "falling back to standard returns for this file.",
+            pq_file,
+        )
+
     returns_arr = np.empty(n, dtype=np.float32)
     rewards_arr = np.empty(n, dtype=np.float32)
+    done_arr = np.zeros(n, dtype=bool)
 
     for _, ep_start, ep_end in episodes:
         ep_length = ep_end - ep_start
@@ -164,16 +364,32 @@ def _process_single_parquet(
         if dataset_type == "sft":
             is_success = True
         else:
-            is_success = bool(is_success_col[ep_end - 1])
+            is_success = _normalize_scalar_bool(is_success_col[ep_end - 1])
 
-        ep_returns, ep_rewards = compute_returns_for_episode(
-            episode_length=ep_length,
-            is_success=is_success,
-            gamma=gamma,
-            failure_reward=failure_reward,
-        )
+        if hitl_aware_returns and teleop_col is not None:
+            ep_returns, ep_rewards = compute_hitl_aware_returns_for_episode(
+                episode_length=ep_length,
+                is_success=is_success,
+                teleop_mask=teleop_col[ep_start:ep_end],
+                gamma=gamma,
+                failure_reward=failure_reward,
+                hitl_transition_steps=hitl_transition_steps,
+            )
+        else:
+            ep_returns, ep_rewards = compute_returns_for_episode(
+                episode_length=ep_length,
+                is_success=is_success,
+                gamma=gamma,
+                failure_reward=failure_reward,
+            )
         returns_arr[ep_start:ep_end] = ep_returns
         rewards_arr[ep_start:ep_end] = ep_rewards
+        done_arr[ep_start:ep_end] = _compute_done_flags_for_episode(
+            episode_length=ep_length,
+            is_success=is_success,
+            teleop_mask=teleop_col[ep_start:ep_end] if teleop_col is not None else None,
+            hitl_aware_returns=hitl_aware_returns and teleop_col is not None,
+        )
 
     if "task" in col_names:
         prompts_list = [str(t) for t in table.column("task").to_pylist()]
@@ -189,6 +405,7 @@ def _process_single_parquet(
             "frame_index": pa.array(frame_indices),
             "return": pa.array(returns_arr),
             "reward": pa.array(rewards_arr),
+            "done": pa.array(done_arr),
             "prompt": pa.array(prompts_list, type=pa.string()),
         }
     )
@@ -203,6 +420,8 @@ def process_dataset(
     failure_reward: float,
     num_workers: int = 8,
     tag: str | None = None,
+    hitl_aware_returns: bool = False,
+    hitl_transition_steps: int = 0,
 ) -> dict:
     """Process a LeRobot dataset and compute return/reward/prompt.
 
@@ -218,13 +437,19 @@ def process_dataset(
         failure_reward: Penalty for failed episodes
         num_workers: Number of parallel workers for parquet processing
         tag: Optional tag for the sidecar filename
+        hitl_aware_returns: Whether to split successful HITL episodes at the
+            first teleop frame
+        hitl_transition_steps: Number of pre-teleop frames to smooth into the
+            post-intervention return scale
 
     Returns:
         Statistics dict with return/reward stats
     """
     logger.info(f"Processing dataset: {dataset_path}")
     logger.info(
-        f"  Type: {dataset_type}, Gamma: {gamma}, Failure reward: {failure_reward}"
+        f"  Type: {dataset_type}, Gamma: {gamma}, "
+        f"Failure reward: {failure_reward}, HITL-aware returns: {hitl_aware_returns}, "
+        f"HITL transition steps: {hitl_transition_steps}"
     )
 
     if output_path is None:
@@ -260,7 +485,13 @@ def process_dataset(
     if effective_workers <= 1:
         for pq_file in tqdm(parquet_files, desc="Processing parquet files"):
             tbl = _process_single_parquet(
-                pq_file, dataset_type, gamma, failure_reward, tasks
+                pq_file,
+                dataset_type,
+                gamma,
+                failure_reward,
+                tasks,
+                hitl_aware_returns=hitl_aware_returns,
+                hitl_transition_steps=hitl_transition_steps,
             )
             if tbl is not None:
                 result_tables.append(tbl)
@@ -276,6 +507,8 @@ def process_dataset(
                     gamma,
                     failure_reward,
                     tasks,
+                    hitl_aware_returns=hitl_aware_returns,
+                    hitl_transition_steps=hitl_transition_steps,
                 )
                 futures[fut] = pq_file
 
@@ -370,6 +603,11 @@ def process_dataset(
             "shape": [1],
             "names": None,
         }
+        info["features"]["done"] = {
+            "dtype": "bool",
+            "shape": [1],
+            "names": None,
+        }
         info["features"]["prompt"] = {
             "dtype": "string",
             "shape": [1],
@@ -401,6 +639,10 @@ def compute_returns(cfg: DictConfig) -> None:
         )
     num_workers = cfg.data.get("num_workers", 8)
     tag = cfg.data.get("tag", None)
+    hitl_aware_returns = cfg.data.get("hitl_aware_returns", False)
+    default_hitl_transition_steps = cfg.data.get("hitl_transition_steps", None)
+    default_hitl_transition_chunks = cfg.data.get("hitl_transition_chunks", 0)
+    default_action_horizon = cfg.data.get("action_horizon", None)
 
     datasets_list = cfg.data.get("train_data_paths", None)
 
@@ -420,6 +662,16 @@ def compute_returns(cfg: DictConfig) -> None:
             if output_path and data_root and not Path(output_path).is_absolute():
                 output_path = str(Path(data_root) / output_path)
 
+            entry_hitl_transition_steps = _resolve_hitl_transition_steps(
+                hitl_transition_steps=entry.get(
+                    "hitl_transition_steps", default_hitl_transition_steps
+                ),
+                hitl_transition_chunks=entry.get(
+                    "hitl_transition_chunks", default_hitl_transition_chunks
+                ),
+                action_horizon=entry.get("action_horizon", default_action_horizon),
+            )
+
             datasets_to_process.append(
                 {
                     "dataset_path": ds_path,
@@ -429,6 +681,10 @@ def compute_returns(cfg: DictConfig) -> None:
                     "failure_reward": entry.get(
                         "failure_reward", default_failure_reward
                     ),
+                    "hitl_aware_returns": entry.get(
+                        "hitl_aware_returns", hitl_aware_returns
+                    ),
+                    "hitl_transition_steps": entry_hitl_transition_steps,
                 }
             )
     else:
@@ -445,6 +701,12 @@ def compute_returns(cfg: DictConfig) -> None:
         if output_path and data_root and not Path(output_path).is_absolute():
             output_path = str(Path(data_root) / output_path)
 
+        hitl_transition_steps = _resolve_hitl_transition_steps(
+            hitl_transition_steps=default_hitl_transition_steps,
+            hitl_transition_chunks=default_hitl_transition_chunks,
+            action_horizon=default_action_horizon,
+        )
+
         datasets_to_process.append(
             {
                 "dataset_path": dataset_path,
@@ -452,6 +714,8 @@ def compute_returns(cfg: DictConfig) -> None:
                 "dataset_type": default_type,
                 "gamma": default_gamma,
                 "failure_reward": default_failure_reward,
+                "hitl_aware_returns": hitl_aware_returns,
+                "hitl_transition_steps": hitl_transition_steps,
             }
         )
 
@@ -479,6 +743,8 @@ def compute_returns(cfg: DictConfig) -> None:
             failure_reward=ds_config["failure_reward"],
             num_workers=num_workers,
             tag=tag,
+            hitl_aware_returns=ds_config["hitl_aware_returns"],
+            hitl_transition_steps=ds_config["hitl_transition_steps"],
         )
         all_stats.append(
             {
