@@ -25,7 +25,7 @@ from .hardware import (
     HardwareInfo,
     Turtle2HWInfo,
 )
-from .manager import WorkerInfo
+from .manager import Tracer, WorkerInfo
 from .placement import (
     ComponentPlacement,
     FlexiblePlacementStrategy,
@@ -33,7 +33,6 @@ from .placement import (
     PackedPlacementStrategy,
     PlacementStrategy,
 )
-from .tracing import DistTracer, TraceServer
 from .worker import Worker, WorkerAddress, WorkerGroupFuncResult
 from .worker.routing import (
     CommMapper,
@@ -86,6 +85,5 @@ __all__ = [
     "Channel",
     "ChannelWorker",
     "WeightedItem",
-    "DistTracer",
-    "TraceServer",
+    "Tracer",
 ]

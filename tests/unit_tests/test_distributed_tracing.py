@@ -15,178 +15,93 @@
 import json
 import os
 import tempfile
-import time
-import unittest
-from unittest.mock import patch
 
-from rlinf.scheduler.tracing import DistTracer, TraceServer
+from rlinf.scheduler import Tracer
 
 
-class TestDistributedTracing(unittest.TestCase):
-    def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.trace_file = os.path.join(self.temp_dir.name, "test_traces.jsonl")
+class FakeProxy:
+    """Stand-in for the tracer ManagerProxy that records events in memory."""
 
-        # Start the trace server on an ephemeral port
-        self.server = TraceServer(host="127.0.0.1", port=0, output_file=self.trace_file)
-        self.server.start()
-        self.port = self.server.port
+    def __init__(self):
+        self.events = []
 
-    def tearDown(self):
-        DistTracer.reset()
-        self.server.stop()
-        self.temp_dir.cleanup()
+    def record(self, event):
+        self.events.append(event)
 
-    def _read_events(self) -> list[dict]:
-        with open(self.trace_file, "r") as f:
-            return [json.loads(line) for line in f.readlines()]
 
-    def test_clock_synchronization_and_tracing(self):
-        # 1. Initialize the global tracer
-        DistTracer.init(
-            server_ip="127.0.0.1",
-            port=self.port,
-            process_name="test_proc",
-            thread_name="test_thread",
-        )
-        tracer = DistTracer.get()
-        self.assertIsNotNone(tracer)
+class TestTracerManager:
+    """Server-side test: the Tracer manager writes events to a JSONL file."""
 
-        # 2. Check if the offset was successfully synchronized
-        self.assertTrue(tracer.last_sync_time > 0.0)
+    def test_record_and_finalize(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "trace.jsonl")
+            # Construct the manager as a plain object (no Ray actor needed).
+            tracer = Tracer(path)
+            tracer.record({"name": "a", "ph": "B", "ts": 1, "pid": "p", "tid": "main"})
+            tracer.record({"name": "a", "ph": "E", "ts": 2, "pid": "p", "tid": "main"})
+            assert tracer.finalize() == os.path.abspath(path)
 
-        # 3. Trace a block using trace_span
-        with DistTracer.trace_span("operation_a", cat="math", args={"data_len": 10}):
-            time.sleep(0.1)
+            with open(path) as f:
+                events = [json.loads(line) for line in f]
+            assert [e["ph"] for e in events] == ["B", "E"]
+            assert all(e["name"] == "a" for e in events)
 
-        # 4. Trace using explicit begin/end
-        DistTracer.trace_begin("operation_b", cat="manual")
-        DistTracer.trace_end("operation_b", cat="manual")
 
-        # 5. Trace using decorator
-        @DistTracer.trace_func(cat="dec")
-        def decorated_function():
-            time.sleep(0.05)
+class TestTracerEmit:
+    """Client-side test: the emit API forwards well-formed events, or no-ops."""
 
-        decorated_function()
+    def teardown_method(self):
+        Tracer._unavailable = False
+        Tracer._labeled = False
 
-        # 6. Flush tracer events and shutdown
-        tracer.shutdown()
+    def test_emit_forwards_events(self, monkeypatch):
+        proxy = FakeProxy()
+        monkeypatch.setattr(Tracer, "_get", classmethod(lambda cls: proxy))
+        monkeypatch.setattr(Tracer, "_pid", staticmethod(lambda: "driver"))
+        Tracer._labeled = False
 
-        # 7. Verify written JSONL events
-        self.assertTrue(os.path.exists(self.trace_file))
-        events = self._read_events()
+        with Tracer.trace_span("step", cat="runner", args={"i": 0}):
+            Tracer.trace_begin("inner", cat="actor")
+            Tracer.trace_end("inner", cat="actor")
 
-        # Verify initial metadata events
-        proc_meta = [e for e in events if e.get("name") == "process_name"]
-        thread_meta = [e for e in events if e.get("name") == "thread_name"]
-        self.assertEqual(len(proc_meta), 1)
-        self.assertEqual(len(thread_meta), 1)
-        self.assertTrue(proc_meta[0]["args"]["name"].startswith("test_proc"))
-        self.assertEqual(thread_meta[0]["args"]["name"], "test_thread")
+        @Tracer.trace_func(cat="dec")
+        def fn():
+            return 7
 
-        # Verify span events (ph: "B"/"E" pairs)
-        span_begin = [
-            e for e in events if e.get("name") == "operation_a" and e["ph"] == "B"
-        ]
-        span_end = [
-            e for e in events if e.get("name") == "operation_a" and e["ph"] == "E"
-        ]
-        self.assertEqual(len(span_begin), 1)
-        self.assertEqual(len(span_end), 1)
-        self.assertEqual(span_begin[0]["cat"], "math")
-        self.assertEqual(span_begin[0]["args"]["data_len"], 10)
-        # The span should last at least 100ms in microseconds
-        self.assertTrue(span_end[0]["ts"] - span_begin[0]["ts"] >= 100000)
+        assert fn() == 7
 
-        # Verify explicit begin/end events
-        manual_phs = sorted(e["ph"] for e in events if e.get("name") == "operation_b")
-        self.assertEqual(manual_phs, ["B", "E"])
+        # A one-time process_name metadata event labels the process.
+        meta = [e for e in proxy.events if e["ph"] == "M"]
+        assert len(meta) == 1
+        assert meta[0]["args"]["name"] == "driver"
 
-        # Verify decorated function events
-        dec_events = [e for e in events if e.get("name") == "decorated_function"]
-        self.assertEqual(sorted(e["ph"] for e in dec_events), ["B", "E"])
-        self.assertEqual(dec_events[0]["cat"], "dec")
+        # Duration events are well-formed and balanced per name.
+        spans = [e for e in proxy.events if e["ph"] in ("B", "E")]
+        assert all({"name", "cat", "ph", "ts", "pid", "tid"} <= e.keys() for e in spans)
+        step_begin = next(e for e in spans if e["name"] == "step" and e["ph"] == "B")
+        assert step_begin["cat"] == "runner" and step_begin["args"] == {"i": 0}
+        for name in ("step", "inner", "fn"):
+            phs = sorted(e["ph"] for e in spans if e["name"] == name)
+            assert phs == ["B", "E"]
 
-    def test_disabled_tracer_is_noop(self):
-        DistTracer.reset()
-        self.assertIsNone(DistTracer.get())
+    def test_disabled_is_noop(self):
+        # When the tracer manager is unavailable, every emit API is a no-op.
+        Tracer._unavailable = True
 
-        # All tracing entry points must be no-ops without a tracer
-        DistTracer.trace_begin("noop")
-        DistTracer.trace_end("noop")
-        with DistTracer.trace_span("noop"):
+        Tracer.trace_begin("noop")
+        Tracer.trace_end("noop")
+        with Tracer.trace_span("noop"):
             pass
 
-        @DistTracer.trace_func
-        def decorated_function():
+        @Tracer.trace_func
+        def fn():
             return 42
 
-        self.assertEqual(decorated_function(), 42)
-
-    def test_daily_resync_drift_correction(self):
-        tracer = DistTracer(
-            server_ip="127.0.0.1",
-            port=self.port,
-            process_name="test_resync",
-        )
-        self.assertIsNotNone(tracer)
-
-        # Mock the clock sync method to detect calls
-        with patch.object(tracer, "sync_clock", wraps=tracer.sync_clock) as mock_sync:
-            # Force tracer's last sync time to be older than 24 hours (86400 seconds)
-            tracer.last_sync_time = time.time() - 90000.0
-
-            # Allow background loop to iterate
-            time.sleep(2.5)
-
-            # Assert that sync_clock was triggered at least once due to age check
-            mock_sync.assert_called()
-
-        tracer.shutdown()
-
-    def test_connection_loss_and_recovery(self):
-        tracer = DistTracer(
-            server_ip="127.0.0.1",
-            port=self.port,
-            process_name="test_recovery",
-        )
-        self.assertIsNotNone(tracer)
-        self.assertTrue(tracer.is_connected)
-        self.assertEqual(tracer.buffer_limit, 1000)
-
-        # 1. Simulate server connection loss by pointing to an invalid port
-        valid_url = tracer.server_url
-        tracer.server_url = "http://127.0.0.1:54321"
-
-        # Log an event and try to flush it
-        tracer.log_event("failed_event", cat="test")
-        tracer.flush()
-
-        # Check that we detected the disconnect and expanded our buffer limit
-        self.assertFalse(tracer.is_connected)
-        self.assertEqual(tracer.buffer_limit, 10000)
-
-        # Verify the event is still preserved in the buffer
-        with tracer.buffer_lock:
-            buffer_content = list(tracer.buffer)
-        self.assertTrue(any(e["name"] == "failed_event" for e in buffer_content))
-
-        # 2. Restore connection URL to simulate server coming back online
-        tracer.server_url = valid_url
-
-        # Wait for the background loop to run a health check, recover, and flush
-        time.sleep(2.5)
-
-        # Verify we recovered and flushed successfully
-        self.assertTrue(tracer.is_connected)
-        self.assertEqual(tracer.buffer_limit, 1000)
-
-        events = self._read_events()
-        self.assertTrue(any(e.get("name") == "failed_event" for e in events))
-
-        tracer.shutdown()
+        assert fn() == 42
+        assert Tracer._get() is None
 
 
 if __name__ == "__main__":
-    unittest.main()
+    import pytest
+
+    pytest.main([__file__, "-v"])

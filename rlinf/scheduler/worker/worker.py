@@ -38,7 +38,6 @@ from ..cluster import (
 )
 from ..hardware import AcceleratorType, AcceleratorUtil, HardwareInfo
 from ..manager import WorkerAddress
-from ..tracing import DistTracer
 from .routing import split_channel_message
 
 if TYPE_CHECKING:
@@ -1307,22 +1306,6 @@ class Worker(metaclass=WorkerMeta):
             return self._worker_address.root_group_name
         return "worker"
 
-    def setup_tracer(self, server_ip: str, server_port: int = 8888):
-        """Initialize this worker's tracer client; called collectively by the runner.
-
-        Once initialized, all timed sections (see `worker_timer`) also emit trace events.
-        """
-        DistTracer.init(
-            server_ip,
-            server_port,
-            process_name=self._worker_name or f"worker_pid{os.getpid()}",
-            thread_name="main",
-        )
-
-    def flush_tracer(self):
-        """Flush and shut down this worker's tracer; called by the runner before exit."""
-        DistTracer.reset()
-
     @contextmanager
     def worker_timer(self, tag: Optional[str] = None, trace: bool = True):
         """Context manager to time the execution of a worker function.
@@ -1337,15 +1320,20 @@ class Worker(metaclass=WorkerMeta):
             tag = frame.function
         assert tag is not None, "Timer tag must be provided."
         if trace:
-            DistTracer.trace_begin(tag, cat=self._trace_category)
+            # Lazy import to avoid a circular import (Tracer lives under ..manager).
+            from ..manager import Tracer
+        else:
+            Tracer = None
+        if Tracer is not None:
+            Tracer.trace_begin(tag, cat=self._trace_category)
         try:
             start_time = time.perf_counter()
             yield
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
-            if trace:
-                DistTracer.trace_end(tag, cat=self._trace_category)
+            if Tracer is not None:
+                Tracer.trace_end(tag, cat=self._trace_category)
 
     @staticmethod
     def timer(tag: Optional[str] = None, trace: bool = True):

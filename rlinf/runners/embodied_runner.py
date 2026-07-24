@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Union
 
 from omegaconf.dictconfig import DictConfig
 
-from rlinf.scheduler import Channel, DistTracer, TraceServer
+from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
@@ -117,35 +117,11 @@ class EmbodiedRunner:
             self.cfg.runner.get("per_worker_log", False)
         )
 
-        self.trace_server = None
-        self._setup_tracing()
-
         # Async logging setup
         self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
-
-    def _setup_tracing(self):
-        """Start the trace server and tracer clients if `runner.tracer` is enabled."""
-        tracer_cfg = self.cfg.runner.get("tracer", None)
-        if tracer_cfg is None or not tracer_cfg.get("enable", False):
-            return
-
-        output_file = tracer_cfg.get("output_file", None) or os.path.join(
-            self.cfg.runner.logger.log_path,
-            self.cfg.runner.logger.experiment_name,
-            "trace/trace_events.jsonl",
-        )
-        self.trace_server = TraceServer(
-            port=tracer_cfg.get("port", 8888), output_file=output_file
-        ).start()
-        for group in [self.actor, self.rollout, self.env, self.reward, self.critic]:
-            if group is not None:
-                group.setup_tracer(self.trace_server.ip, self.trace_server.port).wait()
-        DistTracer.init(
-            port=self.trace_server.port, process_name="driver", thread_name="main"
-        )
 
     def _log_worker(self):
         """Background thread for processing log messages."""
@@ -473,13 +449,6 @@ class EmbodiedRunner:
         )
 
     def _finish_run(self) -> None:
-        # Final tracer flush before workers are torn down
-        if self.trace_server is not None:
-            for group in [self.actor, self.rollout, self.env, self.reward, self.critic]:
-                if group is not None:
-                    group.flush_tracer().wait()
-            DistTracer.reset()
-
         self.metric_logger.finish()
 
         # Stop logging thread

@@ -1,9 +1,22 @@
 Profiling
 ==============================
 
-Use the ``cluster.profiling`` configuration for system-level GPU profiling of
-Ray worker processes, and the ``runner.tracer`` configuration for distributed
-tracing of execution timelines (see `Distributed Tracing`_ below).
+RLinf offers two complementary tools for understanding performance, aimed at
+different levels:
+
+- **GPU profiling** (``cluster.profiling``): low-level, system profiling of
+  *individual* worker processes. It wraps selected worker groups with a
+  backend-specific profiler (``nsys``/``rocprof-sys``) to capture CUDA kernels,
+  memory traffic, NVTX ranges, and CPU activity. Use it to answer "what is one
+  GPU/process doing, kernel by kernel?".
+- **Tracing** (``cluster.tracer``): a lightweight, high-level timeline of RLinf's
+  own timed sections *across all workers and the runner* — steps, phases, and
+  worker RPCs such as ``generate``, ``run_training``, and ``interact``. It has
+  negligible overhead and answers "how do the stages across workers overlap, and
+  where is the critical path?". See `Tracing`_ below.
+
+The two are independent and can be enabled together. The rest of this page
+covers GPU profiling; see `Tracing`_ at the end for tracing.
 
 RLinf supports wrapping selected worker groups with a backend-specific profiler
 command. The backend is selected by the required ``backend`` field:
@@ -416,42 +429,40 @@ AMD first pass:
 - Check ``output_dir`` for ``.json`` or binary trace files after the run.
 
 
-Distributed Tracing
+Tracing
 ------------------------------
 
-Beyond GPU-level profiling, RLinf integrates a lightweight, HTTP-based
-distributed tracing system. It records the execution timeline of the runner and
-all Ray workers (environment, rollout, actor, etc.) across nodes without
-bottlenecking the training loop, and exports it in the Chrome Trace format for
-interactive visualization.
+Whereas GPU profiling zooms into one process, tracing gives the big picture: it
+records the execution timeline of RLinf's own timed sections across the runner
+and all Ray workers (environment, rollout, actor, etc.), and exports it in the
+Chrome Trace format for interactive visualization. It has negligible overhead and
+is the fastest way to see how stages overlap and where the critical path is.
 
 How It Works
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. When tracing is enabled, the runner starts a centralized **HTTP trace
-   server** in a background thread on the driver node.
-2. The runner then initializes a background **trace client** in the driver and
-   in every worker process.
-3. Clocks are automatically synchronized across nodes using Cristian's
-   algorithm to ensure precise chronological alignment of spans.
-4. Every timed section — the runner's ``ScopedTimer`` sections (e.g. ``step``,
+1. When tracing is enabled, the cluster launches the **tracer**, a scheduler
+   manager (a single Ray actor on node rank 0), alongside the other managers
+   (``WorkerManager``, ``NodeManager``, …) at startup.
+2. Every worker and the driver reach it autonomously via ``Tracer.get_proxy()``,
+   exactly like the other managers — there is no per-process client, buffer, or
+   background thread.
+3. Every timed section — the runner's ``ScopedTimer`` sections (e.g. ``step``,
    ``generate_rollouts``) and workers' ``Worker.timer`` sections (e.g.
-   ``run_training``, ``interact``, ``predict``) — also emits a trace event,
-   which is asynchronously flushed to the server and appended to a JSONL trace
-   file.
+   ``run_training``, ``interact``, ``predict``) — emits a trace event that is sent
+   directly to the tracer manager, which appends it to a JSONL trace file.
 
 Enabling Tracing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Tracing is controlled by the ``runner.tracer`` config section; no separate
-server process needs to be started:
+Because the tracer is a cluster manager, it is configured under ``cluster.tracer``;
+no separate server process needs to be started:
 
 .. code-block:: yaml
 
-   runner:
+   cluster:
      tracer:
        enable: true
-       port: 8888           # trace server port on the driver node
        output_file: null    # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
 
 Or directly from the Hydra CLI:
@@ -460,11 +471,11 @@ Or directly from the Hydra CLI:
 
     python3 examples/embodiment/train_embodied_agent.py \
         --config-name libero_spatial_ppo_openpi_pi05 \
-        +runner.tracer.enable=true
+        +cluster.tracer.enable=true
 
 When ``output_file`` is not set, trace events are written to
 ``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``
-on the driver node.
+on node rank 0.
 
 Adding Custom Spans
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -472,14 +483,14 @@ Adding Custom Spans
 Timed sections are traced automatically. In workers, ``@Worker.timer(...)`` and
 ``with self.worker_timer(...)`` emit trace events by default; pass
 ``trace=False`` to opt a timer out of tracing. For trace-only instrumentation,
-``DistTracer`` exposes ``trace_begin`` / ``trace_end``, the ``trace_span``
-context manager, and the ``trace_func`` decorator:
+``Tracer`` exposes ``trace_begin`` / ``trace_end``, the ``trace_span`` context
+manager, and the ``trace_func`` decorator:
 
 .. code-block:: python
 
-   from rlinf.scheduler import DistTracer
+   from rlinf.scheduler import Tracer
 
-   with DistTracer.trace_span("data_preprocess", cat="actor"):
+   with Tracer.trace_span("data_preprocess", cat="actor"):
        preprocess()
 
 All tracing APIs are no-ops when tracing is disabled, so they are safe to leave
@@ -504,5 +515,5 @@ Once your run completes or during execution, you can visualize the trace data:
    file.
 
 You will see an interactive Gantt chart visualizing execution layers, actor
-wait times, and system bottlenecks labeled precisely by Node IP, Hostname, and
-Process Role.
+wait times, and system bottlenecks, with each process labeled by its worker name
+(e.g. ``ActorGroup:0``) or ``driver``.

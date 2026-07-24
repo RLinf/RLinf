@@ -1,8 +1,18 @@
 性能分析
 ==============================
 
-使用 ``cluster.profiling`` 配置对 Ray worker 进程进行系统级 GPU Profiling，
-使用 ``runner.tracer`` 配置对执行时间线做分布式追踪（见下文 `分布式追踪`_）。
+RLinf 提供两种互补的性能理解工具，面向不同层次：
+
+- **GPU Profiling**（``cluster.profiling``）：对*单个* worker 进程的低层系统级
+  profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker
+  group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
+  GPU/进程逐个 kernel 在做什么？”。
+- **Tracing**（``cluster.tracer``）：*跨所有 worker 和 runner* 的 RLinf 自身计时
+  区间的高层时间线——step、阶段，以及 ``generate``、``run_training``、``interact``
+  等 worker RPC。开销极低，用于回答“各 worker 的阶段如何重叠、关键路径在哪？”。
+  见下文 `Tracing`_。
+
+两者相互独立，可同时开启。本页其余部分介绍 GPU Profiling；Tracing 见文末。
 
 RLinf 支持使用特定 profiling 工具包装指定的 worker group。通过必填字段 ``backend``
 来选择后端：
@@ -408,36 +418,38 @@ AMD 第一轮定位：
 - 运行结束后检查 ``output_dir`` 下的 ``.json`` 或二进制 trace 文件。
 
 
-分布式追踪
+Tracing
 ------------------------------
 
-除 GPU 级 Profiling 外，RLinf 还集成了一个轻量级的基于 HTTP 的分布式追踪系统。
-它可以在不拖慢训练主循环的前提下，记录 runner 和所有 Ray worker（环境、Rollout、
-Actor 等）跨节点的执行时间线，并导出为 Chrome Trace 格式做交互式可视化。
+与 GPU Profiling 聚焦单个进程不同，Tracing 给出全局视角：它记录 RLinf 自身计时
+区间在 runner 和所有 Ray worker（环境、Rollout、Actor 等）上的执行时间线，并导出
+为 Chrome Trace 格式做交互式可视化。开销极低，是查看各阶段如何重叠、关键路径在哪的
+最快方式。
 
 工作原理
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. 启用追踪后，runner 会在 driver 节点的后台线程中启动一个集中式 **HTTP 追踪
-   服务器**。
-2. 随后 runner 会在 driver 和每个 worker 进程中初始化一个后台 **追踪客户端**。
-3. 各节点使用 Cristian 算法自动同步时钟，保证事件时间线的精确对齐。
-4. 所有计时区间——runner 的 ``ScopedTimer`` 区间（如 ``step``、
+1. 启用追踪后，cluster 会在启动时把 **tracer**（一个调度器 manager，位于节点
+   rank 0 的单个 Ray actor）与其他 manager（``WorkerManager``、``NodeManager`` 等）
+   一起启动。
+2. 每个 worker 和 driver 都通过 ``Tracer.get_proxy()`` 自主访问它，与其他 manager
+   完全一致——没有进程级客户端、缓冲区或后台线程。
+3. 所有计时区间——runner 的 ``ScopedTimer`` 区间（如 ``step``、
    ``generate_rollouts``）与 worker 的 ``Worker.timer`` 区间（如
-   ``run_training``、``interact``、``predict``）——都会同时发出追踪事件，
-   异步刷新到服务器并追加写入 JSONL 追踪文件。
+   ``run_training``、``interact``、``predict``）——都会发出追踪事件，直接发送给
+   tracer manager，由其追加写入 JSONL 追踪文件。
 
 如何启用追踪
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-追踪由 ``runner.tracer`` 配置节控制，无需单独启动服务器进程：
+由于 tracer 是一个 cluster manager，其配置位于 ``cluster.tracer``，无需单独启动
+服务器进程：
 
 .. code-block:: yaml
 
-   runner:
+   cluster:
      tracer:
        enable: true
-       port: 8888           # driver 节点上追踪服务器的端口
        output_file: null    # 默认为 <log_path>/<experiment_name>/trace/trace_events.jsonl
 
 也可以直接通过 Hydra CLI 开启：
@@ -446,9 +458,9 @@ Actor 等）跨节点的执行时间线，并导出为 Chrome Trace 格式做交
 
     python3 examples/embodiment/train_embodied_agent.py \
         --config-name libero_spatial_ppo_openpi_pi05 \
-        +runner.tracer.enable=true
+        +cluster.tracer.enable=true
 
-若未设置 ``output_file``，追踪事件会写入 driver 节点上的
+若未设置 ``output_file``，追踪事件会写入节点 rank 0 上的
 ``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``。
 
 如何添加自定义 Span
@@ -456,15 +468,15 @@ Actor 等）跨节点的执行时间线，并导出为 Chrome Trace 格式做交
 
 计时区间会被自动追踪。在 worker 中，``@Worker.timer(...)`` 和
 ``with self.worker_timer(...)`` 默认会发出追踪事件；传入 ``trace=False``
-可以让某个 timer 不参与追踪。若只需要追踪而不需要计时，``DistTracer``
+可以让某个 timer 不参与追踪。若只需要追踪而不需要计时，``Tracer``
 提供了 ``trace_begin`` / ``trace_end``、``trace_span`` 上下文管理器和
 ``trace_func`` 装饰器：
 
 .. code-block:: python
 
-   from rlinf.scheduler import DistTracer
+   from rlinf.scheduler import Tracer
 
-   with DistTracer.trace_span("data_preprocess", cat="actor"):
+   with Tracer.trace_span("data_preprocess", cat="actor"):
        preprocess()
 
 追踪关闭时，所有追踪 API 都是 no-op，因此这些调用可以安全地留在
@@ -486,5 +498,5 @@ Actor 等）跨节点的执行时间线，并导出为 Chrome Trace 格式做交
    或 ``chrome://tracing``。
 4. 点击 **Open trace file** 并选择你转换后的 ``trace_events.json`` 文件。
 
-你将看到一个交互式甘特图，精确展示各个节点 IP、主机名和进程角色的执行层次、
-Actor 等待时间和系统瓶颈。
+你将看到一个交互式甘特图，展示执行层次、Actor 等待时间和系统瓶颈，每个进程按其
+worker 名（如 ``ActorGroup:0``）或 ``driver`` 标注。

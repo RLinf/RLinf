@@ -1352,13 +1352,20 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                     )
                 )
 
-    # Distributed tracing defaults
+    # Tracing defaults. The tracer is a cluster manager, so its config lives under
+    # `cluster.tracer` and is launched by the Cluster below when enabled.
     with open_dict(cfg):
-        if "tracer" not in cfg.runner:
-            cfg.runner.tracer = {}
-        cfg.runner.tracer.enable = bool(cfg.runner.tracer.get("enable", False))
-        cfg.runner.tracer.port = cfg.runner.tracer.get("port", 8888)
-        cfg.runner.tracer.output_file = cfg.runner.tracer.get("output_file", None)
+        if "tracer" not in cfg.cluster:
+            cfg.cluster.tracer = {}
+        cfg.cluster.tracer.enable = bool(cfg.cluster.tracer.get("enable", False))
+        if cfg.cluster.tracer.enable and not cfg.cluster.tracer.get(
+            "output_file", None
+        ):
+            cfg.cluster.tracer.output_file = os.path.join(
+                cfg.runner.logger.log_path,
+                cfg.runner.logger.experiment_name,
+                "trace/trace_events.jsonl",
+            )
 
     # Init cluster
     Cluster(
