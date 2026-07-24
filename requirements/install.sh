@@ -80,7 +80,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "generation")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1615,6 +1615,16 @@ install_dreamzero_model() {
     esac
 }
 
+install_generation_model() {
+    # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
+    # Python 3.10 in the generation examples.
+    PYTHON_VERSION="3.10"
+    create_and_sync_venv
+    install_common_embodied_deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/generation.txt"
+    uv pip uninstall pynvml || true
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -2268,7 +2278,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ]; then
+            elif [ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "generation" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
@@ -2309,6 +2319,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                generation)
+                    install_generation_model
                     ;;
                 "")
                     install_env_only

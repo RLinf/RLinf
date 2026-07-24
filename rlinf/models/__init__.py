@@ -16,7 +16,12 @@ from typing import Callable, Optional
 
 from omegaconf import DictConfig
 
-from rlinf.config import EMBODIED_MODEL, SupportedModel, torch_dtype_from_precision
+from rlinf.config import (
+    EMBODIED_MODEL,
+    GENERATION_MODEL,
+    SupportedModel,
+    torch_dtype_from_precision,
+)
 from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
@@ -41,8 +46,11 @@ def register_model(
         )
     _MODEL_REGISTRY[model_type] = model_builder
     SupportedModel.register(model_type, force=force)
+    model_kind = SupportedModel(model_type)
     if category == "embodied":
-        EMBODIED_MODEL.add(SupportedModel(model_type))
+        EMBODIED_MODEL.add(model_kind)
+    elif category == "generation":
+        GENERATION_MODEL.add(model_kind)
 
 
 def _register_builtin_models():
@@ -143,6 +151,16 @@ def _register_builtin_models():
 
     def _build_steam_value_model(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.value_model.steam import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_sd3(cfg: DictConfig, torch_dtype):
+        from rlinf.models.generation.sd3 import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_wan22_ti2v_5b(cfg: DictConfig, torch_dtype):
+        from rlinf.models.generation.wan import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -252,6 +270,18 @@ def _register_builtin_models():
         SupportedModel.STEAM_VALUE_MODEL.value,
         _build_steam_value_model,
         category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.SD3.value,
+        _build_sd3,
+        category="generation",
+        force=True,
+    )
+    register_model(
+        SupportedModel.WAN22_TI2V_5B.value,
+        _build_wan22_ti2v_5b,
+        category="generation",
         force=True,
     )
     register_model(

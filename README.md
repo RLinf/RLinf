@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/07] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/embodied/video_models.rst).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [PyTorch OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html).
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
@@ -170,6 +171,10 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           </ul>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/wan.html">Wan</a> ✅</li>
+          </ul>
+          <li><b>RL for Video Generation Models</b></li>
+          <ul>
+            <li><a href="docs/source-en/rst_source/examples/embodied/video_models.rst">SD3 / Wan2.2</a> ✅</li>
           </ul>
           <li><b>Custom Models</b></li>
           <ul>

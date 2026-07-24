@@ -110,6 +110,19 @@
        </p>
      </div>
 
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
+            data-target="animated-image.originalImage">
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/video_models.html" style="text-decoration: underline; color: blue;">
+           <b>视频生成模型的强化学习</b>
+         </a><br>
+         使用 Diffusion-NFT 微调 SD3 和 Wan2.2 生成模型
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -125,3 +138,4 @@
    ABot-M0 <embodied/abot_m0>
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
+   视频生成模型的强化学习 <embodied/video_models>
