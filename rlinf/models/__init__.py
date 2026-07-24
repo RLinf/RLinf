@@ -66,6 +66,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_openpi_pytorch(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_pytorch import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_dexbotic_pi(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.dexbotic_pi import get_model
 
@@ -167,6 +172,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.OPENPI.value,
         _build_openpi,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.OPENPI_PYTORCH.value,
+        _build_openpi_pytorch,
         category="embodied",
         force=True,
     )

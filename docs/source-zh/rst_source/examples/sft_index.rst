@@ -50,5 +50,6 @@ VLA / WAM 模型监督微调
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   OpenPI_mixed_precision <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
    VLM <embodied/sft_vlm>
