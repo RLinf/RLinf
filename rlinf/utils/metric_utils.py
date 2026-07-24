@@ -166,6 +166,26 @@ CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
 )
 
 
+INTERACT_DELAY_METRIC_KEYS = {"interact_delay"}
+
+
+def _is_interact_delay_metric_key(key: str) -> bool:
+    return any(
+        key == metric_key or key.endswith(f"/{metric_key}")
+        for metric_key in INTERACT_DELAY_METRIC_KEYS
+    )
+
+
+def _build_interact_delay_stat_key(key: str, stat_name: str) -> str:
+    matched_metric_key = next(
+        metric_key
+        for metric_key in INTERACT_DELAY_METRIC_KEYS
+        if key == metric_key or key.endswith(f"/{metric_key}")
+    )
+    metric_prefix = key[: -len(matched_metric_key)]
+    return f"{metric_prefix}{stat_name}"
+
+
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
 
@@ -287,9 +307,16 @@ def count_trajectories(metrics_dict):
     if not metrics_dict:
         return 0
 
-    # Use the first metric tensor to get the trajectory count
-    # All metrics should have the same first dimension (number of trajectories)
-    first_key = next(iter(metrics_dict.keys()))
+    # Use a trajectory-shaped metric tensor to get the trajectory count.
+    # Some metrics, such as interact delay samples, are auxiliary distributions and
+    # should not define the trajectory count.
+    valid_metric_keys = [
+        key for key in metrics_dict.keys() if not _is_interact_delay_metric_key(key)
+    ]
+    if not valid_metric_keys:
+        return 0
+
+    first_key = valid_metric_keys[0]
     first_tensor = metrics_dict[first_key]
 
     if isinstance(first_tensor, torch.Tensor):
@@ -333,19 +360,49 @@ def compute_evaluate_metrics(eval_metrics_list):
         if metric:
             all_eval_metrics[env_info_key] = metric
 
+    aggregated_eval_metrics = {}
     for key in all_eval_metrics:
         shards = [_normalize_metric_shard(s) for s in all_eval_metrics[key]]
         stacked = torch.concat(shards).float()
-        all_eval_metrics[key] = (
+        if _is_interact_delay_metric_key(key):
+            if stacked.numel() > 0:
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "average_delay")
+                ] = stacked.mean().detach().cpu().numpy()
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "medium_delay")
+                ] = torch.quantile(stacked, 0.5).detach().cpu().numpy()
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "max_delay")
+                ] = stacked.max().detach().cpu().numpy()
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "min_delay")
+                ] = stacked.min().detach().cpu().numpy()
+            else:
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "average_delay")
+                ] = np.asarray(0.0, dtype=np.float64)
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "medium_delay")
+                ] = np.asarray(0.0, dtype=np.float64)
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "max_delay")
+                ] = np.asarray(0.0, dtype=np.float64)
+                aggregated_eval_metrics[
+                    _build_interact_delay_stat_key(key, "min_delay")
+                ] = np.asarray(0.0, dtype=np.float64)
+            continue
+
+        aggregated_eval_metrics[key] = (
             stacked.mean().detach().cpu().numpy()
             if stacked.numel() > 0
             else np.asarray(0.0, dtype=np.float64)
         )
 
     # Add total trajectory count to metrics
-    all_eval_metrics["num_trajectories"] = sum(trajectory_counts)
+    aggregated_eval_metrics["num_trajectories"] = sum(trajectory_counts)
 
-    return all_eval_metrics
+    return aggregated_eval_metrics
 
 
 def compute_rollout_metrics(data_buffer: dict) -> dict:

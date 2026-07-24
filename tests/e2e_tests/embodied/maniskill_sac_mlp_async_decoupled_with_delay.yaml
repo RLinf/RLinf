@@ -17,8 +17,25 @@ cluster:
   num_nodes: 1
   component_placement:
     actor: 0
-    rollout: 0:0-1
-    env: 0:0-4, 1:5-9
+    rollout: 1:0-1
+    env: 1:0-1
+
+net_emulation:
+  enabled: true
+  symmetric: true
+  proxy:
+    node_rank: 0
+    num_cpus: 1
+    name: "NetEmulationProxy"
+  crossdc_pairs:
+    - src: ["Env:0", "Env:1"]
+      dst: ["Rollout:0", "Rollout:1", "Actor:0"]
+      delay_ms: 10
+  bandwidth_groups:
+    - members: ["Env:0", "Env:1"]
+      bandwidth_mbps: 1000
+    - members: ["Rollout:0", "Rollout:1", "Actor:0"]
+      bandwidth_mbps: 1000
 
 runner:
   task_type: embodied
@@ -27,9 +44,9 @@ runner:
   # decoupled, removing the static mapping.
   enable_decoupled_mode: True
   logger:
-    log_path: /workspace/results/maniskill_sac_mlp_async_decoupled
+    log_path: /workspace/results/maniskill_sac_mlp_async_decoupled_with_delay
     project_name: rlinf
-    experiment_name: "ci-test"
+    experiment_name: "ci-test-real-sim-delay"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 5
@@ -73,6 +90,10 @@ algorithm:
 
 env:
   group_name: "EnvGroup"
+  delay_sampler:
+    type: uniform
+    min_delay: 0.1
+    max_delay: 0.2
 
   train:
     rollout_epoch: 1
@@ -82,7 +103,7 @@ env:
     use_fixed_reset_state_ids: False
     max_episode_steps: 50 # max episode steps for truncation
     max_steps_per_rollout_epoch: 50
-  
+
   eval:
     rollout_epoch: 1
     total_num_envs: 80
@@ -92,9 +113,6 @@ env:
     max_steps_per_rollout_epoch: 50
     use_fixed_reset_state_ids: True
     group_size: 1
-    video_cfg:
-      save_video: True
-      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
   enable_torch_compile: True

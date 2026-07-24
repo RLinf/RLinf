@@ -109,6 +109,8 @@ class EmbodiedRunner:
         # compute `max_steps`
         self.set_max_steps()
 
+        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+
         self.timer = ScopedTimer(reduction="max", sync_cuda=False)
 
         self.logger = get_logger()

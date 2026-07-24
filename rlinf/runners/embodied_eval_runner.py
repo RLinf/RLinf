@@ -53,6 +53,8 @@ class EmbodiedEvalRunner:
 
         self.logger = get_logger()
 
+        self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+
     def init_workers(self):
         rollout_handle = self.rollout.init_worker()
         env_handle = self.env.init_worker()
@@ -70,8 +72,7 @@ class EmbodiedEvalRunner:
             output_channel=self.env_channel,
         )
         env_results = env_handle.wait()
-        env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
-        if not env_decoupled_mode:
+        if not self.env_decoupled_mode:
             rollout_handle.wait()
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
