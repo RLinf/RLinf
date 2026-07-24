@@ -1,0 +1,49 @@
+# Evo-1 (evo1-flash) model config for RLinf SFT.
+# Evo-1 = InternVL3-1B embedder + flow-matching (DiT) action head.
+# Mirrors examples/embodiment/config/model/evo1.yaml but trimmed for SFT
+# (no rl_head_config -- the RL-only fields are not read on the SFT path).
+
+model_type: "evo1"
+
+# Evo-1 checkpoint DIRECTORY (config.json, norm_stats.json,
+# mp_rank_00_model_states.pt), e.g. a download of
+# https://huggingface.co/MINT-SJTU/Evo1_LIBERO, or a base to fine-tune from.
+model_path: "/path/to/Evo1_LIBERO"
+
+# Evo-1 runs bf16 internally.
+precision: "bf16"
+
+# Env action layout (LIBERO Franka: 6-DoF delta + 1 gripper).
+action_dim: 7
+# Action steps executed per inference (env interface / eval).
+num_action_chunks: 14
+
+is_lora: False
+lora_rank: 32
+add_value_head: False
+policy_setup: "libero"
+
+evo1:
+  # Evo-1 repo root so 'import dataset.*' resolves (the LeRobot dataset loader
+  # lives in the Evo-1 repo), or set the EVO1_REPO_PATH environment variable.
+  repo_path: "/path/to/Evo-1"
+
+  # Model geometry (must match the checkpoint's config.json).
+  horizon: 50
+  per_action_dim: 24
+  state_dim: 24
+  image_size: 448
+  num_view_slots: 3
+  num_inference_timesteps: 32
+
+  # norm_stats.json keys (must match the checkpoint).
+  arm_key: "libero_robot"
+  dataset_key: "libero_robot"
+  binarize_gripper: True
+
+  # SFT dataloader options (consumed by rlinf/models/embodiment/evo1/sft_builder.py).
+  video_backend: "av"
+  use_augmentation: False
+  num_workers: 4
+  # Optional decoded-frame cache dir (speeds up repeated epochs):
+  # cache_dir: "/path/to/dataset_cache/evo1_libero"

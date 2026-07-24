@@ -122,6 +122,7 @@
    Lingbot-VLA <embodied/lingbotvla>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
+   Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    OpenSora <embodied/opensora>
    Wan <embodied/wan>
