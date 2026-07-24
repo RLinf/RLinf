@@ -35,6 +35,7 @@ class SupportedEnvType(Enum):
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
     D4RL = "d4rl"
+    GEN_REWARD = "gen_reward"
     POLARIS = "polaris"
 
 
@@ -144,6 +145,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.d4rl.d4rl_env import D4RLEnv
 
         return D4RLEnv
+    elif env_type == SupportedEnvType.GEN_REWARD:
+        from rlinf.envs.gen_reward import GenRewardEnv
+
+        return GenRewardEnv
     elif env_type == SupportedEnvType.POLARIS:
         from rlinf.envs.polaris.polaris_env import PolarisEnv
 

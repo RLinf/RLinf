@@ -1,0 +1,30 @@
+env_type: "gen_reward"
+seed: 42
+total_num_envs: 24
+group_size: 3
+auto_reset: False
+ignore_terminations: False
+max_episode_steps: 1
+max_steps_per_rollout_epoch: 1
+is_eval: False
+
+video_cfg:
+  save_video: False
+  info_on_video: False
+  video_base_dir: ${runner.logger.log_path}/video
+
+dataset:
+  type: "embodied.robotwin_dataset"
+  repo_id: "local/robotwin_vidar_demo_3task_50eps"
+  # Put the prepared RobotWin LeRobot dataset here, or override this value at launch.
+  root: /path/to/robotwin_vidar_demo_3task_50eps
+  sample_mode: episode
+  future_seconds: 1.0
+  num_frames: 6
+  prompt_prefix: "The whole scene is in a realistic, industrial art style with three views: a fixed rear camera, a movable left arm camera, and a movable right arm camera. The aloha robot is currently performing the following task: "
+  video_backend: "pyav"
+
+reward:
+  type: "single"
+  model: "embodied.video_similarity"
+  key: "avg"

@@ -1,0 +1,10 @@
+accelerate==1.13.0
+diffusers==0.38.0
+peft==0.17.1
+transformers==4.49.0
+protobuf==3.20.3
+numpy==1.26.4
+opencv-python==4.11.0.86
+paddlepaddle==2.6.2
+paddleocr==2.9.1
+Levenshtein==0.27.3
