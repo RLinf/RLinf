@@ -31,6 +31,12 @@ from torch.utils._pytree import tree_map
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.models.embodiment.openpi.rtc_guidance import (
+    RTCGuidanceContext,
+)
+from rlinf.models.embodiment.openpi.rtc_guidance import (
+    sample_actions_with_rtc_guidance as _sample_actions_with_rtc_guidance,
+)
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 from rlinf.utils.pytree import register_pytree_dataclasses
@@ -60,6 +66,11 @@ class OpenPi0Config(Pi0Config):
     action_chunk: int = 5  # action chunk
     action_env_dim: int = 7  # for environment action dim
     num_steps: int = 10  # denoise steps
+    # Real-time correction keeps the newly sampled chunk consistent with the
+    # unexecuted tail of the previous chunk during real-world replanning.
+    rtc_enabled: bool = False
+    rtc_guidance_mode: str = "approx"
+    rtc_guidance_clip: float = 5.0
     # training config
     train_expert_only: bool = False
     safe_get_logprob: bool = False
@@ -833,6 +844,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         env_obs,
         mode: Literal["train", "eval"] = "train",
         compute_values=True,
+        rtc_context: RTCGuidanceContext | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         to_process_obs = self.obs_processor(env_obs)  # env obs -> policy input obs
@@ -876,9 +888,20 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
 
         else:
             # Non-DSRL or eval mode
-            outputs = self.sample_actions(
-                observation, mode=mode, compute_values=compute_values
-            )
+            if rtc_context is not None and mode == "eval" and self.config.rtc_enabled:
+                # RTC is only used during evaluation: the rollout worker passes
+                # the previous model-space action chunk so the sampler can guide
+                # the overlapping horizon without changing normal training.
+                outputs = self.sample_actions_with_rtc_guidance(
+                    observation,
+                    rtc_context=rtc_context,
+                    mode=mode,
+                    compute_values=compute_values,
+                )
+            else:
+                outputs = self.sample_actions(
+                    observation, mode=mode, compute_values=compute_values
+                )
             actions = self.output_transform(
                 {"actions": outputs["actions"], "state": observation.state}
             )["actions"]
@@ -918,8 +941,32 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "prev_logprobs": prev_logprobs,
             "prev_values": prev_values,
             "forward_inputs": forward_inputs,
+            "model_actions": outputs["actions"],
         }
         return actions, result
+
+    @torch.no_grad()
+    def sample_actions_with_rtc_guidance(
+        self,
+        observation: _model.Observation,
+        rtc_context: RTCGuidanceContext,
+        noise=None,
+        mode="eval",
+        compute_values=True,
+    ) -> dict[str, torch.Tensor]:
+        """Sample OpenPI actions with RTC overlap guidance enabled."""
+        if self.config.rtc_guidance_mode != "approx":
+            raise NotImplementedError(
+                f"Unsupported RTC guidance mode: {self.config.rtc_guidance_mode}"
+            )
+        return _sample_actions_with_rtc_guidance(
+            self,
+            observation,
+            rtc_context=rtc_context,
+            noise=noise,
+            mode=mode,
+            compute_values=compute_values,
+        )
 
     @torch.no_grad()
     def sample_actions(
