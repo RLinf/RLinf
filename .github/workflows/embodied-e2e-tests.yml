@@ -322,6 +322,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft
 
+      - name: Libero-Spatial OPD test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_opd_openvlaoft
+
       - name: ManiSkill Async PPO test
         timeout-minutes: 20
         run: |
@@ -532,6 +540,39 @@ jobs:
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
           bash tests/e2e_tests/embodied/run.sh behavior_ppo_openpi
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+          rm -rf /tmp/tmp*
+
+  embodied-openpi-pytorch-behavior-eval-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          bash requirements/install.sh embodied --model openpi --env behavior
+
+      - name: BEHAVIOR-OpenPI-PyTorch eval test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
+          export ISAAC_PATH=/workspace/dataset/isaac-sim
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_pytorch_eval
 
       - name: Clean up
         run: |
@@ -960,6 +1001,39 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh roboverse_ppo_openpi_pi05
           mv roboverse_data .venv/roboverse/
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-robocasa365-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export ROBOCASA_PATH=/workspace/dataset/robocasa365
+          export ROBOCASA_ASSETS_PATH=/workspace/dataset/robocasa365_assets
+          bash requirements/install.sh embodied --model openpi --env robocasa365
+
+      - name: RoboCasa365 PPO test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOCASA_PATH=/workspace/dataset/robocasa365
+          export ROBOCASA_ASSETS_PATH=/workspace/dataset/robocasa365_assets
+          export ROBOCASA365_OPENPI_CKPT=/workspace/dataset/pi0-robocasa-pretrain-human300
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh robocasa365_ppo_openpi
 
       - name: Clean up
         run: |

@@ -81,7 +81,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1343,6 +1343,13 @@ install_openpi_model() {
             install_flash_attn
             install_robocasa_env
             ;;
+        robocasa365)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_robocasa365_env
+            ;;
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
@@ -1942,6 +1949,52 @@ install_robocasa_env() {
     uv pip install -e "$robocasa_dir"
     uv pip install protobuf==6.33.0
     python -m robocasa.scripts.setup_macros
+}
+
+install_robocasa365_env() {
+    local robocasa_dir
+    local assets_path
+    local macros_private_path
+
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b main)
+    assets_path="$robocasa_dir/robocasa/models/assets"
+    macros_private_path="$robocasa_dir/robocasa/macros_private.py"
+
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        mkdir -p "$ROBOCASA_ASSETS_PATH"
+
+        if [[ -d "$assets_path" && ! -L "$assets_path" ]]; then
+            echo "[install_robocasa365_env] Copying RoboCasa assets from $assets_path to $ROBOCASA_ASSETS_PATH" >&2
+            cp -an "$assets_path/." "$ROBOCASA_ASSETS_PATH/"
+        fi
+
+        rm -rf "$assets_path"
+    fi
+
+    if [[ -z "${ROBOCASA_PATH:-}" && -d "$robocasa_dir/.git" ]]; then
+        git -C "$robocasa_dir" fetch origin main >&2
+        git -C "$robocasa_dir" checkout main >&2 || git -C "$robocasa_dir" checkout -B main origin/main >&2
+        git -C "$robocasa_dir" pull --ff-only origin main >&2
+    fi
+
+    uv pip install -e "$robocasa_dir"
+    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
+    uv pip install --no-deps mujoco==3.3.1
+    uv pip install protobuf==6.33.0
+
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        rm -rf "$assets_path"
+        ln -s "$ROBOCASA_ASSETS_PATH" "$assets_path"
+
+        echo "[install_robocasa365_env] Linked $assets_path -> $ROBOCASA_ASSETS_PATH" >&2
+    fi
+
+    if [[ -f "$macros_private_path" ]]; then
+        echo "[install_robocasa365_env] Reusing existing $macros_private_path" >&2
+    else
+        python -m robocasa.scripts.setup_macros
+    fi
 }
 
 install_franka_env() {
