@@ -164,6 +164,12 @@ class EnvWorker(Worker):
         if self.use_training_pipeline and self.enable_train:
             self._init_pipeline_params()
 
+        if self.delay_sampler is not None:
+            assert self.env_decoupled_mode, (
+                "delay_sampler requires runner.enable_decoupled_mode to be True. "
+                "Set runner.enable_decoupled_mode: true in your config."
+            )
+
         self.delay_sampler = DelaySampler.create(
             self.cfg.env.get("delay_sampler", None)
         )
