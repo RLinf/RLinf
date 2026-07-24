@@ -321,6 +321,49 @@ def compute_reinpp_advantages(
     return advantages, None
 
 
+@register_advantage("opd")
+def compute_opd_advantages(
+    prev_logprobs: torch.Tensor,
+    teacher_logprobs: torch.Tensor,
+    loss_mask: Optional[torch.Tensor] = None,
+    normalize_advantages: bool = False,
+    **kwargs,
+):
+    """Compute OPD advantages from frozen teacher token log-probabilities."""
+    assert teacher_logprobs is not None, (
+        "OPD advantage computation requires post-rollout teacher_logprobs."
+    )
+    assert prev_logprobs is not None, (
+        "OPD advantage computation requires prev_logprobs from student rollout."
+    )
+    assert teacher_logprobs.shape == prev_logprobs.shape, (
+        f"teacher_logprobs shape {teacher_logprobs.shape} must match "
+        f"prev_logprobs shape {prev_logprobs.shape}."
+    )
+    assert not normalize_advantages, (
+        "VLA-OPD uses raw reverse-KL rewards; set normalize_advantages to False."
+    )
+    num_action_chunks = kwargs.get("num_action_chunks", None)
+    assert num_action_chunks is not None, (
+        "OPD advantage computation requires num_action_chunks."
+    )
+    advantages = teacher_logprobs.float() - prev_logprobs.float()
+    assert advantages.shape[-1] % num_action_chunks == 0, (
+        f"OPD token count {advantages.shape[-1]} must be divisible by "
+        f"num_action_chunks {num_action_chunks}."
+    )
+    advantages = advantages.reshape(*advantages.shape[:-1], num_action_chunks, -1)
+    if loss_mask is not None:
+        target_steps = loss_mask.shape[0]
+        assert advantages.shape[0] in {target_steps, target_steps + 1}, (
+            f"OPD advantages time dimension {advantages.shape[0]} must match "
+            f"loss_mask time dimension {target_steps} or include one bootstrap step."
+        )
+        advantages = advantages[:target_steps]
+
+    return advantages, None
+
+
 @register_advantage("raw")
 def compute_raw_advantages(
     rewards: torch.Tensor,
