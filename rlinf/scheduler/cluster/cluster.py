@@ -59,6 +59,17 @@ class ClusterEnvVar(str, Enum):
     TIMEOUT = "TIMEOUT"
     """Timeout for the all inter-worker communications."""
 
+    GLOO_CHUNK_MB = "GLOO_CHUNK_MB"
+    """Pinned host chunk size (in MB) for staging accelerator tensors over GLOO.
+
+    Used by the no-accelerator-CCL fallback (e.g. heterogeneous GPU models),
+    which streams device<->host copies through a fixed reusable pinned buffer
+    of this size, NCCL_BUFFSIZE-style. Set to 0 to disable chunking and stage
+    whole tensors instead. Must be set to the same value on all nodes, as it
+    determines the on-wire message sequence. The 128MB default was picked by
+    an A/B sweep (64/128/256/512MB) of a 1GB bf16 transfer over loopback.
+    """
+
     NODE_RANK = "NODE_RANK"
     """Rank of each node in the cluster."""
 
@@ -120,6 +131,7 @@ class Cluster:
         ClusterEnvVar.CATCH_FAILURE: "0",
         ClusterEnvVar.LOG_LEVEL: "INFO",
         ClusterEnvVar.TIMEOUT: "180",
+        ClusterEnvVar.GLOO_CHUNK_MB: "128",
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
         ClusterEnvVar.EXT_MODULE: None,
