@@ -3,30 +3,29 @@
 #   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble --nproc 4
 
 advantage:
-  value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
+  value_checkpoint: /home/yz/projects/RLinf/logs/steam_sft/steam_value_model_sft-20260714-02:46:02/steam_sft/checkpoints/global_step_13000/actor
   batch_size: 256
   num_dataloader_workers_per_gpu: 12
   prefetch_factor: 2
-  label_mode: quantile
-  rollout_quantile: 0.3
-  expert_quantile: 0.8
-  tag: steam_k32_ensemble3_ckpt16000_wco_exp_and_rollout
+  label_mode: quantile        # 必填："threshold" 或 "quantile"
+  rollout_quantile: 0.3       # rollout 帧最高的 30% 标为 True
+  expert_quantile: 0.8        # 可选：sft 帧最高的 80% 标为 True
+  tag: dataset_V8-1_task2_steam_k32_ensemble3_ckpt13000_wco_exp_and_rollout
 
   model:
     precision: "bf16"
 
 data:
-  k: 32
+  k: 32                       # 必须与 Step 1 的 data.k 一致
 
   camera_keys:
-    - face_view
-    - left_wrist_view
-    - right_wrist_view
+    - image
+    - wrist_image
 
   train_data_paths:
-    - dataset_path: /path/to/expert_dataset
-      type: sft
-    - dataset_path: /path/to/rollout_dataset
+    # - dataset_path: "/home/yz/datasets/V6_task2"
+    #   type: sft
+    - dataset_path: "/home/yz/datasets/V8_0706/V8-1_task2_merged_391_RLinf"
       type: rollout
 
 distributed:

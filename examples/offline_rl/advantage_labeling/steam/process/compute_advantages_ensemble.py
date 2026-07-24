@@ -678,6 +678,7 @@ def compute_ensemble_advantages(cfg: DictConfig) -> None:
         logger.info(
             "Loading ensemble checkpoint from %s", cfg.advantage.value_checkpoint
         )
+    # 加载价值模型并作为ensemble集成模型，即使 checkpoint 是单模型，也会被包装成 ensemble 形式
     raw_model = SteamCriticModel.from_checkpoint(
         cfg.advantage.value_checkpoint,
         device=device,
@@ -708,6 +709,7 @@ def compute_ensemble_advantages(cfg: DictConfig) -> None:
                     entry.dataset_path,
                     entry.type,
                 )
+            # 计算各帧价值（分数）,只计算正向pair的分数，即(t,tk)
             df = run_inference_for_dataset(
                 model=model,
                 dataset_entry=entry,
@@ -718,6 +720,7 @@ def compute_ensemble_advantages(cfg: DictConfig) -> None:
             )
 
             if rank == 0:
+                # 计算优势值（连续值）
                 df_cont = compute_advantage_continuous(df)
                 collected.append((entry, df_cont))
 
@@ -732,6 +735,16 @@ def compute_ensemble_advantages(cfg: DictConfig) -> None:
         # pool. When expert_quantile is unset, sft frames stay all-True (the
         # historical convention) but still record the rollout threshold in their
         # tag metadata for provenance.
+
+        # rank 0 统一决定阈值，将规定的positive数据写 parquet / YAML
+        # 如果是 threshold 模式：
+        # - rollout 用 positive_threshold。
+        # - sft 全部标为 positive，即 advantage=True。
+        # 如果是 quantile 模式：
+        # - 所有 rollout dataset 的 advantage_continuous 拼起来，取 (1 - rollout_quantile) 分位数作为 rollout threshold。
+        # - rollout 中 advantage_continuous > rollout_threshold 的帧标 True。
+        # - 如果设置了 expert_quantile，所有 sft 分数拼起来，单独取 expert threshold。
+        # - 如果没设置 expert_quantile，sft 全部标 True。
         if rank == 0:
             expert_threshold: Optional[float] = None
             if label_mode == "quantile":

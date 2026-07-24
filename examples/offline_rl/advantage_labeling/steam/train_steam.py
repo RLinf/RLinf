@@ -65,7 +65,9 @@ def main(cfg) -> None:
     )
 
     runner = SFTRunner(cfg=cfg, actor=actor_group)
+    # 让 actor worker 初始化模型、optimizer、dataloader；如果有 resume_dir 就加载 checkpoint。
     runner.init_workers()
+    #   
     runner.run()
 
 

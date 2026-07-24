@@ -362,6 +362,7 @@ class _LeRobotSource(TrajectorySource):
         queries ``[t, tk]`` timestamps together per camera, which keeps the
         sample schema identical while reducing random video decode overhead.
         """
+        # 一次性读取同一个 episode 里的两帧 frame_t 和 frame_tk，并尽量优化视频解码，避免为每个时间点重复打开/seek 视频。
         raw_t = self._metadata_sample(episode, frame_t)
         raw_tk = self._metadata_sample(episode, frame_tk)
 
@@ -376,12 +377,14 @@ class _LeRobotSource(TrajectorySource):
         if not requested_video_keys:
             return raw_t, raw_tk
 
+        # 取出两帧对应的时间戳。LeRobot 的视频读取通常不是按 frame index 直接读，而是按 episode + timestamp 查询视频帧。
         timestamps = [
             float(_scalar_item(raw_t["timestamp"])),
             float(_scalar_item(raw_tk["timestamp"])),
         ]
         ep_idx = int(_scalar_item(raw_t.get("episode_index", episode)))
         for camera_key in requested_video_keys:
+            # 一次查询这个 camera 的两个时间戳：
             frames = self.base._query_videos({camera_key: timestamps}, ep_idx)[
                 camera_key
             ]
@@ -488,11 +491,15 @@ class _BasePairDataset(Dataset):
         flat index to ``(eligible-slot, t)`` in ``O(log |eligible|)`` via
         :func:`numpy.searchsorted`.
         """
+        # 把多个 episode 里的时间位置 t 展平成一个连续的一维索引空间，方便 __getitem__(idx) 用一个整数 idx 找到对应的 episode 和帧位置
+        # 每个episode包含T-1个 anchor
         pair_positions_per_episode = np.array(
             [self._source.episode_length(ep) - 1 for ep in self._eligible],
             dtype=np.int64,
         )
+        # 计算每个 episode 的 累计结束位置（区分不同episode的边界）。
         self._pair_position_ends = np.cumsum(pair_positions_per_episode)
+        # 总锚点个数，*2即为总数据对的个数（正向&反向）
         self._num_pair_positions = int(self._pair_position_ends[-1])
 
     def _resolve_pair_position(self, pair_position: int) -> tuple[int, int, int]:
@@ -502,16 +509,21 @@ class _BasePairDataset(Dataset):
         episode the second slot collapses to the last frame ``T - 1`` (stride
         degrades to ``T - 1 - t < k``).
         """
+        # 是 _init_anchor_index() 的反向映射：把一维的 pair_position 还原成具体的 (episode, t, t_plus_k)。
         if pair_position < 0 or pair_position >= self._num_pair_positions:
             raise IndexError(pair_position)
+        # 判断属于第几个episode，不是原始 episode id，而是 _eligible 列表里的位置。
         episode_slot = int(
             np.searchsorted(self._pair_position_ends, pair_position, side="right")
         )
+        # 拿到当前 episode 在 flattened 空间里的起始偏移。
         prev_episode_end = (
             int(self._pair_position_ends[episode_slot - 1]) if episode_slot > 0 else 0
         )
         episode = int(self._eligible[episode_slot])
+        # 当前 episode 的局部时间位置就是：
         t = int(pair_position - prev_episode_end)
+        # 下一帧的episode内局部位置
         t_plus_k = min(t + self.k, self._source.episode_length(episode) - 1)
         return episode, t, t_plus_k
 
@@ -549,6 +561,17 @@ class _BasePairDataset(Dataset):
         frame_idx: int,
     ) -> str:
         """Return the per-sample task instruction from an already-loaded sample."""
+        # 整体作用可以概括为：
+        # 从已加载 sample 中拿任务语言指令
+        #     -> 优先使用 sample["task"]
+        #     -> 否则用 sample["task_index"] 查任务表
+        #     -> 如果仍然没有，就使用 Dataset 的 fallback prompt
+        #     -> 如果没有 fallback，则报错
+
+        # 它主要是为了两个目的：
+        # 1. 保证每个训练样本都有 prompt
+        # 2. 避免为了拿 prompt 重复读取同一帧 sample
+        
         prompt = self._source.get_prompt_from_sample(sample, episode, frame_idx)
         return self._prompt_or_fallback(prompt, episode, frame_idx)
 
@@ -716,6 +739,7 @@ class PairDataset(_BasePairDataset):
             min_episode_length = 2
         self._min_episode_length = int(min_episode_length)
         total_eps = self._source.num_episodes()
+        # 筛选可用episode（最少2帧，满足only_success条件）
         self._eligible = [
             ep
             for ep in range(total_eps)
@@ -817,7 +841,7 @@ class PairDataset(_BasePairDataset):
     def __len__(self) -> int:
         # Each temporal anchor contributes two labeled samples:
         #   positive: (t, t+k)
-        #   negative: (t+k, t)
+        #   negative: (t+k, t)，直接颠倒两帧即可
         return 2 * self._num_pair_positions
 
     def _decode_sample_index(self, idx: int) -> tuple[int, bool]:
@@ -874,6 +898,7 @@ class PairDataset(_BasePairDataset):
         return sample
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
+        # 靠 idx 的奇偶区分两个不同顺序的样本；当于原本的正向样本【0，1，2】，通过*2后全部未偶数，就留出了奇数作为负向样本
         pair_position, is_positive = self._decode_sample_index(idx)
         episode, t, t_plus_k_binary = self._resolve_pair_position(pair_position)
 
@@ -882,6 +907,7 @@ class PairDataset(_BasePairDataset):
             # clamp (t+k may degrade to T-1 near episode end). Labels are
             # long bin indices matching the multi-bin layout — 1 for
             # progress (positive stride), 0 for regress (negative stride).
+            # 仅用0/1二值化标签作为每个数据对的标签
             if is_positive:
                 frame_idx_t, frame_idx_tk = t, t_plus_k_binary
                 label: Any = 1
@@ -904,6 +930,7 @@ class PairDataset(_BasePairDataset):
                     f"t={t} episode_length={episode_length} (bug in anchor "
                     "enumeration)."
                 )
+            # 表示这一对帧的时间方向和时间距离，用来生成分类标签 label， |i|代表时间距离，正负号代表时间方向
             i = int(self._rng_for_worker().integers(low=1, high=max_valid_stride + 1))
             if is_positive:
                 frame_idx_t, frame_idx_tk = t, t + i
@@ -924,6 +951,7 @@ class PairDataset(_BasePairDataset):
                     signed_stride * scale, self.k, self.num_bins
                 )
             else:
+                # 构建帧对的标签
                 label = _signed_stride_to_bin(signed_stride, self.k, self.num_bins)
 
         raw_t, raw_tk = self._source.get_raw_pair(

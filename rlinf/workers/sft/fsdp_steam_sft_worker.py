@@ -151,6 +151,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
 
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
+        # 1、解析 tokenizer；2、创建 SteamImageProcessor；3、 创建 SteamProcessor
         super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
@@ -371,6 +372,9 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                     "Binary value PairDataset requires an explicit data.only_success "
                     f"or train_data_paths[*].only_success for dataset_path={ds_path!r}."
                 )
+            # 长度归一化标签相关配置，走默认值：
+            # length_scale_enabled = False
+            # length_scale_percentile = 90.0
             length_scale_enabled = bool(
                 entry.get(
                     "length_scale_enabled",
@@ -386,6 +390,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
             return PairDataset(
                 dataset_path=ds_path,
                 camera_keys=tuple(
+                    # 读取相机keys
                     data_cfg.get(
                         "camera_keys",
                         (

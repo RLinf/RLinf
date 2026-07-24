@@ -23,7 +23,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "steam_sft_smovla_v2_0713"
+    experiment_name: "steam_sft"
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
@@ -33,33 +33,29 @@ runner:
 
 data:
   train_data_paths:
-    # - dataset_path: "/home/yz/datasets/V6_task2"
-    #   type: sft
-    # - dataset_path: "/home/yz/datasets/V8_0706/V8-1_task2_merged_391_RLinf"
-    #   type: rollout
-    # - dataset_path: "/home/yz/datasets/1F_0713/smovla_V2_0713_RLinf"
-    #   type: sft
-    - dataset_path: "/home/yz/datasets/1F_0713/smovla_V3_0720_merged_RLinf"
+    - dataset_path: "/path/to/sft_dataset"
       type: sft
-
+    - dataset_path: "/path/to/rollout_dataset"
+      type: rollout
 
   balance_weights: true
   seed: 42
   dataset_type: sft
 
   camera_keys:
-    - image
-    - wrist_image
+    - observation.images.global
+    - observation.images.right
+    - observation.images.wrist
 
   k: 32
   # false = train on all episodes (success + failure); true = keep only
   # successful episodes (rollout datasets only; sft is always all-success).
-  only_success: True
+  only_success: false
   min_episode_length: null
 
-  train_num_workers: 2
-  eval_num_workers: 1
-  prefetch_factor: 1
+  train_num_workers: 8
+  eval_num_workers: 4
+  prefetch_factor: 4
   persistent_workers: false
   pin_memory: false
   do_augment: false
@@ -71,7 +67,7 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  global_batch_size: 256
+  global_batch_size: 512
   seed: 0
 
   model:
@@ -81,16 +77,16 @@ actor:
     label_smoothing: 0.05
     num_frames_per_pair: 2
     num_bins: 32
-    vision_repo_id: /home/yz/modelZoo/siglip-so400m-patch14-384
-    language_repo_id: /home/yz/modelZoo/gemma-3-270m
-    tokenizer_path: /home/yz/modelZoo/gemma-3-270m
+    vision_repo_id: "/path/to/siglip"
+    language_repo_id: "/path/to/gemma3"
+    tokenizer_path: "/path/to/gemma/tokenizer"
     freeze_vision_encoder: false
     freeze_language_model: false
-    include_state_in_prompt: true
+    include_state_in_prompt: false
     max_state_dim: 32
     state_discretization_bins: 256
     max_token_len: 200
-    ensemble_size: 3
+    ensemble_size: 1
     ensemble_head_seed_base: 0
     use_gradient_checkpointing: true
 

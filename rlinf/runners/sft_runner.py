@@ -82,6 +82,11 @@ class SFTRunner:
             desc="Global Step",
             ncols=800,
         )
+        progress_log_interval = int(self.cfg.runner.get("log_interval", 10))
+        if progress_log_interval < 1:
+            raise ValueError(
+                f"runner.log_interval must be >= 1, got {progress_log_interval}."
+            )
         for _step in range(start_step, self.max_steps):
             if hasattr(self.actor, "set_global_step"):
                 # set global step
@@ -141,6 +146,28 @@ class SFTRunner:
                 evaluate_metrics = {f"eval/{k}": v for k, v in eval_metrics[0].items()}
                 logging_metrics.update(evaluate_metrics)
                 self.metric_logger.log(evaluate_metrics, _step)
+
+            if (
+                self.global_step == start_step + 1
+                or self.global_step % progress_log_interval == 0
+            ):
+                progress_items = [
+                    f"step={self.global_step}/{self.max_steps}",
+                    f"epoch={self.epoch}",
+                ]
+                for key in (
+                    "time/step",
+                    "time/training",
+                    "train/loss",
+                    "train/accuracy",
+                    "train/accuracy_neighbor",
+                    "train/grad_norm",
+                    "train/lr",
+                ):
+                    value = logging_metrics.get(key)
+                    if value is not None:
+                        progress_items.append(f"{key}={value:.6g}")
+                logger.info("[SFT_PROGRESS] %s", " ".join(progress_items))
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)

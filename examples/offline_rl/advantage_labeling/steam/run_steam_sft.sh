@@ -3,6 +3,8 @@
 # Run STEAM value model SFT training
 # Usage: bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh [CONFIG_NAME] [EXTRA_ARGS...]
 # Example: bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh steam_value_model_sft
+# 重设缓存路径
+export RAY_TMPDIR="${RAY_TMPDIR:-/home/yz/ray_tmp}"
 
 export SCRIPT_DIR="$( cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )"
 export REPO_PATH="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"

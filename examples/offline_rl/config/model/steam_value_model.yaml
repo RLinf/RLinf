@@ -11,9 +11,9 @@ is_lora: false
 # Backbones (local paths or HF repo ids). SteamProcessor uses
 # tokenizer_path; the backbone loads vision/language encoders via
 # vision_repo_id / language_repo_id.
-vision_repo_id: /path/to/siglip-so400m-patch14-384
-language_repo_id: /path/to/gemma-3-270m
-tokenizer_path: /path/to/gemma-3-270m
+vision_repo_id: /home/yz/modelZoo/siglip-so400m-patch14-384
+language_repo_id: /home/yz/modelZoo/gemma-3-270m
+tokenizer_path: /home/yz/modelZoo/gemma-3-270m
 
 # Architecture
 fusion_hidden_dim: 512
