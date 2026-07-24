@@ -3,11 +3,11 @@
 
 RLinf 提供两种互补的性能理解工具，面向不同层次：
 
-- **GPU Profiling**（``cluster.profiling``）：对*单个* worker 进程的低层系统级
+- **GPU Profiling**\ （``cluster.profiling``）：对\ *单个*\ worker 进程的低层系统级
   profiling。它用特定后端的 profiler（``nsys``/``rocprof-sys``）包装指定的 worker
   group，采集 CUDA kernel、显存流量、NVTX range 和 CPU 活动。用于回答“某个
   GPU/进程逐个 kernel 在做什么？”。
-- **Tracing**（``cluster.tracer``）：*跨所有 worker 和 runner* 的 RLinf 自身计时
+- **Tracing**\ （``cluster.tracer``）：\ *跨所有 worker 和 runner*\ 的 RLinf 自身计时
   区间的高层时间线——step、阶段，以及 ``generate``、``run_training``、``interact``
   等 worker RPC。开销极低，用于回答“各 worker 的阶段如何重叠、关键路径在哪？”。
   见下文 `Tracing`_。
@@ -429,7 +429,7 @@ Tracing
 工作原理
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-1. 启用追踪后，cluster 会在启动时把 **tracer**（一个调度器 manager，位于节点
+1. 启用追踪后，cluster 会在启动时把 **tracer**\ （一个调度器 manager，位于节点
    rank 0 的单个 Ray actor）与其他 manager（``WorkerManager``、``NodeManager`` 等）
    一起启动。
 2. 每个 worker 和 driver 都通过 ``Tracer.get_proxy()`` 自主访问它，与其他 manager
