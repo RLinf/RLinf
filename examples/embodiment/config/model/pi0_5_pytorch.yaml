@@ -1,0 +1,51 @@
+model_type: "openpi_pytorch"
+
+# Model-shape template only. The real checkpoint path (model_path) is set in the
+# eval experiment config (behavior_openpi_pi05_pytorch_eval.yaml); the values here
+# are placeholders so this template stays path-free and reusable.
+
+# Weight dtype for eval: bf16. (SFT keeps an fp32 master; see the SFT template.)
+precision: bf16
+
+# LoRA is not used for eval, but the shared model factory reads these keys.
+is_lora: False
+lora_rank: 32
+
+# Action and chunk settings (BEHAVIOR pi05). `num_action_chunks` is the Pi0
+# action_horizon.
+num_action_chunks: 32
+action_dim: 23
+use_proprio: True
+
+# Number of flow-matching denoising steps for eval action sampling. The model is
+# tuned for this step count and the action-parity gate holds at equal num_steps.
+num_steps: 5
+
+# No value head in the eval-only model.
+add_value_head: False
+
+# openpi_pytorch model-shape parameters. get_model builds Pi0Config from
+# num_action_chunks (action_horizon) + the openpi.* shape fields; no config.json
+# is read. Norm stats + the PaliGemma tokenizer are resolved by the shared openpi
+# transform pipeline (checkpoint-relative for eval; the tokenizer from openpi's
+# cache), so no assets_dir/asset_id/paligemma_tokenizer are needed here.
+#
+# The openpi.* interpolations use relative refs (${..field}) so this template is
+# mount-agnostic — it composes under `@rollout.model` (eval) and `@actor.model`
+# (RL training) alike.
+openpi:
+  # Concrete openpi_pytorch variant: eval / sft / rl.
+  task: eval
+  # openpi TrainConfig key selecting the shared transform pipeline
+  # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env
+  # selector for eval repack and the SFT dataloader registry.
+  config_name: "pi05_behavior"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  num_steps: ${..num_steps}
+  action_env_dim: ${..action_dim}
+  # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200

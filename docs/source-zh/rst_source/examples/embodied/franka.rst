@@ -739,4 +739,5 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
    Pi0 SFT <franka_pi0_sft_deploy>
    HG-DAgger <hg-dagger>
    Dual-Arm <dual_franka>
+   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
    Dual PICO DAgger <dual_franka_pico_dagger>
