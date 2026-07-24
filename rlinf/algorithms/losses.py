@@ -18,6 +18,9 @@ import torch
 
 from rlinf.algorithms.registry import register_policy_loss
 from rlinf.algorithms.utils import huber_loss
+from rlinf.utils.metric_utils import (
+    compute_critic_explained_variance_stats,
+)
 from rlinf.utils.utils import masked_mean, masked_mean_ratio
 
 
@@ -360,30 +363,20 @@ def compute_ppo_critic_loss(
     value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
     value_clip_ratio = value_clip_indicator.float().mean()
 
-    # explained variance
-    if loss_mask is not None:
-        masked_returns = returns[loss_mask]
-        masked_values = values[loss_mask]
-    else:
-        masked_returns = returns
-        masked_values = values
-
-    var_returns = torch.var(masked_returns)
-    if torch.isnan(var_returns) or var_returns == 0:
-        explained_variance = torch.tensor(float("nan"), device=returns.device)
-    else:
-        var_diff = torch.var(masked_returns - masked_values)
-        if torch.isnan(var_diff):
-            explained_variance = torch.tensor(float("nan"), device=returns.device)
-        else:
-            explained_variance = 1 - var_diff / var_returns
+    explained_variance_stats = compute_critic_explained_variance_stats(
+        returns=returns,
+        values=values,
+        loss_mask=loss_mask,
+    )
 
     # Compile metrics for logging
     metrics_data = {
         "critic/value_loss": value_loss.detach(),
         "critic/value_clip_ratio": value_clip_ratio.detach(),
-        "critic/explained_variance": explained_variance.detach(),
     }
+    metrics_data.update(
+        {key: value.detach() for key, value in explained_variance_stats.items()}
+    )
     return value_loss, metrics_data
 
 
@@ -429,6 +422,87 @@ def compute_ppo_actor_critic_loss(**kwargs) -> tuple[torch.Tensor, dict]:
     metrics_data.update(critic_metrics_data)
 
     return loss, metrics_data
+
+
+@register_policy_loss("opd")
+def compute_opd_actor_loss(
+    logprobs: torch.Tensor,
+    advantages: torch.Tensor,
+    loss_mask: Optional[torch.Tensor] = None,
+    loss_agg_func: Optional[Callable[..., torch.Tensor]] = masked_mean,
+    max_episode_steps: Optional[int] = None,
+    loss_mask_sum: Optional[torch.Tensor] = None,
+    **kwargs,
+) -> tuple[torch.Tensor, dict]:
+    """Compute the VLA-OPD actor loss with stop-gradient dense rewards."""
+    assert logprobs.dtype == torch.float32, (
+        "logprobs must be float32 to keep numerical stability"
+    )
+    assert advantages.dtype == torch.float32, (
+        "advantages must be float32 to keep numerical stability"
+    )
+    assert advantages.shape == logprobs.shape, (
+        f"OPD advantages shape {advantages.shape} must match logprobs shape "
+        f"{logprobs.shape}."
+    )
+    assert loss_mask is not None, "OPD actor loss requires loss_mask."
+    assert loss_mask_sum is not None, "OPD actor loss requires loss_mask_sum."
+
+    if loss_mask.dim() == logprobs.dim() - 1:
+        loss_mask = loss_mask.unsqueeze(-1)
+    if loss_mask_sum.dim() == logprobs.dim() - 1:
+        loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+    if loss_mask.shape != logprobs.shape:
+        assert loss_mask.dim() == logprobs.dim(), (
+            f"OPD loss_mask rank {loss_mask.dim()} must match logprobs rank "
+            f"{logprobs.dim()}."
+        )
+        assert loss_mask.shape[:-1] == logprobs.shape[:-1], (
+            f"OPD loss_mask shape {loss_mask.shape} must match logprobs shape "
+            f"{logprobs.shape} except the token dimension."
+        )
+        assert loss_mask.shape[-1] == 1, (
+            f"OPD loss_mask token dimension {loss_mask.shape[-1]} must be 1 "
+            f"or match logprobs token dimension {logprobs.shape[-1]}."
+        )
+        loss_mask = loss_mask.expand_as(logprobs)
+    if loss_mask_sum.shape != logprobs.shape:
+        assert loss_mask_sum.dim() == logprobs.dim(), (
+            f"OPD loss_mask_sum rank {loss_mask_sum.dim()} must match "
+            f"logprobs rank {logprobs.dim()}."
+        )
+        assert loss_mask_sum.shape[:-1] == logprobs.shape[:-1], (
+            f"OPD loss_mask_sum shape {loss_mask_sum.shape} must match "
+            f"logprobs shape {logprobs.shape} except the token dimension."
+        )
+        assert loss_mask_sum.shape[-1] == 1, (
+            f"OPD loss_mask_sum token dimension {loss_mask_sum.shape[-1]} "
+            f"must be 1 or match logprobs token dimension {logprobs.shape[-1]}."
+        )
+        loss_mask_sum = loss_mask_sum.expand_as(logprobs)
+    assert loss_mask.shape == logprobs.shape, (
+        f"OPD loss_mask shape {loss_mask.shape} must match logprobs shape "
+        f"{logprobs.shape}."
+    )
+    assert loss_mask_sum.shape == logprobs.shape, (
+        f"OPD loss_mask_sum shape {loss_mask_sum.shape} must match "
+        f"logprobs shape {logprobs.shape}."
+    )
+
+    loss_mask_ratio = None
+    if max_episode_steps is not None:
+        loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
+        loss_agg_func = masked_mean_ratio
+
+    opd_rewards = advantages.detach()
+    policy_loss = loss_agg_func(-logprobs * opd_rewards, loss_mask, loss_mask_ratio)
+
+    metrics_data = {
+        "actor/policy_loss": policy_loss.detach(),
+        "actor/opd_reward": masked_mean(opd_rewards, loss_mask).detach(),
+        "actor/opd_reverse_kl": masked_mean(-opd_rewards, loss_mask).detach(),
+    }
+    return policy_loss, metrics_data
 
 
 @register_policy_loss("actor")

@@ -1,0 +1,111 @@
+defaults:
+  - env/robocasa365@env.eval
+  - model/pi0@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "robocasa365_eval_openpi"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 18  # must be divisible by env_world_size, >=18 tasks
+    seed: 7
+    seed_strategy: openpi
+    split: pretrain
+    task_soup: atomic_seen
+    task_mode: atomic
+    # task_filter: ["CloseFridge"]
+    task_sampling_strategy: ordered
+    auto_reset: False
+    ignore_terminations: False
+    use_fixed_reset_state_ids: True
+    episode_horizon_source: task_horizon # max_episode_steps
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 1500 # 700
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: True
+      info_on_video: True
+      extra_info_on_video:
+        - episode.success_once
+        - episode.success_at_end
+        - episode.episode_len
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    init_params:
+      camera_heights: 256
+      camera_widths: 256
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: robocasa
+  enable_offload: False
+  pipeline_stage_num: 1
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+    max_new_tokens: null
+
+  model:
+    model_type: "openpi"
+    model_path: ${oc.env:ROBOCASA365_OPENPI_CKPT,/path/to/pi0-robocasa-pretrain-human300}
+    precision: null
+    num_action_chunks: 5
+    action_dim: 12
+    is_lora: False
+    lora_rank: 32
+    use_proprio: True
+    num_steps: 5
+    add_value_head: False
+    openpi:
+      config_name: "pi0_robocasa365_pretrain_human300"
+      num_images_in_input: 2
+      noise_level: 0.5
+      action_chunk: ${..num_action_chunks}
+      num_steps: ${..num_steps}
+      train_expert_only: True
+      action_env_dim: ${..action_dim}
+      noise_method: "flow_sde"
+      add_value_head: ${..add_value_head}
+      detach_critic_input: False
+      use_dsrl: False
+    openpi_data:
+      state_space: "16d"
+      image_space: "2views"
+      action_space: "12d"
