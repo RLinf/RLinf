@@ -939,6 +939,30 @@ def validate_embodied_cfg(cfg):
         assert stage_num == 1, (
             "use_reward_model requires rollout.pipeline_stage_num to be 1"
         )
+        reward_worker_type = str(cfg.reward.get("worker_type", "model")).lower()
+        assert reward_worker_type in {"model", "api"}, (
+            "reward.worker_type must be either 'model' or 'api'."
+        )
+        reward_model_cfg = cfg.reward.get("model", {})
+        if reward_worker_type == "api":
+            assert reward_model_cfg.get("model_type") == "history_vlm", (
+                "reward.worker_type='api' currently requires "
+                "reward.model.model_type='history_vlm'."
+            )
+            api_cfg = cfg.reward.get("api", {})
+            api_base = str(api_cfg.get("api_base") or "").strip()
+            # Empty api_base means the trainer will call
+            # launch_sglang_router_and_server with top-level router_server_args.
+            if not api_base:
+                assert "router_server_args" in cfg, (
+                    "reward.worker_type='api' requires either reward.api.api_base or "
+                    "the standard top-level router_server_args block for "
+                    "Ray-managed SGLang."
+                )
+                assert "reward_server" in cfg.cluster.get("component_placement", {}), (
+                    "Ray-managed SGLang reward API requires "
+                    "cluster.component_placement.reward_server."
+                )
 
     if cfg.runner.get("enable_decoupled_mode", False):
         assert stage_num == 1, (
@@ -1004,7 +1028,6 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
-
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
