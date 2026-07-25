@@ -116,22 +116,25 @@ installed as described in :ref:`liberopro-plus-benchmark`.
 Download the Model
 ------------------
 
-Download the released LIBERO checkpoint and matching normalization statistics:
+For evaluation or fine-tuning from the released policy, download its
+checkpoint and matching normalization statistics:
 
 .. code-block:: bash
 
-   hf download yuanty/fastwam \
+   huggingface-cli download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      libero_uncond_2cam224_dataset_stats.json \
      --local-dir /workspace/checkpoints/fastwam
 
-Set both paths in ``examples/embodiment/config/model/fastwam.yaml`` and
-``examples/sft/config/model/fastwam.yaml``:
+For the official base-model SFT recipe documented below, keep
+``model_path: null``. The SFT config then loads the official Wan2.2 video DiT
+and initializes ActionDiT from the official interpolated backbone payload.
+Use ``dataset_stats_path`` for the released normalization statistics:
 
 .. code-block:: yaml
 
    model_type: fastwam
-   model_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
+   model_path: null
    dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 FastWAM and RLinf Configuration
@@ -157,8 +160,8 @@ global state. The two configuration layers have separate responsibilities:
        optional future-video visualization. These values take precedence over
        FastWAM's evaluation defaults.
    * - RLinf FSDP config
-     - Owns mixed precision and gradient checkpointing. Keep the model preset at
-       ``precision: fp32`` for SFT; FSDP applies bf16 forward/backward precision.
+     - Owns mixed precision and gradient checkpointing. Keep the model preset at ``precision: bf16`` for SFT; FSDP2 casting is unset and
+       the worker uses bf16 autocast, matching the upstream Accelerator path.
 
 Use only ``model_path`` for the FastWAM checkpoint. ``checkpoint_path`` is not a
 supported alias.
@@ -238,3 +241,54 @@ FastWAM's MoT accesses the video and action transformer blocks directly, so the
 example intentionally uses whole-model FSDP2 wrapping. The full trainable MoT is
 too large for ordinary single-GPU SFT; use multiple GPUs and tune the batch size
 for available memory.
+FastWAM SFT quick start
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+After installing the environment, the following idempotent helper downloads
+the Wan2.2 VAE, T5 encoder/tokenizer files, official Wan2.2 video DiT shards,
+the official LIBERO archives, prepares the interpolated ActionDiT backbone,
+and precomputes the text-embedding cache:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   tmux new -s fastwam-sft
+   bash examples/sft/prepare_fastwam_sft.sh
+   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+   # Detach with Ctrl-b d; reattach with: tmux attach -t fastwam-sft
+
+The helper uses repository-relative defaults and also prepares the official Wan2.2 video DiT and ActionDiT backbone. Override
+FASTWAM_CHECKPOINT_DIR, DIFFSYNTH_MODEL_BASE_PATH, FASTWAM_DATASET_DIR, or
+FASTWAM_TEXT_EMBEDDING_CACHE_DIR, or FASTWAM_ACTION_DIT_BACKBONE_PATH when assets already live elsewhere. Set
+FASTWAM_DOWNLOAD_DATA=0 to skip the dataset archive download and point
+FASTWAM_DATASET_DIR at an existing extraction.
+
+The VAE is required even for SFT because the upstream training_loss encodes the
+video observations. The official base-model SFT path also requires the Wan2.2
+video DiT and the generated ActionDiT backbone: ``model_path`` remains null,
+``skip_dit_load_from_pretrain=false``, and only the MoT plus proprio encoder are
+trainable.
+
+Official FastWAM versus RLinf
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The official recipe uses preprocess_action_dit_backbone.py, cached T5
+embeddings, and accelerate with DeepSpeed ZeRO-1 (the README's LIBERO example
+uses eight GPUs). RLinf instead:
+
+* reuses the upstream RobotVideoDataset, FastWAMProcessor, and training_loss;
+* runs the generic RLinf train_vla_sft.py / FSDP2 worker rather than the
+  upstream train_zero1.sh entrypoint;
+* composes the upstream sim_libero config without changing Hydra global
+  state, starts from the official Wan2.2 base plus the interpolated ActionDiT
+  backbone, and trains only MoT plus the proprio encoder; and
+* keeps precision: bf16 in the model preset and enables bf16 autocast around
+  the loss, matching the upstream Accelerator path. FSDP2's own casting policy
+  is unset to avoid a second mixed-precision path; the RLinf wrapper still
+  aligns direct-call inputs (VAE video, text context, action, and proprio)
+  with the active model dtype.
+
+This is an intentional integration difference: RLinf SFT does not reproduce
+the upstream optimizer/distributed launcher byte-for-byte, but it keeps the
+upstream model loss, data transforms, masks, normalization, and text-cache
+format compatible.

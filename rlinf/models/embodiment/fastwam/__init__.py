@@ -229,6 +229,21 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> nn.Module:
         if getattr(model, "proprio_encoder", None) is not None:
             model.proprio_encoder.requires_grad_(True)
 
+    trainable_roots = []
+    if hasattr(model, "dit"):
+        trainable_roots.append("dit (FastWAM MoT: video_expert + action_expert)")
+    if getattr(model, "proprio_encoder", None) is not None:
+        trainable_roots.append("proprio_encoder")
+    logger.info(
+        "FastWAM SFT init: precision=%s model_path=%s trainable=%s "
+        "skip_dit_load_from_pretrain=%s action_dit_pretrained_path=%s",
+        str(torch_dtype),
+        ckpt_path or "<Wan2.2 base>",
+        trainable_roots,
+        fcfg.model.get("skip_dit_load_from_pretrain"),
+        fcfg.model.get("action_dit_pretrained_path"),
+    )
+
     # Build the processor + normalizer from dataset stats (action/state min-max).
     from hydra.utils import instantiate
 

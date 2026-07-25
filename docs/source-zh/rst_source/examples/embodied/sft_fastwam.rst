@@ -113,22 +113,25 @@ LIBERO-Plus 请使用 ``--env liberoplus``。还需按
 下载模型
 --------
 
-下载已发布的 LIBERO 检查点和与之匹配的归一化统计信息：
+如果要评测发布策略或从发布策略继续微调，可以下载 checkpoint
+及匹配的归一化统计信息：
 
 .. code-block:: bash
 
-   hf download yuanty/fastwam \
+   huggingface-cli download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      libero_uncond_2cam224_dataset_stats.json \
      --local-dir /workspace/checkpoints/fastwam
 
-在 ``examples/embodiment/config/model/fastwam.yaml`` 和
-``examples/sft/config/model/fastwam.yaml`` 中设置这两个路径：
+对于下面介绍的官方 base-model SFT，保持 ``model_path: null``。
+SFT 配置会加载官方 Wan2.2 video DiT，并使用官方插值后的 ActionDiT
+backbone payload 初始化动作分支。归一化统计信息仍通过
+``dataset_stats_path`` 指定：
 
 .. code-block:: yaml
 
    model_type: fastwam
-   model_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224.pt
+   model_path: null
    dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 FastWAM 与 RLinf 配置
@@ -154,7 +157,8 @@ RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状
        这些值优先于 FastWAM 的评测默认值。
    * - RLinf FSDP 配置
      - 管理混合精度与梯度 checkpoint。SFT 的模型 preset 保持
-       ``precision: fp32``；FSDP 对 forward/backward 应用 bf16 精度。
+       ``precision: bf16``；FSDP2 不额外 cast，由 worker 使用 bf16 autocast，
+       与上游 Accelerator 路径一致。
 
 FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名。
 
@@ -227,3 +231,47 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
 
 FastWAM 的 MoT 会直接访问视频与动作 Transformer block，因此示例有意使用整模型
 FSDP2 包装。完整可训练 MoT 不适合普通单 GPU SFT；请使用多 GPU，并按显存调整 batch size。
+FastWAM SFT 一键准备
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+安装环境后，可以在同一个 tmux 会话中运行下面的幂等脚本。脚本会下载
+Wan2.2 VAE、T5 编码器/Tokenizer 文件、官方 Wan2.2 video DiT 分片和
+LIBERO 压缩包，准备插值后的 ActionDiT backbone，并预计算文本
+embedding cache：
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   tmux new -s fastwam-sft
+   bash examples/sft/prepare_fastwam_sft.sh
+   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+   # Ctrl-b d 脱离；查看时执行：tmux attach -t fastwam-sft
+
+脚本默认使用仓库内的相对路径。如果权重或数据已经在别处，可以在运行前
+设置 FASTWAM_CHECKPOINT_DIR、DIFFSYNTH_MODEL_BASE_PATH、
+FASTWAM_DATASET_DIR 或 FASTWAM_TEXT_EMBEDDING_CACHE_DIR。若跳过数据集
+压缩包下载，设置 FASTWAM_DOWNLOAD_DATA=0，并把 FASTWAM_DATASET_DIR
+指向已解压的 *_no_noops_lerobot 目录。
+
+即使是 SFT，VAE 仍然是必需的，因为上游 training_loss 会编码视频观测。
+官方 base-model SFT 同时需要 Wan2.2 video DiT 和生成的 ActionDiT
+backbone：``model_path`` 保持为空，``skip_dit_load_from_pretrain=false``，
+并且只训练 MoT 与 proprio encoder。
+
+官方 FastWAM 与 RLinf 的差异
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+官方流程使用 preprocess_action_dit_backbone.py、缓存的 T5 embedding，
+以及 Accelerate + DeepSpeed ZeRO-1；官方 README 的 LIBERO 示例使用 8 张
+GPU。RLinf 的差异是：
+
+* 复用上游 RobotVideoDataset、FastWAMProcessor 和 training_loss；
+* 使用通用的 train_vla_sft.py / FSDP2 worker，而不是上游 train_zero1.sh；
+* 组合上游 sim_libero 配置但不修改 Hydra 全局状态，从官方 Wan2.2
+  base 和插值后的 ActionDiT backbone 开始训练，只训练 MoT 和 proprio encoder；
+* 模型 preset 保持 precision: bf16，并在 loss 外层启用 bf16 autocast，
+  与上游 Accelerator 路径一致。FSDP2 不额外启用 cast，避免第二条混合精度路径；
+  RLinf wrapper 仍会将 VAE、text context、action 和 proprio 的直连输入对齐到模型 dtype。
+
+这是有意的集成差异：RLinf 不承诺逐字节复现上游 optimizer 和分布式
+launcher，但保持上游模型 loss、数据变换、mask、归一化和文本 cache 格式兼容。
