@@ -66,9 +66,7 @@ def _get_router_args():
 def _valid_router_fields() -> set[str]:
     global _VALID_ROUTER_FIELDS
     if _VALID_ROUTER_FIELDS is None:
-        _VALID_ROUTER_FIELDS = {
-            f.name for f in dataclasses.fields(_get_router_args())
-        }
+        _VALID_ROUTER_FIELDS = {f.name for f in dataclasses.fields(_get_router_args())}
     return _VALID_ROUTER_FIELDS
 
 
@@ -90,8 +88,7 @@ def _router_cfg_to_cli(router_cfg: dict) -> list[str]:
     for key, value in router_cfg.items():
         if key not in valid:
             raise ValueError(
-                f"Unknown router config key {key!r}. Expected one of "
-                f"{sorted(valid)}."
+                f"Unknown router config key {key!r}. Expected one of {sorted(valid)}."
             )
         if key in _ROUTER_ARGS_NOT_ON_CLI:
             raise ValueError(

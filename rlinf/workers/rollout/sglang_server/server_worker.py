@@ -289,7 +289,9 @@ class SGLangmmgenServerWorker(SGLangServerWorker):
     # ------------------------------------------------------------------
     def init_server(self) -> None:
         """Spawn the multimodal sglang server subprocess and wait /health."""
-        assert self._server_proc is None, "multimodal_gen sglang server already initialized."
+        assert self._server_proc is None, (
+            "multimodal_gen sglang server already initialized."
+        )
 
         # The sglang router only forwards fixed LLM endpoints
         # (/generate, /v1/chat/completions, ...), not the multimodal_gen model
@@ -347,11 +349,11 @@ class SGLangmmgenServerWorker(SGLangServerWorker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
-        spawn_timeout = float(
-            self._cfg.rollout.sglang.get("spawn_timeout", 1800.0)
-        )
+        spawn_timeout = float(self._cfg.rollout.sglang.get("spawn_timeout", 1800.0))
         try:
-            _wait_for_http_health(self._advertise_host, self._server_port, spawn_timeout)
+            _wait_for_http_health(
+                self._advertise_host, self._server_port, spawn_timeout
+            )
         except RuntimeError as e:
             self.log_error(f"multimodal sglang server failed to become healthy: {e!r}")
             self.shutdown()

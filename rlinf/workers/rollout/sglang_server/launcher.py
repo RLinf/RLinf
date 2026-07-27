@@ -49,7 +49,7 @@ from rlinf.scheduler import (
 from rlinf.scheduler.placement import PlacementStrategy
 
 from .router_worker import SGLangRouterWorker
-from .server_worker import SGLangServerWorker, SGLangmmgenServerWorker
+from .server_worker import SGLangmmgenServerWorker, SGLangServerWorker
 
 
 def launch_sglang_router_and_server(
