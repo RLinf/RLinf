@@ -121,9 +121,9 @@ long as it carries the keys the launcher consumes:
    * - ``server_type``
      - str
      - Picks the sglang server class, default ``srt``: ``srt`` = language model
-       via ``sglang.srt`` → ``SGLangServerWorker``; ``embodied`` = VLA/diffusion
-       via ``sglang.multimodal_gen`` → ``SGLangmmgenServerWorker``. Other values
-       raise.
+       via ``sglang.srt`` → ``SGLangServerWorker``; ``embodied`` = embodied
+       (VLA/diffusion) model via ``sglang.multimodal_gen`` →
+       ``SGLangmmgenServerWorker``. Other values raise.
    * - ``group_name``
      - str
      - Worker-group name for the sglang server group.
