@@ -395,6 +395,12 @@ EOF
     echo "${ver%%.*} ${ver#*.}"
 }
 
+# sglang 0.5.11+ uses cu13 (torch 2.11+cu130)
+_sglang_needs_cu13() {
+    [ -z "${SGLANG_VERSION:-}" ] && return 1
+    [ "$(printf '%s\n0.5.11\n' "$SGLANG_VERSION" | sort -V | head -n1)" = "0.5.11" ]
+}
+
 configure_nvidia() {
     PLATFORM_TORCH_STR=""
     PLATFORM_TORCH_INDEX=""
@@ -410,6 +416,13 @@ configure_nvidia() {
     PLATFORM_EXTRA_OVERRIDES=()
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
+    fi
+    # sglang 0.5.11+ uses cu13 (torch 2.11+cu130)
+    if _sglang_needs_cu13; then
+        PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/cu130"
+        PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+        PLATFORM_RELAX_TORCHCODEC=1
+        echo "[install.sh] NVIDIA cu13: sglang ${SGLANG_VERSION} (>=0.5.11), routing torch through cu130 index"
     fi
 }
 
@@ -636,8 +649,12 @@ apply_sglang_override() {
             0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
             0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
             0.5.4) XGRAMMAR_VERSION="0.1.25" ;;
+            0.5.5) XGRAMMAR_VERSION="0.1.25" ;;
+            0.5.6|0.5.7|0.5.8|0.5.9) XGRAMMAR_VERSION="0.1.27" ;;
+            0.5.10|0.5.11) XGRAMMAR_VERSION="0.1.32" ;;
+            0.5.12) XGRAMMAR_VERSION="0.2.0" ;;
             *)
-                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
+                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.12). Set XGRAMMAR_VERSION explicitly."
                 exit 1
                 ;;
         esac
@@ -928,7 +945,7 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     fi
     # Detect Python tags
@@ -960,7 +977,7 @@ EOF
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     }
     cuda_major="${cuda_mm%% *}"
@@ -979,18 +996,25 @@ EOF
 )
 
     uv pip uninstall flash-attn || true
-    local prebuilt_ver base_url wheel_name
+    local prebuilt_ver base_url wheel_name fa_release_org
     for prebuilt_ver in "${prebuilt_flash_versions[@]}"; do
-        base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
+        # flash-attn 2.8.3 wheels are mirrored on the RLinf fork (cu12 + cu13
+        # tagged wheels); older versions (e.g. 2.7.4.post1) stay on Dao-AILab.
+        if [ "$prebuilt_ver" = "2.8.3" ]; then
+            fa_release_org="RLinf"
+        else
+            fa_release_org="Dao-AILab"
+        fi
+        base_url="${GITHUB_PREFIX}https://github.com/${fa_release_org}/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
-        echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
+        echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver} (${fa_release_org})..."
         if uv pip install "${base_url}/${wheel_name}"; then
             return 0
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
-    uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+    FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
 }
 
 install_apex() {
@@ -2258,28 +2282,102 @@ install_roboverse_env() {
     uv pip install "mujoco==3.3.7" "dm-control==1.0.34" --force-reinstall
 }
 
+# Functions for sglang 0.5.12 + torch 2.11+cu13 + TE 2.17
+install_te_2_17() {
+    echo "[install.sh] Installing TE 2.17.0 (source build with nvcc)..."
+    export NVTE_PYTORCH_FORCE_BUILD=TRUE
+    uv pip install --no-build-isolation "transformer-engine[pytorch,core_cu13]==2.17.0"
+    echo "[install.sh] TE 2.17.0 installed."
+}
+
+install_mbridge() {
+    # Megatron-Bridge 0.4.2 (py3.10/3.11 compat) from PyPI as rlinf-megatron-bridge==0.4.2.
+    echo "[install.sh] Installing rlinf-megatron-bridge 0.4.2 (PyPI wheel)..."
+    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge==0.4.2"
+    echo "[install.sh] rlinf-megatron-bridge 0.4.2 installed (import: megatron.bridge)."
+}
+
+uninstall_fa4_conditional() {
+    local gpu_cc
+    gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null)
+    if [ -z "$gpu_cc" ]; then
+        echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4."
+        return 0
+    fi
+    if [ "$gpu_cc" -lt 9 ]; then
+        echo "[install.sh] GPU sm${gpu_cc} < sm90: FA4 backward unsupported, uninstalling flash-attn-4 → TE will use FA2."
+        uv pip uninstall flash-attn-4 || true
+    else
+        echo "[install.sh] GPU sm${gpu_cc} >= sm90: FA4 usable, keeping flash-attn-4."
+    fi
+}
+
+generate_nccl_env_script() {
+    local env_script="$(dirname "$VENV_DIR")/$(basename "$VENV_DIR")_env.sh"
+    # Resolve the venv's nvidia libs dir dynamically (py3.10/3.11/3.12 agnostic).
+    local nvlib
+    nvlib="$(python -c 'import nvidia; print(nvidia.__path__[0])' 2>/dev/null)"
+    if [ -z "$nvlib" ]; then
+        echo "[install.sh] WARNING: nvidia package not found in venv; skipping NCCL env script."
+        return 0
+    fi
+    cat > "$env_script" <<EOF
+# NCCL fix for TE 2.17 + torch cu130 (generated by install.sh).
+# Venv's cu13 nvidia libs must take precedence over stale system libnccl.
+NVLIB=$nvlib
+export LD_LIBRARY_PATH="\$(ls -d \$NVLIB/*/lib 2>/dev/null | tr '\n' ':')\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+EOF
+    echo "source $(realpath "$env_script")" >> "$VENV_DIR/bin/activate"
+    echo "[install.sh] NCCL env script generated: $env_script (sourced in activate)."
+}
+
 #=======================AGENTIC INSTALLER=======================
 
 install_agentic() {
     uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    local _sglang_prerelease=""
+    if _sglang_needs_cu13; then
+        _sglang_prerelease="--prerelease=allow"
+    fi
+    uv sync --extra agentic-sglang --inexact --active $_sglang_prerelease $NO_INSTALL_RLINF_CMD
+
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
-
+    if _sglang_needs_cu13; then
+        uv pip install "kernels>=0.12,<0.13"
+    fi
     # Megatron-LM
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
+    local _mcore_branch="core_r0.13.0"
+    if _sglang_needs_cu13; then
+        _mcore_branch="core_r0.17.0"
+    fi
     local megatron_dir
-    megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0)
+    megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b $_mcore_branch)
 
     echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 
-    # If TEST_BUILD is 1, skip installing megatron.txt
-    if [ "$TEST_BUILD" -ne 1 ]; then
+    # Conditionally skip megatron.txt for sglang 0.5.x:
+    if _sglang_needs_cu13 && [ "$TEST_BUILD" -ne 1 ]; then
+        echo "[install.sh] sglang 0.5.x: skipping megatron.txt (TE 2.1.0), using TE 2.17 instead"
+    elif [ "$TEST_BUILD" -ne 1 ]; then
         uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
     fi
 
+    if _sglang_needs_cu13; then
+        if [ -f /etc/profile.d/cuda.sh ]; then
+            source /etc/profile.d/cuda.sh
+        fi
+        install_te_2_17
+        install_mbridge
+        # FA4 conditional uninstall by GPU arch:
+        # sm<9 (Ampere/A100): uninstall → TE uses FA2 (sm80 fwd+bwd OK, e2e validated run8)
+        # sm>=9 (Hopper+): keep FA4 (fwd+bwd both supported)
+        uninstall_fa4_conditional
+        generate_nccl_env_script
+    fi
     install_apex
     install_flash_attn
     uv pip uninstall pynvml || true
