@@ -315,7 +315,13 @@ def preprocess_loss_inputs(
             proximal_logprobs = proximal_logprobs.reshape(bsz, -1, single_action_dim)
         if versions is not None:
             versions = versions.reshape(bsz, -1, single_action_dim)
-        advantages = advantages.unsqueeze(-1)
+        if kwargs.get("loss_type") == "opd":
+            assert advantages.shape == logprobs.shape, (
+                f"OPD advantages shape {advantages.shape} must match "
+                f"logprobs shape {logprobs.shape}."
+            )
+        else:
+            advantages = advantages.unsqueeze(-1)
         if loss_mask is not None:
             loss_mask = loss_mask.unsqueeze(-1)
         if loss_mask_sum is not None:

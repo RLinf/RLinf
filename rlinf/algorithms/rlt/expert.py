@@ -12,34 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 from typing import Any
 
 import numpy as np
 import torch
-from omegaconf import OmegaConf, open_dict
 
+from rlinf.algorithms.expert import build_expert_model_config
 
-def build_expert_model_config(
-    cfg: Any,
-    model_cfg: Any,
-    *,
-    rlt_feature_model_config: Any | None = None,
-):
-    """Build rollout expert config for DAgger or ManiSkill RLT."""
-    expert_cfg = cfg.rollout.expert_model
-    if rlt_feature_model_config is not None:
-        expert_overrides = OmegaConf.to_container(expert_cfg, resolve=True)
-        expert_overrides = {} if expert_overrides is None else dict(expert_overrides)
-        return OmegaConf.merge(
-            copy.deepcopy(rlt_feature_model_config), expert_overrides
-        )
-
-    expert_model_config = copy.deepcopy(model_cfg)
-    with open_dict(expert_model_config):
-        expert_model_config.precision = expert_cfg.precision
-        expert_model_config.model_path = expert_cfg.model_path
-    return expert_model_config
+__all__ = ["build_expert_model_config", "predict_expert_actions"]
 
 
 def predict_expert_actions(
