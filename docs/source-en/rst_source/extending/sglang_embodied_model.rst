@@ -25,31 +25,47 @@ Overall Architecture
 
 The SGLang embodied evaluation path separates general logic from model-specific logic:
 
-- ``SGLangEmbodiedWorker`` is responsible for starting and stopping the ``sglang serve`` subprocess, polling
-  ``/health``, allocating ports, and exchanging observations and actions with the environment Worker through channels;
-- Subclasses of ``EmbodiedActionPolicy`` are responsible for model-specific observation preprocessing, HTTP requests,
-  response parsing, and action postprocessing.
+- The driver script (e.g. ``eval_embodied_agent.py``) starts one or more sglang
+  server processes via :func:`launch_sglang_router_and_server` and pushes each
+  server's URL to the rollout workers; server startup, ``/health`` polling, and
+  port allocation are handled by ``SGLangmmgenServerWorker`` (driver side) — the
+  rollout worker itself no longer owns a server subprocess;
+- ``SGLangEmbodiedWorker`` is a thin client: it picks the driver-assigned server
+  URL for its own rank, loads the Action Policy, and exchanges observations and
+  actions with the environment Worker through channels;
+- Subclasses of ``EmbodiedActionPolicy`` are responsible for model-specific
+  observation preprocessing, HTTP requests, response parsing, and action
+  postprocessing.
 
 Therefore, integrating a new model usually **does not require modifying**
-``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``. The model is selected by
-``rollout.model.model_type``, and the call flow is as follows:
+``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``, and you do not need to
+care how the server is started — server parameters come entirely from the YAML
+``rollout.sglang.server`` block passed straight to the sglang server process. The
+model is selected by ``rollout.model.model_type``, and the call flow is as follows:
 
 .. code-block:: text
 
    rollout.model.model_type: "<your_model>"
                  │
                  ▼
+   driver: launch_sglang_router_and_server()
+                 │  (rollout.sglang.server_type == "embodied" → SGLangmmgenServerWorker)
+                 ▼
+   each SGLangmmgenServerWorker.init_server()
+                 │  (rollout.sglang.server → ServerArgs.from_kwargs → launch_server)
+                 ▼
    SGLangEmbodiedWorker.init_worker()
                  │
                  ├── get_action_policy_cls("<your_model>")
-                 ├── start sglang serve
+                 ├── pick this rank's server URL
                  └── create YourActionPolicy
                               │
                               ├── convert env_obs to model input
                               ├── request the model's action endpoint
                               └── return [N, H, D] actions
 
-To enter this call flow, all four of the following conditions must be satisfied in the configuration:
+To enter this call flow, the following conditions must all be satisfied in the
+configuration:
 
 .. code-block:: yaml
 
@@ -60,12 +76,23 @@ To enter this call flow, all four of the following conditions must be satisfied 
    rollout:
      rollout_backend: sglang
      sglang:
-       serving_mode: embodied
+       serving_mode: embodied      # rollout worker = SGLangEmbodiedWorker
+       server_type: embodied      # server class = SGLangmmgenServerWorker
+       launch_server: true        # driver launches the server group
      model:
        model_type: "<your_model>"
 
-Here, ``serving_mode: embodied`` cannot be omitted. Otherwise, RLinf creates a regular
-``SGLangWorker`` instead of ``SGLangEmbodiedWorker``, preventing the model from working correctly.
+Note that ``rollout.sglang.server_type`` and ``rollout.model.model_type`` are two
+**orthogonal** fields with different names and different responsibilities:
+
+- ``rollout.sglang.server_type`` decides **which sglang server class to launch**
+  (``srt`` = language model via ``sglang.srt``; ``embodied`` = VLA / diffusion via
+  ``sglang.multimodal_gen``'s ``/v1/actions/generations`` endpoint);
+- ``rollout.model.model_type`` decides **which Action Policy the rollout worker
+  loads** (the Policy Registry lookup key).
+
+``serving_mode: embodied`` also cannot be omitted — otherwise RLinf creates a
+regular ``SGLangWorker`` instead of ``SGLangEmbodiedWorker``.
 
 
 Adaptation Steps
@@ -206,8 +233,10 @@ Step 6: Test and Debug
 
 For the first run, it is recommended to reduce ``env.eval.total_num_envs`` and confirm the following in order:
 
-1. The Worker type in the logs is ``SGLangEmbodiedWorker``;
-2. The ``sglang serve`` command printed in the logs contains model-specific parameters;
+1. The rollout Worker type in the logs is ``SGLangEmbodiedWorker`` and the server
+   Worker type is ``SGLangmmgenServerWorker``;
+2. The ``multimodal_gen sglang serve: launching in-process ...`` line printed in
+   the logs carries the correct ``pipeline``, ``backend``, ``tp_size`` and GPU;
 3. ``/health`` responds within ``spawn_timeout``;
 4. The request sent by the Policy can be parsed correctly by the action endpoint;
 5. The action dimensions and dtype output by the Server meet the convention;
@@ -268,7 +297,11 @@ Policy Adaptation
 1. ``DreamZeroActionRequest`` and ``DreamZeroActionResult`` define the request and response;
 2. ``HttpDreamZeroActionClient`` is responsible for encoding, retrying, sending, and parsing HTTP requests;
 3. ``_DreamZeroActionAdapter`` reuses training data transformations to perform observation and action conversion;
-4. ``DreamZeroActionPolicy`` implements the RLinf interface and generates DreamZero Server startup parameters.
+4. ``DreamZeroActionPolicy`` implements the RLinf interface: it receives this
+   rank's server URL and performs observation conversion, HTTP request, and
+   action postprocessing in ``infer``. The Policy does not participate in server
+   startup — server parameters come entirely from the YAML
+   ``rollout.sglang.server`` block.
 
 The Policy registration code is:
 
@@ -365,50 +398,68 @@ These actions are still in DreamZero's normalized and padded action space and ca
 Server Parameters and Pipeline Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``SGLangEmbodiedWorker._model_specific_sglang_serve_args`` appends the following types of parameters:
+The server's startup parameters come entirely from the YAML
+``rollout.sglang.server`` block. That block is forwarded verbatim to
+``sglang.multimodal_gen``'s ``ServerArgs.from_kwargs(**)``: top-level keys are
+``ServerArgs`` fields, and the ``pipeline_config`` sub-block is dispatched by
+``from_kwargs`` into ``DreamZeroPipelineConfig`` (matched by
+``pipeline_class_name``), which also converts ``backend`` / ``disagg_role``
+strings to enums. A typical block looks like:
 
-.. code-block:: text
+.. code-block:: yaml
 
-   --backend sglang
-   --pipeline DreamZeroPipeline
-   --pipeline-config-path <tmpdir>/dreamzero_pipeline_rank<rank>.json
-   --sp-degree <sp_size>
-   --cfg-parallel-size <cfg_parallel_degree>
-   --dreamzero-dit-path <model_path>
-   --dreamzero-vae-path <model_path>
-   --dreamzero-text-encoder-path <model_path>
-   --dreamzero-image-encoder-path <model_path>
+   rollout:
+     sglang:
+       server:
+         model_path: ${rollout.model.model_path}
+         backend: sglang
+         pipeline_class_name: DreamZeroPipeline
+         tp_size: ${..tensor_parallel_size}
+         num_gpus: 1
+         attention_backend: TORCH_SDPA
+         dit_cpu_offload: false
+         cfg_parallel_degree: 1
+         sp_degree: 1
+         pipeline_config:            # → DreamZeroPipelineConfig
+           cfg_scale: 5.0
+           default_num_inference_steps: 16
+           action_horizon: 16
+           num_frames: 33
+           synthetic_height: 160
+           synthetic_width: 320
+           dreamzero_compile_components: true
+           dreamzero_tensor_parallel_size: ${..tp_size}
+           dreamzero_sequence_parallel_size: 1
+           dreamzero_max_sessions: 128
 
-All these model paths point to ``rollout.model.model_path``, and the Server loads
-different model components according to the checkpoint layout.
+Key points:
 
-The Policy also generates the JSON used by ``DreamZeroPipelineConfig``. The main mappings are as follows:
+- ``host`` / ``port`` / ``master_port`` are filled at runtime by
+  ``SGLangmmgenServerWorker`` (free ports allocated serially under a PortLock);
+  do not set them in YAML;
+- the top-level ``ServerArgs`` fields map directly to ``sglang serve`` arguments
+  (``backend``, ``attention_backend``, ``tp_size``, ``num_gpus``,
+  ``dit_cpu_offload``, ``cfg_parallel_degree``, ``sp_degree``, ...);
+- the ``pipeline_config`` sub-block maps to ``DreamZeroPipelineConfig`` fields,
+  named identically to the sglang side (``cfg_scale``,
+  ``default_num_inference_steps``, ``dreamzero_compile_components``,
+  ``dreamzero_sequence_parallel_size``, ``dreamzero_max_sessions``, ...);
+- all model paths point to ``rollout.model.model_path``; the Server loads the
+  different model components per the checkpoint layout.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 42 58
+.. warning::
 
-   * - Pipeline JSON Field
-     - Source
-   * - ``dreamzero_compile_components``
-     - ``rollout.sglang.compile_components``
-   * - ``dreamzero_sequence_parallel_size``
-     - ``rollout.sglang.sp_degree``; reads ``sp_size`` when not set
-   * - ``dreamzero_max_sessions``
-     - ``rollout.sglang.max_sessions``; defaults to this Worker's eval batch size
-   * - ``cfg_scale``
-     - ``rollout.sglang.cfg_scale``
-   * - ``action_horizon``
-     - ``rollout.model.action_horizon``
-   * - ``num_inference_steps``
-     - ``rollout.sglang.num_inference_steps``
-   * - ``num_frames``, tile parameters
-     - ``rollout.model.action_head_cfg.config``
-   * - ``synthetic_height`` / ``synthetic_width``
-     - ``rollout.model.target_video_height`` / ``target_video_width``
+   ``pipeline_config.dreamzero_tensor_parallel_size`` **must equal** the
+   top-level ``tp_size``. DreamZero validates at init that the "configured TP"
+   matches the "actual TP group"; a mismatch raises ``ValueError: DreamZero
+   tensor parallel size must match the initialized TP group``. The field
+   defaults to 1, so when enabling ``tp_size > 1`` you must align it explicitly
+   (the example above uses ``${..tp_size}`` so changing ``tp_size`` auto-syncs).
 
-This means that model shape-related fields must remain consistent with the checkpoint training configuration and cannot be
-changed arbitrarily based only on GPU memory availability.
+Model shape-related fields (``num_frames``, tile parameters, ``synthetic_*``,
+``action_horizon``, ...) must remain consistent with the checkpoint training
+configuration and cannot be changed arbitrarily based only on GPU memory
+availability.
 
 
 Model YAML
@@ -576,10 +627,23 @@ SGLang Worker Dispatch
      return_logprobs: false
 
      sglang:
-       serving_mode: "embodied"
+       serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
+       server_type: "embodied"      # server class = SGLangmmgenServerWorker
+       launch_server: true          # driver launches the server group
+       launch_router: false         # no router (action endpoint not forwarded by router)
+       group_name: SGLangServerGroup
+       router_group_name: SGLangRouterGroup
 
 - ``rollout_backend: sglang`` selects the SGLang backend;
-- ``serving_mode: embodied`` further selects ``SGLangEmbodiedWorker``.
+- ``serving_mode: embodied`` selects the rollout worker = ``SGLangEmbodiedWorker``;
+- ``server_type: embodied`` selects the server class =
+  ``SGLangmmgenServerWorker`` (VLA / diffusion, via ``sglang.multimodal_gen``).
+  ``serving_mode`` and ``server_type`` are orthogonal: the former controls how
+  the worker connects, the latter which server class to launch;
+- ``launch_router: false`` is required: the sglang router only forwards fixed
+  LLM endpoints (``/generate``, ``/v1/chat/completions``), not the dreamzero
+  ``/v1/actions/generations``, so the embodied path disables the router and
+  rollout workers hit their rank-assigned server URL directly.
 
 ``pipeline_stage_num`` participates in calculating the eval batch size for each rollout rank;
 ``return_logprobs: false`` indicates that policy probabilities are not needed for evaluation.
@@ -588,23 +652,39 @@ SGLang Worker Dispatch
 Server Startup and Parallel Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+``rollout.sglang`` top level holds RLinf-private keys (spawn timeout, HTTP
+client, parallelism, launch toggles); the ``server`` sub-block holds the
+``ServerArgs`` fields forwarded to sglang:
+
 .. code-block:: yaml
 
    rollout:
      sglang:
        spawn_timeout: 900
-       attention_backend: "TORCH_SDPA"
-       compile_components: true
-       num_gpus: 1
-       tp_size: 1
-       sp_size: 1
-       cfg_parallel_degree: 1
-       dit_cpu_offload: false
-       cfg_scale: 5.0
-       num_inference_steps: 16
+       tensor_parallel_size: 1
+       pipeline_parallel_size: 1
+       launch_server: true
+       launch_router: false
+       server_type: embodied
        seed: 1140
 
-Field descriptions:
+       server:                       # → ServerArgs.from_kwargs
+         backend: sglang
+         pipeline_class_name: DreamZeroPipeline
+         tp_size: ${..tensor_parallel_size}
+         num_gpus: 1
+         attention_backend: TORCH_SDPA
+         dit_cpu_offload: false
+         cfg_parallel_degree: 1
+         sp_degree: 1
+         pipeline_config:            # → DreamZeroPipelineConfig
+           cfg_scale: 5.0
+           default_num_inference_steps: 16
+           dreamzero_compile_components: true
+           dreamzero_tensor_parallel_size: ${..tp_size}
+           dreamzero_sequence_parallel_size: 1
+
+Top-level private-key fields:
 
 .. list-table::
    :header-rows: 1
@@ -614,40 +694,33 @@ Field descriptions:
      - Meaning
    * - ``spawn_timeout``
      - Maximum number of seconds the Worker waits for ``/health`` to succeed
-   * - ``attention_backend``
-     - Attention backend passed to ``sglang serve``
-   * - ``compile_components``
-     - Whether to compile the relevant components of the DreamZero Pipeline
-   * - ``num_gpus``
-     - Number of GPUs used by each Server
-   * - ``tp_size``
-     - Tensor parallel size passed to the Server
-   * - ``sp_size`` / ``sp_degree``
-     - DreamZero sequence parallel size; if both are set, ``sp_degree`` takes precedence
-   * - ``cfg_parallel_degree``
-     - Classifier-free guidance parallel size
-   * - ``dit_cpu_offload``
-     - Whether to offload DiT-related parts to the CPU
-   * - ``cfg_scale``
-     - CFG scale used for DreamZero inference
-   * - ``num_inference_steps``
-     - Number of flow-matching/diffusion inference steps
+   * - ``tensor_parallel_size``
+     - TP size per server engine; the launcher packs hardware ranks into engines
+       of ``tp×pp`` (4 GPUs tp=2 → two 2-GPU servers; tp=4 → one 4-GPU server)
+   * - ``pipeline_parallel_size``
+     - PP size per server engine
+   * - ``launch_server`` / ``launch_router``
+     - Whether the driver launches the server group / router
+   * - ``server_type``
+     - server-class dispatch: ``srt`` / ``embodied``
    * - ``seed``
      - Random seed used for each action request
 
-If there are multiple rollout ranks, each rank starts an independent Server. The default service port is
-``port_base + rank * port_stride``. To customize it, add:
+The ``server`` sub-block fields are ``ServerArgs`` fields (``backend``,
+``attention_backend``, ``tp_size``, ``num_gpus``, ``dit_cpu_offload``,
+``cfg_parallel_degree``, ``sp_degree``, ...); the ``pipeline_config`` sub-block
+holds ``DreamZeroPipelineConfig`` fields (``cfg_scale``,
+``default_num_inference_steps``, ``dreamzero_*``, ...). Refer to the
+``ServerArgs`` / ``DreamZeroPipelineConfig`` of the SGLang version in use for
+the exact field meanings.
 
-.. code-block:: yaml
-
-   rollout:
-     sglang:
-       host: 127.0.0.1
-       port_base: 30010
-       port_stride: 100
-       master_port_base: 30100
-
-The port ranges must avoid conflicts with other tasks or other ranks.
+With multiple rollout ranks, ``launch_sglang_router_and_server`` packs the
+hardware ranks into multiple server engines of
+``tensor_parallel_size × pipeline_parallel_size`` and launches them in parallel.
+**The HTTP port and master_port are allocated by the worker's PortLock as free
+ports serially** — do not set ``host`` / ``port`` / ``port_base`` /
+``master_port_base`` in YAML; this avoids concurrent ranks grabbing the same
+port (an EADDRINUSE on master_port=30005 was seen before).
 
 
 HTTP Client Configuration
@@ -794,12 +867,18 @@ Confirm that the following three names are identical and that the Policy module 
 Server Fails to Start
 ~~~~~~~~~~~~~~~~~~~~~
 
-The Worker prints the complete ``sglang serve`` command and the Server log path. Check the following first:
+The logs print a ``multimodal_gen sglang serve: launching in-process ...`` line
+and the server subprocess output (streamed straight to the Ray actor's
+stdout/stderr). Check the following first:
 
 - Whether the current SGLang installation contains ``DreamZeroPipeline`` and the action endpoint;
 - Whether the checkpoint path and component layout are correct;
-- Whether ``num_gpus``, ``tp_size``, and ``sp_size`` match the available GPUs;
-- Whether the port is occupied;
+- Whether ``num_gpus``, ``tp_size``, and ``sp_degree`` match the available GPUs;
+- **Whether ``pipeline_config.dreamzero_tensor_parallel_size`` equals ``tp_size``**
+  (must-check for tp>1, else "DreamZero tensor parallel size must match the
+  initialized TP group");
+- Whether the port is occupied (HTTP/master_port are auto-allocated by PortLock
+  but may still clash with external processes);
 - Whether ``spawn_timeout`` is sufficient to cover initial compilation and weight loading.
 
 

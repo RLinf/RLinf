@@ -18,15 +18,14 @@ from .launcher import (
     launch_sglang_api,
     launch_sglang_router_and_server,
 )
-from .multimodal_server_worker import SGLangMultimodalServerWorker
 from .router_worker import SGLangRouterWorker
-from .server_worker import SGLangServerWorker
+from .server_worker import SGLangServerWorker, SGLangmmgenServerWorker
 
 __all__ = [
     "SGLangRouterWorker",
     "SGLangServerWorker",
     "get_sglang_api_url",
     "launch_sglang_api",
-    "SGLangMultimodalServerWorker",
+    "SGLangmmgenServerWorker",
     "launch_sglang_router_and_server",
 ]

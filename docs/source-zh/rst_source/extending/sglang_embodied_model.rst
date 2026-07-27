@@ -25,13 +25,20 @@ RLinf 的评测 rollout，并使用 RLinf 支持的各类仿真器进行模型�
 
 SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 
-- ``SGLangEmbodiedWorker`` 负责启动和关闭 ``sglang serve`` 子进程、轮询
-  ``/health``、分配端口，以及通过 channel 与环境 Worker 交换 observation 和 action；
+- 驱动脚本（如 ``eval_embodied_agent.py``）通过
+  :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，
+  并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health``
+  轮询和端口分配由 ``SGLangmmgenServerWorker``（driver 侧）负责，rollout worker
+  本身不再持有 server 子进程；
+- ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的
+  server URL进行推理服务的端口，加载 Action Policy，通过 channel 与环境 Worker 交换 observation
+  和 action；
 - ``EmbodiedActionPolicy`` 的子类负责模型特有的 observation 预处理、HTTP 请求、
   响应解析和 action 后处理。
 
 因此，接入新模型时通常 **不需要修改**
-``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``。模型由
+``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``，也无需关心 server
+如何启动——server 参数完全由 YAML 的 ``rollout.sglang.server`` 直接传递给 sglang server 进程。模型由
 ``rollout.model.model_type`` 选择，调用关系如下：
 
 .. code-block:: text
@@ -39,17 +46,23 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
    rollout.model.model_type: "<your_model>"
                  │
                  ▼
+   驱动脚本: launch_sglang_router_and_server()
+                 │  (rollout.sglang.server_type == "embodied" → SGLangmmgenServerWorker)
+                 ▼
+   每个 SGLangmmgenServerWorker.init_server()
+                 │  (rollout.sglang.server → ServerArgs.from_kwargs → launch_server)
+                 ▼
    SGLangEmbodiedWorker.init_worker()
                  │
                  ├── get_action_policy_cls("<your_model>")
-                 ├── 启动 sglang serve
+                 ├── 取本 rank 的 server URL
                  └── 创建 YourActionPolicy
                               │
                               ├── 将 env_obs 转换为模型输入
                               ├── 请求模型的 action endpoint
                               └── 返回 [N, H, D] 动作
 
-要进入这条调用链，配置中必须同时满足以下四项：
+要进入这条调用链，配置中必须同时满足以下条件：
 
 .. code-block:: yaml
 
@@ -60,12 +73,23 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
    rollout:
      rollout_backend: sglang
      sglang:
-       serving_mode: embodied
+       serving_mode: embodied      # 选择 rollout worker = SGLangEmbodiedWorker
+       server_type: embodied      # 选择 server 类 = SGLangmmgenServerWorker
+       launch_server: true        # 驱动脚本启动 server 组
      model:
        model_type: "<your_model>"
 
-其中 ``serving_mode: embodied`` 不可省略。否则，RLinf 会创建普通的
-``SGLangWorker``，而不是 ``SGLangEmbodiedWorker``，导致模型无法正常工作。
+注意 ``rollout.sglang.server_type`` 与 ``rollout.model.model_type`` 是两个**正交**
+字段，名字不同、职责不同：
+
+- ``rollout.sglang.server_type`` 决定 **launch 哪个 sglang server 类**
+  （``srt`` = 语言模型走 ``sglang.srt``；``embodied`` = VLA/diffusion 走
+  ``sglang.multimodal_gen`` 的 ``/v1/actions/generations`` 端点）；
+- ``rollout.model.model_type`` 决定 **rollout worker 加载哪个 Action Policy**
+  （Policy Registry 查找键）。
+
+``serving_mode: embodied`` 也不可省略——否则 RLinf 会创建普通的 ``SGLangWorker``
+而非 ``SGLangEmbodiedWorker``。
 
 
 适配步骤
@@ -206,8 +230,10 @@ Policy 需要继承 ``EmbodiedActionPolicy``，并通过装饰器注册：
 
 第一次运行时建议将 ``env.eval.total_num_envs`` 降低，并依次确认：
 
-1. 日志中的 Worker 类型为 ``SGLangEmbodiedWorker``；
-2. 日志打印的 ``sglang serve`` 命令包含模型专用参数；
+1. 日志中的 rollout Worker 类型为 ``SGLangEmbodiedWorker``，server Worker 类型为
+   ``SGLangmmgenServerWorker``；
+2. 日志打印的 ``multimodal_gen sglang serve: launching in-process ...`` 行包含
+   正确的 ``pipeline``、``backend``、``tp_size`` 和 GPU；
 3. ``/health`` 能在 ``spawn_timeout`` 内返回；
 4. Policy 发出的请求能被 action endpoint 正确解析；
 5. Server 输出的 action 维度和 dtype 符合约定；
@@ -268,7 +294,9 @@ Policy 适配
 1. ``DreamZeroActionRequest`` 和 ``DreamZeroActionResult`` 定义请求与响应；
 2. ``HttpDreamZeroActionClient`` 负责编码、重试、发送和解析 HTTP 请求；
 3. ``_DreamZeroActionAdapter`` 复用训练数据变换，完成观测转换与动作转换；
-4. ``DreamZeroActionPolicy`` 实现 RLinf 接口，并生成 DreamZero Server 启动参数。
+4. ``DreamZeroActionPolicy`` 实现 RLinf 接口：接收本 rank 的 server URL，在
+   ``infer`` 中完成观测转换、HTTP 请求和动作后处理。Policy 不参与 server 启动——
+   server 参数完全来自 YAML 的 ``rollout.sglang.server`` 块。
 
 Policy 的注册代码如下：
 
@@ -365,49 +393,62 @@ Client 从以下位置读取 Server 返回的归一化动作：
 Server 参数和 Pipeline 配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``SGLangEmbodiedWorker._model_specific_sglang_serve_args`` 会追加以下类型的参数：
+server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该块被原样转发给
+``sglang.multimodal_gen`` 的 ``ServerArgs.from_kwargs(**)``：顶层参数
+``ServerArgs`` 字段，``pipeline_config`` 子块由 ``from_kwargs`` dispatch 到
+``DreamZeroPipelineConfig``（按 ``pipeline_class_name`` 匹配），并把
+``backend`` / ``disagg_role`` 等字符串转成枚举。结构如下：
 
-.. code-block:: text
+.. code-block:: yaml
 
-   --backend sglang
-   --pipeline DreamZeroPipeline
-   --pipeline-config-path <tmpdir>/dreamzero_pipeline_rank<rank>.json
-   --sp-degree <sp_size>
-   --cfg-parallel-size <cfg_parallel_degree>
-   --dreamzero-dit-path <model_path>
-   --dreamzero-vae-path <model_path>
-   --dreamzero-text-encoder-path <model_path>
-   --dreamzero-image-encoder-path <model_path>
+   rollout:
+     sglang:
+       server:
+         model_path: ${rollout.model.model_path}
+         backend: sglang
+         pipeline_class_name: DreamZeroPipeline
+         tp_size: ${..tensor_parallel_size}
+         num_gpus: 1
+         attention_backend: TORCH_SDPA
+         dit_cpu_offload: false
+         cfg_parallel_degree: 1
+         sp_degree: 1
+         pipeline_config:            # → DreamZeroPipelineConfig
+           cfg_scale: 5.0
+           default_num_inference_steps: 16
+           action_horizon: 16
+           num_frames: 33
+           synthetic_height: 160
+           synthetic_width: 320
+           dreamzero_compile_components: true
+           dreamzero_tensor_parallel_size: ${..tp_size}
+           dreamzero_sequence_parallel_size: 1
+           dreamzero_max_sessions: 128
 
-这些模型路径都指向 ``rollout.model.model_path``，由 Server 根据 checkpoint 布局
-加载模型的不同组件。
+关键说明：
 
-Policy 还会生成 ``DreamZeroPipelineConfig`` 使用的 JSON。主要映射关系如下：
+- ``host`` / ``port`` / ``master_port`` 由 ``SGLangmmgenServerWorker`` 在运行时
+  填入（用 PortLock 串行分配的空闲端口），YAML 中不要手设；
+- 顶层 ``ServerArgs`` 字段直接对应 ``sglang serve`` 参数（``backend``、
+  ``attention_backend``、``tp_size``、``num_gpus``、``dit_cpu_offload``、
+  ``cfg_parallel_degree``、``sp_degree`` 等）；
+- ``pipeline_config`` 子块对应 ``DreamZeroPipelineConfig`` 字段，命名与 sglang
+  侧一致（``cfg_scale``、``default_num_inference_steps``、
+  ``dreamzero_compile_components``、``dreamzero_sequence_parallel_size``、
+  ``dreamzero_max_sessions`` 等）；
+- 模型路径都指向 ``rollout.model.model_path``，由 Server 按 checkpoint 布局
+  加载不同组件。
 
-.. list-table::
-   :header-rows: 1
-   :widths: 42 58
+.. warning::
 
-   * - Pipeline JSON 字段
-     - 来源
-   * - ``dreamzero_compile_components``
-     - ``rollout.sglang.compile_components``
-   * - ``dreamzero_sequence_parallel_size``
-     - ``rollout.sglang.sp_degree``，未设置时读取 ``sp_size``
-   * - ``dreamzero_max_sessions``
-     - ``rollout.sglang.max_sessions``，默认等于本 Worker 的 eval batch size
-   * - ``cfg_scale``
-     - ``rollout.sglang.cfg_scale``
-   * - ``action_horizon``
-     - ``rollout.model.action_horizon``
-   * - ``num_inference_steps``
-     - ``rollout.sglang.num_inference_steps``
-   * - ``num_frames``、tile 参数
-     - ``rollout.model.action_head_cfg.config``
-   * - ``synthetic_height`` / ``synthetic_width``
-     - ``rollout.model.target_video_height`` / ``target_video_width``
+   ``pipeline_config.dreamzero_tensor_parallel_size`` **必须等于** 顶层
+   ``tp_size``。DreamZero 在初始化时会校验"配置 TP"与"实际 TP group"一致，
+   不一致会抛出 ``ValueError: DreamZero tensor parallel size must match the
+   initialized TP group``。该字段默认为 1，因此开启 ``tp_size > 1`` 时必须显式
+   对齐（示例中用 ``${..tp_size}`` 联动，改 ``tp_size`` 即自动同步）。
 
-这意味着模型 shape 相关字段必须与 checkpoint 训练配置保持一致，不能只根据显存情况
+模型 shape 相关字段（``num_frames``、tile 参数、``synthetic_*``、
+``action_horizon`` 等）必须与 checkpoint 训练配置保持一致，不能只根据显存情况
 随意修改。
 
 
@@ -576,10 +617,22 @@ SGLang Worker 分发
      return_logprobs: false
 
      sglang:
-       serving_mode: "embodied"
+       serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
+       server_type: "embodied"      # server 类 = SGLangmmgenServerWorker
+       launch_server: true          # 驱动脚本启动 server 组
+       launch_router: false         # 不启动 router（action endpoint 不被 router 转发）
+       group_name: SGLangServerGroup
+       router_group_name: SGLangRouterGroup
 
 - ``rollout_backend: sglang`` 选择 SGLang 后端；
-- ``serving_mode: embodied`` 进一步选择 ``SGLangEmbodiedWorker``。
+- ``serving_mode: embodied`` 选择 rollout worker = ``SGLangEmbodiedWorker``；
+- ``server_type: embodied`` 选择 server 类 = ``SGLangmmgenServerWorker``（VLA/
+  diffusion，走 ``sglang.multimodal_gen``）。``serving_mode`` 与 ``server_type``
+  正交：前者负责 worker 侧怎么连，后者管 launch 哪个 server 类；
+- ``launch_router: false`` 是必填：sglang router 只转发固定 LLM 端点
+  （``/generate``、``/v1/chat/completions``），不转发 dreamzero 的
+  ``/v1/actions/generations``，所以具身路径禁用 router，rollout worker 直接
+  连本 rank 分配的 server URL。
 
 ``pipeline_stage_num`` 会参与每个 rollout rank 的 eval batch size 计算；
 ``return_logprobs: false`` 表示评测不需要策略概率。
@@ -588,23 +641,38 @@ SGLang Worker 分发
 Server 启动与并行配置
 ~~~~~~~~~~~~~~~~~~~~~
 
+``rollout.sglang`` 顶层放 RLinf 私有的参数（spawn 超时、HTTP 客户端、并行度、
+launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字段：
+
 .. code-block:: yaml
 
    rollout:
      sglang:
        spawn_timeout: 900
-       attention_backend: "TORCH_SDPA"
-       compile_components: true
-       num_gpus: 1
-       tp_size: 1
-       sp_size: 1
-       cfg_parallel_degree: 1
-       dit_cpu_offload: false
-       cfg_scale: 5.0
-       num_inference_steps: 16
+       tensor_parallel_size: 1
+       pipeline_parallel_size: 1
+       launch_server: true
+       launch_router: false
+       server_type: embodied
        seed: 1140
 
-字段说明：
+       server:                       # → ServerArgs.from_kwargs
+         backend: sglang
+         pipeline_class_name: DreamZeroPipeline
+         tp_size: ${..tensor_parallel_size}
+         num_gpus: 1
+         attention_backend: TORCH_SDPA
+         dit_cpu_offload: false
+         cfg_parallel_degree: 1
+         sp_degree: 1
+         pipeline_config:            # → DreamZeroPipelineConfig
+           cfg_scale: 5.0
+           default_num_inference_steps: 16
+           dreamzero_compile_components: true
+           dreamzero_tensor_parallel_size: ${..tp_size}
+           dreamzero_sequence_parallel_size: 1
+
+RLinf 私有参数字段说明：
 
 .. list-table::
    :header-rows: 1
@@ -614,40 +682,30 @@ Server 启动与并行配置
      - 含义
    * - ``spawn_timeout``
      - Worker 等待 ``/health`` 成功的最长秒数
-   * - ``attention_backend``
-     - 传给 ``sglang serve`` 的注意力后端
-   * - ``compile_components``
-     - 是否编译 DreamZero Pipeline 的相关组件
-   * - ``num_gpus``
-     - 每个 Server 使用的 GPU 数
-   * - ``tp_size``
-     - 传给 Server 的 tensor parallel 大小
-   * - ``sp_size`` / ``sp_degree``
-     - DreamZero sequence parallel 大小；若两者都设置，``sp_degree`` 优先
-   * - ``cfg_parallel_degree``
-     - classifier-free guidance 并行大小
-   * - ``dit_cpu_offload``
-     - 是否将 DiT 相关部分 offload 到 CPU
-   * - ``cfg_scale``
-     - DreamZero 推理使用的 CFG scale
-   * - ``num_inference_steps``
-     - 流匹配/扩散推理步数
+   * - ``tensor_parallel_size``
+     - 每个 server engine 的 TP 大小；launcher 按 ``tp×pp`` 把硬件 rank 打包成
+       engine（4 卡 tp=2 → 2 个 2-GPU server；tp=4 → 1 个 4-GPU server）
+   * - ``pipeline_parallel_size``
+     - 每个 server engine 的 PP 大小
+   * - ``launch_server`` / ``launch_router``
+     - 是否由驱动脚本启动 server 组 / router
+   * - ``server_type``
+     - server 类分发：``srt`` / ``embodied``
    * - ``seed``
      - 每次 action 请求使用的随机种子
 
-如果有多个 rollout rank，每个 rank 会启动独立的 Server。默认服务端口为
-``port_base + rank * port_stride``。需要自定义时可以增加：
+``server`` 子块的字段就是 ``ServerArgs`` 字段（``backend``、
+``attention_backend``、``tp_size``、``num_gpus``、``dit_cpu_offload``、
+``cfg_parallel_degree``、``sp_degree`` 等），``pipeline_config`` 子块是
+``DreamZeroPipelineConfig`` 字段（``cfg_scale``、``default_num_inference_steps``、
+``dreamzero_*`` 等）。具体字段含义以所用 SGLang 版本的 ``ServerArgs`` /
+``DreamZeroPipelineConfig`` 为准。
 
-.. code-block:: yaml
-
-   rollout:
-     sglang:
-       host: 127.0.0.1
-       port_base: 30010
-       port_stride: 100
-       master_port_base: 30100
-
-端口范围必须避免与其它任务或其它 rank 冲突。
+如果有多个 rollout rank，``launch_sglang_router_and_server`` 会把硬件 rank 按
+``tensor_parallel_size × pipeline_parallel_size`` 打包成多个 server engine 并行
+启动。**HTTP 端口和 master_port 由 worker 的 PortLock 串行分配空闲端口**，
+无需也不要在 YAML 中手设 ``host`` / ``port`` / ``port_base`` / ``master_port_base``——
+这能避免并发 rank 抢同一端口（曾出现 master_port 在 30005 上 EADDRINUSE）。
 
 
 HTTP Client 配置
@@ -795,12 +853,17 @@ Worker 不是 ``SGLangEmbodiedWorker``
 Server 无法启动
 ~~~~~~~~~~~~~~~
 
-Worker 会打印完整的 ``sglang serve`` 命令和 Server 日志路径。优先检查：
+日志会打印 ``multimodal_gen sglang serve: launching in-process ...`` 行和
+server 子进程的输出（直接流到 Ray actor 的 stdout/stderr）。优先检查：
 
 - 当前 SGLang 安装是否包含 ``DreamZeroPipeline`` 和 action endpoint；
 - checkpoint 路径和组件布局是否正确；
-- ``num_gpus``、``tp_size``、``sp_size`` 与可用 GPU 是否匹配；
-- 端口是否被占用；
+- ``num_gpus``、``tp_size``、``sp_degree`` 与可用 GPU 是否匹配；
+- **``pipeline_config.dreamzero_tensor_parallel_size`` 是否等于 ``tp_size``**
+  （tp>1 时必查，否则报 "DreamZero tensor parallel size must match the
+  initialized TP group"）；
+- 端口是否被占用（HTTP/master_port 由 PortLock 自动分配，但仍可能与外部进程
+  冲突）；
 - ``spawn_timeout`` 是否足够覆盖首次编译和权重加载时间。
 
 

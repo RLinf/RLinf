@@ -48,9 +48,8 @@ from rlinf.scheduler import (
 )
 from rlinf.scheduler.placement import PlacementStrategy
 
-from .multimodal_server_worker import SGLangMultimodalServerWorker
 from .router_worker import SGLangRouterWorker
-from .server_worker import SGLangServerWorker
+from .server_worker import SGLangServerWorker, SGLangmmgenServerWorker
 
 
 def launch_sglang_router_and_server(
@@ -78,8 +77,8 @@ def launch_sglang_router_and_server(
             ``placement_strategy`` is provided or when ``launch_server``
             is ``False``.
         router_server_args: ``DictConfig`` carrying the
-            ``{tensor_parallel_size, pipeline_parallel_size, server,
-            router, group_name, router_group_name, launch_server,
+            ``{tensor_parallel_size, pipeline_parallel_size, server_type,
+            server, router, group_name, router_group_name, launch_server,
             launch_router}`` keys the launcher consumes directly
             (typically ``config.rollout``).
         rollout_node_group: Optional node-group label(s) to forward to
@@ -137,10 +136,14 @@ def launch_sglang_router_and_server(
                 node_group=rollout_node_group,
             )
 
-        if router_server_args.get("multimodal", False):
-            server_worker_cls = SGLangMultimodalServerWorker
-        else:
+        # Pick the sglang server class by ``server_type``: the kind of model
+        # this server serves. Select the server_args accordingly to start the
+        # sglang server.
+        server_type = router_server_args.get("server_type", "srt")
+        if server_type == "srt":
             server_worker_cls = SGLangServerWorker
+        elif server_type == "embodied":
+            server_worker_cls = SGLangmmgenServerWorker
 
         server_group = server_worker_cls.create_group(
             config=config,

@@ -112,6 +112,11 @@ SGLang Server 与 Router
    * - ``pipeline_parallel_size``
      - int
      - 单引擎 PP 大小。
+   * - ``server_type``
+     - str
+     - 选择 sglang server 类，默认 ``srt``：``srt`` = 语言模型走 ``sglang.srt``→
+       ``SGLangServerWorker``；``embodied`` = 具身模型（VLA/diffusion）走
+       ``sglang.multimodal_gen``→ ``SGLangmmgenServerWorker``。其它值会抛错。
    * - ``group_name``
      - str
      - sglang server worker group 的名字。

@@ -77,23 +77,39 @@ rollout:
     pipeline_parallel_size: 1
     launch_server: true
     launch_router: false
-    multimodal: true
+    server_type: embodied
     group_name: SGLangServerGroup
     router_group_name: SGLangRouterGroup
     server:
+      # All keys below are forwarded verbatim to ServerArgs.from_kwargs.
+      # Top-level = ServerArgs fields; pipeline_config = PipelineConfig fields
+      # dispatched into DreamZeroPipelineConfig.
       model_path: ${rollout.model.model_path}
       backend: sglang
-      pipeline: DreamZeroPipeline
+      pipeline_class_name: DreamZeroPipeline
       tp_size: ${..tensor_parallel_size}
-      pp_size: ${..pipeline_parallel_size}
       num_gpus: 1
       attention_backend: TORCH_SDPA
       dit_cpu_offload: false
-      cfg_parallel_size: 1
+      cfg_parallel_degree: 1
       sp_degree: 1
-      cfg_scale: 5.0
-      num_inference_steps: 16
-      compile_components: true
+      pipeline_config:
+        cfg_scale: 5.0
+        default_num_inference_steps: 16
+        action_horizon: 16
+        num_frames: 33
+        synthetic_height: 160
+        synthetic_width: 320
+        tile_size_height: 34
+        tile_size_width: 34
+        tile_stride_height: 18
+        tile_stride_width: 16
+        tiled: false
+        dreamzero_compile_components: true
+        dreamzero_tensor_parallel_size: ${..tp_size}
+        dreamzero_sequence_parallel_size: 1
+        dreamzero_max_sessions: 128
+        dynamic_cache_schedule: false
 
   model:
     model_type: "dreamzero"
