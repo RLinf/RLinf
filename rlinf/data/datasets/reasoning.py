@@ -209,7 +209,11 @@ class ReasoningDataset(Dataset):
         """
         Use tokenizer to encode the texts and return the token ids and length.
         """
-        text_ids = self.tokenizer.batch_encode_plus(list(texts))["input_ids"]
+        # transformers >= 5.0 renamed the tiktoken-backed tokenizer class to TokenizersBackend
+        try:
+            text_ids = self.tokenizer.batch_encode_plus(list(texts))["input_ids"]
+        except AttributeError:
+            text_ids = self.tokenizer(list(texts))["input_ids"]
         return text_ids
 
     def __getitem__(self, idx):

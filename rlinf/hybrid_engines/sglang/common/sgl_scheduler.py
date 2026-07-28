@@ -63,13 +63,17 @@ class Scheduler(_Scheduler):
         if not hasattr(self.tp_worker, "worker"):
             self.tp_worker.worker = self.tp_worker
 
-        self._request_dispatcher._mapping.extend(
-            [
-                (TaskMethodInput, self.run_task_method),
-                (SyncHFWeightInput, self.sync_hf_weight),
-                (AbortGenerationInput, self.abort_generation),
-            ]
-        )
+        # In sglang 0.4.x `_mapping` was a list; in 0.5.x it's an OrderedDict
+        _extra_req_mapping = [
+            (TaskMethodInput, self.run_task_method),
+            (SyncHFWeightInput, self.sync_hf_weight),
+            (AbortGenerationInput, self.abort_generation),
+        ]
+        if isinstance(self._request_dispatcher._mapping, dict):
+            for _ty, _fn in _extra_req_mapping:
+                self._request_dispatcher._mapping[_ty] = _fn
+        else:
+            self._request_dispatcher._mapping.extend(_extra_req_mapping)
 
         self.is_weight_offloaded = False
         self.weight_norm_dict = None
