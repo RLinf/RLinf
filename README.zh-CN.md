@@ -29,6 +29,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/07] 🔥 RLinf 使用 PyTorch 重新实现了 π₀ 和 π₀.₅，数值表现与 JAX 参考实现对齐。文档：[PyTorch OpenPI](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_pytorch.html)。
 - [2026/07] 🔥 RLinf 支持 OPD，用于在 LIBERO 上对 OpenVLA-OFT 进行在线策略蒸馏。文档：[OPD](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html)。
 - [2026/07] 🎉 RLinf v0.3 发布，主要升级：真机 RL 全流程（数据采集 → SFT → RL → 部署）、更多模拟器与 SOTA 模型、系统级优化。发布说明：[RLinf v0.3](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.3.html)。
 - [2026/07] 🔥 RLinf 支持 RLT，用于 VLA 策略的在线强化学习微调。文档：[RLT](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html)。
@@ -144,8 +145,8 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>VLA 模型</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html">π₀</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/pi0.html">π₀.₅</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅（OpenPI-PyTorch）</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_pytorch.html">π₀ / π₀.₅（RLinf-PyTorch）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
