@@ -313,7 +313,22 @@ class RolloutResult:
     def merge_rollout_results(
         rollout_results: list["RolloutResult"],
     ) -> "RolloutResult":
-        def _merge_optional_tensor(field_name: str) -> torch.Tensor | None:
+        def _shard_batch_size(rollout_result: "RolloutResult") -> int:
+            for field_name in ("actions", "prev_logprobs", "prev_values", "versions"):
+                value = getattr(rollout_result, field_name)
+                if isinstance(value, torch.Tensor):
+                    return int(value.shape[0])
+            if rollout_result.forward_inputs:
+                for value in rollout_result.forward_inputs.values():
+                    if isinstance(value, torch.Tensor):
+                        return int(value.shape[0])
+            raise ValueError(
+                "Cannot infer shard batch size while coalescing an optional field."
+            )
+
+        def _merge_optional_tensor(
+            field_name: str, coalesce_none: bool = False
+        ) -> torch.Tensor | None:
             values = [
                 getattr(rollout_result, field_name)
                 for rollout_result in rollout_results
@@ -321,15 +336,37 @@ class RolloutResult:
             if all(value is None for value in values):
                 return None
             if any(value is None for value in values):
-                raise ValueError(
-                    f"Inconsistent field '{field_name}': some shards are None while others are tensors."
-                )
+                if not coalesce_none:
+                    raise ValueError(
+                        f"Inconsistent field '{field_name}': some shards are None while others are tensors."
+                    )
+                # ``bootstrap_values`` is a conditional field: a shard is None
+                # exactly when it contained no truncation this chunk (its
+                # ``final_obs`` was None). Those rows are never read downstream
+                # because ``compute_bootstrap_rewards`` masks with
+                # ``last_step_truncations``, which is False for them. Zero-fill
+                # the None shards to keep row alignment; the result is
+                # numerically identical to leaving them absent.
+                template = next(value for value in values if value is not None)
+                feature_shape = template.shape[1:]
+                filled = [
+                    value
+                    if value is not None
+                    else torch.zeros(
+                        (_shard_batch_size(rollout_result), *feature_shape),
+                        dtype=template.dtype,
+                    )
+                    for rollout_result, value in zip(rollout_results, values)
+                ]
+                return torch.cat(filled, dim=0)
             return torch.cat(values, dim=0)
 
         merged_actions = _merge_optional_tensor("actions")
         merged_prev_logprobs = _merge_optional_tensor("prev_logprobs")
         merged_prev_values = _merge_optional_tensor("prev_values")
-        merged_bootstrap_values = _merge_optional_tensor("bootstrap_values")
+        merged_bootstrap_values = _merge_optional_tensor(
+            "bootstrap_values", coalesce_none=True
+        )
         merged_intervene_flags = _merge_optional_tensor("intervene_flags")
         merged_versions = _merge_optional_tensor("versions")
 

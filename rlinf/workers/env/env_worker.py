@@ -15,7 +15,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
@@ -53,6 +53,9 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
+
+if TYPE_CHECKING:
+    from rlinf.scheduler.collective import AsyncRouteWork
 
 
 class EnvWorker(Worker):
@@ -1009,6 +1012,27 @@ class EnvWorker(Worker):
                 continue
             channel.put(chunk, async_op=True)
 
+    def _recv_train_rollout_result(
+        self, input_channel: Channel, stage_id: int, *, async_op: bool
+    ):
+        """Receive (or post an async receive for) one stage's rollout result.
+
+        Shared by the synchronous path and the cross-stage prefetch path so the
+        routing kwargs stay in one place. With ``async_op=True`` returns an
+        ``AsyncRouteWork`` whose ``.wait()`` yields the merged ``RolloutResult``.
+        """
+        return self.recv_from(
+            group_name=self.cfg.rollout.group_name,
+            channel=input_channel,
+            tag="train_rollout_results",
+            route_key=stage_id if not self.env_decoupled_mode else None,
+            batch_size=self.train_batch_size,
+            merge_fn=RolloutResult.merge_rollout_results,
+            infer_batch_size_fn=self._infer_rollout_batch_size,
+            decoupled_mode=self.env_decoupled_mode,
+            async_op=async_op,
+        )
+
     @Worker.timer("run_interact_once")
     async def _run_interact_once(
         self,
@@ -1025,12 +1049,38 @@ class EnvWorker(Worker):
         env_metrics = defaultdict(list)
         rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
 
+        # Per-stage handle for the in-flight async obs-send (see the scatter below).
+        # Sending the new obs asynchronously lets the per-rollout shards pipeline and
+        # overlaps the transfer with the *other* stage's recv/step instead of blocking
+        # the env one shard at a time.
+        pending_obs_sends: list["AsyncRouteWork | None"] = [None] * self.stage_num
+
+        # Cross-stage recv prefetch: post each stage's result-recv right after its
+        # obs-send, then consume it on the next visit to that stage. This hides the
+        # recv transfer/request-roundtrip behind the *other* stage's env_interact_step.
+        # Gated to the standard routed, reward-model-free path:
+        #   - reward_channel is None: otherwise get_reward_model_output interleaves
+        #     recv/send on the same input_channel, so that path stays synchronous.
+        #   - not env_decoupled_mode: decoupled mode routes every stage through a
+        #     single key (route_key=None), so two outstanding recvs could scramble the
+        #     shard->stage mapping. Distinct per-stage route_keys are required here.
+        prefetch_recv = reward_channel is None and not self.env_decoupled_mode
+        pending_recvs: list["AsyncRouteWork | None"] = [None] * self.stage_num
+
         for epoch in range(self.rollout_epoch):
             if epoch == 0 and self._prefetched_train_bootstrap is not None:
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
             else:
                 env_outputs = self._bootstrap_and_send_train(rollout_channel)
+
+            # Seed the prefetch: bootstrap has sent obs for every stage, so post the
+            # matching result-recv for each before entering the chunk-step loop.
+            if prefetch_recv:
+                for stage_id in range(self.stage_num):
+                    pending_recvs[stage_id] = self._recv_train_rollout_result(
+                        input_channel, stage_id, async_op=True
+                    )
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1058,16 +1108,15 @@ class EnvWorker(Worker):
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
 
-                    rollout_result = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="train_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.train_batch_size,
-                        merge_fn=RolloutResult.merge_rollout_results,
-                        infer_batch_size_fn=self._infer_rollout_batch_size,
-                        decoupled_mode=self.env_decoupled_mode,
-                    )
+                    if prefetch_recv and pending_recvs[stage_id] is not None:
+                        # Prefetched at the previous visit to this stage; the transfer
+                        # overlapped the other stage's sim, so this rarely blocks.
+                        rollout_result = pending_recvs[stage_id].wait()
+                        pending_recvs[stage_id] = None
+                    else:
+                        rollout_result = self._recv_train_rollout_result(
+                            input_channel, stage_id, async_op=False
+                        )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, rollout_result.bootstrap_values, reward_model_output
                     )
@@ -1113,6 +1162,14 @@ class EnvWorker(Worker):
                             cache_current=True,
                         )
 
+                    # Drain this stage's previous async obs-send before stepping the
+                    # sim: env_interact_step may overwrite the obs buffers that the
+                    # in-flight send still references. Each stage owns a separate env
+                    # instance, so only the *same* stage's next step can invalidate them.
+                    if pending_obs_sends[stage_id] is not None:
+                        pending_obs_sends[stage_id].wait()
+                        pending_obs_sends[stage_id] = None
+
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
                         rollout_result.actions, stage_id
                     )
@@ -1123,7 +1180,11 @@ class EnvWorker(Worker):
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
-                    self.send_to(
+                    # Scatter the new obs to the rollout workers asynchronously so the
+                    # per-shard puts pipeline instead of blocking the env one rollout at
+                    # a time. Drained above (next same-stage step) and at the epoch
+                    # boundary (end of the chunk-step loop) before buffers are reused.
+                    pending_obs_sends[stage_id] = self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
                         data=self._build_rollout_input_data(env_batch),
@@ -1131,7 +1192,14 @@ class EnvWorker(Worker):
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
+                        async_op=True,
                     )
+                    # Post this stage's next result-recv right away so its transfer
+                    # runs in the background while the other stage's sim executes.
+                    if prefetch_recv:
+                        pending_recvs[stage_id] = self._recv_train_rollout_result(
+                            input_channel, stage_id, async_op=True
+                        )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs
@@ -1150,6 +1218,13 @@ class EnvWorker(Worker):
                     )
                     if should_record:
                         self.record_env_metrics(env_metrics, env_info)
+
+            # Drain any outstanding async obs-sends before the epoch's trailing
+            # recv/bootstrap phase and the next epoch's env reset reuse the buffers.
+            for stage_id in range(self.stage_num):
+                if pending_obs_sends[stage_id] is not None:
+                    pending_obs_sends[stage_id].wait()
+                    pending_obs_sends[stage_id] = None
 
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
@@ -1173,16 +1248,14 @@ class EnvWorker(Worker):
                         env_metrics["reward_model_output"].append(
                             reward_model_output.detach().float().reshape(-1).cpu()
                         )
-                rollout_result = self.recv_from(
-                    group_name=self.cfg.rollout.group_name,
-                    channel=input_channel,
-                    tag="train_rollout_results",
-                    route_key=stage_id if not self.env_decoupled_mode else None,
-                    batch_size=self.train_batch_size,
-                    merge_fn=RolloutResult.merge_rollout_results,
-                    infer_batch_size_fn=self._infer_rollout_batch_size,
-                    decoupled_mode=self.env_decoupled_mode,
-                )
+                if prefetch_recv and pending_recvs[stage_id] is not None:
+                    # Consume the recv prefetched by the last chunk-step iteration.
+                    rollout_result = pending_recvs[stage_id].wait()
+                    pending_recvs[stage_id] = None
+                else:
+                    rollout_result = self._recv_train_rollout_result(
+                        input_channel, stage_id, async_op=False
+                    )
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
