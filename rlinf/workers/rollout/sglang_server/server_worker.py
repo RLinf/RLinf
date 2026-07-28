@@ -19,58 +19,116 @@ import multiprocessing as mp
 import os
 import signal
 import time
-from dataclasses import asdict
-from typing import Optional
+from typing import Callable, Optional
 
 import ray.util
 import requests
 from omegaconf import DictConfig, OmegaConf
-from sglang.srt.server_args import ServerArgs
 
 from rlinf.scheduler import Worker
 from rlinf.utils.http_client import no_proxy_env
 
 
-def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
-    """Child-process entrypoint: launches a single sglang HTTP server.
+def _ensure_no_proxy_for_localhost() -> None:
+    """Make sure sglang's intra-node IPC never tunnels through a proxy."""
+    local = "127.0.0.1,localhost,::1"
+    current = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
+    if not any(h in current for h in ("127.0.0.1", "localhost")):
+        os.environ["NO_PROXY"] = (
+            f"{current},{local}".strip(",") if current else local
+        )
 
-    Runs in a *spawned* subprocess so the parent's Ray actor isn't blocked
-    by sglang's uvicorn loop. ``ready_pipe`` is a one-shot
-    ``multiprocessing.Pipe`` end the child writes to once initialization
-    either completes or throws (mirrors sglang's ``pipe_finish_writer``
-    contract).
+
+def _run_sglang_server(
+    server_type: str,
+    server_args_kwargs: dict,
+    dist_port: int,
+    launch_router: bool,
+) -> None:
+    """Child-process entrypoint: launch one sglang HTTP server.
+
+    Args:
+        server_type: ``"srt"`` (language model) or ``"embodied"`` (VLA /
+            diffusion). Selects which sglang dispatch entrypoint to call:
+            ``"srt"``      -> :func:`sglang.launch_server.run_server`
+            (what ``sglang serve`` calls for an LLM);
+            ``"embodied"`` -> :func:`sglang.multimodal_gen.runtime.launch_server.dispatch_launch`
+            (what ``sglang serve`` calls for a diffusion model). Any other
+            value raises (no auto-detection — the caller must declare the
+            family explicitly).
+        server_args_kwargs: The server config block, with ``host``/``port``
+            already filled in by the parent. The type-specific distributed
+            bootstrap port (``dist_init_addr`` for SRT, ``master_port`` for
+            embodied) is injected here, since the two ServerArgs don't share
+            that field.
+        dist_port: Free port for the internal torch.distributed bootstrap.
+        launch_router: Whether the caller is also bringing up a sglang router
+            (read from ``rollout.sglang.launch_router``). The router can't
+            forward the multimodal action endpoint, so ``embodied`` + router
+            is rejected here.
     """
-    # Put this process in its own group so SIGTERM to the parent can
-    # forward via os.killpg without killing the Ray actor itself.
+    # Own process group so SIGTERM via os.killpg(pid) reaches the sglang serve
+    # tree, not the Ray actor.
     try:
         os.setpgrp()
     except OSError:
         pass
 
-    from sglang.srt.entrypoints.http_server import launch_server
+    _ensure_no_proxy_for_localhost()
+    os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
 
-    server_args = ServerArgs(**server_args_dict)
-    # Strip proxy env vars so sglang's internal HTTP calls (e.g. the
-    # tokenizer-manager / scheduler IPC that /get_server_info touches)
-    # don't tunnel through a user-configured proxy — otherwise the router's
-    # discover_metadata step hangs and worker registration fails.
+    if server_type not in ("srt", "embodied"):
+        raise ValueError(
+            f"Unsupported server_type {server_type!r}; "
+            "expected 'srt' (language model) or 'embodied' (VLA/diffusion)."
+        )
+
+    if server_type == "embodied" and launch_router:
+        raise RuntimeError(
+            "launch_router is not supported for the multimodal (diffusion/VLA) "
+            "sglang server: the sglang router only forwards fixed endpoints "
+            "(/generate, /v1/chat/completions, ...), not the dreamzero action "
+            "endpoint /v1/actions/generations. Set rollout.sglang.launch_router: "
+            "false (rollout workers hit their rank-assigned server URL directly)."
+        )
+
     with no_proxy_env():
-        try:
-            launch_server(server_args, pipe_finish_writer=ready_pipe)
-        except Exception as e:  # pragma: no cover — surface failures to parent
-            try:
-                ready_pipe.send(repr(e))
-            except Exception:
-                pass
-            raise
+        if server_type == "embodied":
+            from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
+            from sglang.multimodal_gen.runtime.server_args import (
+                ServerArgs,
+                set_global_server_args,
+            )
+
+            server_args_kwargs["master_port"] = dist_port
+            server_args = ServerArgs.from_kwargs(**server_args_kwargs)
+            set_global_server_args(server_args)
+            dispatch_launch(server_args)
+        else:  # "srt"
+            from sglang.launch_server import run_server
+            from sglang.srt.server_args import ServerArgs
+
+            server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
+            server_args = ServerArgs(**server_args_kwargs)
+            run_server(server_args)
 
 
-def _wait_for_http_health(host: str, port: int, timeout: float = 300.0) -> None:
+def _wait_for_http_health(
+    host: str,
+    port: int,
+    timeout: float = 300.0,
+    is_alive: Optional[Callable[[], bool]] = None,
+) -> None:
     """Block until ``GET http://host:port/health`` returns 200, or raise."""
     deadline = time.perf_counter() + timeout
     url = f"http://{host}:{port}/health"
     last_err: Optional[BaseException] = None
     while time.perf_counter() < deadline:
+        if is_alive is not None and not is_alive():
+            raise RuntimeError(
+                f"sglang server subprocess exited before /health went 200 "
+                f"({url}); see the worker log for the child's error."
+            )
         try:
             resp = requests.get(url, timeout=5, proxies={"http": None, "https": None})
             if resp.status_code == 200:
@@ -88,12 +146,15 @@ class SGLangServerWorker(Worker):
     """Worker that owns one sglang HTTP server process.
 
     Args:
-        config: Full RLinf ``DictConfig``. Kept for parity with other
-            workers / future use; the sglang server itself is configured
-            entirely from ``sglang_cfg``.
+        config: Full RLinf ``DictConfig``. The sglang server itself is
+            configured entirely from ``sglang_cfg``; ``config`` is read for
+            the optional ``rollout.sglang.spawn_timeout`` /
+            ``launch_router`` knobs.
         sglang_cfg: The sub-config block whose keys are forwarded verbatim
-            as ``ServerArgs(**)`` kwargs — except ``host`` / ``port`` /
-            ``dist_init_addr``, which are filled in at runtime here.
+            as ``ServerArgs`` kwargs — except ``host`` / ``port`` (filled in
+            at runtime here) and the distributed-bootstrap port
+            (``dist_init_addr`` for SRT, ``master_port`` for embodied, filled
+            in by the child since the two ServerArgs don't share that field).
             Typically ``config.rollout.server`` when used inside a rollout,
             but any compatible block works (the server isn't tied to the
             rollout pipeline).
@@ -102,6 +163,9 @@ class SGLangServerWorker(Worker):
         advertise_host: Optional explicit advertise host (the URL we
             hand to the router). If ``None``, we fall back to the Ray
             actor's node IP via ``ray.util.get_node_ip_address()``.
+        server_type: ``"srt"`` (language model) or ``"embodied"``
+            (VLA/diffusion). Required — any other value raises. Defaults to
+            ``"srt"`` so a plain language-model rollout need not set it.
     """
 
     def __init__(
@@ -110,16 +174,22 @@ class SGLangServerWorker(Worker):
         sglang_cfg: DictConfig,
         bind_host: str = "0.0.0.0",
         advertise_host: Optional[str] = None,
+        server_type: str = "srt",
     ):
         Worker.__init__(self)
+        if server_type not in ("srt", "embodied"):
+            raise ValueError(
+                f"Unsupported server_type {server_type!r}; "
+                "expected 'srt' (language model) or 'embodied' (VLA/diffusion)."
+            )
         self._cfg = config
         self._sglang_cfg = sglang_cfg
         self._bind_host = bind_host
         self._advertise_host = advertise_host
+        self._server_type = server_type
 
         self._server_proc: Optional[mp.Process] = None
         self._server_port: Optional[int] = None
-        self._ready_pipe = None
 
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
@@ -140,15 +210,16 @@ class SGLangServerWorker(Worker):
         http_port = self.acquire_free_port()
         dist_port = self.acquire_free_port()
 
-        sglang_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True)
-        sglang_kwargs["host"] = self._bind_host
-        sglang_kwargs["port"] = http_port
-        sglang_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
-        server_args = ServerArgs(**sglang_kwargs)
+        server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}
+        server_kwargs["host"] = self._bind_host
+        server_kwargs["port"] = http_port
 
+        launch_router = bool(self._cfg.rollout.sglang.get("launch_router", False))
+
+        tp_size = server_kwargs.get("tp_size") or server_kwargs.get("tp-size")
         self.log_info(
-            f"Launching sglang server: tp_size={server_args.tp_size}, "
-            f"http=:{http_port}, dist_init={server_args.dist_init_addr}, "
+            f"Launching sglang server (server_type={self._server_type}): "
+            f"tp_size={tp_size}, http=:{http_port}, dist_port={dist_port}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
         )
 
@@ -177,17 +248,12 @@ class SGLangServerWorker(Worker):
             pass
 
         ctx = mp.get_context("spawn")
-        parent_pipe, child_pipe = ctx.Pipe(duplex=False)
-        self._ready_pipe = parent_pipe
         proc = ctx.Process(
             target=_run_sglang_server,
-            args=(asdict(server_args), child_pipe),
+            args=(self._server_type, server_kwargs, dist_port, launch_router),
             daemon=False,
         )
         proc.start()
-        # We hand the write end to the child; close ours so the read end
-        # signals EOF if the child dies before sending anything.
-        child_pipe.close()
 
         self._server_proc = proc
         self._server_port = http_port
@@ -196,8 +262,19 @@ class SGLangServerWorker(Worker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
+        # multimodal_gen (VLA) warmup is heavier than an LLM, so it gets a
+        # longer default. Overridable via rollout.sglang.spawn_timeout.
+        default_spawn_timeout = 1800.0 if self._server_type == "embodied" else 300.0
+        spawn_timeout = float(
+            self._cfg.rollout.sglang.get("spawn_timeout", default_spawn_timeout)
+        )
         try:
-            _wait_for_http_health(self._advertise_host, http_port)
+            _wait_for_http_health(
+                self._advertise_host,
+                http_port,
+                spawn_timeout,
+                is_alive=lambda: self._server_proc.is_alive(),
+            )
         except RuntimeError as e:
             self.log_error(f"sglang server failed to become healthy: {e!r}")
             self.shutdown()
@@ -243,119 +320,3 @@ class SGLangServerWorker(Worker):
             proc.join(timeout=5)
         self._server_proc = None
         self._server_port = None
-
-
-def _run_sglang_mmgen_server(server_args_kwargs: dict) -> None:
-    """Child-process entrypoint: launch one ``sglang.multimodal_gen`` server.
-
-    Mirrors ``_run_sglang_server`` (SRT language model) above but drives the
-    ``sglang.multimodal_gen`` ``launch_server`` (diffusion / VLA pipeline; no
-    ``pipe_finish_writer``). The child inherits the parent (Ray actor)
-    stdout/stderr, so sglang's serve logs stream to the actor's log stream
-    rather than a separate serve-log file.
-    """
-    # Own process group so SIGTERM via os.killpg(pid) reaches the serve tree,
-    # not the Ray actor.
-    try:
-        os.setpgrp()
-    except OSError:
-        pass
-
-    from sglang.multimodal_gen.runtime.launch_server import launch_server
-    from sglang.multimodal_gen.runtime.server_args import (
-        ServerArgs,
-        set_global_server_args,
-    )
-
-    server_args = ServerArgs.from_kwargs(**server_args_kwargs)
-    set_global_server_args(server_args)
-
-    with no_proxy_env():
-        # Blocks until interrupted; tears down its own scheduler workers on
-        # exit. The parent kills the whole process group on shutdown.
-        launch_server(server_args, launch_http_server=True)
-
-
-class SGLangmmgenServerWorker(SGLangServerWorker):
-    """Worker that owns one multimodal ``sglang serve`` subprocess.
-
-    Lifecycle surface mirrors :class:`SGLangServerWorker`
-    (``init_server`` / ``is_healthy`` / ``shutdown`` / ``get_server_url``);
-    only the launch mechanism differs (multimodal in-process launcher).
-    """
-
-    # ------------------------------------------------------------------
-    # Lifecycle (overrides — spawn the multimodal in-process launcher)
-    # ------------------------------------------------------------------
-    def init_server(self) -> None:
-        """Spawn the multimodal sglang server subprocess and wait /health."""
-        assert self._server_proc is None, (
-            "multimodal_gen sglang server already initialized."
-        )
-
-        # The sglang router only forwards fixed LLM endpoints
-        # (/generate, /v1/chat/completions, ...), not the multimodal_gen model
-        # endpoint /v1/actions/generations, so it is unsupported here.
-        if self._cfg.rollout.sglang.get("launch_router", False):
-            raise RuntimeError(
-                "launch_router is not supported for the multimodal sglang "
-                "server: the sglang router only forwards fixed endpoints "
-                "(/generate, /v1/chat/completions, ...), not the dreamzero "
-                "action endpoint /v1/actions/generations. Set "
-                "rollout.sglang.launch_router: false (rollout workers hit "
-                "their rank-assigned server URL directly)."
-            )
-
-        http_port = self.acquire_free_port()
-        master_port = self.acquire_free_port()
-
-        # Localhost calls must never tunnel through an upstream proxy.
-        _local_hosts = "127.0.0.1,localhost,::1"
-        _no_proxy = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
-        if not any(h in _no_proxy for h in ("127.0.0.1", "localhost")):
-            os.environ["NO_PROXY"] = (
-                f"{_no_proxy},{_local_hosts}".strip(",") if _no_proxy else _local_hosts
-            )
-
-        # Forward the ``rollout.sglang.server`` block verbatim to
-        # ServerArgs.from_kwargs; fill the per-rank ports here.
-        from sglang.multimodal_gen.runtime.server_args import ServerArgs
-
-        server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}
-        server_kwargs["host"] = self._bind_host
-        server_kwargs["port"] = http_port
-        server_kwargs["master_port"] = master_port
-        server_args = ServerArgs.from_kwargs(**server_kwargs)
-
-        env = os.environ.copy()
-        env.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
-        self.log_info(
-            f"multimodal_gen sglang serve: launching in-process "
-            f"pipeline={server_args.pipeline_class_name} "
-            f"backend={server_args.backend} tp_size={server_args.tp_size} "
-            f"http=:{http_port} master_port={master_port} "
-            f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
-        )
-
-        ctx = mp.get_context("spawn")
-        proc = ctx.Process(
-            target=_run_sglang_mmgen_server,
-            args=(server_kwargs,),
-            daemon=False,
-        )
-        proc.start()
-        self._server_proc = proc
-        self._server_port = http_port
-        if self._advertise_host is None:
-            self._advertise_host = ray.util.get_node_ip_address()
-
-        spawn_timeout = float(self._cfg.rollout.sglang.get("spawn_timeout", 1800.0))
-        try:
-            _wait_for_http_health(
-                self._advertise_host, self._server_port, spawn_timeout
-            )
-        except RuntimeError as e:
-            self.log_error(f"multimodal sglang server failed to become healthy: {e!r}")
-            self.shutdown()
-            raise
-        self.log_info(f"multimodal sglang server ready at {self.get_server_url()}")

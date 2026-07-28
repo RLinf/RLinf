@@ -49,7 +49,7 @@ from rlinf.scheduler import (
 from rlinf.scheduler.placement import PlacementStrategy
 
 from .router_worker import SGLangRouterWorker
-from .server_worker import SGLangmmgenServerWorker, SGLangServerWorker
+from .server_worker import SGLangServerWorker
 
 
 def launch_sglang_router_and_server(
@@ -136,18 +136,14 @@ def launch_sglang_router_and_server(
                 node_group=rollout_node_group,
             )
 
-        # Pick the sglang server class by ``server_type``: the kind of model
-        # this server serves. Select the server_args accordingly to start the
-        # sglang server.
-        server_type = router_server_args.get("server_type", "srt")
-        if server_type == "srt":
-            server_worker_cls = SGLangServerWorker
-        elif server_type == "embodied":
-            server_worker_cls = SGLangmmgenServerWorker
-
-        server_group = server_worker_cls.create_group(
+        # One worker class serves both sglang model families; ``server_type``
+        # declares which one — ``"srt"`` (language model) or ``"embodied"``
+        # (VLA/diffusion), any other value errors. Defaults to ``"srt"`` so a
+        # plain language-model rollout need not set it.
+        server_group = SGLangServerWorker.create_group(
             config=config,
             sglang_cfg=router_server_args.server,
+            server_type=router_server_args.get("server_type", "srt"),
         ).launch(
             cluster=cluster,
             name=router_server_args.group_name,
