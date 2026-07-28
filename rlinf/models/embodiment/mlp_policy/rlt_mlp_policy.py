@@ -37,6 +37,7 @@ class RLTMLPPolicy(MLPPolicy):
         add_q_head: bool = True,
         q_head_type: str = "default",
         fixed_std: float = 0.002,
+        num_q_heads: int = 2,
     ):
         if not add_q_head:
             raise ValueError(
@@ -67,6 +68,7 @@ class RLTMLPPolicy(MLPPolicy):
             add_q_head=add_q_head,
             q_head_type=q_head_type,
             critic_obs_dim=critic_obs_dim,
+            num_q_heads=num_q_heads,
         )
         self.z_dim = z_dim
         self.proprio_dim = proprio_dim

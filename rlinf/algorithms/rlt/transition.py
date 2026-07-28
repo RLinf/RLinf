@@ -18,6 +18,7 @@ from rlinf.envs import SupportedEnvType
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
 RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
+RLT_OPTIONAL_OBS_KEYS = ("base_chunks",)
 RLT_TRANSITION_PREFIX = "rlt_transition_"
 
 
@@ -52,9 +53,12 @@ def extract_rlt_obs_from_forward_inputs(
             "rollout.rlt_feature_model is configured and the rollout worker "
             "populates RLT features."
         )
-    return copy_dict_tensor(
-        {key: forward_inputs[f"{prefix}{key}"] for key in RLT_OBS_KEYS}
-    )
+    obs = {key: forward_inputs[f"{prefix}{key}"] for key in RLT_OBS_KEYS}
+    for key in RLT_OPTIONAL_OBS_KEYS:
+        prefixed_key = f"{prefix}{key}"
+        if prefixed_key in forward_inputs:
+            obs[key] = forward_inputs[prefixed_key]
+    return copy_dict_tensor(obs)
 
 
 def update_rlt_transitions(

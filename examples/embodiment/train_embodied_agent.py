@@ -61,6 +61,14 @@ def main(cfg) -> None:
         from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACFSDPPolicy
 
         actor_worker_cls = RLTACFSDPPolicy
+    elif cfg.algorithm.loss_type == "expo_ft_ac":
+        if use_training_pipeline:
+            raise ValueError(
+                "runner.use_training_pipeline=True is not supported for expo_ft_ac."
+            )
+        from rlinf.workers.actor.fsdp_expo_ft_policy_worker import ExpoFTACFSDPPolicy
+
+        actor_worker_cls = ExpoFTACFSDPPolicy
     elif cfg.algorithm.loss_type == "embodied_dagger":
         if use_training_pipeline:
             raise ValueError(
