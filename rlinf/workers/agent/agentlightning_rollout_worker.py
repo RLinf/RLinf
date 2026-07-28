@@ -67,7 +67,7 @@ class AgentLightningRolloutWorker(Worker):
 
     def init_worker(
         self,
-        store: "LightningStore",
+        store_endpoint: str,
         adapter: "TraceToTripletBase",
         server_addresses: Optional[list[str]] = None,
         group_size: int = 1,
@@ -75,15 +75,9 @@ class AgentLightningRolloutWorker(Worker):
         reward_fillna_value: float = 0.0,
         is_eval_mode: bool = False,
     ):
-        from agentlightning.llm_proxy import LLMProxy
+        from agentlightning.store import LightningStoreClient
 
-        self.store = store
-        self.llm_proxy = LLMProxy(
-            port=self.acquire_free_port(),
-            model_list=[],
-            store=store,
-        )
-        self.llm_proxy.start()
+        self.store = LightningStoreClient(store_endpoint)
         self.adapter = adapter
         self.server_addresses = server_addresses or []
         self.group_size = 1 if is_eval_mode else group_size
@@ -160,7 +154,7 @@ class AgentLightningRolloutWorker(Worker):
         self._total_tasks_queued += len(rollouts)
 
     async def _update_proxy_server(self):
-        from agentlightning.llm_proxy import ModelConfig
+        from agentlightning.llm_proxy import LLMProxy, ModelConfig
 
         model_name = (
             os.path.basename(str(self.model))
@@ -168,22 +162,30 @@ class AgentLightningRolloutWorker(Worker):
             else str(self.model)
         )
 
-        self.llm_proxy.update_model_list(
-            [
-                ModelConfig(
-                    {
-                        "model_name": model_name,
-                        "litellm_params": {
-                            "model": "openai/" + model_name,
-                            "api_base": f"http://{address}/v1/",
-                            "api_key": "sk-placeholder",
-                        },
-                    }
-                )
-                for address in self.server_addresses
-            ],
+        model_list = [
+            ModelConfig(
+                {
+                    "model_name": model_name,
+                    "litellm_params": {
+                        "model": "openai/" + model_name,
+                        "api_base": f"http://{address}/v1/",
+                        "api_key": "sk-placeholder",
+                    },
+                }
+            )
+            for address in self.server_addresses
+        ]
+
+        # Select the port immediately before binding. Initializing the rollout
+        # worker can be followed by a lengthy checkpoint conversion, during
+        # which a port that was free at initialization may be claimed by
+        # another job on a shared CI runner.
+        self.llm_proxy = LLMProxy(
+            port=self.acquire_free_port(),
+            model_list=model_list,
+            store=self.store,
         )
-        await self.llm_proxy.restart()
+        await self.llm_proxy.start()
 
     async def _change_to_triplets(self, rollout: "Rollout") -> "RolloutLegacy":
         from agentlightning import RolloutLegacy

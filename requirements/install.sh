@@ -81,7 +81,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1088,6 +1088,56 @@ clone_or_reuse_repo() {
 }
 
 #=======================EMBODIED INSTALLERS=======================
+assert_transformers_version() {
+    local expected="$1"
+    python - "$expected" <<'EOF'
+from importlib.metadata import version
+import sys
+
+expected = sys.argv[1]
+actual = version("transformers")
+if actual != expected:
+    raise SystemExit(f"Expected transformers=={expected}, found {actual}.")
+EOF
+}
+
+install_qwen3_vl_sglang_deps() {
+    local missing_tags=()
+    [ -z "$TORCH_VERSION" ] && missing_tags+=("--torch 2.8.0")
+    [ -z "$SGLANG_VERSION" ] && missing_tags+=("--sglang 0.5.4")
+    [ -z "$TRANSFORMERS_VERSION" ] && missing_tags+=("--transformers 4.57.1")
+    if [ ${#missing_tags[@]} -ne 0 ]; then
+        echo "[install.sh] Qwen3-VL SGLang reward serving requires explicit install tags: ${missing_tags[*]}" >&2
+        exit 1
+    fi
+
+    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    python - "$TORCH_VERSION" "$SGLANG_VERSION" "$TRANSFORMERS_VERSION" <<'EOF'
+from importlib.metadata import version
+import sys
+
+from packaging.version import Version
+import sglang_router
+import torch
+
+expected_torch, expected_sglang, expected_transformers = sys.argv[1:4]
+actual_torch = torch.__version__.split("+", 1)[0]
+if actual_torch != expected_torch:
+    raise SystemExit(f"Expected torch=={expected_torch}, found {torch.__version__}.")
+actual_sglang = Version(version("sglang"))
+expected_sglang_version = Version(expected_sglang)
+if actual_sglang != expected_sglang_version:
+    raise SystemExit(f"Expected sglang=={expected_sglang_version}, found {actual_sglang}.")
+actual_transformers = version("transformers")
+if actual_transformers != expected_transformers:
+    raise SystemExit(
+        f"Expected transformers=={expected_transformers}, found {actual_transformers}."
+    )
+version("sglang-router")
+assert sglang_router is not None
+EOF
+}
+
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
@@ -1292,6 +1342,13 @@ install_openpi_model() {
             uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
             install_flash_attn
             install_robocasa_env
+            ;;
+        robocasa365)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            install_flash_attn
+            install_robocasa365_env
             ;;
         robotwin)
             create_and_sync_venv
@@ -1622,7 +1679,7 @@ install_qwen3_vl_model() {
             ;;
     esac
 
-    uv pip install --upgrade "transformers>=4.57.1,<=4.57.6" "tokenizers>=0.22,<0.23"
+    install_qwen3_vl_sglang_deps
 
     install_flash_attn
 }
@@ -1892,6 +1949,52 @@ install_robocasa_env() {
     uv pip install -e "$robocasa_dir"
     uv pip install protobuf==6.33.0
     python -m robocasa.scripts.setup_macros
+}
+
+install_robocasa365_env() {
+    local robocasa_dir
+    local assets_path
+    local macros_private_path
+
+    robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/robocasa/robocasa.git -b main)
+    assets_path="$robocasa_dir/robocasa/models/assets"
+    macros_private_path="$robocasa_dir/robocasa/macros_private.py"
+
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        mkdir -p "$ROBOCASA_ASSETS_PATH"
+
+        if [[ -d "$assets_path" && ! -L "$assets_path" ]]; then
+            echo "[install_robocasa365_env] Copying RoboCasa assets from $assets_path to $ROBOCASA_ASSETS_PATH" >&2
+            cp -an "$assets_path/." "$ROBOCASA_ASSETS_PATH/"
+        fi
+
+        rm -rf "$assets_path"
+    fi
+
+    if [[ -z "${ROBOCASA_PATH:-}" && -d "$robocasa_dir/.git" ]]; then
+        git -C "$robocasa_dir" fetch origin main >&2
+        git -C "$robocasa_dir" checkout main >&2 || git -C "$robocasa_dir" checkout -B main origin/main >&2
+        git -C "$robocasa_dir" pull --ff-only origin main >&2
+    fi
+
+    uv pip install -e "$robocasa_dir"
+    uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+    uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
+    uv pip install --no-deps mujoco==3.3.1
+    uv pip install protobuf==6.33.0
+
+    if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
+        rm -rf "$assets_path"
+        ln -s "$ROBOCASA_ASSETS_PATH" "$assets_path"
+
+        echo "[install_robocasa365_env] Linked $assets_path -> $ROBOCASA_ASSETS_PATH" >&2
+    fi
+
+    if [[ -f "$macros_private_path" ]]; then
+        echo "[install_robocasa365_env] Reusing existing $macros_private_path" >&2
+    else
+        python -m robocasa.scripts.setup_macros
+    fi
 }
 
 install_franka_env() {
