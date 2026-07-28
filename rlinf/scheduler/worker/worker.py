@@ -1299,28 +1299,45 @@ class Worker(metaclass=WorkerMeta):
         self._timer_metrics.clear()
         return metrics
 
+    @property
+    def _trace_category(self) -> str:
+        """The trace event category of this worker, i.e., its root group name."""
+        if getattr(self, "_worker_address", None) is not None:
+            return self._worker_address.root_group_name
+        return "worker"
+
     @contextmanager
-    def worker_timer(self, tag: Optional[str] = None):
+    def worker_timer(self, tag: Optional[str] = None, trace: bool = True):
         """Context manager to time the execution of a worker function.
 
         Args:
             tag (str): The name of the timer to record the execution time for. Default is the current function name.
+            trace (bool): Whether to also emit a trace event; no-op if the tracer is not initialized.
         """
         if tag is None:
             frame_num = 2
             frame = inspect.stack()[frame_num]
             tag = frame.function
         assert tag is not None, "Timer tag must be provided."
+        if trace:
+            # Lazy import to avoid a circular import (Tracer lives under ..manager).
+            from ..manager import Tracer
+        else:
+            Tracer = None
+        if Tracer is not None:
+            Tracer.trace_begin(tag, cat=self._trace_category)
         try:
             start_time = time.perf_counter()
             yield
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+            if Tracer is not None:
+                Tracer.trace_end(tag, cat=self._trace_category)
 
     @staticmethod
-    def timer(tag: Optional[str] = None):
-        """Decorator to time a worker function and emit a profiling annotation."""
+    def timer(tag: Optional[str] = None, trace: bool = True):
+        """Decorator to time a worker function, emitting a profiling annotation and optionally a trace event."""
 
         def decorator(func):
             label = tag or func.__name__
@@ -1328,7 +1345,7 @@ class Worker(metaclass=WorkerMeta):
 
                 @functools.wraps(func)
                 async def wrapper(self, *args, **kwargs):
-                    with self.worker_timer(label):
+                    with self.worker_timer(label, trace=trace):
                         with AcceleratorUtil.profiling_range(
                             self._accelerator_type, label
                         ):
@@ -1338,7 +1355,7 @@ class Worker(metaclass=WorkerMeta):
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                with self.worker_timer(label):
+                with self.worker_timer(label, trace=trace):
                     with AcceleratorUtil.profiling_range(self._accelerator_type, label):
                         return func(self, *args, **kwargs)
 
