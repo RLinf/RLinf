@@ -56,7 +56,7 @@ algorithm:
   enable_drq: False
   q_head_type: ${actor.model.q_head_type}
   bootstrap_type: standard
-  gamma: 0.96
+  gamma: 0.99
   tau: 0.005
 
   # RLT actor objective: -q_weight * Q + bc_weight * BC.

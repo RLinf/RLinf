@@ -241,7 +241,7 @@ class RLTACLossMixin:
         )
 
         with torch.no_grad():
-            next_actions, _, _ = self.model(
+            next_actions, _, _ = self.target_model(
                 forward_type=ForwardType.SAC,
                 obs=next_obs,
             )
