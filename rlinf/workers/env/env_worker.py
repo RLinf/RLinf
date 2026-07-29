@@ -77,7 +77,7 @@ class EnvWorker(Worker):
         self.stage_num = self.cfg.rollout.pipeline_stage_num
         self.enable_rlt = OmegaConf.select(
             self.cfg, "algorithm.loss_type", default=""
-        ) in {"rlt_ac", "expo_ft_ac"}
+        ) in {"rlt_ac", "rlt_td3", "expo_ft_ac"}
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
