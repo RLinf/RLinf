@@ -194,10 +194,9 @@ class SGLangServerWorker(Worker):
         server_kwargs["host"] = self._bind_host
         server_kwargs["port"] = http_port
 
-        tp_size = server_kwargs.get("tp_size") or server_kwargs.get("tp-size")
         self.log_info(
             f"Launching sglang server (server_type={self._server_type}): "
-            f"tp_size={tp_size}, http=:{http_port}, dist_port={dist_port}, "
+            f"http=:{http_port}, dist_port={dist_port}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
         )
 
@@ -226,12 +225,6 @@ class SGLangServerWorker(Worker):
             pass
 
         ctx = mp.get_context("spawn")
-        # One-shot readiness pipe for the SRT path: the child hands its write
-        # end to sglang as ``pipe_finish_writer`` (and writes the launch
-        # exception there if launch_server raises). The parent doesn't read it
-        # — readiness is /health below, and ``is_alive`` catches a dead child —
-        # so it's kept as a local (not on the instance) just so the read end
-        # stays open while the child may write to it, then released.
         parent_pipe, child_pipe = ctx.Pipe(duplex=False)
         self._ready_pipe = parent_pipe
         proc = ctx.Process(
