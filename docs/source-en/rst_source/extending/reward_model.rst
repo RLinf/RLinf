@@ -316,25 +316,38 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env maniskill_libero --vlm-reward
+   bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-Then configure the reward section to use ``history_vlm``. The QwenTrend example
-uses ``reward_mode: history_buffer`` so the env worker maintains per-env history
-windows and sends them to the reward worker only when a valid window is available:
+Then configure the reward section to use ``history_vlm``.
+For local Hugging Face inference, leave ``reward.worker_type`` unset.
+For OpenAI-compatible API inference, set ``reward.worker_type: api`` and provide
+``reward.api.api_base`` and ``reward.api.model``. If RLinf should launch a
+Ray-managed SGLang server/router for this API, leave ``reward.api.api_base`` empty
+and provide the standard top-level ``router_server_args`` block described in
+:doc:`../guides/sglang_server`.
+The QwenTrend example still uses ``reward_mode: history_buffer``, so the
+environment collects the image history window before the reward worker scores it:
 
 .. code-block:: yaml
 
    reward:
      use_reward_model: true
+     worker_type: api
      group_name: "RewardGroup"
      reward_mode: history_buffer
      history_reward_assign: true
      reward_weight: 1.0
      env_reward_weight: 0.0
+     api:
+       api_base: null
+       model: Qwen3-VL-4B-Instruct
+       sampling_params:
+         max_tokens: 16
+         temperature: 0.0
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "history_vlm"
-       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
        gt_success_bonus: 20.0
        precision: "bf16"
        input_builder_name: qwentrend_input_builder
@@ -356,24 +369,28 @@ windows and sends them to the reward worker only when a valid window is availabl
              - extra_view_images
            input_on_done: false
        interval_reward: 0.0
-       infer_micro_batch_size: 64
-       max_new_tokens: 16
-       do_sample: false
-       temperature: 0.0
-       use_chat_template: true
 
 Important fields:
 
+- ``worker_type: api`` selects the OpenAI-compatible API reward worker.
+- ``reward.api.api_base`` points to an external OpenAI-compatible endpoint. Leave it empty only when using the Ray-managed SGLang path.
+- ``router_server_args`` follows the standard SGLang server/router config when RLinf launches SGLang for the reward API.
+- ``cluster.component_placement.reward_server`` decides where the SGLang server workers run when ``router_server_args`` is used.
 - ``history_buffers`` defines which observation keys are cached, the window length, and the minimum valid history length.
 - ``input_builder_name`` converts the history window into dual-view VLM inputs.
 - ``reward_parser_name`` maps generated labels to scalar rewards using ``positive_reward``, ``negative_reward``, ``unclear_reward``, and ``invalid_reward``.
 - ``gt_success_bonus`` optionally adds a success bonus from environment info.
 
+When ``reward.api.api_base`` is empty and ``router_server_args`` is present,
+``train_embodied_agent.py`` launches the Ray-managed SGLang server/router,
+registers the servers with the router, and writes the resolved endpoint to
+``reward.api.api_base`` before the reward worker is created.
+
 Launch the MLP RL run with:
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
 
 4. Summary
 ^^^^^^^^^^

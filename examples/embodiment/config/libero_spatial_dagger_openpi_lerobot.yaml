@@ -46,7 +46,7 @@ algorithm:
     init_beta: 1.0
     beta_schedule: "exponential" # beta_t = beta_{t-1} * beta_decay
     beta_decay: 0.995
-    # only_save_expert controls dagger logic. 
+    # only_save_expert controls dagger logic.
     # If set False, all data will be re-labeled by expert and saved (classic-dagger)
     # If set True, only expert data will be saved (hg-dagger, always used in real-world exp)
     only_save_expert: False
