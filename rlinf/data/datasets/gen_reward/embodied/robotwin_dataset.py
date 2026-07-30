@@ -19,7 +19,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from rlinf.envs.gen_reward.datasets.embodied.lerobot_dataset import (
+from rlinf.data.datasets.gen_reward.embodied.lerobot_dataset import (
     LeRobotImageConditionedDataset,
 )
 

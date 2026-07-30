@@ -43,8 +43,6 @@ algorithm:
 
   group_size: 8
   reward_coef: 1.0
-  rollout_epoch: 2
-  eval_rollout_epoch: 1
 
   reward_type: action_level
   logprob_type: token_level
@@ -78,19 +76,6 @@ algorithm:
   nft_gather_type: action_level
   nft_energy_reduction: mean
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 1.0
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-    add_BOS: False
-  length_params:
-    max_new_token: null
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
   enable_offload: False
@@ -99,6 +84,7 @@ env:
     group_size: ${algorithm.group_size}
     max_episode_steps: 1
     max_steps_per_rollout_epoch: 16
+    rollout_epoch: 2
     video_cfg:
       save_video: True
       fps: 10
@@ -121,6 +107,9 @@ env:
       device: "cuda"
       batch_size: 4
       temperature: 2.0
+
+  eval:
+    rollout_epoch: 1
 
 rollout:
   group_name: "RolloutGroup"

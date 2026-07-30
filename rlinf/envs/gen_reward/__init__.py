@@ -26,7 +26,7 @@ from rlinf.envs.gen_reward.utils import (
 
 def build_reward_dataset(cfg: Any) -> Any:
     dataset_type = normalize_type(cfg_require(cfg, "type"))
-    module = import_module(f"rlinf.envs.gen_reward.datasets.{dataset_type}")
+    module = import_module(f"rlinf.data.datasets.gen_reward.{dataset_type}")
     return module.DATASET_CLS.from_config(cfg)
 
 

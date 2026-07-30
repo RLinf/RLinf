@@ -139,20 +139,9 @@ class Wan22Model(torch.nn.Module, BasePolicy):
 
     def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
         del kwargs
-        batch_size = forward_inputs["nft_x0"].shape[0]
-        num_train_timesteps = min(
-            max(1, int(self.config.num_steps * self.config.timestep_fraction)),
-            self.config.num_steps,
+        raise NotImplementedError(
+            "Wan2.2 flow-grpo is unavailable now. Use rl_mode='nft'."
         )
-        return {
-            "logprobs": torch.zeros(
-                batch_size,
-                num_train_timesteps,
-                device=forward_inputs["nft_x0"].device,
-                dtype=forward_inputs["nft_x0"].dtype,
-            ),
-            "values": None,
-        }
 
     def _prepare_nft_forward_inputs(
         self,

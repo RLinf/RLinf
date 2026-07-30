@@ -717,40 +717,51 @@ class MultiStepRolloutWorker(Worker):
                 merge_fn=self._merge_obs_batches,
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
-            if self.collect_final_values or self.enable_opd:
-                actions, result = self._predict_rollout_actions(
-                    env_output["obs"],
-                    final_obs=env_output.get("final_obs", None),
-                    rlt_switch_flags=env_output.get("rlt_switch_flags", None),
-                    intervene_requested=env_output.get("intervene_flags", None),
-                )
-
-                if self.enable_opd:
-                    # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
-                    rollout_result = self._build_rollout_result(
-                        actions,
-                        result,
-                        final_obs=env_output.get("final_obs", None),
-                    )
-                else:
-                    rollout_result = RolloutResult(
-                        actions=actions,
-                        prev_values=(
-                            result["prev_values"] if self.collect_prev_infos else None
-                        ),
-                        bootstrap_values=self.get_bootstrap_values(
-                            env_output.get("final_obs", None)
-                        ),
-                        forward_inputs=(
-                            result["forward_inputs"]
-                            if self.rlt_feature_model is not None
-                            else {}
-                        ),
-                    )
-            else:
+            if not self.collect_final_values:
                 batch_size = self._infer_env_batch_size(env_output)
                 rollout_result = RolloutResult(
                     versions=torch.zeros(batch_size, 1, dtype=torch.float32),
+                )
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=rollout_result,
+                    tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
+                    batch_size=self.train_batch_size,
+                    split_fn=self._split_rollout_result,
+                )
+                continue
+
+            actions, result = self._predict_rollout_actions(
+                env_output["obs"],
+                final_obs=env_output.get("final_obs", None),
+                rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                intervene_requested=env_output.get("intervene_flags", None),
+            )
+
+            if self.enable_opd:
+                # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
+                rollout_result = self._build_rollout_result(
+                    actions,
+                    result,
+                    final_obs=env_output.get("final_obs", None),
+                )
+            else:
+                rollout_result = RolloutResult(
+                    actions=actions,
+                    prev_values=(
+                        result["prev_values"] if self.collect_prev_infos else None
+                    ),
+                    bootstrap_values=self.get_bootstrap_values(
+                        env_output.get("final_obs", None)
+                    ),
+                    forward_inputs=(
+                        result["forward_inputs"]
+                        if self.rlt_feature_model is not None
+                        else {}
+                    ),
                 )
             self.send_to(
                 group_name=self.cfg.env.group_name,

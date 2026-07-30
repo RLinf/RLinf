@@ -274,6 +274,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
 
             ref_model = self.model_provider_func()
             ref_config = getattr(ref_model, "config", None)
+            # Compiling the reference model adds repeated compilation and cache overhead.
             if hasattr(ref_config, "compile_transformer_forward"):
                 ref_config.compile_transformer_forward = False
             ref_model.load_state_dict(self.get_rollout_state_dict(), strict=False)
@@ -383,55 +384,37 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         advantages = self._postprocess_advantages(advantages)
         # loss
         delta_e = e_pos - e_neg
-        loss_form = self.cfg.algorithm.get("nft_loss_form", "dpo")
         clip_frac = 0.0
-        clip_loss_frac = None
+        e_pos_clip = None
+        e_neg_clip = None
         clip_ratio = self.cfg.algorithm.get("nft_clip_ratio", None)
-        if loss_form == "dpo":
-            dpo_beta = float(self.cfg.algorithm.get("dpo_beta", 1.0))
-            y = advantages * 2.0 - 1.0
-            logit = (dpo_beta / 2.0) * y * delta_e
-            loss = masked_mean(F.softplus(logit), loss_mask)
-        elif loss_form == "mse":
-            beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
-            loss_scale = float(self.cfg.algorithm.get("adv_clip_max", 1.0)) / beta
-            loss_elem = (advantages * e_pos + (1.0 - advantages) * e_neg) * loss_scale
-            if clip_ratio is not None:
-                delta_norm = self._reduce_nft_tensor(
-                    delta_v, gather_type, "norm", keepdim=True
-                ).clamp_min(1e-8)
-                old_norm = self._reduce_nft_tensor(
-                    v_old, gather_type, "norm", keepdim=True
-                ).clamp_min(1e-8)
-                clip_coef = (float(clip_ratio) * old_norm / delta_norm).clamp(max=1.0)
-                clip_frac = (clip_coef < 1.0).float().mean().item()
-                delta_v_clip = torch.where(
-                    clip_coef < 1.0, (delta_v * clip_coef).detach(), delta_v
-                )
-                v_pos_clip = v_old + beta * delta_v_clip
-                v_neg_clip = v_old - beta * delta_v_clip
-                _, pred_pos_clip = self._compute_nft_target_and_pred(
-                    forward_inputs, target_space, x_t, v_pos_clip, t_bc, dt_bc, sigma_i
-                )
-                _, pred_neg_clip = self._compute_nft_target_and_pred(
-                    forward_inputs, target_space, x_t, v_neg_clip, t_bc, dt_bc, sigma_i
-                )
-                e_pos_clip = self._reduce_nft_tensor(
-                    (pred_pos_clip - target) ** 2 * w_pos, gather_type, energy_reduction
-                )
-                e_neg_clip = self._reduce_nft_tensor(
-                    (pred_neg_clip - target) ** 2 * w_neg, gather_type, energy_reduction
-                )
-                clip_loss_elem = (
-                    advantages * e_pos_clip + (1.0 - advantages) * e_neg_clip
-                ) * loss_scale
-                clip_loss_frac = masked_mean(
-                    (loss_elem < clip_loss_elem).float(), loss_mask
-                ).item()
-                loss_elem = torch.maximum(loss_elem, clip_loss_elem)
-            loss = masked_mean(loss_elem, loss_mask)
-        else:
-            raise ValueError(f"Unsupported nft_loss_form: {loss_form}")
+        loss_form = self.cfg.algorithm.get("nft_loss_form", "dpo")
+        if loss_form == "mse" and clip_ratio is not None:
+            e_pos_clip, e_neg_clip, clip_frac = self._compute_nft_clipped_energies(
+                forward_inputs=forward_inputs,
+                target_space=target_space,
+                x_t=x_t,
+                delta_v=delta_v,
+                v_old=v_old,
+                t_bc=t_bc,
+                dt_bc=dt_bc,
+                sigma_i=sigma_i,
+                target=target,
+                w_pos=w_pos,
+                w_neg=w_neg,
+                gather_type=gather_type,
+                energy_reduction=energy_reduction,
+                clip_ratio=float(clip_ratio),
+            )
+        loss, clip_loss_frac = self._compute_nft_loss(
+            e_pos,
+            e_neg,
+            delta_e,
+            advantages,
+            loss_mask,
+            e_pos_clip=e_pos_clip,
+            e_neg_clip=e_neg_clip,
+        )
         # metrics
         with torch.no_grad():
             delta_v_norm = self._reduce_nft_tensor(delta_v, gather_type, "norm")
@@ -454,6 +437,112 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             if clip_loss_frac is not None:
                 metrics_data["actor/clip_loss_frac"] = clip_loss_frac
         return loss, metrics_data
+
+    def _compute_nft_clipped_energies(
+        self,
+        *,
+        forward_inputs: dict,
+        target_space: str,
+        x_t: torch.Tensor,
+        delta_v: torch.Tensor,
+        v_old: torch.Tensor,
+        t_bc: torch.Tensor,
+        dt_bc: torch.Tensor,
+        sigma_i: torch.Tensor,
+        target: torch.Tensor,
+        w_pos: torch.Tensor | float,
+        w_neg: torch.Tensor | float,
+        gather_type: str,
+        energy_reduction: str,
+        clip_ratio: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, float]:
+        """Compute clipped candidate energies for the NFT MSE objective."""
+        delta_norm = self._reduce_nft_tensor(
+            delta_v, gather_type, "norm", keepdim=True
+        ).clamp_min(1e-8)
+        old_norm = self._reduce_nft_tensor(
+            v_old, gather_type, "norm", keepdim=True
+        ).clamp_min(1e-8)
+        clip_coef = (clip_ratio * old_norm / delta_norm).clamp(max=1.0)
+        clip_frac = (clip_coef < 1.0).float().mean().item()
+        delta_v_clip = torch.where(
+            clip_coef < 1.0,
+            (delta_v * clip_coef).detach(),
+            delta_v,
+        )
+        beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
+        v_pos_clip = v_old + beta * delta_v_clip
+        v_neg_clip = v_old - beta * delta_v_clip
+        _, pred_pos_clip = self._compute_nft_target_and_pred(
+            forward_inputs,
+            target_space,
+            x_t,
+            v_pos_clip,
+            t_bc,
+            dt_bc,
+            sigma_i,
+        )
+        _, pred_neg_clip = self._compute_nft_target_and_pred(
+            forward_inputs,
+            target_space,
+            x_t,
+            v_neg_clip,
+            t_bc,
+            dt_bc,
+            sigma_i,
+        )
+        e_pos_clip = self._reduce_nft_tensor(
+            (pred_pos_clip - target) ** 2 * w_pos,
+            gather_type,
+            energy_reduction,
+        )
+        e_neg_clip = self._reduce_nft_tensor(
+            (pred_neg_clip - target) ** 2 * w_neg,
+            gather_type,
+            energy_reduction,
+        )
+        return e_pos_clip, e_neg_clip, clip_frac
+
+    def _compute_nft_loss(
+        self,
+        e_pos: torch.Tensor,
+        e_neg: torch.Tensor,
+        delta_e: torch.Tensor,
+        advantages: torch.Tensor,
+        loss_mask: torch.Tensor,
+        *,
+        e_pos_clip: torch.Tensor | None = None,
+        e_neg_clip: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, float | None]:
+        """Aggregate NFT energies into the configured objective."""
+        loss_form = self.cfg.algorithm.get("nft_loss_form", "dpo")
+        if loss_form == "dpo":
+            dpo_beta = float(self.cfg.algorithm.get("dpo_beta", 1.0))
+            y = advantages * 2.0 - 1.0
+            logit = (dpo_beta / 2.0) * y * delta_e
+            return masked_mean(F.softplus(logit), loss_mask), None
+
+        if loss_form == "mse":
+            beta = float(self.cfg.algorithm.get("nft_beta", 1.0))
+            loss_scale = float(self.cfg.algorithm.get("adv_clip_max", 1.0)) / beta
+            loss_elem = (advantages * e_pos + (1.0 - advantages) * e_neg) * loss_scale
+            clip_loss_frac = None
+            if e_pos_clip is not None or e_neg_clip is not None:
+                if e_pos_clip is None or e_neg_clip is None:
+                    raise ValueError(
+                        "Both positive and negative clipped NFT energies are required."
+                    )
+                clip_loss_elem = (
+                    advantages * e_pos_clip + (1.0 - advantages) * e_neg_clip
+                ) * loss_scale
+                clip_loss_frac = masked_mean(
+                    (loss_elem < clip_loss_elem).float(),
+                    loss_mask,
+                ).item()
+                loss_elem = torch.maximum(loss_elem, clip_loss_elem)
+            return masked_mean(loss_elem, loss_mask), clip_loss_frac
+
+        raise ValueError(f"Unsupported nft_loss_form: {loss_form}")
 
     def _postprocess_advantages(self, advantages: torch.Tensor) -> torch.Tensor:
         """Map advantages into [0, 1] to match NFT loss semantics (r=0 -> neg, r=1 -> pos).

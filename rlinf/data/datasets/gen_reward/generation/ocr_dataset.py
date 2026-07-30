@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rlinf.envs.gen_reward.datasets import TextDataset
+from rlinf.data.datasets.gen_reward import TextDataset
 from rlinf.envs.gen_reward.utils import cfg_get
 
 
