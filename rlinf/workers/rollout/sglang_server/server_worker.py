@@ -166,7 +166,11 @@ class SGLangServerWorker(Worker):
 
         self._server_proc: Optional[mp.Process] = None
         self._server_port: Optional[int] = None
+        self._ready_pipe = None
 
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 
@@ -229,14 +233,15 @@ class SGLangServerWorker(Worker):
         # so it's kept as a local (not on the instance) just so the read end
         # stays open while the child may write to it, then released.
         parent_pipe, child_pipe = ctx.Pipe(duplex=False)
+        self._ready_pipe = parent_pipe
         proc = ctx.Process(
             target=_run_sglang_server,
             args=(self._server_type, server_kwargs, dist_port, child_pipe),
             daemon=False,
         )
         proc.start()
-        # We handed the write end to the child; close ours so the read end
-        # signals EOF if the child dies before writing anything.
+        # We hand the write end to the child; close ours so the read end
+        # signals EOF if the child dies before sending anything.
         child_pipe.close()
 
         self._server_proc = proc
@@ -246,10 +251,6 @@ class SGLangServerWorker(Worker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
-        # multimodal_gen (VLA) warmup is heavier than an LLM, so it gets a
-        # longer default. (Not read from config — RLinf doesn't probe
-        # rollout.sglang here; the worker is config-block agnostic beyond
-        # ``sglang_cfg``.)
         spawn_timeout = 1800.0 if self._server_type == "embodied" else 300.0
         try:
             _wait_for_http_health(
@@ -262,9 +263,6 @@ class SGLangServerWorker(Worker):
             self.log_error(f"sglang server failed to become healthy: {e!r}")
             self.shutdown()
             raise
-        # The server is up; release the (unread) read end now that the child's
-        # one-shot pipe_finish_writer write has happened.
-        parent_pipe.close()
         self.log_info(f"sglang server ready at {self.get_server_url()}")
 
     def get_server_url(self) -> str:
