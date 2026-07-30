@@ -19,13 +19,13 @@ from typing import Any
 import numpy as np
 import torch
 
-from rlinf.envs.gen_reward.rewards import (
+from rlinf.envs.generation.rewards import (
     FRAME_LEVEL,
     VIDEO_LEVEL,
     VideoRewardBackendBase,
 )
-from rlinf.envs.gen_reward.rewards.generation.ocr import OCRScorer
-from rlinf.envs.gen_reward.utils import extract_quoted_text
+from rlinf.envs.generation.rewards.visual.ocr import OCRScorer
+from rlinf.envs.generation.utils import extract_quoted_text
 
 
 class VideoOCRRewardBackend(VideoRewardBackendBase):

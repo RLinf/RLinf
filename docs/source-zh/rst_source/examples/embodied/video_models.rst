@@ -8,7 +8,7 @@
    在 RLinf 中使用 Diffusion-NFT 训练视频生成模型。
 
 使用 RLinf 对 SD3 和 Wan2.2 生成模型进行 Diffusion-NFT 强化学习微调。该流程复用
-具身 runner，将图像/视频生成模型接入 ``actor.model``，并通过 ``gen_reward``
+具身 runner，将图像/视频生成模型接入 ``actor.model``，并通过 ``generation`` 环境
 对生成媒体进行一步式 reward 打分。
 
 概览
@@ -22,7 +22,7 @@
    .. grid-item-card:: 环境
       :text-align: center
 
-      ``gen_reward``
+      ``generation``
 
    .. grid-item-card:: 算法
       :text-align: center

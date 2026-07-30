@@ -85,14 +85,14 @@ env:
     video_cfg:
       save_video: False
     dataset:
-      type: "generation.ocr_dataset"
+      type: "visual.ocr_dataset"
       # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
       # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "train"
     reward:
       type: "single"
-      model: "generation.ocr"
+      model: "visual.ocr"
       key: "avg"
       use_gpu: True
       lang: "en"
@@ -104,14 +104,14 @@ env:
     is_eval: True
     rollout_epoch: 8
     dataset:
-      type: "generation.ocr_dataset"
+      type: "visual.ocr_dataset"
       # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
       # The directory should contain train.txt and test.txt.
       path: /path/to/dataset/ocr
       split: "test"
     reward:
       type: "single"
-      model: "generation.ocr"
+      model: "visual.ocr"
       key: "avg"
       use_gpu: True
       lang: "en"

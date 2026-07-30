@@ -19,8 +19,8 @@ from typing import Any
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from rlinf.data.datasets.gen_reward import EnvRecord, ImageConditionedDataset
-from rlinf.envs.gen_reward.utils import media_to_uint8_nhwc
+from rlinf.data.datasets.generation import EnvRecord, ImageConditionedDataset
+from rlinf.envs.generation.utils import media_to_uint8_nhwc
 
 
 class LeRobotImageConditionedDataset(ImageConditionedDataset):

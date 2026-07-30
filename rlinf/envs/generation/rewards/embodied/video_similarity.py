@@ -18,12 +18,12 @@ from typing import Any
 
 import numpy as np
 
-from rlinf.envs.gen_reward.rewards import (
+from rlinf.envs.generation.rewards import (
     FRAME_LEVEL,
     VIDEO_LEVEL,
     VideoRewardBackendBase,
 )
-from rlinf.envs.gen_reward.utils import prepare_video_pair
+from rlinf.envs.generation.utils import prepare_video_pair
 
 
 class VideoSimilarityRewardBackend(VideoRewardBackendBase):

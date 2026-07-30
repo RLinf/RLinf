@@ -17,8 +17,8 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-from rlinf.envs.gen_reward.rewards import MultiRewardBackend
-from rlinf.envs.gen_reward.utils import (
+from rlinf.envs.generation.rewards import MultiRewardBackend
+from rlinf.envs.generation.utils import (
     cfg_require,
     normalize_type,
 )
@@ -26,13 +26,13 @@ from rlinf.envs.gen_reward.utils import (
 
 def build_reward_dataset(cfg: Any) -> Any:
     dataset_type = normalize_type(cfg_require(cfg, "type"))
-    module = import_module(f"rlinf.data.datasets.gen_reward.{dataset_type}")
+    module = import_module(f"rlinf.data.datasets.generation.{dataset_type}")
     return module.DATASET_CLS.from_config(cfg)
 
 
 def _build_single_reward_backend(cfg: Any) -> Any:
     reward_model = normalize_type(cfg_require(cfg, "model"))
-    module = import_module(f"rlinf.envs.gen_reward.rewards.{reward_model}")
+    module = import_module(f"rlinf.envs.generation.rewards.{reward_model}")
     return module.REWARD_CLS.from_config(cfg)
 
 
@@ -42,13 +42,13 @@ def build_reward_backend(cfg: Any) -> Any:
         return _build_single_reward_backend(cfg)
     if reward_type == "multi":
         return MultiRewardBackend.from_config(cfg, _build_single_reward_backend)
-    raise ValueError(f"Unknown gen_reward reward type: {reward_type}")
+    raise ValueError(f"Unknown generation reward type: {reward_type}")
 
 
-from rlinf.envs.gen_reward.gen_reward_env import GenRewardEnv  # noqa: E402
+from rlinf.envs.generation.generation_env import GenerationEnv  # noqa: E402
 
 __all__ = [
-    "GenRewardEnv",
+    "GenerationEnv",
     "build_reward_backend",
     "build_reward_dataset",
 ]

@@ -21,9 +21,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from rlinf.envs.gen_reward.rewards import FRAME_LEVEL, VideoRewardBackendBase
-from rlinf.envs.gen_reward.rewards.embodied.models.vidar_dim import IDM
-from rlinf.envs.gen_reward.utils import cfg_get
+from rlinf.envs.generation.rewards import FRAME_LEVEL, VideoRewardBackendBase
+from rlinf.envs.generation.rewards.embodied.models.vidar_idm import IDM
+from rlinf.envs.generation.utils import cfg_get
 
 
 class ActionPredictionRewardBackend(VideoRewardBackendBase):

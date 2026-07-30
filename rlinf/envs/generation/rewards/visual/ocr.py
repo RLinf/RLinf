@@ -20,8 +20,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from rlinf.envs.gen_reward.rewards import ImageRewardBackendBase
-from rlinf.envs.gen_reward.utils import cfg_get, extract_quoted_text
+from rlinf.envs.generation.rewards import ImageRewardBackendBase
+from rlinf.envs.generation.utils import cfg_get, extract_quoted_text
 
 
 class OCRScorer:

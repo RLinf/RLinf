@@ -1,4 +1,4 @@
-env_type: "gen_reward"
+env_type: "generation"
 seed: 42
 total_num_envs: 24
 group_size: 3
@@ -14,7 +14,7 @@ video_cfg:
   video_base_dir: ${runner.logger.log_path}/video/ocr_video_reward
 
 dataset:
-  type: "generation.ocr_dataset"
+  type: "visual.ocr_dataset"
   # Download from https://github.com/NVlabs/DiffusionNFT/tree/main/dataset/ocr.
   # The directory should contain train.txt and test.txt.
   path: /path/to/dataset/ocr
@@ -22,7 +22,7 @@ dataset:
 
 reward:
   type: "single"
-  model: "generation.video_ocr"
+  model: "visual.video_ocr"
   key: "avg"
   use_gpu: False
   lang: "en"

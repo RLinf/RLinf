@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from rlinf.envs.gen_reward.utils import (
+from rlinf.envs.generation.utils import (
     cfg_get,
     cfg_require,
     media_to_uint8_nhwc,

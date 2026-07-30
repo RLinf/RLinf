@@ -9,7 +9,7 @@ RL for Video Generation Models
 
 Use RLinf to fine-tune SD3 and Wan2.2 generation models with Diffusion-NFT.
 The workflow reuses the embodied runner, registers image/video generation
-models under ``actor.model``, and uses ``gen_reward`` to score generated media
+models under ``actor.model``, and uses the ``generation`` environment to score generated media
 with a one-step reward.
 
 Overview
@@ -24,7 +24,7 @@ models on the OCR prompt dataset.
    .. grid-item-card:: Environments
       :text-align: center
 
-      ``gen_reward``
+      ``generation``
 
    .. grid-item-card:: Algorithms
       :text-align: center

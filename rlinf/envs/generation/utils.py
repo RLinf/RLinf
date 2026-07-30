@@ -35,7 +35,7 @@ def cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
 def cfg_require(cfg: Any, key: str) -> Any:
     value = cfg_get(cfg, key, None)
     if value is None:
-        raise KeyError(f"Missing required gen_reward config field: {key}")
+        raise KeyError(f"Missing required generation config field: {key}")
     return value
 
 

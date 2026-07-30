@@ -19,11 +19,11 @@ from typing import Any
 import numpy as np
 import torch
 
-from rlinf.envs.gen_reward.rewards import FRAME_LEVEL, VIDEO_LEVEL
-from rlinf.envs.gen_reward.rewards.embodied.action_prediction import (
+from rlinf.envs.generation.rewards import FRAME_LEVEL, VIDEO_LEVEL
+from rlinf.envs.generation.rewards.embodied.action_prediction import (
     ActionPredictionRewardBackend,
 )
-from rlinf.envs.gen_reward.utils import cfg_get
+from rlinf.envs.generation.utils import cfg_get
 
 
 class ActionSmoothnessRewardBackend(ActionPredictionRewardBackend):

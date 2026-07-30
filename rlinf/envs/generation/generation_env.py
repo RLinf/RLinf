@@ -31,8 +31,8 @@ from .utils import (
 )
 
 
-class GenRewardEnv(gym.Env):
-    """One-step generated-output reward environment.
+class GenerationEnv(gym.Env):
+    """One-step environment for scoring generated outputs.
 
     Reset returns dataset context. Step receives generated outputs and returns rewards.
     """

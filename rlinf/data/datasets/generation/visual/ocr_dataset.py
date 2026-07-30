@@ -17,8 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from rlinf.data.datasets.gen_reward import TextDataset
-from rlinf.envs.gen_reward.utils import cfg_get
+from rlinf.data.datasets.generation import TextDataset
+from rlinf.envs.generation.utils import cfg_get
 
 
 class OCRDataset(TextDataset):
