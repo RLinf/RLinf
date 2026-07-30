@@ -18,11 +18,21 @@ import torch.nn.functional as F
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Worker
-from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import RLTACFSDPPolicy
+from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import (
+    RLTACFSDPPolicy,
+    RLTACLossMixin,
+)
+from rlinf.workers.actor.fsdp_rlt_td3_policy_worker import (
+    RLTTD3FSDPPolicy,
+    RLTTD3LossMixin,
+)
 
 
 class ExpoFTACLossMixin:
     """EXPO-FT losses while reusing RLT replay, routing, and scheduling."""
+
+    def _use_td3_mlp_losses(self) -> bool:
+        return self.cfg.actor.model.get("model_type") == "rlt_td3_mlp_policy"
 
     @staticmethod
     def _flatten_chunk(tensor: torch.Tensor) -> torch.Tensor:
@@ -91,6 +101,9 @@ class ExpoFTACLossMixin:
 
     @Worker.timer("forward_critic")
     def forward_critic(self, batch):
+        if self._use_td3_mlp_losses():
+            return RLTACLossMixin.forward_critic(self, batch)
+
         curr_obs = batch["curr_obs"]
         next_obs = batch["next_obs"]
         actions = batch["actions"]
@@ -162,6 +175,9 @@ class ExpoFTACLossMixin:
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
+        if self._use_td3_mlp_losses():
+            return RLTTD3LossMixin.forward_actor(self, batch)
+
         curr_obs = batch["curr_obs"]
         base_actions = self._base_actions_for_actor(batch)
         pi, log_pi, _ = self.model(
@@ -196,6 +212,9 @@ class ExpoFTACLossMixin:
 
     @Worker.timer("forward_alpha")
     def forward_alpha(self, batch):
+        if self._use_td3_mlp_losses():
+            return RLTACLossMixin.forward_alpha(self, batch)
+
         curr_obs = batch["curr_obs"]
         base_actions = self._base_actions_for_actor(batch)
         with torch.no_grad():
@@ -210,5 +229,13 @@ class ExpoFTACLossMixin:
         return -alpha * (log_pi.mean() + self.target_entropy)
 
 
-class ExpoFTACFSDPPolicy(ExpoFTACLossMixin, RLTACFSDPPolicy):
+class ExpoFTACFSDPPolicy(ExpoFTACLossMixin, RLTTD3LossMixin, RLTACFSDPPolicy):
     """Synchronous EXPO-FT worker with RLT transition replay."""
+
+    def update_one_epoch(self, train_actor: bool = True):
+        if self._use_td3_mlp_losses():
+            return RLTTD3FSDPPolicy.update_one_epoch(
+                self,
+                train_actor=train_actor,
+            )
+        return super().update_one_epoch(train_actor=train_actor)

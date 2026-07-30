@@ -257,6 +257,11 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
     def _format_chunk_actions(self, actions: torch.Tensor) -> torch.Tensor:
         return actions.reshape(-1, self.chunk_len, self.step_action_dim)
 
+    def default_forward(self, **kwargs):
+        raise NotImplementedError(
+            "RLTTD3MLPPolicy does not use PPO-style default_forward."
+        )
+
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         obs = kwargs.get("obs")
         if obs is not None:
@@ -274,9 +279,7 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         if forward_type == ForwardType.CROSSQ_Q:
             return self.crossq_q_forward(**kwargs)
         if forward_type == ForwardType.DEFAULT:
-            raise NotImplementedError(
-                "RLTTD3MLPPolicy does not use PPO-style default_forward."
-            )
+            return self.default_forward(**kwargs)
         if forward_type == ForwardType.SFT:
             raise NotImplementedError("RLTTD3MLPPolicy does not implement SFT.")
         raise NotImplementedError(f"Unsupported forward_type: {forward_type}")

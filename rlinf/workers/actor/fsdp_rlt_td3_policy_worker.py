@@ -25,14 +25,6 @@ from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import (
 class RLTTD3LossMixin(RLTACLossMixin):
     """Ablation-style TD3 actor objective over current RLT replay fields."""
 
-    def _set_critic_requires_grad(self, requires_grad: bool) -> None:
-        if hasattr(self.model, "set_critic_requires_grad"):
-            self.model.set_critic_requires_grad(requires_grad)
-            return
-        for name, param in self.model.named_parameters():
-            if "q_head" in name:
-                param.requires_grad_(requires_grad)
-
     @staticmethod
     def _chunk_delta_loss(
         pred_chunk: torch.Tensor,
@@ -146,16 +138,16 @@ class RLTTD3LossMixin(RLTACLossMixin):
             log_pi = log_pi.unsqueeze(-1)
         log_pi = log_pi.sum(dim=-1, keepdim=True)
 
-        self._set_critic_requires_grad(False)
-        try:
-            all_qf_pi = self.model(
-                forward_type=ForwardType.SAC_Q,
-                obs=curr_obs,
-                actions=pi,
-                detach_encoder=True,
-            )
-        finally:
-            self._set_critic_requires_grad(True)
+        # Keep the FSDP-wrapped model's parameter trainability stable across
+        # the actor and critic forwards. Dynamically toggling critic
+        # ``requires_grad`` here can leave FSDP post-backward hooks in an
+        # invalid state, while the actor optimizer still excludes critic params.
+        all_qf_pi = self.model(
+            forward_type=ForwardType.SAC_Q,
+            obs=curr_obs,
+            actions=pi,
+            detach_encoder=True,
+        )
 
         num_q_values = all_qf_pi.shape[-1]
         metrics = {
