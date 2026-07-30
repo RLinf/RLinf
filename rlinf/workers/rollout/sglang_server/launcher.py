@@ -136,10 +136,6 @@ def launch_sglang_router_and_server(
                 node_group=rollout_node_group,
             )
 
-        # One worker class serves both sglang model families; ``server_type``
-        # declares which one — ``"srt"`` (language model) or ``"embodied"``
-        # (VLA/diffusion), any other value errors. Defaults to ``"srt"`` so a
-        # plain language-model rollout need not set it.
         server_group = SGLangServerWorker.create_group(
             config=config,
             sglang_cfg=router_server_args.server,
