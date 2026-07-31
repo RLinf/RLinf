@@ -392,8 +392,7 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         prompts = data["prompts"]
         # images: list (len B) of [num_views, 3, H, W] float tensors -> to device.
         images = [
-            img.to(device) if torch.is_tensor(img) else img
-            for img in data["images"]
+            img.to(device) if torch.is_tensor(img) else img for img in data["images"]
         ]
         image_masks = data["image_masks"].to(device)
         # Match the reference train loop: states/actions in float32.

@@ -54,9 +54,7 @@ def evo1_sft_collate_fn(batch):
         "action_mask": torch.stack([item["action_mask"] for item in batch], dim=0),
         "state_mask": torch.stack([item["state_mask"] for item in batch], dim=0),
         "image_masks": torch.stack([item["image_mask"] for item in batch], dim=0),
-        "embodiment_ids": torch.stack(
-            [item["embodiment_id"] for item in batch], dim=0
-        ),
+        "embodiment_ids": torch.stack([item["embodiment_id"] for item in batch], dim=0),
     }
 
 

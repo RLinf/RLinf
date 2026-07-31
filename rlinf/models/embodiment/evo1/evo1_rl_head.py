@@ -231,8 +231,7 @@ def flow_sde_mean_std(
         sigmas = (
             noise_level_t
             * torch.sqrt(
-                (1 - timesteps)
-                / torch.where(timesteps == 0, timesteps[1], timesteps)
+                (1 - timesteps) / torch.where(timesteps == 0, timesteps[1], timesteps)
             )[:-1]
         )  # [N]
         sigma_i = sigmas[idx_t][:, None, None].expand_as(x_t)
