@@ -121,6 +121,7 @@ class AcceleratorType(str, Enum):
     NPU = "NPU"  # Huawei Ascend
     NO_ACCEL = "NO_ACCEL"
     MUSA_GPU = "MUSA_GPU"
+    KUNLUN_XPU = "KUNLUN_XPU"
 
 
 class AcceleratorManager:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 import typing
 
 from rlinf.scheduler import Channel
@@ -19,7 +20,7 @@ from rlinf.scheduler import WorkerGroupFuncResult as Handle
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
-from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
 
 if typing.TYPE_CHECKING:
     from omegaconf.dictconfig import DictConfig
@@ -77,9 +78,17 @@ class EmbodiedEvalRunner:
         return eval_metrics
 
     def run(self):
+        start_time = time.time()
         eval_metrics = self.evaluate()
         eval_metrics = {f"eval/{k}": v for k, v in eval_metrics.items()}
         self.logger.info(eval_metrics)
         self.metric_logger.log(step=0, data=eval_metrics)
+        print_metrics_table(
+            step=0,
+            total_steps=1,
+            start_time=start_time,
+            metrics=eval_metrics,
+            log_path=self.metric_logger.log_path,
+        )
 
         self.metric_logger.finish()

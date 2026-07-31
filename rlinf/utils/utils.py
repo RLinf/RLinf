@@ -632,6 +632,21 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
     for p in all_params:
         p.grad = saved_grads[p]
 
+    # The empty step above advances each Adam param's step counter to 1, which biases
+    # the first real update through bias correction and diverges from a freshly-built
+    # optimizer. Reset the step counter to 0 so this state initialization is a true
+    # no-op for training dynamics, while preserving the already-zeroed exp_avg/exp_avg_sq
+    # entries so load_state_dict still finds initialized state.
+    for p in all_params:
+        st = optimizer.state.get(p, {})
+        step = st.get("step", None)
+        if step is None:
+            continue
+        if torch.is_tensor(step):
+            step.zero_()
+        else:
+            st["step"] = 0
+
 
 def get_rng_state() -> dict:
     """

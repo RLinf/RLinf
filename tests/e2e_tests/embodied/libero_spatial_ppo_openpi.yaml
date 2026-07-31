@@ -17,6 +17,9 @@ cluster:
   num_nodes: 1
   component_placement:
     actor,env,rollout: 0-1
+  tracer:
+    enable: true
+    output_file: null # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
 
 runner:
   task_type: embodied
