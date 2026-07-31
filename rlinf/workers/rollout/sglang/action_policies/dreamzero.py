@@ -720,11 +720,10 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         session_ids = self._session_ids_for_batch(batch_size, policy_context)
         reset_mask = [False] * batch_size
         if self._debug_batch_print:
-            print(
+            self.logger.info(
                 f"[DreamZeroActionPolicy rank={self.rank} "
                 f"call={self._eval_predict_calls}] batch_size={batch_size} "
                 f"reset_count={sum(reset_mask)} session_ids={session_ids[:4]}",
-                flush=True,
             )
         action_request = self._build_action_request(
             normalized_input,
