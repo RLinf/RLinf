@@ -17,8 +17,8 @@
 An action policy knows how to turn an RLinf env observation batch into model
 action chunks over a launched ``sglang serve`` HTTP server. The general worker
 (``SGLangEmbodiedWorker``) launches the serve and drives the eval channel
-loop; the model-specific action API (e.g. Cosmos3 ``/v1/videos`` action
-generation) lives in a registered policy selected by ``rollout.model.model_type``.
+loop; the model-specific action API lives in a registered policy selected 
+by ``rollout.model.model_type``.
 
 A non-default model reuses the whole embodied design by:
   1. registering a policy here (``@register_action_policy("<model_type>")``),
@@ -28,7 +28,6 @@ A non-default model reuses the whole embodied design by:
      block is needed.
 """
 
-# Register built-in policies (import for its side effect).
 from rlinf.workers.rollout.sglang.action_policies import dreamzero  # noqa: F401,E401
 from rlinf.workers.rollout.sglang.action_policies.base import (
     EmbodiedActionPolicy,

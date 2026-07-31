@@ -42,15 +42,10 @@ def main(cfg) -> None:
     component_placement = HybridComponentPlacement(cfg, cluster)
 
     # Create rollout worker group. Select the worker by ``rollout_backend``:
-    # only ``sglang`` is supported here (vllm is intentionally not wired in);
-    # configs without a backend are HF embodied models using MultiStepRolloutWorker.
+    # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_backend = cfg.rollout.get("rollout_backend", None)
-    if rollout_backend is not None:
-        assert rollout_backend == "sglang", (
-            f"only the sglang rollout_backend is supported by this eval entry "
-            f"(got {rollout_backend!r}); vllm/other backends are not wired in."
-        )
+    rollout_backend = cfg.rollout.get("rollout_backend","huggingface")
+    if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
         rollout_group = (
@@ -62,26 +57,22 @@ def main(cfg) -> None:
                 placement_strategy=rollout_placement,
             )
         )
-    else:
+    elif rollout_backend == "huggingface":
         rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
             cluster,
             name=cfg.rollout.group_name,
             placement_strategy=rollout_placement,
         )
+    else:
+        raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
     env_group = EnvWorker.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    # Launch the sglang server group (multimodal; no router) before workers
-    # init: each rollout worker is assigned one server URL (rank-indexed) so
-    # N servers are consumed in parallel for throughput. Driven by the
-    # ``rollout.sglang`` launch flags (launch_server/launch_router/multimodal/...),
-    # passed as router_server_args to launch_sglang_router_and_server (mirrors
-    # the training-side launch path; all sglang knobs live in one shared block).
-    server_group = None
-    if rollout_backend == "sglang" and cfg.rollout.sglang.get("launch_server", False):
+    # launch the sglang server
+    if rollout_backend == "sglang":
         from rlinf.workers.rollout.sglang_server import (
             launch_sglang_router_and_server,
         )

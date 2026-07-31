@@ -61,25 +61,12 @@ class SGLangEmbodiedWorker(SGLangWorker):
                 with _open_dict(model_cfg):
                     model_cfg.model_path = original_model_path
         self.cfg_rollout = self._cfg_rollout
-        # Embodied action-policy path. model_type selects the action policy (see
-        # rlinf/workers/rollout/sglang/action_policies); the policy turns env obs
-        # into action chunks by calling the launched sglang serve.
         self.model_type = str(
             getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
         ).lower()
         self.action_policy = None
         self.sglang_server_url = None
-        # sglang server URLs the driver launched (via launch_sglang_router_and_server)
-        # and pushed to us via set_sglang_server_urls(). Set at runtime, not in cfg,
-        # because the cfg is serialized into each Ray actor at .launch() time —
-        # before the driver knows the URLs (the server group hasn't started yet).
         self._sglang_server_urls = None
-        # NOTE: no _setup_http_routes() — this worker does not host HTTP; the
-        # embodied eval is driven over channels, not via the /evaluate route.
-
-        # Channel-eval attrs (mirror MultiStepRolloutWorker.__init__ so
-        # EmbodiedEvalRunner can drive this worker). Set at construction, not in
-        # init_worker, so they're available before the serve is spawned.
         cfg = self._cfg
         self.cfg = cfg
         self.model_cfg = self._cfg_rollout.model
@@ -108,11 +95,6 @@ class SGLangEmbodiedWorker(SGLangWorker):
         self.collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
 
     async def init_worker(self):
-        # Pick the driver-launched sglang server URL assigned to this rank
-        # (the driver ran launch_sglang_router_and_server + pushed URLs via
-        # set_sglang_server_urls), then load the model's registered action
-        # policy. No worker-owned HTTP server (the eval loop is channel-based);
-        # eval attrs are already set in __init__.
         policy_cls = None
         if self.model_type:
             from rlinf.workers.rollout.sglang.action_policies import (
@@ -183,12 +165,7 @@ class SGLangEmbodiedWorker(SGLangWorker):
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """env_obs -> action chunks [N, num_action_chunks, action_dim].
-
-        Delegates to the registered action policy (selected by model_type);
-        the policy builds the model-specific request, calls the launched
-        sglang serve, and parses the returned action.
-        """
+        """env_obs -> action chunks [N, num_action_chunks, action_dim]."""
         if self.action_policy is None:
             raise RuntimeError(
                 "no action policy loaded (init_worker not called, or model_type "
@@ -197,12 +174,7 @@ class SGLangEmbodiedWorker(SGLangWorker):
         return self.action_policy.infer(env_obs, mode=mode)
 
     async def evaluate(self, input_channel, output_channel):
-        """Channel-based embodied eval loop, driven by EmbodiedEvalRunner.
-
-        Mirrors MultiStepRolloutWorker.evaluate's non-decoupled path: recv an
-        obs batch from env, predict actions, send them back. Inherited from the
-        SGLangWorker base's channel machinery (recv_from/send_to).
-        """
+        """Channel-based embodied eval loop, driven by EmbodiedEvalRunner."""
         from tqdm import tqdm
 
         for _ in tqdm(

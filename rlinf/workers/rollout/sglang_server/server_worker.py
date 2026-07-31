@@ -244,12 +244,10 @@ class SGLangServerWorker(Worker):
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
 
-        spawn_timeout = 1800.0 if self._server_type == "embodied" else 300.0
         try:
             _wait_for_http_health(
-                self._advertise_host,
-                http_port,
-                spawn_timeout,
+                host=self._advertise_host,
+                port=http_port,
                 is_alive=lambda: self._server_proc.is_alive(),
             )
         except RuntimeError as e:

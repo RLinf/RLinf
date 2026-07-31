@@ -35,18 +35,7 @@ from rlinf.utils.logging import get_logger
 
 
 class EmbodiedActionPolicy(ABC):
-    """Turn env observations into action chunks via a launched sglang serve.
-
-    Args:
-        cfg: the full RLinf ``DictConfig``. Policies read model-specific config
-            from ``cfg.rollout.model.<model_type>`` and embodiment facts
-            (``env_type``, ``raw_action_dim``) from ``cfg.env.eval`` — no
-            rollout-side embodiment block is required.
-        server_url: base URL of the already-launched ``sglang serve``
-            (e.g. ``http://127.0.0.1:30010``). ``None`` means an external server
-            URL was configured and the worker did not spawn one.
-        rank: rollout rank of the worker holding this policy.
-    """
+    """Turn env observations into action chunks via a launched sglang serve."""
 
     def __init__(self, cfg: Any, server_url: "str | None", rank: int):
         self.cfg = cfg
@@ -60,18 +49,7 @@ class EmbodiedActionPolicy(ABC):
     def infer(
         self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
     ) -> "tuple[torch.Tensor, dict]":
-        """Map an env observation batch to action chunks.
-
-        Args:
-            env_obs: the obs dict received from the env worker over the channel
-                (uniform across simulators: ``main_images`` + ``task_descriptions``
-                + optional proprioception).
-            mode: ``"train"`` or ``"eval"`` (some policies have no distinction).
-
-        Returns:
-            (actions, info) where ``actions`` is a float tensor of shape
-            ``[N, num_action_chunks, action_dim]`` and ``info`` is a dict.
-        """
+        """Map an env observation batch to action chunks."""
         raise NotImplementedError
 
     def evaluate_actions(self, observations: Any) -> dict:

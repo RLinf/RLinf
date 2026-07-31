@@ -30,10 +30,7 @@ package_version = get_version(package_name)
 sglang_version = None
 
 if package_version is None:
-    raise ValueError(
-        "sglang is not installed. Install sglang_main (e.g. "
-        "`pip install -e <sglang>/python`)."
-    )
+    raise ValueError("sglang is not installed. Install sglang_main (e.g. ")
 else:
     sglang_version = package_version
     import types as _types
@@ -48,12 +45,6 @@ else:
     except Exception as _e:  # pragma: no cover - depends on sglang version
         from rlinf.utils.logging import get_logger
 
-        get_logger().warning(
-            "SRT hybrid engine unavailable on sglang %s (%s). The legacy "
-            "SRT/LLM rollout path is disabled; the Cosmos3 evaluate path "
-            "(sglang.multimodal_gen) is unaffected.",
-            package_version,
-            _e,
-        )
+        get_logger().warning("the sglang hybrid engine is unavailable.")
 
 __all__ = ["Engine", "io_struct"]

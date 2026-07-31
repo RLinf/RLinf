@@ -27,12 +27,7 @@ ACTION_POLICY_REGISTRY: dict[str, Callable[..., object]] = {}
 
 
 def register_action_policy(name: str):
-    """Decorator registering an action policy class under a model type name.
-
-    Args:
-        name: model_type string (case-insensitive); must match
-            ``rollout.model.model_type`` for the worker to select this policy.
-    """
+    """Decorator registering an action policy class under a model type name."""
 
     def decorator(cls):
         ACTION_POLICY_REGISTRY[name.lower()] = cls
