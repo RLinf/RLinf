@@ -718,9 +718,10 @@ class MultiStepRolloutWorker(Worker):
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
             if not self.collect_final_values:
-                batch_size = self._infer_env_batch_size(env_output)
                 rollout_result = RolloutResult(
-                    versions=torch.zeros(batch_size, 1, dtype=torch.float32),
+                    versions=torch.zeros_like(
+                        result["prev_logprobs"], dtype=torch.float32
+                    ),
                 )
                 self.send_to(
                     group_name=self.cfg.env.group_name,
