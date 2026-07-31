@@ -40,9 +40,6 @@ from typing import Any, Literal, Optional
 import torch
 
 
-# ---------------------------------------------------------------------------- #
-# Config access helper (works for dict, OmegaConf DictConfig, or namespace)
-# ---------------------------------------------------------------------------- #
 def cfg_get(cfg: Any, key: str, default: Any) -> Any:
     if cfg is None:
         return default
@@ -51,9 +48,6 @@ def cfg_get(cfg: Any, key: str, default: Any) -> Any:
     return getattr(cfg, key, default)
 
 
-# ---------------------------------------------------------------------------- #
-# Gaussian log-prob for one SDE transition step
-# ---------------------------------------------------------------------------- #
 def get_logprob_norm(
     sample: torch.Tensor,
     mu: torch.Tensor,
@@ -76,9 +70,6 @@ def get_logprob_norm(
     return log_prob
 
 
-# ---------------------------------------------------------------------------- #
-# Prompt <-> byte-tensor (lossless, keeps forward_inputs all-tensor)
-# ---------------------------------------------------------------------------- #
 def bytes_from_prompts(
     prompts: list[str], max_len: int = 512, device=None
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -116,9 +107,6 @@ def prompts_from_bytes(
     return out
 
 
-# ---------------------------------------------------------------------------- #
-# Evo-1 head single-step velocity (extracted from FlowmatchingActionHead)
-# ---------------------------------------------------------------------------- #
 def build_context_tokens(
     action_head,
     fused_tokens: torch.Tensor,
@@ -188,9 +176,6 @@ def flow_velocity(
     return pred.view(bsz, horizon, per_dim)
 
 
-# ---------------------------------------------------------------------------- #
-# SDE mean/std (flow_sde weights, applied to Evo-1's v_t)
-# ---------------------------------------------------------------------------- #
 def flow_sde_mean_std(
     x_t: torch.Tensor,
     v_t: torch.Tensor,
@@ -247,9 +232,6 @@ def flow_sde_mean_std(
     return x_t_mean, x_t_std
 
 
-# ---------------------------------------------------------------------------- #
-# Rollout: SDE denoising trajectory
-# ---------------------------------------------------------------------------- #
 def rl_denoise_sample(
     action_head,
     fused_tokens: torch.Tensor,
@@ -331,9 +313,6 @@ def rl_denoise_sample(
     return x_0, chains, denoise_inds, log_probs
 
 
-# ---------------------------------------------------------------------------- #
-# Replay: recompute log-probs on stored chains under current weights
-# ---------------------------------------------------------------------------- #
 def rl_replay_logprob(
     action_head,
     fused_tokens: torch.Tensor,

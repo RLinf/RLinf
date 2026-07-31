@@ -115,9 +115,6 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             or 32
         )
 
-    # ------------------------------------------------------------------ #
-    # Dispatch
-    # ------------------------------------------------------------------ #
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
@@ -127,9 +124,6 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
             f"Evo-1 does not support forward_type={forward_type}."
         )
 
-    # ------------------------------------------------------------------ #
-    # Shared input encoding
-    # ------------------------------------------------------------------ #
     def _encode_env_obs(self, env_obs: dict[str, Any]):
         """Turn ``env_obs`` into Evo-1 inference tensors.
 
@@ -181,9 +175,6 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         env_chunk_actions = actions.detach().cpu().numpy().astype(np.float32)
         return self._apply_gripper_mapping(env_chunk_actions)
 
-    # ------------------------------------------------------------------ #
-    # Inference / rollout
-    # ------------------------------------------------------------------ #
     @torch.no_grad()
     def predict_action_batch(
         self,
@@ -378,9 +369,6 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         ).astype(np.float32)
         return out
 
-    # ------------------------------------------------------------------ #
-    # SFT training -- native flow-matching MSE.
-    # ------------------------------------------------------------------ #
     def sft_forward(self, data: dict[str, Any], **kwargs: Any):
         """Compute Evo-1's flow-matching MSE loss on an SFT batch.
 
@@ -428,9 +416,6 @@ class Evo1ForRLActionPrediction(nn.Module, BasePolicy):
         loss = loss * (mask_flat.numel() / (mask_flat.sum() + 1e-8))
         return loss
 
-    # ------------------------------------------------------------------ #
-    # RL path -- flow-matching SDE-replay (GRPO-first).
-    # ------------------------------------------------------------------ #
     def default_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
