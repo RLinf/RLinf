@@ -28,7 +28,7 @@ The SGLang embodied evaluation path separates general logic from model-specific 
 - The driver script (e.g. ``eval_embodied_agent.py``) starts one or more sglang
   server processes via :func:`launch_sglang_router_and_server` and pushes each
   server's URL to the rollout workers; server startup, ``/health`` polling, and
-  port allocation are handled by ``SGLangmmgenServerWorker`` (driver side) — the
+  port allocation are handled by ``SGLangServerWorker`` (driver side) — the
   rollout worker itself no longer owns a server subprocess;
 - ``SGLangEmbodiedWorker`` is a thin client: it picks the driver-assigned server
   URL for its own rank, loads the Action Policy, and exchanges observations and
@@ -49,10 +49,10 @@ model is selected by ``rollout.model.model_type``, and the call flow is as follo
                  │
                  ▼
    driver: launch_sglang_router_and_server()
-                 │  (rollout.sglang.server_type == "embodied" → SGLangmmgenServerWorker)
+                 │  (rollout.sglang.server_type == "embodied" → SGLangServerWorker)
                  ▼
-   each SGLangmmgenServerWorker.init_server()
-                 │  (rollout.sglang.server → ServerArgs.from_kwargs → launch_server)
+   each SGLangServerWorker.init_server()
+                 │  (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
@@ -77,7 +77,7 @@ configuration:
      rollout_backend: sglang
      sglang:
        serving_mode: embodied      # rollout worker = SGLangEmbodiedWorker
-       server_type: embodied      # server class = SGLangmmgenServerWorker
+       server_type: embodied      # server dispatch = embodied (via dispatch_launch)
        launch_server: true        # driver launches the server group
      model:
        model_type: "<your_model>"
@@ -85,9 +85,12 @@ configuration:
 Note that ``rollout.sglang.server_type`` and ``rollout.model.model_type`` are two
 **orthogonal** fields with different names and different responsibilities:
 
-- ``rollout.sglang.server_type`` decides **which sglang server class to launch**
-  (``srt`` = language model via ``sglang.srt``; ``embodied`` = VLA / diffusion via
-  ``sglang.multimodal_gen``'s ``/v1/actions/generations`` endpoint);
+- ``rollout.sglang.server_type`` decides **which sglang dispatch branch the
+  server subprocess runs** (within the same ``SGLangServerWorker`` class:
+  ``srt`` = language model via
+  ``sglang.srt.entrypoints.http_server.launch_server``; ``embodied`` = VLA /
+  diffusion via ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``,
+  serving the ``/v1/actions/generations`` endpoint);
 - ``rollout.model.model_type`` decides **which Action Policy the rollout worker
   loads** (the Policy Registry lookup key).
 
@@ -234,10 +237,11 @@ Step 6: Test and Debug
 For the first run, it is recommended to reduce ``env.eval.total_num_envs`` and confirm the following in order:
 
 1. The rollout Worker type in the logs is ``SGLangEmbodiedWorker`` and the server
-   Worker type is ``SGLangmmgenServerWorker``;
+   Worker type is ``SGLangServerWorker`` (``server_type=embodied``);
 2. The ``multimodal_gen sglang serve: launching in-process ...`` line printed in
    the logs carries the correct ``pipeline``, ``backend``, ``tp_size`` and GPU;
-3. ``/health`` responds within ``spawn_timeout``;
+3. ``/health`` responds before the timeout (server first-time compilation +
+   weight loading is slow, so allow enough time);
 4. The request sent by the Policy can be parsed correctly by the action endpoint;
 5. The action dimensions and dtype output by the Server meet the convention;
 6. The denormalized action shape matches the simulator's requirements;
@@ -433,7 +437,7 @@ strings to enums. A typical block looks like:
 Key points:
 
 - ``host`` / ``port`` / ``master_port`` are filled at runtime by
-  ``SGLangmmgenServerWorker`` (free ports allocated serially under a PortLock);
+  ``SGLangServerWorker`` (free ports allocated serially under a PortLock);
   do not set them in YAML;
 - the top-level ``ServerArgs`` fields map directly to ``sglang serve`` arguments
   (``backend``, ``attention_backend``, ``tp_size``, ``num_gpus``,
@@ -617,7 +621,7 @@ SGLang Worker Dispatch
 
      sglang:
        serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
-       server_type: "embodied"      # server class = SGLangmmgenServerWorker
+       server_type: "embodied"      # server dispatch = embodied (via dispatch_launch)
        launch_server: true          # driver launches the server group
        launch_router: false         # no router (action endpoint not forwarded by router)
        group_name: SGLangServerGroup
@@ -625,10 +629,12 @@ SGLang Worker Dispatch
 
 - ``rollout_backend: sglang`` selects the SGLang backend;
 - ``serving_mode: embodied`` selects the rollout worker = ``SGLangEmbodiedWorker``;
-- ``server_type: embodied`` selects the server class =
-  ``SGLangmmgenServerWorker`` (VLA / diffusion, via ``sglang.multimodal_gen``).
+- ``server_type: embodied`` selects the server dispatch branch = ``embodied``
+  (VLA / diffusion, via ``sglang.multimodal_gen``'s ``dispatch_launch``).
   ``serving_mode`` and ``server_type`` are orthogonal: the former controls how
-  the worker connects, the latter which server class to launch;
+  the worker connects, the latter which sglang dispatch the server subprocess
+  runs; both take effect within the same ``SGLangServerWorker`` class — there
+  is no longer a separate server class;
 - ``launch_router: false`` is required: the sglang router only forwards fixed
   LLM endpoints (``/generate``, ``/v1/chat/completions``), not the dreamzero
   ``/v1/actions/generations``, so the embodied path disables the router and
@@ -641,15 +647,14 @@ SGLang Worker Dispatch
 Server Startup and Parallel Configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rollout.sglang`` top level holds RLinf-private keys (spawn timeout, HTTP
-client, parallelism, launch toggles); the ``server`` sub-block holds the
-``ServerArgs`` fields forwarded to sglang:
+``rollout.sglang`` top level holds RLinf-private keys (HTTP client, parallelism,
+launch toggles); the ``server`` sub-block holds the ``ServerArgs`` fields
+forwarded to sglang:
 
 .. code-block:: yaml
 
    rollout:
      sglang:
-       spawn_timeout: 900
        tensor_parallel_size: 1
        pipeline_parallel_size: 1
        launch_server: true
@@ -679,8 +684,6 @@ Top-level private-key fields:
 
    * - Field
      - Meaning
-   * - ``spawn_timeout``
-     - Maximum number of seconds the Worker waits for ``/health`` to succeed
    * - ``tensor_parallel_size``
      - TP size per server engine; the launcher packs hardware ranks into engines
        of ``tp×pp`` (4 GPUs tp=2 → two 2-GPU servers; tp=4 → one 4-GPU server)
@@ -689,7 +692,7 @@ Top-level private-key fields:
    * - ``launch_server`` / ``launch_router``
      - Whether the driver launches the server group / router
    * - ``server_type``
-     - server-class dispatch: ``srt`` / ``embodied``
+     - server dispatch branch: ``srt`` / ``embodied``
    * - ``seed``
      - Random seed used for each action request
 
@@ -863,7 +866,8 @@ stdout/stderr). Check the following first:
 - Whether ``num_gpus``, ``tp_size``, and ``sp_degree`` match the available GPUs;
 - Whether the port is occupied (HTTP/master_port are auto-allocated by PortLock
   but may still clash with external processes);
-- Whether ``spawn_timeout`` is sufficient to cover initial compilation and weight loading.
+- Whether enough startup wait time is given for first-time compilation and
+  weight loading.
 
 
 Request to Local Server Times Out

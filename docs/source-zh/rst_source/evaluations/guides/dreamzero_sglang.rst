@@ -79,15 +79,15 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
      - 启动 ``SGLangEmbodiedWorker``，由 worker 拉起并管理本地 SGLang action server。
    * - ``rollout.sglang.http_payload_format: msgpack``
      - 使用 DreamZero evaluation 路径的二进制 action payload。
-   * - ``rollout.sglang.num_inference_steps``
+   * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
      - 控制 server 侧 DreamZero denoising steps。
-   * - ``rollout.sglang.cfg_scale``
+   * - ``rollout.sglang.server.pipeline_config.cfg_scale``
      - action inference 使用的 classifier-free guidance scale。
-   * - ``rollout.sglang.cfg_parallel_degree``
+   * - ``rollout.sglang.server.cfg_parallel_degree``
      - 设置为 ``2`` 时，将 CFG 的 positive / negative 分支切到不同 rank。
-   * - ``rollout.sglang.tp_size``
+   * - ``rollout.sglang.server.tp_size``
      - DreamZero DiT tensor parallel size。
-   * - ``rollout.sglang.sp_size``
+   * - ``rollout.sglang.server.sp_degree``
      - DreamZero DiT attention sequence parallel size。
    * - ``rollout.model.model_path``
      - SGLang 加载的 DreamZero Diffusers checkpoint 目录。
@@ -104,8 +104,8 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.sglang.num_gpus=2 \
-     rollout.sglang.cfg_parallel_degree=2 \
+     rollout.sglang.server.num_gpus=2 \
+     rollout.sglang.server.cfg_parallel_degree=2 \
      rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 验证

@@ -79,15 +79,15 @@ Important Config Fields
      - Starts ``SGLangEmbodiedWorker``, which launches and controls the local SGLang action server.
    * - ``rollout.sglang.http_payload_format: msgpack``
      - Uses the binary action payload path used by DreamZero evaluation.
-   * - ``rollout.sglang.num_inference_steps``
+   * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
      - Controls the DreamZero denoising steps used by the server.
-   * - ``rollout.sglang.cfg_scale``
+   * - ``rollout.sglang.server.pipeline_config.cfg_scale``
      - Classifier-free guidance scale for action inference.
-   * - ``rollout.sglang.cfg_parallel_degree``
+   * - ``rollout.sglang.server.cfg_parallel_degree``
      - Splits positive and negative CFG branches across ranks when set to ``2``.
-   * - ``rollout.sglang.tp_size``
+   * - ``rollout.sglang.server.tp_size``
      - Tensor-parallel size for the DreamZero DiT.
-   * - ``rollout.sglang.sp_size``
+   * - ``rollout.sglang.server.sp_degree``
      - Sequence-parallel size for the DreamZero DiT attention sequence.
    * - ``rollout.model.model_path``
      - DreamZero Diffusers checkpoint directory loaded by SGLang.
@@ -104,8 +104,8 @@ The supported DreamZero SGLang evaluation entry is ``libero_spatial_dreamzero_ev
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.sglang.num_gpus=2 \
-     rollout.sglang.cfg_parallel_degree=2 \
+     rollout.sglang.server.num_gpus=2 \
+     rollout.sglang.server.cfg_parallel_degree=2 \
      rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 Validation

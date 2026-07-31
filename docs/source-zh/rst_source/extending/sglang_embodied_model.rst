@@ -28,7 +28,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 - 驱动脚本（如 ``eval_embodied_agent.py``）通过
   :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，
   并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health``
-  轮询和端口分配由 ``SGLangmmgenServerWorker``（driver 侧）负责，rollout worker
+  轮询和端口分配由 ``SGLangServerWorker``（driver 侧）负责，rollout worker
   本身不再持有 server 子进程；
 - ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的
   server URL进行推理服务的端口，加载 Action Policy，通过 channel 与环境 Worker 交换 observation
@@ -47,10 +47,10 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
                  │
                  ▼
    驱动脚本: launch_sglang_router_and_server()
-                 │  (rollout.sglang.server_type == "embodied" → SGLangmmgenServerWorker)
+                 │  (rollout.sglang.server_type == "embodied" → SGLangServerWorker)
                  ▼
-   每个 SGLangmmgenServerWorker.init_server()
-                 │  (rollout.sglang.server → ServerArgs.from_kwargs → launch_server)
+   每个 SGLangServerWorker.init_server()
+                 │  (rollout.sglang.server → ServerArgs.from_kwargs → dispatch_launch)
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
@@ -73,8 +73,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
    rollout:
      rollout_backend: sglang
      sglang:
-       serving_mode: embodied      # 选择 rollout worker = SGLangEmbodiedWorker
-       server_type: embodied      # 选择 server 类 = SGLangmmgenServerWorker
+       server_type: embodied      # 选择 server 分派 = embodied（走 dispatch_launch）
        launch_server: true        # 驱动脚本启动 server 组
      model:
        model_type: "<your_model>"
@@ -82,9 +81,11 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 注意 ``rollout.sglang.server_type`` 与 ``rollout.model.model_type`` 是两个**正交**
 字段，名字不同、职责不同：
 
-- ``rollout.sglang.server_type`` 决定 **launch 哪个 sglang server 类**
-  （``srt`` = 语言模型走 ``sglang.srt``；``embodied`` = VLA/diffusion 走
-  ``sglang.multimodal_gen`` 的 ``/v1/actions/generations`` 端点）；
+- ``rollout.sglang.server_type`` 决定 **server 子进程走哪条 sglang 分派分支**
+  （同一个 ``SGLangServerWorker`` 类内：``srt`` = 语言模型走
+  ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` = VLA/diffusion
+  走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``，服务
+  ``/v1/actions/generations`` 端点）；
 - ``rollout.model.model_type`` 决定 **rollout worker 加载哪个 Action Policy**
   （Policy Registry 查找键）。
 
@@ -231,10 +232,10 @@ Policy 需要继承 ``EmbodiedActionPolicy``，并通过装饰器注册：
 第一次运行时建议将 ``env.eval.total_num_envs`` 降低，并依次确认：
 
 1. 日志中的 rollout Worker 类型为 ``SGLangEmbodiedWorker``，server Worker 类型为
-   ``SGLangmmgenServerWorker``；
+   ``SGLangServerWorker``；
 2. 日志打印的 ``multimodal_gen sglang serve: launching in-process ...`` 行包含
    正确的 ``pipeline``、``backend``、``tp_size`` 和 GPU；
-3. ``/health`` 能在 ``spawn_timeout`` 内返回；
+3. ``/health`` 能在超时前返回（server 首次编译 + 权重加载耗时较长，需留足时间）；
 4. Policy 发出的请求能被 action endpoint 正确解析；
 5. Server 输出的 action 维度和 dtype 符合约定；
 6. 反归一化后的 action shape 与仿真器要求一致；
@@ -425,7 +426,7 @@ server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该�
 
 关键说明：
 
-- ``host`` / ``port`` / ``master_port`` 由 ``SGLangmmgenServerWorker`` 在运行时
+- ``host`` / ``port`` / ``master_port`` 由 ``SGLangServerWorker`` 在运行时
   填入（用 PortLock 串行分配的空闲端口），YAML 中不要手设；
 - 顶层 ``ServerArgs`` 字段直接对应 ``sglang serve`` 参数（``backend``、
   ``attention_backend``、``tp_size``、``num_gpus``、``dit_cpu_offload``、
@@ -606,8 +607,7 @@ SGLang Worker 分发
      return_logprobs: false
 
      sglang:
-       serving_mode: "embodied"      # rollout worker = SGLangEmbodiedWorker
-       server_type: "embodied"      # server 类 = SGLangmmgenServerWorker
+       server_type: "embodied"      # server 分派 = embodied（走 dispatch_launch）
        launch_server: true          # 驱动脚本启动 server 组
        launch_router: false         # 不启动 router（action endpoint 不被 router 转发）
        group_name: SGLangServerGroup
@@ -615,9 +615,11 @@ SGLang Worker 分发
 
 - ``rollout_backend: sglang`` 选择 SGLang 后端；
 - ``serving_mode: embodied`` 选择 rollout worker = ``SGLangEmbodiedWorker``；
-- ``server_type: embodied`` 选择 server 类 = ``SGLangmmgenServerWorker``（VLA/
-  diffusion，走 ``sglang.multimodal_gen``）。``serving_mode`` 与 ``server_type``
-  正交：前者负责 worker 侧怎么连，后者管 launch 哪个 server 类；
+- ``server_type: embodied`` 选择 server 分派分支 = ``embodied``（VLA/
+  diffusion，走 ``sglang.multimodal_gen`` 的 ``dispatch_launch``）。
+  ``serving_mode`` 与 ``server_type`` 正交：前者负责 worker 侧怎么连，后者管
+  server 子进程走哪条 sglang 分派；两者都在同一个 ``SGLangServerWorker`` 类内
+  生效，不再区分 server 类；
 - ``launch_router: false`` 是必填：sglang router 只转发固定 LLM 端点
   （``/generate``、``/v1/chat/completions``），不转发 dreamzero 的
   ``/v1/actions/generations``，所以具身路径禁用 router，rollout worker 直接
@@ -630,14 +632,13 @@ SGLang Worker 分发
 Server 启动与并行配置
 ~~~~~~~~~~~~~~~~~~~~~
 
-``rollout.sglang`` 顶层放 RLinf 私有的参数（spawn 超时、HTTP 客户端、并行度、
+``rollout.sglang`` 顶层放 RLinf 私有的参数（HTTP 客户端、并行度、
 launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字段：
 
 .. code-block:: yaml
 
    rollout:
      sglang:
-       spawn_timeout: 900
        tensor_parallel_size: 1
        pipeline_parallel_size: 1
        launch_server: true
@@ -667,8 +668,6 @@ RLinf 私有参数字段说明：
 
    * - 字段
      - 含义
-   * - ``spawn_timeout``
-     - Worker 等待 ``/health`` 成功的最长秒数
    * - ``tensor_parallel_size``
      - 每个 server engine 的 TP 大小；launcher 按 ``tp×pp`` 把硬件 rank 打包成
        engine（4 卡 tp=2 → 2 个 2-GPU server；tp=4 → 1 个 4-GPU server）
@@ -677,7 +676,7 @@ RLinf 私有参数字段说明：
    * - ``launch_server`` / ``launch_router``
      - 是否由驱动脚本启动 server 组 / router
    * - ``server_type``
-     - server 类分发：``srt`` / ``embodied``
+     - server 分派分支：``srt`` / ``embodied``
    * - ``seed``
      - 每次 action 请求使用的随机种子
 
@@ -848,7 +847,7 @@ server 子进程的输出（直接流到 Ray actor 的 stdout/stderr）。优先
 - ``num_gpus``、``tp_size``、``sp_degree`` 与可用 GPU 是否匹配；
 - 端口是否被占用（HTTP/master_port 由 PortLock 自动分配，但仍可能与外部进程
   冲突）；
-- ``spawn_timeout`` 是否足够覆盖首次编译和权重加载时间。
+- server 首次编译 + 权重加载耗时较长时，是否给了足够的启动等待时间。
 
 
 请求本地 Server 超时
