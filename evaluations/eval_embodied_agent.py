@@ -44,7 +44,7 @@ def main(cfg) -> None:
     # Create rollout worker group. Select the worker by ``rollout_backend``:
     # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_backend = cfg.rollout.get("rollout_backend","huggingface")
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 

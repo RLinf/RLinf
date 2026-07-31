@@ -17,7 +17,7 @@
 An action policy knows how to turn an RLinf env observation batch into model
 action chunks over a launched ``sglang serve`` HTTP server. The general worker
 (``SGLangEmbodiedWorker``) launches the serve and drives the eval channel
-loop; the model-specific action API lives in a registered policy selected 
+loop; the model-specific action API lives in a registered policy selected
 by ``rollout.model.model_type``.
 
 A non-default model reuses the whole embodied design by:

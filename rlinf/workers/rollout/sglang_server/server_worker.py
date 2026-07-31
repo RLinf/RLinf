@@ -34,9 +34,7 @@ def _ensure_no_proxy_for_localhost() -> None:
     local = "127.0.0.1,localhost,::1"
     current = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
     if not any(h in current for h in ("127.0.0.1", "localhost")):
-        os.environ["NO_PROXY"] = (
-            f"{current},{local}".strip(",") if current else local
-        )
+        os.environ["NO_PROXY"] = f"{current},{local}".strip(",") if current else local
 
 
 def _run_sglang_server(
