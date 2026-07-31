@@ -100,6 +100,19 @@ class ClusterEnvVar(str, Enum):
     Set explicitly when workers do not share a filesystem with the launch node.
     """
 
+    SERIALIZE_PG_LIFECYCLE = "SERIALIZE_PG_LIFECYCLE"
+    """Serialize ProcessGroup create/destroy within a process.
+
+    Concurrent GLOO rendezvous / TCPStore from multiple threads can abort with
+    ``pybind11_object_dealloc`` on older torch builds. Env FT recovery hits this
+    when many send-queue threads rebuild peer groups at once.
+
+    Values (``RLINF_SERIALIZE_PG_LIFECYCLE``):
+        - Unset: enabled when ``torch < 2.7.0``, disabled when ``torch >= 2.7.0``.
+        - ``1`` / ``true`` / ``on`` / ``yes``: force enable.
+        - ``0`` / ``false`` / ``off`` / ``no``: force disable.
+    """
+
 
 class PathEnvMergeMode(str, Enum):
     """Merge mode for path-like worker env vars."""
@@ -128,6 +141,7 @@ class Cluster:
         ClusterEnvVar.EXT_MODULE: None,
         ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
         ClusterEnvVar.CODE_WORKING_DIR: "0",
+        ClusterEnvVar.SERIALIZE_PG_LIFECYCLE: None,
     }
     PATH_LIKE_ENV_VARS = {
         "PYTHONPATH",

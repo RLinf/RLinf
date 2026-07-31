@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import logging
+import threading
+from contextlib import nullcontext
 from datetime import timedelta
 from typing import Optional
 
 import torch
 import torch.distributed as dist
+from packaging.version import parse as parse_version
 
 from ..hardware import AcceleratorType, AcceleratorUtil
 from .async_work import AsyncCollWork, AsyncWork
@@ -26,6 +29,53 @@ from .collective_group import (
     CollectiveGroupInfo,
     CollectiveGroupOptions,
 )
+
+# Serialize ProcessGroup create/destroy within a process when enabled.
+# Concurrent GLOO rendezvous / TCPStore from multiple threads can abort with:
+#   pybind11_object_dealloc(): Tried to deallocate unregistered instance!
+# (known torch/pybind race). Env FT recovery hits this when many send-queue
+# threads rebuild peer groups at once. Prefer correctness over parallel init.
+#
+# Default: on for torch < 2.7.0, off for torch >= 2.7.0.
+# Override with RLINF_SERIALIZE_PG_LIFECYCLE=0/1 (see ClusterEnvVar).
+# Corresponding issue: https://github.com/pytorch/pytorch/pull/143598
+# and https://github.com/pybind/pybind11/issues/5473
+_PROCESS_GROUP_LIFECYCLE_LOCK = threading.RLock()
+_TORCH_SERIALIZE_PG_LIFECYCLE_CUTOFF = "2.7.0"
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_ENV_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def is_process_group_lifecycle_lock_enabled() -> bool:
+    """Return whether ProcessGroup create/destroy should be serialized.
+
+    Honors ``RLINF_SERIALIZE_PG_LIFECYCLE`` when set; otherwise defaults to
+    enabled for ``torch < 2.7.0`` and disabled for ``torch >= 2.7.0``.
+    """
+    from ..cluster import Cluster, ClusterEnvVar
+
+    raw = Cluster.get_sys_env_var(ClusterEnvVar.SERIALIZE_PG_LIFECYCLE)
+    if raw is not None and str(raw).strip() != "":
+        lowered = str(raw).strip().lower()
+        if lowered in _TRUE_ENV_VALUES:
+            return True
+        if lowered in _FALSE_ENV_VALUES:
+            return False
+        env_name = Cluster.get_full_env_var_name(ClusterEnvVar.SERIALIZE_PG_LIFECYCLE)
+        raise ValueError(
+            f"Invalid {env_name}={raw!r}; expected one of "
+            f"{sorted(_TRUE_ENV_VALUES | _FALSE_ENV_VALUES)} or unset."
+        )
+    return parse_version(torch.__version__) < parse_version(
+        _TORCH_SERIALIZE_PG_LIFECYCLE_CUTOFF
+    )
+
+
+def _process_group_lifecycle_guard():
+    """Acquire the lifecycle lock when serialization is enabled."""
+    if is_process_group_lifecycle_lock_enabled():
+        return _PROCESS_GROUP_LIFECYCLE_LOCK
+    return nullcontext()
 
 
 class MultiChannelProcessGroup:
@@ -475,6 +525,40 @@ class MultiChannelProcessGroup:
         """Create a new process group.
 
         This function is modified version of dist.init_process_group to allow creating multiple process groups without the default process group and new processes unknown to existing process groups (therefore new_group cannot be used).
+
+        When serialization is enabled (see ``RLINF_SERIALIZE_PG_LIFECYCLE``),
+        creation is locked process-wide to avoid torch/pybind races on
+        concurrent GLOO rendezvous / TCPStore.
+        """
+        with _process_group_lifecycle_guard():
+            return MultiChannelProcessGroup._create_process_group_unlocked(
+                backend=backend,
+                init_method=init_method,
+                timeout=timeout,
+                world_size=world_size,
+                rank=rank,
+                store=store,
+                group_name=group_name,
+                pg_options=pg_options,
+                device_id=device_id,
+            )
+
+    @staticmethod
+    def _create_process_group_unlocked(
+        backend=None,
+        init_method=None,
+        timeout=None,
+        world_size=-1,
+        rank=-1,
+        store=None,
+        group_name=None,
+        pg_options=None,
+        device_id=None,
+    ) -> dist.ProcessGroup:
+        """Create a process group without taking the lifecycle lock.
+
+        Callers must hold ``_PROCESS_GROUP_LIFECYCLE_LOCK`` when serialization
+        is enabled, or accept the concurrent-init risk when it is disabled.
         """
         from torch.distributed.distributed_c10d import (
             Backend,
@@ -543,6 +627,28 @@ class MultiChannelProcessGroup:
 
         This is a modified version of dist.new_group to allow splitting any existing process groups (not only the default group like dist.new_group) into a new one.
         """
+        with _process_group_lifecycle_guard():
+            return MultiChannelProcessGroup._split_process_group_unlocked(
+                base_group=base_group,
+                timeout=timeout,
+                backend=backend,
+                pg_options=pg_options,
+                group_name=group_name,
+            )
+
+    @staticmethod
+    def _split_process_group_unlocked(
+        base_group: dist.ProcessGroup = None,
+        timeout=None,
+        backend=None,
+        pg_options=None,
+        group_name=None,
+    ) -> dist.ProcessGroup:
+        """Split a process group without taking the lifecycle lock.
+
+        Callers must hold ``_PROCESS_GROUP_LIFECYCLE_LOCK`` when serialization
+        is enabled, or accept the concurrent-init risk when it is disabled.
+        """
         dist.new_group
         from torch.distributed.distributed_c10d import (
             Backend,
@@ -590,7 +696,7 @@ class MultiChannelProcessGroup:
             device_id=device_id,
         )
         if result is None:
-            pg = MultiChannelProcessGroup._create_process_group(
+            pg = MultiChannelProcessGroup._create_process_group_unlocked(
                 backend=backend,
                 world_size=group_world_size,
                 rank=group_rank,
