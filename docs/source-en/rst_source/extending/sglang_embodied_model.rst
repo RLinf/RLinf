@@ -353,7 +353,7 @@ when using msgpack, the logical fields remain the same, but Tensors and ndarrays
 .. code-block:: json
 
    {
-     "model": "/path/to/dreamzero_checkpoint",
+     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers",
      "parameters": {
        "action_input": {},
        "session_ids": [
@@ -428,8 +428,6 @@ strings to enums. A typical block looks like:
            synthetic_height: 160
            synthetic_width: 320
            dreamzero_compile_components: true
-           dreamzero_tensor_parallel_size: ${..tp_size}
-           dreamzero_sequence_parallel_size: 1
            dreamzero_max_sessions: 128
 
 Key points:
@@ -443,18 +441,9 @@ Key points:
 - the ``pipeline_config`` sub-block maps to ``DreamZeroPipelineConfig`` fields,
   named identically to the sglang side (``cfg_scale``,
   ``default_num_inference_steps``, ``dreamzero_compile_components``,
-  ``dreamzero_sequence_parallel_size``, ``dreamzero_max_sessions``, ...);
+  ``dreamzero_max_sessions``, ...);
 - all model paths point to ``rollout.model.model_path``; the Server loads the
   different model components per the checkpoint layout.
-
-.. warning::
-
-   ``pipeline_config.dreamzero_tensor_parallel_size`` **must equal** the
-   top-level ``tp_size``. DreamZero validates at init that the "configured TP"
-   matches the "actual TP group"; a mismatch raises ``ValueError: DreamZero
-   tensor parallel size must match the initialized TP group``. The field
-   defaults to 1, so when enabling ``tp_size > 1`` you must align it explicitly
-   (the example above uses ``${..tp_size}`` so changing ``tp_size`` auto-syncs).
 
 Model shape-related fields (``num_frames``, tile parameters, ``synthetic_*``,
 ``action_horizon``, ...) must remain consistent with the checkpoint training
@@ -681,8 +670,6 @@ client, parallelism, launch toggles); the ``server`` sub-block holds the
            cfg_scale: 5.0
            default_num_inference_steps: 16
            dreamzero_compile_components: true
-           dreamzero_tensor_parallel_size: ${..tp_size}
-           dreamzero_sequence_parallel_size: 1
 
 Top-level private-key fields:
 
@@ -757,7 +744,7 @@ DreamZero Model and Data Configuration
      model:
        model_type: "dreamzero"
        precision: bf16
-       model_path: /path/to/dreamzero_checkpoint
+       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
        tokenizer_path: google/umt5-xxl
        metadata_json_path: /path/to/metadata.json
        embodiment_tag: "libero_sim"
@@ -816,7 +803,7 @@ metadata, run the following from the repository root:
    bash evaluations/run_eval.sh \
      libero \
      libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/dreamzero_checkpoint \
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      rollout.model.metadata_json_path=/path/to/metadata.json
 
 For the detailed DreamZero SGLang evaluation workflow, see :doc:`../evaluations/guides/dreamzero_sglang`.
@@ -828,7 +815,7 @@ For initial joint debugging, the number of environments can be overridden:
    bash evaluations/run_eval.sh \
      libero \
      libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/dreamzero_checkpoint \
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      rollout.model.metadata_json_path=/path/to/metadata.json \
      env.eval.total_num_envs=4
 
@@ -874,9 +861,6 @@ stdout/stderr). Check the following first:
 - Whether the current SGLang installation contains ``DreamZeroPipeline`` and the action endpoint;
 - Whether the checkpoint path and component layout are correct;
 - Whether ``num_gpus``, ``tp_size``, and ``sp_degree`` match the available GPUs;
-- **Whether ``pipeline_config.dreamzero_tensor_parallel_size`` equals ``tp_size``**
-  (must-check for tp>1, else "DreamZero tensor parallel size must match the
-  initialized TP group");
 - Whether the port is occupied (HTTP/master_port are auto-allocated by PortLock
   but may still clash with external processes);
 - Whether ``spawn_timeout`` is sufficient to cover initial compilation and weight loading.

@@ -24,21 +24,19 @@ DreamZero SGLang 评测
    cd /path/to/sglang_dreamzero
    pip install -e "python[diffusion]"
 
-准备 Repacked Checkpoint
-------------------------
+准备 Checkpoint
+---------------
 
-从 `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000>`_ 下载 LIBERO SFT checkpoint。
-DreamZero SGLang backend 需要 repacked checkpoint。从 RLinf 仓库中将原始 checkpoint 转换一次：
+从
+`RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_
+下载 LIBERO SFT Diffusers checkpoint。将 ``rollout.model.model_path`` 指向下载后的 checkpoint 目录。
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
-   python toolkits/difusser-like-weight-convert/dreamzero_repack.py \
-     --path /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000
+   huggingface-cli download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+     --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-默认输出目录与原 checkpoint 同级，并带 ``-repacked`` 后缀。后续将 ``rollout.model.model_path`` 指向该 repacked 目录。
-
-repacked checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并显式设置 ``rollout.model.metadata_json_path``：
+checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并显式设置 ``rollout.model.metadata_json_path``：
 
 .. code-block:: bash
 
@@ -56,8 +54,7 @@ repacked checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果
 
    cd /path/to/RLinf
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000-repacked \
-     rollout.model.tokenizer_path=/path/to/umt5-xxl
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 如果使用自定义 metadata 文件，额外加入：
 
@@ -91,7 +88,7 @@ repacked checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果
    * - ``rollout.sglang.sp_size``
      - DreamZero DiT attention sequence parallel size。
    * - ``rollout.model.model_path``
-     - SGLang 加载的 repacked DreamZero checkpoint 目录。
+     - SGLang 加载的 DreamZero Diffusers checkpoint 目录。
    * - ``rollout.model.metadata_json_path``
      - action inference 前后归一化使用的统计信息。
    * - ``rollout.model.num_action_chunks``
@@ -107,8 +104,7 @@ repacked checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
      rollout.sglang.num_gpus=2 \
      rollout.sglang.cfg_parallel_degree=2 \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000-repacked \
-     rollout.model.tokenizer_path=/path/to/umt5-xxl
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 验证
 ----
@@ -120,6 +116,6 @@ LIBERO-Spatial SGLang 配置使用 ``auto_reset: True`` 和 ordered reset states
 常见问题
 --------
 
-- 如果 SGLang 找不到 model components，确认 ``rollout.model.model_path`` 指向 repacked checkpoint，而不是原始 DreamZero checkpoint。
+- 如果 SGLang 找不到 model components，确认 ``rollout.model.model_path`` 指向下载后的 Diffusers checkpoint 目录。
 - 如果 metadata 加载失败，将 ``rollout.model.metadata_json_path`` 设置为为 ``libero_sim`` 生成的现有 ``metadata.json``。
 - 如果本地 HTTP 请求意外经过 proxy，启动前设置 ``NO_PROXY=127.0.0.1,localhost``。

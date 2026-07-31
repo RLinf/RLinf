@@ -88,8 +88,8 @@ rollout:
       backend: sglang
       pipeline_class_name: DreamZeroPipeline
       tp_size: ${..tensor_parallel_size}
-      num_gpus: 1
-      attention_backend: TORCH_SDPA
+      num_gpus: 1  # shoud be TP size * PP size * CFG degree * SP degree
+      attention_backend: FA  # FA or TORCH_SDPA
       dit_cpu_offload: false
       cfg_parallel_degree: 1
       sp_degree: 1
@@ -106,15 +106,13 @@ rollout:
         tile_stride_width: 16
         tiled: false
         dreamzero_compile_components: true
-        dreamzero_tensor_parallel_size: ${..tp_size}
-        dreamzero_sequence_parallel_size: 1
         dreamzero_max_sessions: 128
         dynamic_cache_schedule: false
 
   model:
     model_type: "dreamzero"
     precision: bf16
-    model_path: /path/to/dreamzero_checkpoint
+    model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
     tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
     # Dataset-generated metadata.json for normalisation statistics.
     # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \

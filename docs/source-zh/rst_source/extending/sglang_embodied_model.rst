@@ -348,7 +348,7 @@ DreamZero Client 调用 ``POST /v1/actions/generations``。JSON 形式如下；
 .. code-block:: json
 
    {
-     "model": "/path/to/dreamzero_checkpoint",
+     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers",
      "parameters": {
        "action_input": {},
        "session_ids": [
@@ -421,8 +421,6 @@ server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该�
            synthetic_height: 160
            synthetic_width: 320
            dreamzero_compile_components: true
-           dreamzero_tensor_parallel_size: ${..tp_size}
-           dreamzero_sequence_parallel_size: 1
            dreamzero_max_sessions: 128
 
 关键说明：
@@ -434,18 +432,9 @@ server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该�
   ``cfg_parallel_degree``、``sp_degree`` 等）；
 - ``pipeline_config`` 子块对应 ``DreamZeroPipelineConfig`` 字段，命名与 sglang
   侧一致（``cfg_scale``、``default_num_inference_steps``、
-  ``dreamzero_compile_components``、``dreamzero_sequence_parallel_size``、
-  ``dreamzero_max_sessions`` 等）；
+  ``dreamzero_compile_components``、``dreamzero_max_sessions`` 等）；
 - 模型路径都指向 ``rollout.model.model_path``，由 Server 按 checkpoint 布局
   加载不同组件。
-
-.. warning::
-
-   ``pipeline_config.dreamzero_tensor_parallel_size`` **必须等于** 顶层
-   ``tp_size``。DreamZero 在初始化时会校验"配置 TP"与"实际 TP group"一致，
-   不一致会抛出 ``ValueError: DreamZero tensor parallel size must match the
-   initialized TP group``。该字段默认为 1，因此开启 ``tp_size > 1`` 时必须显式
-   对齐（示例中用 ``${..tp_size}`` 联动，改 ``tp_size`` 即自动同步）。
 
 模型 shape 相关字段（``num_frames``、tile 参数、``synthetic_*``、
 ``action_horizon`` 等）必须与 checkpoint 训练配置保持一致，不能只根据显存情况
@@ -669,8 +658,6 @@ launch 开关），``server`` 子块放转发给 sglang 的 ``ServerArgs`` 字�
            cfg_scale: 5.0
            default_num_inference_steps: 16
            dreamzero_compile_components: true
-           dreamzero_tensor_parallel_size: ${..tp_size}
-           dreamzero_sequence_parallel_size: 1
 
 RLinf 私有参数字段说明：
 
@@ -742,7 +729,7 @@ DreamZero 模型与数据配置
      model:
        model_type: "dreamzero"
        precision: bf16
-       model_path: /path/to/dreamzero_checkpoint
+       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
        tokenizer_path: google/umt5-xxl
        metadata_json_path: /path/to/metadata.json
        embodiment_tag: "libero_sim"
@@ -801,7 +788,7 @@ metadata 后，在仓库根目录运行：
    bash evaluations/run_eval.sh \
      libero \
      libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/dreamzero_checkpoint \
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      rollout.model.metadata_json_path=/path/to/metadata.json
 
 详细的 DreamZero SGLang evaluation 流程见 :doc:`../evaluations/guides/dreamzero_sglang`。
@@ -813,7 +800,7 @@ metadata 后，在仓库根目录运行：
    bash evaluations/run_eval.sh \
      libero \
      libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/dreamzero_checkpoint \
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      rollout.model.metadata_json_path=/path/to/metadata.json \
      env.eval.total_num_envs=4
 
@@ -859,9 +846,6 @@ server 子进程的输出（直接流到 Ray actor 的 stdout/stderr）。优先
 - 当前 SGLang 安装是否包含 ``DreamZeroPipeline`` 和 action endpoint；
 - checkpoint 路径和组件布局是否正确；
 - ``num_gpus``、``tp_size``、``sp_degree`` 与可用 GPU 是否匹配；
-- **``pipeline_config.dreamzero_tensor_parallel_size`` 是否等于 ``tp_size``**
-  （tp>1 时必查，否则报 "DreamZero tensor parallel size must match the
-  initialized TP group"）；
 - 端口是否被占用（HTTP/master_port 由 PortLock 自动分配，但仍可能与外部进程
   冲突）；
 - ``spawn_timeout`` 是否足够覆盖首次编译和权重加载时间。

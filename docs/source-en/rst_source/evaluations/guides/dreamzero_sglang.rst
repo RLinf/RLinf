@@ -24,21 +24,19 @@ Install the SGLang build that contains DreamZero support, including the ``diffus
    cd /path/to/sglang_dreamzero
    pip install -e "python[diffusion]"
 
-Prepare the Repacked Checkpoint
--------------------------------
+Prepare the Checkpoint
+----------------------
 
-Download the LIBERO SFT checkpoint from `RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000 <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000>`_.
-The DreamZero SGLang backend expects a repacked checkpoint directory. Convert the raw checkpoint once from the RLinf repository:
+Download the LIBERO SFT Diffusers checkpoint from
+`RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers <https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers>`_.
+Point ``rollout.model.model_path`` at the downloaded checkpoint directory.
 
 .. code-block:: bash
 
-   cd /path/to/RLinf
-   python toolkits/difusser-like-weight-convert/dreamzero_repack.py \
-     --path /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000
+   huggingface-cli download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+     --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
-By default, the output is written next to the source checkpoint with a ``-repacked`` suffix. Point ``rollout.model.model_path`` at this repacked directory.
-
-The repacked checkpoint should contain ``experiment_cfg/metadata.json``. If metadata is not available in the checkpoint, generate it from the LIBERO dataset and set ``rollout.model.metadata_json_path`` explicitly:
+The checkpoint should contain ``experiment_cfg/metadata.json``. If metadata is not available in the checkpoint, generate it from the LIBERO dataset and set ``rollout.model.metadata_json_path`` explicitly:
 
 .. code-block:: bash
 
@@ -56,8 +54,7 @@ The default SGLang eval config is ``evaluations/libero/libero_spatial_dreamzero_
 
    cd /path/to/RLinf
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000-repacked \
-     rollout.model.tokenizer_path=/path/to/umt5-xxl
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 For a custom metadata file, add:
 
@@ -91,7 +88,7 @@ Important Config Fields
    * - ``rollout.sglang.sp_size``
      - Sequence-parallel size for the DreamZero DiT attention sequence.
    * - ``rollout.model.model_path``
-     - Repacked DreamZero checkpoint directory loaded by SGLang.
+     - DreamZero Diffusers checkpoint directory loaded by SGLang.
    * - ``rollout.model.metadata_json_path``
      - Normalization statistics used before and after action inference.
    * - ``rollout.model.num_action_chunks``
@@ -107,8 +104,7 @@ The supported DreamZero SGLang evaluation entry is ``libero_spatial_dreamzero_ev
    bash evaluations/run_eval.sh libero libero_spatial_dreamzero_eval_sglang \
      rollout.sglang.num_gpus=2 \
      rollout.sglang.cfg_parallel_degree=2 \
-     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Step26000-repacked \
-     rollout.model.tokenizer_path=/path/to/umt5-xxl
+     rollout.model.model_path=/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 Validation
 ----------
@@ -120,6 +116,6 @@ The LIBERO-Spatial SGLang config uses ``auto_reset: True`` and ordered reset sta
 Troubleshooting
 ---------------
 
-- If SGLang cannot find model components, confirm that ``rollout.model.model_path`` points to the repacked checkpoint directory rather than the raw DreamZero checkpoint.
+- If SGLang cannot find model components, confirm that ``rollout.model.model_path`` points to the downloaded Diffusers checkpoint directory.
 - If metadata loading fails, set ``rollout.model.metadata_json_path`` to an existing ``metadata.json`` generated for ``libero_sim``.
 - If local HTTP requests unexpectedly use a proxy, set ``NO_PROXY=127.0.0.1,localhost`` before launching evaluation.

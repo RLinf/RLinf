@@ -35,19 +35,21 @@ roughly:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib import error as urllib_error
-from urllib import request as urllib_request
 
 import numpy as np
+import requests
 import torch
 from omegaconf import DictConfig, open_dict
+from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
+    pack_msgpack,
+    unpack_msgpack,
+)
 from tianshou.data import Batch
 
 from rlinf.data.datasets.dreamzero.data_transforms import (
@@ -66,32 +68,28 @@ from rlinf.workers.rollout.sglang.action_policies.registry import (
 
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
 
-_NO_PROXY_HTTP_OPENER = urllib_request.build_opener(urllib_request.ProxyHandler({}))
-
-
-def _urlopen_no_proxy(request_or_url, *, timeout: float):
-    return _NO_PROXY_HTTP_OPENER.open(request_or_url, timeout=timeout)
-
 
 @dataclass
 class DreamZeroActionRequest:
-    """Request contract used by the DreamZero SGLang action endpoint.
-
-    ``normalized_input`` is the output of the local DreamZero data transform and
-    is passed to the server as ``input.observation``. ``session_ids`` name
-    the logical env slots for the server-side video/text cache. ``reset_mask`` is
-    the client-side cache invalidation handle for those logical sessions: setting
-    a row to ``True`` asks the server to drop cached state for that session before
-    processing the request.  Model/cache lifecycle resets caused by window
-    limits, language changes, etc. are still decided by the server.
-    """
+    """Request contract used by the DreamZero SGLang action endpoint."""
 
     normalized_input: dict[str, Any]
+    """DreamZero-normalized observation sent as ``input.observation``."""
+
     session_ids: list[str]
+    """Logical environment slots for the server-side cache."""
+
     reset_mask: list[bool]
-    prompt_cache_keys: list[str]
-    negative_prompt_cache_keys: list[str]
+    """Per-session cache invalidation flags."""
+
+    prompt_texts: list[str]
+    """Positive prompts sent as ``input.prompt``."""
+
+    negative_prompt_texts: list[str]
+    """Negative prompts sent as ``parameters.negative_prompts``."""
+
     seed: int
+    """Request seed forwarded to the SGLang action endpoint."""
 
 
 @dataclass
@@ -99,6 +97,7 @@ class DreamZeroActionResult:
     """Normalized action tensor returned by the SGLang action endpoint."""
 
     normalized_action: Any
+    """Action values in DreamZero normalized action space."""
 
 
 class HttpDreamZeroActionClient:
@@ -137,13 +136,13 @@ class HttpDreamZeroActionClient:
         payload = {
             "model": self._model,
             "input": {
-                "prompt": request.prompt_cache_keys,
+                "prompt": request.prompt_texts,
                 "observation": request.normalized_input,
             },
             "parameters": {
                 "session_ids": request.session_ids,
                 "reset_mask": request.reset_mask,
-                "negative_prompts": request.negative_prompt_cache_keys,
+                "negative_prompts": request.negative_prompt_texts,
                 "seed": request.seed,
             },
             "runtime": {
@@ -165,10 +164,6 @@ class HttpDreamZeroActionClient:
         )
 
     def _encode_payload(self, payload: dict[str, Any]) -> tuple[bytes, str]:
-        from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-            pack_msgpack,
-        )
-
         return (
             pack_msgpack(self._to_msgpackable(payload)),
             "application/msgpack",
@@ -179,45 +174,15 @@ class HttpDreamZeroActionClient:
         last_error: Exception | None = None
         url = f"{self._server_url}/v1/actions/generations"
         for attempt in range(self._max_retries + 1):
-            http_request = urllib_request.Request(
-                url,
-                data=body,
-                headers={"Content-Type": content_type, "Accept": content_type},
-                method="POST",
-            )
             try:
-                with _urlopen_no_proxy(
-                    http_request, timeout=self._timeout_s
-                ) as response:
-                    response_bytes = response.read()
-                    if "msgpack" in response.headers.get("content-type", "").lower():
-                        from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-                            unpack_msgpack,
-                        )
-
-                        return unpack_msgpack(response_bytes)
-                    raise RuntimeError(
-                        "DreamZero SGLang action HTTP response must be msgpack, "
-                        f"got content-type={response.headers.get('content-type')!r}"
-                    )
-            except urllib_error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                if exc.code in retry_statuses and attempt < self._max_retries:
-                    last_error = RuntimeError(
-                        f"status={exc.code}, body={detail[:1000]}"
-                    )
-                    self._sleep_before_retry(attempt)
-                    continue
-                raise RuntimeError(
-                    "DreamZero SGLang action HTTP request failed: "
-                    f"status={exc.code}, body_bytes={len(body)}, body={detail}"
-                ) from exc
-            except (
-                ConnectionResetError,
-                TimeoutError,
-                OSError,
-                urllib_error.URLError,
-            ) as exc:
+                resp = requests.post(
+                    url,
+                    data=body,
+                    headers={"Content-Type": content_type, "Accept": content_type},
+                    timeout=self._timeout_s,
+                    proxies={"http": None, "https": None},
+                )
+            except requests.exceptions.RequestException as exc:
                 if attempt < self._max_retries:
                     last_error = exc
                     self._sleep_before_retry(attempt)
@@ -227,6 +192,25 @@ class HttpDreamZeroActionClient:
                     f"attempts={self._max_retries + 1}, body_bytes={len(body)}, "
                     f"last_error={last_error or exc}"
                 ) from exc
+
+            if resp.status_code in retry_statuses and attempt < self._max_retries:
+                last_error = RuntimeError(
+                    f"status={resp.status_code}, body={resp.text[:1000]}"
+                )
+                self._sleep_before_retry(attempt)
+                continue
+            if not resp.ok:
+                raise RuntimeError(
+                    "DreamZero SGLang action HTTP request failed: "
+                    f"status={resp.status_code}, body_bytes={len(body)}, "
+                    f"body={resp.text}"
+                )
+            if "msgpack" not in resp.headers.get("content-type", "").lower():
+                raise RuntimeError(
+                    "DreamZero SGLang action HTTP response must be msgpack, "
+                    f"got content-type={resp.headers.get('content-type')!r}"
+                )
+            return unpack_msgpack(resp.content)
         raise RuntimeError(
             "DreamZero SGLang action HTTP request failed after retries: "
             f"attempts={self._max_retries + 1}, body_bytes={len(body)}, "
@@ -270,11 +254,11 @@ class _DreamZeroActionAdapter:
     """
 
     def __init__(self, cfg: DictConfig):
-        tokenizer_path = cfg.get("tokenizer_path", "google/umt5-xxl")
         self.embodiment_tag = str(cfg.embodiment_tag)
         self._rollout_obs_layout = rollout_obs_layout_for_embodiment(
             self.embodiment_tag
         )
+        tokenizer_path = os.path.join(str(cfg.model_path), "tokenizer")
         self.data_transforms = build_dreamzero_composed_transform(cfg, tokenizer_path)
         self.data_transforms.set_metadata(load_dreamzero_dataset_metadata(cfg))
         self.data_transforms.eval()
@@ -307,63 +291,69 @@ class _DreamZeroActionAdapter:
         """Apply DreamZero dataset transforms to obtain server model inputs.
 
         The output contains normalized tensors such as images/video, state,
-        tokenized text, attention masks and ``embodiment_id``.  Prompt tokens are
-        aligned after the transform so the rollout path uses the training prompt
-        format expected by the server-side text cache.
+        ``embodiment_id`` and server-side prompt strings. Text tokenization is
+        owned by the SGLang server.
         """
 
-        normalized_input = self.data_transforms(obs)
+        normalized_input = self._apply_server_transforms(obs)
         if isinstance(normalized_input, Batch):
             normalized_input = normalized_input.__getstate__()
-        normalized_input = dict(normalized_input)
-        self._align_rollout_prompt_tokens(obs, normalized_input)
-        return normalized_input
+        return dict(normalized_input)
 
-    @staticmethod
-    def _as_list(value: Any) -> list[Any]:
-        if torch.is_tensor(value):
-            value = value.detach().cpu()
-            if value.ndim == 0:
-                return [value.item()]
-            return value.flatten().tolist()
-        if isinstance(value, np.ndarray):
-            if value.ndim == 0:
-                return [value.item()]
-            return value.reshape(-1).tolist()
-        if isinstance(value, list):
-            return value
-        if isinstance(value, tuple):
-            return list(value)
-        return [value]
+    def _apply_server_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
+        data = obs
+        for transform in self.data_transforms.transforms[:-1]:
+            data = transform(data)
+        return self._apply_dream_transform_without_tokenizer(data)
 
-    def _align_rollout_prompt_tokens(
-        self, obs: dict[str, Any], normalized_input: dict[str, Any]
-    ) -> None:
-        """Replace rollout text tokens with DreamZero training-format tokens."""
+    def _apply_dream_transform_without_tokenizer(
+        self, data: dict[str, Any]
+    ) -> dict[str, Any]:
+        import tree
 
-        tasks = obs.get("annotation.task")
-        if tasks is None or "text" not in normalized_input:
-            return
-        embodiment_ids = self._as_list(normalized_input["embodiment_id"])
-        task_list = self._as_list(tasks)
-        if len(task_list) == 1 and len(embodiment_ids) > 1:
-            task_list = task_list * len(embodiment_ids)
-        texts = [
-            format_training_prompt(
-                normalize_instruction_text(task),
-                int(embodiment_id),
-                self._dream_transform.embodiment_tag_mapping,
-            )
-            for task, embodiment_id in zip(task_list, embodiment_ids, strict=False)
-        ]
-        ids, mask = self._dream_transform.tokenizer(
-            texts,
-            return_mask=True,
-            add_special_tokens=True,
-        )
-        normalized_input["text"] = ids
-        normalized_input["text_attention_mask"] = mask
-        normalized_input["_dreamzero_prompt_texts"] = texts
+        data = dict(data)
+        if not self._dream_transform.training and data["video"].ndim == 5:
+            data["video"] = data["video"][None, ...]
+        is_batched, batch_size = self._dream_transform.check_keys_and_batch_size(data)
+        if is_batched:
+            samples = [
+                self._dream_transform.apply_single(
+                    tree.map_structure(lambda x: x[i], data)
+                )
+                for i in range(batch_size)
+            ]
+        else:
+            samples = [self._dream_transform.apply_single(data)]
+        return self._collate_server_dream_batch(samples)
+
+    def _collate_server_dream_batch(
+        self, features: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        batch: dict[str, Any] = {}
+        for key in features[0]:
+            if key == "text":
+                batch["_dreamzero_prompt_texts"] = [
+                    format_training_prompt(
+                        normalize_instruction_text(elem[key]),
+                        int(elem["embodiment_id"]),
+                        self._dream_transform.embodiment_tag_mapping,
+                    )
+                    for elem in features
+                ]
+            elif key == "text_negative":
+                batch["_dreamzero_negative_prompt_texts"] = [
+                    str(elem[key]) for elem in features
+                ]
+            else:
+                values = [elem[key] for elem in features]
+                try:
+                    batch[key] = torch.from_numpy(np.stack(values))
+                except ValueError as e:
+                    shapes = [np.asarray(v).shape for v in values]
+                    raise ValueError(
+                        f"Shape mismatch in collate for key='{key}': shapes={shapes}"
+                    ) from e
+        return batch
 
     def unapply(self, batch: Batch, obs: dict[str, Any] | None = None, **kwargs):
         """Invert normalized actions back to environment-scale action tensors.
@@ -462,7 +452,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         ``PipelineConfig.from_kwargs`` loads this file from
         ``--pipeline-config-path`` inside the server process.  It is the bridge
         from RLinf/Hydra fields (action horizon, image size, CFG scale,
-        tensor/sequence-parallel size, compile flag) to
+        compile flag) to
         ``server_args.pipeline_config`` used by the DreamZero server stages.
         """
 
@@ -476,12 +466,6 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         cfg = {
             "dreamzero_compile_components": bool(
                 getattr(sglang_cfg, "compile_components", True)
-            ),
-            "dreamzero_tensor_parallel_size": int(
-                getattr(sglang_cfg, "tp_size", 1) or 1
-            ),
-            "dreamzero_sequence_parallel_size": int(
-                getattr(sglang_cfg, "sp_degree", None) or 1
             ),
             "dreamzero_max_sessions": int(
                 getattr(sglang_cfg, "max_sessions", eval_batch_size) or eval_batch_size
@@ -628,65 +612,63 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
 
         request_input = dict(normalized_input)
         prompt_texts = request_input.pop("_dreamzero_prompt_texts", None)
+        negative_prompt_texts = request_input.pop(
+            "_dreamzero_negative_prompt_texts", None
+        )
+        for key in (
+            "text",
+            "text_attention_mask",
+            "text_negative",
+            "text_attention_mask_negative",
+        ):
+            request_input.pop(key, None)
         batch_size = len(session_ids)
         return DreamZeroActionRequest(
             normalized_input=request_input,
             session_ids=session_ids,
             reset_mask=reset_mask,
-            prompt_cache_keys=self._prompt_cache_keys(
-                request_input,
-                "text",
+            prompt_texts=self._batched_prompt_texts(
+                prompt_texts,
                 batch_size,
-                prompt_texts=prompt_texts,
+                "prompt",
             ),
-            negative_prompt_cache_keys=self._prompt_cache_keys(
-                request_input,
-                "text_negative",
+            negative_prompt_texts=self._batched_prompt_texts(
+                negative_prompt_texts,
                 batch_size,
+                "negative_prompt",
+                default="",
             ),
             seed=self._seed,
         )
 
     @staticmethod
-    def _prompt_cache_keys(
-        normalized_input: dict[str, Any],
-        key: str,
+    def _batched_prompt_texts(
+        value: Any,
         batch_size: int,
-        *,
-        prompt_texts: Any = None,
+        field_name: str,
+        default: str | None = None,
     ) -> list[str]:
-        """Build per-row prompt cache keys for server-side text embeddings.
-
-        Training-format prompt text is preferred because it is stable and human
-        readable.  If only token ids are available, a SHA1 over each token row is
-        used.  Missing prompt branches are explicitly marked so the server sees a
-        deterministic cache key for every batch row.
-        """
-
-        if prompt_texts is not None:
-            values = (
-                list(prompt_texts)
-                if isinstance(prompt_texts, Sequence)
-                and not isinstance(prompt_texts, (str, bytes))
-                else [str(prompt_texts)]
+        if value is None:
+            if default is None:
+                raise ValueError(f"DreamZero {field_name} is required")
+            return [default] * batch_size
+        if isinstance(value, str):
+            return [value] * batch_size
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+            raise TypeError(
+                f"DreamZero {field_name} must be a string or list of strings"
             )
-            if len(values) == 1 and batch_size > 1:
-                values = values * batch_size
-            if len(values) == batch_size:
-                return [str(value) for value in values]
-        value = normalized_input.get(key)
-        if torch.is_tensor(value):
-            rows = value.detach().cpu()
-            if rows.ndim == 0:
-                rows = rows.reshape(1)
-            if rows.shape[0] == 1 and batch_size > 1:
-                rows = rows.repeat(batch_size, *([1] * (rows.ndim - 1)))
-            if rows.shape[0] == batch_size:
-                return [
-                    f"{key}:tokens:{hashlib.sha1(row.contiguous().numpy().tobytes()).hexdigest()}"
-                    for row in rows
-                ]
-        return [f"{key}:missing"] * batch_size
+        values = list(value)
+        if not all(isinstance(item, str) for item in values):
+            raise TypeError(
+                f"DreamZero {field_name} must be a string or list of strings"
+            )
+        if len(values) != batch_size:
+            raise ValueError(
+                f"DreamZero {field_name} batch size mismatch: "
+                f"got {len(values)}, expected {batch_size}"
+            )
+        return values
 
     def _extract_action_output(
         self,
