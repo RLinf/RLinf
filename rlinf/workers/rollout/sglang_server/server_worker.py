@@ -166,9 +166,6 @@ class SGLangServerWorker(Worker):
         self._server_port: Optional[int] = None
         self._ready_pipe = None
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
     def init_server(self) -> None:
         """Spawn the sglang HTTP server subprocess and wait for /health.
 

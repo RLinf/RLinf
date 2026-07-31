@@ -52,12 +52,7 @@ _VALID_ROUTER_FIELDS: Optional[set[str]] = None  # lazily populated
 
 
 def _get_router_args():
-    """Lazily import and return ``sglang_router.router_args.RouterArgs``.
-
-    Deferred so that merely importing this module (and thus
-    ``launch_sglang_router_and_server``) does not require ``sglang_router``
-    when the caller sets ``launch_router: false``.
-    """
+    """Lazily import and return ``sglang_router.router_args.RouterArgs``"""
     from sglang_router.router_args import RouterArgs
 
     return RouterArgs

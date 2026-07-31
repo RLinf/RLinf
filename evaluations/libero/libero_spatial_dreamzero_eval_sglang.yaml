@@ -81,9 +81,6 @@ rollout:
     group_name: SGLangServerGroup
     router_group_name: SGLangRouterGroup
     server:
-      # All keys below are forwarded verbatim to ServerArgs.from_kwargs.
-      # Top-level = ServerArgs fields; pipeline_config = PipelineConfig fields
-      # dispatched into DreamZeroPipelineConfig.
       model_path: ${rollout.model.model_path}
       backend: sglang
       pipeline_class_name: DreamZeroPipeline
@@ -112,7 +109,7 @@ rollout:
   model:
     model_type: "dreamzero"
     precision: bf16
-    model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
+    model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers # https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
     tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
     # Dataset-generated metadata.json for normalisation statistics.
     # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
