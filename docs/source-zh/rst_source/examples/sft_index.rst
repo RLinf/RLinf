@@ -22,6 +22,17 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_openpi_pytorch.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
+           <b>JAX 精度对齐的 PyTorch OpenPI SFT</b>
+         </a><br>
+         支持 Pi0 / Pi0.5 的 RoboTwin 训练，以及 Pi0.5 的 BEHAVIOR-1K 训练
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -50,6 +61,6 @@ VLA / WAM 模型监督微调
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
-   OpenPI_mixed_precision <embodied/sft_openpi_pytorch>
+   JAX 精度对齐的 PyTorch OpenPI <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
    VLM <embodied/sft_vlm>

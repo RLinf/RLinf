@@ -1,96 +1,109 @@
-Supervised Fine-Tuning with PyTorch OpenPI (Pi0.5) on BEHAVIOR
-==============================================================
+JAX-Aligned PyTorch OpenPI Supervised Fine-Tuning
+=================================================
 
-This page explains how to run **supervised fine-tuning (SFT)** of the
-self-contained **PyTorch OpenPI Pi0.5** flow-matching VLA on the
-**BEHAVIOR-1K** task with the RLinf framework. The model is a pure-PyTorch
-re-implementation of the Pi0.5 architecture (dual-expert Gemma + SigLIP with a
-flow-matching action head), registered in RLinf under
-``model_type: openpi_pytorch``. SFT is typically the first stage before
-reinforcement learning: the model imitates high-quality demonstrations so that
-RL can continue optimization from a strong prior.
+This page documents supervised fine-tuning (SFT) for RLinf's self-contained,
+JAX-aligned PyTorch implementation of OpenPI. It supports the ``Pi0`` and
+``Pi0.5`` flow-matching VLA variants, registered as
+``model_type: openpi_pytorch``. The implementation follows the OpenPI JAX
+reference architecture and precision behavior while using PyTorch and FSDP for
+training.
 
-Contents
-----------
+The currently maintained SFT recipes are:
 
-- What the PyTorch OpenPI SFT flow is and how it is configured
-- The precision contract used by the FSDP optimizer and mixed-precision compute
-- The streaming BEHAVIOR data-loader keys and norm-stats / tokenizer settings
-- How to launch training and convert the resulting checkpoints for evaluation
+- **Pi0 on RoboTwin**
+- **Pi0.5 on RoboTwin**
+- **Pi0.5 on BEHAVIOR-1K**
 
-
-What it is
-----------
-
-The ``openpi_pytorch`` model is a self-contained PyTorch port of the Pi0.5
-flow-matching VLA. **It is worth emphasizing that** the PyTorch implementation
-shipped in the official openpi repository is *not* numerically aligned with its
-JAX reference, whereas this port is numerically aligned with the JAX
-implementation. Unlike the JAX/LeRobot-backed OpenPI path (see
-:doc:`sft_openpi`), it builds the model shape directly from a small set of
-config fields (no ``config.json`` is read at construction time) and is wired for
-BEHAVIOR-1K out of the box. During SFT the policy is trained to predict the
-32-step, 23-dim action chunk for the dual-arm R1 Pro robot from the BEHAVIOR
-demonstrations, using the flow-matching denoising objective.
+There is currently no maintained Pi0-on-BEHAVIOR SFT configuration. Use one of
+the recipes below rather than mixing a model template and a dataset config that
+are not listed together.
 
 
-Configuration
--------------
+Available recipes
+-----------------
 
-The example is split into a reusable, path-free **model template** and an
-**experiment config** that supplies the filesystem paths:
+Each recipe is an experiment configuration under ``examples/sft/config/``.
+The configuration imports its matching path-free model template through Hydra
+and supplies the local dataset, checkpoint, and normalization-statistics paths.
 
-- Experiment config: ``examples/sft/config/behavior_pi05_vla.yaml``
-- Model template: ``examples/sft/config/model/pi0_5_pytorch.yaml``
+.. list-table::
+   :header-rows: 1
+   :widths: 18 18 32 32
 
-The experiment config pulls in the model template through Hydra ``defaults``:
+   * - Model
+     - Dataset
+     - Experiment configuration
+     - Model template / OpenPI config
+   * - Pi0
+     - RoboTwin
+     - ``robotwin_sft_openpi_pytorch.yaml``
+     - ``model/pi0_pytorch.yaml`` / ``pi0_aloha_robotwin``
+   * - Pi0.5
+     - RoboTwin
+     - ``robotwin_sft_openpi_pytorch_pi05.yaml``
+     - ``model/pi0_5_pytorch_robotwin.yaml`` /
+       ``pi05_aloha_robotwin``
+   * - Pi0.5
+     - BEHAVIOR-1K
+     - ``behavior_pi05_vla.yaml``
+     - ``model/pi0_5_pytorch.yaml`` / ``pi05_behavior``
+
+All three recipes load fp32 master weights and use FSDP mixed precision with
+bf16 parameter computation and fp32 gradient reduction/buffers. This keeps the
+reference-aligned optimizer behavior while reducing activation and compute
+memory use. Gradient checkpointing is enabled in the supplied configs.
+
+
+Prepare a recipe
+----------------
+
+Start from the experiment configuration in the table and replace every
+``/path/to/...`` placeholder. The model checkpoint must be in the new
+``openpi_pytorch`` layout (``model.safetensors`` plus ``config.json``), with
+the matching ``norm_stats.json`` available at the configured asset location.
+Use the ``jax2new`` checkpoint-converter mode if you are starting from an
+OpenPI JAX checkpoint; see
+``rlinf/utils/ckpt_convertor/openpi/README.md`` for the full conversion flow.
+
+RoboTwin
+~~~~~~~~
+
+The two RoboTwin recipes use the LeRobot-format RoboTwin dataset and share the
+same data settings:
 
 .. code:: yaml
 
-   defaults:
-     - model/pi0_5_pytorch@actor.model
-     - training_backend/fsdp@actor.fsdp_config
-     - override hydra/job_logging: stdout
+   data:
+     train_data_paths: /path/to/robotwin-data
+     num_workers: 4
+     tolerance_s: 1.0e-4
 
-Precision contract
-~~~~~~~~~~~~~~~~~~~
+RoboTwin uses 14-dimensional ALOHA actions and three input images. The model
+config pads the actions to OpenPI's 32-dimensional model action space and sets
+``num_action_chunks: 50``. Set the model and assets paths in the selected
+recipe, for example:
 
-The PyTorch OpenPI SFT recipe deliberately separates the **load dtype** from the
-**compute dtype**:
+.. code:: yaml
 
-- The model template sets ``actor.model.precision: fp32`` (in
-  ``pi0_5_pytorch.yaml``). The fp32 weights are loaded as the **FSDP optimizer
-  master**, so warmup-LR updates are not lost to bf16 rounding.
-- FSDP ``MixedPrecision`` computes in bf16 while keeping the gradient all-reduce
-  and buffers in fp32:
+   actor:
+     model:
+       model_path: /path/to/pi0_base_pytorch_new       # or Pi0.5
+       openpi:
+         assets_dir: ${actor.model.model_path}
+         asset_id: "physical-intelligence/robotwin"
+         num_images_in_input: 3
 
-  .. code:: yaml
+Use the Pi0 checkpoint with ``robotwin_sft_openpi_pytorch.yaml`` and the
+Pi0.5 checkpoint with ``robotwin_sft_openpi_pytorch_pi05.yaml``. Do not swap
+these model paths or OpenPI config names.
 
-     actor:
-       fsdp_config:
-         gradient_checkpointing: True
-         mixed_precision:
-           param_dtype: bf16     # FSDP compute dtype
-           reduce_dtype: fp32    # grad all-reduce stays fp32
-           buffer_dtype: fp32
+BEHAVIOR-1K
+~~~~~~~~~~~
 
-  ``param_dtype`` is the FSDP **compute** dtype and is set explicitly to bf16
-  rather than being interpolated from ``actor.model.precision``: the load-dtype
-  selector and the compute dtype are independent knobs, so an fp32-master load
-  still computes in bf16.
-- Gradient checkpointing is enabled
-  (``actor.fsdp_config.gradient_checkpointing: True``) on the dual-expert Gemma +
-  SigLIP backbone to reduce activation memory.
-- The learning-rate schedule is a reference-exact warmup + cosine decay,
-  selected with ``actor.optim.lr_scheduler: openpi_cosine`` (warmup starts at
-  ``peak / (warmup + 1)`` and cosine-decays to ``min_lr`` over
-  ``total_training_steps``).
-
-Streaming data loader
-~~~~~~~~~~~~~~~~~~~~~~~
-
-The BEHAVIOR streaming loader reads all of its parameters directly from the
-``data:`` section (there are no hidden defaults):
+``behavior_pi05_vla.yaml`` uses the Pi0.5 streaming BEHAVIOR loader. It trains
+on 32-step, 23-dimensional dual-arm R1 Pro action chunks with the
+flow-matching denoising objective. Configure the dataset root, task selection,
+and matching Pi0.5 assets under ``data`` and ``actor.model.openpi``:
 
 .. code:: yaml
 
@@ -111,96 +124,82 @@ The BEHAVIOR streaming loader reads all of its parameters directly from the
          - "press radio"
          - "place radio on coffee table"
 
-Key data fields:
-
-- ``train_data_paths`` / ``behavior_dataset_root``: root of the BEHAVIOR
-  dataset (the latter defaults to the former).
-- ``repo_id``: BEHAVIOR demonstration repo id
-  (``behavior-1k/2025-challenge-demos``).
-- ``modalities``: input modalities consumed by the loader (e.g. ``["rgb"]``).
-- ``num_workers``: number of data-loader worker processes.
-- ``fine_grained_level`` and ``tolerance_s``: time-alignment controls for the
-  streaming reader.
-- ``tasks``: the BEHAVIOR task(s) to train on.
-- ``use_skill``: when ``false``, train on the main-task text; when ``true``,
-  train on the per-frame REFERENCE skill text selected from ``task_subtasks``.
-- ``task_subtasks``: per-task ordered skill labels used to build the
-  index-to-label mapping when ``use_skill: true``.
-
-Norm stats and tokenizer
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The normalization statistics and PaliGemma tokenizer live under
-``actor.model.openpi``:
-
-.. code:: yaml
-
    actor:
      model:
        model_path: /path/to/pi05_base_pytorch_new
        openpi:
          assets_dir: /path/to/assets
          asset_id: "behavior-1k/2025-challenge-demos"
-         paligemma_tokenizer: /path/to/paligemma_tokenizer/paligemma_tokenizer.model
 
-- ``assets_dir``: directory holding the quantile-normalization stats.
-- ``asset_id``: sub-path under ``assets_dir`` for this task's stats.
-- ``paligemma_tokenizer``: the PaliGemma SentencePiece tokenizer model
-  (resolved from YAML, not hardcoded in code).
-
-The norm stats are resolved at ``{assets_dir}/{asset_id}/norm_stats.json``.
-
-Filesystem paths
-~~~~~~~~~~~~~~~~~
-
-All filesystem paths are set directly in the config as ``/path/to/...``
-placeholders. Edit them in ``examples/sft/config/behavior_pi05_vla.yaml`` to
-point at your own staged assets:
-
-- ``data.train_data_paths`` / ``data.behavior_dataset_root``: root of the
-  BEHAVIOR streaming dataset.
-- ``actor.model.model_path``: the new-format **fp32 base checkpoint** the
-  trainer loads.
-- ``actor.model.openpi.assets_dir``: the norm-stats directory.
-- ``actor.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
-  tokenizer model.
+``train_data_paths`` and ``behavior_dataset_root`` identify the local BEHAVIOR
+dataset. ``tasks`` selects the task or tasks to train. With ``use_skill:
+false``, training uses the main-task text; with ``true``, it uses the per-frame
+REFERENCE skill text specified by ``task_subtasks``. When skill training is
+enabled, use the explicit ordered labels that correspond to the selected task.
 
 
-Launch scripts
-----------------
+Launch training
+---------------
 
-Run the SFT helper with the BEHAVIOR Pi0.5 config name:
+From the repository root, launch the recipe that matches the desired model and
+dataset:
 
 .. code:: bash
 
-   # return to repo root
+   # Pi0 on RoboTwin
+   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
+
+   # Pi0.5 on RoboTwin
+   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch_pi05
+
+   # Pi0.5 on BEHAVIOR-1K
    bash examples/sft/run_vla_sft.sh behavior_pi05_vla
 
-The script forwards the config name to the SFT entry point and writes logs and
-checkpoints under the configured ``runner.logger.log_path``. Checkpoints are
-saved every ``runner.save_interval`` steps under
-``.../checkpoints/global_step_<N>/``.
+The helper sets the SFT config path, records the run command, and writes logs
+and checkpoints under ``logs/<timestamp>-<config-name>``. Checkpoints are saved
+according to ``runner.save_interval`` in
+``checkpoints/global_step_<N>/``.
 
 
-Converting checkpoints for evaluation
--------------------------------------
+Convert an SFT checkpoint
+-------------------------
 
-An SFT-trained checkpoint can be converted into the bare new-format ``Pi0``
-layout (the layout the evaluation loader expects) with the OpenPI checkpoint
-convertor:
+Use the converter mode matching the dataset and model layout.
+
+For RoboTwin Pi0, use ``robotwin_sft2new``:
+
+.. code:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+       --ckpt /path/to/checkpoints/global_step_30000 \
+       --input-norm-stats /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi0_robotwin_sft_hf \
+       --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi0_base_pytorch_new
+
+For RoboTwin Pi0.5, use the matching Pi0.5 base model and add ``--pi05``:
+
+.. code:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+       --pi05 \
+       --ckpt /path/to/checkpoints/global_step_30000 \
+       --input-norm-stats /path/to/pi05_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi05_robotwin_sft_hf \
+       --output-norm-stats /path/to/pi05_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi05_base_pytorch_new
+
+For Pi0.5 on BEHAVIOR-1K, use ``sft2new``:
 
 .. code:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
-       --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
-       --input-norm-stats  /path/to/norm_stats.json \
-       --output-model      /path/to/pi05_sft_pytorch_new \
-       --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
+       --ckpt /path/to/checkpoints/global_step_30000 \
+       --input-norm-stats /path/to/norm_stats.json \
+       --output-model /path/to/pi05_behavior_sft_new \
+       --output-norm-stats /path/to/pi05_behavior_sft_new/physical-intelligence/behavior/norm_stats.json
 
-The ``sft2new`` mode strips the wrapper/FSDP key prefixes, casts floating-point
-tensors to bf16 (the new-format eval loader validates that every checkpoint
-tensor is bf16), and copies the norm-stats file verbatim. See the convertor
-package README at ``rlinf/utils/ckpt_convertor/openpi/README.md`` for the other
-conversion modes and full flag reference. The converted checkpoint can then be
-used to evaluate on BEHAVIOR; see :doc:`behavior` for the eval config and launch
-command.
+``robotwin_sft2new`` preserves the RoboTwin Pi0 or Pi0.5 architecture in its
+output configuration. ``sft2new`` writes the BEHAVIOR Pi0.5 layout and casts
+floating-point tensors to bf16 for the evaluation loader. See the converter
+README for every option and the matching evaluation configuration.
