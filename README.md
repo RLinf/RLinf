@@ -461,4 +461,5 @@ In particular, we would like to thank the teams and contributors behind VeRL, AR
 **Contact:**
 We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
 - Chao Yu: zoeyuchao@gmail.com
+- Quanlu Zhang: zhangquanlu@infini-ai.com
 - Yu Wang: yu-wang@tsinghua.edu.cn
