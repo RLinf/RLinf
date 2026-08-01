@@ -175,7 +175,7 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
    MUJOCO_GL=egl bash evaluations/run_eval.sh \
      libero libero_spatial_fastwam_eval
 
-**更大规模评测：** 通过 8 个可复用环境进程运行 80 条轨迹，并关闭录像：
+**更大规模评测：** 将单个 rollout worker 的并行环境槽位增至 8，运行 80 条轨迹，并关闭录像：
 
 .. code-block:: bash
 
