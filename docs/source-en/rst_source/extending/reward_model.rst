@@ -190,7 +190,7 @@ For the ResNet path, set ``actor.model.model_type`` to ``"resnet"``:
        model_type: "resnet"
        arch: "resnet18"
        pretrained: False
-       image_size: [3, 128, 128]
+       image_size: [3, 224, 224]
 
 If you want to continue training from existing weights, set ``model_path`` to a checkpoint.
 If you want to train from scratch, keep ``model_path: null``.
@@ -294,7 +294,7 @@ During online RL, the ``env``, ``rollout``, and ``reward`` workers collaborate a
       | 3. When reward model is enabled, sends a reward input dict to the Reward worker
       v
    Reward worker
-      | 4. Runs ``compute_reward(...)`` and returns reward model output
+      | 4. Runs compute_reward(...) and returns reward model output
       v
    Env worker
       | 5. Receives bootstrap values from the Rollout worker

@@ -187,7 +187,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        model_type: "resnet"
        arch: "resnet18"
        pretrained: False
-       image_size: [3, 128, 128]
+       image_size: [3, 224, 224]
 
 如果需要从已有权重继续训练，可以通过 ``model_path`` 指定 checkpoint；
 如果希望从头训练，则保持 ``model_path: null``。
@@ -290,7 +290,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
       | 3. 当启用 reward model 时，将 reward input dict 发送给 Reward worker
       v
    Reward worker
-      | 4. 执行 ``compute_reward(...)``，返回 reward model output
+      | 4. 执行 compute_reward(...)，返回 reward model output
       v
    Env worker
       | 5. 接收 Rollout worker 的 bootstrap values
