@@ -195,8 +195,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 dataset_size = len(self.data_loader.dataset)
                 global_micro_steps = max(
                     math.ceil(
-                        dataset_size
-                        / (self.micro_batch_size * self._world_size)
+                        dataset_size / (self.micro_batch_size * self._world_size)
                     ),
                     1,
                 )

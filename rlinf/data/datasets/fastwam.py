@@ -43,13 +43,13 @@ logger = get_logger()
 
 
 class _OfficialFastWAMEpochSampler(Sampler[int]):
-    '''Match the upstream epoch sampler and Accelerate batch sharding.
+    """Match the upstream epoch sampler and Accelerate batch sharding.
 
     The upstream trainer builds one globally shuffled sample stream, forms local
     batches, and Accelerate assigns contiguous local batches to ranks. With
     even_batches enabled, a final partial batch is completed with the initial
     samples and missing rank batches are filled from the same initial stream.
-    '''
+    """
 
     def __init__(
         self,
@@ -107,7 +107,10 @@ class _OfficialFastWAMEpochSampler(Sampler[int]):
                 initial_data.extend(batch)
             if idx % self.num_replicas == self.rank:
                 batch_to_yield = batch
-            if idx % self.num_replicas == self.num_replicas - 1 and len(batch) == self.batch_size:
+            if (
+                idx % self.num_replicas == self.num_replicas - 1
+                and len(batch) == self.batch_size
+            ):
                 yield from batch_to_yield
                 batch_to_yield = []
 
@@ -135,6 +138,7 @@ class _OfficialFastWAMEpochSampler(Sampler[int]):
 
     def __len__(self) -> int:
         return self.num_batches_per_rank * self.batch_size
+
 
 def build_fastwam_sft_dataloader(
     cfg,

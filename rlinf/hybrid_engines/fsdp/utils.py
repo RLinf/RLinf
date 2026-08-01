@@ -563,9 +563,7 @@ def get_lr_scheduler(
         from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
         num_training_steps = max(int(num_training_steps), 1)
-        num_warmup_steps = min(
-            max(int(num_warmup_steps), 0), num_training_steps - 1
-        )
+        num_warmup_steps = min(max(int(num_warmup_steps), 0), num_training_steps - 1)
         remaining_steps = max(num_training_steps - num_warmup_steps, 1)
         eta_min = optimizer.param_groups[0]["lr"] * 0.01
         main_scheduler = CosineAnnealingLR(

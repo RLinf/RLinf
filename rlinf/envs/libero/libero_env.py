@@ -725,9 +725,7 @@ class LiberoEnv(gym.Env):
             actions = actions.detach().cpu().numpy()
 
         active = (
-            self._eval_active
-            if self.is_eval
-            else np.ones(self.num_envs, dtype=bool)
+            self._eval_active if self.is_eval else np.ones(self.num_envs, dtype=bool)
         )
         if active.all():
             raw_obs, _reward, terminations, info_lists = self.env.step(actions)

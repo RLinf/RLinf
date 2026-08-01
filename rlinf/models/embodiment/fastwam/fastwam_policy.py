@@ -570,7 +570,9 @@ class FastWAMPolicy(FastWAM, BasePolicy):
 
         encoder_dtype = next(self.proprio_encoder.parameters()).dtype
         proprio = proprio.to(device=self.device, dtype=encoder_dtype)
-        proprio_token = self.proprio_encoder(proprio.unsqueeze(1)).to(dtype=context.dtype)
+        proprio_token = self.proprio_encoder(proprio.unsqueeze(1)).to(
+            dtype=context.dtype
+        )
         proprio_mask = torch.ones(
             (context_mask.shape[0], 1),
             dtype=torch.bool,

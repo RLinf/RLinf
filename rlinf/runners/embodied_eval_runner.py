@@ -78,9 +78,7 @@ class EmbodiedEvalRunner:
             "expected_num_trajectories", None
         )
         if expected_num_trajectories is not None:
-            observed_num_trajectories = int(
-                eval_metrics.get("num_trajectories", 0)
-            )
+            observed_num_trajectories = int(eval_metrics.get("num_trajectories", 0))
             if observed_num_trajectories != int(expected_num_trajectories):
                 raise RuntimeError(
                     "LIBERO evaluation did not cover the expected number of "
