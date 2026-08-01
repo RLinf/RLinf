@@ -1770,7 +1770,7 @@ install_libero_env() {
     libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
     uv pip install -e "$libero_dir"
-    uv pip install "mujoco<=3.9.0"
+    uv pip install "mujoco==3.3.7"
     echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 }
 
@@ -1853,7 +1853,7 @@ install_liberopro_env() {
     local libero_pro_dir
     libero_pro_dir=$(clone_or_reuse_repo LIBERO_PRO_PATH "$VENV_DIR/libero_pro" https://github.com/RLinf/LIBERO-PRO.git)
     uv pip install -e "$libero_pro_dir"
-    uv pip install "mujoco<=3.9.0"
+    uv pip install "mujoco==3.3.7"
 }
 
 install_liberoplus_env() {
@@ -1865,7 +1865,7 @@ install_liberoplus_env() {
     libero_plus_dir=$(clone_or_reuse_repo LIBERO_PLUS_PATH "$VENV_DIR/libero_plus" https://github.com/RLinf/LIBERO-plus.git)
     uv pip install -r $libero_plus_dir/extra_requirements.txt
     uv pip install -e "$libero_plus_dir"
-    uv pip install "mujoco<=3.9.0"
+    uv pip install "mujoco==3.3.7"
 }
 
 install_behavior_env() {
