@@ -556,6 +556,37 @@ def get_lr_scheduler(
             min_lr_rate=min_lr_rate,
             min_lr=min_lr,
         )
+    elif lr_scheduler == "fastwam_cosine":
+        # FastWAM's official trainer uses a LinearLR warmup followed by a
+        # torch CosineAnnealingLR with eta_min=learning_rate*0.01. Keep this
+        # scheduler separate from RLinf's existing HF-style cosine preset.
+        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+
+        num_training_steps = max(int(num_training_steps), 1)
+        num_warmup_steps = min(max(int(num_warmup_steps), 0), num_training_steps - 1)
+        remaining_steps = max(num_training_steps - num_warmup_steps, 1)
+        eta_min = optimizer.param_groups[0]["lr"] * 0.01
+        main_scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=remaining_steps,
+            eta_min=eta_min,
+            last_epoch=last_epoch,
+        )
+        if num_warmup_steps <= 0:
+            return main_scheduler
+
+        warmup_scheduler = LinearLR(
+            optimizer,
+            start_factor=1.0 / num_warmup_steps,
+            end_factor=1.0,
+            total_iters=num_warmup_steps,
+            last_epoch=last_epoch,
+        )
+        return SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[num_warmup_steps],
+        )
     # PyTorch native
     elif lr_scheduler == "torch_constant":
         from torch.optim.lr_scheduler import ConstantLR

@@ -469,6 +469,32 @@ class FastWAMPolicy(FastWAM, BasePolicy):
             return self.default_forward(**kwargs)
         raise NotImplementedError(f"FastWAMPolicy does not support {forward_type}.")
 
+    def build_inputs(self, sample, tiled: bool = False):
+        """Build upstream inputs and align cached text features with FSDP."""
+        inputs = super().build_inputs(sample, tiled=tiled)
+        text_embedding = getattr(self.video_expert, "text_embedding", None)
+        if text_embedding is not None:
+            try:
+                context_dtype = next(text_embedding.parameters()).dtype
+            except StopIteration:
+                context_dtype = self.torch_dtype
+            inputs["context"] = inputs["context"].to(dtype=context_dtype)
+        video_patch_embedding = getattr(self.video_expert, "patch_embedding", None)
+        if video_patch_embedding is not None:
+            try:
+                video_dtype = next(video_patch_embedding.parameters()).dtype
+            except StopIteration:
+                video_dtype = self.torch_dtype
+            inputs["input_latents"] = inputs["input_latents"].to(dtype=video_dtype)
+        action_encoder = getattr(self.action_expert, "action_encoder", None)
+        if action_encoder is not None:
+            try:
+                action_dtype = next(action_encoder.parameters()).dtype
+            except StopIteration:
+                action_dtype = self.torch_dtype
+            inputs["action"] = inputs["action"].to(dtype=action_dtype)
+        return inputs
+
     def sft_forward(self, data: Any = None, **kwargs):
         """Supervised flow-matching loss over a FastWAM sample batch.
 
@@ -509,3 +535,50 @@ class FastWAMPolicy(FastWAM, BasePolicy):
         for expert in (self.video_expert, self.action_expert):
             expert.use_gradient_checkpointing = False
         self.mot.mot_checkpoint_mixed_attn = False
+
+    @torch.no_grad()
+    def _encode_video_latents(
+        self,
+        video_tensor,
+        tiled=False,
+        tile_size=(30, 52),
+        tile_stride=(15, 26),
+    ):
+        """Encode video with the VAE's active mixed-precision dtype."""
+        vae_dtype = next(self.vae.parameters()).dtype
+        video_tensor = video_tensor.to(device=self.device, dtype=vae_dtype)
+        return self.vae.encode(
+            video_tensor,
+            device=self.device,
+            tiled=tiled,
+            tile_size=tile_size,
+            tile_stride=tile_stride,
+        )
+
+    def _append_proprio_to_context(self, context, context_mask, proprio):
+        """Append proprioception without letting FSDP change its input dtype."""
+        if self.proprio_encoder is None or proprio is None:
+            return context, context_mask
+        if proprio.ndim != 2:
+            raise ValueError(
+                f"proprio must be 2D [B, D], got shape {tuple(proprio.shape)}"
+            )
+        if self.proprio_dim is None or proprio.shape[1] != self.proprio_dim:
+            raise ValueError(
+                f"proprio last dim must be {self.proprio_dim}, got {proprio.shape[1]}"
+            )
+
+        encoder_dtype = next(self.proprio_encoder.parameters()).dtype
+        proprio = proprio.to(device=self.device, dtype=encoder_dtype)
+        proprio_token = self.proprio_encoder(proprio.unsqueeze(1)).to(
+            dtype=context.dtype
+        )
+        proprio_mask = torch.ones(
+            (context_mask.shape[0], 1),
+            dtype=torch.bool,
+            device=context_mask.device,
+        )
+        return (
+            torch.cat([context, proprio_token], dim=1),
+            torch.cat([context_mask, proprio_mask], dim=1),
+        )

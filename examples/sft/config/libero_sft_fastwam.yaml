@@ -9,7 +9,7 @@
 # Launch:
 #   bash examples/sft/run_vla_sft.sh libero_sft_fastwam
 defaults:
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - model/fastwam@actor.model
   - override hydra/job_logging: stdout
 
@@ -33,41 +33,57 @@ runner:
     experiment_name: "libero_sft_fastwam"
     logger_backends: ["tensorboard"]
 
-  max_epochs: -1
-  max_steps: 20            # smoke run; raise for real training
+  # Official task/libero_uncond_2cam224_1e-4.yaml: 10 epochs, no step cap.
+  # Use runner.max_steps=1 for a smoke test without changing the real defaults.
+  max_epochs: 10
+  max_steps: -1
+  # Official eval_every=200 is not enabled here because RLinf's generic
+  # embodied SFT evaluator does not yet expose Wan22 rollout/video metrics.
   val_check_interval: -1
-  save_interval: -1
-  log_interval: 1
+  save_interval: 2000
+  log_interval: 10
   resume_dir: null
 
 data:
-  # Local LeRobot LIBERO dataset directory (override on the CLI as needed).
-  train_data_paths: /workspace/data/libero/libero_spatial_no_noops_lerobot
-  # Pre-computed T5 text-embedding cache (built by precompute_text_embeds.py).
-  text_embedding_cache_dir: /workspace/data/text_embeds_cache/libero
-  num_workers: 2
+  # Match the official task/libero_uncond_2cam224_1e-4.yaml dataset set.
+  # Set FASTWAM_DATASET_DIR for a one-suite smoke run, or override
+  # data.train_data_paths explicitly for a custom dataset list.
+  train_data_paths:
+    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_spatial_no_noops_lerobot
+    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_object_no_noops_lerobot
+    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_goal_no_noops_lerobot
+    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_10_no_noops_lerobot
+  # Pre-computed T5 text-embedding cache shared by all four suites.
+  text_embedding_cache_dir: ${oc.env:FASTWAM_TEXT_EMBEDDING_CACHE_DIR,data/libero_mujoco3.3.2/text_embeds_cache/libero}
+  num_workers: 8
 
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 1
-  global_batch_size: 1
+  # Official FastWAM uses batch_size=16 per process. RLinf's global batch is
+  # across all ranks, hence 16*8=128 for the official 8-GPU recipe. On two GPUs
+  # use global_batch_size=32 to keep the same per-rank batch without accumulation.
+  micro_batch_size: 16
+  global_batch_size: 128
   seed: 42
 
   model:
     model_type: "fastwam"
 
   optim:
-    lr: 1.0e-5
+    lr: 1.0e-4
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-08
     weight_decay: 1.0e-2
     clip_grad: 1.0
-    lr_scheduler: "cosine"
+    # Matches FastWAM LinearLR(5%) + CosineAnnealingLR(eta_min=lr*0.01).
+    lr_scheduler: "fastwam_cosine"
     lr_warmup_steps: -1
     lr_warmup_steps_ratio: 0.05
-    total_training_steps: 20
+    # Resolved by FSDPSftWorker from the actual dataloader length and runner
+    # epoch/step limits, matching the official trainer's estimate.
+    total_training_steps: null
 
   fsdp_config:
     strategy: "fsdp2"
@@ -82,8 +98,10 @@ actor:
     wrap_policy:
       no_split_names: ["__none__"]
     use_orig_params: True
-    gradient_checkpointing: True
-    gradient_checkpointing_use_reentrant: True
+    # Official LIBERO task sets mot_checkpoint_mixed_attn=false. Keep both
+    # upstream MoT and expert checkpointing disabled for an equivalent path.
+    gradient_checkpointing: False
+    gradient_checkpointing_use_reentrant: False
     limit_all_gathers: False
     forward_prefetch: True
     backward_prefetch: "pre"
@@ -91,10 +109,13 @@ actor:
     save_full_model_weights: False
     grad_scaler:
       enabled: False
+    # Official FastWAM constructs all model components in bf16 and wraps the
+    # training loss in Accelerator.autocast(bf16). Leave FSDP2's own casting
+    # policy unset so it does not add a second mixed-precision path.
     mixed_precision:
-      param_dtype: bf16
-      reduce_dtype: bf16
-      buffer_dtype: bf16
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null
     amp_autocast:
-      enabled: False
+      enabled: True
       precision: "bf16"

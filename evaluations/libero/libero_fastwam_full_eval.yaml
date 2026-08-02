@@ -1,0 +1,70 @@
+# Full FastWAM/LIBERO benchmark through RLinf's native EmbodiedEvalRunner.
+#
+# The default suite is LIBERO-Spatial. Override task_suite_name for Goal/Object.
+# Eight RLinf worker pairs each host five environments. Their batched inference
+# covers 500 fixed initial states once (ceil(500 / 40) == 13 episodes per
+# environment); use the suite-specific LIBERO-10 limits noted below.
+defaults:
+  - env/libero_spatial@env.eval
+  - model/fastwam@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_fastwam_full_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 40
+    auto_reset: true
+    ignore_terminations: true
+    # FastWAM upstream: 30 open-gripper no-op steps followed by 400 controller
+    # steps for Spatial/Goal/Object. For LIBERO-10 override to 700 and 9100.
+    num_steps_wait: 30
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 5200
+    group_size: 1
+    use_fixed_reset_state_ids: true
+    use_ordered_reset_state_ids: true
+    is_eval: true
+    libero_variant: standard
+    perturbation_suffix: null
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_type: "fastwam"
+    # Replace both placeholders with the checkpoint and dataset-stats files to evaluate.
+    model_path: your_path_to/FASTWAM_SFT_CKPT
+    dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS

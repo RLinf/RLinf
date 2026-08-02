@@ -1610,13 +1610,32 @@ install_dreamzero_model() {
 
 install_fastwam_deps() {
     local fastwam_path
-    fastwam_path=$(clone_or_reuse_repo FASTWAM_PATH "$VENV_DIR/FastWAM" https://github.com/yuantianyuan01/FastWAM.git)
-    if [ -z "${FASTWAM_PATH:-}" ]; then
-        git -C "$fastwam_path" checkout "${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}" >&2
+    local fastwam_ref="${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}"
+    local use_external_fastwam=0
+    if [ -n "${FASTWAM_PATH:-}" ]; then
+        use_external_fastwam=1
+    fi
+
+    # The upstream repository is only fetched when the checkout is missing. A
+    # filtered clone avoids downloading its large history, while a pinned
+    # detached commit keeps the RLinf adapter reproducible.
+    fastwam_path=$(clone_or_reuse_repo FASTWAM_PATH "$VENV_DIR/FastWAM" \
+        https://github.com/yuantianyuan01/FastWAM.git --filter=blob:none --no-checkout)
+    if [ "$use_external_fastwam" -eq 0 ] || [ ! -f "$fastwam_path/pyproject.toml" ]; then
+        if ! git -C "$fastwam_path" cat-file -e "$fastwam_ref^{commit}" 2>/dev/null; then
+            git -C "$fastwam_path" fetch --depth 1 origin "$fastwam_ref" >&2
+        fi
+        git -C "$fastwam_path" checkout --detach "$fastwam_ref" >&2
+    fi
+    if [ ! -f "$fastwam_path/pyproject.toml" ]; then
+        echo "FastWAM checkout is missing pyproject.toml: $fastwam_path" >&2
+        exit 1
     fi
 
     # Keep RLinf's platform-specific Torch stack; install the remaining pinned
-    # FastWAM runtime dependencies and then the package itself without deps.
+    # FastWAM runtime dependencies. The editable install is deliberately
+    # --no-deps: upstream declares its own Torch 2.7.1+cu128 pins, while RLinf
+    # has already selected the platform-compatible Torch stack above.
     uv pip install -r "$SCRIPT_DIR/embodied/models/fastwam.txt"
     uv pip install -e "$fastwam_path" --no-deps
 }
@@ -1642,6 +1661,11 @@ install_fastwam_model() {
     esac
 
     install_fastwam_deps
+
+    # robosuite 1.4.1 uses the pre-3.10 mj_fullM calling convention. Keep the
+    # known-good version only in the FastWAM installation path: ordinary LIBERO
+    # users retain the environment installer's compatibility range below.
+    uv pip install "mujoco==3.3.7"
 }
 
 install_qwen3_vl_model() {
