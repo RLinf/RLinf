@@ -583,8 +583,9 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
     ) -> RolloutResult:
         intervene_flags = result.get("intervene_flags")
-        if intervene_flags is None and result.get("expert_label_flag", False):
-            intervene_flags = torch.full(
+        save_flags = None
+        if self.enable_dagger and result.get("expert_label_flag", False):
+            save_flags = torch.full(
                 (actions.shape[0], self.model_cfg.num_action_chunks),
                 True,
                 dtype=torch.bool,
@@ -596,6 +597,7 @@ class MultiStepRolloutWorker(Worker):
             prev_values=result["prev_values"] if self.collect_prev_infos else None,
             bootstrap_values=self.get_bootstrap_values(final_obs),
             intervene_flags=intervene_flags,
+            save_flags=save_flags,
             forward_inputs=result["forward_inputs"],
             versions=torch.full_like(
                 result["prev_logprobs"],
@@ -969,6 +971,7 @@ class MultiStepRolloutWorker(Worker):
         split_prev_values = _split_optional_tensor(rollout_result.prev_values)
         split_bootstrap_values = _split_optional_tensor(rollout_result.bootstrap_values)
         split_intervene_flags = _split_optional_tensor(rollout_result.intervene_flags)
+        split_save_flags = _split_optional_tensor(rollout_result.save_flags)
         split_versions = _split_optional_tensor(rollout_result.versions)
         split_forward_inputs = (
             [{} for _ in sizes]
@@ -990,6 +993,7 @@ class MultiStepRolloutWorker(Worker):
                 prev_values=split_prev_values[idx],
                 bootstrap_values=split_bootstrap_values[idx],
                 intervene_flags=split_intervene_flags[idx],
+                save_flags=split_save_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
                 versions=split_versions[idx],
             )

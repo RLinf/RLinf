@@ -290,6 +290,7 @@ class RolloutResult:
 
     bootstrap_values: torch.Tensor = None  # [B, 1]
     intervene_flags: torch.Tensor = None  # [B, num_action_chunks]
+    save_flags: torch.Tensor = None  # [B, num_action_chunks]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
     versions: torch.Tensor = None  # [B, 1]
 
@@ -304,6 +305,8 @@ class RolloutResult:
             self.bootstrap_values = self.bootstrap_values.cpu().contiguous()
         if self.intervene_flags is not None:
             self.intervene_flags = self.intervene_flags.cpu().contiguous()
+        if self.save_flags is not None:
+            self.save_flags = self.save_flags.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
         if self.versions is not None:
@@ -331,6 +334,7 @@ class RolloutResult:
         merged_prev_values = _merge_optional_tensor("prev_values")
         merged_bootstrap_values = _merge_optional_tensor("bootstrap_values")
         merged_intervene_flags = _merge_optional_tensor("intervene_flags")
+        merged_save_flags = _merge_optional_tensor("save_flags")
         merged_versions = _merge_optional_tensor("versions")
 
         forward_inputs_list = [
@@ -347,6 +351,7 @@ class RolloutResult:
             prev_values=merged_prev_values,
             bootstrap_values=merged_bootstrap_values,
             intervene_flags=merged_intervene_flags,
+            save_flags=merged_save_flags,
             forward_inputs=merged_forward_inputs,
             versions=merged_versions,
         )
@@ -592,6 +597,21 @@ class EmbodiedRolloutResult:
         last_action = self.actions[-1]
         bsz, num_action_chunks = intervene_flags.shape
         expanded_flags = intervene_flags.reshape(bsz, num_action_chunks, 1).expand_as(
+            last_action.reshape(bsz, num_action_chunks, -1)
+        )
+        self.intervene_flags[-1] = expanded_flags.reshape(bsz, -1).to(torch.bool)
+
+    def mark_last_step_with_flags(self, save_flags: torch.Tensor):
+        if not self.intervene_flags:
+            return
+
+        if save_flags.dim() == 1:
+            save_flags = save_flags[:, None]
+        assert save_flags.dim() == 2, f"Expected 2D tensor, got {save_flags.shape=}"
+
+        last_action = self.actions[-1]
+        bsz, num_action_chunks = save_flags.shape
+        expanded_flags = save_flags.reshape(bsz, num_action_chunks, 1).expand_as(
             last_action.reshape(bsz, num_action_chunks, -1)
         )
         self.intervene_flags[-1] = expanded_flags.reshape(bsz, -1).to(torch.bool)
@@ -859,7 +879,7 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
 
     1. Auto-reset envs: ``final_observation`` is attributed to the finished
        episode; post-reset observations are carried via ``_pending_obs``.
-    2. DAgger intervention: ``RolloutResult.intervene_flags`` and expert actions
+    2. DAgger intervention: ``RolloutResult.save_flags`` and expert actions
        override recorded actions and set ``intervene_flag``.
     3. Real-world hooks: ``record_reset``, ``pre_record``, and
        ``segment_advance`` info flags are honored.
@@ -1116,7 +1136,7 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
     def _inject_expert_into_step_info(
         step_info: dict,
         expert_actions: np.ndarray,
-        intervene_flags,
+        save_flags,
         *,
         step_idx: int,
         step_term,
@@ -1125,22 +1145,22 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
         """Port of pre-refactor ``CollectEpisode.chunk_step`` expert injection."""
         if (
             expert_actions is None
-            or intervene_flags is None
+            or save_flags is None
             or "intervene_action" in step_info
         ):
             return
-        step_intervene_flags = intervene_flags[:, step_idx]
+        step_save_flags = save_flags[:, step_idx]
         step_expert = expert_actions[:, step_idx]
         if "final_info" in step_info:
             step_info["final_info"]["intervene_action"] = expert_actions
-            step_info["final_info"]["intervene_flag"] = intervene_flags
+            step_info["final_info"]["intervene_flag"] = save_flags
             step_info["intervene_action"] = step_expert
             term = EmbodiedLerobotRolloutResult._to_numpy(step_term)
             trunc = EmbodiedLerobotRolloutResult._to_numpy(step_trunc)
-            step_info["intervene_flag"] = step_intervene_flags & ~(term | trunc)
+            step_info["intervene_flag"] = step_save_flags & ~(term | trunc)
         else:
             step_info["intervene_action"] = step_expert
-            step_info["intervene_flag"] = step_intervene_flags
+            step_info["intervene_flag"] = step_save_flags
 
     def _update_episode_success(self, env_idx: int, env_info: Any) -> None:
         success = self._extract_success_from_info(env_info)
@@ -1265,11 +1285,9 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
             num_chunks=num_chunks,
             action_dim=action_dim,
         )
-        intervene_flags = rollout_result.intervene_flags
-        if intervene_flags is not None:
-            intervene_flags = self._to_numpy(intervene_flags).reshape(
-                num_envs, num_chunks
-            )
+        save_flags = rollout_result.save_flags
+        if save_flags is not None:
+            save_flags = self._to_numpy(save_flags).reshape(num_envs, num_chunks)
         expert_actions = rollout_result.forward_inputs.get("action", None)
         if expert_actions is not None:
             expert_actions = self._reshape_chunk_actions(
@@ -1302,7 +1320,7 @@ class EmbodiedLerobotRolloutResult(EmbodiedRolloutResult):
                 self._inject_expert_into_step_info(
                     step_info,
                     expert_actions,
-                    intervene_flags,
+                    save_flags,
                     step_idx=step_idx,
                     step_term=step_term,
                     step_trunc=step_trunc,
