@@ -186,21 +186,42 @@ def _build_interact_delay_stat_key(key: str, stat_name: str) -> str:
     return f"{metric_prefix}{stat_name}"
 
 
-
 def compute_delay_stats(key: str, stacked: "torch.Tensor") -> dict:
     """Compute average, median, max, min delay stats from delay samples."""
     if stacked.numel() > 0:
         return {
-            _build_interact_delay_stat_key(key, "average_delay"): stacked.mean().detach().cpu().numpy(),
-            _build_interact_delay_stat_key(key, "medium_delay"): torch.quantile(stacked, 0.5).detach().cpu().numpy(),
-            _build_interact_delay_stat_key(key, "max_delay"): stacked.max().detach().cpu().numpy(),
-            _build_interact_delay_stat_key(key, "min_delay"): stacked.min().detach().cpu().numpy(),
+            _build_interact_delay_stat_key(key, "average_delay"): stacked.mean()
+            .detach()
+            .cpu()
+            .numpy(),
+            _build_interact_delay_stat_key(key, "medium_delay"): torch.quantile(
+                stacked, 0.5
+            )
+            .detach()
+            .cpu()
+            .numpy(),
+            _build_interact_delay_stat_key(key, "max_delay"): stacked.max()
+            .detach()
+            .cpu()
+            .numpy(),
+            _build_interact_delay_stat_key(key, "min_delay"): stacked.min()
+            .detach()
+            .cpu()
+            .numpy(),
         }
     return {
-        _build_interact_delay_stat_key(key, "average_delay"): np.asarray(0.0, dtype=np.float64),
-        _build_interact_delay_stat_key(key, "medium_delay"): np.asarray(0.0, dtype=np.float64),
-        _build_interact_delay_stat_key(key, "max_delay"): np.asarray(0.0, dtype=np.float64),
-        _build_interact_delay_stat_key(key, "min_delay"): np.asarray(0.0, dtype=np.float64),
+        _build_interact_delay_stat_key(key, "average_delay"): np.asarray(
+            0.0, dtype=np.float64
+        ),
+        _build_interact_delay_stat_key(key, "medium_delay"): np.asarray(
+            0.0, dtype=np.float64
+        ),
+        _build_interact_delay_stat_key(key, "max_delay"): np.asarray(
+            0.0, dtype=np.float64
+        ),
+        _build_interact_delay_stat_key(key, "min_delay"): np.asarray(
+            0.0, dtype=np.float64
+        ),
     }
 
 

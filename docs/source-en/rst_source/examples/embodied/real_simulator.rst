@@ -13,8 +13,8 @@ workflow runs unchanged.
 Observation Delay (delay_sampler)
 ---------------------------------
 
-Emulate per-environment sensor latency by inserting a configurable delay wait
-before each observation leaves the Env Worker.
+Emulate per-environment sensor latency by inserting a configurable delay wait via an ``InsertDelay`` env wrapper that
+delays ``chunk_step`` and ``reset`` returns.
 
 Use this when you need to test how variable observation timing affects
 policy training, or when you're preparing a policy for real-world deployment
@@ -54,11 +54,9 @@ All delay values are in **seconds**.
 
 Requirements:
 
-- ``runner.enable_decoupled_mode`` must be set to ``true``.
-- The delay applies only in training mode (``mode="train"``). Evaluation is
-  unaffected.
-- Use the async runner (``train_async.py``). The synchronous runner does not
-  support decoupled communication.
+- The delay applies only in training mode. Evaluation is unaffected.
+- The wrapper is applied per-environment-instance via ``_setup_env_and_wrappers``,
+  independent of the runner type (sync / async).
 
 
 Network Emulation (net_emulation)
@@ -134,9 +132,6 @@ Combine both modules to simulate a realistic deployment:
 
 .. code-block:: yaml
 
-   runner:
-     enable_decoupled_mode: true       # required by delay_sampler
-
    env:
      delay_sampler:
        type: uniform
@@ -165,4 +160,3 @@ See also
 
 - :doc:`RoboTwin <robotwin>` — RoboTwin environment setup and configuration.
 - :doc:`DAgger <dagger>` — DAgger training with expert policy.
-- :doc:`Env Decoupled Mode <../../guides/env_decoupled_mode>` — required by ``delay_sampler``.

@@ -15,7 +15,7 @@
 import asyncio
 import gc
 from collections import defaultdict
-from typing import Any, Callable, Literal
+from typing import Any
 
 import numpy as np
 import torch
@@ -53,7 +53,6 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
-
 
 
 class EnvWorker(Worker):
@@ -162,10 +161,6 @@ class EnvWorker(Worker):
         if self.use_training_pipeline and self.enable_train:
             self._init_pipeline_params()
 
-
-        self.train_num_envs_per_send = 0
-        self.eval_num_envs_per_send = 0
-
         if self.enable_train:
             self.train_prev_done: list[torch.Tensor] = [
                 torch.zeros(self.train_num_envs_per_stage, dtype=torch.bool)
@@ -259,11 +254,6 @@ class EnvWorker(Worker):
                     for _ in range(self.stage_num)
                 ]
                 self.history_lengths = [{} for _ in range(self.stage_num)]
-
-        if self.enable_train:
-            self.train_num_envs_per_send = self.train_num_envs_per_stage
-        if self.enable_eval:
-            self.eval_num_envs_per_send = self.eval_num_envs_per_stage
 
         self._init_env()
 
@@ -398,8 +388,11 @@ class EnvWorker(Worker):
                 seed_offset=self._rank * self.stage_num + stage_id,
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
-            )               
-            if self.cfg.env.get("delay_sampler", None) and env_cfg is not self.cfg.env.eval: 
+            )
+            if (
+                self.cfg.env.get("delay_sampler", None)
+                and env_cfg is not self.cfg.env.eval
+            ):
                 env = InsertDelay(env, self.cfg.env.delay_sampler)
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
@@ -427,7 +420,6 @@ class EnvWorker(Worker):
                 )
             env_list.append(env)
         return env_list
-
 
     def _init_env(self):
         for i in range(self.stage_num):
@@ -1136,18 +1128,19 @@ class EnvWorker(Worker):
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
-                    data = self._build_rollout_input_data(env_batch)
                     self.send_to(
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
-                        data=data,
+                        data=self._build_rollout_input_data(env_batch),
                         mode="train",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     if hasattr(self.env_list[stage_id], "insert_delay_metrics"):
-                        env_metrics["time/interact_delay"].append(self.env_list[stage_id].insert_delay_metrics())
+                        env_metrics["time/interact_delay"].append(
+                            self.env_list[stage_id].insert_delay_metrics()
+                        )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs

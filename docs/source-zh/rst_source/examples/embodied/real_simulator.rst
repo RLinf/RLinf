@@ -10,7 +10,7 @@ YAML 中的对应参数控制。两者**默认关闭**：不配置对应参数�
 观测延迟仿真 (delay_sampler)
 ----------------------------
 
-在每条观测数据离开 Env Worker 之前插入可配置的延迟等待，模拟每个真机的
+通过 ``InsertDelay`` env wrapper 在 ``chunk_step`` 和 ``reset`` 返回前注入可配置的等待延迟，模拟每个真机的
 传感器延迟。
 
 适用场景：测试可变观测时序对策略训练的影响，或为真实世界部署准备策略时，
@@ -50,9 +50,9 @@ YAML 中的对应参数控制。两者**默认关闭**：不配置对应参数�
 
 使用要求：
 
-- ``runner.enable_decoupled_mode`` 必须设为 ``true``。
-- 延迟仅在训练模式（``mode="train"``）下生效，评估不受影响。
-- 需使用异步 Runner（``train_async.py``）。同步 Runner 不支持解耦通信。
+- 延迟仅在训练模式下生效，评估不受影响。
+- Wrapper 通过 ``_setup_env_and_wrappers`` 按环境实例应用，与 Runner
+  类型（同步/异步）无关。
 
 
 网络仿真 (net_emulation)
@@ -125,9 +125,6 @@ Rollout Worker 部署在不同集群或云区域时。
 
 .. code-block:: yaml
 
-   runner:
-     enable_decoupled_mode: true       # delay_sampler 必需
-
    env:
      delay_sampler:
        type: uniform
@@ -156,4 +153,3 @@ Rollout Worker 部署在不同集群或云区域时。
   
   - :doc:`RoboTwin <robotwin>` — RoboTwin 环境设置与配置。
   - :doc:`DAgger <dagger>` — 基于专家策略的 DAgger 训练。
-  - :doc:`Env 解耦模式 <../../guides/env_decoupled_mode>` — ``delay_sampler`` 的前置条件。
