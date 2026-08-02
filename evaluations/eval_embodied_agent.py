@@ -21,6 +21,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -84,7 +85,9 @@ def main(cfg) -> None:
             router_server_args=cfg.rollout.sglang,
         )
         _server_urls = list(server_group.get_server_url().wait())
-        print(f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}")
+        get_logger().info(
+            f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}"
+        )
         rollout_group.set_sglang_server_urls(_server_urls).wait()
 
     runner = EmbodiedEvalRunner(
