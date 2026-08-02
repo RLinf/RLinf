@@ -63,4 +63,4 @@ RLinf 将 ``main_images`` 映射为 MolmoAct2-LIBERO 所需的 agent view，将 
 
    logs/<timestamp>-libero_10_molmoact2_eval/eval_embodiment.log
 
-评测协议见 :doc:`LIBERO 评测 <libero>`，指标解释见 :doc:`评测结果 <../reference/results>`。
+评测协议见 :doc:`LIBERO 评测 <../../evaluations/guides/libero>`，指标解释见 :doc:`评测结果 <../../evaluations/reference/results>`。

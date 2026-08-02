@@ -63,4 +63,4 @@ The terminal reports ``eval/success_once``. Logs are written to:
 
    logs/<timestamp>-libero_10_molmoact2_eval/eval_embodiment.log
 
-See :doc:`LIBERO Evaluation <libero>` for the benchmark protocol and :doc:`Evaluation Results <../reference/results>` for metric interpretation.
+See :doc:`LIBERO Evaluation <../../evaluations/guides/libero>` for the benchmark protocol and :doc:`Evaluation Results <../../evaluations/reference/results>` for metric interpretation.
