@@ -169,7 +169,7 @@ CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
 INTERACT_DELAY_METRIC_KEYS = {"interact_delay"}
 
 
-def _is_interact_delay_metric_key(key: str) -> bool:
+def is_interact_delay_metric_key(key: str) -> bool:
     return any(
         key == metric_key or key.endswith(f"/{metric_key}")
         for metric_key in INTERACT_DELAY_METRIC_KEYS
@@ -184,6 +184,24 @@ def _build_interact_delay_stat_key(key: str, stat_name: str) -> str:
     )
     metric_prefix = key[: -len(matched_metric_key)]
     return f"{metric_prefix}{stat_name}"
+
+
+
+def compute_delay_stats(key: str, stacked: "torch.Tensor") -> dict:
+    """Compute average, median, max, min delay stats from delay samples."""
+    if stacked.numel() > 0:
+        return {
+            _build_interact_delay_stat_key(key, "average_delay"): stacked.mean().detach().cpu().numpy(),
+            _build_interact_delay_stat_key(key, "medium_delay"): torch.quantile(stacked, 0.5).detach().cpu().numpy(),
+            _build_interact_delay_stat_key(key, "max_delay"): stacked.max().detach().cpu().numpy(),
+            _build_interact_delay_stat_key(key, "min_delay"): stacked.min().detach().cpu().numpy(),
+        }
+    return {
+        _build_interact_delay_stat_key(key, "average_delay"): np.asarray(0.0, dtype=np.float64),
+        _build_interact_delay_stat_key(key, "medium_delay"): np.asarray(0.0, dtype=np.float64),
+        _build_interact_delay_stat_key(key, "max_delay"): np.asarray(0.0, dtype=np.float64),
+        _build_interact_delay_stat_key(key, "min_delay"): np.asarray(0.0, dtype=np.float64),
+    }
 
 
 def compute_split_num(num, split_num):
@@ -311,7 +329,7 @@ def count_trajectories(metrics_dict):
     # Some metrics, such as interact delay samples, are auxiliary distributions and
     # should not define the trajectory count.
     valid_metric_keys = [
-        key for key in metrics_dict.keys() if not _is_interact_delay_metric_key(key)
+        key for key in metrics_dict.keys() if not is_interact_delay_metric_key(key)
     ]
     if not valid_metric_keys:
         return 0
@@ -364,33 +382,8 @@ def compute_evaluate_metrics(eval_metrics_list):
     for key in all_eval_metrics:
         shards = [_normalize_metric_shard(s) for s in all_eval_metrics[key]]
         stacked = torch.concat(shards).float()
-        if _is_interact_delay_metric_key(key):
-            if stacked.numel() > 0:
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "average_delay")
-                ] = stacked.mean().detach().cpu().numpy()
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "medium_delay")
-                ] = torch.quantile(stacked, 0.5).detach().cpu().numpy()
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "max_delay")
-                ] = stacked.max().detach().cpu().numpy()
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "min_delay")
-                ] = stacked.min().detach().cpu().numpy()
-            else:
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "average_delay")
-                ] = np.asarray(0.0, dtype=np.float64)
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "medium_delay")
-                ] = np.asarray(0.0, dtype=np.float64)
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "max_delay")
-                ] = np.asarray(0.0, dtype=np.float64)
-                aggregated_eval_metrics[
-                    _build_interact_delay_stat_key(key, "min_delay")
-                ] = np.asarray(0.0, dtype=np.float64)
+        if is_interact_delay_metric_key(key):
+            aggregated_eval_metrics.update(compute_delay_stats(key, stacked))
             continue
 
         aggregated_eval_metrics[key] = (
