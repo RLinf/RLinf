@@ -1439,12 +1439,12 @@ install_molmoact2_model() {
     fi
     git -C "$molmoact2_lerobot_path" checkout --detach "$molmoact2_lerobot_ref"
 
-    # Install from the upstream checkout so RLinf's uv overrides do not mask
-    # LeRobot's newer dependencies. The released MolmoAct2 checkpoint declares
-    # Transformers 5.3.0 and uses its tokenizer/processor serialization format.
+    # Avoid RLinf's uv overrides when the checkout is nested under the venv.
     pushd "$molmoact2_lerobot_path" >/dev/null
-    uv pip install -e . "transformers==5.3.0"
+    uv pip install --no-config -e . "transformers==5.3.0"
     popd >/dev/null
+
+    uv pip check
 
     python - <<'EOF'
 from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
