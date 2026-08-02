@@ -1661,6 +1661,11 @@ install_fastwam_model() {
     esac
 
     install_fastwam_deps
+
+    # robosuite 1.4.1 uses the pre-3.10 mj_fullM calling convention. Keep the
+    # known-good version only in the FastWAM installation path: ordinary LIBERO
+    # users retain the environment installer's compatibility range below.
+    uv pip install "mujoco==3.3.7"
 }
 
 install_qwen3_vl_model() {
@@ -1770,7 +1775,7 @@ install_libero_env() {
     libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
 
     uv pip install -e "$libero_dir"
-    uv pip install "mujoco==3.3.7"
+    uv pip install "mujoco<=3.9.0"
     echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 }
 
@@ -1853,7 +1858,7 @@ install_liberopro_env() {
     local libero_pro_dir
     libero_pro_dir=$(clone_or_reuse_repo LIBERO_PRO_PATH "$VENV_DIR/libero_pro" https://github.com/RLinf/LIBERO-PRO.git)
     uv pip install -e "$libero_pro_dir"
-    uv pip install "mujoco==3.3.7"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_liberoplus_env() {
@@ -1865,7 +1870,7 @@ install_liberoplus_env() {
     libero_plus_dir=$(clone_or_reuse_repo LIBERO_PLUS_PATH "$VENV_DIR/libero_plus" https://github.com/RLinf/LIBERO-plus.git)
     uv pip install -r $libero_plus_dir/extra_requirements.txt
     uv pip install -e "$libero_plus_dir"
-    uv pip install "mujoco==3.3.7"
+    uv pip install "mujoco<=3.9.0"
 }
 
 install_behavior_env() {
