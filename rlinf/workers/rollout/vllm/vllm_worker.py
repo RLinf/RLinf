@@ -14,7 +14,9 @@
 import asyncio
 import copy
 import os
+from dataclasses import fields
 from functools import partial
+from itertools import count
 from typing import AsyncGenerator, Optional, Union, cast
 
 from omegaconf import DictConfig
@@ -22,10 +24,9 @@ from PIL import Image
 from transformers import AutoTokenizer
 from vllm.config import VllmConfig
 from vllm.engine.arg_utils import EngineArgs
-from vllm.inputs.data import PromptType, TextPrompt, TokensPrompt
+from vllm.inputs import PromptType, TextPrompt, TokensPrompt
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
-from vllm.utils import Counter
 from vllm.v1.engine.async_llm import AsyncLLM as AsyncLLMEngine
 
 from rlinf.config import torch_dtype_from_precision
@@ -37,7 +38,7 @@ from rlinf.utils.data_process import process_image_data
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.rollout.utils import RunningStatusManager, print_vllm_outputs
 
-from . import VLLMExecutor
+from . import VLLM_WORKER_CLS, VLLMExecutor
 
 
 class VLLMWorker(Worker):
@@ -59,7 +60,7 @@ class VLLMWorker(Worker):
             "The capital of France is",
             "The future of AI is",
         ]
-        self._request_counter = Counter()
+        self._request_counter = count()
 
         # NOTE(daibo):
         # because 0.8.5 vLLM can not return outputs when generation
@@ -332,27 +333,29 @@ class VLLMWorker(Worker):
         If mode is collocated, it will additionally offload model weights,
         ready to use parameters sent from actor.
         """
-        engine_args: EngineArgs = EngineArgs(
-            model=self._cfg.rollout.model.model_path,
-            tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
-            dtype=torch_dtype_from_precision(self._cfg.rollout.model.precision),
-            gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
-            enforce_eager=self._cfg.rollout.enforce_eager,
-            enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,
-            enable_prefix_caching=self._cfg.rollout.vllm.enable_prefix_caching,
-            max_num_batched_tokens=self._cfg.rollout.vllm.max_num_batched_tokens,
-            task="generate",
-            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
-            trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
-            max_model_len=self._cfg.runner.seq_length,
-            max_num_seqs=self._cfg.rollout.max_running_requests,
-            enable_sleep_mode=True,  # it enables offload weights
-        )
+        engine_kwargs = {
+            "model": self._cfg.rollout.model.model_path,
+            "tensor_parallel_size": self._cfg.rollout.tensor_parallel_size,
+            "dtype": torch_dtype_from_precision(self._cfg.rollout.model.precision),
+            "gpu_memory_utilization": self._cfg.rollout.gpu_memory_utilization,
+            "enforce_eager": self._cfg.rollout.enforce_eager,
+            "enable_chunked_prefill": self._cfg.rollout.vllm.enable_chunked_prefill,
+            "enable_prefix_caching": self._cfg.rollout.vllm.enable_prefix_caching,
+            "max_num_batched_tokens": self._cfg.rollout.vllm.max_num_batched_tokens,
+            "load_format": "dummy" if not self._cfg.rollout.validate_weight else "auto",
+            "trust_remote_code": self._cfg.actor.tokenizer.trust_remote_code,
+            "max_model_len": self._cfg.runner.seq_length,
+            "max_num_seqs": self._cfg.rollout.max_running_requests,
+            "enable_sleep_mode": True,  # it enables offload weights
+        }
+        # `task` was dropped from EngineArgs after 0.8.5; generation is inferred.
+        if "task" in {field.name for field in fields(EngineArgs)}:
+            engine_kwargs["task"] = "generate"
+        engine_args: EngineArgs = EngineArgs(**engine_kwargs)
         vllm_config: VllmConfig = engine_args.create_engine_config()
 
         # here to set the customed worker class for VLLM engine
-        vllm_worker_cls = "rlinf.hybrid_engines.vllm.vllm_0_8_5.worker.VLLMWorker"
-        vllm_config.parallel_config.worker_cls = vllm_worker_cls
+        vllm_config.parallel_config.worker_cls = VLLM_WORKER_CLS
 
         self.log_info(f"vllm_config is {vllm_config}")
 

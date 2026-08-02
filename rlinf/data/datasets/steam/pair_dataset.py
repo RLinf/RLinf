@@ -233,10 +233,16 @@ class _LeRobotSource(TrajectorySource):
         dataset_type: str,
     ) -> None:
         _isolate_hf_datasets_cache_for_process()
-        from lerobot.common.datasets.lerobot_dataset import (
-            LeRobotDataset,
-            LeRobotDatasetMetadata,
-        )
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.lerobot_dataset import (
+                LeRobotDataset,
+                LeRobotDatasetMetadata,
+            )
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.lerobot_dataset import (
+                LeRobotDataset,
+                LeRobotDatasetMetadata,
+            )
 
         from rlinf.data.datasets.recap.utils import (
             decode_image_struct_batch,

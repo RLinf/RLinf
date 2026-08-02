@@ -1,0 +1,12 @@
+# engine: vllm==0.23.0
+# vllm 0.23.0 on CUDA 13 (torch 2.11 cu130, driver >= 580) — the pins upstream
+# declares, so this line needs no substitutions.
+-r vllm_0.23.0_common.txt
+
+flashinfer-cubin==0.6.12
+flashinfer-python==0.6.12
+humming-kernels[cu13]==0.1.4
+nvidia-cutlass-dsl[cu13]==4.5.2
+quack-kernels>=0.3.3
+tilelang==0.1.9
+tokenspeed-mla==0.1.2
