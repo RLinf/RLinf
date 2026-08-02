@@ -39,7 +39,9 @@ def _molmoact2_predict_action_batch(self, env_obs=None, mode="eval", **kwargs):
         main_images = env_obs["image"]
         batch["image"] = main_images
     else:
-        raise KeyError(f"Cannot find image in env_obs. Available keys: {list(env_obs.keys())}")
+        raise KeyError(
+            f"Cannot find image in env_obs. Available keys: {list(env_obs.keys())}"
+        )
 
     batch_size = main_images.shape[0]
 
@@ -107,11 +109,12 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     checkpoint_path = cfg.get("checkpoint_path", None) or cfg.get("model_path", None)
     if checkpoint_path is None:
-        raise ValueError("MolmoAct2 requires `checkpoint_path` or `model_path` in config.")
+        raise ValueError(
+            "MolmoAct2 requires `checkpoint_path` or `model_path` in config."
+        )
 
     molmo_cfg = MolmoAct2Config(
         checkpoint_path=checkpoint_path,
-        seq_len=cfg.get("seq_len", None),
         num_steps=cfg.get("num_steps", None),
         inference_action_mode=cfg.get("inference_action_mode", "continuous"),
         discrete_action_tokenizer=cfg.get(
@@ -119,14 +122,14 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             "allenai/MolmoAct2-FAST-Tokenizer",
         ),
         enable_depth_reasoning=cfg.get("enable_depth_reasoning", False),
-        num_depth_tokens_per_image=cfg.get("num_depth_tokens_per_image", None),
-        verbose=cfg.get("verbose", False),
         norm_tag=cfg.get("norm_tag", ""),
     )
 
     model = MolmoAct2Policy(molmo_cfg)
 
     # Add RLinf-required action interface
-    model.predict_action_batch = types.MethodType(_molmoact2_predict_action_batch, model)
+    model.predict_action_batch = types.MethodType(
+        _molmoact2_predict_action_batch, model
+    )
 
     return model

@@ -18,10 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import torch
-try:
-    from torch.distributed.tensor import DTensor
-except ImportError:
-    from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import (

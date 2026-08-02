@@ -27,10 +27,7 @@ from torch.distributed.checkpoint.state_dict import (
     set_model_state_dict,
 )
 from torch.distributed.device_mesh import DeviceMesh
-try:
-    from torch.distributed.tensor import DTensor
-except ImportError:
-    from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 

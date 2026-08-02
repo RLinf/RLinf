@@ -21,10 +21,7 @@ from torch.distributed.checkpoint.state_dict import (
     get_model_state_dict,
     set_model_state_dict,
 )
-try:
-    from torch.distributed.tensor import DTensor
-except ImportError:
-    from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.utils import (

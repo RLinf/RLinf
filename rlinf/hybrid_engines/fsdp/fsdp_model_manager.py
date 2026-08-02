@@ -20,10 +20,7 @@ import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-try:
-    from torch.distributed.tensor import DTensor
-except ImportError:
-    from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForVision2Seq

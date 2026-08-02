@@ -2,6 +2,7 @@ defaults:
   - env/libero_10@env.eval
   - model/molmoact2@rollout.model
   - override hydra/job_logging: stdout
+  - _self_
 
 hydra:
   run:
@@ -38,16 +39,19 @@ env:
 
   eval:
     rollout_epoch: 1
-    total_num_envs: 1
+    total_num_envs: 20
     auto_reset: True
     ignore_terminations: True
     group_size: 1
-    max_episode_steps: 50 # max episode steps for truncation
-    max_steps_per_rollout_epoch: 50
+    # Full LIBERO-Long defaults: 20 envs x 25 episodes = 500 trajectories.
+    # Override these two step budgets together for the other task suites.
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 13000
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     reset_gripper_open: False
     is_eval: True
+    seed: 1000
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -67,6 +71,5 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/workspace/models/MolmoAct2-LIBERO"
+    model_path: "/path/to/models/MolmoAct2-LIBERO"
     model_type: "molmoact2"
-    max_prompt_length: 128

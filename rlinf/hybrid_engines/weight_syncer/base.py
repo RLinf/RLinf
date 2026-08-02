@@ -19,10 +19,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import torch
 from omegaconf import DictConfig, OmegaConf
-try:
-    from torch.distributed.tensor import DTensor
-except ImportError:
-    from torch.distributed._tensor import DTensor
+from torch.distributed.tensor import DTensor
 
 from rlinf.scheduler import CollectiveGroupOptions, Worker
 

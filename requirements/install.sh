@@ -80,7 +80,7 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "molmoact2" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1414,6 +1414,46 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_molmoact2_model() {
+    # MolmoAct2's upstream LeRobot extra requires Python 3.12.
+    PYTHON_VERSION="3.12"
+
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for MolmoAct2 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local molmoact2_lerobot_path
+    local molmoact2_lerobot_ref="${MOLMOACT2_LEROBOT_REF:-28b4f721f931aab554cb176412223f098023705f}"
+    molmoact2_lerobot_path=$(clone_or_reuse_repo MOLMOACT2_LEROBOT_PATH "$VENV_DIR/lerobot-molmoact2" https://github.com/allenai/lerobot.git -b molmoact2-hf-inference)
+
+    if ! git -C "$molmoact2_lerobot_path" rev-parse --verify "${molmoact2_lerobot_ref}^{commit}" >/dev/null 2>&1; then
+        git -C "$molmoact2_lerobot_path" fetch origin "$molmoact2_lerobot_ref"
+    fi
+    git -C "$molmoact2_lerobot_path" checkout --detach "$molmoact2_lerobot_ref"
+
+    # Install from the upstream checkout so RLinf's uv overrides do not mask
+    # LeRobot's newer dependencies. The released MolmoAct2 checkpoint declares
+    # Transformers 5.3.0 and uses its tokenizer/processor serialization format.
+    pushd "$molmoact2_lerobot_path" >/dev/null
+    uv pip install -e . "transformers==5.3.0"
+    popd >/dev/null
+
+    python - <<'EOF'
+from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
+
+assert MolmoAct2Config is not None
+EOF
+    uv pip uninstall pynvml || true
+}
+
 install_starvla_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -2332,6 +2372,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                molmoact2)
+                    install_molmoact2_model
                     ;;
                 starvla)
                     install_starvla_model
