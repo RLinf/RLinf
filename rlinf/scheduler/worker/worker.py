@@ -67,6 +67,13 @@ class WorkerMeta(type):
         if func_name.startswith("_") and func_name != "__init__":
             return func
 
+        # staticmethod is callable on Python 3.10+, and wrapping it into a plain
+        # function would let the class rebind self onto its first argument.
+        if isinstance(func, staticmethod):
+            return staticmethod(
+                cls._catch_failure_for_cls_func(cls_name, func_name, func.__func__)
+            )
+
         def func_wrapper(func: Callable):
             @functools.wraps(func)
             def sync_func(*args, **kwargs):
