@@ -1247,11 +1247,16 @@ class Worker(metaclass=WorkerMeta):
         """
         return self._worker_address.get_parent_rank()
 
-    def acquire_free_port(self):
-        """Safely acquire a free port on the current node without causing conflicts within the node."""
+    def acquire_free_port(self, max_port_num: Optional[int] = None):
+        """Safely acquire a free port on the current node without causing conflicts within the node.
+
+        Args:
+            max_port_num (Optional[int]): Largest acceptable port. Use it for servers that
+                derive a second port from this one and would overflow past 65535.
+        """
         max_tries = 10000  # Retry up to 10000 times to find a free port
         for _ in range(max_tries):
-            port = Cluster.find_free_port()
+            port = Cluster.find_free_port(max_port_num)
             success = self._port_lock.acquire(port)
             if success:
                 return port
