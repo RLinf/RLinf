@@ -140,6 +140,15 @@ Use ``dataset_stats_path`` for the released normalization statistics:
 FastWAM and RLinf Configuration
 -------------------------------
 
+The standard evaluation YAML reads examples/embodiment/config/model/fastwam.yaml.
+Before use, replace the model_path and dataset_stats_path placeholders in that
+file with local model files:
+
+.. code-block:: yaml
+
+   model_path: your_path_to/FASTWAM_CHECKPOINT
+   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+
 RLinf composes FastWAM's upstream YAML with OmegaConf without changing Hydra's
 global state. The two configuration layers have separate responsibilities:
 

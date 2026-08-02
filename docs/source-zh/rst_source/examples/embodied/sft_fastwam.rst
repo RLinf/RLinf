@@ -137,6 +137,14 @@ backbone payload 初始化动作分支。归一化统计信息仍通过
 FastWAM 与 RLinf 配置
 ------------------------
 
+标准评测 YAML 会读取 examples/embodiment/config/model/fastwam.yaml。
+使用前将该文件中的 model_path 与 dataset_stats_path 占位路径替换为本机模型文件：
+
+.. code-block:: yaml
+
+   model_path: your_path_to/FASTWAM_CHECKPOINT
+   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+
 RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状态。
 两层配置的职责分工如下：
 
