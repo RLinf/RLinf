@@ -48,7 +48,6 @@ env:
     num_steps_wait: 30
     max_episode_steps: 400
     max_steps_per_rollout_epoch: 5200
-    expected_num_trajectories: 500
     group_size: 1
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true

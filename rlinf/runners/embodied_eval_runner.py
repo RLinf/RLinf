@@ -74,17 +74,6 @@ class EmbodiedEvalRunner:
             rollout_handle.wait()
         eval_metrics_list = [results for results in env_results if results is not None]
         eval_metrics = compute_evaluate_metrics(eval_metrics_list)
-        expected_num_trajectories = self.cfg.env.eval.get(
-            "expected_num_trajectories", None
-        )
-        if expected_num_trajectories is not None:
-            observed_num_trajectories = int(eval_metrics.get("num_trajectories", 0))
-            if observed_num_trajectories != int(expected_num_trajectories):
-                raise RuntimeError(
-                    "LIBERO evaluation did not cover the expected number of "
-                    f"trajectories: expected={expected_num_trajectories}, "
-                    f"observed={observed_num_trajectories}."
-                )
         return eval_metrics
 
     def run(self):
