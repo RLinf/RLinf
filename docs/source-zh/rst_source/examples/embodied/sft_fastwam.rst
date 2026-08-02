@@ -172,6 +172,15 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
 评测
 ----
 
+完整 SFT checkpoint 的评测使用 evaluations/libero/libero_fastwam_full_eval.yaml。
+启动前直接将其中的两个占位路径替换为本机文件路径；它们不是环境变量，也不会自动下载
+或解析。请保留已有 checkpoint、dataset stats 与数据集文件。
+
+.. code-block:: yaml
+
+   model_path: your_path_to/FASTWAM_SFT_CKPT
+   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+
 单一的 ``libero_spatial_fastwam_eval.yaml`` 取代了原先分开的小规模、
 大规模、LIBERO-Plus、仅语言扰动和未来视频 YAML。
 

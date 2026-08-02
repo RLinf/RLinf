@@ -178,6 +178,17 @@ supported alias.
 Evaluate
 --------
 
+Use evaluations/libero/libero_fastwam_full_eval.yaml to evaluate an SFT
+checkpoint. Before launch, replace its two placeholder paths with local files.
+They are not environment variables and are not resolved or downloaded
+automatically. Keep existing checkpoints, dataset statistics, and datasets in
+place.
+
+.. code-block:: yaml
+
+   model_path: your_path_to/FASTWAM_SFT_CKPT
+   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+
 The single ``libero_spatial_fastwam_eval.yaml`` config replaces separate small,
 large, LIBERO-Plus, language-only, and future-video YAML files.
 

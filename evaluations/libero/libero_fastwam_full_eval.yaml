@@ -65,6 +65,6 @@ rollout:
   pipeline_stage_num: 1
   model:
     model_type: "fastwam"
-    # Benchmark the SFT checkpoint produced by this alignment run, not the released base policy.
-    model_path: /mnt/public2/wph/codes/develop_async/RLinf_fastwam/logs/20260731-08:44:59-libero_sft_fastwam/official_checkpoint/libero_fastwam_step_21700.pt
-    dataset_stats_path: /mnt/public2/wph/codes/develop_async/RLinf_fastwam/logs/20260731-04:09:42-libero_sft_fastwam/dataset_stats.json
+    # Replace both placeholders with the checkpoint and dataset-stats files to evaluate.
+    model_path: your_path_to/FASTWAM_SFT_CKPT
+    dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
