@@ -160,6 +160,13 @@ RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状
        ``precision: bf16``；FSDP2 不额外 cast，由 worker 使用 bf16 autocast，
        与上游 Accelerator 路径一致。
 
+.. note::
+
+   FSDP 通用启动日志可能建议将模型参数设为 fp32，以适配常规模型的优化器策略。
+   这条建议不适用于 FastWAM：其官方 SFT 路径就是 bf16 模型参数加 bf16 autocast，
+   且 FSDP2 不应再额外进行参数 dtype cast。看到该通用提示不表示 FastWAM 配置错误，
+   不需要为消除提示而改为 fp32。
+
 FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名。
 
 评测

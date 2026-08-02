@@ -163,6 +163,15 @@ global state. The two configuration layers have separate responsibilities:
      - Owns mixed precision and gradient checkpointing. Keep the model preset at ``precision: bf16`` for SFT; FSDP2 casting is unset and
        the worker uses bf16 autocast, matching the upstream Accelerator path.
 
+.. note::
+
+   The generic FSDP startup log may recommend fp32 model parameters for the
+   optimizer policy used by ordinary models. That recommendation does not apply
+   to FastWAM: its official SFT path uses bf16 model parameters plus bf16
+   autocast, and FSDP2 must not add another parameter dtype cast. This generic
+   message does not indicate a FastWAM configuration error; do not switch to
+   fp32 merely to silence it.
+
 Use only ``model_path`` for the FastWAM checkpoint. ``checkpoint_path`` is not a
 supported alias.
 

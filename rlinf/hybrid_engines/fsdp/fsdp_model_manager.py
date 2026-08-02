@@ -67,20 +67,14 @@ class FSDPModelManager:
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
         if self.torch_dtype != torch.float32:
-            if str(self._cfg.model.get("model_type", "")).lower() == "fastwam":
-                self._logger.info(
-                    "[FSDP] FastWAM follows the upstream SFT path: "
-                    "bf16 model parameters with bf16 autocast."
-                )
-            else:
-                self._logger.warning(
-                    "Provided there is sufficient GPU memory, "
-                    "set the actor.model.precision parameter to fp32 "
-                    "to allow the optimizer to run in fp32 for better convergence. "
-                    "Meanwhile, setting mixed_precision.param_dtype to 16-bit dtype "
-                    "can help maximize speed, as it will automatically "
-                    "convert fp32 to fp16 during operator execution."
-                )
+            self._logger.warning(
+                "Provided there is sufficient GPU memory, "
+                "set the actor.model.precision parameter to fp32 "
+                "to allow the optimizer to run in fp32 for better convergence. "
+                "Meanwhile, setting mixed_precision.param_dtype to 16-bit dtype "
+                "can help maximize speed, as it will automatically "
+                "convert fp32 to fp16 during operator execution."
+            )
 
         self.optimizer_steps = 0
         self.critic_warmup_steps = 0
