@@ -76,9 +76,9 @@ Important Config Fields
    * - ``rollout.rollout_backend: sglang``
      - Selects the SGLang rollout backend.
    * - ``rollout.sglang.serving_mode: embodied``
-     - Starts ``SGLangEmbodiedWorker``, which launches and controls the local SGLang action server.
-   * - ``rollout.sglang.http_payload_format: msgpack``
-     - Uses the binary action payload path used by DreamZero evaluation.
+     - Selects ``SGLangEmbodiedWorker``; the SGLang serve group is launched by the
+       driver script (``launch_sglang_router_and_server``), and the worker connects
+       to the driver-assigned server URL for inference.
    * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
      - Controls the DreamZero denoising steps used by the server.
    * - ``rollout.sglang.server.pipeline_config.cfg_scale``

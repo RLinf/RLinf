@@ -30,12 +30,16 @@ The SGLang embodied evaluation path separates general logic from model-specific 
   server's URL to the rollout workers; server startup, ``/health`` polling, and
   port allocation are handled by ``SGLangServerWorker`` (driver side) — the
   rollout worker itself no longer owns a server subprocess;
-- ``SGLangEmbodiedWorker`` is a thin client: it picks the driver-assigned server
-  URL for its own rank, loads the Action Policy, and exchanges observations and
-  actions with the environment Worker through channels;
-- Subclasses of ``EmbodiedActionPolicy`` are responsible for model-specific
-  observation preprocessing, HTTP requests, response parsing, and action
-  postprocessing.
+- ``SGLangEmbodiedWorker`` picks the driver-assigned server URL for its own rank,
+  uses it to create an :class:`InferenceHTTPClient`, loads the model's **sglang
+  adapter**, and exchanges observations and actions with the environment Worker
+  through channels. **The HTTP request to the server (msgpack encoding + retries)
+  is performed by the worker itself**;
+- The **sglang adapter** (a plain standalone class, e.g. ``DreamzeroSglangAdapter``)
+  only holds model-specific pure logic: ``build_request`` turns an env
+  observation into the request payload, ``parse_response`` turns the server
+  response into actions, and ``action_path`` declares the action endpoint. It
+  **does not hold an HTTP client and does not send requests itself**.
 
 Therefore, integrating a new model usually **does not require modifying**
 ``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``, and you do not need to
@@ -56,13 +60,16 @@ model is selected by ``rollout.model.model_type``, and the call flow is as follo
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
-                 ├── get_action_policy_cls("<your_model>")
-                 ├── pick this rank's server URL
-                 └── create YourActionPolicy
-                              │
-                              ├── convert env_obs to model input
-                              ├── request the model's action endpoint
-                              └── return [N, H, D] actions
+                 ├── get_sglang_adapter_cls("<your_model>")
+                 ├── pick this rank's server URL, create InferenceHTTPClient
+                 └── create YourSglangAdapter(cfg, rank)
+
+   SGLangEmbodiedWorker.predict(env_obs)   # driven by EmbodiedEvalRunner
+                 │
+                 ├── adapter.build_request(env_obs)  → (payload, state)
+                 ├── http_client.post(adapter.action_path, payload, msgpack=True, ...)
+                 └── adapter.parse_response(resp, state)  → [N, H, D] actions
+
 
 To enter this call flow, the following conditions must all be satisfied in the
 configuration:
@@ -91,8 +98,8 @@ Note that ``rollout.sglang.server_type`` and ``rollout.model.model_type`` are tw
   ``sglang.srt.entrypoints.http_server.launch_server``; ``embodied`` = VLA /
   diffusion via ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``,
   serving the ``/v1/actions/generations`` endpoint);
-- ``rollout.model.model_type`` decides **which Action Policy the rollout worker
-  loads** (the Policy Registry lookup key).
+- ``rollout.model.model_type`` decides **which sglang adapter the rollout worker
+  loads** (the adapter registry lookup key).
 
 ``serving_mode: embodied`` also cannot be omitted — otherwise RLinf creates a
 regular ``SGLangWorker`` instead of ``SGLangEmbodiedWorker``.
@@ -106,8 +113,10 @@ The following describes, in the recommended order, the work required for a new m
 Step 1: Confirm the SGLang Server Action Interface
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf's Action Policy is a client of SGLang Server. Before writing RLinf code, first confirm
-that the SGLang side already has the following capabilities:
+RLinf's sglang adapter builds requests for and parses responses from SGLang
+Server (the actual HTTP round-trip is performed by the worker). Before writing
+RLinf code, first confirm that the SGLang side already has the following
+capabilities:
 
 1. ``sglang serve`` can load the target model or target Pipeline;
 2. SGLang Server provides a VLA interface for this model that accepts batched observations and returns batched actions;
@@ -115,7 +124,7 @@ that the SGLang side already has the following capabilities:
 
 .. warning::
 
-   The Action Policy in the RLinf repository is only responsible for action requests and conversion. The model Pipeline, action route, and
+   The sglang adapter in the RLinf repository is only responsible for building action requests and parsing responses. The model Pipeline, action route, and
    related ``sglang serve`` parameters still need to be implemented in the SGLang version being used.
 
 
@@ -137,44 +146,51 @@ If the model needs to pass embodied configuration validation, it must also be ad
        SupportedModel.YOUR_MODEL,
    }
 
-``"your_model"``, the name in the Action Policy decorator, and
-``rollout.model.model_type`` in the YAML must be identical. Policy Registry lookup is case-insensitive,
-but using lowercase everywhere is still recommended.
+``"your_model"``, the name used in ``register_sglang_adapter``, and
+``rollout.model.model_type`` in the YAML must be identical. The adapter registry
+lookup is case-insensitive, but using lowercase everywhere is still recommended.
 
 
-Step 3: Implement the Action Policy
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 3: Implement the sglang adapter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Create a model file in the following directory:
+Create the adapter file under the model's own directory (in the model layer,
+next to the training-side model code):
 
 .. code-block:: text
 
-   rlinf/workers/rollout/sglang/action_policies/<your_model>.py
+   rlinf/models/embodiment/<your_model>/sglang_adapter.py
 
-The Policy needs to inherit from ``EmbodiedActionPolicy`` and be registered with a decorator:
+The adapter is a **plain standalone class** (it does not need to inherit any base
+class) with the constructor signature ``(cfg, rank)``. It must implement
+``build_request`` / ``parse_response`` and declare ``action_path``:
 
 .. code-block:: python
 
+   import numpy as np
    import torch
 
-   from rlinf.workers.rollout.sglang.action_policies.base import (
-       EmbodiedActionPolicy,
-   )
-   from rlinf.workers.rollout.sglang.action_policies.registry import (
-       register_action_policy,
-   )
 
+   class YourSglangAdapter:
+       action_path = "/v1/actions/generations"
 
-   @register_action_policy("your_model")
-   class YourActionPolicy(EmbodiedActionPolicy):
-       def __init__(self, cfg, server_url, rank):
-           super().__init__(cfg, server_url, rank)
-           # Create lightweight transforms and an HTTP client here.
+       def __init__(self, cfg, rank):
+           self.cfg_rollout = cfg.rollout
+           self.model_cfg = cfg.rollout.model
+           self.rank = rank
+           # Create lightweight transforms here (do not load large model weights).
 
-       def infer(self, env_obs, mode="eval"):
-           # 1. Convert RLinf env_obs to model input.
-           # 2. Normalize it and send a request to SGLang Server.
-           # 3. Parse the response and denormalize the actions.
+       def build_request(self, env_obs, mode="eval"):
+           # 1. Convert RLinf env_obs to model input and normalize it;
+           # 2. Assemble the server request payload (a dict);
+           # 3. Return (payload, state); state is passed back to parse_response as-is.
+           payload = {...}
+           state = ...            # e.g. the intermediate observation used for denormalization
+           return payload, state
+
+       def parse_response(self, resp, state):
+           # 1. Read the normalized action from the server response;
+           # 2. Denormalize it to environment-scale actions.
            actions = ...
            info = {
                "prev_logprobs": ...,
@@ -183,37 +199,65 @@ The Policy needs to inherit from ``EmbodiedActionPolicy`` and be registered with
            }
            return torch.as_tensor(actions, dtype=torch.float32), info
 
-``infer`` is the only method that must be implemented. Its interface is:
+Interface contract:
 
-- The input ``env_obs`` is a dictionary of environment observations organized by batch;
-- General fields include ``main_images`` and ``task_descriptions``; the model can also use
-  ``wrist_images``, ``states``, or other views;
-- The output ``actions`` must be a Tensor with shape
-  ``[N, num_action_chunks, action_dim]``;
-- The output ``info`` is an additional information dictionary. This interface is reserved for future training extensions; currently, it can return
-  ``prev_logprobs``, ``prev_values``, and ``forward_inputs`` as DreamZero does;
-- The current SGLang embodied Worker is used only for evaluation. If the Policy does not support training mode, then when
-  ``mode != "eval"`` it should explicitly raise ``NotImplementedError``. Support for using SGLang
-  as a rollout worker for embodied model training is planned.
+- **HTTP is handled by the worker** — the adapter does not hold an HTTP client
+  and does not send requests. The worker calls ``build_request`` to get the
+  payload, sends it via ``http_client.post(adapter.action_path, payload,
+  msgpack=True, ...)``, then hands the response to ``parse_response``;
+- The ``env_obs`` passed to ``build_request`` is a dictionary of environment
+  observations organized by batch; general fields include ``main_images`` and
+  ``task_descriptions``, and the model can also use ``wrist_images``, ``states``
+  or other views. It returns ``(payload, state)``: ``payload`` is the request
+  body sent to the server, and ``state`` is any intermediate value to be reused
+  in ``parse_response``;
+- ``parse_response`` returns ``(actions, info)``: ``actions`` must be a Tensor
+  with shape ``[N, num_action_chunks, action_dim]``; ``info`` is an additional
+  information dictionary reserved for future training extensions — currently it
+  can return ``prev_logprobs``, ``prev_values`` and ``forward_inputs`` as
+  DreamZero does;
+- The current SGLang embodied Worker is used only for evaluation. If the adapter
+  does not support training mode, it should explicitly raise
+  ``NotImplementedError`` when ``mode != "eval"``. Support for using SGLang as a
+  rollout worker for embodied model training is planned.
 
 .. important::
 
-   Do not load the model in the Action Policy. The model should exist only in the ``sglang serve``
-   subprocess. Keep only data transformations, the HTTP Client, and a small amount of request context in the Policy; otherwise,
-   weights will be loaded repeatedly and additional GPU memory will be consumed.
+   Do not load the model in the adapter. The model should exist only in the
+   ``sglang serve`` subprocess. Keep only data transformations and a small amount
+   of request context in the adapter; otherwise weights will be loaded repeatedly
+   and additional GPU memory will be consumed.
 
 
-Step 4: Import the Policy to Trigger Registration
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Step 4: Register the adapter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Add the following in ``rlinf/workers/rollout/sglang/action_policies/__init__.py``:
+The adapter is registered with a **lazy builder** in
+``_register_builtin_sglang_adapters()`` inside
+``rlinf/models/embodiment/sglang_adapter.py`` (mirroring the model-registration
+style of ``rlinf.models``): put the heavy imports inside the builder so your
+adapter module is imported only when that ``model_type`` is actually looked up:
 
 .. code-block:: python
 
-   from rlinf.workers.rollout.sglang.action_policies import your_model  # noqa: F401,E401
+   # rlinf/models/embodiment/sglang_adapter.py
+   def _register_builtin_sglang_adapters():
+       def _build_your_model():
+           from rlinf.models.embodiment.your_model.sglang_adapter import (
+               YourSglangAdapter,
+           )
 
-The decorator executes only when the module is imported. If this step is omitted, Worker initialization reports that no
-Action Policy is registered for the corresponding ``model_type``.
+           return YourSglangAdapter
+
+       register_sglang_adapter(
+           SupportedModel.YOUR_MODEL.value,
+           _build_your_model,
+           force=True,
+       )
+
+The worker looks it up via ``get_sglang_adapter_cls(model_type)`` in
+``init_worker``. If registration is missing, Worker initialization reports that
+no sglang adapter is registered for the corresponding ``model_type``.
 
 
 Step 5: Add the Model YAML and Evaluation YAML
@@ -261,10 +305,10 @@ DreamZero's SGLang evaluation path consists of the following files:
      - Purpose
    * - ``rlinf/config.py``
      - Register ``dreamzero`` and add it to ``EMBODIED_MODEL``
-   * - ``rlinf/workers/rollout/sglang/action_policies/dreamzero.py``
-     - Observation transformation, HTTP Client, Serve parameters, and action postprocessing
-   * - ``rlinf/workers/rollout/sglang/action_policies/__init__.py``
-     - Import the DreamZero Policy
+   * - ``rlinf/models/embodiment/dreamzero/sglang_adapter.py``
+     - ``DreamzeroSglangAdapter``: observation transforms, request building, response parsing, and action postprocessing
+   * - ``rlinf/models/embodiment/sglang_adapter.py``
+     - adapter registry (``register_sglang_adapter`` / ``get_sglang_adapter_cls``); lazily registers the DreamZero adapter
    * - ``examples/embodiment/config/model/dreamzero_5b.yaml``
      - DreamZero 5B model configuration
    * - ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``
@@ -293,27 +337,37 @@ can use:
        model_type: dreamzero
 
 
-Policy Adaptation
-~~~~~~~~~~~~~~~~~
+Adapter Adaptation
+~~~~~~~~~~~~~~~~~~~
 
-``dreamzero.py`` divides model adaptation into four steps:
+``sglang_adapter.py`` uses a **single class** ``DreamzeroSglangAdapter`` to hold
+all of the DreamZero adaptation logic (observation/action transforms + request
+assembly + response parsing):
 
-1. ``DreamZeroActionRequest`` and ``DreamZeroActionResult`` define the request and response;
-2. ``HttpDreamZeroActionClient`` is responsible for encoding, retrying, sending, and parsing HTTP requests;
-3. ``_DreamZeroActionAdapter`` reuses training data transformations to perform observation and action conversion;
-4. ``DreamZeroActionPolicy`` implements the RLinf interface: it receives this
-   rank's server URL and performs observation conversion, HTTP request, and
-   action postprocessing in ``infer``. The Policy does not participate in server
-   startup — server parameters come entirely from the YAML
-   ``rollout.sglang.server`` block.
+1. ``__init__(cfg, rank)`` reuses the training data transforms
+   (``build_dreamzero_composed_transform``) to prepare observation conversion and
+   action inverse-transform; it does not load the large model nor build an HTTP client;
+2. ``build_request(env_obs, mode)`` turns an env observation into the server
+   request payload and returns a ``state`` (the converted observation) for
+   ``parse_response`` to reuse;
+3. ``parse_response(resp, state)`` reads the normalized action from the response
+   and denormalizes it to environment-scale actions;
+4. ``action_path`` declares the action endpoint ``/v1/actions/generations``.
 
-The Policy registration code is:
+**The HTTP request is performed by ``SGLangEmbodiedWorker``** — the adapter only
+builds the payload and parses the response, it does not send requests; server
+parameters also come entirely from the YAML ``rollout.sglang.server`` block.
+
+The adapter is registered via a lazy builder (see
+``rlinf/models/embodiment/sglang_adapter.py``):
 
 .. code-block:: python
 
-   @register_action_policy("dreamzero")
-   class DreamZeroActionPolicy(EmbodiedActionPolicy):
-       ...
+   register_sglang_adapter(
+       SupportedModel.DREAMZERO.value,
+       _build_dreamzero_sglang_adapter,   # lazily imports DreamzeroSglangAdapter inside
+       force=True,
+   )
 
 The complete data flow for one inference is:
 
@@ -321,21 +375,21 @@ The complete data flow for one inference is:
 
    RLinf env_obs
        │
-       ├── observation_convert()
-       │     main_images       → video.image
-       │     wrist_images      → video.wrist_image
-       │     states            → state.state
-       │     task_descriptions → annotation.task
+       ├── build_request()
+       │     ├── _observation_convert()
+       │     │     main_images       → video.image
+       │     │     wrist_images      → video.wrist_image
+       │     │     states            → state.state
+       │     │     task_descriptions → annotation.task
+       │     ├── _normalize_obs()   dataset transform + metadata normalization
+       │     │     (text is NOT tokenized on the client; the SGLang server does it)
+       │     └── assemble payload (raw prompt text + normalized observation)
        │
-       ├── normalize_obs()
-       │     dataset transform + metadata normalization + prompt tokenize
+       ├── worker: POST /v1/actions/generations (msgpack)
        │
-       ├── POST /v1/actions/generations
-       │
-       ├── unapply()
-       │     [B, H, max_action_dim] → environment-scale actions
-       │
-       └── actions [B, H, action_dim]
+       └── parse_response()
+             ├── _unapply()  [B, H, max_action_dim] → environment-scale actions
+             └── actions [B, H, action_dim]
 
 Using ``embodiment_tag: libero_sim`` as an example, ``main_images`` and
 ``wrist_images`` are converted into two video modalities, an external camera and a wrist camera; ``states`` is converted into
@@ -351,26 +405,31 @@ embodiment id.
 HTTP Requests
 ~~~~~~~~~~~~~
 
-The DreamZero Client calls ``POST /v1/actions/generations``. The JSON form is as follows;
-when using msgpack, the logical fields remain the same, but Tensors and ndarrays do not need to be expanded into large lists first:
+The adapter's ``build_request`` assembles the payload for
+``POST /v1/actions/generations``, which the worker sends via
+``http_client.post(..., msgpack=True)``. The logical structure of the payload is
+as follows (transported with msgpack, so Tensors and ndarrays do not need to be
+expanded into large lists first):
 
 .. code-block:: json
 
    {
-     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers",
+     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-repacked",
+     "input": {
+       "prompt": [
+         "<training-format prompt>"
+       ],
+       "observation": {}
+     },
      "parameters": {
-       "action_input": {},
        "session_ids": [
          "rlinf-eval-r0-stage0-slot0"
        ],
        "reset_mask": [
          false
        ],
-       "prompts": [
-         "<training-format prompt>"
-       ],
        "negative_prompts": [
-         "text_negative:missing"
+         "<negative prompt>"
        ],
        "seed": 1140
      },
@@ -382,21 +441,25 @@ when using msgpack, the logical fields remain the same, but Tensors and ndarrays
 
 Where:
 
-- ``action_input`` is the output of ``_DreamZeroActionAdapter.normalize_obs``;
-- ``session_ids`` identifies each logical environment slot and is used by the Server to reuse video or text caches;
-- ``reset_mask`` is used to clear the cache for the corresponding session before the next request;
-- ``prompt_cache_keys`` in the Python dataclass is sent as
-  ``prompts`` in the HTTP payload, and ``negative_prompt_cache_keys`` is sent as ``negative_prompts``;
-- ``seed`` comes from ``rollout.sglang.seed``.
+- ``input.prompt`` is the **raw instruction text** for each environment (it is
+  not tokenized on the client; the SGLang server tokenizes it);
+- ``input.observation`` is the normalized model input (the output of
+  ``_normalize_obs`` with the prompt/token-related keys removed);
+- ``parameters.session_ids`` identifies each logical environment slot and is used by the Server to reuse video or text caches;
+- ``parameters.reset_mask`` is used to clear the cache for the corresponding
+  session before the next request (all ``false`` by default in evaluation);
+- ``parameters.negative_prompts`` are the negative prompts;
+- ``parameters.seed`` comes from ``rollout.sglang.seed``.
 
-The Client reads the normalized actions returned by the Server from:
+The worker reads the normalized actions returned by the Server from the following
+location and hands them to ``parse_response``:
 
 .. code-block:: python
 
    response["data"][0]["action"]["values"]
 
 These actions are still in DreamZero's normalized and padded action space and cannot be sent directly to the environment; they must pass through
-``_DreamZeroActionAdapter.unapply``.
+``DreamzeroSglangAdapter._unapply`` (called inside ``parse_response``).
 
 
 Server Parameters and Pipeline Configuration
@@ -467,7 +530,6 @@ can be summarized as:
    model_type: "dreamzero"
 
    model_path: null
-   tokenizer_path: null
    metadata_json_path: null
 
    action_dim: 32
@@ -498,11 +560,9 @@ The meanings of the main fields are as follows:
    * - Field
      - Meaning
    * - ``model_type``
-     - Lookup key for the Action Policy Registry; must be ``dreamzero``
+     - Lookup key for the adapter registry; must be ``dreamzero``
    * - ``model_path``
      - Full checkpoint path; must be overridden in the evaluation YAML
-   * - ``tokenizer_path``
-     - Text tokenizer path; the DreamZero example uses ``google/umt5-xxl``
    * - ``metadata_json_path``
      - Dataset statistics used for state and action normalization and denormalization
    * - ``action_dim`` / ``max_action_dim``
@@ -723,19 +783,21 @@ HTTP Client Configuration
        http_timeout_s: 600
        http_max_retries: 5
        http_retry_backoff_s: 1.0
-       http_payload_format: "msgpack"
-       debug_sessions: false
-       debug_batch: false
 
-Field descriptions:
+These fields are read by ``SGLangEmbodiedWorker`` to create the
+:class:`InferenceHTTPClient` that sends requests to the server. Field
+descriptions:
 
 - ``http_timeout_s`` is the timeout for a single action request;
 - ``http_max_retries`` is the number of retries for connection errors or retryable 5xx responses;
-- ``http_retry_backoff_s`` is the base wait time for linear backoff;
-- ``http_payload_format`` supports ``json`` and ``msgpack``. ``msgpack`` is recommended for images and large batches
-  to avoid expanding ndarrays into enormous JSON lists;
-- ``debug_sessions`` and ``debug_batch`` can be enabled when jointly debugging cache or shape issues, but should not be
-  kept enabled for large-scale evaluation.
+- ``http_retry_backoff_s`` is the base wait time for linear backoff.
+
+.. note::
+
+   Embodied action requests always use **msgpack** (so ndarrays are not expanded
+   into enormous JSON lists for images / large batches); the worker calls
+   ``http_client.post(..., msgpack=True)``, and there is no longer an
+   ``http_payload_format`` config option.
 
 
 DreamZero Model and Data Configuration
@@ -747,8 +809,7 @@ DreamZero Model and Data Configuration
      model:
        model_type: "dreamzero"
        precision: bf16
-       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-       tokenizer_path: google/umt5-xxl
+       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-repacked
        metadata_json_path: /path/to/metadata.json
        embodiment_tag: "libero_sim"
 
@@ -761,7 +822,6 @@ DreamZero Model and Data Configuration
 Among these fields:
 
 - ``model_path`` is the checkpoint loaded by SGLang Server;
-- ``tokenizer_path`` is used only for the text tokenizer; do not use it in place of ``model_path``;
 - ``metadata_json_path`` provides normalization statistics from the training data. If it is not explicitly specified, the code only attempts
   ``model_path/experiment_cfg/metadata.json``;
 - ``embodiment_tag`` selects the observation layout, modality transformations, action postprocessing, and embodiment id;
@@ -842,15 +902,17 @@ Check whether both of the following are set:
        serving_mode: embodied
 
 
-Action Policy Not Registered
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sglang adapter Not Registered
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Confirm that the following three names are identical and that the Policy module has been imported in ``action_policies/__init__.py``:
+Confirm that the following three names are identical and that the adapter is
+registered in ``_register_builtin_sglang_adapters()`` inside
+``rlinf/models/embodiment/sglang_adapter.py``:
 
 .. code-block:: text
 
    SupportedModel.register("dreamzero")
-   @register_action_policy("dreamzero")
+   register_sglang_adapter("dreamzero", _build_dreamzero_sglang_adapter, force=True)
    rollout.model.model_type: dreamzero
 
 
@@ -895,7 +957,7 @@ Check the following in order:
 Abnormal GPU Memory Usage
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Confirm that the Action Policy does not import and create a local large DreamZero model. The model can only be loaded by
+Confirm that the sglang adapter does not import and create a local large DreamZero model. The model can only be loaded by
 ``sglang serve``. Also check ``max_sessions``, eval batch size, compilation options, and
 parallel configuration; DreamZero sets ``max_sessions`` to the current Worker's eval batch size by default, and
 increasing the number of parallel environments also increases the Server-side cache requirements.

@@ -30,11 +30,14 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
   并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health``
   轮询和端口分配由 ``SGLangServerWorker``\ （driver 侧）负责，rollout worker
   本身不再持有 server 子进程；
-- ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的
-  server URL进行推理服务的端口，加载 Action Policy，通过 channel 与环境 Worker 交换 observation
-  和 action；
-- ``EmbodiedActionPolicy`` 的子类负责模型特有的 observation 预处理、HTTP 请求、
-  响应解析和 action 后处理。
+- ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的 server URL，
+  用它创建一个 :class:`InferenceHTTPClient`，加载模型对应的 **sglang adapter**，
+  并通过 channel 与环境 Worker 交换 observation 和 action。**向 server 发起的
+  HTTP 请求（msgpack 编码 + 重试）由 worker 自己完成**；
+- **sglang adapter**（一个独立的普通类，例如 ``DreamzeroSglangAdapter``）只负责
+  模型特有的纯逻辑：``build_request`` 把 env observation 转成请求 payload，
+  ``parse_response`` 把 server 响应转成动作，``action_path`` 声明动作端点。它
+  **不持有 HTTP client，也不亲自发请求**。
 
 因此，接入新模型时通常 **不需要修改**
 ``rlinf/workers/rollout/sglang/sglang_embodied_worker.py``，也无需关心 server
@@ -54,13 +57,16 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
                  ▼
    SGLangEmbodiedWorker.init_worker()
                  │
-                 ├── get_action_policy_cls("<your_model>")
-                 ├── 取本 rank 的 server URL
-                 └── 创建 YourActionPolicy
-                              │
-                              ├── 将 env_obs 转换为模型输入
-                              ├── 请求模型的 action endpoint
-                              └── 返回 [N, H, D] 动作
+                 ├── get_sglang_adapter_cls("<your_model>")
+                 ├── 取本 rank 的 server URL，创建 InferenceHTTPClient
+                 └── 创建 YourSglangAdapter(cfg, rank)
+
+   SGLangEmbodiedWorker.predict(env_obs)   # 由 EmbodiedEvalRunner 驱动
+                 │
+                 ├── adapter.build_request(env_obs)  → (payload, state)
+                 ├── http_client.post(adapter.action_path, payload, msgpack=True, ...)
+                 └── adapter.parse_response(resp, state)  → [N, H, D] 动作
+
 
 要进入这条调用链，配置中必须同时满足以下条件：
 
@@ -86,8 +92,8 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
   ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` = VLA/diffusion
   走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``，服务
   ``/v1/actions/generations`` 端点）；
-- ``rollout.model.model_type`` 决定 **rollout worker 加载哪个 Action Policy**
-  （Policy Registry 查找键）。
+- ``rollout.model.model_type`` 决定 **rollout worker 加载哪个 sglang adapter**
+  （adapter registry 查找键）。
 
 ``serving_mode: embodied`` 也不可省略——否则 RLinf 会创建普通的 ``SGLangWorker``
 而非 ``SGLangEmbodiedWorker``。
@@ -101,8 +107,8 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 步骤一：确认 SGLang Server 的动作接口
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-RLinf 的 Action Policy 是 SGLang Server 的客户端。在编写 RLinf 代码前，先确认
-SGLang 侧已经具备以下能力：
+RLinf 的 sglang adapter 为 SGLang Server 构造请求、解析响应（实际的 HTTP 收发由
+worker 完成）。在编写 RLinf 代码前，先确认 SGLang 侧已经具备以下能力：
 
 1. ``sglang serve`` 能够加载目标模型或目标 Pipeline；
 2. SGLang Server 已为该模型提供接收批量 observation、返回批量 action 的 VLA 接口；
@@ -110,8 +116,8 @@ SGLang 侧已经具备以下能力：
 
 .. warning::
 
-   RLinf 仓库中的 Action Policy 只负责 action 请求与转换。模型 Pipeline、动作路由及
-   相关 ``sglang serve`` 参数仍需在所使用的 SGLang 版本中实现。
+   RLinf 仓库中的 sglang adapter 只负责构造 action 请求、解析响应。模型 Pipeline、
+   动作路由及相关 ``sglang serve`` 参数仍需在所使用的 SGLang 版本中实现。
 
 
 步骤二：注册 ``model_type``
@@ -132,44 +138,50 @@ SGLang 侧已经具备以下能力：
        SupportedModel.YOUR_MODEL,
    }
 
-``"your_model"``、Action Policy 装饰器中的名称和 YAML 中的
-``rollout.model.model_type`` 必须一致。Policy Registry 查找时不区分大小写，
+``"your_model"``、``register_sglang_adapter`` 注册时使用的名称和 YAML 中的
+``rollout.model.model_type`` 必须一致。adapter registry 查找时不区分大小写，
 但仍建议全部使用小写。
 
 
-步骤三：实现 Action Policy
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+步骤三：实现 sglang adapter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在以下目录中新建模型文件：
+在模型自己的目录下新建 adapter 文件（放在 model 层，与训练侧模型代码同级）：
 
 .. code-block:: text
 
-   rlinf/workers/rollout/sglang/action_policies/<your_model>.py
+   rlinf/models/embodiment/<your_model>/sglang_adapter.py
 
-Policy 需要继承 ``EmbodiedActionPolicy``，并通过装饰器注册：
+adapter 是一个 **独立的普通类**（不需要继承任何基类），构造签名为
+``(cfg, rank)``，需要实现 ``build_request`` / ``parse_response`` 两个方法并声明
+``action_path``：
 
 .. code-block:: python
 
+   import numpy as np
    import torch
 
-   from rlinf.workers.rollout.sglang.action_policies.base import (
-       EmbodiedActionPolicy,
-   )
-   from rlinf.workers.rollout.sglang.action_policies.registry import (
-       register_action_policy,
-   )
 
+   class YourSglangAdapter:
+       action_path = "/v1/actions/generations"
 
-   @register_action_policy("your_model")
-   class YourActionPolicy(EmbodiedActionPolicy):
-       def __init__(self, cfg, server_url, rank):
-           super().__init__(cfg, server_url, rank)
-           # 在这里创建轻量的 transform 和 HTTP client。
+       def __init__(self, cfg, rank):
+           self.cfg_rollout = cfg.rollout
+           self.model_cfg = cfg.rollout.model
+           self.rank = rank
+           # 在这里创建轻量的 transform（不要加载大模型权重）。
 
-       def infer(self, env_obs, mode="eval"):
-           # 1. 将 RLinf env_obs 转换为模型输入。
-           # 2. 归一化并向 SGLang Server 发送请求。
-           # 3. 解析响应并将动作反归一化。
+       def build_request(self, env_obs, mode="eval"):
+           # 1. 将 RLinf env_obs 转换为模型输入并归一化；
+           # 2. 组装 server 的请求 payload（dict）；
+           # 3. 返回 (payload, state)，state 会原样回传给 parse_response。
+           payload = {...}
+           state = ...            # 例如反归一化需要用到的中间 observation
+           return payload, state
+
+       def parse_response(self, resp, state):
+           # 1. 从 server 响应里取出归一化动作；
+           # 2. 反归一化为环境尺度动作。
            actions = ...
            info = {
                "prev_logprobs": ...,
@@ -178,37 +190,58 @@ Policy 需要继承 ``EmbodiedActionPolicy``，并通过装饰器注册：
            }
            return torch.as_tensor(actions, dtype=torch.float32), info
 
-``infer`` 是唯一必须实现的方法，其接口输入为：
+接口设计：
 
-- 输入 ``env_obs`` 是按 batch 组织的环境观测字典；
-- 通用字段包括 ``main_images``、``task_descriptions``，模型还可以使用
-  ``wrist_images``、``states`` 或其它视角；
-- 输出 ``actions`` 必须是 Tensor，shape 为
-  ``[N, num_action_chunks, action_dim]``；
-- 输出 ``info`` 是附加信息字典。该接口为未来的训练扩展预留；目前可以像 DreamZero
-  一样返回 ``prev_logprobs``、``prev_values`` 和 ``forward_inputs``；
-- 当前 SGLang embodied Worker 只用于评测。若 Policy 不支持训练模式，应对
+- **HTTP 收发由 worker 负责**——adapter 不持有 HTTP client、也不发请求。worker
+  会调用 ``build_request`` 拿到 payload，用 ``http_client.post(adapter.action_path,
+  payload, msgpack=True, ...)`` 发送，再把响应交给 ``parse_response``；
+- ``build_request`` 输入的 ``env_obs`` 是按 batch 组织的环境观测字典；通用字段包括
+  ``main_images``、``task_descriptions``，模型还可以使用 ``wrist_images``、
+  ``states`` 或其它视角。返回 ``(payload, state)``：``payload`` 是发给 server 的
+  请求体，``state`` 是需要在 ``parse_response`` 阶段复用的任意中间量；
+- ``parse_response`` 返回 ``(actions, info)``：``actions`` 必须是 Tensor，shape
+  为 ``[N, num_action_chunks, action_dim]``；``info`` 是附加信息字典，为未来训练
+  扩展预留，目前可以像 DreamZero 一样返回 ``prev_logprobs``、``prev_values`` 和
+  ``forward_inputs``；
+- 当前 SGLang embodied Worker 只用于评测。若 adapter 不支持训练模式，应对
   ``mode != "eval"`` 明确抛出 ``NotImplementedError``。后续计划支持将 SGLang
   作为 rollout worker，用于具身模型训练。
 
 .. important::
 
-   不要在 Action Policy 中加载模型。模型应只存在于 ``sglang serve``
-   子进程中。Policy 中只保留数据变换、HTTP Client 和少量请求上下文，否则会造成
-   重复加载权重和额外显存占用。
+   不要在 adapter 中加载模型。模型应只存在于 ``sglang serve`` 子进程中。adapter
+   中只保留数据变换和少量请求上下文，否则会造成重复加载权重和额外显存占用。
 
 
-步骤四：导入 Policy，触发注册
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+步骤四：注册 adapter
+~~~~~~~~~~~~~~~~~~~~
 
-在 ``rlinf/workers/rollout/sglang/action_policies/__init__.py`` 中添加：
+adapter 使用 **lazy builder** 注册在
+``rlinf/models/embodiment/sglang_adapter.py`` 的
+``_register_builtin_sglang_adapters()`` 中（与 ``rlinf.models`` 的模型注册风格
+一致）：把重依赖的 import 放进 builder 内部，只有真正 lookup 到该 ``model_type``
+时才会导入你的 adapter 模块：
 
 .. code-block:: python
 
-   from rlinf.workers.rollout.sglang.action_policies import your_model  # noqa: F401,E401
+   # rlinf/models/embodiment/sglang_adapter.py
+   def _register_builtin_sglang_adapters():
+       def _build_your_model():
+           from rlinf.models.embodiment.your_model.sglang_adapter import (
+               YourSglangAdapter,
+           )
 
-装饰器只有在模块被导入时才会执行。如果漏掉这一步，Worker 初始化时会报告没有为
-对应 ``model_type`` 注册 Action Policy。
+           return YourSglangAdapter
+
+       register_sglang_adapter(
+           SupportedModel.YOUR_MODEL.value,
+           _build_your_model,
+           force=True,
+       )
+
+worker 在 ``init_worker`` 时通过
+``get_sglang_adapter_cls(model_type)`` 查表。如果漏掉注册，Worker 初始化时会报告
+没有为对应 ``model_type`` 注册 sglang adapter。
 
 
 步骤五：添加模型 YAML 和评测 YAML
@@ -255,10 +288,10 @@ DreamZero 的 SGLang 评测路径由以下文件组成：
      - 作用
    * - ``rlinf/config.py``
      - 注册 ``dreamzero`` 并加入 ``EMBODIED_MODEL``
-   * - ``rlinf/workers/rollout/sglang/action_policies/dreamzero.py``
-     - 观测变换、HTTP Client、Serve 参数和动作后处理
-   * - ``rlinf/workers/rollout/sglang/action_policies/__init__.py``
-     - 导入 DreamZero Policy
+   * - ``rlinf/models/embodiment/dreamzero/sglang_adapter.py``
+     - ``DreamzeroSglangAdapter``：观测变换、请求构造、响应解析和动作后处理
+   * - ``rlinf/models/embodiment/sglang_adapter.py``
+     - adapter registry（``register_sglang_adapter`` / ``get_sglang_adapter_cls``）， DreamZero adapter
    * - ``examples/embodiment/config/model/dreamzero_5b.yaml``
      - DreamZero 5B 模型配置
    * - ``evaluations/libero/libero_spatial_dreamzero_eval_sglang.yaml``
@@ -287,25 +320,32 @@ DreamZero 在 ``rlinf/config.py`` 中的注册如下：
        model_type: dreamzero
 
 
-Policy 适配
+Adapter 适配
 ~~~~~~~~~~~~~~~~~
 
-``dreamzero.py`` 将模型适配拆成四步：
+``sglang_adapter.py`` 用**一个类** ``DreamzeroSglangAdapter`` 承载全部 DreamZero
+适配逻辑（观测/动作变换 + 请求组装 + 响应解析）：
 
-1. ``DreamZeroActionRequest`` 和 ``DreamZeroActionResult`` 定义请求与响应；
-2. ``HttpDreamZeroActionClient`` 负责编码、重试、发送和解析 HTTP 请求；
-3. ``_DreamZeroActionAdapter`` 复用训练数据变换，完成观测转换与动作转换；
-4. ``DreamZeroActionPolicy`` 实现 RLinf 接口：接收本 rank 的 server URL，在
-   ``infer`` 中完成观测转换、HTTP 请求和动作后处理。Policy 不参与 server 启动——
-   server 参数完全来自 YAML 的 ``rollout.sglang.server`` 块。
+1. ``__init__(cfg, rank)`` 复用训练数据变换（``build_dreamzero_composed_transform``）
+   完成观测转换与动作反变换的准备；不加载大模型、不建 HTTP client；
+2. ``build_request(env_obs, mode)`` 把 env observation 转成 server 请求 payload，
+   并返回一份 ``state``（转换后的 observation）供 ``parse_response`` 复用；
+3. ``parse_response(resp, state)`` 从响应里取出归一化动作，反归一化为环境尺度动作；
+4. ``action_path`` 声明动作端点 ``/v1/actions/generations``。
 
-Policy 的注册代码如下：
+**HTTP 请求由 ``SGLangEmbodiedWorker`` 执行**——adapter 只构造 payload、解析响应，
+不发请求；server 参数也完全来自 YAML 的 ``rollout.sglang.server`` 块。
+
+adapter 通过 builder 注册（见
+``rlinf/models/embodiment/sglang_adapter.py``）：
 
 .. code-block:: python
 
-   @register_action_policy("dreamzero")
-   class DreamZeroActionPolicy(EmbodiedActionPolicy):
-       ...
+   register_sglang_adapter(
+       SupportedModel.DREAMZERO.value,
+       _build_dreamzero_sglang_adapter,   # imports DreamzeroSglangAdapter
+       force=True,
+   )
 
 一次推理的完整数据流为：
 
@@ -313,21 +353,21 @@ Policy 的注册代码如下：
 
    RLinf env_obs
        │
-       ├── observation_convert()
-       │     main_images       → video.image
-       │     wrist_images      → video.wrist_image
-       │     states            → state.state
-       │     task_descriptions → annotation.task
+       ├── build_request()
+       │     ├── _observation_convert()
+       │     │     main_images       → video.image
+       │     │     wrist_images      → video.wrist_image
+       │     │     states            → state.state
+       │     │     task_descriptions → annotation.task
+       │     ├── _normalize_obs()   dataset transform + metadata 归一化
+       │     │     （文本不在客户端 tokenize，交由 SGLang server 处理）
+       │     └── 组装 payload（原始 prompt 文本 + 归一化 observation）
        │
-       ├── normalize_obs()
-       │     dataset transform + metadata 归一化 + prompt tokenize
+       ├── worker: POST /v1/actions/generations（msgpack）
        │
-       ├── POST /v1/actions/generations
-       │
-       ├── unapply()
-       │     [B, H, max_action_dim] → 环境尺度动作
-       │
-       └── actions [B, H, action_dim]
+       └── parse_response()
+             ├── _unapply()  [B, H, max_action_dim] → 环境尺度动作
+             └── actions [B, H, action_dim]
 
 以 ``embodiment_tag: libero_sim`` 为例，``main_images`` 和
 ``wrist_images`` 会被转换成外部相机与腕部相机两个视频模态，``states`` 转换为
@@ -343,26 +383,29 @@ embodiment id。
 HTTP 请求
 ~~~~~~~~~~~~~
 
-DreamZero Client 调用 ``POST /v1/actions/generations``。JSON 形式如下；
-使用 msgpack 时逻辑字段保持一致，但 Tensor 和 ndarray 不需要先展开成大列表：
+adapter 的 ``build_request`` 组装发往 ``POST /v1/actions/generations`` 的 payload，
+由 worker 用 ``http_client.post(..., msgpack=True)`` 发送。payload 的逻辑结构如下
+（用 msgpack 传输，Tensor 和 ndarray 不需要先展开成大列表）：
 
 .. code-block:: json
 
    {
-     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers",
+     "model": "/path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-repacked",
+     "input": {
+       "prompt": [
+         "<training-format prompt>"
+       ],
+       "observation": {}
+     },
      "parameters": {
-       "action_input": {},
        "session_ids": [
          "rlinf-eval-r0-stage0-slot0"
        ],
        "reset_mask": [
          false
        ],
-       "prompts": [
-         "<training-format prompt>"
-       ],
        "negative_prompts": [
-         "text_negative:missing"
+         "<negative prompt>"
        ],
        "seed": 1140
      },
@@ -374,21 +417,24 @@ DreamZero Client 调用 ``POST /v1/actions/generations``。JSON 形式如下；
 
 其中：
 
-- ``action_input`` 是 ``_DreamZeroActionAdapter.normalize_obs`` 的输出；
-- ``session_ids`` 标识每个逻辑环境槽位，用于 Server 复用视频或文本缓存；
-- ``reset_mask`` 用于在下一次请求前清理对应 session 的缓存；
-- Python dataclass 中的 ``prompt_cache_keys`` 在 HTTP payload 中发送为
-  ``prompts``，``negative_prompt_cache_keys`` 发送为 ``negative_prompts``；
-- ``seed`` 来自 ``rollout.sglang.seed``。
+- ``input.prompt`` 是每个环境的**原始指令文本**（不在客户端 tokenize，由 SGLang
+  server 自行 tokenize）；
+- ``input.observation`` 是归一化后的模型输入（``_normalize_obs`` 的输出，去掉
+  prompt/token 相关键）；
+- ``parameters.session_ids`` 标识每个逻辑环境槽位，用于 Server 复用视频或文本缓存；
+- ``parameters.reset_mask`` 用于在下一次请求前清理对应 session 的缓存（评测默认
+  全为 ``false``）；
+- ``parameters.negative_prompts`` 是负向提示词；
+- ``parameters.seed`` 来自 ``rollout.sglang.seed``。
 
-Client 从以下位置读取 Server 返回的归一化动作：
+worker 从以下位置读取 Server 返回的归一化动作，并交给 ``parse_response``：
 
 .. code-block:: python
 
    response["data"][0]["action"]["values"]
 
 该动作仍处于 DreamZero 的归一化、补齐后的动作空间，不能直接发送给环境，必须经过
-``_DreamZeroActionAdapter.unapply``。
+``DreamzeroSglangAdapter._unapply``（在 ``parse_response`` 内部调用）。
 
 
 Server 参数和 Pipeline 配置
@@ -454,7 +500,6 @@ DreamZero 模型配置位于
    model_type: "dreamzero"
 
    model_path: null
-   tokenizer_path: null
    metadata_json_path: null
 
    action_dim: 32
@@ -485,11 +530,9 @@ DreamZero 模型配置位于
    * - 字段
      - 含义
    * - ``model_type``
-     - Action Policy Registry 的查找键，必须为 ``dreamzero``
+     - adapter registry 的查找键，必须为 ``dreamzero``
    * - ``model_path``
      - 完整 checkpoint 路径；评测 YAML 中必须覆盖
-   * - ``tokenizer_path``
-     - 文本 tokenizer 路径；DreamZero 示例使用 ``google/umt5-xxl``
    * - ``metadata_json_path``
      - 数据集统计量，用于状态和动作归一化及反归一化
    * - ``action_dim`` / ``max_action_dim``
@@ -704,19 +747,19 @@ HTTP Client 配置
        http_timeout_s: 600
        http_max_retries: 5
        http_retry_backoff_s: 1.0
-       http_payload_format: "msgpack"
-       debug_sessions: false
-       debug_batch: false
 
-字段说明：
+这些字段由 ``SGLangEmbodiedWorker`` 读取，用于创建向 server 发请求的
+:class:`InferenceHTTPClient`。字段说明：
 
 - ``http_timeout_s`` 是单次 action 请求的超时时间；
 - ``http_max_retries`` 是遇到连接错误或可重试 5xx 时的重试次数；
-- ``http_retry_backoff_s`` 是线性退避的基础等待时间；
-- ``http_payload_format`` 支持 ``json`` 和 ``msgpack``。图像和大 batch 推荐使用
-  ``msgpack``，避免把 ndarray 展开成巨大的 JSON 列表；
-- ``debug_sessions`` 和 ``debug_batch`` 可在联调缓存或 shape 问题时打开，不建议在
-  大规模评测中长期启用。
+- ``http_retry_backoff_s`` 是线性退避的基础等待时间。
+
+.. note::
+
+   具身 action 请求固定使用 **msgpack**（图像/大 batch 下 ndarray 不必展开成巨大的
+   JSON 列表），worker 调用 ``http_client.post(..., msgpack=True)``，无需也不再有
+   ``http_payload_format`` 配置项。
 
 
 DreamZero 模型与数据配置
@@ -728,8 +771,7 @@ DreamZero 模型与数据配置
      model:
        model_type: "dreamzero"
        precision: bf16
-       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-       tokenizer_path: google/umt5-xxl
+       model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-repacked
        metadata_json_path: /path/to/metadata.json
        embodiment_tag: "libero_sim"
 
@@ -742,7 +784,6 @@ DreamZero 模型与数据配置
 这些字段中：
 
 - ``model_path`` 是 SGLang Server 加载的 checkpoint；
-- ``tokenizer_path`` 只用于文本 tokenizer，不要用它代替 ``model_path``；
 - ``metadata_json_path`` 提供训练数据的归一化统计量。若未显式指定，代码只会尝试
   ``model_path/experiment_cfg/metadata.json``；
 - ``embodiment_tag`` 选择观测布局、模态变换、动作后处理和 embodiment id；
@@ -823,16 +864,17 @@ Worker 不是 ``SGLangEmbodiedWorker``
        serving_mode: embodied
 
 
-提示 Action Policy 未注册
-~~~~~~~~~~~~~~~~~~~~~~~~~
+提示 sglang adapter 未注册
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-确认以下三个名称一致，并确认 Policy 模块已在 ``action_policies/__init__.py`` 中
-导入：
+确认以下三个名称一致，并确认 adapter 已在
+``rlinf/models/embodiment/sglang_adapter.py`` 的
+``_register_builtin_sglang_adapters()`` 中注册：
 
 .. code-block:: text
 
    SupportedModel.register("dreamzero")
-   @register_action_policy("dreamzero")
+   register_sglang_adapter("dreamzero", _build_dreamzero_sglang_adapter, force=True)
    rollout.model.model_type: dreamzero
 
 
@@ -875,7 +917,7 @@ server 子进程的输出（直接流到 Ray actor 的 stdout/stderr）。优先
 显存占用异常
 ~~~~~~~~~~~~
 
-确认 Action Policy 没有导入并创建本地 DreamZero 大模型。模型只能由
+确认 sglang adapter 没有导入并创建本地 DreamZero 大模型。模型只能由
 ``sglang serve`` 加载。还需要检查 ``max_sessions``、eval batch size、编译选项和
 并行配置；DreamZero 默认将 ``max_sessions`` 设为当前 Worker 的 eval batch size，
 增加并行环境数也会增加 Server 侧缓存需求。

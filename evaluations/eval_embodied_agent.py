@@ -49,6 +49,7 @@ def main(cfg) -> None:
     if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
+        env_worker_cls = EnvWorker
         rollout_group = (
             get_rollout_backend_worker(cfg)
             .create_group(cfg, component_placement)

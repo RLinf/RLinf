@@ -76,9 +76,9 @@ checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoi
    * - ``rollout.rollout_backend: sglang``
      - 选择 SGLang rollout backend。
    * - ``rollout.sglang.serving_mode: embodied``
-     - 启动 ``SGLangEmbodiedWorker``，由 worker 拉起并管理本地 SGLang action server。
-   * - ``rollout.sglang.http_payload_format: msgpack``
-     - 使用 DreamZero evaluation 路径的二进制 action payload。
+     - 选择 ``SGLangEmbodiedWorker``；SGLang serve 组由驱动脚本
+       （``launch_sglang_router_and_server``）拉起，worker 连接 driver 分配的
+       server URL 进行推理。
    * - ``rollout.sglang.server.pipeline_config.default_num_inference_steps``
      - 控制 server 侧 DreamZero denoising steps。
    * - ``rollout.sglang.server.pipeline_config.cfg_scale``
