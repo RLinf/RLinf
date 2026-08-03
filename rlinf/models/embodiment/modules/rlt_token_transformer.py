@@ -126,15 +126,11 @@ class RLTTokenEncoder(nn.Module):
             if self.input_dim != self.embed_dim
             else nn.Identity()
         )
-        self.rl_token_embed = nn.Parameter(
-            sinusoidal_pe_init(1, self.embed_dim)
-        )
+        self.rl_token_embed = nn.Parameter(sinusoidal_pe_init(1, self.embed_dim))
         self.prefix_pos_enc = nn.Parameter(
             sinusoidal_pe_init(self.prefix_seq_len, self.embed_dim)
         )
-        self.rl_token_pos_enc = nn.Parameter(
-            sinusoidal_pe_init(1, self.embed_dim)
-        )
+        self.rl_token_pos_enc = nn.Parameter(sinusoidal_pe_init(1, self.embed_dim))
         self.layers = nn.ModuleList(
             [
                 RLTSelfAttentionLayer(
