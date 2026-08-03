@@ -9,7 +9,6 @@ PyTorch 与 FSDP 完成训练。
 当前维护的 SFT 配方包括：
 
 - **Pi0 + RoboTwin**
-- **Pi0.5 + RoboTwin**
 - **Pi0.5 + BEHAVIOR-1K**
 
 当前尚未提供 Pi0 + BEHAVIOR 的维护版 SFT 配置。请使用下面明确列出的模型和数据集配对，
@@ -35,16 +34,11 @@ PyTorch 与 FSDP 完成训练。
      - ``robotwin_sft_openpi_pytorch.yaml``
      - ``model/pi0_pytorch.yaml`` / ``pi0_aloha_robotwin``
    * - Pi0.5
-     - RoboTwin
-     - ``robotwin_sft_openpi_pytorch_pi05.yaml``
-     - ``model/pi0_5_pytorch_robotwin.yaml`` /
-       ``pi05_aloha_robotwin``
-   * - Pi0.5
      - BEHAVIOR-1K
      - ``behavior_pi05_vla.yaml``
      - ``model/pi0_5_pytorch.yaml`` / ``pi05_behavior``
 
-三个配方均以 fp32 加载 master weights，并采用 FSDP 混合精度：参数以 bf16 计算，
+两个配方均以 fp32 加载 master weights，并采用 FSDP 混合精度：参数以 bf16 计算，
 梯度规约与 buffer 保持 fp32。这样既保持参考实现对齐的优化器行为，又能降低计算和激活显存。
 随附配置还启用了梯度检查点。
 
@@ -61,7 +55,7 @@ PyTorch 与 FSDP 完成训练。
 RoboTwin
 ~~~~~~~~
 
-两种 RoboTwin 配方均使用 LeRobot 格式的 RoboTwin 数据集，并共享以下数据设置：
+RoboTwin 配方使用 LeRobot 格式的 RoboTwin 数据集，并采用以下数据设置：
 
 .. code:: yaml
 
@@ -77,14 +71,13 @@ RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像。模型配置会将动
 
    actor:
      model:
-       model_path: /path/to/pi0_base_rlinf_pytorch       # 或 Pi0.5
+       model_path: /path/to/pi0_base_rlinf_pytorch
        openpi:
          assets_dir: ${actor.model.model_path}
          asset_id: "physical-intelligence/robotwin"
          num_images_in_input: 3
 
-Pi0 checkpoint 对应 ``robotwin_sft_openpi_pytorch.yaml``；Pi0.5 checkpoint 对应
-``robotwin_sft_openpi_pytorch_pi05.yaml``。请勿交换这两种 checkpoint、OpenPI 配置名或模型路径。
+Pi0 checkpoint 对应 ``robotwin_sft_openpi_pytorch.yaml``。
 
 BEHAVIOR-1K
 ~~~~~~~~~~~
@@ -134,9 +127,6 @@ BEHAVIOR-1K
    # Pi0 + RoboTwin
    bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
 
-   # Pi0.5 + RoboTwin
-   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch_pi05
-
    # Pi0.5 + BEHAVIOR-1K
    bash examples/sft/run_vla_sft.sh behavior_pi05_vla
 
@@ -163,19 +153,6 @@ RoboTwin Pi0：
        --output-model /path/to/pi0_robotwin_sft_rlinf_pytorch \
        --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
        --reference-model /path/to/pi0_base_rlinf_pytorch
-
-RoboTwin Pi0.5：
-
-.. code:: bash
-
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
-       --config-name pi05_aloha_robotwin \
-       --dtype fp32 \
-       --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi05_robotwin_sft_rlinf_pytorch \
-       --output-norm-stats /path/to/pi05_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi05_base_rlinf_pytorch
 
 Pi0.5 + BEHAVIOR-1K：
 

@@ -28,7 +28,7 @@ VLA / WAM 模型监督微调
          <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
            <b>JAX 精度对齐的 PyTorch OpenPI SFT</b>
          </a><br>
-         支持 Pi0 / Pi0.5 的 RoboTwin 训练，以及 Pi0.5 的 BEHAVIOR-1K 训练
+         支持 Pi0 的 RoboTwin 训练，以及 Pi0.5 的 BEHAVIOR-1K 训练
        </p>
      </div>
 

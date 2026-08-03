@@ -28,7 +28,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
          <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
            <b>JAX-Aligned PyTorch OpenPI SFT</b>
          </a><br>
-         Train Pi0 or Pi0.5 on RoboTwin, plus Pi0.5 on BEHAVIOR-1K
+         Train Pi0 on RoboTwin, plus Pi0.5 on BEHAVIOR-1K
        </p>
      </div>
 

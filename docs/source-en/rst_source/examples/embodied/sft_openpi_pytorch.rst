@@ -11,7 +11,6 @@ training.
 The currently maintained SFT recipes are:
 
 - **Pi0 on RoboTwin**
-- **Pi0.5 on RoboTwin**
 - **Pi0.5 on BEHAVIOR-1K**
 
 There is currently no maintained Pi0-on-BEHAVIOR SFT configuration. Use one of
@@ -39,16 +38,11 @@ and supplies the local dataset, checkpoint, and normalization-statistics paths.
      - ``robotwin_sft_openpi_pytorch.yaml``
      - ``model/pi0_pytorch.yaml`` / ``pi0_aloha_robotwin``
    * - Pi0.5
-     - RoboTwin
-     - ``robotwin_sft_openpi_pytorch_pi05.yaml``
-     - ``model/pi0_5_pytorch_robotwin.yaml`` /
-       ``pi05_aloha_robotwin``
-   * - Pi0.5
      - BEHAVIOR-1K
      - ``behavior_pi05_vla.yaml``
      - ``model/pi0_5_pytorch.yaml`` / ``pi05_behavior``
 
-All three recipes load fp32 master weights and use FSDP mixed precision with
+Both recipes load fp32 master weights and use FSDP mixed precision with
 bf16 parameter computation and fp32 gradient reduction/buffers. This keeps the
 reference-aligned optimizer behavior while reducing activation and compute
 memory use. Gradient checkpointing is enabled in the supplied configs.
@@ -68,8 +62,8 @@ OpenPI JAX checkpoint; see
 RoboTwin
 ~~~~~~~~
 
-The two RoboTwin recipes use the LeRobot-format RoboTwin dataset and share the
-same data settings:
+The RoboTwin recipe uses the LeRobot-format RoboTwin dataset with these data
+settings:
 
 .. code:: yaml
 
@@ -87,15 +81,13 @@ recipe, for example:
 
    actor:
      model:
-       model_path: /path/to/pi0_base_rlinf_pytorch       # or Pi0.5
+       model_path: /path/to/pi0_base_rlinf_pytorch
        openpi:
          assets_dir: ${actor.model.model_path}
          asset_id: "physical-intelligence/robotwin"
          num_images_in_input: 3
 
-Use the Pi0 checkpoint with ``robotwin_sft_openpi_pytorch.yaml`` and the
-Pi0.5 checkpoint with ``robotwin_sft_openpi_pytorch_pi05.yaml``. Do not swap
-these model paths or OpenPI config names.
+Use the Pi0 checkpoint with ``robotwin_sft_openpi_pytorch.yaml``.
 
 BEHAVIOR-1K
 ~~~~~~~~~~~
@@ -149,9 +141,6 @@ dataset:
    # Pi0 on RoboTwin
    bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
 
-   # Pi0.5 on RoboTwin
-   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch_pi05
-
    # Pi0.5 on BEHAVIOR-1K
    bash examples/sft/run_vla_sft.sh behavior_pi05_vla
 
@@ -179,19 +168,6 @@ For RoboTwin Pi0:
        --output-model /path/to/pi0_robotwin_sft_rlinf_pytorch \
        --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
        --reference-model /path/to/pi0_base_rlinf_pytorch
-
-For RoboTwin Pi0.5:
-
-.. code:: bash
-
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
-       --config-name pi05_aloha_robotwin \
-       --dtype fp32 \
-       --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi05_robotwin_sft_rlinf_pytorch \
-       --output-norm-stats /path/to/pi05_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi05_base_rlinf_pytorch
 
 For Pi0.5 on BEHAVIOR-1K:
 
