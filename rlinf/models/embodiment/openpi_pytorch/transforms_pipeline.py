@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from typing import Any, Sequence
 
 
@@ -35,13 +36,15 @@ def build_openpi_transforms(
     * output: ``[*model.outputs, Unnormalize, *data.outputs]``
 
     Norm stats resolve from ``{norm_stats_dir}/{asset_id}/norm_stats.json`` when
-    ``norm_stats_dir`` is given, else from the checkpoint dir via
-    ``data_config.asset_id`` (``{model_path}/{asset_id}/norm_stats.json`` — the
-    same canonical stats the original openpi path resolves). Eval / RL leave
-    ``norm_stats_dir`` unset (their checkpoint bundles the stats); the BEHAVIOR
-    SFT loader passes the experiment's ``assets_dir`` + ``asset_id`` so it reads
-    the exact same ``norm_stats.json`` the old SFT path did (the SFT *base*
-    checkpoint bundles no stats).
+    ``norm_stats_dir`` is given. An explicit
+    ``data_kwargs["norm_stats_path"]`` also takes precedence, which lets an
+    eval/RL config select task-specific statistics stored in the checkpoint.
+    Otherwise they resolve from the checkpoint dir via ``data_config.asset_id``
+    (``{model_path}/{asset_id}/norm_stats.json`` — the same canonical stats the
+    original openpi path resolves). The BEHAVIOR SFT loader passes the
+    experiment's ``assets_dir`` + ``asset_id`` so it reads the exact same
+    ``norm_stats.json`` the old SFT path did (the SFT *base* checkpoint bundles
+    no stats).
     """
     import openpi.shared.download as download
     import openpi.transforms as transforms
@@ -61,11 +64,23 @@ def build_openpi_transforms(
     asset_id = norm_stats_asset_id or data_config.asset_id
     if asset_id is None:
         raise ValueError("asset_id is required to load norm_stats.")
-    stats_dir = (
-        norm_stats_dir
-        if norm_stats_dir is not None
-        else download.maybe_download(str(model_path))
+    explicit_norm_stats_path = (
+        data_kwargs.get("norm_stats_path") if data_kwargs is not None else None
     )
+    if norm_stats_dir is not None:
+        stats_dir = norm_stats_dir
+    elif explicit_norm_stats_path is not None:
+        norm_stats_path = pathlib.Path(explicit_norm_stats_path).expanduser()
+        norm_stats_dir_path = (
+            norm_stats_path.parent
+            if norm_stats_path.name == "norm_stats.json"
+            else norm_stats_path
+        )
+        # ``load_norm_stats`` expects the parent of ``asset_id``; the config
+        # override above has already set ``asset_id`` to this directory name.
+        stats_dir = str(norm_stats_dir_path.parent)
+    else:
+        stats_dir = download.maybe_download(str(model_path))
     norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
     if norm_stats is None:
         raise FileNotFoundError(
