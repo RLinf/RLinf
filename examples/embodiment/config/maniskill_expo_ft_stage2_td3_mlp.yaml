@@ -33,8 +33,8 @@ algorithm:
   update_epoch: 5
   rlt_schedule:
     enable: True
-    max_updates_per_train_step: 1600
-    warmup_min_size: 1000
+    max_updates_per_train_step: 400
+    warmup_min_size: 10000
     warmup_post_collect_updates: 30000
     train_every_episodes: 0
     train_every_transitions: 5
