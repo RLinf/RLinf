@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from typing import Any, Sequence
 
 
@@ -57,15 +58,29 @@ def build_openpi_transforms(
         train_config.assets_dirs, upstream_model_config
     )
 
+    explicit_norm_stats_path = (
+        data_kwargs.get("norm_stats_path")
+        if data_kwargs is not None and data_kwargs.get("norm_stats_path") is not None
+        else None
+    )
+    if explicit_norm_stats_path is not None:
+        norm_dir = pathlib.Path(explicit_norm_stats_path).expanduser()
+        if norm_dir.is_file():
+            norm_dir = norm_dir.parent
+        norm_stats_dir = str(norm_dir.parent)
+        norm_stats_asset_id = norm_dir.name
+
     asset_id = norm_stats_asset_id or data_config.asset_id
     if asset_id is None:
         raise ValueError("asset_id is required to load norm_stats.")
-    stats_dir = (
-        norm_stats_dir
-        if norm_stats_dir is not None
-        else download.maybe_download(str(model_path))
-    )
-    norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
+    norm_stats = data_config.norm_stats
+    if norm_stats is None:
+        stats_dir = (
+            norm_stats_dir
+            if norm_stats_dir is not None
+            else download.maybe_download(str(model_path))
+        )
+        norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
     if norm_stats is None:
         raise FileNotFoundError(
             f"openpi_pytorch: norm_stats not found at {stats_dir}/{asset_id}/"

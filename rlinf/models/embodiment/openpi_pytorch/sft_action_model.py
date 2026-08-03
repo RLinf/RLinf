@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import torch
@@ -21,13 +22,22 @@ import torch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
     OpenPiPytorchActionModel,
+    OpenPiPytorchRLTConfig,
 )
+from rlinf.models.embodiment.openpi_pytorch.pi0_model import model as pi0_model_module
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0, make_attn_mask
 
 
 class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
-    """SFT variant of :class:`OpenPiPytorchActionModel` (flow-matching loss)."""
+    """SFT variant of :class:`OpenPiPytorchActionModel`.
+
+    With ``openpi.use_rlt=False`` this computes the ordinary flow-matching loss.
+    With ``openpi.use_rlt=True`` it keeps the same VLA loss and adds the legacy
+    RLT-token reconstruction objective:
+
+    ``loss = rlt_loss + rlt_alpha * vla_loss``.
+    """
 
     def __init__(
         self,
@@ -35,11 +45,13 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         *,
         num_steps: int,
         action_env_dim: int,
+        rlt_cfg: OpenPiPytorchRLTConfig | None = None,
     ):
         super().__init__(
             pi0_model,
             num_steps=num_steps,
             action_env_dim=action_env_dim,
+            rlt_cfg=rlt_cfg,
         )
 
     def forward(self, forward_type: ForwardType = ForwardType.SFT, **kwargs):
@@ -65,8 +77,22 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)
-        per_timestep_loss = self.model.compute_loss(observation, actions, train=True)
-        return per_timestep_loss.mean()
+        if not self.rlt_cfg.use_rlt:
+            per_timestep_loss = self.model.compute_loss(
+                observation, actions, train=True
+            )
+            return per_timestep_loss.mean()
+
+        per_timestep_loss, prefix_output, prefix_mask = (
+            self._sft_forward_with_rlt_prefix(observation, actions)
+        )
+        vla_loss = per_timestep_loss.mean()
+        rlt_loss, _ = self._rlt_forward(prefix_output, prefix_mask)
+        return {
+            "loss": rlt_loss + self.rlt_cfg.rlt_alpha * vla_loss,
+            "vla_loss": vla_loss,
+            "rlt_loss": rlt_loss,
+        }
 
     def compute_loss(self, data: Any) -> torch.Tensor:
         """Alias kept for interface parity with the old action model."""
@@ -95,8 +121,10 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         return observation, actions
 
     def _observation_to_device(self, observation: Any) -> Observation:
-        if isinstance(observation, dict):
-            observation = Observation.from_dict(observation)
+        if not isinstance(observation, Observation):
+            observation = Observation.from_dict(
+                self._observation_to_vendored_dict(observation)
+            )
         if not isinstance(observation, Observation):
             raise TypeError(
                 f"SFT observation must be an Observation or dict; "
@@ -118,6 +146,41 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             pcd_xyz=_move(observation.pcd_xyz),
         )
 
+    @staticmethod
+    def _observation_to_vendored_dict(observation: Any) -> dict[str, Any]:
+        """Convert either vendored or upstream OpenPI observations to a dict."""
+        if isinstance(observation, dict):
+            observation = dict(observation)
+        elif hasattr(observation, "to_dict"):
+            observation = observation.to_dict()
+        elif dataclasses.is_dataclass(observation):
+            observation = dataclasses.asdict(observation)
+        if isinstance(observation, dict):
+            if "images" in observation:
+                observation = dict(observation)
+                observation["image"] = observation.pop("images")
+            if "image_masks" in observation:
+                observation = dict(observation)
+                observation["image_mask"] = observation.pop("image_masks")
+            return observation
+        if hasattr(observation, "images") and hasattr(observation, "image_masks"):
+            return {
+                "image": observation.images,
+                "image_mask": observation.image_masks,
+                "state": observation.state,
+                "tokenized_prompt": getattr(observation, "tokenized_prompt", None),
+                "tokenized_prompt_mask": getattr(
+                    observation, "tokenized_prompt_mask", None
+                ),
+                "token_ar_mask": getattr(observation, "token_ar_mask", None),
+                "token_loss_mask": getattr(observation, "token_loss_mask", None),
+                "pcd_xyz": getattr(observation, "pcd_xyz", None),
+            }
+        raise TypeError(
+            f"SFT observation must be an Observation-like object or dict; "
+            f"got {type(observation)!r}."
+        )
+
     def _actions_to_device(self, actions: Any) -> torch.Tensor:
         if not isinstance(actions, torch.Tensor):
             actions = torch.as_tensor(actions)
@@ -135,3 +198,58 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             f"openpi transform pipeline before collation); got last dim "
             f"{actions.shape[-1]}."
         )
+
+    def _sft_forward_with_rlt_prefix(
+        self,
+        observation: Observation,
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute VLA loss while retaining the prefix hidden states for RLT."""
+        batch_size = actions.shape[0]
+        device = actions.device
+
+        observation = pi0_model_module.preprocess_observation(
+            observation, train=True
+        )
+        embed_dtype = self.model.embed_dtype
+        observation = pi0_model_module._observation_to_dtype(observation, embed_dtype)
+        actions = actions.to(dtype=embed_dtype)
+        dtype = actions.dtype
+
+        noise = torch.randn(actions.shape, device=device, dtype=dtype)
+        time = (
+            torch.distributions.Beta(torch.tensor(1.5), torch.tensor(1.0))
+            .sample((batch_size,))
+            .to(device=device, dtype=dtype)
+        )
+        time = time * 0.999 + 0.001
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.model.embed_prefix(
+            observation
+        )
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = (
+            self.model.embed_suffix(observation, x_t, time)
+        )
+
+        input_mask = torch.cat([prefix_mask, suffix_mask], dim=1)
+        ar_mask = torch.cat([prefix_ar_mask, suffix_ar_mask], dim=0)
+        attn_mask = make_attn_mask(input_mask, ar_mask)
+        positions = torch.cumsum(input_mask.int(), dim=1) - 1
+
+        prefix_out, suffix_out = self.model.llm(
+            [prefix_tokens, suffix_tokens],
+            positions=positions,
+            mask=attn_mask,
+            adarms_cond=[None, adarms_cond],
+        )[0]
+        v_t = self.model.velocity_from_suffix(
+            suffix_out[:, -self.model.action_horizon :]
+        )
+        loss = torch.mean(torch.square(v_t - u_t), dim=-1)
+        prefix_out, prefix_mask = self._select_rlt_prefix_embeddings(
+            prefix_out.detach(), prefix_mask, observation.tokenized_prompt
+        )
+        return loss, prefix_out, prefix_mask

@@ -44,6 +44,37 @@ def _resolve_data_kwargs(cfg):
     return data_kwargs
 
 
+def _build_rlt_config(model_cfg):
+    """Build optional RLT-token config from ``actor.model.openpi``."""
+    from omegaconf import OmegaConf
+
+    from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
+        OpenPiPytorchRLTConfig,
+    )
+
+    return OpenPiPytorchRLTConfig(
+        use_rlt=bool(OmegaConf.select(model_cfg, "use_rlt", default=False)),
+        rlt_alpha=float(OmegaConf.select(model_cfg, "rlt_alpha", default=1.0)),
+        rlt_input_dim=int(OmegaConf.select(model_cfg, "rlt_input_dim", default=2048)),
+        rlt_embed_dim=int(OmegaConf.select(model_cfg, "rlt_embed_dim", default=2048)),
+        rlt_num_rl_tokens=int(
+            OmegaConf.select(model_cfg, "rlt_num_rl_tokens", default=1)
+        ),
+        rlt_prefix_seq_len=int(
+            OmegaConf.select(model_cfg, "rlt_prefix_seq_len", default=768)
+        ),
+        rlt_num_layers=int(OmegaConf.select(model_cfg, "rlt_num_layers", default=2)),
+        rlt_num_heads=int(OmegaConf.select(model_cfg, "rlt_num_heads", default=8)),
+        rlt_mlp_ratio=float(
+            OmegaConf.select(model_cfg, "rlt_mlp_ratio", default=4.0)
+        ),
+        rlt_image_only=bool(
+            OmegaConf.select(model_cfg, "rlt_image_only", default=True)
+        ),
+        rlt_use_mask=bool(OmegaConf.select(model_cfg, "rlt_use_mask", default=False)),
+    )
+
+
 def _build_eval_model(
     cfg,
     model_cfg,
@@ -87,12 +118,14 @@ def _build_eval_model(
         action_chunk=action_chunk,
         config_name=config_name,
         state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
+        rlt_cfg=_build_rlt_config(model_cfg),
     )
     eval_model.setup_wrappers(input_transforms, output_transforms)
     return eval_model
 
 
 def _build_sft_model(
+    model_cfg,
     model,
     *,
     num_steps,
@@ -113,6 +146,7 @@ def _build_sft_model(
         model,
         num_steps=num_steps,
         action_env_dim=action_env_dim,
+        rlt_cfg=_build_rlt_config(model_cfg),
     )
 
 

@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
@@ -34,6 +34,32 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             SupportedModel(self.cfg.actor.model.model_type)
             == SupportedModel.OPENPI_PYTORCH
         ):
+            if self._use_legacy_openpi_rlt_dataloader():
+                repo_id = resolve_lerobot_repo_id(data_paths)
+                if repo_id is None:
+                    raise ValueError(
+                        "OpenPI SFT requires data.train_data_paths to be set to "
+                        "a local dataset path or LeRobot repo id."
+                    )
+
+                import openpi.training.data_loader as openpi_data_loader
+
+                from rlinf.models.embodiment.openpi.dataconfig import (
+                    get_openpi_config,
+                )
+
+                config = get_openpi_config(
+                    self.cfg.actor.model.openpi.config_name,
+                    model_path=self.cfg.actor.model.model_path,
+                    batch_size=self.cfg.actor.micro_batch_size * self._world_size,
+                    repo_id=repo_id,
+                    data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
+                )
+                data_loader = openpi_data_loader.create_data_loader(
+                    config, framework="pytorch", shuffle=True
+                )
+                return data_loader, data_loader.data_config()
+
             from rlinf.data.datasets.openpi_pytorch import (
                 build_openpi_pytorch_sft_dataloader,
             )
@@ -88,6 +114,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             raise KeyError(
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
+
+    def _use_legacy_openpi_rlt_dataloader(self) -> bool:
+        return (
+            SupportedModel(self.cfg.actor.model.model_type)
+            == SupportedModel.OPENPI_PYTORCH
+            and bool(
+                OmegaConf.select(
+                    self.cfg, "actor.model.openpi.use_rlt", default=False
+                )
+            )
+        )
 
     def get_eval_model_output(self, batch: dict[str, Any]):
         # now the eval is not supported for embodied sft
@@ -159,6 +196,9 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
         if model_type == SupportedModel.OPENPI_PYTORCH:
+            if self._use_legacy_openpi_rlt_dataloader():
+                num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
+                return max(1, num_batches // self.gradient_accumulation)
             return max(1, len(self.data_loader) // self.gradient_accumulation)
         if model_type == SupportedModel.OPENPI:
             num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
