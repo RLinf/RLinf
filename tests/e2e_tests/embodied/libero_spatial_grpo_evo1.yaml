@@ -109,6 +109,10 @@ actor:
     model_path: /workspace/dataset/Evo1_LIBERO
     num_action_chunks: 14
     add_value_head: False
+    evo1:
+      # The checkpoint names its base VLM as a hub id; the runners have no
+      # internet, so point it at the local copy.
+      vlm_name: /workspace/dataset/InternVL3-1B
 
   optim:
     lr: 5.0e-6

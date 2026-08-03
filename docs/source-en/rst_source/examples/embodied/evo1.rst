@@ -116,6 +116,15 @@ Then set ``rollout.model.model_path`` and ``actor.model.model_path`` in the conf
 local checkpoint path. ``actor.model.evo1.arm_key`` / ``dataset_key`` must match the
 top-level key(s) in the checkpoint's ``norm_stats.json``.
 
+The checkpoint holds only the weights trained on top of the base VLM, and names that
+VLM as a hub id (``vlm_name: OpenGVLab/InternVL3-1B``), so loading the model reaches
+HuggingFace for it. On a machine without internet, fetch it once and point
+``actor.model.evo1.vlm_name`` at the local directory:
+
+.. code-block:: bash
+
+    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+
 Run It
 ------
 

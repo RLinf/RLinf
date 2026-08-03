@@ -113,6 +113,14 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 然后把配置里的 ``rollout.model.model_path`` 与 ``actor.model.model_path`` 设为本地权重路径。
 ``actor.model.evo1.arm_key`` / ``dataset_key`` 必须与权重 ``norm_stats.json`` 的顶层 key 一致。
 
+该权重只包含在基座 VLM 之上训练得到的参数，并以 hub id 的形式记录基座
+（``vlm_name: OpenGVLab/InternVL3-1B``），因此加载模型时会去 HuggingFace 拉取它。
+在无外网的机器上，先把它下载到本地，再把 ``actor.model.evo1.vlm_name`` 指向该目录：
+
+.. code-block:: bash
+
+    git clone https://huggingface.co/OpenGVLab/InternVL3-1B
+
 运行
 ----
 

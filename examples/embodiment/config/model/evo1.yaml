@@ -34,6 +34,11 @@ evo1:
   # a manual checkout. A non-existent path is ignored.
   repo_path: "/path/to/Evo-1"
 
+  # Base VLM. Defaults to the checkpoint's vlm_name (OpenGVLab/InternVL3-1B),
+  # which transformers pulls from HuggingFace at load time. Point it at a local
+  # directory to run offline.
+  # vlm_name: "/path/to/model/InternVL3-1B" # https://huggingface.co/OpenGVLab/InternVL3-1B
+
   # Model geometry (override the checkpoint's config.json if needed).
   horizon: 50
   per_action_dim: 24
