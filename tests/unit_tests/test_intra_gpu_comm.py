@@ -99,6 +99,27 @@ class SenderWorker(Worker):
                 self.async_wait(work)
         return True
 
+    def send_borrowed_tensor_list(self, group_name):
+        """Send a CUDA tensor list while retaining producer ownership."""
+        self._borrowed_tensors = [torch.arange(4, device=get_device()).reshape(2, 2)]
+        self.send(
+            self._borrowed_tensors,
+            group_name,
+            dst_rank=self._rank,
+            piggyback_payload={"lease_id": "test-lease"},
+            borrowed_ipc=True,
+        )
+        return True
+
+    def read_borrowed_tensor(self):
+        Worker.torch_platform.current_stream().synchronize()
+        return self._borrowed_tensors[0].cpu()
+
+    def release_borrowed_tensor(self):
+        self._borrowed_tensors.clear()
+        Worker.torch_platform.ipc_collect()
+        return True
+
     def send_mixed_gpu_tensor_list(self, async_op, group_name):
         """Sends a list of tensors from different accelerators."""
         num_gpus = accelerator_device_count()
@@ -146,6 +167,24 @@ class ReceiverWorker(Worker):
             else:
                 self.async_wait(work)
         return tensor
+
+    def recv_borrowed_tensor_list(self, group_name):
+        """Receive producer-owned CUDA views and mutate through the IPC alias."""
+        tensors, metadata = self.recv(
+            group_name,
+            src_rank=self._rank,
+            borrowed_ipc=True,
+        )
+        assert metadata == {"lease_id": "test-lease"}
+        tensors[0].add_(10)
+        Worker.torch_platform.current_stream().synchronize()
+        self._borrowed_tensors = tensors
+        return tensors[0].cpu()
+
+    def release_borrowed_tensor(self):
+        self._borrowed_tensors.clear()
+        Worker.torch_platform.ipc_collect()
+        return True
 
     def recv_tensor_list(self, async_op, group_name):
         """Receives a list of tensors using recv."""
@@ -250,6 +289,21 @@ class TestSameDeviceCommunication:
         result = result[0]
         expected = torch.ones(3, 3) * 0  # Sender rank is 0
         assert torch.equal(result.cpu(), expected)
+
+    def test_borrowed_tensor_list_aliases_producer_storage(
+        self, single_shared_gpu_groups
+    ):
+        sender_group, receiver_group = single_shared_gpu_groups
+        sender_handle = sender_group.send_borrowed_tensor_list(RECEIVER_GROUP_NAME)
+        receiver_handle = receiver_group.recv_borrowed_tensor_list(SENDER_GROUP_NAME)
+        sender_handle.wait()
+        received = receiver_handle.wait()[0]
+        producer = sender_group.read_borrowed_tensor().wait()[0]
+        expected = torch.arange(4).reshape(2, 2) + 10
+        assert torch.equal(received, expected)
+        assert torch.equal(producer, expected)
+        receiver_group.release_borrowed_tensor().wait()
+        sender_group.release_borrowed_tensor().wait()
 
     @pytest.mark.parametrize("async_op", [0, 1, 2], ids=["sync", "async", "asyncio"])
     def test_tensor_list_on_single_shared_gpu(self, single_shared_gpu_groups, async_op):
