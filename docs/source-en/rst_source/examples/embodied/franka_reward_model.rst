@@ -261,3 +261,425 @@ The final reward is generated directly by FrankaEnv based on the reward model's 
 
 From a system perspective, the actual behavior in the real-world system can be understood as:
 directly replacing the ``env_reward`` inside the env worker, re-using the original ``env_reward`` logic to assign rewards and trigger environment resets, thereby fundamentally integrating the reward model.
+
+
+Franka + Qwen VLM Reward Model (Action Trend Judgment)
+=====================================================================
+
+Unlike the ResNet reward model described above, which classifies single frames as
+"success" or "failure," the Qwen VLM reward model guides learning through
+**action trend judgment**. Every 5 frames form a sliding history window, and the
+Qwen3-VL model judges whether the robot's motion trend within the window is
+``positive`` (moving toward the target), ``negative`` (moving away), or
+``unclear`` (indeterminate), then converts the trend label into a scalar reward
+for RL training.
+
+.. code-block:: text
+
+   VLM Output         Reward Value    Meaning
+   ─────────────────────────────────────────────
+   positive           1.0             Correct trend, positive signal
+   negative           -0.2            Wrong trend, mild penalty
+   unclear            0.0             Ambiguous trend, no signal
+   invalid            0.0             Unparseable output, no signal
+
+When the robot arm reaches the target pose and holds it (``terminated=True``),
+the environment writes a ``success`` flag into ``infos``, and ``gt_success_bonus``
+(default +20.0) adds a large bonus on top, helping the RL agent strongly
+associate the success state with high reward.
+
+Overview
+--------
+
+.. grid:: 2 4 4 4
+   :gutter: 2
+
+   .. grid-item-card:: Models
+      :text-align: center
+
+      CNN policy · Qwen3-VL reward model (LoRA)
+
+   .. grid-item-card:: Algorithms
+      :text-align: center
+
+      RLPD · VLM trend-judgment inference
+
+   .. grid-item-card:: Tasks
+      :text-align: center
+
+      Peg Insertion · dual-view manipulation
+
+   .. grid-item-card:: Hardware
+      :text-align: center
+
+      Franka · dual RealSense cameras
+
+| **You'll do:** collect dual-view episodes → preprocess into QwenTrend SFT dataset → fine-tune Qwen3-VL-4B → launch RLPD real-world training.
+| **Prerequisites:** :doc:`franka` through data collection · :doc:`../../extending/reward_model`.
+
+Workflow
+--------
+
+The full pipeline has three stages:
+
+1. **Data Collection** — Collect episodes with dual-view (wrist + global) image sequences on the real robot.
+2. **Supervised Fine-Tuning (SFT)** — Preprocess collected data into QwenTrend format and fine-tune Qwen3-VL-4B with LoRA.
+3. **Real-World RL Training** — Integrate the fine-tuned VLM reward model into RLPD training with ``history_buffer`` mode for online inference.
+
+
+Stage 1: Data Collection
+------------------------
+
+Use the real-world pipeline described in :doc:`franka` to collect episode data.
+Enable ``data_collection`` to save each episode as a ``.pkl`` file:
+
+.. code-block:: yaml
+
+   env:
+     eval:
+       data_collection:
+         enabled: True
+         save_dir: /path/to/collected_data
+         export_format: "pickle"
+         only_success: False
+
+Collection Tips
+~~~~~~~~~~~~~~~
+
+- **Move the robot arm slowly** so the collected data contains rich intermediate states for VLM trend learning.
+- **Ensure both camera views are clear**: ``main_images`` (wrist camera) and ``extra_view_images`` (global camera) should clearly show the end-effector and the target hole.
+- **Collect enough episodes** (50+ recommended), covering both successful and failed outcomes.
+- **Correctly configure ``camera_names``**, matching serials to actual camera serial numbers:
+
+.. code-block:: yaml
+
+   env:
+     train:
+       override_cfg:
+         camera_names:
+           "CAMERA_SERIAL_1": "wrist_1"   # Replace with your wrist camera serial
+           "CAMERA_SERIAL_2": "global"     # Replace with your global camera serial
+
+Why two cameras:
+
+- **Wrist camera** (``main_images``): Close-up view of the gripper and insertion hole for fine manipulation detail.
+- **Global camera** (``extra_view_images``): Full workspace context for spatial awareness.
+
+Dual-view input allows the VLM to simultaneously focus on local manipulation details
+and global spatial relationships, improving trend judgment accuracy.
+
+
+Stage 2: Supervised Fine-Tuning (SFT)
+-------------------------------------
+
+2.1 Preprocess into QwenTrend Dataset
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The collected ``.pkl`` episodes must be converted to QwenTrend SFT format using
+``preprocess_qwentrend_reward_dataset.py``. This script slices episodes into
+5-frame windows, extracts dual-view images, and auto-labels based on GAE or
+TCP distance changes:
+
+.. code-block:: bash
+
+   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+       --raw-data-path /path/to/collected_data \
+       --output-dir /path/to/processed_qwentrend_data \
+       --window-size 5 \
+       --task-description "Pick up the peg and insert it into the hole."
+
+When collected data has no GAE/reward signals, use ``--target-ee-pose`` to rely on
+TCP-to-target distance as the trend signal:
+
+.. code-block:: bash
+
+   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+       --raw-data-path /path/to/collected_data \
+       --output-dir /path/to/processed_qwentrend_data \
+       --window-size 5 \
+       --target-ee-pose "X,Y,Z,RX,RY,RZ"
+
+A concrete example (using ``demo_data/collected_data`` and target pose
+``0.490,0.0,0.076,3.131,0.019,-0.063``):
+
+.. code-block:: bash
+
+   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+       --raw-data-path /data/reward_qwen_data/demo_data/collected_data \
+       --output-dir /data/reward_qwen_data/processed_qwentrend_data \
+       --window-size 5 \
+       --seed 42 \
+       --target-ee-pose "0.490,0.0,0.076,3.131,0.019,-0.063"
+
+Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose. To obtain it:
+
+.. code-block:: bash
+
+   python -m toolkits.realworld_check.test_franka_controller
+
+Move the robot arm to the target position using SpaceMouse; the current TCP pose is printed to the terminal. If you only need position values, pass ``X,Y,Z`` (3 values) — orientation is ignored.
+
+Output directory structure:
+
+.. code-block:: text
+
+   processed_qwentrend_data/
+   ├── dataset_info.json
+   ├── train/
+   │   ├── segments.jsonl
+   │   └── pkl/              # one pkl per window, contains main_frames + extra_view_frames
+   └── eval/
+       ├── segments.jsonl
+       └── pkl/
+
+2.2 Fine-Tune Qwen3-VL-4B
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_qwentrend.yaml``:
+
+.. code-block:: yaml
+
+   data:
+     type: vlm
+     dataset_name: "qwentrend_progress_sft"
+     train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
+     val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
+     video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+
+   actor:
+     model:
+       model_type: qwen3_vl
+       model_path: /data/reward_qwen_data/Qwen3-VL-4B-Instruct
+       is_lora: true
+       lora_rank: 16
+       attn_implementation: flash_attention_2
+
+   fsdp_config:
+     gradient_checkpointing: true     # save GPU memory
+     sharding_strategy: no_shard      # for RTX 4090 single-GPU
+
+Set the environment variable and start training:
+
+.. code-block:: bash
+
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_data
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
+
+After training, note the LoRA checkpoint path (e.g., ``checkpoints/global_step_3000``)
+for use as ``reward.model.lora_path`` in the RL config.
+
+
+Stage 3: Real-World Reinforcement Learning
+------------------------------------------
+
+3.1 Configuration File
+~~~~~~~~~~~~~~~~~~~~~~
+
+Use ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_sglang_reward.yaml``
+as the RL training config. The core reward section:
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: true            # Enable reward model
+     worker_type: model                # Local HuggingFace inference
+     group_name: "RewardGroup"
+     standalone_realworld: False
+     reward_mode: history_buffer       # Trend judgment via history window
+     history_reward_assign: true       # Back-assign VLM reward to history steps
+     reward_weight: 1.0                # VLM reward weight
+     env_reward_weight: 0.0            # Native env reward weight (VLM-only)
+     reward_threshold: 0.5
+
+     model:
+       model_path: "/data/reward_qwen_data/Qwen3-VL-4B-Instruct"
+       model_type: "history_vlm"
+       lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
+       gt_success_bonus: 20.0
+       precision: "bf16"
+
+       input_builder_name: qwentrend_input_builder
+       input_builder_params:
+         default_task_description: "Pick up the peg and insert it into the hole."
+         video_keys:
+           - main_images
+           - extra_view_images
+
+       reward_parser_name: qwentrend_reward_parser
+       reward_parser_params:
+         positive_reward: 1.0
+         negative_reward: -0.2
+         unclear_reward: 0.0
+         invalid_reward: 0.0
+
+       history_buffers:
+         history_window:
+           history_size: 5
+           min_history_size: 5
+           input_interval: 1
+           history_keys:
+             - main_images
+             - extra_view_images
+           input_on_done: false
+
+       interval_reward: 0.0
+       max_new_tokens: 16
+       do_sample: false
+       temperature: 0.0
+
+   cluster:
+     num_nodes: 2
+     component_placement:
+       actor:
+         node_group: "4090"
+       env:
+         node_group: franka
+       reward:
+         node_group: "4090"
+
+3.2 Key Configuration Fields
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Field
+     - Description
+   * - ``reward_mode: history_buffer``
+     - The env worker maintains a sliding window per environment and sends data to the VLM only when ``min_history_size`` frames are accumulated.
+   * - ``history_reward_assign: true``
+     - Back-assigns the VLM trend reward to every step within the history window.
+   * - ``env_reward_weight: 0.0``
+     - The Franka native reward is sparse (1.0 only at target). Training relies primarily on VLM trend judgment. Success is rewarded via ``gt_success_bonus``.
+   * - ``gt_success_bonus: 20.0``
+     - When the environment reports success (``infos["success"] = True``), adds +20.0 on top of the current step's VLM reward.
+   * - ``video_keys``
+     - ``[main_images, extra_view_images]`` — the VLM receives frames from both camera views.
+   * - ``history_buffers.history_window``
+     - Caches the last 5 frames of ``main_images`` and ``extra_view_images``, triggers inference only after at least 5 frames.
+   * - ``worker_type: model``
+     - Loads the model directly in the reward worker for local HuggingFace inference. Change to ``api`` for SGLang API inference.
+
+3.3 Reward Computation Flow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+At each RL training step, the final reward is composed through the following pipeline:
+
+.. code-block:: text
+
+   FrankaEnv.step()
+     │
+     ├─ Native env reward (sparse: 0.0 or 1.0)
+     │
+     └─ infos = {"success": True}   ← written when target reached
+          │
+          v
+   EnvWorker.get_reward_model_output()
+     │
+     ├─ HistoryManager accumulates frames, builds history_input
+     ├─ Sends reward_input to Reward worker
+     │
+     v
+   EmbodiedRewardWorker.compute_image_rewards()
+     │
+     ├─ HistoryVLMRewardModel.compute_reward()
+     │    ├─ min_history_size not met → returns 0.0
+     │    └─ Met → Qwen3-VL inference → parsed to ±1.0 / -0.2 / 0.0
+     │
+     └─ apply_gt_success_bonus()
+          └─ infos["success"] == True → +20.0
+          │
+          v
+   final_reward = env_reward_weight * env_reward
+                + reward_weight * vlm_reward_with_bonus
+
+3.4 Reward Timeline Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Assuming the robot arm starts far from the target, gradually approaches, and eventually reaches it (100 steps total):
+
+.. code-block:: text
+
+   Steps   VLM Trend      VLM Reward    gt_success_bonus    Final Reward
+   ─────────────────────────────────────────────────────────────────────
+   1-4     N/A (< min)     0.0             0                  0.0
+   5-20    unclear          0.0             0                  0.0
+   21-40   positive         1.0             0                  1.0
+   41-80   positive         1.0             0                  1.0
+   81-95   unclear          0.0             0                  0.0
+   96-100  positive         1.0             0                  1.0
+   100     positive         1.0            +20.0               21.0  ← Success!
+
+Because ``history_reward_assign: true``, each VLM inference result is back-assigned
+to every step in that history window.
+
+3.5 Franka Env Success Info Fix
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Unlike simulation, the real-world Franka environment's ``step()`` originally returned
+an empty ``infos`` dict, preventing ``gt_success_bonus`` from working.
+Add the success write in ``franka_env.py``:
+
+.. code-block:: python
+
+   # rlinf/envs/realworld/franka/franka_env.py
+
+   truncated = self._num_steps >= self.config.max_num_steps
+   reward *= self.config.reward_scale
+
+   infos: dict = {}
+   if terminated:
+       infos["success"] = True
+
+   return observation, reward, terminated, truncated, infos
+
+.. note::
+
+   This modification does not affect any other Franka env behavior. It is also
+   safe for configs that do not use ``gt_success_bonus`` (e.g., pure ResNet
+   reward scenarios).
+
+3.6 Starting Training
+~~~~~~~~~~~~~~~~~~~~~
+
+Once hardware deployment and configuration are verified, run on the Ray head node:
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_realworld_async.sh \
+       realworld_peginsertion_rlpd_cnn_async_sglang_reward
+
+After training starts, the logs will show VLM inference outputs, reward
+distributions, and success signals.
+
+3.7 Differences from Simulation (ManiSkill)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * -
+     - Simulation (ManiSkill)
+     - Real-World (Franka)
+   * - **Reward source**
+     - VLM trend + gt_success_bonus (simulator provides automatically)
+     - VLM trend + gt_success_bonus (must manually write in env)
+   * - **Parallel envs**
+     - 32 (many samples, high exploration)
+     - 1 (single robot, limited samples)
+   * - **env_reward_weight**
+     - 0.0 (VLM-only)
+     - 0.0 (VLM-only)
+   * - **VLM inference**
+     - SGLang API (``worker_type: api``)
+     - Local HuggingFace (``worker_type: model``)
+   * - **Task**
+     - PickCube
+     - Peg Insertion
+
+.. tip::
+
+   If the robot arm struggles to reach the success state early in training,
+   temporarily set ``env_reward_weight`` to a small value (e.g., 0.5) to let
+   the native sparse success signal help guide exploration. Revert to ``0.0``
+   once the policy achieves some success rate.
