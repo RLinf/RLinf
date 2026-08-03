@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
+
 import pytest
+import torch
 from omegaconf import OmegaConf
 
 from rlinf.scheduler.manager.net_emulation import (
@@ -158,3 +161,28 @@ def test_reserve_charges_transfer_time_against_the_bandwidth_budget():
     assert manager.reserve("EnvGroup:0", "ActorGroup:0", one_mb) == pytest.approx(
         2.1, abs=0.02
     )
+
+
+def test_estimate_payload_size_counts_tensor_storage():
+    tensor = torch.zeros(256, dtype=torch.float32)  # 1024 bytes of data
+
+    assert NetEmulationManager.estimate_payload_size_bytes(tensor) == 1024
+    assert NetEmulationManager.estimate_payload_size_bytes(None) == 0
+
+
+def test_estimate_payload_size_walks_nested_containers():
+    payload = {"a": torch.zeros(256, dtype=torch.float32), "b": [torch.zeros(256)]}
+
+    size = NetEmulationManager.estimate_payload_size_bytes(payload)
+
+    # Two tensors of 1024 bytes each, plus per-tensor overhead and pickled keys.
+    assert size > 2048
+    assert size < 2048 + 4 * 256
+
+
+def test_estimate_payload_size_falls_back_to_pickle_for_plain_objects():
+    payload = {"task": "pick up the cube", "step": 7}
+
+    size = NetEmulationManager.estimate_payload_size_bytes(payload)
+
+    assert size == len(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))

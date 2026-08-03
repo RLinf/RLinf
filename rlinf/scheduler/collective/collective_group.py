@@ -236,6 +236,12 @@ class CollectiveGroup:
         self._mc_group = None
         self._worker = Worker.current_worker
         self._coll_manager = CollectiveManager.get_proxy()
+        # The net emulation manager is only launched when cluster.net_emulation is
+        # enabled, so its absence just means sends are not delayed.
+        try:
+            self._net_emu_manager = NetEmulationManager.get_proxy(no_wait=True)
+        except ValueError:
+            self._net_emu_manager = None
         self._logger = logging.getLogger(cur_worker_address.get_name())
         self._lock = threading.Lock()
         # Lazily populated sub-groups for the hybrid broadcast path.
@@ -1170,11 +1176,19 @@ class CollectiveGroup:
 
     def _wait_for_net_emulation(self, *payloads: Any) -> None:
         """Pause for the emulated link delay before sending, if emulation is on."""
-        NetEmulationManager.wait_before_send(
+        if self._net_emu_manager is None:
+            return
+        size_bytes = sum(
+            NetEmulationManager.estimate_payload_size_bytes(payload)
+            for payload in payloads
+        )
+        remaining = self._net_emu_manager.reserve(
             self._cur_worker_address.get_name(),
             self._worker_addresses[self._peer_rank].get_name(),
-            *payloads,
+            size_bytes,
         )
+        if remaining > 0:
+            time.sleep(remaining)
 
     def _init_group(self):
         if self._group_info is None:
