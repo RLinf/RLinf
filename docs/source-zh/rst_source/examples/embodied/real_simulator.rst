@@ -58,9 +58,11 @@ YAML 中的对应参数控制。两者**默认关闭**：不配置对应参数�
 网络仿真 (net_emulation)
 ------------------------
 
-通过全局令牌桶调度器仿真跨 Worker 的网络延迟和带宽限制。一个
-``NetEmulationProxy`` Ray actor 拦截所有经过 NCCL 的 Worker 间通信，
-强制执行配置的延迟和带宽上限。
+通过全局调度器仿真跨 Worker 的网络延迟和带宽限制。设置
+``cluster.net_emulation.enabled`` 后，调度器会在 node rank 0 上与其他全局
+Manager 一同启动 ``NetEmulationManager``。所配置 Worker 组之间的每次发送都会
+先向它申请一个传输时隙并等待相应的延迟，从而保证每条链路的延迟和每个组的带宽
+预算在整个集群内保持一致。
 
 适用场景：测试在带宽受限或高延迟链路下策略的表现，例如 Env Worker 和
 Rollout Worker 部署在不同集群或云区域时。
@@ -78,12 +80,6 @@ Rollout Worker 部署在不同集群或云区域时。
    * - ``symmetric``
      - ``bool``
      - 为 ``true`` 时，每对 cross-DC 自动镜像。默认：``true``。
-   * - ``proxy.node_rank``
-     - ``int``
-     - 运行 Proxy actor 的节点 rank。默认：``0``。
-   * - ``proxy.num_cpus``
-     - ``int``
-     - 为 Proxy 分配的 CPU 数。默认：``1``。
    * - ``crossdc_pairs``
      - ``list``
      - 源-目标端点对，每对可配置 ``delay_ms``。
@@ -93,21 +89,19 @@ Rollout Worker 部署在不同集群或云区域时。
 
 .. code-block:: yaml
 
-   net_emulation:
-     enabled: true
-     symmetric: true
-     proxy:
-       node_rank: 0
-       num_cpus: 1
-     crossdc_pairs:
-       - src: ["Env:0", "Env:1"]
-         dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
-         delay_ms: 50
-     bandwidth_groups:
-       - members: ["Env:0", "Env:1"]
-         bandwidth_mbps: 1000
-       - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
-         bandwidth_mbps: 500
+   cluster:
+     net_emulation:
+       enabled: true
+       symmetric: true
+       crossdc_pairs:
+         - src: ["Env:0", "Env:1"]
+           dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+           delay_ms: 50
+       bandwidth_groups:
+         - members: ["Env:0", "Env:1"]
+           bandwidth_mbps: 1000
+         - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+           bandwidth_mbps: 500
 
 端点名称使用 ``GroupName:Rank`` 格式——``Env:0`` 表示第一个 Env Worker，
 ``Rollout:1`` 表示第二个 Rollout Worker。``Group`` 后缀会自动去除。
@@ -131,12 +125,13 @@ Rollout Worker 部署在不同集群或云区域时。
        min_delay: 0.11
        max_delay: 0.20
 
-   net_emulation:
-     enabled: true
-     crossdc_pairs:
-       - src: ["Env:0", "Env:1"]
-         dst: ["Rollout:0", "Rollout:1"]
-         delay_ms: 50
+   cluster:
+     net_emulation:
+       enabled: true
+       crossdc_pairs:
+         - src: ["Env:0", "Env:1"]
+           dst: ["Rollout:0", "Rollout:1"]
+           delay_ms: 50
 
 
 示例

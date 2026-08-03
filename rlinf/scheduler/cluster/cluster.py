@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import ray
 import ray.util.scheduling_strategies
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from packaging import version as vs
 from ray._private import ray_logging
 from ray.actor import ActorHandle
@@ -396,6 +396,7 @@ class Cluster:
             CollectiveManager,
             DeviceLockManager,
             Manager,
+            NetEmulationManager,
             NodeManager,
             PortLockManager,
             Tracer,
@@ -430,6 +431,17 @@ class Cluster:
             if tracer_cfg is not None and tracer_cfg.get("enable", False):
                 self._tracer = self._launch_manager_actor(
                     Tracer, manager_node, runtime_env, tracer_cfg.get("output_file")
+                )
+            # Optional net emulation manager, launched only when emulation is enabled
+            net_emu_cfg = (
+                cluster_cfg.get("net_emulation", None) if cluster_cfg else None
+            )
+            if net_emu_cfg is not None and net_emu_cfg.get("enabled", False):
+                # Resolve to a plain dict so the actor does not need the config schema.
+                if isinstance(net_emu_cfg, DictConfig):
+                    net_emu_cfg = OmegaConf.to_container(net_emu_cfg, resolve=True)
+                self._net_emulation_manager = self._launch_manager_actor(
+                    NetEmulationManager, manager_node, runtime_env, net_emu_cfg
                 )
         except ValueError:
             raise Cluster.NamespaceConflictError

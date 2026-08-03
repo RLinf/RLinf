@@ -19,23 +19,18 @@ cluster:
     actor: 0
     rollout: 1:0-1
     env: 1:0-1
-
-net_emulation:
-  enabled: true
-  symmetric: true
-  proxy:
-    node_rank: 0
-    num_cpus: 1
-    name: "NetEmulationProxy"
-  crossdc_pairs:
-    - src: ["Env:0", "Env:1"]
-      dst: ["Rollout:0", "Rollout:1", "Actor:0"]
-      delay_ms: 10
-  bandwidth_groups:
-    - members: ["Env:0", "Env:1"]
-      bandwidth_mbps: 1000
-    - members: ["Rollout:0", "Rollout:1", "Actor:0"]
-      bandwidth_mbps: 1000
+  net_emulation:
+    enabled: true
+    symmetric: true
+    crossdc_pairs:
+      - src: ["Env:0", "Env:1"]
+        dst: ["Rollout:0", "Rollout:1", "Actor:0"]
+        delay_ms: 10
+    bandwidth_groups:
+      - members: ["Env:0", "Env:1"]
+        bandwidth_mbps: 1000
+      - members: ["Rollout:0", "Rollout:1", "Actor:0"]
+        bandwidth_mbps: 1000
 
 runner:
   task_type: embodied

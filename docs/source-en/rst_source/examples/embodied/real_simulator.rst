@@ -63,9 +63,11 @@ Network Emulation (net_emulation)
 ---------------------------------
 
 Emulate cross-worker network latency and bandwidth limits with a global
-token-bucket scheduler. A ``NetEmulationProxy`` Ray actor intercepts every
-NCCL send between configured worker groups and enforces the specified delays
-and bandwidth caps.
+scheduler. Setting ``cluster.net_emulation.enabled`` launches a
+``NetEmulationManager``, one of the scheduler's global managers, alongside the
+others on node rank 0. Every send between configured worker groups books a
+transmission slot with it and waits out the resulting delay, so the per-link
+latency and the per-group bandwidth budget stay consistent cluster-wide.
 
 Use this to test how policies behave under bandwidth-constrained or
 high-latency links, such as when Env Workers and Rollout Workers are on
@@ -84,12 +86,6 @@ separate clusters or cloud regions.
    * - ``symmetric``
      - ``bool``
      - If ``true``, every cross-DC pair is mirrored. Default: ``true``.
-   * - ``proxy.node_rank``
-     - ``int``
-     - Cluster node that hosts the proxy actor. Default: ``0``.
-   * - ``proxy.num_cpus``
-     - ``int``
-     - CPUs reserved for the proxy. Default: ``1``.
    * - ``crossdc_pairs``
      - ``list``
      - Source-destination pairs with per-pair ``delay_ms``.
@@ -99,21 +95,19 @@ separate clusters or cloud regions.
 
 .. code-block:: yaml
 
-   net_emulation:
-     enabled: true
-     symmetric: true
-     proxy:
-       node_rank: 0
-       num_cpus: 1
-     crossdc_pairs:
-       - src: ["Env:0", "Env:1"]
-         dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
-         delay_ms: 50
-     bandwidth_groups:
-       - members: ["Env:0", "Env:1"]
-         bandwidth_mbps: 1000
-       - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
-         bandwidth_mbps: 500
+   cluster:
+     net_emulation:
+       enabled: true
+       symmetric: true
+       crossdc_pairs:
+         - src: ["Env:0", "Env:1"]
+           dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+           delay_ms: 50
+       bandwidth_groups:
+         - members: ["Env:0", "Env:1"]
+           bandwidth_mbps: 1000
+         - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+           bandwidth_mbps: 500
 
 Endpoint names use the ``GroupName:Rank`` convention — ``Env:0`` for the
 first Env Worker, ``Rollout:1`` for the second Rollout Worker. The ``Group``
@@ -138,12 +132,13 @@ Combine both modules to simulate a realistic deployment:
        min_delay: 0.11
        max_delay: 0.20
 
-   net_emulation:
-     enabled: true
-     crossdc_pairs:
-       - src: ["Env:0", "Env:1"]
-         dst: ["Rollout:0", "Rollout:1"]
-         delay_ms: 50
+   cluster:
+     net_emulation:
+       enabled: true
+       crossdc_pairs:
+         - src: ["Env:0", "Env:1"]
+           dst: ["Rollout:0", "Rollout:1"]
+           delay_ms: 50
 
 
 Example
