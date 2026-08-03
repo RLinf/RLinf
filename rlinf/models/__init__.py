@@ -21,7 +21,7 @@ from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
-_ACTION_POLICY_REGISTRY: dict[str, Callable[[], type]] = {}
+_SGLANG_CONVERT_ACTION_REGISTRY: dict[str, Callable[[], type]] = {}
 
 
 def register_model(
@@ -272,44 +272,50 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
-def register_action_policy(
+def register_sglang_convert_action(
     model_type: str,
-    policy_builder: Callable[[], type],
+    builder: Callable[[], type],
     force: bool = False,
 ):
-    """Register a lazy action-policy builder for ``cfg.model_type``.
+    """Register a lazy sglang convert-action builder for ``cfg.model_type``.
 
-    ``policy_builder`` is a zero-arg callable returning the policy class; keep
+    ``builder`` is a zero-arg callable returning the convert-action class; keep
     the heavy import inside it so it runs only on lookup. Lookup happens via
-    :func:`rlinf.models.embodiment.action_policy.get_action_policy_cls`.
+    :func:`rlinf.models.embodiment.sglang_convert_action.get_sglang_convert_action_cls`.
     """
     if not model_type:
         raise ValueError("model_type must be a non-empty string.")
     key = model_type.lower()
-    if not force and key in _ACTION_POLICY_REGISTRY:
+    if not force and key in _SGLANG_CONVERT_ACTION_REGISTRY:
         raise ValueError(
-            f"Action policy `{key}` is already registered. "
+            f"SGLang convert-action `{key}` is already registered. "
             "Set force=True to override it."
         )
-    _ACTION_POLICY_REGISTRY[key] = policy_builder
+    _SGLANG_CONVERT_ACTION_REGISTRY[key] = builder
 
 
-def _register_builtin_action_policies():
-    def _build_dreamzero_policy():
-        from rlinf.models.embodiment.dreamzero.action_policy import (
-            DreamZeroActionPolicy,
+def _register_builtin_sglang_convert_actions():
+    def _build_dreamzero_sglang_convert_action():
+        from rlinf.models.embodiment.dreamzero.sglang_convert_action import (
+            DreamZeroSGLangConvertAction,
         )
 
-        return DreamZeroActionPolicy
+        return DreamZeroSGLangConvertAction
 
-    register_action_policy(
+    register_sglang_convert_action(
         SupportedModel.DREAMZERO.value,
-        _build_dreamzero_policy,
+        _build_dreamzero_sglang_convert_action,
         force=True,
     )
 
 
-_register_builtin_action_policies()
+_register_builtin_sglang_convert_actions()
+
+
+def get_sglang_convert_action_cls(model_type: str):
+    """Return the sglang convert-action class for ``model_type`` (or ``None``)."""
+    builder = _SGLANG_CONVERT_ACTION_REGISTRY.get(str(model_type).lower())
+    return builder() if builder is not None else None
 
 
 def get_model(cfg: DictConfig):

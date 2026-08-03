@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DreamZero embodied action policy backed by an SGLang action server.
+"""DreamZero embodied sglang action converter backed by an SGLang action server.
 
 This module is the SGLang counterpart of
 ``rlinf.models.embodiment.dreamzero.dreamzero_policy.DreamZeroPolicy`` for eval
@@ -61,7 +61,7 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     normalize_instruction_text,
     rollout_obs_layout_for_embodiment,
 )
-from rlinf.models.embodiment.action_policy import EmbodiedActionPolicy
+from rlinf.utils.logging import get_logger
 
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
 
@@ -425,7 +425,7 @@ class _DreamZeroActionAdapter:
         return actions
 
 
-class DreamZeroActionPolicy(EmbodiedActionPolicy):
+class DreamZeroSGLangConvertAction:
     """DreamZero eval policy for the SGLang embodied rollout worker.
 
     ``SGLangEmbodiedWorker`` owns the server subprocess and channel loop.  This
@@ -492,9 +492,14 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         return path
 
     def __init__(self, cfg: Any, server_url: str | None, rank: int):
-        super().__init__(cfg, server_url, rank)
+        self.cfg_rollout = cfg.rollout
+        self.model_cfg = cfg.rollout.model
+        self.rank = rank
+        self.logger = get_logger()
         if server_url is None:
-            raise ValueError("DreamZeroActionPolicy requires a local sglang server URL")
+            raise ValueError(
+                "DreamZeroSGLangConvertAction requires a local sglang server URL"
+            )
         rollout_model_config = self._rollout_model_config()
         self.action_adapter = _DreamZeroActionAdapter(rollout_model_config)
         sglang_cfg = self.cfg_rollout.get("sglang", {})
@@ -535,7 +540,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
 
         if mode != "eval":
             raise NotImplementedError(
-                "DreamZero sglang action policy currently supports eval only."
+                "DreamZero sglang action converter currently supports eval only."
             )
         rollout_env_obs, policy_context = self._split_policy_context(env_obs)
         converted_obs = self.action_adapter.observation_convert(rollout_env_obs)
@@ -690,7 +695,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         if isinstance(value, Mapping):
             for item in value.values():
                 try:
-                    return DreamZeroActionPolicy._infer_batch_size(item)
+                    return DreamZeroSGLangConvertAction._infer_batch_size(item)
                 except (TypeError, IndexError):
                     continue
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
@@ -717,7 +722,7 @@ class DreamZeroActionPolicy(EmbodiedActionPolicy):
         reset_mask = [False] * batch_size
         if self._debug_batch_print:
             self.logger.info(
-                f"[DreamZeroActionPolicy rank={self.rank} "
+                f"[DreamZeroSGLangConvertAction rank={self.rank} "
                 f"call={self._eval_predict_calls}] batch_size={batch_size} "
                 f"reset_count={sum(reset_mask)} session_ids={session_ids[:4]}",
             )

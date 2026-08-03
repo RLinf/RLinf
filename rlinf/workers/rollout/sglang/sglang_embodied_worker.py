@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Embodied sglang rollout worker: drive a registered action policy over
+"""Embodied sglang rollout worker: drive a registered sglang action converter over
 channels against a driver-launched ``sglang serve`` (no worker-owned HTTP
 server, no in-worker subprocess).
 
-Used by embodied action-policy models (e.g. DreamZero). The eval driver
+Used by embodied sglang-convert-action models (e.g. DreamZero). The eval driver
 launches the ``sglang serve`` server group via
 :func:`launch_sglang_router_and_server` and pushes the server URLs to each
 rollout worker via :meth:`set_sglang_server_urls`; the worker picks the URL
-at its own rank (for N-server parallel throughput), loads the action policy
+at its own rank (for N-server parallel throughput), loads the sglang action converter
 registered for ``rollout.model.model_type``, and is driven by
 ``EmbodiedEvalRunner`` over channels (``recv_from``/``send_to``). It does NOT
 host its own HTTP server (the agent path uses
@@ -37,7 +37,7 @@ from rlinf.utils.placement import HybridComponentPlacement
 
 
 class SGLangEmbodiedWorker(Worker):
-    """Use a driver-launched ``sglang serve`` + action policy + channel eval."""
+    """Use a driver-launched ``sglang serve`` + sglang action converter + channel eval."""
 
     def __init__(
         self,
@@ -55,7 +55,7 @@ class SGLangEmbodiedWorker(Worker):
         self.model_type = str(
             getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
         ).lower()
-        self.action_policy = None
+        self.sglang_convert_action = None
         self.sglang_server_url = None
         self._sglang_server_urls = None
         cfg = self._cfg
@@ -86,18 +86,20 @@ class SGLangEmbodiedWorker(Worker):
         self.collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
 
     async def init_worker(self):
-        policy_cls = None
+        convert_action_cls = None
         if self.model_type:
-            from rlinf.models.embodiment.action_policy import get_action_policy_cls
+            from rlinf.models import get_sglang_convert_action_cls
 
-            policy_cls = get_action_policy_cls(self.model_type)
-        if policy_cls is None:
+            convert_action_cls = get_sglang_convert_action_cls(self.model_type)
+        if convert_action_cls is None:
             raise RuntimeError(
-                f"no action policy registered for model_type "
+                f"no sglang action converter registered for model_type "
                 f"'{self.model_type}'; cannot run the embodied sglang path"
             )
         self._init_sglang_server()
-        self.action_policy = policy_cls(self._cfg, self.sglang_server_url, self._rank)
+        self.sglang_convert_action = convert_action_cls(
+            self._cfg, self.sglang_server_url, self._rank
+        )
 
     def set_sglang_server_urls(self, urls) -> None:
         """Receive the sglang server URLs the driver launched."""
@@ -152,12 +154,12 @@ class SGLangEmbodiedWorker(Worker):
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """env_obs -> action chunks [N, num_action_chunks, action_dim]."""
-        if self.action_policy is None:
+        if self.sglang_convert_action is None:
             raise RuntimeError(
-                "no action policy loaded (init_worker not called, or model_type "
-                f"'{self.model_type}' has no registered policy)"
+                "no sglang action converter loaded (init_worker not called, or model_type "
+                f"'{self.model_type}' has no registered sglang convert-action)"
             )
-        return self.action_policy.infer(env_obs, mode=mode)
+        return self.sglang_convert_action.infer(env_obs, mode=mode)
 
     async def evaluate(self, input_channel, output_channel):
         """Channel-based embodied eval loop, driven by EmbodiedEvalRunner."""
