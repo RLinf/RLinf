@@ -27,9 +27,7 @@ runner:
 
   seq_length: 1024
 
-  # FUSCO's EP all-gathers require every rank to enter with the same shape.
-  # Dynamic batching can produce unequal microbatches across EP ranks.
-  enable_dynamic_batch_size: False
+  enable_dynamic_batch_size: True
   max_tokens_per_mbs: 1024
 
   resume_dir: null
