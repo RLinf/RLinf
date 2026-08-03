@@ -172,7 +172,7 @@ Papers
 
 - **RLinf: Flexible and Efficient Large-Scale Reinforcement Learning via Macro-to-Micro Flow Transformation** (OSDI 2026). Corresponds to the RLinf large-scale RL system. Doc: `RLinf System <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_system.html>`__ ｜ Paper: `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__ ｜ `OSDI Talk <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__.
 
-- **DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training** (OSDI 2026). Corresponds to RLinf's dynamic scheduling feature. Doc: `DynaRL <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/dynarl.html>`__ ｜ `Dynamic Scheduling <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/guides/dynamic_scheduling.html>`__ ｜ `OSDI Talk <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__.
+- **DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training** (OSDI 2026). Corresponds to RLinf's dynamic scheduling feature. Doc: `DynaRL <https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/dynarl.html>`__ ｜ `Dynamic Scheduling <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/guides/dynamic_scheduling.html>`__ ｜ `OSDI Talk <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__.
 
 2 more papers are accepted to **RSS 2026**:
 

@@ -1,8 +1,7 @@
 DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training
 =======================================================================================
 
-**Paper:** `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
-| `PDF <https://www.usenix.org/system/files/osdi26-wang-yuanqing.pdf>`__
+**Paper:** `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__ | `PDF <https://www.usenix.org/system/files/osdi26-wang-yuanqing.pdf>`__
 
 Overview
 --------
@@ -36,8 +35,8 @@ Evaluations on math-reasoning and multi-turn agentic RL (models from 1.5B to
 
 - **Math-reasoning RL:** up to **1.98×** end-to-end throughput over state-of-the-art
   systems (verl, RLinf) across cluster scales.
-- **Agentic RL:** **1.06×–1.53×** higher throughput than RLinf with dynamic
-  allocation alone; with priority-aware request scheduling, **1.27×–1.64×**.
+- **Agentic RL:** **1.06×–1.53×** higher throughput than RLinf; with
+  priority-aware request scheduling, **1.27×–1.64×**.
 - **Overhead:** scheduling plans within 200 ms; each reallocation in 0.5–5 s;
   online scheduling overhead below **1%**.
 

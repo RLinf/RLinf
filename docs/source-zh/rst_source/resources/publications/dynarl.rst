@@ -1,8 +1,7 @@
 DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training
 =======================================================================================
 
-**论文：** `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
-| `PDF <https://www.usenix.org/system/files/osdi26-wang-yuanqing.pdf>`__
+**论文：** `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__ | `PDF <https://www.usenix.org/system/files/osdi26-wang-yuanqing.pdf>`__
 
 概述
 ----
@@ -30,8 +29,8 @@ DynaRL 基于 RLinf 实现，并与现有推理引擎（如 SGLang）与训练�
 
 - **数学推理 RL：** 相对最先进系统（verl、RLinf），端到端吞吐量最高提升
   **1.98×**。
-- **智能体 RL：** 仅动态分配即可相对 RLinf 达到 **1.06×–1.53×**；叠加优先级感知
-  请求调度后达到 **1.27×–1.64×**。
+- **智能体 RL：** 相对 RLinf 达到 **1.06×–1.53×**；叠加优先级感知请求调度后达到
+  **1.27×–1.64×**。
 - **开销：** 调度方案可在 200 ms 内生成，每次重分配约 0.5–5 s，在线调度开销低于
   **1%**。
 
