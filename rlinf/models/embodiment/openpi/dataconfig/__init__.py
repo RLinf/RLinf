@@ -253,6 +253,33 @@ _CONFIGS = [
         save_interval=250,
     ),
     TrainConfig(
+        name="pi05_franka_pnp",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=5,
+            action_dim=32,
+            discrete_state_input=False,
+        ),
+        data=LeRobotRealworldDataConfig(
+            repo_id="RLinf/pick_red",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_franka_pnp/assets",
+            ),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base/params"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=32,
+        num_workers=2,
+        num_train_steps=30_000,
+        log_interval=100,
+        save_interval=10_000,
+    ),
+    TrainConfig(
         name="pi05_maniskill_sim_real_co_training",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=8, discrete_state_input=False

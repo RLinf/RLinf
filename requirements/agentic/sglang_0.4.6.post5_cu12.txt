@@ -1,0 +1,7 @@
+# sglang 0.4.x line (torch 2.6, cu12). Installed by requirements/install.sh
+# after the agentic-sglang extra; see install_agentic.
+sglang[all]==0.4.6.post5
+sglang-router
+torch-memory-saver
+transformers==4.51.1
+xgrammar==0.1.19

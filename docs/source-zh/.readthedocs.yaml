@@ -9,8 +9,9 @@ build:
       - export UV_HTTP_TIMEOUT=120
       - python -m pip install -U uv
       - uv pip install .[embodied]
-      - uv pip install .[agentic-sglang]
-      - uv pip install .[agentic-vllm]
+      - uv pip install .[agentic]
+      - uv pip install --no-deps sglang==0.5.12.post1
+      - uv pip install fastapi
       - uv pip install -r requirements/docs/requirements.txt
 
 sphinx:
