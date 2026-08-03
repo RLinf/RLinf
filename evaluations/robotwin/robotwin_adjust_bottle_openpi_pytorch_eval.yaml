@@ -1,5 +1,5 @@
 defaults:
-  - env/robotwin_place_empty_cup@env.eval
+  - env/robotwin_adjust_bottle@env.eval
   # - model/pi0@rollout.model
   - override hydra/job_logging: stdout
 
@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "robotwin_ppo_openpi"
+    experiment_name: "robotwin_adjust_bottle_openpi_pytorch_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -36,7 +36,7 @@ runner:
 env:
   group_name: "EnvGroup"
   enable_offload: True
-  # Override the default values in env/robotwin_place_empty_cup
+  # Override the default values in env/robotwin_adjust_bottle
   eval:
     rollout_epoch: 1
     total_num_envs: 128
@@ -48,7 +48,7 @@ env:
     group_size: 1
     use_fixed_reset_state_ids: True
     is_eval: True
-    assets_path: "/mnt/project_rlinf_hs/wph/codes/RoboTwin_WBCD"
+    assets_path: "/path/to/robotwin_assets"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: True
@@ -73,19 +73,9 @@ rollout:
   recompute_logprobs: False
   enable_offload: True
   pipeline_stage_num: 1
-  # model:
-  #   model_path: "/path/to/RLinf/RLinf-Pi0-RoboTwin-SFT-place_empty_cup"
-  #   num_action_chunks: 50 # interface for the env
-  #   add_value_head: True
-  #   action_dim: 14
-  #   openpi:
-  #     config_name: "pi0_aloha_robotwin"
-  #     num_images_in_input: 3
-  #     detach_critic_input: True
-
   model:
     model_type: "openpi_pytorch"
-    model_path: "/mnt/project_rlinf_hs/wph/models/pi0_torch_place_2w/hf"
+    model_path: "/path/to/pi0_robotwin_adjust_bottle_sft_hf"
     precision: "bf16"
     is_lora: false
     lora_rank: 32
@@ -95,6 +85,9 @@ rollout:
     use_proprio: True
     num_steps: 5
     add_value_head: False
+    # The converted task checkpoint bundles its own normalization statistics.
+    openpi_data:
+      norm_stats_path: ${..model_path}/physical-intelligence/robotwin/adjust_bottle/norm_stats.json
 
     openpi:
       task: "eval"
