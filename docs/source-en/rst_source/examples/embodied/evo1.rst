@@ -168,8 +168,11 @@ Launch Commands
 .. code-block:: bash
 
     export ROBOT_PLATFORM="LIBERO"
-    export EVO1_REPO_PATH=$(python -c "import os,evo1; print(os.path.dirname(evo1.__file__))" 2>/dev/null || echo /path/to/Evo-1)
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
+
+``install.sh`` makes the Evo-1 source importable, so nothing else has to be set.
+If you checked the repo out yourself instead, point ``actor.model.evo1.repo_path``
+(or the ``EVO1_REPO_PATH`` environment variable) at its root.
 
 To reproduce the RL result quickly on a single task, restrict training to one
 LIBERO-Spatial task with ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``;
@@ -183,7 +186,6 @@ checkpoint before RL), use the SFT config and launcher:
 
 .. code-block:: bash
 
-    export EVO1_REPO_PATH=/path/to/Evo-1
     bash examples/sft/run_vla_sft.sh libero_sft_evo1
 
 Point ``data.train_data_paths`` at an Evo-1 dataset config YAML and

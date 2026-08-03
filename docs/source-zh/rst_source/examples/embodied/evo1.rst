@@ -164,8 +164,10 @@ SDE 采样与 GRPO 的核心参数。
 .. code-block:: bash
 
     export ROBOT_PLATFORM="LIBERO"
-    export EVO1_REPO_PATH=$(python -c "import os,evo1; print(os.path.dirname(evo1.__file__))" 2>/dev/null || echo /path/to/Evo-1)
     bash examples/embodiment/run_embodiment.sh libero_spatial_grpo_evo1
+
+``install.sh`` 已让 Evo-1 源码可被导入，无需额外设置。若你自行 clone 了该仓库，
+请把 ``actor.model.evo1.repo_path``（或环境变量 ``EVO1_REPO_PATH``）指向仓库根目录。
 
 如需快速复现单任务上的 RL 效果，可用 ``+env.train.task_id_filter=[0] +env.eval.task_id_filter=[0]``
 把训练限制到单个 LIBERO-Spatial 任务；几十个 GRPO step 内 ``env/success_at_end`` 就会从
@@ -178,7 +180,6 @@ SFT 基线稳步上升（见下方结果）。
 
 .. code-block:: bash
 
-    export EVO1_REPO_PATH=/path/to/Evo-1
     bash examples/sft/run_vla_sft.sh libero_sft_evo1
 
 把 ``data.train_data_paths`` 指向 Evo-1 的数据集配置 YAML，``actor.model.model_path``

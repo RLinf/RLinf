@@ -6,8 +6,9 @@
 # FSDPVlaSftWorker.build_dataloader / rlinf/models/embodiment/evo1/sft_builder.py.
 #
 # Launch: bash examples/sft/run_vla_sft.sh libero_sft_evo1
-# Prereq: EVO1_REPO_PATH (or actor.model.evo1.repo_path) -> the Evo-1 repo root;
-#         data.train_data_paths -> an Evo-1 dataset config YAML.
+# Prereq: data.train_data_paths -> an Evo-1 dataset config YAML. install.sh makes
+#         the Evo-1 repo importable; for a manual checkout set
+#         actor.model.evo1.repo_path (or EVO1_REPO_PATH) to its root.
 #
 # For Evo-1's original (DeepSpeed, two-stage) LIBERO training recipe, see the
 # Evo-1 repo README "Training on Your Own Dataset": https://github.com/MINT-SJTU/Evo-1

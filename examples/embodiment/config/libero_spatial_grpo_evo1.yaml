@@ -7,7 +7,7 @@
 #
 # NOTE: Evo-1 recomputes the full InternVL VLM forward per train step; the VLM
 # backward is heavy. Start small (few envs, small micro-batch); consider freezing
-# the VLM for the first runs. Set EVO1_REPO_PATH (or actor.model.evo1.repo_path).
+# the VLM for the first runs.
 
 defaults:
   - env/libero_spatial@env.train

@@ -24,7 +24,8 @@ policy_setup: "libero"
 
 evo1:
   # Evo-1 repo root so 'import dataset.*' resolves (the LeRobot dataset loader
-  # lives in the Evo-1 repo), or set the EVO1_REPO_PATH environment variable.
+  # lives in the Evo-1 repo). install.sh already makes it resolve; set this (or
+  # EVO1_REPO_PATH) only for a manual checkout. A non-existent path is ignored.
   repo_path: "/path/to/Evo-1"
 
   # Model geometry (must match the checkpoint's config.json).

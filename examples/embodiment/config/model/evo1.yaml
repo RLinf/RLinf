@@ -30,7 +30,8 @@ policy_setup: "libero"
 # Evo-1-specific settings.
 evo1:
   # Evo-1 repo root (so 'import scripts.Evo1' / 'import config' resolve).
-  # Alternatively set the EVO1_REPO_PATH environment variable.
+  # install.sh already makes them resolve; set this (or EVO1_REPO_PATH) only for
+  # a manual checkout. A non-existent path is ignored.
   repo_path: "/path/to/Evo-1"
 
   # Model geometry (override the checkpoint's config.json if needed).
