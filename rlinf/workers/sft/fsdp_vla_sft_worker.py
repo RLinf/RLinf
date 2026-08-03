@@ -91,31 +91,12 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if eval_dataset:
             batch_size = self.cfg.actor.get("eval_batch_size", batch_size)
 
-        data_kwargs = getattr(self.cfg.actor.model, "openpi_data", None)
-        if model_type == SupportedModel.OPENPI_PYTORCH:
-            data_kwargs = (
-                dict(OmegaConf.to_container(data_kwargs, resolve=True))
-                if data_kwargs is not None
-                else {}
-            )
-            if "robotwin" in str(self.cfg.actor.model.openpi.config_name).lower():
-                # The official loader accepts task-specific statistics through
-                # ``norm_stats_path``. Preserve the RobotWin YAML contract
-                # instead of falling back to generic RobotWin statistics.
-                data_kwargs.setdefault(
-                    "norm_stats_path",
-                    os.path.join(
-                        str(self.cfg.actor.model.openpi.assets_dir),
-                        str(self.cfg.actor.model.openpi.asset_id),
-                        "norm_stats.json",
-                    ),
-                )
         config = get_openpi_config(
             self.cfg.actor.model.openpi.config_name,
             model_path=self.cfg.actor.model.model_path,
             batch_size=batch_size * self._world_size,
             repo_id=repo_id,
-            data_kwargs=data_kwargs,
+            data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
         )
         if model_type == SupportedModel.OPENPI_PYTORCH:
             config = dataclasses.replace(

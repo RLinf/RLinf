@@ -55,6 +55,11 @@ actor:
       assets_dir: ${actor.model.model_path}
       asset_id: "physical-intelligence/robotwin"
       num_images_in_input: 3
+    # Explicitly select this task's statistics for the official OpenPI loader.
+    # For per-task SFT, set ``openpi.asset_id`` to e.g.
+    # ``physical-intelligence/robotwin/adjust_bottle``.
+    openpi_data:
+      norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
 
   optim:
     lr: 2.5e-5
