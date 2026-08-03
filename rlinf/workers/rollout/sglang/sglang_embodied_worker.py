@@ -56,6 +56,7 @@ class SGLangEmbodiedWorker(Worker):
             getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
         ).lower()
         self.sglang_convert_action = None
+        self.http_client = None
         self.sglang_server_url = None
         self._sglang_server_urls = None
         cfg = self._cfg
@@ -88,7 +89,9 @@ class SGLangEmbodiedWorker(Worker):
     async def init_worker(self):
         convert_action_cls = None
         if self.model_type:
-            from rlinf.models import get_sglang_convert_action_cls
+            from rlinf.models.embodiment.sglang_convert_action import (
+                get_sglang_convert_action_cls,
+            )
 
             convert_action_cls = get_sglang_convert_action_cls(self.model_type)
         if convert_action_cls is None:
@@ -97,9 +100,16 @@ class SGLangEmbodiedWorker(Worker):
                 f"'{self.model_type}'; cannot run the embodied sglang path"
             )
         self._init_sglang_server()
-        self.sglang_convert_action = convert_action_cls(
-            self._cfg, self.sglang_server_url, self._rank
+        from rlinf.utils.http_client import InferenceHTTPClient
+
+        self.http_client = InferenceHTTPClient(self.sglang_server_url)
+        sglang_cfg = self._cfg.rollout.get("sglang", {})
+        self._http_timeout_s = float(
+            sglang_cfg.get("http_timeout_s", sglang_cfg.get("timeout_s", 120.0))
         )
+        self._http_max_retries = int(sglang_cfg.get("http_max_retries", 5))
+        self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
+        self.sglang_convert_action = convert_action_cls(self._cfg, self._rank)
 
     def set_sglang_server_urls(self, urls) -> None:
         """Receive the sglang server URLs the driver launched."""
@@ -153,13 +163,22 @@ class SGLangEmbodiedWorker(Worker):
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        """env_obs -> action chunks [N, num_action_chunks, action_dim]."""
-        if self.sglang_convert_action is None:
-            raise RuntimeError(
-                "no sglang action converter loaded (init_worker not called, or model_type "
-                f"'{self.model_type}' has no registered sglang convert-action)"
-            )
-        return self.sglang_convert_action.infer(env_obs, mode=mode)
+        """env_obs -> action chunks [N, num_action_chunks, action_dim].
+
+        Owns the sglang HTTP round-trip: the converter builds the request
+        payload and parses the response; this worker performs the msgpack POST.
+        """
+        converter = self.sglang_convert_action
+        payload, state = converter.build_request(env_obs, mode=mode)
+        resp = self.http_client.post(
+            converter.action_path,
+            payload,
+            msgpack=True,
+            timeout_s=self._http_timeout_s,
+            max_retries=self._http_max_retries,
+            retry_backoff_s=self._http_retry_backoff_s,
+        )
+        return converter.parse_response(resp, state)
 
     async def evaluate(self, input_channel, output_channel):
         """Channel-based embodied eval loop, driven by EmbodiedEvalRunner."""

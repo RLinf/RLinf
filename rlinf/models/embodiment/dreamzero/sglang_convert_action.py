@@ -23,7 +23,8 @@ rollout worker:
 
 1. convert RLinf env observations to DreamZero modality keys;
 2. run DreamZero dataset transforms and metadata-based normalization;
-3. call the SGLang ``/v1/actions/generations`` action endpoint;
+3. build the request for the SGLang ``/v1/actions/generations`` action endpoint
+   (the HTTP POST itself is performed by ``SGLangEmbodiedWorker``);
 4. invert normalized actions back to environment-scale action chunks.
 
 For a Libero batch of size ``B`` and action horizon ``H``, the main shape flow is
@@ -35,21 +36,13 @@ roughly:
 
 from __future__ import annotations
 
-import json
 import os
-import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
-import requests
 import torch
-from omegaconf import DictConfig, open_dict
-from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
-    pack_msgpack,
-    unpack_msgpack,
-)
+from omegaconf import DictConfig
 from tianshou.data import Batch
 
 from rlinf.data.datasets.dreamzero.data_transforms import (
@@ -61,177 +54,8 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     normalize_instruction_text,
     rollout_obs_layout_for_embodiment,
 )
-from rlinf.utils.logging import get_logger
 
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
-
-
-@dataclass
-class DreamZeroActionRequest:
-    """Request contract used by the DreamZero SGLang action endpoint."""
-
-    normalized_input: dict[str, Any]
-    """DreamZero-normalized observation sent as ``input.observation``."""
-
-    session_ids: list[str]
-    """Logical environment slots for the server-side cache."""
-
-    reset_mask: list[bool]
-    """Per-session cache invalidation flags."""
-
-    prompt_texts: list[str]
-    """Positive prompts sent as ``input.prompt``."""
-
-    negative_prompt_texts: list[str]
-    """Negative prompts sent as ``parameters.negative_prompts``."""
-
-    seed: int
-    """Request seed forwarded to the SGLang action endpoint."""
-
-
-@dataclass
-class DreamZeroActionResult:
-    """Normalized action tensor returned by the SGLang action endpoint."""
-
-    normalized_action: Any
-    """Action values in DreamZero normalized action space."""
-
-
-class HttpDreamZeroActionClient:
-    """Small synchronous client for the SGLang action API."""
-
-    def __init__(
-        self,
-        server_url: str,
-        *,
-        timeout_s: float,
-        max_retries: int,
-        retry_backoff_s: float,
-        payload_format: str,
-        model: str | None = None,
-    ):
-        self._server_url = server_url.rstrip("/")
-        self._timeout_s = timeout_s
-        self._max_retries = max(0, int(max_retries))
-        self._retry_backoff_s = max(0.0, float(retry_backoff_s))
-        self._payload_format = str(payload_format).lower()
-        if self._payload_format != "msgpack":
-            raise ValueError(
-                "DreamZero action HTTP payload_format must be 'msgpack', "
-                f"got {payload_format!r}."
-            )
-        self._model = model
-
-    def infer(self, request: DreamZeroActionRequest) -> DreamZeroActionResult:
-        """Send one batched action request and parse the normalized action.
-
-        The server response is an action-generation envelope whose values are
-        still in DreamZero normalized/padded action space.  Environment scaling
-        is handled locally by ``_DreamZeroActionAdapter.unapply``.
-        """
-
-        payload = {
-            "model": self._model,
-            "input": {
-                "prompt": request.prompt_texts,
-                "observation": request.normalized_input,
-            },
-            "parameters": {
-                "session_ids": request.session_ids,
-                "reset_mask": request.reset_mask,
-                "negative_prompts": request.negative_prompt_texts,
-                "seed": request.seed,
-            },
-            "runtime": {
-                "response_format": "envelope",
-                "output_format": "numpy",
-            },
-        }
-        body, content_type = self._encode_payload(payload)
-        response_body = self._post_action_request(body, content_type)
-        try:
-            action_data = response_body["data"][0]["action"]["values"]
-        except (KeyError, IndexError) as exc:
-            raise RuntimeError(
-                "DreamZero SGLang action HTTP response missing "
-                f"data[0].action.values: {response_body}"
-            ) from exc
-        return DreamZeroActionResult(
-            normalized_action=np.asarray(action_data, dtype=np.float32)
-        )
-
-    def _encode_payload(self, payload: dict[str, Any]) -> tuple[bytes, str]:
-        return (
-            pack_msgpack(self._to_msgpackable(payload)),
-            "application/msgpack",
-        )
-
-    def _post_action_request(self, body: bytes, content_type: str) -> dict[str, Any]:
-        retry_statuses = {500, 502, 503, 504}
-        last_error: Exception | None = None
-        url = f"{self._server_url}/v1/actions/generations"
-        for attempt in range(self._max_retries + 1):
-            try:
-                resp = requests.post(
-                    url,
-                    data=body,
-                    headers={"Content-Type": content_type, "Accept": content_type},
-                    timeout=self._timeout_s,
-                    proxies={"http": None, "https": None},
-                )
-            except requests.exceptions.RequestException as exc:
-                if attempt < self._max_retries:
-                    last_error = exc
-                    self._sleep_before_retry(attempt)
-                    continue
-                raise RuntimeError(
-                    "DreamZero SGLang action HTTP request failed after retries: "
-                    f"attempts={self._max_retries + 1}, body_bytes={len(body)}, "
-                    f"last_error={last_error or exc}"
-                ) from exc
-
-            if resp.status_code in retry_statuses and attempt < self._max_retries:
-                last_error = RuntimeError(
-                    f"status={resp.status_code}, body={resp.text[:1000]}"
-                )
-                self._sleep_before_retry(attempt)
-                continue
-            if not resp.ok:
-                raise RuntimeError(
-                    "DreamZero SGLang action HTTP request failed: "
-                    f"status={resp.status_code}, body_bytes={len(body)}, "
-                    f"body={resp.text}"
-                )
-            if "msgpack" not in resp.headers.get("content-type", "").lower():
-                raise RuntimeError(
-                    "DreamZero SGLang action HTTP response must be msgpack, "
-                    f"got content-type={resp.headers.get('content-type')!r}"
-                )
-            return unpack_msgpack(resp.content)
-        raise RuntimeError(
-            "DreamZero SGLang action HTTP request failed after retries: "
-            f"attempts={self._max_retries + 1}, body_bytes={len(body)}, "
-            f"last_error={last_error}"
-        )
-
-    def _sleep_before_retry(self, attempt: int) -> None:
-        if self._retry_backoff_s > 0:
-            time.sleep(self._retry_backoff_s * float(attempt + 1))
-
-    @staticmethod
-    def _to_msgpackable(value: Any) -> Any:
-        if isinstance(value, Batch):
-            value = value.__getstate__()
-        if torch.is_tensor(value):
-            value = value.detach().cpu().numpy()
-        if isinstance(value, Mapping):
-            return {
-                str(key): HttpDreamZeroActionClient._to_msgpackable(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            return [HttpDreamZeroActionClient._to_msgpackable(item) for item in value]
-        return value
 
 
 class _DreamZeroActionAdapter:
@@ -293,8 +117,6 @@ class _DreamZeroActionAdapter:
         """
 
         normalized_input = self._apply_server_transforms(obs)
-        if isinstance(normalized_input, Batch):
-            normalized_input = normalized_input.__getstate__()
         return dict(normalized_input)
 
     def _apply_server_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
@@ -352,7 +174,7 @@ class _DreamZeroActionAdapter:
                     ) from e
         return batch
 
-    def unapply(self, batch: Batch, obs: dict[str, Any] | None = None, **kwargs):
+    def unapply(self, batch: Batch, obs: dict[str, Any] | None = None):
         """Invert normalized actions back to environment-scale action tensors.
 
         ``batch.normalized_action`` comes from the SGLang server and has the
@@ -426,270 +248,131 @@ class _DreamZeroActionAdapter:
 
 
 class DreamZeroSGLangConvertAction:
-    """DreamZero eval policy for the SGLang embodied rollout worker.
+    """DreamZero env-obs -> action-chunks converter over a launched sglang serve.
 
-    ``SGLangEmbodiedWorker`` owns the server subprocess and channel loop.  This
-    policy owns the DreamZero-specific action behavior: pipeline config
-    serialization, observation normalization, action HTTP requests and action
-    unnormalization.
+    Owns only the DreamZero action logic: :meth:`build_request` turns an env
+    observation into the msgpack action payload, and :meth:`parse_response`
+    turns the server response into action chunks. The HTTP round-trip itself is
+    performed by :class:`SGLangEmbodiedWorker`, which posts ``action_path``.
     """
 
-    @staticmethod
-    def _write_pipeline_config(
-        *,
-        sglang_cfg: Any,
-        model_cfg: Any,
-        tmpdir: str | None,
-        rank: int,
-        eval_batch_size: int,
-    ) -> str:
-        """Write the SGLang ``DreamZeroPipelineConfig`` override file.
+    action_path = "/v1/actions/generations"
 
-        ``PipelineConfig.from_kwargs`` loads this file from
-        ``--pipeline-config-path`` inside the server process.  It is the bridge
-        from RLinf/Hydra fields (action horizon, image size, CFG scale,
-        compile flag) to
-        ``server_args.pipeline_config`` used by the DreamZero server stages.
-        """
-
-        if tmpdir is None:
-            raise ValueError("DreamZero sglang serve args require a temp directory")
-        action_head_cfg = getattr(
-            getattr(model_cfg, "action_head_cfg", None), "config", {}
-        )
-        if action_head_cfg is None:
-            action_head_cfg = {}
-        cfg = {
-            "dreamzero_compile_components": bool(
-                getattr(sglang_cfg, "compile_components", True)
-            ),
-            "dreamzero_max_sessions": int(
-                getattr(sglang_cfg, "max_sessions", eval_batch_size) or eval_batch_size
-            ),
-            "cfg_scale": float(getattr(sglang_cfg, "cfg_scale", 5.0)),
-            "action_horizon": int(getattr(model_cfg, "action_horizon")),
-            "num_inference_steps": int(getattr(sglang_cfg, "num_inference_steps", 16)),
-            "dynamic_cache_schedule": bool(
-                getattr(sglang_cfg, "dynamic_cache_schedule", False)
-            ),
-            "num_frames": int(getattr(action_head_cfg, "num_frames", 33)),
-            "synthetic_height": int(getattr(model_cfg, "target_video_height")),
-            "synthetic_width": int(getattr(model_cfg, "target_video_width")),
-            "tile_size_height": int(getattr(action_head_cfg, "tile_size_height", 34)),
-            "tile_size_width": int(getattr(action_head_cfg, "tile_size_width", 34)),
-            "tile_stride_height": int(
-                getattr(action_head_cfg, "tile_stride_height", 18)
-            ),
-            "tile_stride_width": int(getattr(action_head_cfg, "tile_stride_width", 16)),
-            "tiled": bool(getattr(action_head_cfg, "tiled", False)),
-        }
-        if "dit_step_mask" in sglang_cfg:
-            mask = sglang_cfg.get("dit_step_mask")
-            cfg["dit_step_mask"] = None if mask is None else list(mask)
-        path = os.path.join(tmpdir, f"dreamzero_pipeline_rank{rank}.json")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f)
-        return path
-
-    def __init__(self, cfg: Any, server_url: str | None, rank: int):
+    def __init__(self, cfg: Any, rank: int):
         self.cfg_rollout = cfg.rollout
         self.model_cfg = cfg.rollout.model
         self.rank = rank
-        self.logger = get_logger()
-        if server_url is None:
-            raise ValueError(
-                "DreamZeroSGLangConvertAction requires a local sglang server URL"
-            )
-        rollout_model_config = self._rollout_model_config()
-        self.action_adapter = _DreamZeroActionAdapter(rollout_model_config)
+        self.adapter = _DreamZeroActionAdapter(self.model_cfg.copy())
         sglang_cfg = self.cfg_rollout.get("sglang", {})
-        self.action_client = HttpDreamZeroActionClient(
-            server_url,
-            timeout_s=float(
-                sglang_cfg.get("http_timeout_s", sglang_cfg.get("timeout_s", 120.0))
-            ),
-            max_retries=int(sglang_cfg.get("http_max_retries", 5)),
-            retry_backoff_s=float(sglang_cfg.get("http_retry_backoff_s", 1.0)),
-            payload_format=sglang_cfg.get("http_payload_format", "msgpack"),
-            model=sglang_cfg.get("model", str(rollout_model_config.model_path)),
-        )
-        self._eval_predict_calls = 0
-        self._debug_sessions = bool(sglang_cfg.get("debug_sessions", False))
-        self._debug_batch_print = bool(sglang_cfg.get("debug_batch", False)) or bool(
-            int(os.environ.get("DREAMZERO_SGLANG_WORKER_DEBUG_BATCH", "0") or 0)
-        )
+        self._model = sglang_cfg.get("model", str(self.model_cfg.model_path))
         self._seed = int(sglang_cfg.get("seed", 1140))
 
-    def _rollout_model_config(self) -> DictConfig:
-        model_cfg = self.model_cfg.copy()
-        with open_dict(model_cfg):
-            model_cfg.precision = self.cfg_rollout.model.precision
-            model_cfg.model_path = self.cfg_rollout.model.model_path
-        return model_cfg
-
-    def infer(
+    def build_request(
         self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
-    ) -> tuple[torch.Tensor, dict]:
-        """Run one eval rollout action request.
+    ) -> tuple[dict, dict]:
+        """env_obs -> (msgpack action payload, state for :meth:`parse_response`).
 
-        The returned action tensor has shape ``[B, num_action_chunks,
-        action_dim]``.  The info dict mirrors the HF embodied policy interface
-        with placeholder logprobs/values, because this SGLang eval path does not
-        compute policy likelihoods.
+        The returned state (converted observation) is handed back to
+        :meth:`parse_response` so action unnormalization can use it. The worker
+        performs the HTTP POST in between.
         """
-
         if mode != "eval":
             raise NotImplementedError(
-                "DreamZero sglang action converter currently supports eval only."
+                "DreamZero sglang action converter supports eval only."
             )
-        rollout_env_obs, policy_context = self._split_policy_context(env_obs)
-        converted_obs = self.action_adapter.observation_convert(rollout_env_obs)
-        normalized_input = self.action_adapter.normalize_obs(converted_obs)
-        actions = self._run_batch_request(
-            normalized_input, converted_obs, policy_context
-        )
-        if self._debug_sessions:
-            self.logger.info(
-                "DreamZero sglang session rank=%s calls=%s batch_size=%s",
-                self.rank,
-                self._eval_predict_calls,
-                self._infer_batch_size(normalized_input),
-            )
-        actions_t = torch.as_tensor(actions, dtype=torch.float32)
-        flat = actions_t.reshape(actions_t.shape[0], -1)
-        result = {
-            "prev_logprobs": torch.zeros_like(flat, dtype=torch.float32),
-            "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
-            "forward_inputs": {"action": flat.cpu()},
-        }
-        return actions_t, result
+        rollout_obs, context = self._split_context(env_obs)
+        converted = self.adapter.observation_convert(rollout_obs)
+        normalized = self.adapter.normalize_obs(converted)
+        return self._build_payload(normalized, context), converted
 
-    def _split_policy_context(self, env_obs: Any) -> tuple[Any, dict[str, Any]]:
-        """Separate RLinf routing metadata from the env observation payload."""
-
+    @staticmethod
+    def _split_context(env_obs: Any) -> tuple[Any, dict[str, Any]]:
+        """Separate RLinf routing metadata (e.g. stage id) from the observation."""
         if not isinstance(env_obs, Mapping):
             return env_obs, {}
-        context = {
-            key: env_obs[key] for key in _RLINF_POLICY_CONTEXT_KEYS if key in env_obs
-        }
+        context = {k: env_obs[k] for k in _RLINF_POLICY_CONTEXT_KEYS if k in env_obs}
         if not context:
             return env_obs, {}
         cleaned = {
-            key: value
-            for key, value in env_obs.items()
-            if key not in _RLINF_POLICY_CONTEXT_KEYS
+            k: v for k, v in env_obs.items() if k not in _RLINF_POLICY_CONTEXT_KEYS
         }
         return cleaned, context
 
-    def _session_ids_for_batch(
-        self, batch_size: int, context: dict[str, Any]
-    ) -> list[str]:
-        """Create stable logical session ids for server-side DreamZero caches."""
-
-        stage_id = self._stage_id_from_context(context)
-        session_ids = [
-            f"rlinf-eval-r{self.rank}-stage{stage_id}-slot{slot_id}"
-            for slot_id in range(batch_size)
-        ]
-        return session_ids
-
-    @staticmethod
-    def _stage_id_from_context(context: dict[str, Any]) -> int:
-        stage_id = context.get("_rlinf_stage_id", 0)
-        if torch.is_tensor(stage_id):
-            stage_id = stage_id.item()
-        if isinstance(stage_id, np.ndarray):
-            stage_id = stage_id.item()
-        return int(stage_id)
-
-    def _build_action_request(
-        self,
-        normalized_input: dict[str, Any],
-        *,
-        session_ids: list[str],
-        reset_mask: list[bool],
-    ) -> DreamZeroActionRequest:
-        """Assemble the HTTP action request from normalized model inputs."""
-
-        request_input = dict(normalized_input)
-        prompt_texts = request_input.pop("_dreamzero_prompt_texts", None)
-        negative_prompt_texts = request_input.pop(
-            "_dreamzero_negative_prompt_texts", None
-        )
+    def _build_payload(
+        self, normalized: dict[str, Any], context: dict[str, Any]
+    ) -> dict:
+        """Assemble the DreamZero action-endpoint request payload."""
+        observation = dict(normalized)
+        prompts = observation.pop("_dreamzero_prompt_texts", None)
+        neg_prompts = observation.pop("_dreamzero_negative_prompt_texts", None)
         for key in (
             "text",
             "text_attention_mask",
             "text_negative",
             "text_attention_mask_negative",
         ):
-            request_input.pop(key, None)
-        batch_size = len(session_ids)
-        return DreamZeroActionRequest(
-            normalized_input=request_input,
-            session_ids=session_ids,
-            reset_mask=reset_mask,
-            prompt_texts=self._batched_prompt_texts(
-                prompt_texts,
-                batch_size,
-                "prompt",
-            ),
-            negative_prompt_texts=self._batched_prompt_texts(
-                negative_prompt_texts,
-                batch_size,
-                "negative_prompt",
-                default="",
-            ),
-            seed=self._seed,
-        )
+            observation.pop(key, None)
 
-    @staticmethod
-    def _batched_prompt_texts(
-        value: Any,
-        batch_size: int,
-        field_name: str,
-        default: str | None = None,
-    ) -> list[str]:
-        if value is None:
-            if default is None:
-                raise ValueError(f"DreamZero {field_name} is required")
-            return [default] * batch_size
-        if isinstance(value, str):
-            return [value] * batch_size
-        if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-            raise TypeError(
-                f"DreamZero {field_name} must be a string or list of strings"
-            )
-        values = list(value)
-        if not all(isinstance(item, str) for item in values):
-            raise TypeError(
-                f"DreamZero {field_name} must be a string or list of strings"
-            )
-        if len(values) != batch_size:
-            raise ValueError(
-                f"DreamZero {field_name} batch size mismatch: "
-                f"got {len(values)}, expected {batch_size}"
-            )
-        return values
+        batch_size = self._infer_batch_size(observation)
+        stage_id = self._stage_id(context)
+        session_ids = [
+            f"rlinf-eval-r{self.rank}-stage{stage_id}-slot{i}"
+            for i in range(batch_size)
+        ]
+        return {
+            "model": self._model,
+            "input": {
+                "prompt": self._as_texts(prompts, batch_size, "prompt"),
+                "observation": observation,
+            },
+            "parameters": {
+                "session_ids": session_ids,
+                "reset_mask": [False] * batch_size,
+                "negative_prompts": self._as_texts(
+                    neg_prompts, batch_size, "negative_prompt", default=""
+                ),
+                "seed": self._seed,
+            },
+            "runtime": {"response_format": "envelope", "output_format": "numpy"},
+        }
 
-    def _extract_action_output(
-        self,
-        normalized_action: np.ndarray | torch.Tensor,
-        converted_obs: dict[str, Any],
-    ) -> np.ndarray:
-        """Convert server normalized action output into env action chunks."""
-
-        normalized_action_t = torch.as_tensor(normalized_action, dtype=torch.float32)
-        action_batch = self.action_adapter.unapply(
-            Batch(normalized_action=normalized_action_t.detach().cpu().float()),
+    def parse_response(
+        self, resp: dict, converted_obs: dict[str, Any]
+    ) -> tuple[torch.Tensor, dict]:
+        """Server response -> action chunks ``[B, H, action_dim]`` and info dict."""
+        try:
+            values = resp["data"][0]["action"]["values"]
+        except (KeyError, IndexError) as exc:
+            raise RuntimeError(
+                f"DreamZero action response missing data[0].action.values: {resp}"
+            ) from exc
+        action_batch = self.adapter.unapply(
+            Batch(normalized_action=torch.as_tensor(values, dtype=torch.float32)),
             obs=converted_obs,
         )
-        actions = self.action_adapter.actions_from_unapply(action_batch.act)
-        return actions.astype(np.float32, copy=False)
+        actions = torch.as_tensor(
+            self.adapter.actions_from_unapply(action_batch.act).astype(
+                np.float32, copy=False
+            ),
+            dtype=torch.float32,
+        )
+        flat = actions.reshape(actions.shape[0], -1)
+        info = {
+            "prev_logprobs": torch.zeros_like(flat),
+            "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
+            "forward_inputs": {"action": flat.cpu()},
+        }
+        return actions, info
+
+    @staticmethod
+    def _stage_id(context: dict[str, Any]) -> int:
+        stage_id = context.get("_rlinf_stage_id", 0)
+        if torch.is_tensor(stage_id) or isinstance(stage_id, np.ndarray):
+            stage_id = stage_id.item()
+        return int(stage_id)
 
     @staticmethod
     def _infer_batch_size(value: Any) -> int:
-        """Infer batch size from the first tensor/array/list in a nested input."""
-
         if torch.is_tensor(value) or isinstance(value, np.ndarray):
             return int(value.shape[0])
         if isinstance(value, Mapping):
@@ -702,37 +385,19 @@ class DreamZeroSGLangConvertAction:
             return len(value)
         raise TypeError("Unable to infer DreamZero rollout batch size.")
 
-    def _run_batch_request(
-        self,
-        normalized_input: dict[str, Any],
-        converted_obs: dict[str, Any],
-        policy_context: dict[str, Any],
-    ) -> np.ndarray:
-        """Build session metadata, call the server and postprocess the response.
-
-        RLinf supplies stable logical session ids and keeps a client-side reset
-        mask as the cache invalidation hook.  Normal eval requests leave it all
-        ``False``; if RLinf later needs to explicitly clear a server session, the
-        corresponding row can be set to ``True`` while model/cache lifecycle
-        resets remain server-owned.
-        """
-
-        batch_size = self._infer_batch_size(normalized_input)
-        session_ids = self._session_ids_for_batch(batch_size, policy_context)
-        reset_mask = [False] * batch_size
-        if self._debug_batch_print:
-            self.logger.info(
-                f"[DreamZeroSGLangConvertAction rank={self.rank} "
-                f"call={self._eval_predict_calls}] batch_size={batch_size} "
-                f"reset_count={sum(reset_mask)} session_ids={session_ids[:4]}",
+    @staticmethod
+    def _as_texts(
+        value: Any, batch_size: int, name: str, default: str | None = None
+    ) -> list[str]:
+        if value is None:
+            if default is None:
+                raise ValueError(f"DreamZero {name} is required")
+            return [default] * batch_size
+        if isinstance(value, str):
+            return [value] * batch_size
+        values = list(value)
+        if len(values) != batch_size or not all(isinstance(v, str) for v in values):
+            raise ValueError(
+                f"DreamZero {name} must be {batch_size} strings, got {values!r}"
             )
-        action_request = self._build_action_request(
-            normalized_input,
-            session_ids=session_ids,
-            reset_mask=reset_mask,
-        )
-        action_result = self.action_client.infer(action_request)
-        self._eval_predict_calls += 1
-        return self._extract_action_output(
-            action_result.normalized_action, converted_obs
-        )
+        return values
