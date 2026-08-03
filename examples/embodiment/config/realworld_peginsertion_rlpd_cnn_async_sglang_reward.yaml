@@ -142,7 +142,6 @@ env:
       is_dummy: False
       use_dense_reward: False
       reward_scale: 1.0
-      success_bonus: 20.0
       max_num_steps: 50
       target_ee_pose:  TARGET_EE_POSE # Replace with your target end-effector pose
       camera_names:
@@ -211,7 +210,7 @@ actor:
 
 reward:
   use_reward_model: true
-  worker_type: api
+  worker_type: model
   group_name: "RewardGroup"
 
   standalone_realworld: False
@@ -233,7 +232,7 @@ reward:
     model_path: "/path/to/Qwen3-VL-4B-Instruct"
     model_type: "history_vlm"
     lora_path: "/path/to/qwen3-vl-lora-checkpoint"
-    gt_success_bonus: 0.0
+    gt_success_bonus: 20.0
     precision: "bf16"
 
     input_builder_name: qwentrend_input_builder
