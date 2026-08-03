@@ -41,7 +41,7 @@ RLinf 基础环境请参考 :doc:`RLinf Installation </rst_source/start/installa
 
 .. code-block:: bash
 
-   pip install "agentlightning==0.3.0" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator"
+   pip install "agentlightning==0.3.0" "litellm<1.95" "autogen-agentchat" "autogen-ext[openai]" "mcp>=1.10.0" "mcp-server-calculator"
 
 数据准备
 ----------------------------------------

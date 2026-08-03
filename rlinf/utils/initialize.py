@@ -14,6 +14,7 @@
 
 import os
 import random
+import sys
 import time
 import warnings
 from datetime import timedelta
@@ -30,7 +31,6 @@ from megatron.core.rerun_state_machine import (
     initialize_rerun_state_machine,
 )
 from megatron.core.utils import get_te_version, is_te_min_version
-from megatron.legacy import fused_kernels
 from megatron.training.global_vars import _set_timers, set_args
 from omegaconf import open_dict
 from omegaconf.dictconfig import DictConfig
@@ -39,9 +39,72 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import torch_dtype_from_precision
 from rlinf.scheduler import Worker
 
+try:  # Megatron-LM < 0.17
+    from megatron.legacy import fused_kernels
+except ImportError:  # the legacy JIT fused kernels were dropped in 0.17
+    fused_kernels = None
+
+
+# String-valued args are not adopted wholesale (see megatron_arg_defaults), but
+# these are read unconditionally on the path RLinf takes and then forwarded
+# verbatim into DistributedDataParallelConfig, so upstream's default is the right
+# value. Listed by name only, so the value stays in sync with Megatron.
+MEGATRON_STRING_ARGS_TO_ADOPT = frozenset(
+    {
+        "megatron_fsdp_main_params_dtype",
+        "megatron_fsdp_main_grads_dtype",
+        "megatron_fsdp_grad_comm_dtype",
+    }
+)
+
+
+def megatron_arg_defaults() -> dict:
+    """Megatron's own defaults for args RLinf's YAML does not define.
+
+    Megatron reads args off the namespace unconditionally and RLinf only fills in
+    what its YAML has, so every arg a new release starts reading raises
+    ``Missing key`` from omegaconf -- mcore 0.17 alone added ``use_megatron_fsdp``
+    and ``ddp_reduce_scatter_with_fp32_accumulation``.
+
+    String defaults are deliberately skipped. ``parse_args`` runs before
+    ``validate_args``, which rewrites the dtype-valued args from names into torch
+    dtypes, so adopting them raw breaks things that adopting nothing did not:
+    ``main_grads_dtype`` defaults to ``"fp32"`` and ``OptimizerConfig`` asserts on
+    it because it compares against ``torch.float32``. Flags, counts and list
+    defaults carry no such normalisation and are taken as-is. A release that
+    starts requiring a new *string* arg still fails loudly, which is the correct
+    outcome -- it needs a real value in the YAML, not a guess.
+
+    Returns:
+        Upstream defaults minus the string-valued ones. Empty if Megatron's parser
+        cannot be run, which leaves the previous behaviour.
+    """
+    try:
+        from megatron.training.arguments import parse_args
+    except ImportError:
+        return {}
+
+    saved_argv = sys.argv
+    sys.argv = [saved_argv[0] if saved_argv else "rlinf"]
+    try:
+        parsed = vars(parse_args(ignore_unknown_args=True))
+    except BaseException:  # noqa: BLE001 - argparse may SystemExit or validate
+        return {}
+    finally:
+        sys.argv = saved_argv
+
+    return {
+        key: value
+        for key, value in parsed.items()
+        if value is None
+        or isinstance(value, (bool, int, float, list))
+        or key in MEGATRON_STRING_ARGS_TO_ADOPT
+    }
+
 
 def extract_selected_fields(cfg: DictConfig) -> DictConfig:
-    result = {}
+    # Upstream defaults first, so RLinf's own values below always win.
+    result = megatron_arg_defaults()
 
     keys_to_extract = [
         ("model", ""),
@@ -161,6 +224,9 @@ def _compile_dependencies(cfg: DictConfig):
     # ==================
     # Load fused kernels
     # ==================
+
+    if fused_kernels is None:
+        return
 
     # Custom kernel constraints check.
     seq_len = cfg.model.seq_length

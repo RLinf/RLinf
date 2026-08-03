@@ -41,14 +41,26 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
+    if cfg.runner.get("rtc", {}).get("enabled", False):
+        from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
+        from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
+            RTCMultiStepRolloutWorker,
+        )
+
+        env_worker_cls = RTCEnvWorker
+        rollout_worker_cls = RTCMultiStepRolloutWorker
+    else:
+        env_worker_cls = EnvWorker
+        rollout_worker_cls = MultiStepRolloutWorker
+
     # Create rollout worker group
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = MultiStepRolloutWorker.create_group(cfg).launch(
+    rollout_group = rollout_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
     )
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
