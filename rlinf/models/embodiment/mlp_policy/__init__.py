@@ -17,34 +17,13 @@ from omegaconf import DictConfig
 
 
 def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
-    from rlinf.models.embodiment.mlp_policy.expo_ft_mlp_policy import ExpoFTMLPPolicy
     from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
     from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
     from rlinf.models.embodiment.mlp_policy.rlt_mlp_policy import RLTMLPPolicy
     from rlinf.models.embodiment.mlp_policy.rlt_td3_mlp_policy import RLTTD3MLPPolicy
 
     iql_config = cfg.get("iql_config", None)
-    if cfg.model_type == "expo_ft_mlp_policy":
-        model = ExpoFTMLPPolicy(
-            z_dim=cfg.z_dim,
-            proprio_dim=cfg.proprio_dim,
-            action_dim=cfg.action_dim,
-            num_action_chunks=cfg.num_action_chunks,
-            ref_num_action_chunks=cfg.get(
-                "ref_num_action_chunks", cfg.num_action_chunks
-            ),
-            add_q_head=cfg.get("add_q_head", True),
-            q_head_type=cfg.get("q_head_type", "default"),
-            fixed_std=cfg.get("fixed_std", 1.0),
-            num_q_heads=cfg.get("num_q_heads", 10),
-            num_base_candidates=cfg.get("num_base_candidates", 8),
-            num_edit_samples=cfg.get("num_edit_samples", 8),
-            num_min_qs=cfg.get("num_min_qs", 2),
-            edit_scale=cfg.get("edit_scale", 0.2),
-            residual_logstd_min=cfg.get("residual_logstd_min", -20.0),
-            residual_logstd_max=cfg.get("residual_logstd_max", 2.0),
-        )
-    elif cfg.model_type == "rlt_mlp_policy":
+    if cfg.model_type == "rlt_mlp_policy":
         model = RLTMLPPolicy(
             z_dim=cfg.z_dim,
             proprio_dim=cfg.proprio_dim,
