@@ -351,6 +351,33 @@ After fine-tuning, the system generates ``metadata.json`` and other statistical 
 - The current RL setup uses PPO with ``algorithm.loss_type: actor_critic``, so ``actor.model.add_value_head`` must be ``True`` during training.
 - The repository's validated LIBERO example uses ``num_action_chunks: 16`` and ``denoising_steps: 4``.
 
+Optional N1.5 Frozen-Backbone Reuse
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GR00T-N1.5 can reuse the frozen backbone output produced during rollout instead
+of recomputing it during PPO training. The default remains the existing
+trajectory path. Enable the optimization explicitly:
+
+.. code:: yaml
+
+   actor:
+      model:
+         rollout_backbone_feature_transport: borrowed_ipc_pinned
+   rollout:
+      pinned_feature_ipc_batch_blocks: 1
+      pinned_feature_ipc_timeout_seconds: 300.0
+      pinned_feature_verify_trajectory: False
+
+The current implementation requires a frozen GR00T-N1.5 backbone in eval mode,
+equal rollout and actor world sizes with matching ranks on the same CUDA device,
+``pipeline_stage_num: 1``, and one Actor split per Env worker. Rollout retains
+each CUDA feature batch until Actor copies
+it into the pinned CPU cache and acknowledges the lease. Set
+``pinned_feature_verify_trajectory: True`` only for parity debugging because it
+also carries the feature payload in the trajectory.
+Cross-GPU and cross-host rank pairs are unsupported; this path does not fall
+back to NCCL or Gloo copies.
+
 ---------------
 
 Run It

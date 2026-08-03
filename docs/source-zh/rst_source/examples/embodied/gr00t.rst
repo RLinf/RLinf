@@ -347,6 +347,32 @@ RLinf 框架针对GR00T-N1.6采用了高度解耦的两阶段训练架构：
 - 当前 RL 设置使用 PPO 且 ``algorithm.loss_type: actor_critic``，因此训练时必须保证 ``actor.model.add_value_head`` 为 ``True``。
 - 当前仓库中经过验证的 LIBERO 示例使用 ``num_action_chunks: 16`` 和 ``denoising_steps: 4``。
 
+可选的 N1.5 冻结 Backbone 复用
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GR00T-N1.5 可以直接复用 rollout 阶段生成的冻结 backbone 输出，避免 PPO
+训练阶段重复计算。默认仍使用原有 trajectory 通路，需要显式启用：
+
+.. code:: yaml
+
+   actor:
+      model:
+         rollout_backbone_feature_transport: borrowed_ipc_pinned
+   rollout:
+      pinned_feature_ipc_batch_blocks: 1
+      pinned_feature_ipc_timeout_seconds: 300.0
+      pinned_feature_verify_trajectory: False
+
+当前实现要求 GR00T-N1.5 backbone 冻结且处于 eval 模式、rollout 与 actor
+world size 相同且同 rank 位于同一 CUDA device、``pipeline_stage_num: 1``，
+并且每个 Env worker 只对应一个
+Actor split。Rollout
+会保留每批 CUDA feature，直到 Actor 将其复制到 pinned CPU cache 并确认
+lease。``pinned_feature_verify_trajectory: True`` 仅用于一致性调试，因为它
+还会在 trajectory 中携带一份 feature payload。
+跨 GPU 或跨主机的 rank pair 不受支持；该通路不会回退到 NCCL 或 Gloo
+复制。
+
 ---------------
 
 运行

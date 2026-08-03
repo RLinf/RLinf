@@ -112,6 +112,10 @@ rollout:
   backend: "huggingface"
   enable_offload: True
   pipeline_stage_num: 1
+  # Optional GR00T-N1.5 optimization. Keep null for the default trajectory path.
+  pinned_feature_ipc_batch_blocks: 1
+  pinned_feature_ipc_timeout_seconds: 300.0
+  pinned_feature_verify_trajectory: False
 
   model:
     model_path: "/path/to/RLinf-Gr00t-SFT-Stack-cube" # https://huggingface.co/RLinf/RLinf-Gr00t-SFT-Stack-cube
@@ -132,6 +136,7 @@ actor:
     embodiment_tag: "isaaclab_franka"
     obs_converter_type: "isaaclab_stack_cube"
     num_action_chunks: 16
+    rollout_backbone_feature_transport: null
 
   optim:
     lr: 1.0e-5
