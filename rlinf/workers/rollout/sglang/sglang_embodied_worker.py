@@ -55,7 +55,7 @@ class SGLangEmbodiedWorker(Worker):
         self.model_type = str(
             getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
         ).lower()
-        self.sglang_convert_action = None
+        self.sglang_adapter = None
         self.http_client = None
         self.sglang_server_url = None
         self._sglang_server_urls = None
@@ -87,16 +87,16 @@ class SGLangEmbodiedWorker(Worker):
         self.collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
 
     async def init_worker(self):
-        convert_action_cls = None
+        adapter_cls = None
         if self.model_type:
-            from rlinf.models.embodiment.sglang_convert_action import (
-                get_sglang_convert_action_cls,
+            from rlinf.models.embodiment.sglang_adapter import (
+                get_sglang_adapter_cls,
             )
 
-            convert_action_cls = get_sglang_convert_action_cls(self.model_type)
-        if convert_action_cls is None:
+            adapter_cls = get_sglang_adapter_cls(self.model_type)
+        if adapter_cls is None:
             raise RuntimeError(
-                f"no sglang action converter registered for model_type "
+                f"no sglang adapter registered for model_type "
                 f"'{self.model_type}'; cannot run the embodied sglang path"
             )
         self._init_sglang_server()
@@ -109,7 +109,7 @@ class SGLangEmbodiedWorker(Worker):
         )
         self._http_max_retries = int(sglang_cfg.get("http_max_retries", 5))
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
-        self.sglang_convert_action = convert_action_cls(self._cfg, self._rank)
+        self.sglang_adapter = adapter_cls(self._cfg, self._rank)
 
     def set_sglang_server_urls(self, urls) -> None:
         """Receive the sglang server URLs the driver launched."""
@@ -165,20 +165,20 @@ class SGLangEmbodiedWorker(Worker):
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         """env_obs -> action chunks [N, num_action_chunks, action_dim].
 
-        Owns the sglang HTTP round-trip: the converter builds the request
+        Owns the sglang HTTP round-trip: the adapter builds the request
         payload and parses the response; this worker performs the msgpack POST.
         """
-        converter = self.sglang_convert_action
-        payload, state = converter.build_request(env_obs, mode=mode)
+        adapter = self.sglang_adapter
+        payload, state = adapter.build_request(env_obs, mode=mode)
         resp = self.http_client.post(
-            converter.action_path,
+            adapter.action_path,
             payload,
             msgpack=True,
             timeout_s=self._http_timeout_s,
             max_retries=self._http_max_retries,
             retry_backoff_s=self._http_retry_backoff_s,
         )
-        return converter.parse_response(resp, state)
+        return adapter.parse_response(resp, state)
 
     async def evaluate(self, input_channel, output_channel):
         """Channel-based embodied eval loop, driven by EmbodiedEvalRunner."""

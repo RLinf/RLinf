@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DreamZero embodied sglang action converter backed by an SGLang action server.
+"""DreamZero embodied sglang adapter backed by an SGLang action server.
 
 This module is the SGLang counterpart of
 ``rlinf.models.embodiment.dreamzero.dreamzero_policy.DreamZeroPolicy`` for eval
 rollout.  It intentionally does not import or construct the HF policy/model:
 the large DreamZero network lives in a separately spawned ``sglang serve``
-process.  The local policy keeps only the lightweight parts required on the
-rollout worker:
+process.  The adapter keeps only the lightweight parts required on the rollout
+worker:
 
 1. convert RLinf env observations to DreamZero modality keys;
 2. run DreamZero dataset transforms and metadata-based normalization;
@@ -42,8 +42,6 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
-from omegaconf import DictConfig
-from tianshou.data import Batch
 
 from rlinf.data.datasets.dreamzero.data_transforms import (
     build_dreamzero_composed_transform,
@@ -58,72 +56,122 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
 
 
-class _DreamZeroActionAdapter:
-    """Reuse DreamZero observation/action transforms without the HF model.
+class DreamzeroSglangAdapter:
+    """DreamZero env-obs <-> action-chunks adapter for the sglang serve path.
 
-    This mirrors the preprocessing and postprocessing pieces of
-    ``DreamZeroPolicy``:
+    Combines the DreamZero dataset transforms (reused without the HF model) with
+    the sglang action-request assembly:
 
-    - ``observation_convert`` maps RLinf rollout observations to DreamZero
-      modality keys such as ``video.*``, ``state.*`` and ``annotation.task``.
-    - ``normalize_obs`` applies the composed dataset transform and metadata
-      normalization used by the HF policy.
-    - ``unapply`` inverts normalized server actions from padded model space back
-      to per-modality environment-scale action tensors.
-    - ``actions_from_unapply`` concatenates those tensors into the action array
-      expected by the env worker.
+    - :meth:`build_request` turns an env observation into the msgpack action
+      payload (plus a state handed back to :meth:`parse_response`);
+    - :meth:`parse_response` turns the server response into action chunks.
+
+    The HTTP round-trip itself is performed by :class:`SGLangEmbodiedWorker`,
+    which posts :attr:`action_path`.
     """
 
-    def __init__(self, cfg: DictConfig):
-        self.embodiment_tag = str(cfg.embodiment_tag)
+    action_path = "/v1/actions/generations"
+
+    def __init__(self, cfg: Any, rank: int):
+        self.cfg_rollout = cfg.rollout
+        self.model_cfg = cfg.rollout.model
+        self.rank = rank
+        sglang_cfg = self.cfg_rollout.get("sglang", {})
+        self._model = sglang_cfg.get("model", str(self.model_cfg.model_path))
+        self._seed = int(sglang_cfg.get("seed", 1140))
+
+        # DreamZero dataset transforms (obs normalization + action unnormalization).
+        model_cfg = self.model_cfg.copy()
+        self.embodiment_tag = str(model_cfg.embodiment_tag)
         self._rollout_obs_layout = rollout_obs_layout_for_embodiment(
             self.embodiment_tag
         )
-        tokenizer_path = os.path.join(str(cfg.model_path), "tokenizer")
-        self.data_transforms = build_dreamzero_composed_transform(cfg, tokenizer_path)
-        self.data_transforms.set_metadata(load_dreamzero_dataset_metadata(cfg))
+        tokenizer_path = os.path.join(str(model_cfg.model_path), "tokenizer")
+        self.data_transforms = build_dreamzero_composed_transform(
+            model_cfg, tokenizer_path
+        )
+        self.data_transforms.set_metadata(load_dreamzero_dataset_metadata(model_cfg))
         self.data_transforms.eval()
         _, _, action_keys, _ = collect_dreamzero_dataset_keys(
             self.data_transforms, self.embodiment_tag
         )
         self._action_keys = tuple(action_keys)
         self._dream_transform = self.data_transforms.transforms[-1]
-        self._relative_action = bool(cfg.get("relative_action", False))
+        self._relative_action = bool(model_cfg.get("relative_action", False))
         self._relative_action_per_horizon = bool(
-            cfg.get("relative_action_per_horizon", False)
+            model_cfg.get("relative_action_per_horizon", False)
         )
-        self._relative_action_keys = list(cfg.get("relative_action_keys") or [])
+        self._relative_action_keys = list(model_cfg.get("relative_action_keys") or [])
 
-    def observation_convert(self, env_obs: dict[str, Any]) -> dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Request / response
+    # ------------------------------------------------------------------
+    def build_request(
+        self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
+    ) -> tuple[dict, dict]:
+        """env_obs -> (msgpack action payload, state for :meth:`parse_response`).
+
+        The returned state (converted observation) is handed back to
+        :meth:`parse_response` so action unnormalization can use it. The worker
+        performs the HTTP POST in between.
+        """
+        if mode != "eval":
+            raise NotImplementedError("DreamZero sglang adapter supports eval only.")
+        rollout_obs, context = self._split_context(env_obs)
+        converted = self._observation_convert(rollout_obs)
+        normalized = self._normalize_obs(converted)
+        return self._build_payload(normalized, context), converted
+
+    def parse_response(
+        self, resp: dict, converted_obs: dict[str, Any]
+    ) -> tuple[torch.Tensor, dict]:
+        """Server response -> action chunks ``[B, H, action_dim]`` and info dict."""
+        try:
+            values = resp["data"][0]["action"]["values"]
+        except (KeyError, IndexError) as exc:
+            raise RuntimeError(
+                f"DreamZero action response missing data[0].action.values: {resp}"
+            ) from exc
+        act = self._unapply(torch.as_tensor(values, dtype=torch.float32), converted_obs)
+        actions = torch.as_tensor(
+            self._actions_from_unapply(act).astype(np.float32, copy=False),
+            dtype=torch.float32,
+        )
+        flat = actions.reshape(actions.shape[0], -1)
+        info = {
+            "prev_logprobs": torch.zeros_like(flat),
+            "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
+            "forward_inputs": {"action": flat.cpu()},
+        }
+        return actions, info
+
+    # ------------------------------------------------------------------
+    # DreamZero dataset transforms (obs in / actions out)
+    # ------------------------------------------------------------------
+    def _observation_convert(self, env_obs: dict[str, Any]) -> dict[str, Any]:
         """Map RLinf env observation keys to DreamZero dataset modality keys.
 
         Example input keys are ``main_images``, ``wrist_images``, ``states`` and
         ``task_descriptions``.  The converted observation is the same structure
         consumed by the HF policy's DreamZero data transforms.
         """
-
         converted = convert_rollout_env_obs(self.embodiment_tag, env_obs)
         tasks = converted.get("annotation.task")
         if isinstance(tasks, list) and all(isinstance(item, str) for item in tasks):
             converted["annotation.task"] = np.asarray(tasks, dtype=object)
         return converted
 
-    def normalize_obs(self, obs: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_obs(self, obs: dict[str, Any]) -> dict[str, Any]:
         """Apply DreamZero dataset transforms to obtain server model inputs.
 
         The output contains normalized tensors such as images/video, state,
         ``embodiment_id`` and server-side prompt strings. Text tokenization is
         owned by the SGLang server.
         """
-
-        normalized_input = self._apply_server_transforms(obs)
-        return dict(normalized_input)
-
-    def _apply_server_transforms(self, obs: dict[str, Any]) -> dict[str, Any]:
         data = obs
         for transform in self.data_transforms.transforms[:-1]:
             data = transform(data)
-        return self._apply_dream_transform_without_tokenizer(data)
+        return dict(self._apply_dream_transform_without_tokenizer(data))
 
     def _apply_dream_transform_without_tokenizer(
         self, data: dict[str, Any]
@@ -174,18 +222,19 @@ class _DreamZeroActionAdapter:
                     ) from e
         return batch
 
-    def unapply(self, batch: Batch, obs: dict[str, Any] | None = None):
+    def _unapply(
+        self, normalized_action: torch.Tensor, obs: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Invert normalized actions back to environment-scale action tensors.
 
-        ``batch.normalized_action`` comes from the SGLang server and has the
-        padded DreamZero model width, e.g. ``[B, H, max_action_dim]``.  The
-        reverse transform slices and unnormalizes it according to metadata,
-        producing keys such as ``action.actions`` with env width, e.g.
-        ``[B, H, 7]`` for Libero.
+        ``normalized_action`` comes from the SGLang server and has the padded
+        DreamZero model width, e.g. ``[B, H, max_action_dim]``.  The reverse
+        transform slices and unnormalizes it according to metadata, producing
+        keys such as ``action.actions`` with env width, e.g. ``[B, H, 7]`` for
+        Libero.
         """
-
         unnormalized_action = self.data_transforms.unapply(
-            {"action": batch.normalized_action.cpu()}
+            {"action": normalized_action.cpu()}
         )
         if (
             (self._relative_action or self._relative_action_per_horizon)
@@ -222,12 +271,10 @@ class _DreamZeroActionAdapter:
                 unnormalized_action[action_key] = (
                     unnormalized_action[action_key] + last_state
                 )
-        batch.act = unnormalized_action
-        return batch
+        return unnormalized_action
 
-    def actions_from_unapply(self, act_dict: dict[str, Any]) -> np.ndarray:
+    def _actions_from_unapply(self, act_dict: dict[str, Any]) -> np.ndarray:
         """Concatenate unnormalized action modalities in dataset action order."""
-
         parts: list[np.ndarray] = []
         for key in self._action_keys:
             if key not in act_dict:
@@ -246,45 +293,9 @@ class _DreamZeroActionAdapter:
             )
         return actions
 
-
-class DreamZeroSGLangConvertAction:
-    """DreamZero env-obs -> action-chunks converter over a launched sglang serve.
-
-    Owns only the DreamZero action logic: :meth:`build_request` turns an env
-    observation into the msgpack action payload, and :meth:`parse_response`
-    turns the server response into action chunks. The HTTP round-trip itself is
-    performed by :class:`SGLangEmbodiedWorker`, which posts ``action_path``.
-    """
-
-    action_path = "/v1/actions/generations"
-
-    def __init__(self, cfg: Any, rank: int):
-        self.cfg_rollout = cfg.rollout
-        self.model_cfg = cfg.rollout.model
-        self.rank = rank
-        self.adapter = _DreamZeroActionAdapter(self.model_cfg.copy())
-        sglang_cfg = self.cfg_rollout.get("sglang", {})
-        self._model = sglang_cfg.get("model", str(self.model_cfg.model_path))
-        self._seed = int(sglang_cfg.get("seed", 1140))
-
-    def build_request(
-        self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
-    ) -> tuple[dict, dict]:
-        """env_obs -> (msgpack action payload, state for :meth:`parse_response`).
-
-        The returned state (converted observation) is handed back to
-        :meth:`parse_response` so action unnormalization can use it. The worker
-        performs the HTTP POST in between.
-        """
-        if mode != "eval":
-            raise NotImplementedError(
-                "DreamZero sglang action converter supports eval only."
-            )
-        rollout_obs, context = self._split_context(env_obs)
-        converted = self.adapter.observation_convert(rollout_obs)
-        normalized = self.adapter.normalize_obs(converted)
-        return self._build_payload(normalized, context), converted
-
+    # ------------------------------------------------------------------
+    # Request payload assembly
+    # ------------------------------------------------------------------
     @staticmethod
     def _split_context(env_obs: Any) -> tuple[Any, dict[str, Any]]:
         """Separate RLinf routing metadata (e.g. stage id) from the observation."""
@@ -336,34 +347,6 @@ class DreamZeroSGLangConvertAction:
             "runtime": {"response_format": "envelope", "output_format": "numpy"},
         }
 
-    def parse_response(
-        self, resp: dict, converted_obs: dict[str, Any]
-    ) -> tuple[torch.Tensor, dict]:
-        """Server response -> action chunks ``[B, H, action_dim]`` and info dict."""
-        try:
-            values = resp["data"][0]["action"]["values"]
-        except (KeyError, IndexError) as exc:
-            raise RuntimeError(
-                f"DreamZero action response missing data[0].action.values: {resp}"
-            ) from exc
-        action_batch = self.adapter.unapply(
-            Batch(normalized_action=torch.as_tensor(values, dtype=torch.float32)),
-            obs=converted_obs,
-        )
-        actions = torch.as_tensor(
-            self.adapter.actions_from_unapply(action_batch.act).astype(
-                np.float32, copy=False
-            ),
-            dtype=torch.float32,
-        )
-        flat = actions.reshape(actions.shape[0], -1)
-        info = {
-            "prev_logprobs": torch.zeros_like(flat),
-            "prev_values": torch.zeros((flat.shape[0], 1), dtype=torch.float32),
-            "forward_inputs": {"action": flat.cpu()},
-        }
-        return actions, info
-
     @staticmethod
     def _stage_id(context: dict[str, Any]) -> int:
         stage_id = context.get("_rlinf_stage_id", 0)
@@ -378,7 +361,7 @@ class DreamZeroSGLangConvertAction:
         if isinstance(value, Mapping):
             for item in value.values():
                 try:
-                    return DreamZeroSGLangConvertAction._infer_batch_size(item)
+                    return DreamzeroSglangAdapter._infer_batch_size(item)
                 except (TypeError, IndexError):
                     continue
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
