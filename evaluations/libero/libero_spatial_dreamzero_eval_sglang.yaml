@@ -110,7 +110,6 @@ rollout:
     model_type: "dreamzero"
     precision: bf16
     model_path: /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers # https://huggingface.co/RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
-    tokenizer_path: google/umt5-xxl # https://huggingface.co/google/umt5-xxl
     # Dataset-generated metadata.json for normalisation statistics.
     # Generate with: python toolkits/lerobot/generate_dreamzero_metadata.py \
     #   --preset libero_sim --dataset-root /path/to/libero --output-metadata /path/to/metadata.json
