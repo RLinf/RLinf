@@ -1,0 +1,65 @@
+# engine: vllm==0.8.5
+# vllm 0.8.5 on CUDA 12 (torch 2.6), paired with
+# rlinf/hybrid_engines/vllm/vllm_0_8_5.
+#
+# Installed --no-deps to drop one dependency: vllm requires
+# opentelemetry-sdk < 1.27, whose opentelemetry-proto requires protobuf < 5,
+# which breaks tensorboard (its generated event_pb2 needs protoc >= 5.27), while
+# ray >= 2.48 requires opentelemetry-sdk >= 1.30 and calls
+# create_histogram(explicit_bucket_boundaries_advisory=...), which 1.26 rejects.
+# vllm imports opentelemetry lazily (vllm/tracing.py guards it and only raises
+# for --otlp-traces-endpoint), so the otel packages are deliberately absent and
+# ray keeps whatever generation the lock resolved.
+aiohttp
+blake3
+cachetools
+cloudpickle
+compressed-tensors==0.9.3
+depyf==0.18.0
+einops
+fastapi[standard]>=0.115.0
+filelock>=3.16.1
+gguf>=0.13.0
+huggingface-hub[hf_xet]>=0.30.0
+importlib_metadata
+lark==1.2.2
+llguidance>=0.7.9,<0.8.0; platform_machine == "x86_64" or platform_machine == "arm64" or platform_machine == "aarch64"
+lm-format-enforcer>=0.10.11,<0.11
+mistral_common[opencv]>=1.5.4
+msgspec
+ninja
+numba==0.61.2
+numpy
+openai>=1.52.0
+opencv-python-headless>=4.11.0
+outlines==0.1.11
+partial-json-parser
+pillow
+prometheus-fastapi-instrumentator>=7.0.0
+prometheus_client>=0.18.0
+protobuf
+psutil
+py-cpuinfo
+pydantic>=2.9
+python-json-logger
+pyyaml
+pyzmq>=25.0.0
+ray[cgraph]>=2.43.0,!=2.44.*
+requests>=2.26.0
+scipy
+sentencepiece
+setuptools>=74.1.1; python_version > "3.11"
+six>=1.16.0; python_version > "3.11"
+tiktoken>=0.6.0
+tokenizers>=0.21.1
+# torchvision: both engines declare it, and installing the engine --no-deps means
+# nothing else pulls it in -- rlinf.workers.reward imports it transitively, so a
+# venv without it cannot even start a reasoning run. The version comes from
+# pyproject.toml's override, as with the rest of the torch family.
+torchvision
+tqdm
+transformers==4.51.1
+typing_extensions>=4.10
+watchfiles
+xformers==0.0.29.post2; platform_system == "Linux" and platform_machine == "x86_64"
+xgrammar==0.1.18; platform_machine == "x86_64" or platform_machine == "aarch64"

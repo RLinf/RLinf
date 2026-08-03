@@ -32,6 +32,17 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/rtc.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rtc.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/rtc.html" style="text-decoration: underline; color: blue;">
+           <b>RTC：实时控制推理延迟隐藏</b>
+         </a><br>
+         异步重叠 action chunk 执行与推理，加速部署（仿真与真机）
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -117,6 +128,7 @@
 
    SAC-Flow <embodied/sac_flow>
    DSRL <embodied/dsrl>
+   RTC <embodied/rtc>
    DAgger <embodied/dagger>
    RECAP <embodied/recap>
    STEAM <embodied/steam>
