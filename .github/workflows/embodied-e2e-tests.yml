@@ -1270,6 +1270,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export LIBERO_PATH=/workspace/dataset/LIBERO
+          export EVO1_PATH=/workspace/dataset/Evo-1
           bash requirements/install.sh embodied --model evo1 --env libero
 
       - name: LIBERO Evo-1 GRPO test
@@ -1280,8 +1281,6 @@ jobs:
           source .venv/bin/activate
           export ROBOT_PLATFORM=LIBERO
           export LIBERO_TYPE=standard
-          # Evo-1 source is installed via evo1.pth by install.sh; derive the repo path for the wrapper
-          export EVO1_REPO_PATH=$(python -c "import scripts.Evo1 as m, os; print(os.path.dirname(os.path.dirname(m.__file__)))" 2>/dev/null || echo /workspace/dataset/Evo-1)
           bash tests/e2e_tests/embodied/run.sh libero_spatial_grpo_evo1
 
       - name: Clean up

@@ -1679,7 +1679,6 @@ install_starvla_model() {
 
 install_evo1_model() {
     # Evo-1 = InternVL3-1B + flow-matching action head (branch: evo1-flash).
-    # Runs in its own venv because InternVL3 needs transformers==4.39.0.
     case "$ENV_NAME" in
         maniskill_libero|libero)
             create_and_sync_venv
@@ -1695,23 +1694,15 @@ install_evo1_model() {
     local evo1_path
     evo1_path=$(clone_or_reuse_repo EVO1_PATH "$VENV_DIR/Evo-1" https://github.com/MINT-SJTU/Evo-1.git -b "${EVO1_GIT_REF:-evo1-flash}" --depth 1)
 
-    # Evo-1 pins (transformers==4.39.0 for InternVL3, torch==2.5.1, etc.).
-    if [ -f "$evo1_path/Evo_1/requirements.txt" ]; then
-        uv pip install -r "$evo1_path/Evo_1/requirements.txt"
-    fi
-
-    # peft 0.14+ imports transformers.EncoderDecoderCache, which 4.39.0 does not
-    # have, and rlinf's reward worker imports peft on every embodied entrypoint.
-    uv pip install "peft==0.13.2"
+    uv pip install -r "$SCRIPT_DIR/embodied/models/evo1.txt"
 
     # Evo-1 is not a packaged module; expose its import root (Evo_1/) via a .pth
     # so 'import scripts.Evo1' and 'import config' resolve inside this venv.
     # Use the activated venv's python, not `uv run`: uv run re-syncs the project
-    # and undoes the pins above, restoring a huggingface-hub transformers rejects.
+    # and undoes the pins above.
     local site_packages
     site_packages=$(python -c "import site; print(site.getsitepackages()[0])")
     echo "$evo1_path/Evo_1" > "$site_packages/evo1.pth"
-    export EVO1_REPO_PATH="$evo1_path"
 
     install_flash_attn
     uv pip uninstall pynvml || true
