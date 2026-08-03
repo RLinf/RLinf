@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import dataclasses
-import itertools
 import os
-from collections.abc import Iterable
 from typing import Any
 
 import torch
@@ -25,26 +23,12 @@ from rlinf.config import SupportedModel
 from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
-from rlinf.workers.sft._index_recording_dataset import _IndexRecordingDataset
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
-        self._robotwin_ddp_sharding_audit_enabled = False
-        self._robotwin_ddp_sharding_audit_sample_reads = 0
         super().__init__(cfg)
-
-    def init_worker(self):
-        super().init_worker()
-        if self._robotwin_ddp_sharding_audit_enabled:
-            # ``init_worker`` is invoked as a synchronized ActorGroup call. Do
-            # the cross-rank collective here rather than in the constructor,
-            # where individual Ray actors can be created at different times.
-            self._audit_robotwin_ddp_sharding(
-                self.data_loader,
-                num_sample_reads=self._robotwin_ddp_sharding_audit_sample_reads,
-            )
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
@@ -130,224 +114,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         data_loader = openpi_data_loader.create_data_loader(
             config, framework="pytorch", shuffle=not eval_dataset
         )
-        if (
-            model_type == SupportedModel.OPENPI_PYTORCH
-            and "robotwin" in str(self.cfg.actor.model.openpi.config_name).lower()
-            and not eval_dataset
-            and bool(self.cfg.data.get("audit_ddp_sharding", False))
-        ):
-            self._robotwin_ddp_sharding_audit_enabled = True
-            self._robotwin_ddp_sharding_audit_sample_reads = int(
-                self.cfg.data.get("audit_ddp_sharding_sample_reads", 8)
-            )
         return data_loader, data_loader.data_config()
-
-    def _audit_robotwin_ddp_sharding(
-        self, openpi_loader: Any, *, num_sample_reads: int
-    ) -> None:
-        """Verify that the actual RoboTwin SFT loader is DDP-sharded.
-
-        This deliberately runs after OpenPI builds its real PyTorch loader and
-        before the first training batch. It checks both links in the data path:
-
-        1. ``DistributedSampler`` assigns disjoint indices to every DDP rank.
-        2. The transformed RoboTwin dataset passes a sampler index through to
-           the underlying LeRobot dataset, rather than ignoring it as a
-           streaming dataset would.
-
-        The audit never changes the loader or the batches consumed by SFT.
-        """
-        if num_sample_reads < 1:
-            raise ValueError("data.audit_ddp_sharding_sample_reads must be positive.")
-
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-            self._logger.warning(
-                "[RoboTwin DDP data audit] torch.distributed is not initialized; "
-                "skipping sharding audit."
-            )
-            return
-
-        world_size = torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
-        if world_size == 1:
-            self._logger.info(
-                "[RoboTwin DDP data audit] world_size=1; no cross-rank overlap to check."
-            )
-            return
-
-        torch_loader = self._get_openpi_torch_loader(openpi_loader)
-        sampler = getattr(torch_loader, "sampler", None)
-        if not isinstance(sampler, torch.utils.data.DistributedSampler):
-            raise RuntimeError(
-                "[RoboTwin DDP data audit] expected OpenPI's PyTorch loader to use "
-                "DistributedSampler, but got "
-                f"{type(sampler)!r}."
-            )
-
-        # Materializing the sampler is metadata-only: no video or image sample
-        # is loaded. It gives an exact, whole-epoch cross-rank overlap check.
-        sampler_indices = [int(index) for index in sampler]
-        local_report: dict[str, Any]
-        try:
-            probe_indices = sampler_indices[:num_sample_reads]
-            index_mapping = self._probe_openpi_dataset_indices(
-                torch_loader.dataset, probe_indices
-            )
-            local_report = {
-                "rank": rank,
-                "sampler_count": len(sampler_indices),
-                "sampler_indices": sampler_indices,
-                "index_mapping": index_mapping,
-            }
-        except Exception as exc:
-            # Every rank still participates in the collective below, preventing
-            # a peer from hanging if only one rank cannot read a probe sample.
-            local_report = {
-                "rank": rank,
-                "sampler_count": len(sampler_indices),
-                "sampler_indices": sampler_indices,
-                "error": f"{type(exc).__name__}: {exc}",
-            }
-
-        reports: list[dict[str, Any] | None] = [None] * world_size
-        torch.distributed.all_gather_object(reports, local_report)
-        complete_reports = [report for report in reports if report is not None]
-
-        errors = [
-            f"rank {report['rank']}: {report['error']}"
-            for report in complete_reports
-            if "error" in report
-        ]
-        sampler_overlaps = self._find_pairwise_overlaps(
-            [report["sampler_indices"] for report in complete_reports]
-        )
-        mapping_mismatches = [
-            (report["rank"], expected, observed_indices)
-            for report in complete_reports
-            if "index_mapping" in report
-            for expected, observed_indices in report["index_mapping"]
-            if expected not in observed_indices
-        ]
-
-        if rank == 0:
-            counts = [report["sampler_count"] for report in complete_reports]
-            previews = [
-                (report["rank"], report.get("index_mapping", [])[:4])
-                for report in complete_reports
-            ]
-            self._logger.info(
-                "[RoboTwin DDP data audit] dataset_size=%s, world_size=%s, "
-                "sampler=%s, drop_last=%s, per-rank sampler counts=%s",
-                len(torch_loader.dataset),
-                world_size,
-                type(sampler).__name__,
-                sampler.drop_last,
-                counts,
-            )
-            self._logger.info(
-                "[RoboTwin DDP data audit] actual __getitem__ index probes "
-                "(rank, sampler_index->LeRobot_indices): %s",
-                previews,
-            )
-
-        if errors or sampler_overlaps or mapping_mismatches:
-            details = []
-            if errors:
-                details.append("probe read errors: " + "; ".join(errors))
-            if sampler_overlaps:
-                details.append(
-                    "sampler index overlap: "
-                    + self._format_overlaps(sampler_overlaps)
-                )
-            if mapping_mismatches:
-                details.append(
-                    "dataset ignored/remapped sampler index: "
-                    + repr(mapping_mismatches[:8])
-                )
-            raise RuntimeError("[RoboTwin DDP data audit] FAILED: " + " | ".join(details))
-
-        if rank == 0:
-            self._logger.info(
-                "[RoboTwin DDP data audit] PASS: all sampler indices are disjoint "
-                "and every checked dataset read used its sampler index."
-            )
-
-    @staticmethod
-    def _get_openpi_torch_loader(openpi_loader: Any) -> torch.utils.data.DataLoader:
-        """Unwrap OpenPI's public DataLoaderImpl into the backing PyTorch loader."""
-        candidates = (
-            openpi_loader,
-            getattr(openpi_loader, "_data_loader", None),
-            getattr(getattr(openpi_loader, "_data_loader", None), "torch_loader", None),
-        )
-        for candidate in candidates:
-            if isinstance(candidate, torch.utils.data.DataLoader):
-                return candidate
-        raise RuntimeError(
-            "[RoboTwin DDP data audit] could not find the backing "
-            "torch.utils.data.DataLoader in OpenPI's loader wrapper."
-        )
-
-    @staticmethod
-    def _probe_openpi_dataset_indices(
-        dataset: Any, sampler_indices: Iterable[int]
-    ) -> list[tuple[int, list[int]]]:
-        """Record raw LeRobot indices used by real transformed-dataset reads."""
-        owner = dataset
-        seen: set[int] = set()
-        while not hasattr(owner, "hf_dataset"):
-            if id(owner) in seen:
-                raise RuntimeError("cyclic OpenPI dataset wrapper chain")
-            seen.add(id(owner))
-            owner = getattr(owner, "_dataset", None)
-            if owner is None:
-                raise RuntimeError(
-                    "could not find a LeRobot dataset under OpenPI's transform wrappers"
-                )
-
-        original_hf_dataset = owner.hf_dataset
-        recorder = _IndexRecordingDataset(original_hf_dataset)
-        owner.hf_dataset = recorder
-        mappings: list[tuple[int, list[int]]] = []
-        try:
-            for sampler_index in sampler_indices:
-                before = len(recorder.requested_indices)
-                dataset[sampler_index]
-                read_indices = sorted(
-                    {
-                        index
-                        for request in recorder.requested_indices[before:]
-                        for index in request
-                    }
-                )
-                if sampler_index not in read_indices:
-                    raise RuntimeError(
-                        "raw LeRobot reads did not include the sampler index "
-                        f"{sampler_index}; got {read_indices}"
-                    )
-                mappings.append((sampler_index, read_indices))
-        finally:
-            owner.hf_dataset = original_hf_dataset
-        return mappings
-
-    @staticmethod
-    def _find_pairwise_overlaps(
-        index_lists: list[list[int]],
-    ) -> list[tuple[int, int, list[int]]]:
-        overlaps = []
-        for left_rank, right_rank in itertools.combinations(range(len(index_lists)), 2):
-            intersection = set(index_lists[left_rank]) & set(index_lists[right_rank])
-            if intersection:
-                overlaps.append((left_rank, right_rank, sorted(intersection)[:8]))
-        return overlaps
-
-    @staticmethod
-    def _format_overlaps(overlaps: list[tuple[int, int, list[int]]]) -> str:
-        return "; ".join(
-            f"ranks {left_rank}/{right_rank}: {indices}"
-            for left_rank, right_rank, indices in overlaps
-        )
-
     def _validate_openpi_pytorch_model_shape(self, openpi_config: Any) -> None:
         """Keep the local Pi0 architecture consistent with the OpenPI config."""
         model_cfg = self.cfg.actor.model
