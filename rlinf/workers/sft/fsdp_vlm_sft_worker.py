@@ -169,7 +169,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int] | int:
+    def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int]:
         """Generate answers for an eval batch and score them against gold.
 
         Args:
@@ -177,20 +177,20 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 ``attention_mask`` and ``multi_modal_inputs``.
 
         Returns:
-            When every gold answer is a binary ``0`` / ``1`` label, a dict of
-            class-aware counts (``correct``, ``total`` and per-class
-            correct/total) suitable for :meth:`compute_eval_metrics`. Otherwise
-            the scalar number of correct predictions in the batch.
+            A count dictionary with ``correct``, ``total``, ``binary_total`` and
+            per-class correct/total. Always returns this shape so dataset-level
+            aggregation in :meth:`run_eval` cannot drop batches. Balanced
+            accuracy is decided later from ``binary_total == total``.
         """
         counts = {
             "correct": 0,
             "total": 0,
+            "binary_total": 0,
             "positive_correct": 0,
             "positive_total": 0,
             "negative_correct": 0,
             "negative_total": 0,
         }
-        binary_labels = True
         input_ids = batch["prompt"].to(self.device)
         answers = batch["answer"]
         attention_mask = batch["attention_mask"].to(self.device)
@@ -238,38 +238,50 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             is_correct = normalized_pred == normalized_gold
             counts["total"] += 1
             counts["correct"] += int(is_correct)
-            binary_labels &= normalized_gold in {"0", "1"}
-            class_name = "positive" if normalized_gold == "1" else "negative"
-            counts[f"{class_name}_total"] += 1
-            counts[f"{class_name}_correct"] += int(is_correct)
+            if normalized_gold in {"0", "1"}:
+                counts["binary_total"] += 1
+                class_name = "positive" if normalized_gold == "1" else "negative"
+                counts[f"{class_name}_total"] += 1
+                counts[f"{class_name}_correct"] += int(is_correct)
 
-        return counts if binary_labels else counts["correct"]
+        return counts
 
     def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Compute class-aware metrics for binary VLM evaluation.
+        """Compute eval metrics; add class-aware ones only for fully binary data.
 
         Args:
             counts: Aggregated counts from :meth:`get_eval_model_output`
-                (``correct``, ``total`` and per-class correct/total).
+                (``correct``, ``total``, ``binary_total`` and per-class
+                correct/total).
 
         Returns:
-            A dict with overall accuracy, positive-class recall, negative-class
-            accuracy, balanced accuracy and per-class totals.
+            Always includes ``eval_accuracy``. When every gold label in the eval
+            set is binary (``binary_total == total``), also returns
+            positive-class recall, negative-class accuracy, balanced accuracy
+            and per-class totals.
         """
+        metrics = {
+            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
+        }
+        if counts.get("binary_total", 0) != counts["total"]:
+            return metrics
+
         positive_accuracy = counts["positive_correct"] / max(
             1, counts["positive_total"]
         )
         negative_accuracy = counts["negative_correct"] / max(
             1, counts["negative_total"]
         )
-        return {
-            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
-            "positive_recall": positive_accuracy,
-            "negative_accuracy": negative_accuracy,
-            "balanced_accuracy": (positive_accuracy + negative_accuracy) / 2,
-            "positive_total": counts["positive_total"],
-            "negative_total": counts["negative_total"],
-        }
+        metrics.update(
+            {
+                "positive_recall": positive_accuracy,
+                "negative_accuracy": negative_accuracy,
+                "balanced_accuracy": (positive_accuracy + negative_accuracy) / 2,
+                "positive_total": counts["positive_total"],
+                "negative_total": counts["negative_total"],
+            }
+        )
+        return metrics
 
     def weighted_answer_loss(
         self,
