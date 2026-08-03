@@ -184,7 +184,7 @@ Reward Model 数据集采集
        --fail-success-ratio 3
 
 生成的 ``.pt`` 文件符合 ``RewardDatasetPayload`` 约定的标准格式，包含 ``images``、
-``labels``（1 = 成功，0 = 失败）和 ``metadata``。
+``labels`` （1 = 成功，0 = 失败）和 ``metadata``。
 详细说明及完整示例请参见 :doc:`../../extending/reward_model` 中的方式二。
 
 Reward Model 训练
@@ -265,8 +265,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
    unclear           0.0              趋势不明确，不给信号
    invalid           0.0              模型输出无法解析，不给信号
 
-同时，当机械臂到达目标位姿并保持足够步数后（``terminated=True``），环境会在 ``infos``
-中写入 ``success`` 标志，``gt_success_bonus``（默认 +20.0）在此基础上追加巨大奖励，
+同时，当机械臂到达目标位姿并保持足够步数后（ ``terminated=True`` ），环境会在 ``infos``
+中写入 ``success`` 标志，``gt_success_bonus`` （默认 +20.0）在此基础上追加巨大奖励，
 帮助 Agent 明确认知"成功状态"。
 
 概览
@@ -328,7 +328,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 - **缓慢移动机械臂**，使采集数据包含丰富的中间状态，便于 VLM 学习趋势判断。
-- **确保双相机视角清晰**：``main_images``（腕部相机）和 ``extra_view_images``（全局相机）
+- **确保双相机视角清晰**：``main_images`` （腕部相机）和 ``extra_view_images`` （全局相机）
   都能清晰看到机械臂末端和目标孔位。
 - **采集足够 episode**（建议 50+），覆盖成功和失败两种结局。
 - **正确配置 ``camera_names``**，确保 Serial 与实际相机序列号一致：
@@ -344,8 +344,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 两个相机的作用：
 
-- **腕部相机**（``main_images``）：近距离观察夹爪和插孔的精细交互。
-- **全局相机**（``extra_view_images``）：提供工作台整体布局的上下文信息。
+- **腕部相机**（ ``main_images`` ）：近距离观察夹爪和插孔的精细交互。
+- **全局相机**（ ``extra_view_images`` ）：提供工作台整体布局的上下文信息。
 
 双视角输入让 VLM 能同时关注局部操作细节和全局空间关系，提高趋势判断的准确性。
 
@@ -396,7 +396,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
    python -m toolkits.realworld_check.test_franka_controller
 
-将机械臂移动到目标位置后，终端会打印当前 TCP 位姿。只需位置时可填入 ``X,Y,Z``（3 个值），方向被忽略。
+将机械臂移动到目标位置后，终端会打印当前 TCP 位姿。只需位置时可填入 ``X,Y,Z`` （3 个值），方向被忽略。
 
 输出目录结构：
 
@@ -444,7 +444,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
    export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_data
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
 
-训练完成后，LoRA checkpoint 路径（如 ``checkpoints/global_step_3000``）将通过
+训练完成后，LoRA checkpoint 路径（如 ``checkpoints/global_step_3000`` ）将通过
 ``reward.model.lora_path`` 在 RL 训练中引用。
 
 
@@ -532,7 +532,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
      - Franka 原生 reward 为稀疏信号（到达=1.0），训练主要依赖 VLM 趋势判断。
        到达目标时由 ``gt_success_bonus`` 提供奖励。
    * - ``gt_success_bonus: 20.0``
-     - 环境报告成功（``infos["success"] = True``）时追加 +20.0。
+     - 环境报告成功（ ``infos["success"] = True`` ）时追加 +20.0。
        这个巨大奖励让 Agent 明确将"到达目标"与高奖励关联。
    * - ``video_keys``
      - ``[main_images, extra_view_images]`` — VLM 同时接收两个相机视角的帧。
@@ -651,8 +651,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
      - 0.0（纯 VLM）
      - 0.0（纯 VLM）
    * - **VLM 推理方式**
-     - SGLang API（``worker_type: api``）
-     - 本地 HuggingFace（``worker_type: model``）
+     - SGLang API（ ``worker_type: api`` ）
+     - 本地 HuggingFace（ ``worker_type: model`` ）
    * - **任务**
      - PickCube
      - Peg Insertion
