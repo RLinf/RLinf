@@ -11,7 +11,7 @@ Detailed publication pages
 
    * - Publication
      - Focus
-     - Preprint
+     - Paper
    * - :doc:`STEAM <steam>`
      - Self-supervised temporal ensemble advantage modeling for real-world robot learning.
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
