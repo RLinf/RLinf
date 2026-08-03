@@ -114,6 +114,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             config, framework="pytorch", shuffle=not eval_dataset
         )
         return data_loader, data_loader.data_config()
+
     def _validate_openpi_pytorch_model_shape(self, openpi_config: Any) -> None:
         """Keep the local Pi0 architecture consistent with the OpenPI config."""
         model_cfg = self.cfg.actor.model

@@ -193,7 +193,7 @@ def _validate_against_reference(
     unexpected = sorted(actual_keys - reference_keys)
     if missing or unexpected:
         raise ValueError(
-        "SFT checkpoint keys do not match the RLinf PyTorch reference model for "
+            "SFT checkpoint keys do not match the RLinf PyTorch reference model for "
             f"--config-name {spec.config_name!r}: "
             f"missing={missing[:8]}, unexpected={unexpected[:8]}"
         )

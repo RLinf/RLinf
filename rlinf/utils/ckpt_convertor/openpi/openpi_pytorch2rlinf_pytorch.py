@@ -57,9 +57,9 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
     for suffix in (".weight", ".bias"):
         source_key = _OPENPI_PYTORCH_SIGLIP + "embeddings.patch_embedding" + suffix
         if source_key in openpi_pytorch_state_dict:
-            rlinf_pytorch_state_dict["img.stem" + suffix] = (
-                openpi_pytorch_state_dict[source_key]
-            )
+            rlinf_pytorch_state_dict["img.stem" + suffix] = openpi_pytorch_state_dict[
+                source_key
+            ]
 
     # OpenPI stores this as an (num_patches, width) nn.Embedding weight; RLinf
     # holds a (1, num_patches, width) parameter, so add the broadcast dimension.
@@ -98,12 +98,12 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
             if bias_key in openpi_pytorch_state_dict:
                 qkv_biases.append(openpi_pytorch_state_dict[bias_key])
         if qkv_weights:
-            rlinf_pytorch_state_dict[f"{target_prefix}attn.in_proj_weight"] = (
-                torch.cat(qkv_weights, dim=0)
+            rlinf_pytorch_state_dict[f"{target_prefix}attn.in_proj_weight"] = torch.cat(
+                qkv_weights, dim=0
             )
         if qkv_biases:
-            rlinf_pytorch_state_dict[f"{target_prefix}attn.in_proj_bias"] = (
-                torch.cat(qkv_biases, dim=0)
+            rlinf_pytorch_state_dict[f"{target_prefix}attn.in_proj_bias"] = torch.cat(
+                qkv_biases, dim=0
             )
 
         for suffix in (".weight", ".bias"):
@@ -136,9 +136,9 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
             + suffix
         )
         if source_key in openpi_pytorch_state_dict:
-            rlinf_pytorch_state_dict["img.head" + suffix] = (
-                openpi_pytorch_state_dict[source_key]
-            )
+            rlinf_pytorch_state_dict["img.head" + suffix] = openpi_pytorch_state_dict[
+                source_key
+            ]
 
     # PaliGemma LLM (expert 0)
     _PALI_LLM = "paligemma_with_expert.paligemma.model.language_model."
@@ -155,11 +155,14 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
 
         gate_key = f"{source_prefix}mlp.gate_proj.weight"
         up_key = f"{source_prefix}mlp.up_proj.weight"
-        if gate_key in openpi_pytorch_state_dict and up_key in openpi_pytorch_state_dict:
+        if (
+            gate_key in openpi_pytorch_state_dict
+            and up_key in openpi_pytorch_state_dict
+        ):
             gate_transposed = openpi_pytorch_state_dict[gate_key].T.contiguous()
             up_transposed = openpi_pytorch_state_dict[up_key].T.contiguous()
-            rlinf_pytorch_state_dict[f"{target_prefix}mlps.0.w_gating"] = (
-                torch.stack([gate_transposed, up_transposed], dim=0)
+            rlinf_pytorch_state_dict[f"{target_prefix}mlps.0.w_gating"] = torch.stack(
+                [gate_transposed, up_transposed], dim=0
             )
 
         down_key = f"{source_prefix}mlp.down_proj.weight"
@@ -174,15 +177,15 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
         ]:
             source_key = f"{source_prefix}{source_name}.weight"
             if source_key in openpi_pytorch_state_dict:
-                rlinf_pytorch_state_dict[
-                    f"{target_prefix}{target_name}.0.scale"
-                ] = openpi_pytorch_state_dict[source_key]
+                rlinf_pytorch_state_dict[f"{target_prefix}{target_name}.0.scale"] = (
+                    openpi_pytorch_state_dict[source_key]
+                )
 
     source_key = _PALI_LLM + "norm.weight"
     if source_key in openpi_pytorch_state_dict:
-        rlinf_pytorch_state_dict["llm.final_norms.0.scale"] = (
-            openpi_pytorch_state_dict[source_key]
-        )
+        rlinf_pytorch_state_dict["llm.final_norms.0.scale"] = openpi_pytorch_state_dict[
+            source_key
+        ]
 
     # Gemma action expert (expert 1)
     _GEMMA_EXPERT = "paligemma_with_expert.gemma_expert.model."
@@ -199,11 +202,14 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
 
         gate_key = f"{source_prefix}mlp.gate_proj.weight"
         up_key = f"{source_prefix}mlp.up_proj.weight"
-        if gate_key in openpi_pytorch_state_dict and up_key in openpi_pytorch_state_dict:
+        if (
+            gate_key in openpi_pytorch_state_dict
+            and up_key in openpi_pytorch_state_dict
+        ):
             gate_transposed = openpi_pytorch_state_dict[gate_key].T.contiguous()
             up_transposed = openpi_pytorch_state_dict[up_key].T.contiguous()
-            rlinf_pytorch_state_dict[f"{target_prefix}mlps.1.w_gating"] = (
-                torch.stack([gate_transposed, up_transposed], dim=0)
+            rlinf_pytorch_state_dict[f"{target_prefix}mlps.1.w_gating"] = torch.stack(
+                [gate_transposed, up_transposed], dim=0
             )
 
         down_key = f"{source_prefix}mlp.down_proj.weight"
@@ -237,8 +243,7 @@ def openpi_pytorch_to_rlinf_pytorch_state_dict(
     if "paligemma_with_expert.paligemma.lm_head.weight" in openpi_pytorch_state_dict:
         lm_head_key = "paligemma_with_expert.paligemma.lm_head.weight"
     elif (
-        "paligemma_with_expert.gemma_expert.lm_head.weight"
-        in openpi_pytorch_state_dict
+        "paligemma_with_expert.gemma_expert.lm_head.weight" in openpi_pytorch_state_dict
     ):
         lm_head_key = "paligemma_with_expert.gemma_expert.lm_head.weight"
     if lm_head_key is not None:

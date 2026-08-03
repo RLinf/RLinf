@@ -163,9 +163,9 @@ def rlinf_pytorch_to_openpi_pytorch_state_dict(
 
     rlinf_key = "llm.embedder.embedding.weight"
     if rlinf_key in rlinf_pytorch_state_dict:
-        openpi_pytorch_state_dict[
-            "paligemma_with_expert.paligemma.lm_head.weight"
-        ] = rlinf_pytorch_state_dict[rlinf_key]
+        openpi_pytorch_state_dict["paligemma_with_expert.paligemma.lm_head.weight"] = (
+            rlinf_pytorch_state_dict[rlinf_key]
+        )
 
     for key, tensor in rlinf_pytorch_state_dict.items():
         if key.startswith(
@@ -204,12 +204,12 @@ def _convert_llm_expert(
         rlinf_key = f"{rlinf_prefix}mlps.{expert_index}.w_gating"
         if rlinf_key in rlinf_pytorch_state_dict:
             gating = rlinf_pytorch_state_dict[rlinf_key]
-            openpi_pytorch_state_dict[f"{openpi_prefix}mlp.gate_proj.weight"] = (
-                gating[0].T.contiguous()
-            )
-            openpi_pytorch_state_dict[f"{openpi_prefix}mlp.up_proj.weight"] = (
-                gating[1].T.contiguous()
-            )
+            openpi_pytorch_state_dict[f"{openpi_prefix}mlp.gate_proj.weight"] = gating[
+                0
+            ].T.contiguous()
+            openpi_pytorch_state_dict[f"{openpi_prefix}mlp.up_proj.weight"] = gating[
+                1
+            ].T.contiguous()
         rlinf_key = f"{rlinf_prefix}mlps.{expert_index}.w_linear"
         if rlinf_key in rlinf_pytorch_state_dict:
             openpi_pytorch_state_dict[f"{openpi_prefix}mlp.down_proj.weight"] = (
@@ -266,7 +266,8 @@ def convert_trained_ckpt(
     reference_head = reference_state_dict[ACTION_EXPERT_LM_HEAD]
     if (
         ACTION_EXPERT_LM_HEAD not in openpi_pytorch_state_dict
-        or openpi_pytorch_state_dict[ACTION_EXPERT_LM_HEAD].shape != reference_head.shape
+        or openpi_pytorch_state_dict[ACTION_EXPERT_LM_HEAD].shape
+        != reference_head.shape
     ):
         openpi_pytorch_state_dict[ACTION_EXPERT_LM_HEAD] = reference_head.clone()
     for key, tensor in openpi_pytorch_state_dict.items():
@@ -278,7 +279,11 @@ def convert_trained_ckpt(
     missing = reference_keys - converted_keys
     extra = converted_keys - reference_keys
     shape_mismatches = [
-        (key, tuple(reference_state_dict[key].shape), tuple(openpi_pytorch_state_dict[key].shape))
+        (
+            key,
+            tuple(reference_state_dict[key].shape),
+            tuple(openpi_pytorch_state_dict[key].shape),
+        )
         for key in sorted(reference_keys & converted_keys)
         if openpi_pytorch_state_dict[key].shape != reference_state_dict[key].shape
     ]

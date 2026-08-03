@@ -192,7 +192,9 @@ def build_deploy_state_dict(
         )
 
     expected_keys = set(dtype_profile)
-    missing_from_openpi = expected_keys - set(openpi_pytorch_state_dict) - {EMBED_TOKENS_KEY}
+    missing_from_openpi = (
+        expected_keys - set(openpi_pytorch_state_dict) - {EMBED_TOKENS_KEY}
+    )
     if missing_from_openpi:
         raise KeyError(
             f"OpenPI PyTorch state dict is missing {len(missing_from_openpi)} deploy keys; "
