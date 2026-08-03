@@ -123,6 +123,7 @@
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
    MolmoAct2 <embodied/molmoact2>
+   Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
    OpenSora <embodied/opensora>
    Wan <embodied/wan>

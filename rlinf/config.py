@@ -114,6 +114,7 @@ SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
+SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
 EMBODIED_MODEL = set(
     {
@@ -139,6 +140,7 @@ EMBODIED_MODEL = set(
         SupportedModel.CFG_MODEL,
         SupportedModel.RECAP_VALUE_MODEL,
         SupportedModel.STEAM_VALUE_MODEL,
+        SupportedModel.EVO1,
     }
 )
 
@@ -309,6 +311,36 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
     return cfg
 
 
+def hf_rope_parameters(hf_config) -> dict:
+    """Read a HuggingFace config's rope settings across transformers 4 and 5.
+
+    transformers 5 replaced the flat ``rope_theta`` / ``rope_scaling`` pair with a
+    single ``rope_parameters`` dict, renamed its ``type`` key to ``rope_type``,
+    and fills it in even for models that use no scaling (``rope_type: "default"``)
+    where transformers 4 left ``rope_scaling`` as ``None``.
+
+    Args:
+        hf_config: A ``PretrainedConfig`` (or its ``text_config``).
+
+    Returns:
+        The rope settings, always keyed the transformers 5 way.
+    """
+    params = getattr(hf_config, "rope_parameters", None)
+    if isinstance(params, dict):
+        return dict(params)
+
+    params = {}
+    scaling = getattr(hf_config, "rope_scaling", None)
+    if isinstance(scaling, dict):
+        params.update(scaling)
+        if "type" in params and "rope_type" not in params:
+            params["rope_type"] = params["type"]
+    theta = getattr(hf_config, "rope_theta", None)
+    if theta is not None:
+        params["rope_theta"] = theta
+    return params
+
+
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
     from transformers import AutoConfig
@@ -335,16 +367,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
 
     with open_dict(cfg):
-        rs = getattr(hf_config, "rope_scaling", None)
-        if isinstance(rs, dict):
-            rtype = rs.get("type", "")
-            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
-                f = rs.get("factor")
-                if f is not None:
-                    cfg.model.seq_len_interpolation_factor = float(f)
-            else:
-                # mrope
-                cfg.model.seq_len_interpolation_factor = None
+        rs = hf_rope_parameters(hf_config)
+        rtype = rs.get("rope_type", "")
+        if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+            f = rs.get("factor")
+            if f is not None:
+                cfg.model.seq_len_interpolation_factor = float(f)
+        elif rtype and rtype != "default":
+            # mrope. "default" means no scaling at all, which transformers 4
+            # reported as rope_scaling=None and so left this untouched.
+            cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
         if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
@@ -352,7 +384,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
-        cfg.model.rotary_base = hf_config.rope_theta
+        cfg.model.rotary_base = hf_rope_parameters(hf_config)["rope_theta"]
         cfg.model.share_embeddings_and_output_weights = getattr(
             hf_config, "tie_word_embeddings", False
         )

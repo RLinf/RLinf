@@ -193,9 +193,9 @@ class _Patcher:
 
     def _apply_to_class(self, cls):
         # patch member functions and member classes in classes
-        if cls in self._traced_cls:
+        if id(cls) in self._traced_cls:
             return
-        self._traced_cls.add(cls)
+        self._traced_cls.add(id(cls))
 
         for k, v in cls.__dict__.items():
             # most function with prefix '__' means it's an inner operator or variable

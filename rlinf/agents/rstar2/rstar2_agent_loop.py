@@ -55,10 +55,13 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             "tool_response_truncate_side", "right"
         )
         self.apply_chat_template_kwargs = cfg.data.get("apply_chat_template_kwargs", {})
+        # return_dict=False keeps these as list[int] on transformers 5, which
+        # otherwise returns a BatchEncoding from apply_chat_template.
         self.system_prompt = self.tokenizer.apply_chat_template(
             [{}],
             add_generation_prompt=False,
             tokenize=True,
+            return_dict=False,
             **self.apply_chat_template_kwargs,
         )
         assert self.toolcall_parser is not None, "toolcall_parser must be set in rstar2"
@@ -303,6 +306,7 @@ class Rstar2AgentLoopWorker(AgentLoopWorker):
             tool_messages,
             add_generation_prompt=True,
             tokenize=True,
+            return_dict=False,
             **self.apply_chat_template_kwargs,
         )
         tool_response_ids = tool_response_ids[len(self.system_prompt) :]
