@@ -41,7 +41,7 @@ models on the OCR prompt dataset.
 
       1 node / GPUs
 
-| **You'll do:** install dependencies → download models and dataset → choose a config → launch ``run_generation.sh`` → monitor ``avg`` reward.
+| **You'll do:** install dependencies → download models and dataset → choose a config → launch ``run_diffusion.sh`` → monitor ``avg`` reward.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · SD3 or Wan2.2 checkpoints · the OCR prompt dataset.
 
 Tasks
@@ -177,19 +177,19 @@ Then set both dataset paths to the directory that contains these files.
 Run It
 ----------------------------------------
 
-Pass a generation config name to ``run_generation.sh`` and override the model
+Pass a Diffusion-NFT config name to ``run_diffusion.sh`` and override the model
 and dataset paths from the command line.
 
 .. code:: bash
 
-   bash examples/generation/run_generation.sh sd3_nft_ocr \
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
       actor.model.model_path=/path/to/stable-diffusion-3.5-medium \
       env.train.dataset.path=/path/to/dataset/ocr \
       env.eval.dataset.path=/path/to/dataset/ocr
 
 .. code:: bash
 
-   bash examples/generation/run_generation.sh wan22_ti2v_5b_nft_video_ocr \
+   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr \
       actor.model.model_path=/path/to/Wan2.2-TI2V-5B-Diffusers \
       env.train.dataset.path=/path/to/dataset/ocr \
       env.eval.dataset.path=/path/to/dataset/ocr
@@ -201,7 +201,7 @@ The training flow:
 3. Scores the generated media with the OCR reward.
 4. Applies the Diffusion-NFT update to the generation model.
 
-Configure further in ``examples/generation/config/*.yaml``. Start with
+Configure further in ``examples/diffusion/config/*.yaml``. Start with
 ``algorithm.group_size``, ``algorithm.nft_target_space``, ``algorithm.nft_tau``,
 and ``actor.model.*.use_lora``.
 

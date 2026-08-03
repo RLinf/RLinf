@@ -39,7 +39,7 @@
 
       1 节点 · GPU
 
-| **你将完成：** 安装依赖 → 下载模型与数据集 → 选择配置 → 启动 ``run_generation.sh`` → 观察 ``avg`` reward。
+| **你将完成：** 安装依赖 → 下载模型与数据集 → 选择配置 → 启动 ``run_diffusion.sh`` → 观察 ``avg`` reward。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · SD3 或 Wan2.2 checkpoint · OCR prompt 数据集。
 
 任务
@@ -170,18 +170,18 @@ SD3 和 Wan2.2 示例使用
 运行
 ----------------------------------------
 
-向 ``run_generation.sh`` 传入 generation 配置名，并通过命令行覆盖模型和数据集路径。
+向 ``run_diffusion.sh`` 传入 Diffusion-NFT 配置名，并通过命令行覆盖模型和数据集路径。
 
 .. code:: bash
 
-   bash examples/generation/run_generation.sh sd3_nft_ocr \
+   bash examples/diffusion/run_diffusion.sh sd3_nft_ocr \
       actor.model.model_path=/path/to/stable-diffusion-3.5-medium \
       env.train.dataset.path=/path/to/dataset/ocr \
       env.eval.dataset.path=/path/to/dataset/ocr
 
 .. code:: bash
 
-   bash examples/generation/run_generation.sh wan22_ti2v_5b_nft_video_ocr \
+   bash examples/diffusion/run_diffusion.sh wan22_ti2v_5b_nft_video_ocr \
       actor.model.model_path=/path/to/Wan2.2-TI2V-5B-Diffusers \
       env.train.dataset.path=/path/to/dataset/ocr \
       env.eval.dataset.path=/path/to/dataset/ocr
@@ -193,7 +193,7 @@ SD3 和 Wan2.2 示例使用
 3. 通过 OCR reward 为生成媒体打分。
 4. 对生成模型应用 Diffusion-NFT 更新。
 
-进一步配置请修改 ``examples/generation/config/*.yaml``。优先看
+进一步配置请修改 ``examples/diffusion/config/*.yaml``。优先看
 ``algorithm.group_size``、``algorithm.nft_target_space``、``algorithm.nft_tau``
 和 ``actor.model.*.use_lora``。
 

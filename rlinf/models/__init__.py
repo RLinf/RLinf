@@ -155,12 +155,12 @@ def _register_builtin_models():
         return get_model(cfg, torch_dtype)
 
     def _build_sd3(cfg: DictConfig, torch_dtype):
-        from rlinf.models.generation.sd3 import get_model
+        from rlinf.models.diffusion.sd3 import get_model
 
         return get_model(cfg, torch_dtype)
 
     def _build_wan22_ti2v_5b(cfg: DictConfig, torch_dtype):
-        from rlinf.models.generation.wan import get_model
+        from rlinf.models.diffusion.wan import get_model
 
         return get_model(cfg, torch_dtype)
 

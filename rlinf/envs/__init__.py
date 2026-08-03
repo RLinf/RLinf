@@ -146,7 +146,7 @@ def get_env_cls(env_type: str, env_cfg=None):
 
         return D4RLEnv
     elif env_type == SupportedEnvType.GENERATION:
-        from rlinf.envs.generation import GenerationEnv
+        from rlinf.envs.diffusion import GenerationEnv
 
         return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:
