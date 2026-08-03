@@ -85,7 +85,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "evo1")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1677,6 +1677,34 @@ install_starvla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_evo1_model() {
+    # Evo-1 = InternVL3-1B + flow-matching action head (branch: evo1-flash).
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Evo-1 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local evo1_path
+    evo1_path=$(clone_or_reuse_repo EVO1_PATH "$VENV_DIR/Evo-1" https://github.com/RLinf/Evo-1.git -b "${EVO1_GIT_REF:-evo1-flash}" --depth 1)
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/evo1.txt"
+
+    # The RLinf fork carries packaging metadata, so 'import scripts.Evo1' and
+    # 'import config' resolve from a normal install. Editable, because Evo-1
+    # resolves its dataset cache relative to __file__.
+    uv pip install -e "$evo1_path"
+
+    install_flash_attn
+    uv pip uninstall pynvml || true
+}
+
 install_gr00t_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -2745,6 +2773,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                evo1)
+                    install_evo1_model
                     ;;
                 "")
                     install_env_only

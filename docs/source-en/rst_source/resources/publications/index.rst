@@ -11,7 +11,7 @@ Detailed publication pages
 
    * - Publication
      - Focus
-     - Preprint
+     - Paper
    * - :doc:`STEAM <steam>`
      - Self-supervised temporal ensemble advantage modeling for real-world robot learning.
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
@@ -27,6 +27,9 @@ Detailed publication pages
    * - :doc:`RLinf <rlinf_system>`
      - Flexible and efficient RL system.
      - `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
+   * - :doc:`DynaRL <dynarl>`
+     - Flexible and dynamic scheduling for large-scale RL training.
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
    * - :doc:`πRL <pi_rl>`
      - Online RL fine-tuning for flow-based VLA models.
      - `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__
@@ -46,6 +49,7 @@ Detailed publication pages
    rlinf_vla
    rlinf_co
    rlinf_system
+   dynarl
    pi_rl
    wovr
    wideseek_r1
