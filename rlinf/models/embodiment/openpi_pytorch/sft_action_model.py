@@ -95,13 +95,7 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         return observation, actions
 
     def _observation_to_device(self, observation: Any) -> Observation:
-        if isinstance(observation, dict):
-            observation = Observation.from_dict(observation)
-        if not isinstance(observation, Observation):
-            raise TypeError(
-                f"SFT observation must be an Observation or dict; "
-                f"got {type(observation)!r}."
-            )
+        observation = Observation.from_observation_like(observation)
         device = self.device
 
         def _move(x):

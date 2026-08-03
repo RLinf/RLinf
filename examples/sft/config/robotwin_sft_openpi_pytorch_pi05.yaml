@@ -33,6 +33,10 @@ data:
   train_data_paths: "/path/to/robotwin-data"
   num_workers: 4
   tolerance_s: 1.0e-4
+  # At startup, verify the real two-or-more-rank OpenPI loader does not repeat
+  # sampler indices and that map-style __getitem__ consumes those indices.
+  audit_ddp_sharding: true
+  audit_ddp_sharding_sample_reads: 8
 
 actor:
   group_name: "ActorGroup"

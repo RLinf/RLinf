@@ -19,7 +19,7 @@ from __future__ import annotations
 import abc
 import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -109,6 +109,27 @@ class Observation:
     token_ar_mask: torch.Tensor | None = None
     token_loss_mask: torch.Tensor | None = None
     pcd_xyz: torch.Tensor | None = None
+
+    @classmethod
+    def from_observation_like(cls, observation: Any) -> Observation:
+        """Convert a local mapping or official OpenPI Observation to this type.
+
+        The official ``openpi.models.model.Observation`` exposes ``to_dict()``,
+        whose keys match the local ``from_dict`` boundary. Its loader has already
+        applied all data transforms, so this only changes the Python container.
+        """
+        if isinstance(observation, cls):
+            return observation
+        if isinstance(observation, Mapping):
+            return cls.from_dict(dict(observation))
+
+        to_dict = getattr(observation, "to_dict", None)
+        if callable(to_dict):
+            return cls.from_dict(to_dict())
+        raise TypeError(
+            "SFT observation must be a local Observation, mapping, or an "
+            f"OpenPI Observation with to_dict(); got {type(observation)!r}."
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Observation:

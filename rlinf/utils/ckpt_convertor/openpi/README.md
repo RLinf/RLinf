@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,robotwin_sft2new,new2old,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2new,old2new,sft2new,new2old,sft2deploy} ...
 ```
 
 Two checkpoint layouts are referenced throughout:
@@ -86,71 +86,59 @@ RLinf SFT-trained checkpoint -> new bare `Pi0` layout.
   `full_weights.pt` file directly. The convertor strips the wrapper/FSDP key
   prefixes (`model.`, `_fsdp_wrapped_module.`, `_orig_mod.`, `module.`) to recover
   the bare `Pi0` keys.
-- **Output**: `<output-model>/model.safetensors` + `<output-model>/config.json`
-  (the fixed BEHAVIOR pi0.5 architecture config); norm-stats copied to
+- **Model configuration**: `--config-name` is required and is resolved through
+  `rlinf.models.embodiment.openpi.dataconfig.get_openpi_config`. It is the same
+  source used by SFT and eval, and supplies Pi0/Pi0.5 selection, action horizon,
+  model action dimension, token length, and state-input semantics. For example,
+  use `pi05_behavior`, `pi0_aloha_robotwin`, or `pi05_aloha_robotwin`. This mode
+  therefore requires the OpenPI/RLinf config dependencies to be importable.
+- **Output**: `<output-model>/model.safetensors` + `<output-model>/config.json`;
+  `config.json` is derived from `--config-name`. Norm-stats are copied to
   `--output-norm-stats`.
-- **Dtype policy**: floating-point tensors are **cast to bf16** (the new-format
-  eval loader validates that every checkpoint tensor is bf16); integer/bool
-  buffers pass through. The `config.json` records `"dtype": "bfloat16"`.
+- **Storage dtype**: `--dtype {fp32,bf16}` is required. It controls an actual
+  cast before `model.safetensors` is written; it is not merely metadata. Use
+  `fp32` to preserve a full-precision SFT checkpoint and choose `bf16` only when
+  a smaller, lossy artifact is intended.
+- **Validation**: `--reference-model` optionally checks all keys and tensor
+  shapes against a matching new-format base model.
 - **Norm-stats**: input copied verbatim to the output path.
 
+### Behavior and RoboTwin precision
+
+The two SFT configurations use the same mixed-precision policy for training:
+
+| Configuration | Base/model checkpoint | FSDP `param_dtype` | FSDP reduction and buffer dtype |
+| --- | --- | --- | --- |
+| `behavior_pi05_vla.yaml` | fp32 | bf16 | fp32 |
+| `robotwin_sft_openpi_pytorch.yaml` | fp32 | bf16 | fp32 |
+
+This training compute policy is separate from converter storage dtype. Both
+Behavior and RoboTwin `full_weights.pt` checkpoints should be converted with
+`--dtype fp32` when preserving their SFT values is required. Eval may still use
+bf16 compute through its runtime `precision` setting.
+
 ```bash
+# BEHAVIOR Pi0.5, preserving SFT weights in fp32.
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
+    --config-name       pi05_behavior \
+    --dtype              fp32 \
     --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
     --input-norm-stats  /path/to/norm_stats.json \
     --output-model      /path/to/pi05_sft_pytorch_new \
     --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
 ```
 
----
-
-## `robotwin_sft2new`
-
-RoboTwin Pi0/Pi0.5 RLinf SFT checkpoint -> new HF-style `openpi_pytorch`
-layout.
-
-Use this mode for `examples/sft/config/robotwin_sft_openpi_pytorch.yaml` and
-pass `--pi05` for `examples/sft/config/robotwin_sft_openpi_pytorch_pi05.yaml`.
-It is separate from `sft2new`, which keeps the older generic Pi0.5 SFT layout.
-
-- **Pi0 architecture** (default): `pi05=false`, model action dimension 32,
-  action horizon 50, maximum token length 48, state projection + action-time
-  MLPs.
-- **Pi0.5 architecture** (`--pi05`): `pi05=true`, model action dimension 32,
-  action horizon 50, maximum token length 200, discrete state tokens +
-  adaptive-RMS time MLPs.
-- **Input**: an SFT checkpoint directory, `actor/` directory,
-  `model_state_dict/` directory, or `full_weights.pt` directly.
-- **Output**: `model.safetensors` + `config.json`; output weights are fp32 by
-  default to preserve the SFT master weights. Use `--dtype bf16` for a smaller
-  artifact.
-- **Validation**: `--reference-model` optionally checks keys and tensor shapes
-  against the converted Pi0 base model before writing output.
-- **Norm-stats**: copied verbatim to the requested RoboTwin asset path.
-
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+# RoboTwin Pi0, preserving SFT weights in fp32.
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
+    --config-name       pi0_aloha_robotwin \
+    --dtype              fp32 \
     --ckpt              /path/to/checkpoints/global_step_30000 \
-    --input-norm-stats /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
+    --input-norm-stats /path/to/robotwin/norm_stats.json \
     --output-model      /path/to/pi0_robotwin_sft_hf \
     --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
     --reference-model   /path/to/pi0_base_pytorch_new
 ```
-
-For Pi0.5, use a matching Pi0.5 base model and add `--pi05`:
-
-```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
-    --pi05 \
-    --ckpt              /path/to/checkpoints/global_step_30000 \
-    --input-norm-stats /path/to/pi05_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
-    --output-model      /path/to/pi05_robotwin_sft_hf \
-    --output-norm-stats /path/to/pi05_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
-    --reference-model   /path/to/pi05_base_pytorch_new
-```
-
-The output directory can be used as `actor.model.model_path` for the matching
-RoboTwin eval config and can also be uploaded directly to Hugging Face Hub.
 
 ---
 
