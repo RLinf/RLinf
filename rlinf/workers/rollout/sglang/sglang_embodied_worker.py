@@ -31,35 +31,26 @@ from typing import Any, Literal, Optional
 
 import torch
 from omegaconf import DictConfig
-from omegaconf import open_dict as _open_dict
 
-from rlinf.utils.placement import ModelParallelComponentPlacement
-from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
+from rlinf.scheduler import Worker
+from rlinf.utils.placement import HybridComponentPlacement
 
 
-class SGLangEmbodiedWorker(SGLangWorker):
+class SGLangEmbodiedWorker(Worker):
     """Use a driver-launched ``sglang serve`` + action policy + channel eval."""
 
     def __init__(
         self,
         config: DictConfig,
-        placement: ModelParallelComponentPlacement,
-        weight_reload="sync",
+        placement: HybridComponentPlacement,
         config_rollout: Optional[DictConfig] = None,
     ):
-        rollout_cfg = config_rollout if config_rollout is not None else config.rollout
-        model_cfg = rollout_cfg.model
-        original_model_path = model_cfg.model_path
-        tokenizer_path = model_cfg.get("tokenizer_path", None)
-        if tokenizer_path:
-            with _open_dict(model_cfg):
-                model_cfg.model_path = tokenizer_path
-        try:
-            super().__init__(config, placement, weight_reload, config_rollout)
-        finally:
-            if tokenizer_path:
-                with _open_dict(model_cfg):
-                    model_cfg.model_path = original_model_path
+        Worker.__init__(self)
+        self._cfg = config
+        self._cfg_rollout = (
+            config_rollout if config_rollout is not None else config.rollout
+        )
+        self._placement = placement
         self.cfg_rollout = self._cfg_rollout
         self.model_type = str(
             getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
@@ -97,14 +88,9 @@ class SGLangEmbodiedWorker(SGLangWorker):
     async def init_worker(self):
         policy_cls = None
         if self.model_type:
-            from rlinf.workers.rollout.sglang.action_policies import (
-                get_action_policy_cls,
-            )
+            from rlinf.models.embodiment.action_policy import get_action_policy_cls
 
-            try:
-                policy_cls = get_action_policy_cls(self.model_type)
-            except ValueError:
-                policy_cls = None
+            policy_cls = get_action_policy_cls(self.model_type)
         if policy_cls is None:
             raise RuntimeError(
                 f"no action policy registered for model_type "

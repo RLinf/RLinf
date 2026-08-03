@@ -61,10 +61,7 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     normalize_instruction_text,
     rollout_obs_layout_for_embodiment,
 )
-from rlinf.workers.rollout.sglang.action_policies.base import EmbodiedActionPolicy
-from rlinf.workers.rollout.sglang.action_policies.registry import (
-    register_action_policy,
-)
+from rlinf.models.embodiment.action_policy import EmbodiedActionPolicy
 
 _RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
 
@@ -428,7 +425,6 @@ class _DreamZeroActionAdapter:
         return actions
 
 
-@register_action_policy("dreamzero")
 class DreamZeroActionPolicy(EmbodiedActionPolicy):
     """DreamZero eval policy for the SGLang embodied rollout worker.
 

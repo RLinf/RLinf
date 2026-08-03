@@ -85,3 +85,11 @@ class EmbodiedActionPolicy(ABC):
         """Release model-specific resources. Default: no-op (serve lifecycle is
         owned by the worker)."""
         return None
+
+
+def get_action_policy_cls(model_type: str):
+    """Return the action-policy class for ``model_type`` (or ``None``)."""
+    from rlinf.models import _ACTION_POLICY_REGISTRY
+
+    policy_builder = _ACTION_POLICY_REGISTRY.get(str(model_type).lower())
+    return policy_builder() if policy_builder is not None else None

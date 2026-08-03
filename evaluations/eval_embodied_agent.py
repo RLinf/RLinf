@@ -51,7 +51,7 @@ def main(cfg) -> None:
 
         rollout_group = (
             get_rollout_backend_worker(cfg)
-            .create_group(cfg, component_placement, weight_reload=None)
+            .create_group(cfg, component_placement)
             .launch(
                 cluster,
                 name=cfg.rollout.group_name,

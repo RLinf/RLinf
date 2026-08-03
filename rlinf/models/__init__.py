@@ -21,6 +21,7 @@ from rlinf.scheduler import Worker
 
 ModelBuilder = Callable[[DictConfig, Optional[object]], object]
 _MODEL_REGISTRY: dict[str, ModelBuilder] = {}
+_ACTION_POLICY_REGISTRY: dict[str, Callable[[], type]] = {}
 
 
 def register_model(
@@ -269,6 +270,46 @@ def _register_builtin_models():
 
 
 _register_builtin_models()
+
+
+def register_action_policy(
+    model_type: str,
+    policy_builder: Callable[[], type],
+    force: bool = False,
+):
+    """Register a lazy action-policy builder for ``cfg.model_type``.
+
+    ``policy_builder`` is a zero-arg callable returning the policy class; keep
+    the heavy import inside it so it runs only on lookup. Lookup happens via
+    :func:`rlinf.models.embodiment.action_policy.get_action_policy_cls`.
+    """
+    if not model_type:
+        raise ValueError("model_type must be a non-empty string.")
+    key = model_type.lower()
+    if not force and key in _ACTION_POLICY_REGISTRY:
+        raise ValueError(
+            f"Action policy `{key}` is already registered. "
+            "Set force=True to override it."
+        )
+    _ACTION_POLICY_REGISTRY[key] = policy_builder
+
+
+def _register_builtin_action_policies():
+    def _build_dreamzero_policy():
+        from rlinf.models.embodiment.dreamzero.action_policy import (
+            DreamZeroActionPolicy,
+        )
+
+        return DreamZeroActionPolicy
+
+    register_action_policy(
+        SupportedModel.DREAMZERO.value,
+        _build_dreamzero_policy,
+        force=True,
+    )
+
+
+_register_builtin_action_policies()
 
 
 def get_model(cfg: DictConfig):
