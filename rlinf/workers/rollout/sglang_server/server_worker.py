@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import inspect
 import multiprocessing as mp
 import os
 import signal
@@ -83,8 +84,13 @@ def _run_sglang_server(
 
             server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
             server_args = ServerArgs(**server_args_kwargs)
+            # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
+            # polling /health either way, so the pipe is only used to surface exceptions.
+            launch_kwargs = {}
+            if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
+                launch_kwargs["pipe_finish_writer"] = ready_pipe
             try:
-                launch_server(server_args, pipe_finish_writer=ready_pipe)
+                launch_server(server_args, **launch_kwargs)
             except Exception as e:  # pragma: no cover — surface to parent
                 try:
                     ready_pipe.send(repr(e))
@@ -120,6 +126,12 @@ def _wait_for_http_health(
         f"sglang server at {url} did not become healthy within {timeout:.0f}s "
         f"(last error: {last_err!r})."
     )
+
+
+# sglang derives its gRPC port as ``port + SGLANG_GRPC_PORT_OFFSET`` and rejects
+# the result above 65535, so the HTTP port has to leave room for it.
+SGLANG_GRPC_PORT_OFFSET = 10000
+MAX_SGLANG_HTTP_PORT = 65535 - SGLANG_GRPC_PORT_OFFSET
 
 
 class SGLangServerWorker(Worker):
@@ -182,7 +194,7 @@ class SGLangServerWorker(Worker):
         # internal torch.distributed bootstrap. ``acquire_free_port``
         # uses the worker's PortLock so neither port collides with any
         # other worker on this node.
-        http_port = self.acquire_free_port()
+        http_port = self.acquire_free_port(max_port_num=MAX_SGLANG_HTTP_PORT)
         dist_port = self.acquire_free_port()
 
         server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}

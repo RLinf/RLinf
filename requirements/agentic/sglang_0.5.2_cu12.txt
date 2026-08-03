@@ -1,0 +1,8 @@
+# sglang 0.5.2 on CUDA 12 (torch 2.8). No `# engine:` header: this line's pins
+# are CUDA-agnostic (cuda-python unpinned, nvidia-cutlass-dsl only in the
+# blackwell extra), so it resolves as-is and needs no --no-deps.
+sglang[all]==0.5.2
+sglang-router
+torch-memory-saver
+transformers==4.56.1
+xgrammar==0.1.24
