@@ -27,6 +27,58 @@ from rlinf.utils.logging import get_logger
 logger = get_logger()
 
 
+class OnlineOfflineLeRobotDataset(Dataset):
+    """Expose static offline and growing online datasets as one index space.
+
+    Offline samples occupy ``[0, offline_size)`` and online samples occupy the
+    remaining indices. The offline prefix is stable while the online dataset
+    grows, so an existing DataLoader can safely sample newly appended online
+    frames without rebuilding a ``ConcatDataset``.
+    """
+
+    def __init__(self, offline_dataset: Dataset, online_dataset: Dataset) -> None:
+        self.offline_dataset = offline_dataset
+        self.online_dataset = online_dataset
+
+    @property
+    def offline_size(self) -> int:
+        return len(self.offline_dataset)
+
+    @property
+    def online_size(self) -> int:
+        return len(self.online_dataset)
+
+    def __len__(self) -> int:
+        return self.offline_size + self.online_size
+
+    @staticmethod
+    def _training_fields(sample: Any) -> Any:
+        if not isinstance(sample, dict):
+            return sample
+        exact_keys = {"state", "actions", "task", "image", "wrist_image"}
+        return {
+            key: value
+            for key, value in sample.items()
+            if key in exact_keys
+            or key.startswith("wrist_image-")
+            or key.startswith("extra_view_image")
+        }
+
+    def __getitem__(self, index: int):
+        index = int(index)
+        offline_size = self.offline_size
+        if index < 0 or index >= offline_size + self.online_size:
+            raise IndexError(index)
+        if index < offline_size:
+            sample = self.offline_dataset[index]
+        else:
+            sample = self.online_dataset[index - offline_size]
+        return self._training_fields(sample)
+
+    def __getitems__(self, indices: list[int]) -> list[Any]:
+        return [self[index] for index in indices]
+
+
 class RandomReplacementSampler(Sampler):
     """Sampler that randomly samples indices with replacement.
 
@@ -197,6 +249,61 @@ def build_dataloader_from_dataset(
         len(sampler),
     )
 
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        sampler=sampler,
+        num_workers=num_workers,
+        drop_last=drop_last,
+        pin_memory=pin_memory,
+        **kwargs,
+    )
+
+
+def build_combined_dataloader_from_datasets(
+    online_dataset: Dataset,
+    offline_dataset: Dataset,
+    batch_size: int,
+    num_samples_per_epoch: int,
+    world_size: int = 1,
+    rank: int = 0,
+    num_workers: int = 0,
+    drop_last: bool = True,
+    pin_memory: bool = True,
+    seed: int = 42,
+    **kwargs: Any,
+) -> DataLoader:
+    """Build one uniformly sampled pool from offline and online DAgger data."""
+    dataset = OnlineOfflineLeRobotDataset(
+        offline_dataset=offline_dataset,
+        online_dataset=online_dataset,
+    )
+    if world_size > 1:
+        sampler = DistributedRandomReplacementSampler(
+            dataset,
+            num_samples=num_samples_per_epoch,
+            num_replicas=world_size,
+            rank=rank,
+            seed=seed,
+        )
+    else:
+        sampler = RandomReplacementSampler(
+            dataset,
+            num_samples=num_samples_per_epoch,
+            seed=seed,
+        )
+    logger.info(
+        "[build_combined_dataloader_from_datasets] batch_size=%d, world_size=%d, "
+        "rank=%d, offline_samples=%d, online_samples=%d, total_samples=%d, "
+        "sampler_length=%d",
+        batch_size,
+        world_size,
+        rank,
+        dataset.offline_size,
+        dataset.online_size,
+        len(dataset),
+        len(sampler),
+    )
     return DataLoader(
         dataset,
         batch_size=batch_size,

@@ -20,12 +20,15 @@ from pathlib import Path
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from torch.utils.data import ConcatDataset
 
 from rlinf.config import SupportedModel
-from rlinf.data.datasets.dagger import (
-    RollingLeRobotDataset,
+from rlinf.data.datasets.dagger.dataloader import (
+    build_combined_dataloader_from_datasets,
     build_dataloader_from_dataset,
 )
+from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
+from rlinf.data.datasets.dagger.offline_dataset import OfflineLeRobotDataset
 from rlinf.data.embodied_io_struct import Trajectory
 from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -45,6 +48,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
         self.dataset = None
+        self.offline_dataset = None
         self._lerobot_loader = None
         self._lerobot_iter = None
         self.enable_online_lerobot = bool(
@@ -66,6 +70,13 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def _online_lerobot_cfg(self) -> DictConfig:
         return OmegaConf.select(
             self.cfg, "algorithm.dagger.online_lerobot", default=OmegaConf.create({})
+        )
+
+    def _offline_lerobot_cfg(self) -> DictConfig:
+        return OmegaConf.select(
+            self.cfg,
+            "algorithm.dagger.offline_lerobot",
+            default=OmegaConf.create({}),
         )
 
     def _build_lerobot_dataset(self):
@@ -91,6 +102,83 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                     self.cfg, "algorithm.dagger.online_lerobot.fps", default=10
                 )
             ),
+        )
+
+    def _build_offline_lerobot_dataset(self) -> None:
+        offline_cfg = self._offline_lerobot_cfg()
+        if not bool(offline_cfg.get("enabled", False)):
+            self.offline_dataset = None
+            return
+
+        raw_specs = offline_cfg.get("data_paths", [])
+        specs = (
+            OmegaConf.to_container(raw_specs, resolve=True)
+            if OmegaConf.is_config(raw_specs)
+            else raw_specs
+        )
+        if isinstance(specs, (str, dict)):
+            specs = [specs]
+        if not isinstance(specs, list) or not specs:
+            raise ValueError(
+                "algorithm.dagger.offline_lerobot.data_paths must contain at "
+                "least one LeRobot dataset path when offline rehearsal is enabled."
+            )
+
+        target_fps = offline_cfg.get(
+            "target_fps",
+            OmegaConf.select(
+                self.cfg,
+                "algorithm.dagger.online_lerobot.fps",
+                default=None,
+            ),
+        )
+        default_task = offline_cfg.get("default_task", None)
+        datasets = []
+        for spec in specs:
+            if isinstance(spec, str):
+                dataset_path = spec
+                episodes = None
+                dataset_default_task = default_task
+            elif isinstance(spec, dict):
+                dataset_path = spec.get("dataset_path") or spec.get("data_path")
+                episodes = spec.get("episodes")
+                dataset_default_task = spec.get("default_task", default_task)
+            else:
+                raise TypeError(
+                    "Each offline_lerobot.data_paths entry must be a path string "
+                    f"or mapping, got {type(spec).__name__}."
+                )
+            if not dataset_path:
+                raise ValueError(
+                    "Each offline_lerobot.data_paths mapping requires 'dataset_path'."
+                )
+            datasets.append(
+                OfflineLeRobotDataset(
+                    dataset_path=dataset_path,
+                    chunk_size=self.cfg.actor.model.num_action_chunks,
+                    target_fps=int(target_fps) if target_fps is not None else None,
+                    episodes=episodes,
+                    default_task=dataset_default_task,
+                )
+            )
+
+        self.offline_dataset = (
+            datasets[0] if len(datasets) == 1 else ConcatDataset(datasets)
+        )
+        if len(self.offline_dataset) <= 0:
+            raise ValueError("Configured offline DAgger datasets contain no samples.")
+        self.log_info(
+            "Offline LeRobot rehearsal ready: "
+            f"datasets={len(datasets)}, samples={len(self.offline_dataset)}, "
+            f"target_fps={target_fps}; all samples join the DAgger training pool"
+        )
+
+    def _lerobot_dataset_ready(self) -> bool:
+        """Return whether the combined offline/online training pool is ready."""
+        if self.offline_dataset is None:
+            return self.dataset.is_ready()
+        return len(self.offline_dataset) + len(self.dataset) >= int(
+            self.dataset.min_frames
         )
 
     def _discover_lerobot_resume_shards(self) -> list[dict]:
@@ -188,7 +276,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _refresh_lerobot_loader_after_resume(self) -> None:
         with self._lerobot_loader_lock:
-            if not self.dataset.is_ready():
+            if not self._lerobot_dataset_ready():
                 return
             if self._lerobot_loader is not None:
                 self._data_epoch += 1
@@ -217,24 +305,36 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         return selected
 
     def _build_lerobot_data_loader(self):
-        self.data_loader = build_dataloader_from_dataset(
-            dataset=self.dataset,
-            batch_size=self.cfg.actor.micro_batch_size,
-            world_size=self._world_size,
-            rank=self._rank,
-            use_random_replacement=True,
-            num_samples_per_epoch=self.cfg.actor.global_batch_size,
-            seed=self.cfg.actor.get("seed", 42),
-            num_workers=0,
-        )
+        loader_kwargs = {
+            "batch_size": self.cfg.actor.micro_batch_size,
+            "world_size": self._world_size,
+            "rank": self._rank,
+            "num_samples_per_epoch": self.cfg.actor.global_batch_size,
+            "seed": self.cfg.actor.get("seed", 42),
+            "num_workers": 0,
+        }
+        if self.offline_dataset is None:
+            self.data_loader = build_dataloader_from_dataset(
+                dataset=self.dataset,
+                use_random_replacement=True,
+                **loader_kwargs,
+            )
+        else:
+            self.data_loader = build_combined_dataloader_from_datasets(
+                online_dataset=self.dataset,
+                offline_dataset=self.offline_dataset,
+                **loader_kwargs,
+            )
 
         if hasattr(self.data_loader.sampler, "set_epoch"):
             self.data_loader.sampler.set_epoch(self._data_epoch)
         self._logger.info(
             "in _build_lerobot_data_loader: len(data_loader)=%d, "
-            "len(dataset)=%d, num_samples_per_epoch=%d",
+            "online_samples=%d, offline_samples=%d, "
+            "num_samples_per_epoch=%d",
             len(self.data_loader),
             len(self.dataset),
+            len(self.offline_dataset) if self.offline_dataset is not None else 0,
             self.cfg.actor.global_batch_size,
         )
         # Point the unified loader/iter at the new DataLoader.
@@ -276,6 +376,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             )
         else:
             self._build_lerobot_dataset()
+            self._build_offline_lerobot_dataset()
+            if self._lerobot_dataset_ready():
+                self._ensure_lerobot_loader()
             self._resume_lerobot_dataset()
 
     @Worker.timer("actor/recv_traj")
@@ -336,7 +439,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
         if the dataset is still below ``min_frames``, training is skipped later.
         """
         self._recv_lerobot_episodes_from_channel(input_channel)
-        if self.dataset.is_ready():
+        if self._lerobot_dataset_ready():
             self._ensure_lerobot_loader()
 
     @staticmethod
@@ -451,9 +554,12 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def forward_actor(self, batch):
         """Run one supervised forward pass for DAgger."""
         data = self._prepare_sft_batch(batch)
-        use_action_chunk_loss = (
-            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI
-        )
+        use_action_chunk_loss = False
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+            openpi_cfg = self.cfg.actor.model.get("openpi", {})
+            # Preserve the historical OpenPI DAgger behavior unless a task
+            # explicitly disables environment-dimension loss cropping.
+            use_action_chunk_loss = bool(openpi_cfg.get("use_action_chunk_loss", True))
         return self.model(
             forward_type=ForwardType.SFT,
             data=data,
@@ -579,6 +685,15 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
                 f"lerobot_dataset/{key}": value
                 for key, value in lerobot_dataset_stats.items()
             }
+            if self.offline_dataset is not None:
+                lerobot_dataset_stats.update(
+                    {
+                        "offline_lerobot_dataset/samples": len(self.offline_dataset),
+                        "lerobot_dataset/combined_training_samples": (
+                            len(self.offline_dataset) + len(self.dataset)
+                        ),
+                    }
+                )
             resume_thread = self._lerobot_resume_thread
             lerobot_dataset_stats.update(
                 {
@@ -612,7 +727,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
     def _lerobot_all_ranks_ready(self) -> bool:
         """Return True only when every actor rank can train from LeRobot data."""
-        local_ready = int(self.dataset.is_ready() and self._lerobot_loader is not None)
+        local_ready = int(
+            self._lerobot_dataset_ready() and self._lerobot_loader is not None
+        )
         ready_tensor = torch.tensor(
             [local_ready], device=self.device, dtype=torch.int32
         )

@@ -12,12 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Online LeRobot datasets and dataloaders for DAgger training."""
+"""Online/offline LeRobot datasets and dataloaders for DAgger training."""
 
-from rlinf.data.datasets.dagger.dataloader import build_dataloader_from_dataset
+from rlinf.data.datasets.dagger.dataloader import (
+    OnlineOfflineLeRobotDataset,
+    build_combined_dataloader_from_datasets,
+    build_dataloader_from_dataset,
+)
 from rlinf.data.datasets.dagger.dataset import RollingLeRobotDataset
+from rlinf.data.datasets.dagger.offline_dataset import OfflineLeRobotDataset
 
 __all__ = [
+    "OfflineLeRobotDataset",
+    "OnlineOfflineLeRobotDataset",
     "RollingLeRobotDataset",
+    "build_combined_dataloader_from_datasets",
     "build_dataloader_from_dataset",
 ]

@@ -29,6 +29,7 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from rlinf.utils.dual_franka_actions import hold_right_arm_action
 from rlinf.utils.rot6d import matrix_to_rot6d, rot6d_to_quat_xyzw_safe
 
 from ..dual_franka_env import DualFrankaEnv, DualFrankaRobotConfig
@@ -43,6 +44,8 @@ class DualFrankaTCPRobotConfig(DualFrankaRobotConfig):
 
     # Only "rot6d" is implemented; other values raise NotImplementedError.
     rotation_repr: str = "rot6d"
+    # Safety option for left-arm-only policies using the 20D dual-arm layout.
+    hold_right_arm: bool = False
 
 
 class DualFrankaTCPEnv(DualFrankaEnv):
@@ -61,6 +64,15 @@ class DualFrankaTCPEnv(DualFrankaEnv):
     def reset(self, *, seed=None, options=None):
         self._prev_step_quat = [None, None]
         return super().reset(seed=seed, options=options)
+
+    def step(self, action: np.ndarray):
+        if self.config.hold_right_arm and not self.config.is_dummy:
+            action = hold_right_arm_action(
+                action,
+                self._right_state.tcp_pose,
+                self._right_state.gripper_open,
+            )
+        return super().step(action)
 
     # ---------------------------------------------------------------- spaces
 

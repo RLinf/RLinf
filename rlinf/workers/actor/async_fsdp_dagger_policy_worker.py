@@ -64,7 +64,7 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         """
         while not self.should_stop:
             received_any = self._recv_lerobot_episodes_from_channel(input_channel)
-            if self.dataset.is_ready():
+            if self._lerobot_dataset_ready():
                 self._ensure_lerobot_loader()
             if not received_any:
                 time.sleep(0.1)
