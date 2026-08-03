@@ -569,7 +569,7 @@ SGLang 路径额外说明：
 - ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数。两个阈值均达到时停止采集。
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
-- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage`` （或任务对应的 ``stage``）以启用键盘标注界面。
 - ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
@@ -906,8 +906,8 @@ Franka + Qwen VLM Reward Model
 
 在 Franka 真机平台上，也可以使用 Qwen3-VL 作为 VLM reward model，通过**动作趋势判断**
 来引导机械臂学习。与仿真场景一次性判断整段视频不同，真机场景下 VLM 每 5 帧构成一个
-历史窗口，判断窗口内机械臂的运动趋势是 ``positive``（靠近目标）、``negative``（远离目标）
-还是 ``unclear``（无法判断），并将趋势标签转换为标量 reward：
+历史窗口，判断窗口内机械臂的运动趋势是 ``positive`` （靠近目标）、``negative`` （远离目标）
+还是 ``unclear`` （无法判断），并将趋势标签转换为标量 reward：
 
 .. code-block:: text
 
