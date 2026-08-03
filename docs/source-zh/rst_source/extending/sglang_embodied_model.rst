@@ -28,7 +28,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
 - 驱动脚本（如 ``eval_embodied_agent.py``）通过
   :func:`launch_sglang_router_and_server` 启动一个或多个 sglang server 进程，
   并把每个 server 的 URL 推送给 rollout worker；server 的启动、``/health``
-  轮询和端口分配由 ``SGLangServerWorker``（driver 侧）负责，rollout worker
+  轮询和端口分配由 ``SGLangServerWorker``\ （driver 侧）负责，rollout worker
   本身不再持有 server 子进程；
 - ``SGLangEmbodiedWorker`` 按自己的 rank 取一个 driver 分配的
   server URL进行推理服务的端口，加载 Action Policy，通过 channel 与环境 Worker 交换 observation
@@ -397,7 +397,7 @@ Server 参数和 Pipeline 配置
 server 的启动参数完全来自 YAML 的 ``rollout.sglang.server`` 块。该块被原样转发给
 ``sglang.multimodal_gen`` 的 ``ServerArgs.from_kwargs(**)``：顶层参数
 ``ServerArgs`` 字段，``pipeline_config`` 子块由 ``from_kwargs`` dispatch 到
-``DreamZeroPipelineConfig``（按 ``pipeline_class_name`` 匹配），并把
+``DreamZeroPipelineConfig``\ （按 ``pipeline_class_name`` 匹配），并把
 ``backend`` / ``disagg_role`` 等字符串转成枚举。结构如下：
 
 .. code-block:: yaml
@@ -615,7 +615,7 @@ SGLang Worker 分发
 
 - ``rollout_backend: sglang`` 选择 SGLang 后端；
 - ``serving_mode: embodied`` 选择 rollout worker = ``SGLangEmbodiedWorker``；
-- ``server_type: embodied`` 选择 server 分派分支 = ``embodied``（VLA/
+- ``server_type: embodied`` 选择 server 分派分支 = ``embodied``\ （VLA/
   diffusion，走 ``sglang.multimodal_gen`` 的 ``dispatch_launch``）。
   ``serving_mode`` 与 ``server_type`` 正交：前者负责 worker 侧怎么连，后者管
   server 子进程走哪条 sglang 分派；两者都在同一个 ``SGLangServerWorker`` 类内
