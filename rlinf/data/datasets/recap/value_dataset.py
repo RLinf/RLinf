@@ -26,10 +26,17 @@ import numpy as np
 import openpi.models.model as _openpi_model
 import openpi.transforms as _openpi_transforms
 import torch
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
 from openpi.transforms import DataTransformFn
 from torch.utils.data import Dataset
 

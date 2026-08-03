@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rlinf"
-version = "0.3.0"
+version = "0.4.0"
 authors = [{ name = "RLinf Contributors" }]
 description = "Reinforcement Learning Infrastructure for Embodied and Agentic AI"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -21,7 +21,7 @@ classifiers = [
     #   4 - Beta
     #   5 - Production/Stable
     "Development Status :: 2 - Pre-Alpha",
-    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.4",
+    "Environment :: GPU :: NVIDIA CUDA :: 12 :: 12.8",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
 ]
@@ -73,26 +73,8 @@ Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
 [project.optional-dependencies]
-agentic-sglang = [
-    "sglang[all]==0.4.6.post5",
-    "sglang-router",
-    "torch-memory-saver",
+agentic = [
     "numpy==2.2",
-    "transformers==4.51.1",
-    # uvloop is not compatible with simulators, put it here
-    "uvloop==0.21.0",
-    "hydra-core==1.4.0.dev1",
-    "omegaconf==2.4.0.dev4",
-    "word2number",
-    "regex",
-    "peft==0.11.1",
-    "rlinf_latex2sympy2",
-    "mcp",
-]
-agentic-vllm = [
-    "vllm==0.8.5",
-    "numpy==2.2",
-    "transformers==4.51.1",
     # uvloop is not compatible with simulators, put it here
     "uvloop==0.21.0",
     "hydra-core==1.4.0.dev1",
@@ -127,8 +109,6 @@ franka = [
     "imageio[ffmpeg]",
     "evdev",
     "numpy<2",
-    # lerobot is installed from a pinned git commit by requirements/install.sh
-    # (PyPI forbids direct-URL deps in published packages).
     "pyzmq",
     "websockets"
 ]
@@ -146,13 +126,8 @@ xsquare_turtle2 = [
     "pyspacemouse>=2.0.0",
     "imageio[ffmpeg]",
     "evdev",
-    # lerobot is installed from a pinned git commit by requirements/install.sh
-    # (PyPI forbids direct-URL deps in published packages).
 ]
 gim_arm = [
-    # gim_arm_control SDK: install separately via
-    #   pip install -e /path/to/gim_arm_control/python
-    # (brings in pinocchio as a transitive runtime dependency)
     "numpy",
     "scipy",
     "gymnasium",
@@ -162,11 +137,9 @@ gim_arm = [
 ]
 
 [tool.uv]
-prerelease = "allow"
 conflicts = [
     [
-      { extra = "agentic-sglang" },
-      { extra = "agentic-vllm" },
+      { extra = "agentic" },
       { extra = "embodied" },
       { extra = "franka" },
       { extra = "xsquare_turtle2" },
@@ -174,11 +147,10 @@ conflicts = [
     ],
 ]
 override-dependencies = [
-    "torch==2.6.0",
-    "torchvision==0.21.0",
-    "torchaudio==2.6.0",
-    "torchcodec==0.2",
-    "xgrammar==0.1.19",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "torchaudio==2.11.0",
+    "torchcodec>=0.11,<0.12",
     "uvloop==0.21.0",
     "tensorflow-addons==0.23.0 ; platform_machine == 'x86_64'",
     "setuptools>=69.5.1,<75.9",
@@ -233,3 +205,4 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
+
