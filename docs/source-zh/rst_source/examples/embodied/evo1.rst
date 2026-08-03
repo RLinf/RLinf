@@ -91,7 +91,8 @@ Evo-1 —— 嵌入 RLinf 的 Python 内存空间，实现零延迟、张量级�
 2. 安装依赖
 ~~~~~~~~~~~
 
-一条命令安装 Evo-1 原生环境与 LIBERO 基础依赖（脚本会把 Evo-1 源码拉到 ``.venv/Evo-1`` 并处理依赖隔离）：
+一条命令安装 Evo-1 原生环境与 LIBERO 基础依赖（脚本会把 RLinf 的 Evo-1 fork 克隆到
+``.venv/Evo-1``，将其安装进 venv，并处理依赖隔离）：
 
 .. code-block:: bash
 

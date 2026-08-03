@@ -93,7 +93,8 @@ Installation
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Install the Evo-1 native environment and LIBERO base dependencies in one command (the
-script pulls the Evo-1 source into ``.venv/Evo-1`` and handles dependency isolation):
+script clones the RLinf Evo-1 fork into ``.venv/Evo-1``, installs it into the venv,
+and handles dependency isolation):
 
 .. code-block:: bash
 

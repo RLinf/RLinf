@@ -1692,17 +1692,14 @@ install_evo1_model() {
     esac
 
     local evo1_path
-    evo1_path=$(clone_or_reuse_repo EVO1_PATH "$VENV_DIR/Evo-1" https://github.com/MINT-SJTU/Evo-1.git -b "${EVO1_GIT_REF:-evo1-flash}" --depth 1)
+    evo1_path=$(clone_or_reuse_repo EVO1_PATH "$VENV_DIR/Evo-1" https://github.com/RLinf/Evo-1.git -b "${EVO1_GIT_REF:-evo1-flash}" --depth 1)
 
     uv pip install -r "$SCRIPT_DIR/embodied/models/evo1.txt"
 
-    # Evo-1 is not a packaged module; expose its import root (Evo_1/) via a .pth
-    # so 'import scripts.Evo1' and 'import config' resolve inside this venv.
-    # Use the activated venv's python, not `uv run`: uv run re-syncs the project
-    # and undoes the pins above.
-    local site_packages
-    site_packages=$(python -c "import site; print(site.getsitepackages()[0])")
-    echo "$evo1_path/Evo_1" > "$site_packages/evo1.pth"
+    # The RLinf fork carries packaging metadata, so 'import scripts.Evo1' and
+    # 'import config' resolve from a normal install. Editable, because Evo-1
+    # resolves its dataset cache relative to __file__.
+    uv pip install -e "$evo1_path"
 
     install_flash_attn
     uv pip uninstall pynvml || true
