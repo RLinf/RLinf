@@ -186,3 +186,45 @@ def test_estimate_payload_size_falls_back_to_pickle_for_plain_objects():
     size = NetEmulationManager.estimate_payload_size_bytes(payload)
 
     assert size == len(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+
+
+def test_reserve_broadcast_charges_the_uplink_once():
+    # 8 Mbps == 1 MB/s on each side.
+    manager = _manager(
+        crossdc_pairs=[
+            {"src": "Env:0", "dst": ["Actor:0", "Actor:1"], "delay_ms": 100}
+        ],
+        bandwidth_groups=[
+            {"members": ["Env:0"], "bandwidth_mbps": 8},
+            {"members": ["Actor:0", "Actor:1"], "bandwidth_mbps": 8},
+        ],
+    )
+
+    one_mb = 1_000_000
+    # Both receivers share one bandwidth group, so the payload crosses the link
+    # once: 1s uplink + 0.1s delay, not 2s.
+    assert manager.reserve_broadcast(
+        "EnvGroup:0", ["ActorGroup:0", "ActorGroup:1"], one_mb
+    ) == pytest.approx(1.1, abs=0.02)
+
+
+def test_reserve_broadcast_waits_for_the_slowest_destination():
+    manager = _manager(
+        crossdc_pairs=[
+            {"src": "Env:0", "dst": "Actor:0", "delay_ms": 50},
+            {"src": "Env:0", "dst": "Actor:1", "delay_ms": 200},
+        ],
+    )
+
+    assert manager.reserve_broadcast(
+        "EnvGroup:0", ["ActorGroup:0", "ActorGroup:1"], 0
+    ) == pytest.approx(0.2, abs=0.02)
+
+
+def test_reserve_broadcast_ignores_unemulated_destinations():
+    manager = _manager()
+
+    assert (
+        manager.reserve_broadcast("EnvGroup:0", ["RolloutGroup:0", "EnvGroup:1"], 4096)
+        == 0.0
+    )

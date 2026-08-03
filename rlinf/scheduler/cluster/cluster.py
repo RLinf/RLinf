@@ -79,6 +79,13 @@ class ClusterEnvVar(str, Enum):
         export RLINF_EXT_MODULE=workflows.scripts.rlinf_ext
     """
 
+    NET_EMULATION = "NET_EMULATION"
+    """Whether ``cluster.net_emulation`` is enabled for this run.
+
+    Set to ``1`` by the driver when the net emulation manager is launched, so that
+    workers know to wait for it instead of silently sending undelayed.
+    """
+
     PATH_ENV_MERGE_MODE = "PATH_ENV_MERGE_MODE"
     """How to merge path-like env vars when allocating workers.
 
@@ -126,6 +133,7 @@ class Cluster:
         ClusterEnvVar.NODE_RANK: None,
         ClusterEnvVar.COMM_NET_DEVICES: None,
         ClusterEnvVar.EXT_MODULE: None,
+        ClusterEnvVar.NET_EMULATION: "0",
         ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
         ClusterEnvVar.CODE_WORKING_DIR: "0",
     }
@@ -388,6 +396,17 @@ class Cluster:
             + "\n".join(str(group) for group in self._node_groups)
         )
 
+        # Resolve net emulation before the env vars are pushed to the nodes, so that
+        # workers can tell an unlaunched manager from a disabled one.
+        net_emu_cfg = cluster_cfg.get("net_emulation", None) if cluster_cfg else None
+        if net_emu_cfg is not None and net_emu_cfg.get("enabled", False):
+            # Resolve to a plain dict so the actor does not need the config schema.
+            if isinstance(net_emu_cfg, DictConfig):
+                net_emu_cfg = OmegaConf.to_container(net_emu_cfg, resolve=True)
+            os.environ[Cluster.get_full_env_var_name(ClusterEnvVar.NET_EMULATION)] = "1"
+        else:
+            net_emu_cfg = None
+
         # Set environment variables
         self._set_scheduler_env_vars()
 
@@ -433,13 +452,7 @@ class Cluster:
                     Tracer, manager_node, runtime_env, tracer_cfg.get("output_file")
                 )
             # Optional net emulation manager, launched only when emulation is enabled
-            net_emu_cfg = (
-                cluster_cfg.get("net_emulation", None) if cluster_cfg else None
-            )
-            if net_emu_cfg is not None and net_emu_cfg.get("enabled", False):
-                # Resolve to a plain dict so the actor does not need the config schema.
-                if isinstance(net_emu_cfg, DictConfig):
-                    net_emu_cfg = OmegaConf.to_container(net_emu_cfg, resolve=True)
+            if net_emu_cfg is not None:
                 self._net_emulation_manager = self._launch_manager_actor(
                     NetEmulationManager, manager_node, runtime_env, net_emu_cfg
                 )

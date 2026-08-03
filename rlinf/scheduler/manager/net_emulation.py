@@ -181,7 +181,7 @@ class NetEmulationManager(Manager):
         return group + (":" + parts[1] if len(parts) > 1 else "")
 
     def reserve(self, src: str, dst: str, size_bytes: int) -> float:
-        """Book a transmission slot and return how long the sender must still wait.
+        """Book a point-to-point transmission and return the sender's wait.
 
         Args:
             src (str): Name of the sending worker.
@@ -191,22 +191,48 @@ class NetEmulationManager(Manager):
         Returns:
             float: Remaining wait in seconds, ``0.0`` when the link is not emulated.
         """
+        return self._book(src, [dst], size_bytes)
+
+    def reserve_broadcast(self, src: str, dsts: list[str], size_bytes: int) -> float:
+        """Book a one-to-many transmission and return the sender's wait.
+
+        The payload leaves the source once, so the sender-side bandwidth is charged
+        a single time; each distinct receiving bandwidth group is charged once, on
+        the assumption that a broadcast crosses every emulated link once and fans
+        out locally afterwards. The wait is the slowest destination's, which is what
+        gates the collective.
+
+        Args:
+            src (str): Name of the broadcasting worker.
+            dsts (list[str]): Names of the receiving workers.
+            size_bytes (int): Estimated wire size of the payload.
+
+        Returns:
+            float: Remaining wait in seconds, ``0.0`` when no destination is on an
+            emulated link.
+        """
+        return self._book(src, dsts, size_bytes)
+
+    def _book(self, src: str, dsts: list[str], size_bytes: int) -> float:
+        """Reserve capacity for one transfer from *src* to every emulated *dsts*."""
         norm_src = self._normalize_endpoint(src)
-        norm_dst = self._normalize_endpoint(dst)
-        delay_s = self._delay_by_pair.get((norm_src, norm_dst))
-        if delay_s is None:
+        links: list[tuple[str, float]] = []
+        for dst in dsts:
+            norm_dst = self._normalize_endpoint(dst)
+            delay_s = self._delay_by_pair.get((norm_src, norm_dst))
+            if delay_s is not None:
+                links.append((norm_dst, delay_s))
+        if not links:
             return 0.0
 
         size_bytes = max(0, int(size_bytes))
         src_group = self._endpoint_to_bw_group.get(norm_src)
-        dst_group = self._endpoint_to_bw_group.get(norm_dst)
         bw_u = self._bw_by_group.get(src_group, math.inf)
-        bw_d = self._bw_by_group.get(dst_group, math.inf)
 
         with self._lock:
             t0 = time.monotonic()
             # Emulated uplink: serialize sends from the same source under the
-            # configured sender-side bandwidth.
+            # configured sender-side bandwidth. Charged once per transfer.
             t_u_start = (
                 max(t0, self._uplink_next_free.get(src_group, 0.0)) if src_group else t0
             )
@@ -218,23 +244,33 @@ class NetEmulationManager(Manager):
             if src_group:
                 self._uplink_next_free[src_group] = t_u_finish
 
-            # Delay queue: shift the whole transfer by the configured link delay.
-            first_bit_arrive = t_u_start + delay_s
-            last_bit_arrive = t_u_finish + delay_s
+            ready_at = t0
+            charged_dst_groups: set[str] = set()
+            for norm_dst, delay_s in links:
+                # Delay queue: shift the whole transfer by the configured link delay.
+                first_bit_arrive = t_u_start + delay_s
+                last_bit_arrive = t_u_finish + delay_s
 
-            # Emulated downlink: serialize receives at the destination when the
-            # receiver-side bandwidth becomes the bottleneck.
-            t_d_start = max(
-                first_bit_arrive, self._downlink_next_free.get(dst_group, 0.0)
-            )
-            t_d_finish = (
-                t_d_start + (size_bytes / bw_d)
-                if math.isfinite(bw_d) and bw_d > 0
-                else t_d_start
-            )
-            ready_at = max(last_bit_arrive, t_d_finish)
-            if dst_group:
-                self._downlink_next_free[dst_group] = ready_at
+                # Emulated downlink: serialize receives at the destination when the
+                # receiver-side bandwidth becomes the bottleneck.
+                dst_group = self._endpoint_to_bw_group.get(norm_dst)
+                if dst_group is not None and dst_group in charged_dst_groups:
+                    ready_at = max(ready_at, self._downlink_next_free[dst_group])
+                    continue
+                bw_d = self._bw_by_group.get(dst_group, math.inf)
+                t_d_start = max(
+                    first_bit_arrive, self._downlink_next_free.get(dst_group, 0.0)
+                )
+                t_d_finish = (
+                    t_d_start + (size_bytes / bw_d)
+                    if math.isfinite(bw_d) and bw_d > 0
+                    else t_d_start
+                )
+                dst_ready_at = max(last_bit_arrive, t_d_finish)
+                if dst_group is not None:
+                    self._downlink_next_free[dst_group] = dst_ready_at
+                    charged_dst_groups.add(dst_group)
+                ready_at = max(ready_at, dst_ready_at)
 
         return max(ready_at - time.monotonic(), 0.0)
 

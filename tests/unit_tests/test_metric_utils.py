@@ -37,7 +37,7 @@ def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
 
     assert math.isclose(float(metrics["success"]), 0.5)
     assert float(metrics["average_delay"]) == pytest.approx(0.25)
-    assert float(metrics["medium_delay"]) == pytest.approx(0.25)
+    assert float(metrics["median_delay"]) == pytest.approx(0.25)
     assert float(metrics["max_delay"]) == pytest.approx(0.40)
     assert float(metrics["min_delay"]) == pytest.approx(0.10)
     assert metrics["num_trajectories"] == 4
@@ -63,6 +63,6 @@ def test_compute_evaluate_metrics_reports_prefixed_interact_delay_stats():
     )
 
     assert float(metrics["env/average_delay"]) == pytest.approx(0.18)
-    assert float(metrics["env/medium_delay"]) == pytest.approx(0.18)
+    assert float(metrics["env/median_delay"]) == pytest.approx(0.18)
     assert float(metrics["env/max_delay"]) == pytest.approx(0.24)
     assert float(metrics["env/min_delay"]) == pytest.approx(0.12)

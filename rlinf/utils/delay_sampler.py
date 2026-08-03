@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import random
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -66,29 +67,41 @@ class DelaySampler(ABC):
         """Build a sampler from a Hydra config block."""
         if delay_config is None:
             return None
-        delay_type = str(delay_config.type).lower()
+
+        def required(key: str) -> Any:
+            value = _cfg_get(delay_config, key, None)
+            if value is None:
+                raise ValueError(
+                    f"delay_sampler of type '{delay_type}' requires '{key}'"
+                )
+            return value
+
+        delay_type = _cfg_get(delay_config, "type", None)
+        if delay_type is None:
+            raise ValueError("delay_sampler requires a 'type'")
+        delay_type = str(delay_type).lower()
         seed = _cfg_get(delay_config, "seed", None)
 
         if delay_type == "constant":
             return ConstantDelaySampler(
-                delay=delay_config.delay,
+                delay=required("delay"),
                 seed=seed,
             )
         if delay_type == "uniform":
             return UniformDelaySampler(
-                min_delay=delay_config.min_delay,
-                max_delay=delay_config.max_delay,
+                min_delay=required("min_delay"),
+                max_delay=required("max_delay"),
                 seed=seed,
             )
         if delay_type == "exponential":
             return ExponentialDelaySampler(
-                rate=delay_config.rate,
+                rate=required("rate"),
                 seed=seed,
             )
         if delay_type == "gaussian":
             return GaussianDelaySampler(
-                mean=delay_config.mean,
-                stddev=delay_config.stddev,
+                mean=required("mean"),
+                stddev=required("stddev"),
                 seed=seed,
             )
         raise ValueError(f"Unknown delay type: {delay_type}")
@@ -119,8 +132,6 @@ class UniformDelaySampler(DelaySampler):
                 "min_delay must be <= max_delay, "
                 f"got {self.min_delay} > {self.max_delay}"
             )
-        import random
-
         self._rng = random.Random(seed)
 
     def sample(self, num_samples: int) -> list[float]:
@@ -134,8 +145,6 @@ class UniformDelaySampler(DelaySampler):
 class ExponentialDelaySampler(DelaySampler):
     def __init__(self, rate: float, *, seed: int | None = None):
         self.rate = _validate_positive_float(rate, "rate")
-        import random
-
         self._rng = random.Random(seed)
 
     def sample(self, num_samples: int) -> list[float]:
@@ -147,8 +156,6 @@ class GaussianDelaySampler(DelaySampler):
     def __init__(self, mean: float, stddev: float, *, seed: int | None = None):
         self.mean = _validate_non_negative_float(mean, "mean")
         self.stddev = _validate_non_negative_float(stddev, "stddev")
-        import random
-
         self._rng = random.Random(seed)
 
     def sample(self, num_samples: int) -> list[float]:

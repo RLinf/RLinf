@@ -65,9 +65,15 @@ Network Emulation (net_emulation)
 Emulate cross-worker network latency and bandwidth limits with a global
 scheduler. Setting ``cluster.net_emulation.enabled`` launches a
 ``NetEmulationManager``, one of the scheduler's global managers, alongside the
-others on node rank 0. Every send between configured worker groups books a
-transmission slot with it and waits out the resulting delay, so the per-link
-latency and the per-group bandwidth budget stay consistent cluster-wide.
+others on node rank 0. Point-to-point sends and broadcasts between configured
+worker groups book a transmission slot with it and wait out the resulting delay,
+so the per-link latency and the per-group bandwidth budget stay consistent
+cluster-wide. Broadcasts — which is how weight synchronization moves parameters
+from Actor to Rollout Workers — are charged once on the sender and once per
+receiving bandwidth group, and the sender waits for the slowest receiver.
+
+Transfers that never leave a node are not emulated: same-device and same-node
+handoffs go through shared-memory IPC rather than the network.
 
 Use this to test how policies behave under bandwidth-constrained or
 high-latency links, such as when Env Workers and Rollout Workers are on

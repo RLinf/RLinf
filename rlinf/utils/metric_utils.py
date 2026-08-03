@@ -194,7 +194,7 @@ def compute_delay_stats(key: str, stacked: "torch.Tensor") -> dict:
             .detach()
             .cpu()
             .numpy(),
-            _build_interact_delay_stat_key(key, "medium_delay"): torch.quantile(
+            _build_interact_delay_stat_key(key, "median_delay"): torch.quantile(
                 stacked, 0.5
             )
             .detach()
@@ -213,7 +213,7 @@ def compute_delay_stats(key: str, stacked: "torch.Tensor") -> dict:
         _build_interact_delay_stat_key(key, "average_delay"): np.asarray(
             0.0, dtype=np.float64
         ),
-        _build_interact_delay_stat_key(key, "medium_delay"): np.asarray(
+        _build_interact_delay_stat_key(key, "median_delay"): np.asarray(
             0.0, dtype=np.float64
         ),
         _build_interact_delay_stat_key(key, "max_delay"): np.asarray(

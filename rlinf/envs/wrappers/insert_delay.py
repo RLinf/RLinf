@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
+import asyncio
 
 import gymnasium as gym
 import torch
@@ -22,8 +22,17 @@ from rlinf.utils.delay_sampler import DelaySampler
 
 class InsertDelay(gym.Wrapper):
     """Insert a configurable delay after each step, chunk_step and reset to
-    emulate per-environment sensor / action latency. Sampled delays are
-    buffered internally and can be consumed via ``insert_delay_metrics()``.
+    emulate per-environment sensor / action latency.
+
+    ``step``/``chunk_step``/``reset`` only *sample* the delay; the wait itself is
+    taken by ``await wait_delay()``. The env APIs are synchronous but are driven
+    from the env worker's event loop, so sleeping inside them would block every
+    other coroutine in the process for the whole delay. Sampled delays accumulate
+    until they are waited out, so a caller that drains them late still pays the
+    full latency rather than losing it.
+
+    Sampled delays are also buffered for metrics and consumed via
+    ``insert_delay_metrics()``.
     """
 
     def __init__(self, env, delay_cfg):
@@ -33,6 +42,7 @@ class InsertDelay(gym.Wrapper):
             self.env = env
         self.sampler = DelaySampler.create(delay_cfg)
         self.delays: list[float] = []
+        self._pending_delay = 0.0
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
@@ -50,9 +60,16 @@ class InsertDelay(gym.Wrapper):
         return obs, info
 
     def delay(self):
+        """Sample one delay and hold it until ``wait_delay`` is awaited."""
         delay = self.sampler.sample_one()
         self.delays.append(delay)
-        time.sleep(delay)
+        self._pending_delay += delay
+
+    async def wait_delay(self):
+        """Wait out every delay sampled since the last call."""
+        pending, self._pending_delay = self._pending_delay, 0.0
+        if pending > 0:
+            await asyncio.sleep(pending)
 
     def insert_delay_metrics(self) -> torch.Tensor:
         delays = self.delays[:]

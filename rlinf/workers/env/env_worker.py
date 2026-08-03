@@ -437,6 +437,16 @@ class EnvWorker(Worker):
                     get_env_attr(self.eval_env_list[i], "offload")()
 
     @Worker.timer("env_interact_step")
+    async def _wait_env_delay(self, stage_id: int) -> None:
+        """Wait out the delay ``InsertDelay`` sampled for this stage, if it is on.
+
+        The wrapper only samples the delay; waiting here keeps the emulated sensor
+        latency off the event loop so co-scheduled coroutines keep running.
+        """
+        env = self.env_list[stage_id]
+        if hasattr(env, "wait_delay"):
+            await env.wait_delay()
+
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
@@ -1121,6 +1131,9 @@ class EnvWorker(Worker):
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
                         rollout_result.actions, stage_id
                     )
+                    # Emulated observation latency: wait before the obs goes out,
+                    # without blocking the other coroutines in this worker.
+                    await self._wait_env_delay(stage_id)
                     stage_rollout = self.rollout_results[stage_id]
                     if isinstance(stage_rollout, EmbodiedLerobotRolloutResult):
                         stage_rollout.append_chunk_episode_data(

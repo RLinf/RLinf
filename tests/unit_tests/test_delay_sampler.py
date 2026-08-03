@@ -15,6 +15,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
 import pytest
 from omegaconf import OmegaConf
 
@@ -87,3 +90,83 @@ def test_num_samples_must_be_non_negative_int():
 
     with pytest.raises(ValueError, match="num_samples must be >= 0"):
         sampler.sample(-1)
+
+
+class _FakeEnv:
+    """Minimal non-gym env exposing the chunk_step/reset surface."""
+
+    def chunk_step(self, *args, **kwargs):
+        return "stepped"
+
+    def reset(self, *args, **kwargs):
+        return "obs", {}
+
+
+def _delayed_env(delay: float):
+    from rlinf.envs.wrappers import InsertDelay
+
+    return InsertDelay(
+        _FakeEnv(), OmegaConf.create({"type": "constant", "delay": delay})
+    )
+
+
+def test_chunk_step_does_not_block_the_caller():
+    env = _delayed_env(0.5)
+
+    start = time.monotonic()
+    assert env.chunk_step() == "stepped"
+    elapsed = time.monotonic() - start
+
+    # The delay is sampled, not slept: blocking here would stall the event loop.
+    assert elapsed < 0.05
+
+
+def test_wait_delay_waits_out_the_accumulated_delay():
+    env = _delayed_env(0.05)
+    env.chunk_step()
+    env.chunk_step()
+
+    start = time.monotonic()
+    asyncio.run(env.wait_delay())
+    elapsed = time.monotonic() - start
+
+    # Both sampled delays are paid, never dropped.
+    assert elapsed == pytest.approx(0.1, abs=0.03)
+
+
+def test_wait_delay_yields_to_other_coroutines():
+    env = _delayed_env(0.2)
+    env.chunk_step()
+    progressed = []
+
+    async def main():
+        async def ticker():
+            for _ in range(4):
+                await asyncio.sleep(0.01)
+                progressed.append(1)
+
+        await asyncio.gather(env.wait_delay(), ticker())
+
+    asyncio.run(main())
+    # A blocking sleep would have starved the ticker entirely.
+    assert len(progressed) == 4
+
+
+def test_wait_delay_is_a_noop_when_nothing_is_pending():
+    env = _delayed_env(0.5)
+
+    start = time.monotonic()
+    asyncio.run(env.wait_delay())
+
+    assert time.monotonic() - start < 0.05
+
+
+def test_delay_metrics_report_every_sample():
+    env = _delayed_env(0.03)
+    env.chunk_step()
+    env.reset()
+
+    metrics = env.insert_delay_metrics()
+
+    assert metrics.tolist() == pytest.approx([0.03, 0.03])
+    assert env.insert_delay_metrics().numel() == 0
