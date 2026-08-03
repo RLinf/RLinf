@@ -163,6 +163,39 @@ def _build_reversed_negative_sample(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def compute_tcp_distance_scores(
+    observations: list[dict[str, Any]],
+    target_ee_pose: list[float],
+) -> list[float]:
+    """Compute progress scores from TCP-to-target distance.
+
+    Returns negative distances so that *higher* values mean *closer* to the
+    target.  The per-window delta ``end_score - start_score`` is then positive
+    when the robot is moving towards the hole and negative when moving away,
+    which matches the label expectations of ``load_episodes_with_labels``.
+
+    The *observations* are real-world env outputs where ``"states"`` is a
+    19-dim vector whose indices 4–6 hold the TCP (x, y, z) position.
+    """
+    target_xyz = np.asarray(target_ee_pose[:3], dtype=np.float64)
+    scores = []
+    for obs in observations:
+        states = obs.get("states")
+        if states is None:
+            scores.append(0.0)
+            continue
+        if hasattr(states, "detach"):
+            states = states.detach().cpu().numpy()
+        states = np.asarray(states, dtype=np.float64).reshape(-1)
+        if len(states) < 7:
+            scores.append(0.0)
+            continue
+        tcp_xyz = states[4:7]
+        dist_cm = float(np.linalg.norm(tcp_xyz - target_xyz)) * 100.0
+        scores.append(-dist_cm)  # negative cm so delta > 0 when moving closer
+    return scores
+
+
 def load_episodes_with_labels(
     data_path: str,
     window_size: int = 5,
@@ -173,6 +206,7 @@ def load_episodes_with_labels(
     keep_last_window: bool = True,
     task_description: Optional[str] = None,
     load_workers: int = 256,
+    target_ee_pose: Optional[list[float]] = None,
 ) -> list[dict]:
     """Load episodes with per-window labels from collected data."""
     pkl_files = sorted(glob(os.path.join(data_path, "*.pkl")))
@@ -190,8 +224,15 @@ def load_episodes_with_labels(
             score_values = episode.get("gae", None)
             score_source = "gae"
             if score_values is None or len(score_values) == 0:
-                score_values = episode.get("rewards", [])
-                score_source = "rewards"
+                # Fallback: when no GAE, prefer TCP distance if target is known
+                if target_ee_pose is not None and observations:
+                    score_values = compute_tcp_distance_scores(
+                        observations, target_ee_pose
+                    )
+                    score_source = "tcp_distance"
+                else:
+                    score_values = episode.get("rewards", [])
+                    score_source = "rewards"
             seq_len = min(len(observations), len(score_values))
             if seq_len < window_size:
                 return None
@@ -433,6 +474,7 @@ def preprocess_and_save_reward_datasets(
     random_seed: Optional[int] = None,
     load_workers: int = 256,
     write_workers: int = 512,
+    target_ee_pose: Optional[list[float]] = None,
 ) -> dict:
     """Build train/eval Qwen trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
@@ -445,6 +487,7 @@ def preprocess_and_save_reward_datasets(
         keep_last_window=keep_last_window,
         task_description=task_description,
         load_workers=load_workers,
+        target_ee_pose=target_ee_pose,
     )
     if len(episodes) == 0:
         raise ValueError(f"No episodes loaded from raw data path: {raw_data_path}")
@@ -575,6 +618,7 @@ def preprocess_and_save_reward_datasets(
         "fps": fps,
         "task_description": task_description,
         "random_seed": random_seed,
+        "target_ee_pose": target_ee_pose,
         "load_workers": load_workers,
         "write_workers": write_workers,
         "export_format": "pkl",
@@ -729,7 +773,34 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed for deterministic split and sampling.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--target-ee-pose",
+        type=str,
+        default=None,
+        help=(
+            "Target end-effector pose as comma-separated floats: either 3 values "
+            '"x,y,z" for position only, or 6 values "x,y,z,rx,ry,rz" with '
+            "orientation (which is ignored by the TCP-distance scorer). "
+            "When GAE and rewards are both absent or all-zero (common with "
+            "real-world sparse-reward collection), TCP-to-target distance is "
+            "used as the progress signal."
+        ),
+    )
+    args = parser.parse_args()
+    # Parse comma-separated target-ee-pose into list of floats.
+    # Accepts 3 values (position only) or 6 values (position + orientation).
+    if args.target_ee_pose is not None:
+        parts = [x.strip() for x in args.target_ee_pose.split(",")]
+        if len(parts) not in (3, 6):
+            parser.error(
+                "--target-ee-pose expects 3 (x,y,z) or 6 (x,y,z,rx,ry,rz) "
+                "comma-separated floats, got %d: %s" % (len(parts), parts)
+            )
+        try:
+            args.target_ee_pose = [float(x) for x in parts]
+        except ValueError as e:
+            parser.error(f"Invalid float in --target-ee-pose: {e}")
+    return args
 
 
 def main() -> None:
@@ -755,6 +826,7 @@ def main() -> None:
         random_seed=args.seed,
         load_workers=args.load_workers,
         write_workers=args.write_workers,
+        target_ee_pose=args.target_ee_pose,
     )
 
     print("=" * 80)

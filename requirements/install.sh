@@ -928,7 +928,11 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        if ! uv pip install "flash-attn==${flash_ver}" --no-build-isolation; then
+            echo "[install.sh] ERROR: flash-attn source build failed."
+            return 1
+        fi
+        echo "[install.sh] flash-attn==${flash_ver} built and installed successfully."
         return 0
     fi
     # Detect Python tags
@@ -989,8 +993,22 @@ EOF
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
-    echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
-    uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+    echo "[install.sh] flash-attn prebuilt wheel not found for ${torch_tag}+${cu_tag}. Building from source..."
+    if ! command -v nvcc &>/dev/null; then
+        echo "[install.sh] ERROR: nvcc not found in PATH. Install CUDA toolkit or ensure nvcc is on PATH."
+        echo "[install.sh] Hint: export PATH=/usr/local/cuda/bin:\$PATH"
+        return 1
+    fi
+    local nvcc_ver
+    nvcc_ver=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1 || true)
+    echo "[install.sh] Building flash-attn==${flash_ver} with nvcc ${nvcc_ver:-unknown}..."
+    export MAX_JOBS="${MAX_JOBS:-4}"
+    export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6;8.9;9.0}"
+    if ! uv pip install "flash-attn==${flash_ver}" --no-build-isolation; then
+        echo "[install.sh] ERROR: flash-attn source build failed. Check that nvcc version matches torch's CUDA version."
+        return 1
+    fi
+    echo "[install.sh] flash-attn==${flash_ver} built and installed successfully."
 }
 
 install_apex() {

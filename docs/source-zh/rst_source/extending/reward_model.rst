@@ -313,7 +313,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 .. code-block:: bash
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
+     --torch 2.8.0 --sglang 0.5.5 --transformers 4.57.1
 
 随后在 reward 配置中使用 ``history_vlm``。本地 Hugging Face 推理时不需要设置
 ``reward.worker_type``；如果要调用 OpenAI-compatible API，则设置
@@ -828,3 +828,27 @@ SpaceMouse 控制说明：
 
 与 :doc:`../examples/embodied/franka_reward_model` 中的完整 RL 流程相比，
 遥操作脚本不运行策略、actor 或 rollout worker——它纯粹是人在回路的 reward model 评估。
+
+
+Franka + Qwen VLM Reward Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+在 Franka 真机平台上，也可以使用 Qwen3-VL 作为 VLM reward model，通过**动作趋势判断**
+来引导机械臂学习。与仿真场景一次性判断整段视频不同，真机场景下 VLM 每 5 帧构成一个
+历史窗口，判断窗口内机械臂的运动趋势是 ``positive``（靠近目标）、``negative``（远离目标）
+还是 ``unclear``（无法判断），并将趋势标签转换为标量 reward：
+
+.. code-block:: text
+
+   VLM 输出          Reward 值        含义
+   ─────────────────────────────────────────
+   positive          1.0              动作趋势正确，正向奖励
+   negative          -0.2             动作趋势错误，轻微惩罚
+   unclear           0.0              趋势不明确，不给信号
+
+同时通过 ``gt_success_bonus`` 在机械臂到达目标时追加 +20.0 的巨大奖励，
+帮助 Agent 明确认知"成功状态"。
+
+完整流程包括三个阶段：真机数据采集 → QwenTrend 数据预处理 + Qwen3-VL LoRA 微调 →
+RLPD 训练中接入 VLM reward model 在线推理。配置示例与详细步骤请参见
+:doc:`../examples/embodied/franka_reward_model`。
