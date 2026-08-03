@@ -24,6 +24,37 @@ from rlinf.models.embodiment.mlp_policy.mlp_policy import MLPPolicy
 from rlinf.models.embodiment.modules.utils import get_act_func
 
 
+class IQLTwinCritic(nn.Module):
+    """Pair of IQL critics with a root forward method for distributed wrappers.
+
+    FSDP runs parameter all-gather hooks from the wrapped module's ``forward``.
+    Calling children through a plain ``ModuleDict`` bypasses those hooks and leaves
+    sharded parameter storage unavailable on multi-rank runs.
+    """
+
+    def __init__(self, q1: nn.Module, q2: nn.Module) -> None:
+        super().__init__()
+        self.q1 = q1
+        self.q2 = q2
+
+    def __getitem__(self, name: str) -> nn.Module:
+        """Preserve keyed access used by legacy target checkpoint loading."""
+        if name not in {"q1", "q2"}:
+            raise KeyError(name)
+        return getattr(self, name)
+
+    def forward(
+        self, observations: torch.Tensor, actions: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate both critics for the same observation-action batch."""
+        kwargs = {
+            "forward_type": ForwardType.IQL_CRITIC,
+            "observations": observations,
+            "actions": actions,
+        }
+        return self.q1(**kwargs), self.q2(**kwargs)
+
+
 class IQLMLPPolicy(MLPPolicy):
     """IQL-specific policy derived from the generic MLPPolicy."""
 

@@ -1,0 +1,71 @@
+# vllm 0.23.0 dependencies that are the same on every CUDA line.
+# The torch family is left out: pyproject.toml pins it (torch 2.11.0).
+# Paired with rlinf/hybrid_engines/vllm/vllm_0_23.
+aiohttp>=3.13.3
+anthropic>=0.71.0
+apache-tvm-ffi==0.1.9
+blake3
+cachetools
+cbor2
+cloudpickle
+compressed-tensors==0.17.0
+depyf==0.20.0
+diskcache==5.6.3
+einops
+# Upper bound taken from the installed wheel, not PyPI's JSON metadata: the two
+# disagree here, and `uv pip check` reports against the wheel.
+fastapi[standard]>=0.115.0,<0.137
+fastsafetensors>=0.3.2
+filelock>=3.16.1
+gguf>=0.17.0
+ijson
+lark==1.2.2
+llguidance>=1.7.0,<1.8.0; platform_machine == "x86_64" or platform_machine == "arm64" or platform_machine == "aarch64" or platform_machine == "ppc64le"
+lm-format-enforcer==0.11.3
+mcp
+mistral_common[image]>=1.11.3
+model-hosting-container-standards>=0.1.14,<1.0.0
+msgspec
+ninja
+numba==0.65.0
+numpy
+nvidia-cudnn-frontend>=1.19.1
+openai>=2.0.0
+openai-harmony>=0.0.3
+opencv-python-headless>=4.13.0
+opentelemetry-api>=1.27.0
+opentelemetry-exporter-otlp>=1.27.0
+opentelemetry-sdk>=1.27.0
+opentelemetry-semantic-conventions-ai>=0.4.1
+outlines_core==0.2.14
+partial-json-parser
+pillow
+prometheus-fastapi-instrumentator>=7.0.0
+prometheus_client>=0.18.0
+protobuf>=5.29.6,!=6.30.*,!=6.31.*,!=6.32.*,!=6.33.0.*,!=6.33.1.*,!=6.33.2.*,!=6.33.3.*,!=6.33.4.*
+psutil
+py-cpuinfo
+pybase64
+pydantic>=2.12.0
+python-json-logger
+pyyaml
+pyzmq>=25.0.0
+regex
+requests>=2.26.0
+safetensors>=0.6.2
+sentencepiece
+setproctitle
+setuptools>=77.0.3,<81.0.0; python_version > "3.11"
+six>=1.16.0; python_version > "3.11"
+tiktoken>=0.6.0
+tokenizers>=0.21.1
+# torchvision: both engines declare it, and installing the engine --no-deps means
+# nothing else pulls it in -- rlinf.workers.reward imports it transitively, so a
+# venv without it cannot even start a reasoning run. The version comes from
+# pyproject.toml's override, as with the rest of the torch family.
+torchvision
+tqdm
+transformers>=4.56.0,!=5.0.*,!=5.1.*,!=5.2.*,!=5.3.*,!=5.4.*,!=5.5.0
+typing_extensions>=4.10
+watchfiles
+xgrammar>=0.2.0,<1.0.0; platform_machine == "x86_64" or platform_machine == "aarch64" or platform_machine == "arm64" or platform_machine == "s390x" or platform_machine == "ppc64le"
