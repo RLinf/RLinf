@@ -92,6 +92,10 @@ reward，也包括 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
 - 按 **balanced accuracy** 选 checkpoint（同时看 positive recall 和 negative
   accuracy），不要只看整体 accuracy。
 - 选出的目录稍后设为 ``QWENTREND_SUCCESS_CHECKPOINT``。
+  SFT 会保留 ``actor/model_state_dict/full_weights.pt`` 作为完整模型权重，
+  并把 Peft adapter 单独写到 ``actor/lora_adapter/``
+  （``adapter_model.bin`` + ``adapter_config.json``）。Reward 加载端会显式
+  读取该 adapter 产物。
 
 步骤 4 — 构建稠密 potential SFT 数据
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -130,7 +134,9 @@ reward，也包括 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
 
 - 超参与步骤 3 同类，但走 potential 配置。
 - 把选中的 checkpoint 路径写入 ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``。
-  步骤 6–7 直接读这个文件，不用手写路径。
+  步骤 6–7 直接读这个文件，不用手写路径。该目录保留完整的
+  ``full_weights.pt``，并单独写出 ``actor/lora_adapter/`` 供 reward /
+  特征提取加载。
 
 步骤 6 — 训练 scalar potential head
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

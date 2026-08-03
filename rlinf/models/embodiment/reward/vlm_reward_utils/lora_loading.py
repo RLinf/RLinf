@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Load Peft LoRA adapters from QwenTrend ``full_weights.pt`` checkpoints."""
+"""Load Peft LoRA adapters from explicit QwenTrend adapter artifacts."""
 
 from __future__ import annotations
 
@@ -20,89 +20,112 @@ import os
 from typing import Any
 
 import torch
-from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
+from peft import LoraConfig, PeftConfig, get_peft_model, set_peft_model_state_dict
+
+from rlinf.workers.sft.lora_checkpoint import (
+    ADAPTER_CONFIG_FILENAME,
+    ADAPTER_WEIGHTS_FILENAME,
+    LORA_ADAPTER_DIRNAME,
+)
+
+_ADAPTER_WEIGHT_CANDIDATES = (
+    ADAPTER_WEIGHTS_FILENAME,
+    "adapter_model.pt",
+    "adapter_model.safetensors",
+)
 
 
-def full_weights_pt_path(lora_dir: str) -> str:
-    """Return ``.../actor/model_state_dict/full_weights.pt`` under a ckpt dir."""
-    return os.path.join(lora_dir, "actor", "model_state_dict", "full_weights.pt")
+def resolve_lora_adapter_dir(lora_path: str) -> str:
+    """Resolve a checkpoint root or adapter directory to the adapter artifact.
+
+    Accepts:
+      * a Peft adapter directory containing ``adapter_config.json``
+      * ``.../actor`` (looks for ``lora_adapter/``)
+      * ``.../global_step_*`` (looks for ``actor/lora_adapter/``)
+    """
+    candidates = [
+        lora_path,
+        os.path.join(lora_path, LORA_ADAPTER_DIRNAME),
+        os.path.join(lora_path, "actor", LORA_ADAPTER_DIRNAME),
+    ]
+    for candidate in candidates:
+        config_path = os.path.join(candidate, ADAPTER_CONFIG_FILENAME)
+        if os.path.isfile(config_path):
+            return candidate
+    raise FileNotFoundError(
+        "No LoRA adapter artifact "
+        f"({ADAPTER_CONFIG_FILENAME}) found under {lora_path!r}. "
+        f"Looked in: {', '.join(candidates)}"
+    )
 
 
-def load_checkpoint_state(lora_dir: str) -> dict[str, Any]:
-    """Load a checkpoint dict from a LoRA training output directory."""
-    path = full_weights_pt_path(lora_dir)
-    return torch.load(path, map_location="cpu", weights_only=True)
+def load_adapter_weights(adapter_dir: str) -> dict[str, Any]:
+    """Load adapter tensors from ``adapter_model.bin`` / ``.pt`` / ``.safetensors``."""
+    for filename in _ADAPTER_WEIGHT_CANDIDATES:
+        path = os.path.join(adapter_dir, filename)
+        if not os.path.isfile(path):
+            continue
+        if filename.endswith(".safetensors"):
+            from safetensors.torch import load_file
+
+            return load_file(path)
+        return torch.load(path, map_location="cpu", weights_only=True)
+    raise FileNotFoundError(
+        f"No adapter weights found under {adapter_dir!r}. "
+        f"Expected one of: {', '.join(_ADAPTER_WEIGHT_CANDIDATES)}"
+    )
 
 
-def extract_lora_state(checkpoint_state: dict[str, Any]) -> dict[str, Any]:
-    """Keep ``lora_*`` tensors and strip an optional ``module.`` prefix."""
-    return {
-        key.removeprefix("module."): value
-        for key, value in checkpoint_state.items()
-        if "lora_" in key
+def load_lora_adapter_artifacts(
+    adapter_dir: str,
+) -> tuple[dict[str, Any], LoraConfig]:
+    """Load adapter weights and the accompanying Peft ``LoraConfig``."""
+    peft_config = PeftConfig.from_pretrained(adapter_dir)
+    if not isinstance(peft_config, LoraConfig):
+        raise TypeError(
+            f"Expected a LoraConfig at {adapter_dir!r}, got {type(peft_config)!r}"
+        )
+    raw_state = load_adapter_weights(adapter_dir)
+    lora_state = {
+        key.removeprefix("module."): value for key, value in raw_state.items()
     }
+    if not any("lora_" in key for key in lora_state):
+        raise ValueError(
+            f"Adapter artifact at {adapter_dir!r} does not contain lora_* tensors"
+        )
+    return lora_state, peft_config
 
 
-def lora_config_from_state(lora_state: dict[str, Any]) -> LoraConfig:
-    """Infer a ``LoraConfig`` from exported adapter tensor shapes/names."""
-    if not lora_state:
-        raise ValueError("Cannot build LoraConfig from an empty LoRA state dict")
-    lora_rank = next(
-        int(value.shape[0]) for key, value in lora_state.items() if "lora_A" in key
-    )
-    target_modules = sorted(
-        {key.split(".lora_")[0].split(".")[-1] for key in lora_state if ".lora_" in key}
-    )
-    return LoraConfig(
-        r=lora_rank,
-        lora_alpha=lora_rank,
-        lora_dropout=0.0,
-        target_modules=target_modules,
-        init_lora_weights="gaussian",
-    )
-
-
-def attach_default_lora(model: torch.nn.Module, lora_dir: str) -> torch.nn.Module:
-    """Attach the default Peft adapter from ``lora_dir``, or load merged weights."""
-    checkpoint_state = load_checkpoint_state(lora_dir)
-    lora_state = extract_lora_state(checkpoint_state)
-    if lora_state:
-        model = get_peft_model(model, lora_config_from_state(lora_state))
-        set_peft_model_state_dict(model, lora_state)
-        return model
-    stripped = {
-        key.removeprefix("module."): value for key, value in checkpoint_state.items()
-    }
-    model.load_state_dict(stripped, strict=False)
+def attach_default_lora(model: torch.nn.Module, lora_path: str) -> torch.nn.Module:
+    """Attach the default Peft adapter from an explicit adapter artifact."""
+    adapter_dir = resolve_lora_adapter_dir(lora_path)
+    lora_state, lora_config = load_lora_adapter_artifacts(adapter_dir)
+    model = get_peft_model(model, lora_config)
+    set_peft_model_state_dict(model, lora_state)
     return model
 
 
 def attach_named_lora_adapter(
     model: torch.nn.Module,
-    lora_dir: str,
+    lora_path: str,
     adapter_name: str,
 ) -> str:
-    """Add a named Peft adapter from ``lora_dir`` and leave ``default`` active.
+    """Add a named Peft adapter from an explicit adapter artifact.
 
     Returns:
         The adapter name that was attached.
 
     Raises:
-        ValueError: If the checkpoint has no LoRA tensors, or the model is not
-            already a Peft model that supports ``add_adapter``.
+        ValueError: If the model is not already a Peft model that supports
+            ``add_adapter``.
     """
-    checkpoint_state = load_checkpoint_state(lora_dir)
-    lora_state = extract_lora_state(checkpoint_state)
-    if not lora_state:
-        raise ValueError(
-            f"{adapter_name} LoRA path must point to a checkpoint containing "
-            "LoRA weights"
-        )
     if not hasattr(model, "add_adapter"):
         raise ValueError(
             f"A {adapter_name} LoRA adapter requires a primary LoRA adapter"
         )
-    model.add_adapter(adapter_name, lora_config_from_state(lora_state))
+    adapter_dir = resolve_lora_adapter_dir(lora_path)
+    lora_state, lora_config = load_lora_adapter_artifacts(adapter_dir)
+    model.add_adapter(adapter_name, lora_config)
     set_peft_model_state_dict(model, lora_state, adapter_name=adapter_name)
     model.set_adapter("default")
     return adapter_name

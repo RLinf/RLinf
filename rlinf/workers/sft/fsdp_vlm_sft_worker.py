@@ -23,7 +23,7 @@ from omegaconf import DictConfig
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
-from rlinf.workers.sft.lora_checkpoint import rewrite_full_weights_with_lora_adapters
+from rlinf.workers.sft.lora_checkpoint import export_lora_adapter
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
@@ -43,11 +43,10 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         if self._rank == 0:
             self._save_data_state(save_path)
-        # VLMRewardModel loads success/potential adapters from lora_* keys in
-        # full_weights.pt. FSDP full-state export merges Peft weights and drops
-        # those keys; rewrite the file with the Peft adapter state when LoRA.
+        # Preserve framework full_weights.pt (merged full state). Export Peft
+        # adapters separately so HistoryVLMRewardModel can load them explicitly.
         if bool(self.cfg.actor.model.get("is_lora", False)):
-            rewrite_full_weights_with_lora_adapters(
+            export_lora_adapter(
                 self.model,
                 save_path,
                 rank=self._rank,

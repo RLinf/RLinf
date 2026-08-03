@@ -96,6 +96,10 @@ What this does:
 - Pick the checkpoint with the best **balanced accuracy** (also check positive
   recall and negative accuracy). Do not trust aggregate accuracy alone.
 - Use that directory later as ``QWENTREND_SUCCESS_CHECKPOINT``.
+  SFT keeps ``actor/model_state_dict/full_weights.pt`` as the full model state
+  and writes the Peft adapter under ``actor/lora_adapter/``
+  (``adapter_model.bin`` + ``adapter_config.json``). The reward loader consumes
+  that adapter artifact explicitly.
 
 Step 4 — Build dense potential SFT data
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -134,7 +138,9 @@ What this does:
 
 - Same LoRA recipe as step 3, but on the potential config.
 - Writes the chosen checkpoint path to ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``.
-  Use that file in steps 6–7 instead of typing the path by hand.
+  Use that file in steps 6–7 instead of typing the path by hand. The directory
+  keeps full ``full_weights.pt`` and a separate ``actor/lora_adapter/`` artifact
+  for the reward / feature-extraction loaders.
 
 Step 6 — Train the scalar potential head
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

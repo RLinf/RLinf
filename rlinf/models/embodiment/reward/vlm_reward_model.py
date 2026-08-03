@@ -197,10 +197,10 @@ class VLMRewardModel(BaseRewardModel):
         """Load the base VLM and attach primary/success LoRA adapters if set.
 
         Loads ``model_path`` via ``Auto*`` APIs, then, when ``lora_path`` is
-        configured, rebuilds a Peft model from the checkpoint's ``lora_*`` keys
-        (falling back to a plain ``load_state_dict`` for merged weights). An
-        optional ``success_lora_path`` is attached as a separate ``success``
-        adapter. The model is set to eval mode.
+        configured, attaches the Peft adapter artifact written next to the
+        preserved ``full_weights.pt`` (``actor/lora_adapter/``). An optional
+        ``success_lora_path`` is attached as a separate ``success`` adapter.
+        The model is set to eval mode.
         """
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
