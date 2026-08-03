@@ -1,8 +1,22 @@
-GPU Profiling
+Profiling
 ==============================
 
-Use the ``cluster.profiling`` configuration for system-level profiling of Ray
-worker processes.
+RLinf offers two complementary tools for understanding performance, aimed at
+different levels:
+
+- **GPU profiling** (``cluster.profiling``): low-level, system profiling of
+  *individual* worker processes. It wraps selected worker groups with a
+  backend-specific profiler (``nsys``/``rocprof-sys``) to capture CUDA kernels,
+  memory traffic, NVTX ranges, and CPU activity. Use it to answer "what is one
+  GPU/process doing, kernel by kernel?".
+- **Tracing** (``cluster.tracer``): a lightweight, high-level timeline of RLinf's
+  own timed sections *across all workers and the runner* — steps, phases, and
+  worker RPCs such as ``generate``, ``run_training``, and ``interact``. It has
+  negligible overhead and answers "how do the stages across workers overlap, and
+  where is the critical path?". See `Tracing`_ below.
+
+The two are independent and can be enabled together. The rest of this page
+covers GPU profiling; see `Tracing`_ at the end for tracing.
 
 RLinf supports wrapping selected worker groups with a backend-specific profiler
 command. The backend is selected by the required ``backend`` field:
@@ -413,3 +427,93 @@ AMD first pass:
 
 - Verify ``rocprof-sys-python`` is on ``PATH`` in each worker's environment.
 - Check ``output_dir`` for ``.json`` or binary trace files after the run.
+
+
+Tracing
+------------------------------
+
+Whereas GPU profiling zooms into one process, tracing gives the big picture: it
+records the execution timeline of RLinf's own timed sections across the runner
+and all Ray workers (environment, rollout, actor, etc.), and exports it in the
+Chrome Trace format for interactive visualization. It has negligible overhead and
+is the fastest way to see how stages overlap and where the critical path is.
+
+How It Works
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+1. When tracing is enabled, the cluster launches the **tracer**, a scheduler
+   manager (a single Ray actor on node rank 0), alongside the other managers
+   (``WorkerManager``, ``NodeManager``, …) at startup.
+2. Every worker and the driver reach it autonomously via ``Tracer.get_proxy()``,
+   exactly like the other managers — there is no per-process client, buffer, or
+   background thread.
+3. Every timed section — the runner's ``ScopedTimer`` sections (e.g. ``step``,
+   ``generate_rollouts``) and workers' ``Worker.timer`` sections (e.g.
+   ``run_training``, ``interact``, ``predict``) — emits a trace event that is sent
+   directly to the tracer manager, which appends it to a JSONL trace file.
+
+Enabling Tracing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Because the tracer is a cluster manager, it is configured under ``cluster.tracer``;
+no separate server process needs to be started:
+
+.. code-block:: yaml
+
+   cluster:
+     tracer:
+       enable: true
+       output_file: null    # defaults to <log_path>/<experiment_name>/trace/trace_events.jsonl
+
+Or directly from the Hydra CLI:
+
+.. code-block:: bash
+
+    python3 examples/embodiment/train_embodied_agent.py \
+        --config-name libero_spatial_ppo_openpi_pi05 \
+        +cluster.tracer.enable=true
+
+When ``output_file`` is not set, trace events are written to
+``runner.logger.log_path/runner.logger.experiment_name/trace/trace_events.jsonl``
+on node rank 0.
+
+Adding Custom Spans
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Timed sections are traced automatically. In workers, ``@Worker.timer(...)`` and
+``with self.worker_timer(...)`` emit trace events by default; pass
+``trace=False`` to opt a timer out of tracing. For trace-only instrumentation,
+``Tracer`` exposes ``trace_begin`` / ``trace_end``, the ``trace_span`` context
+manager, and the ``trace_func`` decorator:
+
+.. code-block:: python
+
+   from rlinf.scheduler import Tracer
+
+   with Tracer.trace_span("data_preprocess", cat="actor"):
+       preprocess()
+
+All tracing APIs are no-ops when tracing is disabled, so they are safe to leave
+in code paths that also run without tracing.
+
+Visualizing Traces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once your run completes or during execution, you can visualize the trace data:
+
+1. Locate the output JSONL file (e.g., ``trace_events.jsonl``).
+2. Use ``jq`` to convert the JSON Lines format into a single JSON array
+   (Perfetto requires this):
+
+   .. code-block:: bash
+
+       jq -s . trace_events.jsonl > trace_events.json
+
+3. Open a Chrome-based browser and navigate to
+   `Perfetto UI <https://ui.perfetto.dev/>`_ or ``chrome://tracing``.
+4. Click **Open trace file** and select your converted ``trace_events.json``
+   file.
+
+You will see an interactive Gantt chart visualizing execution layers, actor
+wait times, and system bottlenecks, with each process labeled by its worker name
+(e.g. ``ActorGroup:0``) or ``driver``.

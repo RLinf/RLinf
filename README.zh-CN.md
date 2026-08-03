@@ -459,4 +459,5 @@ RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
 我们欢迎博士后、博士/硕士研究生以及实习生的加入。
 诚邀您共同塑造强化学习基础设施与具身智能的未来！
 - Chao Yu: zoeyuchao@gmail.com
+- Quanlu Zhang: zhangquanlu@infini-ai.com
 - Yu Wang: yu-wang@tsinghua.edu.cn
