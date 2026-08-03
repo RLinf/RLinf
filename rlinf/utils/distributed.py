@@ -27,7 +27,7 @@ except ImportError:
 from torch.distributed import ProcessGroup, ReduceOp
 from typing_extensions import Self
 
-from rlinf.scheduler import Worker
+from rlinf.scheduler import Tracer, Worker
 from rlinf.utils.timers import NamedTimer
 
 
@@ -1318,9 +1318,10 @@ class ScopedTimer:
                     measurement using consume_durations().
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, trace: bool = True, **kwargs):
         self._timer = NamedTimer(*args, **kwargs)
         self._duration_log = {}
+        self._trace = trace
 
     def consume_durations(self) -> dict[str, float]:
         durations = self._duration_log
@@ -1329,12 +1330,17 @@ class ScopedTimer:
         return durations
 
     @contextmanager
-    def __call__(self, name: str):
+    def __call__(self, name: str, trace_args: Optional[dict] = None):
+        """Time a section of code, also emitting a trace event if the tracer is initialized."""
+        if self._trace:
+            Tracer.trace_begin(name, cat="runner", args=trace_args)
         try:
             self._timer.start(name=name)
             yield
         finally:
             self._timer.stop(name=name)
+            if self._trace:
+                Tracer.trace_end(name, cat="runner")
             if name in self._duration_log:
                 raise ValueError(
                     f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."

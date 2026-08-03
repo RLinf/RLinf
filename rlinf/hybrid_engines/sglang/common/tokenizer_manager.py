@@ -19,10 +19,17 @@ import fastapi
 from packaging.version import parse
 from sglang.srt.managers.tokenizer_manager import TokenizerManager as _TokenizerManager
 
+# sglang renamed/moved the internal `_Communicator` across versions:
+#   0.4.x: sglang.srt.managers.tokenizer_manager._Communicator
+#   0.5.x (brief): sglang.srt.managers.tokenizer_communicator_mixin._Communicator
+#   0.5.12: sglang.srt.managers.communicator.FanOutCommunicator (renamed)
 try:
     from sglang.srt.managers.tokenizer_manager import _Communicator
 except ImportError:
-    from sglang.srt.managers.tokenizer_communicator_mixin import _Communicator
+    try:
+        from sglang.srt.managers.tokenizer_communicator_mixin import _Communicator
+    except ImportError:
+        from sglang.srt.managers.communicator import FanOutCommunicator as _Communicator
 from sglang.srt.server_args import PortArgs, ServerArgs
 
 from .io_struct import (
@@ -58,22 +65,16 @@ class TokenizerManager(_TokenizerManager):
             self.send_to_scheduler, server_args.dp_size
         )
 
-        self._result_dispatcher._mapping.extend(
-            [
-                (
-                    TaskMethodOutput,
-                    self.run_task_method_communicator.handle_recv,
-                ),
-                (
-                    SyncHFWeightOutput,
-                    self.sync_hf_weight_communicator.handle_recv,
-                ),
-                (
-                    AbortGenerationOutput,
-                    self.abort_generation_communicator.handle_recv,
-                ),
-            ]
-        )
+        _extra_mapping = [
+            (TaskMethodOutput, self.run_task_method_communicator.handle_recv),
+            (SyncHFWeightOutput, self.sync_hf_weight_communicator.handle_recv),
+            (AbortGenerationOutput, self.abort_generation_communicator.handle_recv),
+        ]
+        if isinstance(self._result_dispatcher._mapping, dict):
+            for _ty, _fn in _extra_mapping:
+                self._result_dispatcher._mapping[_ty] = _fn
+        else:
+            self._result_dispatcher._mapping.extend(_extra_mapping)
 
         try:
             sglang_version = parse(version("sglang"))
@@ -126,13 +127,31 @@ class TokenizerManager(_TokenizerManager):
         if not self.patch_return_output_ids:
             return super()._handle_batch_output(recv_obj)
 
-        from sglang.srt.managers.tokenizer_manager import (
-            BatchEmbeddingOut,
-            BatchMultimodalOut,
-            BatchStrOut,
-            BatchTokenIDOut,
-            logger,
-        )
+        # sglang renamed Batch*Out -> Batch*Output (moved to io_struct) in 0.5.x;
+        try:
+            from sglang.srt.managers.io_struct import (
+                BatchEmbeddingOutput as BatchEmbeddingOut,
+            )
+            from sglang.srt.managers.io_struct import (
+                BatchMultimodalOutput as BatchMultimodalOut,
+            )
+            from sglang.srt.managers.io_struct import (
+                BatchStrOutput as BatchStrOut,
+            )
+            from sglang.srt.managers.io_struct import (
+                BatchTokenIDOutput as BatchTokenIDOut,
+            )
+        except ImportError:
+            from sglang.srt.managers.tokenizer_manager import (
+                BatchEmbeddingOut,
+                BatchMultimodalOut,
+                BatchStrOut,
+                BatchTokenIDOut,
+            )
+        try:
+            from sglang.srt.managers.tokenizer_manager import logger
+        except ImportError:
+            from sglang.srt.managers.scheduler import logger
 
         for i, rid in enumerate(recv_obj.rids):
             state = self.rid_to_state.get(rid, None)

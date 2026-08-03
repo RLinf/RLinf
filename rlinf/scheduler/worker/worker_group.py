@@ -493,6 +493,7 @@ class WorkerGroupFuncResult:
             sys.stdout.flush()
             sys.stderr.flush()
             # Send suicide signal if one thread failed, the handler is registered in cluster
+            Cluster._run_failed = True
             os.kill(self._pid, signal.SIGUSR1)
             exit(-1)
         self._wait_done = True
