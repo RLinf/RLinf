@@ -635,7 +635,7 @@ apply_sglang_override() {
             0.5.0|0.5.0rc*) XGRAMMAR_VERSION="0.1.22" ;;
             0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
             0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
-            0.5.4) XGRAMMAR_VERSION="0.1.25" ;;
+            0.5.4|0.5.5) XGRAMMAR_VERSION="0.1.25" ;;
             *)
                 echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
                 exit 1
