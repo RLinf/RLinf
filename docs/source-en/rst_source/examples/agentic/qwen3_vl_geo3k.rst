@@ -30,7 +30,7 @@ RLinf provides the ``requirements/install.sh`` script for one-click environment 
    export MEGATRON_PATH=/path/to/Megatron-LM
    bash requirements/install.sh agentic \
        --torch 2.8.0 \
-       --sglang 0.5.5 \
+       --sglang 0.5.4 \
        --transformers 4.57.1 \
        --no-apex
 
