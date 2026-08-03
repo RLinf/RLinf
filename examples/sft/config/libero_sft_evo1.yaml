@@ -59,11 +59,12 @@ actor:
   # Override the model/evo1 defaults for this run.
   model:
     precision: "bf16"
-    model_path: "/path/to/Evo1_LIBERO"
+    model_path: "/path/to/model/Evo1_LIBERO" # https://huggingface.co/MINT-SJTU/Evo1_LIBERO
     num_action_chunks: 14 # interface for the env
     add_value_head: False
     evo1:
-      # Evo-1 repo root (or set EVO1_REPO_PATH) -- needed for the dataset loader.
+      # install.sh already makes the Evo-1 repo importable; set this only for a
+      # manual checkout. A non-existent path is ignored.
       repo_path: "/path/to/Evo-1"
       # Must match the checkpoint's norm_stats.json keys.
       arm_key: "libero_robot"

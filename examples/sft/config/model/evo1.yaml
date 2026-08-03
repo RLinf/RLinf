@@ -7,7 +7,7 @@ model_type: "evo1"
 
 # Evo-1 checkpoint DIRECTORY (config.json, norm_stats.json,
 # mp_rank_00_model_states.pt), or a base to fine-tune from.
-model_path: "/path/to/Evo1_LIBERO"
+model_path: "/path/to/model/Evo1_LIBERO" # https://huggingface.co/MINT-SJTU/Evo1_LIBERO
 
 # Evo-1 runs bf16 internally.
 precision: "bf16"

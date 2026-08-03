@@ -79,8 +79,10 @@ rollout:
 
   model:
     # Override for your environment (or pass on the CLI).
-    model_path: /path/to/Evo1_LIBERO
+    model_path: /path/to/model/Evo1_LIBERO # https://huggingface.co/MINT-SJTU/Evo1_LIBERO
     evo1:
+      # install.sh already makes the Evo-1 repo importable; set this only for a
+      # manual checkout. A non-existent path is ignored.
       repo_path: /path/to/Evo-1
       # norm_stats.json top-level key for this checkpoint; dataset_key is unused
       # by the Normalizer when arm stats hold observation.state/action directly.

@@ -6,7 +6,7 @@ model_type: "evo1"
 
 # Path to an Evo-1 checkpoint DIRECTORY containing:
 #   config.json, norm_stats.json, mp_rank_00_model_states.pt
-model_path: "/path/to/Evo1_LIBERO"
+model_path: "/path/to/model/Evo1_LIBERO" # https://huggingface.co/MINT-SJTU/Evo1_LIBERO
 
 # Precision used by RLinf actor/rollout wrappers (Evo-1 runs bf16 internally).
 precision: "bf16"
