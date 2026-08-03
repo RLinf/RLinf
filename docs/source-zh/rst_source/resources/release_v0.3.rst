@@ -172,7 +172,7 @@ Agentic AI
 
 - **RLinf: Flexible and Efficient Large-Scale Reinforcement Learning via Macro-to-Micro Flow Transformation** （OSDI 2026）。对应 RLinf 大规模 RL 系统。文档：`RLinf 系统 <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/resources/publications/rlinf_system.html>`__ ｜ 论文：`arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__ ｜ `OSDI 报告 <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__。
 
-- **DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training** （OSDI 2026）。对应 RLinf 的 dynamic scheduling 功能。文档：`Dynamic Scheduling <https://rlinf.readthedocs.io/en/release-v0.3/rst_source/guides/dynamic_scheduling.html>`__ ｜ `OSDI 报告 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__。
+- **DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training** （OSDI 2026）。对应 RLinf 的 dynamic scheduling 功能。文档：`DynaRL <https://rlinf.readthedocs.io/zh-cn/release-v0.3/rst_source/resources/publications/dynarl.html>`__ ｜ `动态调度 <https://rlinf.readthedocs.io/zh-cn/release-v0.3/rst_source/guides/dynamic_scheduling.html>`__ ｜ `OSDI 报告 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__。
 
 另有 2 篇论文被 **RSS 2026** 收录：
 
