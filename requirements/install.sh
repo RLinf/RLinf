@@ -626,22 +626,7 @@ apply_sglang_override() {
         echo "[install.sh] Patched pyproject.toml optional-dependencies: transformers==${TRANSFORMERS_VERSION}"
     fi
 
-    # Auto-derive xgrammar from sglang version when not explicitly set.
-    # Mapping derived from each sglang release's python/pyproject.toml.
-    if [ -n "$SGLANG_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
-        case "${SGLANG_VERSION}" in
-            0.4.6) XGRAMMAR_VERSION="0.1.17" ;;
-            0.4.7|0.4.8|0.4.9) XGRAMMAR_VERSION="0.1.19" ;;
-            0.5.0|0.5.0rc*) XGRAMMAR_VERSION="0.1.22" ;;
-            0.5.1) XGRAMMAR_VERSION="0.1.23" ;;
-            0.5.2|0.5.3) XGRAMMAR_VERSION="0.1.24" ;;
-            0.5.4|0.5.5) XGRAMMAR_VERSION="0.1.25" ;;
-            *)
-                echo "[install.sh] ERROR: Unsupported sglang version '${SGLANG_VERSION}' for xgrammar auto-derivation (supported: 0.4.6 – 0.5.4). Set XGRAMMAR_VERSION explicitly."
-                exit 1
-                ;;
-        esac
-    fi
+VLLM_VERSION=""
 
     if [ -n "$XGRAMMAR_VERSION" ]; then
         sed -i \
@@ -928,11 +913,7 @@ EOF
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
         uv pip uninstall flash-attn || true
-        if ! uv pip install "flash-attn==${flash_ver}" --no-build-isolation; then
-            echo "[install.sh] ERROR: flash-attn source build failed."
-            return 1
-        fi
-        echo "[install.sh] flash-attn==${flash_ver} built and installed successfully."
+        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     fi
     # Detect Python tags
@@ -993,22 +974,8 @@ EOF
         fi
         echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
     done
-    echo "[install.sh] flash-attn prebuilt wheel not found for ${torch_tag}+${cu_tag}. Building from source..."
-    if ! command -v nvcc &>/dev/null; then
-        echo "[install.sh] ERROR: nvcc not found in PATH. Install CUDA toolkit or ensure nvcc is on PATH."
-        echo "[install.sh] Hint: export PATH=/usr/local/cuda/bin:\$PATH"
-        return 1
-    fi
-    local nvcc_ver
-    nvcc_ver=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1 || true)
-    echo "[install.sh] Building flash-attn==${flash_ver} with nvcc ${nvcc_ver:-unknown}..."
-    export MAX_JOBS="${MAX_JOBS:-4}"
-    export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-8.0;8.6;8.9;9.0}"
-    if ! uv pip install "flash-attn==${flash_ver}" --no-build-isolation; then
-        echo "[install.sh] ERROR: flash-attn source build failed. Check that nvcc version matches torch's CUDA version."
-        return 1
-    fi
-    echo "[install.sh] flash-attn==${flash_ver} built and installed successfully."
+    echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
+    FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
 }
 
 install_apex() {

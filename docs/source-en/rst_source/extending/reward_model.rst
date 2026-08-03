@@ -327,7 +327,7 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
 .. code-block:: bash
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.5 --transformers 4.57.1
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
 VLM Trend reward uses the buffered VLM interface (``model_type: buffered_vlm``) with
 ``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. Local inference

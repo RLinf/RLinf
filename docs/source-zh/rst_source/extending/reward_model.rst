@@ -324,7 +324,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 .. code-block:: bash
 
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
-     --torch 2.8.0 --sglang 0.5.5 --transformers 4.57.1
+     --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
 VLM Trend reward 使用 buffered VLM 接口（ ``model_type: buffered_vlm`` ），并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
