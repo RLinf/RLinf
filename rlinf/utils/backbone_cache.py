@@ -87,9 +87,7 @@ def validate_rollout_backbone_sample_ids(
     if flat_ids.numel() != total_samples or not torch.equal(
         flat_ids.sort().values, expected_ids
     ):
-        raise ValueError(
-            "trajectory sample IDs do not form the pinned backbone cache"
-        )
+        raise ValueError("trajectory sample IDs do not form the pinned backbone cache")
 
 
 def filter_rollout_backbone_transport(
