@@ -24,6 +24,10 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.backbone_cache import (
+    ROLLOUT_BACKBONE_TRANSPORT_KEY,
+    is_rollout_backbone_ipc_transport,
+)
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -74,6 +78,12 @@ class EmbodiedRunner:
         self.overlap_env_bootstrap = bool(
             self.cfg.runner.get("overlap_env_bootstrap", False)
         )
+        feature_transport = self.cfg.actor.model.get(ROLLOUT_BACKBONE_TRANSPORT_KEY)
+        self.pinned_feature_ipc = is_rollout_backbone_ipc_transport(feature_transport)
+        if self.pinned_feature_ipc and self.cfg.rollout.pipeline_stage_num != 1:
+            raise ValueError(
+                "pinned rollout backbone transport currently requires pipeline_stage_num=1"
+            )
 
         # Step-gated profiling: ``cluster.profiling.steps`` lists the global step
         profiling_raw = self.cfg.cluster.get("profiling", None)
@@ -499,6 +509,11 @@ class EmbodiedRunner:
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
                 with self.timer("generate_rollouts"):
+                    feature_stream_recv_handle: Handle | None = None
+                    if self.pinned_feature_ipc:
+                        feature_stream_recv_handle = (
+                            self.actor.recv_rollout_backbone_feature_stream()
+                        )
                     env_handle: Handle = self.env.interact(
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
@@ -519,8 +534,28 @@ class EmbodiedRunner:
                         input_channel=self.actor_channel
                     ).wait()
                     rollout_handle.wait()
+                    if self.pinned_feature_ipc:
+                        if feature_stream_recv_handle is None:
+                            raise RuntimeError(
+                                "pinned feature receiver was not started"
+                            )
+                        feature_stream_recv_handle.wait()
+                        self.rollout.finish_rollout_backbone_feature_stream().wait()
                     if self.reward is not None:
                         reward_handle.wait()
+                    if self.pinned_feature_ipc:
+                        source_ranks = [
+                            int(rank)
+                            for rank in self.actor.get_rollout_backbone_feature_source_rank().wait()
+                        ]
+                        logger.info(
+                            "Pinned backbone Actor-to-Rollout route: %s",
+                            source_ranks,
+                        )
+                        feature_recv_handle: Handle = (
+                            self.actor.recv_rollout_backbone_features(source_ranks)
+                        )
+                        feature_recv_handle.wait()
 
                 # compute advantages and returns.
                 with self.timer("cal_adv_and_returns"):

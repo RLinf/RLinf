@@ -34,6 +34,16 @@ from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
+from rlinf.utils.backbone_cache import (
+    ROLLOUT_BACKBONE_BORROWED_IPC_PINNED,
+    ROLLOUT_BACKBONE_FEATURE_KEY,
+    ROLLOUT_BACKBONE_MASK_KEY,
+    ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE,
+    ROLLOUT_BACKBONE_SAMPLE_IDS_KEY,
+    ROLLOUT_BACKBONE_TRANSPORT_KEY,
+    filter_rollout_backbone_transport,
+    is_rollout_backbone_ipc_transport,
+)
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -136,6 +146,290 @@ class MultiStepRolloutWorker(Worker):
             }
         self.rollout_queue_size = self.cfg.rollout.get("rollout_queue_size", 0)
 
+        feature_transport = self.model_cfg.get(ROLLOUT_BACKBONE_TRANSPORT_KEY)
+        if feature_transport not in (None, ROLLOUT_BACKBONE_BORROWED_IPC_PINNED):
+            raise ValueError(
+                f"unsupported rollout backbone feature transport: {feature_transport}"
+            )
+        self._pinned_feature_ipc_enabled = is_rollout_backbone_ipc_transport(
+            feature_transport
+        )
+        if (
+            self._pinned_feature_ipc_enabled
+            and SupportedModel(self.model_cfg.model_type) != SupportedModel.GR00T
+        ):
+            raise ValueError(
+                "pinned rollout backbone transport currently supports GR00T N1.5 only"
+            )
+        if self._pinned_feature_ipc_enabled and (
+            self.placement.get_world_size("rollout")
+            != self.placement.get_world_size("actor")
+        ):
+            raise ValueError(
+                "pinned rollout backbone transport currently requires equal Rollout/Actor world sizes"
+            )
+        self._pinned_feature_verify_trajectory = bool(
+            self.cfg.rollout.get("pinned_feature_verify_trajectory", False)
+        )
+        self._pinned_feature_ipc_batch_blocks = int(
+            self.cfg.rollout.get("pinned_feature_ipc_batch_blocks", 1)
+        )
+        self._pinned_feature_ipc_timeout_seconds = float(
+            self.cfg.rollout.get("pinned_feature_ipc_timeout_seconds", 300.0)
+        )
+        if self._pinned_feature_ipc_batch_blocks <= 0:
+            raise ValueError("rollout.pinned_feature_ipc_batch_blocks must be positive")
+        if self._pinned_feature_ipc_timeout_seconds <= 0:
+            raise ValueError(
+                "rollout.pinned_feature_ipc_timeout_seconds must be positive"
+            )
+        self._pinned_feature_tensors: list[torch.Tensor] = []
+        self._pinned_feature_block_sizes: list[int] = []
+        self._pinned_feature_samples = 0
+        self._pinned_feature_lease_seq = 0
+        self._pinned_feature_active_lease: str | None = None
+        self._pinned_feature_consumer_rank: int | None = None
+        self._pinned_stream_expected_blocks = 0
+        self._pinned_stream_expected_samples = 0
+        self._pinned_stream_blocks = 0
+        self._pinned_stream_expected_batches = 0
+        self._pinned_stream_batches = 0
+        self._pinned_stream_bytes = 0
+        self._pinned_stream_wait_seconds = 0.0
+
+    def _begin_pinned_feature_lease(self) -> None:
+        if not self._pinned_feature_ipc_enabled:
+            return
+        if (
+            self._pinned_feature_tensors
+            or self._pinned_feature_active_lease
+            or self._pinned_feature_consumer_rank is not None
+        ):
+            raise RuntimeError(
+                "previous pinned backbone lease was not released before rollout"
+            )
+        self._pinned_feature_block_sizes.clear()
+        self._pinned_feature_samples = 0
+        self._pinned_stream_blocks = 0
+        self._pinned_stream_batches = 0
+        self._pinned_stream_bytes = 0
+        self._pinned_stream_wait_seconds = 0.0
+        self._pinned_feature_lease_seq += 1
+        self._pinned_feature_active_lease = (
+            f"pinned-r{self._rank}-l{self._pinned_feature_lease_seq}"
+        )
+        self._pinned_feature_consumer_rank = self._rank
+        self._pinned_stream_expected_blocks = int(
+            self.cfg.env.train.rollout_epoch
+            * self.cfg.env.train.max_steps_per_rollout_epoch
+        )
+        self._pinned_stream_expected_samples = int(
+            self._pinned_stream_expected_blocks
+            * self.cfg.env.train.total_num_envs
+            // self._world_size
+        )
+        if (
+            self._pinned_stream_expected_blocks <= 0
+            or self._pinned_stream_expected_samples <= 0
+        ):
+            self._abort_pinned_feature_stream()
+            raise ValueError("pinned feature stream requires positive block counts")
+        if self._pinned_stream_expected_samples >= ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE:
+            self._abort_pinned_feature_stream()
+            raise ValueError("rollout sample count exceeds its feature ID namespace")
+        self._pinned_stream_expected_batches = (
+            self._pinned_stream_expected_blocks
+            + self._pinned_feature_ipc_batch_blocks
+            - 1
+        ) // self._pinned_feature_ipc_batch_blocks
+
+    def _abort_pinned_feature_stream(self) -> None:
+        self._pinned_feature_tensors.clear()
+        self._pinned_feature_block_sizes.clear()
+        self._pinned_feature_samples = 0
+        self._pinned_feature_active_lease = None
+        self._pinned_feature_consumer_rank = None
+        self.torch_platform.ipc_collect()
+
+    async def _retain_pinned_feature_block(
+        self, forward_inputs: dict[str, torch.Tensor]
+    ) -> None:
+        feature = forward_inputs.get(ROLLOUT_BACKBONE_FEATURE_KEY)
+        mask = forward_inputs.get(ROLLOUT_BACKBONE_MASK_KEY)
+        if feature is None or mask is None:
+            raise RuntimeError("pinned backbone IPC requires complete rollout features")
+        if feature.device.type != "cuda" or mask.device.type != "cuda":
+            raise RuntimeError("pinned backbone IPC requires producer CUDA tensors")
+        if feature.shape[0] != mask.shape[0]:
+            raise RuntimeError("pinned backbone feature/mask batch mismatch")
+
+        filter_rollout_backbone_transport(forward_inputs, reuse_enabled=True)
+        block_size = int(feature.shape[0])
+        sample_id_base = self._rank * ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE
+        sample_ids = torch.arange(
+            sample_id_base + self._pinned_feature_samples,
+            sample_id_base + self._pinned_feature_samples + block_size,
+            dtype=torch.int64,
+            device="cpu",
+        )
+        forward_inputs[ROLLOUT_BACKBONE_SAMPLE_IDS_KEY] = sample_ids
+        if not self._pinned_feature_verify_trajectory:
+            forward_inputs.pop(ROLLOUT_BACKBONE_FEATURE_KEY)
+            forward_inputs.pop(ROLLOUT_BACKBONE_MASK_KEY)
+        self._pinned_feature_tensors.extend((feature.detach(), mask.detach()))
+        self._pinned_feature_block_sizes.append(block_size)
+        self._pinned_feature_samples += block_size
+        if self._pinned_feature_ipc_enabled and (
+            len(self._pinned_feature_block_sizes)
+            >= self._pinned_feature_ipc_batch_blocks
+            or self._pinned_feature_samples == self._pinned_stream_expected_samples
+        ):
+            await self._flush_pinned_feature_batch()
+
+    async def _flush_pinned_feature_batch(self) -> None:
+        lease_id = self._pinned_feature_active_lease
+        consumer_rank = self._pinned_feature_consumer_rank
+        if lease_id is None or consumer_rank is None:
+            raise RuntimeError("pinned backbone stream is not active")
+        if not self._pinned_feature_block_sizes:
+            raise RuntimeError("pinned backbone batch is empty")
+        block_sizes = list(self._pinned_feature_block_sizes)
+        tensors = list(self._pinned_feature_tensors)
+        if len(tensors) != 2 * len(block_sizes):
+            raise RuntimeError("pinned backbone batch tensor count is invalid")
+        batch_index = self._pinned_stream_batches
+        start_block_index = self._pinned_stream_blocks
+        batch_samples = sum(block_sizes)
+        offset = self._pinned_feature_samples - batch_samples
+        byte_count = sum(tensor.numel() * tensor.element_size() for tensor in tensors)
+        metadata = {
+            "schema": 3,
+            "lease_id": lease_id,
+            "batch_index": batch_index,
+            "start_block_index": start_block_index,
+            "total_blocks": self._pinned_stream_expected_blocks,
+            "offset": offset,
+            "block_sizes": block_sizes,
+            "total_samples": self._pinned_stream_expected_samples,
+            "producer_rank": self._rank,
+            "consumer_rank": consumer_rank,
+            "model_version": int(self.version),
+            "sample_id_base": self._rank * ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE,
+            "bytes": byte_count,
+            "verify_trajectory": self._pinned_feature_verify_trajectory,
+        }
+        wait_start = time.perf_counter()
+        try:
+            self.send(
+                tensors,
+                dst_group_name=self.actor_group_name,
+                dst_rank=consumer_rank,
+                piggyback_payload=metadata,
+                borrowed_ipc=True,
+            )
+            recv_work = self.recv(
+                src_group_name=self.actor_group_name,
+                src_rank=consumer_rank,
+                async_op=True,
+            )
+            try:
+                ack = await asyncio.wait_for(
+                    recv_work.async_wait(),
+                    timeout=self._pinned_feature_ipc_timeout_seconds,
+                )
+            except asyncio.TimeoutError as error:
+                raise TimeoutError(
+                    "timed out waiting for Actor ACK for pinned backbone batch "
+                    f"{batch_index} lease {lease_id}"
+                ) from error
+            if isinstance(ack, dict) and ack.get("status") == "error":
+                raise RuntimeError(
+                    "Actor rejected pinned backbone batch "
+                    f"{batch_index}: {ack.get('error', 'unknown error')}"
+                )
+            if (
+                not isinstance(ack, dict)
+                or ack.get("schema") != 3
+                or ack.get("status") != "ok"
+                or ack.get("lease_id") != lease_id
+                or int(ack.get("batch_index", -1)) != batch_index
+                or int(ack.get("completed_blocks", -1))
+                != start_block_index + len(block_sizes)
+            ):
+                raise RuntimeError(
+                    f"pinned backbone batch ACK mismatch at batch {batch_index}: {ack}"
+                )
+        except Exception:
+            tensors.clear()
+            self._abort_pinned_feature_stream()
+            raise
+        finally:
+            self._pinned_stream_wait_seconds += time.perf_counter() - wait_start
+        self._pinned_stream_batches += 1
+        self._pinned_stream_blocks += len(block_sizes)
+        self._pinned_stream_bytes += byte_count
+        self._pinned_feature_tensors.clear()
+        self._pinned_feature_block_sizes.clear()
+        tensors.clear()
+        self.torch_platform.ipc_collect()
+        log_stride = max(1, self._pinned_stream_expected_blocks // 4)
+        if batch_index == 0 or self._pinned_stream_blocks % log_stride == 0:
+            self.log_info(
+                "PINNED_FEATURE_BATCH_RELEASE "
+                f"rank={self._rank} lease={lease_id} "
+                f"batches={self._pinned_stream_batches}/"
+                f"{self._pinned_stream_expected_batches} "
+                f"blocks={self._pinned_stream_blocks}/"
+                f"{self._pinned_stream_expected_blocks} bytes={self._pinned_stream_bytes}"
+            )
+
+    @Worker.timer("rollout/feature_stream")
+    def finish_rollout_backbone_feature_stream(self) -> dict[str, float]:
+        if not self._pinned_feature_ipc_enabled:
+            return {}
+        try:
+            if self._pinned_feature_tensors or self._pinned_feature_block_sizes:
+                raise RuntimeError("pinned backbone stream has an unflushed batch")
+            if self._pinned_stream_blocks != self._pinned_stream_expected_blocks:
+                raise RuntimeError(
+                    "pinned backbone block stream count mismatch: "
+                    f"{self._pinned_stream_blocks}/"
+                    f"{self._pinned_stream_expected_blocks}"
+                )
+            if self._pinned_stream_batches != self._pinned_stream_expected_batches:
+                raise RuntimeError(
+                    "pinned backbone batch stream count mismatch: "
+                    f"{self._pinned_stream_batches}/"
+                    f"{self._pinned_stream_expected_batches}"
+                )
+            if self._pinned_feature_samples != self._pinned_stream_expected_samples:
+                raise RuntimeError(
+                    "pinned backbone sample stream count mismatch: "
+                    f"{self._pinned_feature_samples}/"
+                    f"{self._pinned_stream_expected_samples}"
+                )
+        except Exception:
+            self._abort_pinned_feature_stream()
+            raise
+        lease_id = self._pinned_feature_active_lease
+        self.log_info(
+            "PINNED_FEATURE_STREAM_DONE "
+            f"rank={self._rank} lease={lease_id} "
+            f"batches={self._pinned_stream_batches} "
+            f"blocks={self._pinned_stream_blocks} "
+            f"samples={self._pinned_feature_samples} "
+            f"bytes={self._pinned_stream_bytes} "
+            f"wait_s={self._pinned_stream_wait_seconds:.6f}"
+        )
+        self._pinned_feature_active_lease = None
+        self._pinned_feature_consumer_rank = None
+        return {
+            "rollout/pinned_feature_bytes": float(self._pinned_stream_bytes),
+            "rollout/pinned_feature_blocks": float(self._pinned_stream_blocks),
+            "rollout/pinned_feature_batches": float(self._pinned_stream_batches),
+            "rollout/pinned_feature_wait_seconds": self._pinned_stream_wait_seconds,
+        }
+
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.model_cfg)
         with open_dict(rollout_model_config):
@@ -143,6 +437,7 @@ class MultiStepRolloutWorker(Worker):
             rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
+        self.hf_model.capture_rollout_backbone_output = self._pinned_feature_ipc_enabled
 
         if self.cfg.runner.get("ckpt_path", None):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
@@ -607,6 +902,29 @@ class MultiStepRolloutWorker(Worker):
             ),
         )
 
+    async def _build_policy_output_with_transport(
+        self,
+        actions: torch.Tensor,
+        result: dict[str, Any],
+        *,
+        final_obs: dict[str, Any] | None = None,
+    ) -> PolicyOutput:
+        policy_output = self._build_policy_output(
+            actions,
+            result,
+            final_obs=final_obs,
+        )
+        forward_inputs = policy_output.forward_inputs
+        if forward_inputs is not None:
+            if self._pinned_feature_ipc_enabled:
+                await self._retain_pinned_feature_block(forward_inputs)
+            else:
+                filter_rollout_backbone_transport(
+                    forward_inputs,
+                    reuse_enabled=False,
+                )
+        return policy_output
+
     def get_bootstrap_values(
         self, final_obs: dict[str, Any] | None
     ) -> torch.Tensor | None:
@@ -694,7 +1012,7 @@ class MultiStepRolloutWorker(Worker):
                     intervene_requested=env_output.get("intervene_flags", None),
                 )
 
-                policy_output = self._build_policy_output(
+                policy_output = await self._build_policy_output_with_transport(
                     actions,
                     result,
                     final_obs=env_output.get("final_obs", None),
@@ -729,7 +1047,7 @@ class MultiStepRolloutWorker(Worker):
 
             if self.enable_opd:
                 # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
-                policy_output = self._build_policy_output(
+                policy_output = await self._build_policy_output_with_transport(
                     actions,
                     result,
                     final_obs=env_output.get("final_obs", None),
@@ -766,6 +1084,7 @@ class MultiStepRolloutWorker(Worker):
         input_channel: Channel,
         output_channel: Channel,
     ):
+        self._begin_pinned_feature_lease()
         if self.enable_offload:
             self.reload_model()
 

@@ -14,7 +14,7 @@
 
 import time
 from functools import partial
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -44,6 +44,19 @@ from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Cluster, Worker
+from rlinf.utils.backbone_cache import (
+    ROLLOUT_BACKBONE_BORROWED_IPC_PINNED,
+    ROLLOUT_BACKBONE_FEATURE_KEY,
+    ROLLOUT_BACKBONE_MASK_KEY,
+    ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE,
+    ROLLOUT_BACKBONE_SAMPLE_IDS_KEY,
+    ROLLOUT_BACKBONE_TRANSPORT_KEY,
+    is_rollout_backbone_ipc_transport,
+    rollout_backbone_channel_key,
+    rollout_backbone_producer_rank,
+    validate_frozen_backbone,
+    validate_rollout_backbone_sample_ids,
+)
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,
     get_reverse_idx,
@@ -72,6 +85,8 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.pinned_feature_stream import receive_pinned_rollout_backbone_stream
+from rlinf.utils.pinned_rollout_cache import PinnedRolloutBackboneCache
 from rlinf.utils.placement import (
     HybridComponentPlacement,
     ModelParallelComponentPlacement,
@@ -1087,6 +1102,35 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
+        feature_transport = cfg.actor.model.get(ROLLOUT_BACKBONE_TRANSPORT_KEY)
+        if feature_transport not in (None, ROLLOUT_BACKBONE_BORROWED_IPC_PINNED):
+            raise ValueError(
+                f"unsupported rollout backbone feature transport: {feature_transport}"
+            )
+        self._pinned_feature_ipc_enabled = is_rollout_backbone_ipc_transport(
+            feature_transport
+        )
+        self._pinned_feature_ipc_batch_blocks = int(
+            cfg.rollout.get("pinned_feature_ipc_batch_blocks", 1)
+        )
+        self._pinned_feature_ipc_timeout_seconds = float(
+            cfg.rollout.get("pinned_feature_ipc_timeout_seconds", 300.0)
+        )
+        if self._pinned_feature_ipc_batch_blocks <= 0:
+            raise ValueError("rollout.pinned_feature_ipc_batch_blocks must be positive")
+        if self._pinned_feature_ipc_timeout_seconds <= 0:
+            raise ValueError(
+                "rollout.pinned_feature_ipc_timeout_seconds must be positive"
+            )
+        if self._pinned_feature_ipc_enabled and (
+            self._component_placement.get_world_size("rollout")
+            != self._component_placement.get_world_size("actor")
+        ):
+            raise ValueError(
+                "pinned rollout backbone transport currently requires equal Rollout/Actor world sizes"
+            )
+        self._pinned_backbone_metadata: dict[str, Any] | None = None
+        self._pinned_rollout_backbone_cache: PinnedRolloutBackboneCache | None = None
         if self.enable_sft_co_train:
             self._build_sft_data_loader()
 
@@ -1211,12 +1255,104 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         recv_list = []
         for _ in range(split_num):
-            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            channel_key = (
+                rollout_backbone_channel_key(self._rank)
+                if self._pinned_feature_ipc_enabled
+                else None
+            )
+            if channel_key is None:
+                recv_work = input_channel.get(async_op=True)
+            else:
+                recv_work = input_channel.get(key=channel_key, async_op=True)
+            trajectory: Trajectory = await recv_work.async_wait()
             recv_list.append(trajectory)
 
         self.rollout_batch = convert_trajectories_to_batch(recv_list)
 
         self.rollout_batch = self._process_received_rollout_batch(self.rollout_batch)
+
+    def get_rollout_backbone_feature_source_rank(self) -> int:
+        if not self._pinned_feature_ipc_enabled:
+            return self._rank
+        forward_inputs = self.rollout_batch.get("forward_inputs", {})
+        sample_ids = forward_inputs.get(ROLLOUT_BACKBONE_SAMPLE_IDS_KEY)
+        if sample_ids is None:
+            raise RuntimeError("trajectory is missing pinned backbone sample IDs")
+        return rollout_backbone_producer_rank(sample_ids)
+
+    @Worker.timer("actor/feature_stream_recv")
+    async def recv_rollout_backbone_feature_stream(self) -> dict[str, float]:
+        if not self._pinned_feature_ipc_enabled:
+            return {}
+        if self._pinned_rollout_backbone_cache is not None:
+            raise RuntimeError("previous rollout backbone cache is still active")
+        expected_blocks = int(
+            self.cfg.env.train.rollout_epoch
+            * self.cfg.env.train.max_steps_per_rollout_epoch
+        )
+        expected_samples = int(
+            expected_blocks * self.cfg.env.train.total_num_envs // self._world_size
+        )
+        cache, metadata, metrics = await receive_pinned_rollout_backbone_stream(
+            self,
+            source_rank=self._rank,
+            consumer_rank=self._rank,
+            model_version=int(self.version),
+            expected_blocks=expected_blocks,
+            expected_samples=expected_samples,
+            blocks_per_batch=self._pinned_feature_ipc_batch_blocks,
+            rollout_group_name=self._rollout_group_name,
+            timeout_seconds=self._pinned_feature_ipc_timeout_seconds,
+        )
+        self._pinned_rollout_backbone_cache = cache
+        self._pinned_backbone_metadata = metadata
+        return metrics
+
+    def validate_rollout_backbone_feature_stream(
+        self, source_ranks: list[int]
+    ) -> dict[str, float]:
+        if not self._pinned_feature_ipc_enabled:
+            return {}
+        if len(source_ranks) != self._world_size or sorted(source_ranks) != list(
+            range(self._world_size)
+        ):
+            raise RuntimeError(
+                f"pinned backbone route must be a rank permutation: {source_ranks}"
+            )
+        source_rank = int(source_ranks[self._rank])
+        if source_rank != self._rank:
+            raise RuntimeError(
+                "streaming pinned backbone IPC requires identity same-GPU routing"
+            )
+        cache = self._pinned_rollout_backbone_cache
+        metadata = self._pinned_backbone_metadata
+        if cache is None or metadata is None:
+            raise RuntimeError("pinned backbone stream is not ready")
+        forward_inputs = self.rollout_batch.get("forward_inputs", {})
+        sample_ids = forward_inputs.get(ROLLOUT_BACKBONE_SAMPLE_IDS_KEY)
+        if sample_ids is None:
+            raise RuntimeError("trajectory is missing pinned backbone sample IDs")
+        sample_id_base = int(metadata["sample_id_base"])
+        if sample_id_base != source_rank * ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE:
+            raise RuntimeError("pinned backbone sample-ID namespace is invalid")
+        validate_rollout_backbone_sample_ids(
+            sample_ids,
+            producer_rank=source_rank,
+            total_samples=cache.samples,
+        )
+        self.log_info(
+            "PINNED_FEATURE_ROUTE_VALID "
+            f"rank={self._rank} source={source_rank} samples={cache.samples}"
+        )
+        return {"actor/pinned_feature_route_valid": 1.0}
+
+    @Worker.timer("actor/feature_recv")
+    def recv_rollout_backbone_features(
+        self, source_ranks: list[int]
+    ) -> dict[str, float]:
+        if not self._pinned_feature_ipc_enabled:
+            return {}
+        return self.validate_rollout_backbone_feature_stream(source_ranks)
 
     def _process_received_rollout_batch(
         self, rollout_batch: dict[str, torch.Tensor]
@@ -1491,8 +1627,52 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             )
         return loss
 
-    @Worker.timer("run_training")
+    def _validate_pinned_backbone_contract(self) -> bool:
+        """Validate the pinned Rollout feature-reuse contract."""
+        if not self._pinned_feature_ipc_enabled:
+            return False
+        if SupportedModel(self.cfg.actor.model.model_type) != SupportedModel.GR00T:
+            raise ValueError(
+                "pinned rollout backbone transport currently supports GR00T N1.5 only"
+            )
+        if self.enable_sft_co_train:
+            raise ValueError(
+                "pinned rollout backbone transport is incompatible with SFT co-training"
+            )
+        if not self.cfg.actor.model.rl_head_config.get("disable_dropout", False):
+            raise ValueError(
+                "pinned rollout backbone transport requires disable_dropout=true"
+            )
+        model = self.model
+        while hasattr(model, "module"):
+            model = model.module
+        backbone = getattr(model, "backbone", None)
+        if backbone is None:
+            raise ValueError("GR00T model does not expose a backbone module")
+        backbone.eval()
+        validate_frozen_backbone(backbone)
+        return True
+
+    def _clear_pinned_rollout_backbone_cache(self) -> None:
+        cache = self._pinned_rollout_backbone_cache
+        if cache is not None:
+            cache.clear()
+        self._pinned_rollout_backbone_cache = None
+        self._pinned_backbone_metadata = None
+        rollout_batch = getattr(self, "rollout_batch", None)
+        if isinstance(rollout_batch, dict):
+            forward_inputs = rollout_batch.get("forward_inputs", {})
+            forward_inputs.pop(ROLLOUT_BACKBONE_SAMPLE_IDS_KEY, None)
+
     def run_training(self) -> None:
+        try:
+            return self._run_training_impl()
+        except Exception:
+            self._clear_pinned_rollout_backbone_cache()
+            raise
+
+    @Worker.timer("run_training")
+    def _run_training_impl(self) -> None:
         """
         Run the training process using the received rollout batch.
         """
@@ -1515,6 +1695,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
         self.model.train()
+        reuse_rollout_feature = self._validate_pinned_backbone_contract()
+        pinned_rollout_cache = self._pinned_rollout_backbone_cache
+        if self._pinned_feature_ipc_enabled and pinned_rollout_cache is None:
+            raise RuntimeError("pinned backbone transport is enabled without a cache")
+        if self._pinned_feature_ipc_enabled and not reuse_rollout_feature:
+            raise RuntimeError("pinned backbone transport requires feature reuse")
+        self._reuse_feature_fallbacks = 0
         rollout_size = (
             self.rollout_batch["prev_logprobs"].shape[0]
             * self.rollout_batch["prev_logprobs"].shape[1]
@@ -1537,7 +1724,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        for _ in range(update_epoch):
+        for epoch_idx in range(update_epoch):
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
@@ -1561,10 +1748,67 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.optimizer.zero_grad()
                 for idx, batch in enumerate(train_micro_batch):
+                    if pinned_rollout_cache is not None:
+                        forward_inputs = batch.get("forward_inputs", {})
+                        sample_ids = forward_inputs.pop(
+                            ROLLOUT_BACKBONE_SAMPLE_IDS_KEY, None
+                        )
+                        if sample_ids is None:
+                            raise RuntimeError(
+                                "training microbatch is missing pinned backbone sample IDs"
+                            )
+                        metadata = self._pinned_backbone_metadata
+                        if metadata is None:
+                            raise RuntimeError(
+                                "pinned backbone metadata was released early"
+                            )
+                        local_sample_ids = sample_ids - int(metadata["sample_id_base"])
+                        pinned_output = pinned_rollout_cache.load(local_sample_ids)
+                        if bool(metadata.get("verify_trajectory", False)):
+                            trajectory_feature = forward_inputs.get(
+                                ROLLOUT_BACKBONE_FEATURE_KEY
+                            )
+                            trajectory_mask = forward_inputs.get(
+                                ROLLOUT_BACKBONE_MASK_KEY
+                            )
+                            if trajectory_feature is None or trajectory_mask is None:
+                                raise RuntimeError(
+                                    "pinned feature transport verification requires trajectory features"
+                                )
+                            if not torch.equal(
+                                pinned_output["backbone_features"],
+                                trajectory_feature.to(self.device),
+                            ):
+                                max_diff = (
+                                    (
+                                        pinned_output["backbone_features"].float()
+                                        - trajectory_feature.to(self.device).float()
+                                    )
+                                    .abs()
+                                    .max()
+                                )
+                                raise RuntimeError(
+                                    "pinned feature transport feature mismatch against trajectory "
+                                    f"reference: max_diff={float(max_diff.item())}"
+                                )
+                            if not torch.equal(
+                                pinned_output["backbone_attention_mask"],
+                                trajectory_mask.to(self.device),
+                            ):
+                                raise RuntimeError(
+                                    "pinned feature transport attention mask mismatch against trajectory"
+                                )
+                        forward_inputs[ROLLOUT_BACKBONE_FEATURE_KEY] = pinned_output[
+                            "backbone_features"
+                        ]
+                        forward_inputs[ROLLOUT_BACKBONE_MASK_KEY] = pinned_output[
+                            "backbone_attention_mask"
+                        ]
                     self.train_micro_batch(
                         micro_batch=batch,
                         metrics=metrics,
                         is_last=(idx + 1) == self.gradient_accumulation,
+                        reuse_rollout_feature=reuse_rollout_feature,
                     )
                     # avoid gpu memory leak
                     train_micro_batch[idx] = None
@@ -1580,6 +1824,42 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 if len(lr_list) > 1:
                     data["critic/lr"] = lr_list[1]
                 append_to_dict(metrics, data)
+        if pinned_rollout_cache is not None:
+            pinned_stats = pinned_rollout_cache.stats()
+            append_to_dict(
+                metrics,
+                {
+                    "actor/pinned_feature_loads": float(pinned_stats.loads),
+                    "actor/pinned_feature_loaded_samples": float(
+                        pinned_stats.loaded_samples
+                    ),
+                    "actor/pinned_feature_bytes": float(pinned_stats.bytes),
+                    "actor/pinned_feature_staging_bytes": float(
+                        pinned_stats.staging_bytes
+                    ),
+                    "actor/pinned_feature_allocation_seconds": (
+                        pinned_stats.allocation_seconds
+                    ),
+                    "actor/pinned_feature_d2h_seconds": pinned_stats.d2h_seconds,
+                    "actor/pinned_feature_cpu_gather_seconds": (
+                        pinned_stats.cpu_gather_seconds
+                    ),
+                    "actor/pinned_feature_h2d_seconds": pinned_stats.h2d_seconds,
+                },
+            )
+            self.log_info(
+                "PINNED_FEATURE_TRAINING_DONE "
+                f"rank={self._rank} loads={pinned_stats.loads} "
+                f"loaded_samples={pinned_stats.loaded_samples} "
+                f"cpu_gather_s={pinned_stats.cpu_gather_seconds:.6f} "
+                f"h2d_s={pinned_stats.h2d_seconds:.6f}"
+            )
+            self._clear_pinned_rollout_backbone_cache()
+        if reuse_rollout_feature:
+            append_to_dict(
+                metrics,
+                {"actor/reuse_feature_fallbacks": float(self._reuse_feature_fallbacks)},
+            )
         # put LR scheduler step here
         self.lr_scheduler.step()
         self.optimizer.zero_grad()
@@ -1605,8 +1885,29 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         metrics: dict[str, list[float]],
         *,
         is_last: bool,
+        reuse_rollout_feature: bool = False,
     ) -> None:
+        backbone_kwargs = {}
+
         micro_batch = put_tensor_device(micro_batch, self.device)
+
+        if reuse_rollout_feature:
+            fwd = micro_batch.get("forward_inputs", {})
+            reuse_feat = fwd.pop(ROLLOUT_BACKBONE_FEATURE_KEY, None)
+            reuse_mask = fwd.pop(ROLLOUT_BACKBONE_MASK_KEY, None)
+            if reuse_feat is not None and reuse_mask is not None:
+                backbone_kwargs = {
+                    "precomputed_backbone": {
+                        "backbone_features": reuse_feat.detach(),
+                        "backbone_attention_mask": reuse_mask.detach(),
+                    }
+                }
+            else:
+                self._reuse_feature_fallbacks += 1
+                raise RuntimeError(
+                    "pinned rollout backbone cache returned an incomplete feature"
+                )
+
         backward_ctx = self.before_micro_batch(self.model, is_last_micro_batch=is_last)
         advantages = micro_batch["advantages"]
         prev_logprobs = micro_batch["prev_logprobs"]
@@ -1639,6 +1940,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
                 compute_values=compute_values,
                 use_cache=False,
+                **backbone_kwargs,
                 **kwargs,
             )
 
