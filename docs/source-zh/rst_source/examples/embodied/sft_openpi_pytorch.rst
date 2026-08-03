@@ -52,10 +52,10 @@ PyTorch 与 FSDP 完成训练。
 准备配方
 --------
 
-从表中选择实验配置，并替换所有 ``/path/to/...`` 占位符。模型 checkpoint 必须是新的
-``openpi_pytorch`` 布局（包含 ``model.safetensors`` 与 ``config.json``），对应的
+从表中选择实验配置，并替换所有 ``/path/to/...`` 占位符。模型 checkpoint 必须是 RLinf PyTorch
+布局（包含 ``model.safetensors`` 与 ``config.json``），对应的
 ``norm_stats.json`` 也必须位于配置指定的 asset 路径。若起点为 OpenPI JAX checkpoint，
-请使用 checkpoint 转换器的 ``jax2new`` 模式；完整流程见
+请使用 checkpoint 转换器的 ``jax2rlinf_pytorch`` 模式；完整流程见
 ``rlinf/utils/ckpt_convertor/openpi/README.md``。
 
 RoboTwin
@@ -77,7 +77,7 @@ RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像。模型配置会将动
 
    actor:
      model:
-       model_path: /path/to/pi0_base_pytorch_new       # 或 Pi0.5
+       model_path: /path/to/pi0_base_rlinf_pytorch       # 或 Pi0.5
        openpi:
          assets_dir: ${actor.model.model_path}
          asset_id: "physical-intelligence/robotwin"
@@ -114,7 +114,7 @@ BEHAVIOR-1K
 
    actor:
      model:
-       model_path: /path/to/pi05_base_pytorch_new
+       model_path: /path/to/pi05_base_rlinf_pytorch
        openpi:
          assets_dir: /path/to/assets
          asset_id: "behavior-1k/2025-challenge-demos"
@@ -148,41 +148,46 @@ BEHAVIOR-1K
 转换 SFT checkpoint
 -------------------
 
-请按数据集与模型布局选择对应的转换模式。
+所有 SFT checkpoint 都使用 ``sft2rlinf_pytorch``；``--config-name`` 选择匹配的
+Pi0/Pi0.5 架构，``--dtype fp32`` 用于保留 SFT 的主权重精度。
 
-RoboTwin Pi0 使用 ``robotwin_sft2new``：
+RoboTwin Pi0：
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi0_aloha_robotwin \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi0_robotwin_sft_hf \
-       --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi0_base_pytorch_new
+       --input-norm-stats /path/to/pi0_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi0_robotwin_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi0_base_rlinf_pytorch
 
-RoboTwin Pi0.5 需使用匹配的 Pi0.5 基础模型，并加入 ``--pi05``：
+RoboTwin Pi0.5：
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
-       --pi05 \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi05_aloha_robotwin \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi05_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi05_robotwin_sft_hf \
-       --output-norm-stats /path/to/pi05_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi05_base_pytorch_new
+       --input-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi05_robotwin_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi05_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi05_base_rlinf_pytorch
 
-Pi0.5 + BEHAVIOR-1K 使用 ``sft2new``：
+Pi0.5 + BEHAVIOR-1K：
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi05_behavior \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
        --input-norm-stats /path/to/norm_stats.json \
-       --output-model /path/to/pi05_behavior_sft_new \
-       --output-norm-stats /path/to/pi05_behavior_sft_new/physical-intelligence/behavior/norm_stats.json
+       --output-model /path/to/pi05_behavior_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi05_behavior_sft_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
 
-``robotwin_sft2new`` 会在输出配置中保留 RoboTwin 的 Pi0 或 Pi0.5 架构。
-``sft2new`` 会写出 BEHAVIOR Pi0.5 布局，并将浮点张量转换为 bf16 供评估加载器使用。
+所选的 ``--config-name`` 会在输出配置中保留 RoboTwin 或 BEHAVIOR 的架构。
 所有选项以及对应评估配置请参见转换器 README。

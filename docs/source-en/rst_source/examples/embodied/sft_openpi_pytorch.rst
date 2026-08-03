@@ -58,10 +58,10 @@ Prepare a recipe
 ----------------
 
 Start from the experiment configuration in the table and replace every
-``/path/to/...`` placeholder. The model checkpoint must be in the new
-``openpi_pytorch`` layout (``model.safetensors`` plus ``config.json``), with
+``/path/to/...`` placeholder. The model checkpoint must be in the RLinf PyTorch
+layout (``model.safetensors`` plus ``config.json``), with
 the matching ``norm_stats.json`` available at the configured asset location.
-Use the ``jax2new`` checkpoint-converter mode if you are starting from an
+Use the ``jax2rlinf_pytorch`` checkpoint-converter mode if you are starting from an
 OpenPI JAX checkpoint; see
 ``rlinf/utils/ckpt_convertor/openpi/README.md`` for the full conversion flow.
 
@@ -87,7 +87,7 @@ recipe, for example:
 
    actor:
      model:
-       model_path: /path/to/pi0_base_pytorch_new       # or Pi0.5
+       model_path: /path/to/pi0_base_rlinf_pytorch       # or Pi0.5
        openpi:
          assets_dir: ${actor.model.model_path}
          asset_id: "physical-intelligence/robotwin"
@@ -126,7 +126,7 @@ and matching Pi0.5 assets under ``data`` and ``actor.model.openpi``:
 
    actor:
      model:
-       model_path: /path/to/pi05_base_pytorch_new
+       model_path: /path/to/pi05_base_rlinf_pytorch
        openpi:
          assets_dir: /path/to/assets
          asset_id: "behavior-1k/2025-challenge-demos"
@@ -164,42 +164,47 @@ according to ``runner.save_interval`` in
 Convert an SFT checkpoint
 -------------------------
 
-Use the converter mode matching the dataset and model layout.
+All SFT checkpoints use ``sft2rlinf_pytorch``. ``--config-name`` selects the
+matching Pi0/Pi0.5 architecture; ``--dtype fp32`` preserves SFT master weights.
 
-For RoboTwin Pi0, use ``robotwin_sft2new``:
+For RoboTwin Pi0:
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi0_aloha_robotwin \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi0_robotwin_sft_hf \
-       --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi0_base_pytorch_new
+       --input-norm-stats /path/to/pi0_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi0_robotwin_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi0_base_rlinf_pytorch
 
-For RoboTwin Pi0.5, use the matching Pi0.5 base model and add ``--pi05``:
+For RoboTwin Pi0.5:
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode robotwin_sft2new \
-       --pi05 \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi05_aloha_robotwin \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi05_base_pytorch_new/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi05_robotwin_sft_hf \
-       --output-norm-stats /path/to/pi05_robotwin_sft_hf/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi05_base_pytorch_new
+       --input-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --output-model /path/to/pi05_robotwin_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi05_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
+       --reference-model /path/to/pi05_base_rlinf_pytorch
 
-For Pi0.5 on BEHAVIOR-1K, use ``sft2new``:
+For Pi0.5 on BEHAVIOR-1K:
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2new \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi05_behavior \
+       --dtype fp32 \
        --ckpt /path/to/checkpoints/global_step_30000 \
        --input-norm-stats /path/to/norm_stats.json \
-       --output-model /path/to/pi05_behavior_sft_new \
-       --output-norm-stats /path/to/pi05_behavior_sft_new/physical-intelligence/behavior/norm_stats.json
+       --output-model /path/to/pi05_behavior_sft_rlinf_pytorch \
+       --output-norm-stats /path/to/pi05_behavior_sft_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
 
-``robotwin_sft2new`` preserves the RoboTwin Pi0 or Pi0.5 architecture in its
-output configuration. ``sft2new`` writes the BEHAVIOR Pi0.5 layout and casts
-floating-point tensors to bf16 for the evaluation loader. See the converter
-README for every option and the matching evaluation configuration.
+The selected ``--config-name`` preserves the RoboTwin or BEHAVIOR architecture
+in the output configuration. See the converter README for every option and the
+matching evaluation configuration.

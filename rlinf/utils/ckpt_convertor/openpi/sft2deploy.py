@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert an openpi_pytorch SFT checkpoint to legacy OpenPI deploy weights.
+"""Convert an RLinf SFT checkpoint to OpenPI PyTorch deploy weights.
 
 This mode converts a consolidated RLinf SFT ``full_weights.pt`` checkpoint into
-the legacy OpenPI deploy ``full_weights.pt`` layout. It first strips the SFT
-wrapper prefixes to recover the bare Pi0 checkpoint, converts that checkpoint to
-the old ``paligemma_with_expert.*`` layout with a reference old-format OpenPI
-model, then packs the resulting state dict as one deploy ``full_weights.pt``.
+the OpenPI PyTorch deploy ``full_weights.pt`` layout. It first strips the SFT
+wrapper prefixes to recover the RLinf PyTorch Pi0 checkpoint, converts it to the
+``paligemma_with_expert.*`` layout with an OpenPI PyTorch reference model, then
+packs the resulting state dict as one deploy ``full_weights.pt``.
 
 ``--ckpt`` can be a ``global_step_*`` directory, an ``actor`` directory, a
 ``model_state_dict`` directory, or a direct ``full_weights.pt`` file. ``--output``
@@ -87,7 +87,7 @@ def load_full_weights_pt(path: str | pathlib.Path) -> Any:
 
 
 def load_reference_state_dict(reference: str | pathlib.Path) -> dict[str, Any]:
-    """Load a reference state dict from a deploy pt or old-format model."""
+    """Load a reference state dict from a deploy pt or OpenPI PyTorch model."""
     from rlinf.utils.ckpt_convertor.openpi._core import load_safetensors
 
     reference = pathlib.Path(reference)
@@ -107,15 +107,15 @@ def load_reference_state_dict(reference: str | pathlib.Path) -> dict[str, Any]:
 
     raise FileNotFoundError(
         f"No reference checkpoint found under {reference}; expected a deploy "
-        "full_weights.pt or an old-format model.safetensors."
+        "full_weights.pt or an OpenPI PyTorch model.safetensors."
     )
 
 
-def sft_to_new_safetensors(
+def sft_to_rlinf_pytorch_safetensors(
     input_ckpt: str | pathlib.Path,
     output_model: str | pathlib.Path,
 ) -> pathlib.Path:
-    """Strip SFT wrapper prefixes and write a bare Pi0 safetensors checkpoint."""
+    """Strip SFT wrapper prefixes and write RLinf PyTorch Pi0 safetensors."""
     import torch
 
     from rlinf.utils.ckpt_convertor.openpi._core import (
@@ -144,9 +144,9 @@ def sft_to_new_safetensors(
 
 def extract_embed_tokens(
     input_ckpt: str | pathlib.Path,
-    new_safetensors: str | pathlib.Path,
+    rlinf_pytorch_safetensors: str | pathlib.Path,
 ) -> Any:
-    """Extract the shared token-embedding table from SFT or new-format weights."""
+    """Extract the shared token embedding from SFT or RLinf PyTorch weights."""
     from rlinf.utils.ckpt_convertor.openpi._core import load_safetensors
 
     raw = load_full_weights_pt(resolve_full_weights(input_ckpt))
@@ -154,10 +154,10 @@ def extract_embed_tokens(
         if key in raw:
             return raw[key].detach().cpu()
 
-    new_sd = load_safetensors(new_safetensors)
+    rlinf_pytorch_state_dict = load_safetensors(rlinf_pytorch_safetensors)
     for key in EMBEDDER_KEYS:
-        if key in new_sd:
-            return new_sd[key].detach().cpu()
+        if key in rlinf_pytorch_state_dict:
+            return rlinf_pytorch_state_dict[key].detach().cpu()
 
     raise KeyError(
         f"Could not find an embedder tensor. Expected one of {EMBEDDER_KEYS}."
@@ -180,7 +180,7 @@ def load_shape_reference(
 
 
 def build_deploy_state_dict(
-    old_sd: dict[str, Any],
+    openpi_pytorch_state_dict: dict[str, Any],
     embed_tokens: Any,
     dtype_profile: dict[str, Any],
 ) -> dict[str, Any]:
@@ -192,14 +192,14 @@ def build_deploy_state_dict(
         )
 
     expected_keys = set(dtype_profile)
-    missing_from_old = expected_keys - set(old_sd) - {EMBED_TOKENS_KEY}
-    if missing_from_old:
+    missing_from_openpi = expected_keys - set(openpi_pytorch_state_dict) - {EMBED_TOKENS_KEY}
+    if missing_from_openpi:
         raise KeyError(
-            f"old-format state dict is missing {len(missing_from_old)} deploy keys; "
-            f"first few: {sorted(missing_from_old)[:5]}"
+            f"OpenPI PyTorch state dict is missing {len(missing_from_openpi)} deploy keys; "
+            f"first few: {sorted(missing_from_openpi)[:5]}"
         )
 
-    merged = dict(old_sd)
+    merged = dict(openpi_pytorch_state_dict)
     merged[EMBED_TOKENS_KEY] = embed_tokens.detach().cpu()
 
     deploy = {}
@@ -262,7 +262,7 @@ def convert_sft_to_deploy_pt(
     """Convert an SFT checkpoint into one legacy deploy ``full_weights.pt``."""
     import torch
 
-    from rlinf.utils.ckpt_convertor.openpi import new2old
+    from rlinf.utils.ckpt_convertor.openpi import rlinf_pytorch2openpi_pytorch
     from rlinf.utils.ckpt_convertor.openpi._core import load_safetensors
 
     output_pt = resolve_output_pt(output)
@@ -272,26 +272,32 @@ def convert_sft_to_deploy_pt(
         prefix="sft2deploy_", dir=str(output_pt.parent)
     ) as work_dir:
         work_dir = pathlib.Path(work_dir)
-        new_dir = work_dir / "new"
-        old_dir = work_dir / "old"
+        rlinf_pytorch_dir = work_dir / "rlinf_pytorch"
+        openpi_pytorch_dir = work_dir / "openpi_pytorch"
 
-        logger.info("Step 1/3: sft -> new")
-        new_safetensors = sft_to_new_safetensors(input_ckpt, new_dir)
+        logger.info("Step 1/3: SFT -> RLinf PyTorch")
+        rlinf_pytorch_safetensors = sft_to_rlinf_pytorch_safetensors(
+            input_ckpt, rlinf_pytorch_dir
+        )
 
-        logger.info("Step 2/3: new -> old")
-        new2old.convert_trained_ckpt(
-            input_ckpt=str(new_safetensors),
-            output_dir=str(old_dir),
+        logger.info("Step 2/3: RLinf PyTorch -> OpenPI PyTorch")
+        rlinf_pytorch2openpi_pytorch.convert_trained_ckpt(
+            input_ckpt=str(rlinf_pytorch_safetensors),
+            output_dir=str(openpi_pytorch_dir),
             reference_model=str(reference_model),
             norm_stats=None,
         )
 
-        logger.info("Step 3/3: old -> deploy pt")
-        old_sd = load_safetensors(old_dir / "model.safetensors")
+        logger.info("Step 3/3: OpenPI PyTorch -> deploy pt")
+        openpi_pytorch_state_dict = load_safetensors(
+            openpi_pytorch_dir / "model.safetensors"
+        )
         dtype_profile = load_dtype_profile(dtype_reference)
         shape_reference = load_shape_reference(dtype_reference)
-        embed_tokens = extract_embed_tokens(input_ckpt, new_safetensors)
-        deploy_sd = build_deploy_state_dict(old_sd, embed_tokens, dtype_profile)
+        embed_tokens = extract_embed_tokens(input_ckpt, rlinf_pytorch_safetensors)
+        deploy_sd = build_deploy_state_dict(
+            openpi_pytorch_state_dict, embed_tokens, dtype_profile
+        )
         validate_deploy_state_dict(deploy_sd, dtype_profile, shape_reference)
 
         torch.save(deploy_sd, output_pt)
@@ -322,8 +328,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--reference-model",
         required=True,
         help=(
-            "reference old-format OpenPI model dir used by new2old to source the "
-            "old-only action-expert lm_head and validate keys/shapes"
+            "reference OpenPI PyTorch model dir used to source the action-expert "
+            "lm_head and validate keys/shapes"
         ),
     )
     parser.add_argument(

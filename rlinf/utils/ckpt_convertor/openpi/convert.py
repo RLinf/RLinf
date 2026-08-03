@@ -16,20 +16,20 @@
 
 Dispatches to five modes over a shared core:
 
-    jax2new     JAX Pi0/Pi05 checkpoint -> new self-contained PyTorch layout
-    old2new     old paligemma_with_expert.* -> new bare Pi0 layout
-    sft2new     RLinf SFT full_weights.pt -> new layout selected by
-                ``--config-name`` and explicit ``--dtype``
-    new2old     new bare Pi0 layout -> old paligemma_with_expert.* layout
-    sft2deploy  openpi_pytorch SFT -> legacy openpi deploy full_weights.pt
+    jax2rlinf_pytorch              JAX Pi0/Pi05 checkpoint -> RLinf PyTorch layout
+    openpi_pytorch2rlinf_pytorch   OpenPI PyTorch layout -> RLinf PyTorch layout
+    sft2rlinf_pytorch              RLinf SFT full_weights.pt -> RLinf PyTorch
+                                   layout selected by ``--config-name`` and ``--dtype``
+    rlinf_pytorch2openpi_pytorch   RLinf PyTorch layout -> OpenPI PyTorch layout
+    sft2deploy                     RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
 
 Usage::
 
-    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax2new \\
+    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax2rlinf_pytorch \\
         --input-model       /path/to/jax_checkpoint \\
         --input-norm-stats  /path/to/norm_stats.json \\
-        --output-model      /path/to/out_new \\
-        --output-norm-stats /path/to/out_new/physical-intelligence/behavior/norm_stats.json
+        --output-model      /path/to/out_rlinf_pytorch \\
+        --output-norm-stats /path/to/out_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
 
 Run ``--mode <mode> --help`` for the per-mode arguments.
 """
@@ -39,18 +39,18 @@ from __future__ import annotations
 import argparse
 
 from rlinf.utils.ckpt_convertor.openpi import (
-    jax2new,
-    new2old,
-    old2new,
+    jax2rlinf_pytorch,
+    openpi_pytorch2rlinf_pytorch,
+    rlinf_pytorch2openpi_pytorch,
     sft2deploy,
-    sft2new,
+    sft2rlinf_pytorch,
 )
 
 _MODES = {
-    "jax2new": jax2new,
-    "old2new": old2new,
-    "sft2new": sft2new,
-    "new2old": new2old,
+    "jax2rlinf_pytorch": jax2rlinf_pytorch,
+    "openpi_pytorch2rlinf_pytorch": openpi_pytorch2rlinf_pytorch,
+    "sft2rlinf_pytorch": sft2rlinf_pytorch,
+    "rlinf_pytorch2openpi_pytorch": rlinf_pytorch2openpi_pytorch,
     "sft2deploy": sft2deploy,
 }
 

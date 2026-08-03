@@ -276,12 +276,13 @@ BEHAVIOR 评估同样支持新的 **自包含 PyTorch OpenPI** 代码（模型
 
 - ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
 
-该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **新格式** 的
-PyTorch checkpoint，即由 OpenPI checkpoint 转换器
-（``ckpt_convertor.openpi`` 的 ``old2new`` / ``sft2new``）产出的 checkpoint。
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **RLinf PyTorch**
+checkpoint，即由 OpenPI checkpoint 转换器
+（``ckpt_convertor.openpi`` 的 ``openpi_pytorch2rlinf_pytorch`` /
+``sft2rlinf_pytorch``）产出的 checkpoint。
 将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
 
-- ``rollout.model.model_path``：新格式评估 checkpoint。
+- ``rollout.model.model_path``：RLinf PyTorch 评估 checkpoint。
 - ``rollout.model.openpi.assets_dir``：存放 BEHAVIOR 归一化统计的目录。归一化统计在
   ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
 - ``rollout.model.openpi.paligemma_tokenizer``：PaliGemma SentencePiece tokenizer

@@ -429,7 +429,7 @@ guide must first be converted from the ``openpi-jax`` format. See
 
 .. code-block:: text
 
-   rlinf/utils/ckpt_convertor/openpi/sft2new.py
+   rlinf/utils/ckpt_convertor/openpi/sft2rlinf_pytorch.py
 
 Before deployment, convert the checkpoint produced by SFT into the deployment
 checkpoint format:
@@ -440,7 +440,7 @@ checkpoint format:
      --mode sft2deploy \
      --ckpt INPUT \
      --output OUTPUT \
-     --reference-model OLD_MODEL \
+     --reference-model OPENPI_PYTORCH_MODEL \
      --dtype-reference DEPLOY_FULL_WEIGHTS_PT
 
 

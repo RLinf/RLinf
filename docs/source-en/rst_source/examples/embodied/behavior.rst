@@ -380,12 +380,13 @@ OpenPI** code (model ``model_type: openpi_pytorch``; see
 
 - ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
 
-This config runs in eval-only mode (``runner.only_eval: True``) and consumes a
-**new-format** PyTorch checkpoint, i.e. one produced by the OpenPI checkpoint
-convertor (``ckpt_convertor.openpi`` ``old2new`` / ``sft2new``). Set the model
+This config runs in eval-only mode (``runner.only_eval: True``) and consumes an
+**RLinf PyTorch** checkpoint, i.e. one produced by the OpenPI checkpoint
+convertor (``ckpt_convertor.openpi`` ``openpi_pytorch2rlinf_pytorch`` /
+``sft2rlinf_pytorch``). Set the model
 paths directly in the config as ``/path/to/...`` placeholders:
 
-- ``rollout.model.model_path``: the new-format eval checkpoint.
+- ``rollout.model.model_path``: the RLinf PyTorch eval checkpoint.
 - ``rollout.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
   Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``.
 - ``rollout.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece

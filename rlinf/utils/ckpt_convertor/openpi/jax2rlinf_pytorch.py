@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert a JAX Pi0/Pi05 checkpoint to the NEW self-contained PyTorch layout.
+"""Convert a JAX Pi0/Pi05 checkpoint to the RLinf PyTorch layout.
 
 Reproduces the SigLIP / dual-expert-LLM / projection weight transforms exactly,
 taking the model-shape fields as explicit arguments instead of looking them up in
@@ -79,7 +79,7 @@ def _load_jax_params(checkpoint_dir: str | pathlib.Path) -> dict:
 
 
 def convert_siglip(params: dict) -> dict:
-    """Convert SigLIP ViT parameters from JAX to the new PyTorch format."""
+    """Convert SigLIP ViT parameters from JAX to the RLinf PyTorch layout."""
     pt: dict[str, torch.Tensor] = {}
     img = params["PaliGemma"]["img"]
 
@@ -287,7 +287,7 @@ def convert(
     pcd: bool = False,
     dtype: str = "bfloat16",
 ) -> pathlib.Path:
-    """Convert a JAX checkpoint dir to a new-format PyTorch checkpoint.
+    """Convert a JAX checkpoint dir to an RLinf PyTorch checkpoint.
 
     Loads the JAX params from ``input_model``, converts SigLIP/LLM/projections,
     writes ``output_model/model.safetensors`` (fp32 weights) + ``config.json``
@@ -325,13 +325,13 @@ def convert(
 
 
 def add_arguments(parser) -> None:
-    """Register the ``jax2new`` mode arguments on ``parser``."""
+    """Register the ``jax2rlinf_pytorch`` mode arguments on ``parser``."""
     parser.add_argument("--input-model", required=True, help="JAX checkpoint directory")
     parser.add_argument(
         "--input-norm-stats", required=True, help="norm_stats.json to copy across"
     )
     parser.add_argument(
-        "--output-model", required=True, help="output (new-format) checkpoint dir"
+        "--output-model", required=True, help="output RLinf PyTorch checkpoint dir"
     )
     parser.add_argument(
         "--output-norm-stats", required=True, help="destination norm_stats.json path"
@@ -347,7 +347,7 @@ def add_arguments(parser) -> None:
 
 
 def run(args) -> None:
-    """Execute the ``jax2new`` mode from parsed ``args``."""
+    """Execute the ``jax2rlinf_pytorch`` mode from parsed ``args``."""
     convert(
         args.input_model,
         args.input_norm_stats,

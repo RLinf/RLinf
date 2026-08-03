@@ -14,9 +14,11 @@
 
 """Consolidated OpenPI 0.5 checkpoint convertors.
 
-Five layout convertors (``jax2new``, ``old2new``, ``sft2new``, ``new2old``,
-``sft2deploy``) share one core. ``sft2new`` reads its model architecture from
-the same OpenPI TrainConfig used by SFT and eval. See
+Five layout convertors (``jax2rlinf_pytorch``,
+``openpi_pytorch2rlinf_pytorch``, ``sft2rlinf_pytorch``,
+``rlinf_pytorch2openpi_pytorch``, ``sft2deploy``) share one core.
+``sft2rlinf_pytorch`` reads its model architecture from the same OpenPI
+TrainConfig used by SFT and eval. See
 :mod:`rlinf.utils.ckpt_convertor.openpi.convert` for the unified ``--mode``
 dispatcher and the package README for per-mode layouts and examples.
 """

@@ -412,7 +412,7 @@ Checkpoint 保存到
 
 .. code-block:: bash
 
-   RLinf/rlinf/utils/ckpt_convertor/openpi/sft2new.py
+   RLinf/rlinf/utils/ckpt_convertor/openpi/sft2rlinf_pytorch.py
 
 在训练前需要将 SFT 得到的 Checkpoint 进行转化，得到部署所需要的
 checkpoint，转化方法如下：
@@ -423,7 +423,7 @@ checkpoint，转化方法如下：
      --mode sft2deploy \
      --ckpt INPUT \
      --output OUTPUT \
-     --reference-model OLD_MODEL \
+     --reference-model OPENPI_PYTORCH_MODEL \
      --dtype-reference DEPLOY_FULL_WEIGHTS_PT
 
 
