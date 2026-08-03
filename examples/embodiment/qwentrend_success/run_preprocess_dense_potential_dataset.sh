@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 # Step 2b (dense): train state-success teacher, then build potential/progress SFT data.
 set -euo pipefail
 

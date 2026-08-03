@@ -152,7 +152,9 @@ def test_save_lora_adapter_files_requires_lora_keys(tmp_path: Path) -> None:
         )
 
 
-def _distributed_save_failure_worker(rank: int, world_size: int, store_file: str) -> None:
+def _distributed_save_failure_worker(
+    rank: int, world_size: int, store_file: str
+) -> None:
     import torch.distributed as dist
 
     dist.init_process_group(

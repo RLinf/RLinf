@@ -103,7 +103,9 @@ def save_lora_adapter_files(
     config_path = os.path.join(adapter_dir, ADAPTER_CONFIG_FILENAME)
     torch.save(lora_state, weights_path)
     with open(config_path, "w", encoding="utf-8") as handle:
-        json.dump(peft_config_to_jsonable(peft_config), handle, indent=2, sort_keys=True)
+        json.dump(
+            peft_config_to_jsonable(peft_config), handle, indent=2, sort_keys=True
+        )
         handle.write("\n")
 
 

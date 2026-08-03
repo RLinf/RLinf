@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 # Step 3b (dense): LoRA-SFT Qwen3-VL for potential / progress trend labels.
 set -euo pipefail
 

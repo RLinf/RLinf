@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 # Step 2a (sparse): build dual-view 5-frame terminal-success SFT data.
 set -euo pipefail
 

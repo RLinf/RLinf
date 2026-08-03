@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 # Step 3c (dense): extract frozen Qwen features, then train scalar potential head.
 set -euo pipefail
 

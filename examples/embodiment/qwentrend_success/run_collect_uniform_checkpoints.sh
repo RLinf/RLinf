@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 set -euo pipefail
 
 : "${CHECKPOINT_TEMPLATE_EARLY:?Set the step20-120 printf checkpoint template}"

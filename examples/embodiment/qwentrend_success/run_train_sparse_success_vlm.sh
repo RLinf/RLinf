@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Copyright 2026 The RLinf Authors.
 # Step 3a (sparse): LoRA-SFT Qwen3-VL for terminal success 0/1 generation.
 set -euo pipefail
 
