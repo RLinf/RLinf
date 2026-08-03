@@ -1104,10 +1104,6 @@ class EnvWorker(Worker):
                         ].mark_last_step_with_intervene_flags(
                             rollout_result.intervene_flags
                         )
-                    if rollout_result.save_flags is not None:
-                        self.rollout_results[stage_id].mark_last_step_with_flags(
-                            rollout_result.save_flags
-                        )
                     if self.enable_rlt and self.collect_transitions:
                         update_rlt_transitions(
                             stage_id,
