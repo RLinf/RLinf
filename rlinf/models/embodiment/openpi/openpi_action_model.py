@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import math
-import os
 import random
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -23,16 +22,6 @@ from typing import Any, Literal
 import numpy as np
 import torch
 import torch.nn.functional as F
-
-# Opt-in: no-op openpi's Observation @at.typecheck (jaxtyped+beartype). On the
-# eager torch rollout path it costs ~2ms/predict of GPU-idle CPU per Observation
-# build; obs shapes are stable so skipping is safe. Must run before openpi is
-# imported (the decorator fires at import). Default off.
-if os.environ.get("RLINF_DISABLE_OPENPI_TYPECHECK") == "1":
-    import openpi.shared.array_typing as _at
-
-    _at.typecheck = lambda t: t
-
 from openpi import transforms as _transforms
 from openpi.models import model as _model
 from openpi.models.pi0_config import Pi0Config
@@ -45,6 +34,47 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 from rlinf.utils.pytree import register_pytree_dataclasses
+
+_OBSERVATION_TYPECHECK_STRIPPED = False
+
+
+def _strip_observation_typecheck() -> bool:
+    """Remove openpi's ``@at.typecheck`` wrapper from ``Observation.__init__``.
+
+    openpi decorates ``Observation`` with jaxtyped + beartype validation, which
+    costs ~2 ms per construction on the eager torch rollout path. Unwrapping the
+    already-decorated class works no matter when openpi was imported, unlike
+    replacing ``at.typecheck`` before import.
+
+    Returns:
+        bool: True if the wrapper was removed, False if there was nothing to
+        remove -- already stripped, or openpi changed how it decorates
+        ``Observation``. False is not an error; it just means the per-call cost
+        stays.
+    """
+    inner = getattr(_model.Observation.__init__, "__wrapped__", None)
+    if inner is None:
+        return False
+    _model.Observation.__init__ = inner
+    return True
+
+
+def _observation_from_dict(obs_dict: dict[str, Any]) -> "_model.Observation":
+    """Build an ``Observation``, typechecking only the first one per process.
+
+    Rollout observation shapes are fixed by the env and the model config, so
+    openpi's per-construction validation can only ever catch a misconfiguration
+    on the first build. That one stays checked -- a wrong batch dim or dtype
+    still fails immediately with openpi's own error -- and the wrapper is then
+    dropped so the rest of the run does not pay the validation cost every step.
+    """
+    global _OBSERVATION_TYPECHECK_STRIPPED
+
+    observation = _model.Observation.from_dict(obs_dict)
+    if not _OBSERVATION_TYPECHECK_STRIPPED:
+        _OBSERVATION_TYPECHECK_STRIPPED = True
+        _strip_observation_typecheck()
+    return observation
 
 
 def _to_numpy(x):
@@ -398,7 +428,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             )
             processed_obs = self.input_transform(obs_dict, transpose=False)
             processed_obs = self.precision_processor(processed_obs)
-            observation = _model.Observation.from_dict(processed_obs)
+            observation = _observation_from_dict(processed_obs)
         else:
             obs_dict["actions"] = batch["action"].reshape(
                 bsz, self.config.action_chunk, -1
@@ -410,7 +440,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             if "tokenized_prompt_mask" in batch:
                 processed_obs["tokenized_prompt_mask"] = batch["tokenized_prompt_mask"]
             processed_obs = self.precision_processor(processed_obs)
-            observation = _model.Observation.from_dict(processed_obs)
+            observation = _observation_from_dict(processed_obs)
             actions = processed_obs["actions"].clone()
             processed_obs.pop("actions")
 
@@ -435,7 +465,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         denoise_inds = forward_inputs["denoise_inds"]
         # input transform
         observation = self.input_transform(forward_inputs, transpose=False)
-        observation = _model.Observation.from_dict(observation)
+        observation = _observation_from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
         )
@@ -481,7 +511,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         """Compute velocity v_theta at explicit (x_t, timesteps) for NFT loss."""
         # obs process
         observation = self.input_transform(forward_inputs, transpose=False)
-        observation = _model.Observation.from_dict(observation)
+        observation = _observation_from_dict(observation)
         images, img_masks, lang_tokens, lang_masks, state = (
             self._preprocess_observation(observation, train=False)
         )
@@ -560,7 +590,7 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         processed_obs = self.precision_processor(
             processed_obs
         )  # obs precision processor
-        observation = _model.Observation.from_dict(processed_obs)
+        observation = _observation_from_dict(processed_obs)
 
         is_dsrl_active = self.config.use_dsrl
         if is_dsrl_active:
