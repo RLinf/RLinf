@@ -1,17 +1,19 @@
 JAX 精度对齐的 PyTorch OpenPI 监督微调：BEHAVIOR 与 RoboTwin
 ================================================================
 
-本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI** 流匹配
-（flow-matching）VLA 模型进行 **监督微调（SFT）**。模型在 RLinf 中以
-``model_type: openpi_pytorch`` 注册。SFT 通常作为进入强化学习前的第一阶段：
-模型先模仿高质量示范，后续强化学习才能在良好先验上继续优化。
+本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI Pi0.5** 流匹配
+（flow-matching）VLA 模型，在 **BEHAVIOR-1K** 任务上进行 **监督微调（SFT）**。
+该模型是 Pi0.5 架构的纯 PyTorch 重实现（双专家 Gemma + SigLIP，配合流匹配动作头），
+在 RLinf 中以 ``model_type: openpi_pytorch`` 注册。SFT 通常作为进入强化学习前的
+第一阶段：模型先模仿高质量示范，后续强化学习才能在良好先验上继续优化。本文也说明
+同一套 JAX 精度对齐实现如何用于 **Pi0 + RoboTwin**。
 
 内容包括
 --------
 
 - PyTorch OpenPI SFT 流程是什么，以及如何配置
 - FSDP 优化器与混合精度计算所使用的精度约定
-- BEHAVIOR 流式数据加载器的相关字段，以及归一化统计配置
+- BEHAVIOR 流式数据加载器的相关字段，以及归一化统计和 tokenizer 的处理方式
 - 如何启动训练，以及如何转换得到的 checkpoint 用于评估
 - Pi0 RoboTwin 的官方 OpenPI/LeRobot 数据加载、训练和评估流程
 
@@ -115,8 +117,8 @@ BEHAVIOR 流式加载器直接从 ``data:`` 段读取其全部参数（没有隐
 - ``task_subtasks``：每个任务的有序技能标签，当 ``use_skill: true`` 时用于构建
   下标到标签的映射。
 
-归一化统计
-~~~~~~~~~~
+归一化统计与 tokenizer
+~~~~~~~~~~~~~~~~~~~~~~~
 
 归一化统计的路径位于 ``actor.model.openpi`` 下：
 
@@ -133,8 +135,10 @@ BEHAVIOR 流式加载器直接从 ``data:`` 段读取其全部参数（没有隐
 - ``asset_id``：在 ``assets_dir`` 下对应本任务统计信息的子路径。
 
 归一化统计会在 ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
-PaliGemma tokenizer 由 OpenPI 的模型 transform 按基础模型配置处理，无需在此 SFT YAML
-中另行指定路径。
+PaliGemma tokenizer 则由 OpenPI 的 ``ModelTransformFactory`` 在构建输入 transform
+时按基础模型配置加载。早期文档中的 ``paligemma_tokenizer`` 字段用于显式传入
+SentencePiece 模型路径；当前 ``openpi_pytorch`` SFT YAML 不再消费这个字段，因此无需
+配置它。该变化不影响 tokenizer 的使用，只是将其从实验 YAML 移入 OpenPI transform。
 
 文件系统路径
 ~~~~~~~~~~~~
@@ -243,6 +247,12 @@ Pi0 RoboTwin 使用对应的配置名：
 选择 Pi0 或 Pi0.5 的模型形状，并原样复制归一化统计文件。RoboTwin 转换后的目录可
 直接填入 ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml`` 的
 ``rollout.model.model_path``；评估配置中的 ``openpi_data.norm_stats_path`` 应指向同一
-任务的统计量。其他转换模式与完整参数说明，请参见转换器包的 README
+任务的统计量。
+
+旧文档中的 ``sft2new`` 是该转换流程的旧名称：它同样会去除 wrapper/FSDP key 前缀、
+复制归一化统计，并把输出浮点张量转换为 bf16。现在改用更明确的
+``sft2rlinf_pytorch`` 名称，以表明目标是 RLinf PyTorch 裸 ``Pi0`` 布局；输出 dtype
+由必填的 ``--dtype {fp32,bf16}`` 控制。若需复现旧 ``sft2new`` 的 bf16 输出，请传入
+``--dtype bf16``。其他转换模式与完整参数说明，请参见转换器包的 README
 （``rlinf/utils/ckpt_convertor/openpi/README.md``）。转换后的 checkpoint 即可用于在
 BEHAVIOR 或 RoboTwin 上评估。
