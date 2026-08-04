@@ -67,7 +67,6 @@ actor:
       rlt_alpha: 1.0
       rlt_input_dim: 2048
       rlt_embed_dim: 2048
-      rlt_num_rl_tokens: 1
       rlt_prefix_seq_len: 1024
       rlt_num_layers: 2
       rlt_num_heads: 8

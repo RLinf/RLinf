@@ -223,6 +223,12 @@ class RLTACLossMixin:
         }
         return bc_weight, q_weight, metrics
 
+    def _next_actions_for_critic_target(self, next_obs):
+        return self.model(
+            forward_type=ForwardType.SAC,
+            obs=next_obs,
+        )
+
     @Worker.timer("forward_critic")
     def forward_critic(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
@@ -241,10 +247,7 @@ class RLTACLossMixin:
         )
 
         with torch.no_grad():
-            next_actions, _, _ = self.model(
-                forward_type=ForwardType.SAC,
-                obs=next_obs,
-            )
+            next_actions, _, _ = self._next_actions_for_critic_target(next_obs)
 
             if not use_crossq:
                 all_qf_next_target = self.target_model(
