@@ -22,7 +22,11 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from lerobot.common.datasets.utils import hf_transform_to_torch
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.utils import hf_transform_to_torch
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.utils import hf_transform_to_torch
 from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)

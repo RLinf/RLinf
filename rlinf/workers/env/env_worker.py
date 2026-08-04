@@ -1188,8 +1188,17 @@ class EnvWorker(Worker):
                 rewards = self.compute_bootstrap_rewards(
                     env_output, rollout_result.bootstrap_values, reward_model_output
                 )
+                final_actions = rollout_result.forward_inputs.get("action", None)
+                final_forward_inputs = rollout_result.forward_inputs
+                if (
+                    OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+                    == "embodied_dagger"
+                ):
+                    final_actions = None
+                    final_forward_inputs = {}
+
                 chunk_step_result = ChunkStepResult(
-                    actions=rollout_result.forward_inputs.get("action", None),
+                    actions=final_actions,
                     prev_logprobs=(
                         rollout_result.prev_logprobs
                         if self.collect_prev_infos
@@ -1198,7 +1207,7 @@ class EnvWorker(Worker):
                     prev_values=(
                         rollout_result.prev_values if self.collect_prev_infos else None
                     ),
-                    forward_inputs=rollout_result.forward_inputs,
+                    forward_inputs=final_forward_inputs,
                     versions=rollout_result.versions,
                     dones=env_output.dones,
                     truncations=env_output.truncations,

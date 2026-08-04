@@ -28,31 +28,65 @@ import torch as th
 import torch.distributed as dist
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
-from lerobot.common.constants import HF_LEROBOT_HOME
-from lerobot.common.datasets.lerobot_dataset import (
-    CODEBASE_VERSION,
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
-from lerobot.common.datasets.utils import (
-    EPISODES_PATH,
-    EPISODES_STATS_PATH,
-    STATS_PATH,
-    TASKS_PATH,
-    backward_compatible_episodes_stats,
-    cast_stats_to_numpy,
-    check_delta_timestamps,
-    check_timestamps_sync,
-    check_version_compatibility,
-    get_delta_indices,
-    get_episode_data_index,
-    get_safe_version,
-    is_valid_version,
-    load_info,
-    load_json,
-    load_jsonlines,
-)
-from lerobot.common.datasets.video_utils import get_safe_default_codec
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.constants import HF_LEROBOT_HOME
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.constants import HF_LEROBOT_HOME
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import (
+        CODEBASE_VERSION,
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import (
+        CODEBASE_VERSION,
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.utils import (
+        EPISODES_PATH,
+        EPISODES_STATS_PATH,
+        STATS_PATH,
+        TASKS_PATH,
+        backward_compatible_episodes_stats,
+        cast_stats_to_numpy,
+        check_delta_timestamps,
+        check_timestamps_sync,
+        check_version_compatibility,
+        get_delta_indices,
+        get_episode_data_index,
+        get_safe_version,
+        is_valid_version,
+        load_info,
+        load_json,
+        load_jsonlines,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.utils import (
+        EPISODES_PATH,
+        EPISODES_STATS_PATH,
+        STATS_PATH,
+        TASKS_PATH,
+        backward_compatible_episodes_stats,
+        cast_stats_to_numpy,
+        check_delta_timestamps,
+        check_timestamps_sync,
+        check_version_compatibility,
+        get_delta_indices,
+        get_episode_data_index,
+        get_safe_version,
+        is_valid_version,
+        load_info,
+        load_json,
+        load_jsonlines,
+    )
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.video_utils import get_safe_default_codec
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.video_utils import get_safe_default_codec
 
 # Transform base for PromptFromLeRobotItem — reuse openpi's (the openpi_pytorch
 # data path is built on openpi.transforms throughout).
@@ -162,7 +196,10 @@ def _install_lerobot_compat_shim():
     except ModuleNotFoundError:
         import types
 
-        from lerobot.common.datasets.compute_stats import _assert_type_and_shape
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.compute_stats import _assert_type_and_shape
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.compute_stats import _assert_type_and_shape
 
         pkg = sys.modules.setdefault(
             "lerobot.datasets", types.ModuleType("lerobot.datasets")
