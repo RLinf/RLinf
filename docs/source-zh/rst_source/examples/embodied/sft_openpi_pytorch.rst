@@ -1,5 +1,5 @@
-JAX 精度对齐的 PyTorch OpenPI 监督微调：BEHAVIOR 与 RoboTwin
-================================================================
+JAX 精度对齐的 PyTorch OpenPI 监督微调
+========================================
 
 本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI Pi0.5** 流匹配
 （flow-matching）VLA 模型，在 **BEHAVIOR-1K** 任务上进行 **监督微调（SFT）**。
