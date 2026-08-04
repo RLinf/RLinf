@@ -23,7 +23,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
 from rlinf.utils.logging import get_logger

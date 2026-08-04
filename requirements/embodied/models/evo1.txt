@@ -1,0 +1,19 @@
+# Evo-1 runtime dependencies, mirroring Evo_1/requirements.txt from the upstream
+# repo. torch, torchvision and transformers are left out: the embodied extra and
+# the pyproject torch override already install them.
+accelerate
+accelerator
+av
+deepspeed
+diffusers
+einop
+fvcore
+matplotlib
+ninja
+opencv-python
+pandas
+pyarrow
+swanlab
+timm
+wandb
+websockets

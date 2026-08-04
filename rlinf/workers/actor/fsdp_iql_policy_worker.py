@@ -23,7 +23,10 @@ from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import IQLMLPPolicy
+from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
+    IQLMLPPolicy,
+    IQLTwinCritic,
+)
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import collect_param_names_need_sync
 from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
@@ -229,6 +232,7 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             target_module = self.model_provider_func(
                 obs_dim, action_dim, type_name="critic"
             )
+            target_module.load_state_dict(critic_module.state_dict(), strict=True)
 
         use_fsdp_wrap = self.cfg.actor.get("use_fsdp_wrap", False)
         if use_fsdp_wrap:
@@ -257,7 +261,6 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
 
         # Initialize target model
         if initialize_target:
-            self.target_model.load_state_dict(self.critic_model.state_dict())
             self.target_model.eval()
             self.target_model_initialized = True
             for p in self.target_model.parameters():
@@ -388,31 +391,19 @@ class EmbodiedIQLFSDPPolicy(EmbodiedFSDPActor):
             return self.build_critic_module(obs_dim, action_dim)
         raise ValueError(f"Unsupported provider type: {type_name}")
 
-    def build_critic_module(self, obs_dim: int, action_dim: int) -> torch.nn.ModuleDict:
-        return torch.nn.ModuleDict(
-            {
-                "q1": self.build_iql_module(obs_dim, action_dim, type_name="critic"),
-                "q2": self.build_iql_module(obs_dim, action_dim, type_name="critic"),
-            }
+    def build_critic_module(self, obs_dim: int, action_dim: int) -> IQLTwinCritic:
+        return IQLTwinCritic(
+            q1=self.build_iql_module(obs_dim, action_dim, type_name="critic"),
+            q2=self.build_iql_module(obs_dim, action_dim, type_name="critic"),
         ).to(self.device)
 
+    @staticmethod
     def forward_critic_module(
-        self,
-        critic_module: torch.nn.ModuleDict,
+        critic_module: torch.nn.Module,
         observations: torch.Tensor,
         actions: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        q1 = critic_module["q1"](
-            forward_type=ForwardType.IQL_CRITIC,
-            observations=observations,
-            actions=actions,
-        )
-        q2 = critic_module["q2"](
-            forward_type=ForwardType.IQL_CRITIC,
-            observations=observations,
-            actions=actions,
-        )
-        return q1, q2
+        return critic_module(observations=observations, actions=actions)
 
     def forward_value(
         self, obs: torch.Tensor, actions: torch.Tensor

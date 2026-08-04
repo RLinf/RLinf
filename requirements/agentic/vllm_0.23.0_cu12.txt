@@ -1,0 +1,19 @@
+# engine: vllm @ https://wheels.vllm.ai/0fc695fc6d1d82e9a5ac6835ac8e4e1c83703665/vllm-0.23.0%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl ; platform_machine == "x86_64"
+# engine: vllm @ https://wheels.vllm.ai/0fc695fc6d1d82e9a5ac6835ac8e4e1c83703665/vllm-0.23.0%2Bcu129-cp38-abi3-manylinux_2_28_aarch64.whl ; platform_machine == "aarch64"
+# vllm 0.23.0 on CUDA 12 (torch 2.11 cu129 kernels).
+#
+# The PyPI vllm wheel is built against CUDA 13; upstream publishes a cu129 build
+# of the same version, which is what the `# engine:` lines above point at. Its
+# index (https://wheels.vllm.ai/0.23.0/cu129/vllm/) links the wheel by release
+# commit, so the URL carries that hash rather than the version.
+# nvidia-cutlass-dsl and humming-kernels express the CUDA line as an extra, so
+# dropping [cu13] / asking for [cu12] is all they need.
+-r vllm_0.23.0_common.txt
+
+flashinfer-cubin==0.6.12
+flashinfer-python[cu12]==0.6.12
+humming-kernels[cu12]==0.1.4
+nvidia-cutlass-dsl==4.5.2
+quack-kernels>=0.3.3
+tilelang==0.1.9
+tokenspeed-mla==0.1.2

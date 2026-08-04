@@ -31,6 +31,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-openpi-test:
@@ -68,6 +70,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-openpi-pytorch-behavior-test:
@@ -100,6 +104,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
           rm -rf /tmp/tmp*
 
@@ -120,7 +126,10 @@ jobs:
           bash requirements/install.sh agentic
           source .venv/bin/activate
           uv pip install transformers==4.57.1
-          uv pip install bitsandbytes
+          # --no-deps: bitsandbytes' torch requirement is unpinned, so a plain
+          # install re-resolves torch through pyproject's override and replaces
+          # the version install.sh chose for this stack.
+          uv pip install --no-deps bitsandbytes
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
@@ -153,6 +162,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-reward-model-test:
@@ -190,4 +201,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune

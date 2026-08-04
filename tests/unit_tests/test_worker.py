@@ -108,6 +108,28 @@ class TestWorkerAddress:
         assert addr.get_name() == "MyWorkerGroup:5"
 
 
+class StaticMethodWorker(Worker):
+    """A Worker exposing a public staticmethod, wrapped by WorkerMeta."""
+
+    @staticmethod
+    def add(first: int, second: int) -> int:
+        return first + second
+
+
+class TestWorkerMeta:
+    """Tests for the WorkerMeta method wrapping."""
+
+    def test_staticmethod_stays_a_staticmethod(self):
+        """Verify WorkerMeta does not turn a staticmethod into an instance method."""
+        assert isinstance(StaticMethodWorker.__dict__["add"], staticmethod)
+
+    def test_staticmethod_call_does_not_rebind_self(self):
+        """Verify calling a staticmethod through an instance passes no self."""
+        worker = object.__new__(StaticMethodWorker)
+        assert worker.add(1, 2) == 3
+        assert StaticMethodWorker.add(1, 2) == 3
+
+
 class TestManagerNamespace:
     """Tests for manager namespace propagation."""
 
