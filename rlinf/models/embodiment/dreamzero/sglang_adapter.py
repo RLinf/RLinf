@@ -53,10 +53,10 @@ from rlinf.data.datasets.dreamzero.data_transforms import (
     rollout_obs_layout_for_embodiment,
 )
 
-_RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id",)
+_RLINF_POLICY_CONTEXT_KEYS = ("_rlinf_stage_id", "_rlinf_reset")
 
 
-class DreamzeroSglangAdapter:
+class DreamZeroSGLangAdapter:
     """DreamZero env-obs <-> action-chunks adapter for the sglang serve path.
 
     Combines the DreamZero dataset transforms (reused without the HF model) with
@@ -330,6 +330,8 @@ class DreamzeroSglangAdapter:
             f"rlinf-eval-r{self.rank}-stage{stage_id}-slot{i}"
             for i in range(batch_size)
         ]
+        reset = bool(context.get("_rlinf_reset", False))
+        reset_mask = [reset] * batch_size
         return {
             "model": self._model,
             "input": {
@@ -338,7 +340,7 @@ class DreamzeroSglangAdapter:
             },
             "parameters": {
                 "session_ids": session_ids,
-                "reset_mask": [False] * batch_size,
+                "reset_mask": reset_mask,
                 "negative_prompts": self._as_texts(
                     neg_prompts, batch_size, "negative_prompt", default=""
                 ),
@@ -361,7 +363,7 @@ class DreamzeroSglangAdapter:
         if isinstance(value, Mapping):
             for item in value.values():
                 try:
-                    return DreamzeroSglangAdapter._infer_batch_size(item)
+                    return DreamZeroSGLangAdapter._infer_batch_size(item)
                 except (TypeError, IndexError):
                     continue
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):

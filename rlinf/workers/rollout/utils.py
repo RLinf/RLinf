@@ -342,11 +342,11 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
 
             return SGLangEmbodiedWorker
         elif serving_mode == "worker_http":
-            from rlinf.workers.rollout.sglang.sglang_worker_server import (
-                SGLangWorkerWithHTTPServer,
+            from rlinf.workers.rollout.sglang.sglang_agent_worker import (
+                SGLangAgentWorkerWithHTTPServer,
             )
 
-            return SGLangWorkerWithHTTPServer
+            return SGLangAgentWorkerWithHTTPServer
         elif serving_mode is None:
             from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 

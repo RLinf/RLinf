@@ -65,14 +65,10 @@ rollout:
 
   sglang:
     serving_mode: "embodied"
-    spawn_timeout: 900
     http_timeout_s: 600
     http_max_retries: 5
     http_retry_backoff_s: 1.0
-    http_payload_format: "msgpack"
     seed: 1140
-    debug_sessions: false
-    debug_batch: false
     tensor_parallel_size: 1
     pipeline_parallel_size: 1
     launch_server: true
@@ -85,7 +81,7 @@ rollout:
       backend: sglang
       pipeline_class_name: DreamZeroPipeline
       tp_size: ${..tensor_parallel_size}
-      num_gpus: 1  # shoud be TP size * PP size * CFG degree * SP degree
+      num_gpus: 1  # launcher/placement key: should be TP size * PP size * CFG degree * SP degree
       attention_backend: FA  # FA or TORCH_SDPA
       dit_cpu_offload: false
       cfg_parallel_degree: 1

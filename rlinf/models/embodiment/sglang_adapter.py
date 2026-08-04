@@ -53,10 +53,10 @@ def register_sglang_adapter(
 def _register_builtin_sglang_adapters():
     def _build_dreamzero_sglang_adapter():
         from rlinf.models.embodiment.dreamzero.sglang_adapter import (
-            DreamzeroSglangAdapter,
+            DreamZeroSGLangAdapter,
         )
 
-        return DreamzeroSglangAdapter
+        return DreamZeroSGLangAdapter
 
     register_sglang_adapter(
         SupportedModel.DREAMZERO.value,

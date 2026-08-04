@@ -3,7 +3,7 @@ DreamZero SGLang 评测
 
 本文档说明如何通过 RLinf 的 SGLang embodied backend 运行 DreamZero LIBERO 评测。该路径用于只做推理评测的场景，要求 DreamZero checkpoint 已转换为 SGLang-native 的组件化目录。
 
-与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 在运行时不需要 ``DREAMZERO_PATH``，也不依赖外部 DreamZero Python 包。RLinf rollout worker 会启动并管理本地 SGLang action server，通过 VLA action API 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
+与 :doc:`../../examples/embodied/sft_dreamzero` 中的原始 DreamZero eval 路径相比，SGLang backend 把庞大的 DreamZero 网络放在独立拉起的 ``sglang serve`` 进程里，而不是在 rollout worker 中加载。但 worker 仍然需要安装 DreamZero 的 transform 栈：``rlinf.models.embodiment.dreamzero.sglang_adapter`` 会 import ``rlinf.data.datasets.dreamzero.data_transforms``，后者依赖由 ``install_dreamzero_deps`` 安装的 ``groot`` 包。由 eval driver 拉起 SGLang server group 并把每个 server URL 下发给各 rollout worker；worker 只是一个瘦客户端，通过 VLA action API 向本 rank 分配到的 URL 发送 batched observation，并将返回的 action chunk 反归一化后送入 LIBERO 环境。
 
 安装测试环境
 ------------
@@ -13,7 +13,7 @@ DreamZero SGLang 评测
 .. code-block:: bash
 
    cd /path/to/RLinf
-   bash requirements/install.sh embodied --env libero --model dreamzero-sglang \
+   bash requirements/install.sh embodied --env libero --model dreamzero \
      --torch 2.11.0 --python 3.11.14 --venv /path/to/dreamzero_test
 
 DreamZero 支持仍在 SGLang PR 中，需使用包含
@@ -35,7 +35,7 @@ DreamZero 支持仍在 SGLang PR 中，需使用包含
 
 .. code-block:: bash
 
-   huggingface-cli download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+   hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 checkpoint 中通常应包含 ``experiment_cfg/metadata.json``。如果 checkpoint 中没有 metadata，可从 LIBERO 数据集生成，并显式设置 ``rollout.model.metadata_json_path``：

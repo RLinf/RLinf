@@ -252,23 +252,32 @@ class InferenceHTTPClient:
 
         last_error: Optional[Exception] = None
         for attempt in range(retries + 1):
+            is_last = attempt >= retries
             try:
                 resp = requests.post(
                     url, proxies={"http": None, "https": None}, **request_kwargs
                 )
             except requests.exceptions.RequestException as exc:
-                if attempt < retries:
-                    last_error = exc
-                    self._sleep_before_retry(attempt, retry_backoff_s)
-                    continue
-                raise
-            if resp.status_code in retry_statuses and attempt < retries:
+                last_error = exc
+                if is_last:
+                    raise RuntimeError(
+                        f"POST {url} failed after {retries + 1} attempt(s): {exc}"
+                    ) from exc
+                self._sleep_before_retry(attempt, retry_backoff_s)
+                continue
+            if resp.status_code in retry_statuses and not is_last:
                 last_error = RuntimeError(
                     f"status={resp.status_code}, body={resp.text[:500]}"
                 )
                 self._sleep_before_retry(attempt, retry_backoff_s)
                 continue
-            resp.raise_for_status()
+            if not resp.ok:
+                detail = f"status={resp.status_code}, body={resp.text[:500]}"
+                if last_error is not None:
+                    detail += (
+                        f" (after {retries + 1} attempt(s); prior error: {last_error})"
+                    )
+                raise RuntimeError(f"POST {url} failed: {detail}")
             if msgpack:
                 if "msgpack" not in resp.headers.get("content-type", "").lower():
                     raise RuntimeError(
@@ -277,9 +286,6 @@ class InferenceHTTPClient:
                     )
                 return unpack_msgpack(resp.content)
             return resp.json()
-        raise RuntimeError(
-            f"POST {url} failed after {retries + 1} attempts: {last_error}"
-        )
 
     @staticmethod
     def _sleep_before_retry(attempt: int, retry_backoff_s: float) -> None:
@@ -296,7 +302,7 @@ class InferenceHTTPClient:
 
             if isinstance(value, Batch):
                 value = value.__getstate__()
-        except Exception:
+        except ImportError:
             pass
         if torch.is_tensor(value):
             return value.detach().cpu().numpy()

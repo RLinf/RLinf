@@ -35,7 +35,7 @@ The SGLang embodied evaluation path separates general logic from model-specific 
   adapter**, and exchanges observations and actions with the environment Worker
   through channels. **The HTTP request to the server (msgpack encoding + retries)
   is performed by the worker itself**;
-- The **sglang adapter** (a plain standalone class, e.g. ``DreamzeroSglangAdapter``)
+- The **sglang adapter** (a plain standalone class, e.g. ``DreamZeroSGLangAdapter``)
   only holds model-specific pure logic: ``build_request`` turns an env
   observation into the request payload, ``parse_response`` turns the server
   response into actions, and ``action_path`` declares the action endpoint. It
@@ -306,7 +306,7 @@ DreamZero's SGLang evaluation path consists of the following files:
    * - ``rlinf/config.py``
      - Register ``dreamzero`` and add it to ``EMBODIED_MODEL``
    * - ``rlinf/models/embodiment/dreamzero/sglang_adapter.py``
-     - ``DreamzeroSglangAdapter``: observation transforms, request building, response parsing, and action postprocessing
+     - ``DreamZeroSGLangAdapter``: observation transforms, request building, response parsing, and action postprocessing
    * - ``rlinf/models/embodiment/sglang_adapter.py``
      - adapter registry (``register_sglang_adapter`` / ``get_sglang_adapter_cls``); lazily registers the DreamZero adapter
    * - ``examples/embodiment/config/model/dreamzero_5b.yaml``
@@ -340,7 +340,7 @@ can use:
 Adapter Adaptation
 ~~~~~~~~~~~~~~~~~~~
 
-``sglang_adapter.py`` uses a **single class** ``DreamzeroSglangAdapter`` to hold
+``sglang_adapter.py`` uses a **single class** ``DreamZeroSGLangAdapter`` to hold
 all of the DreamZero adaptation logic (observation/action transforms + request
 assembly + response parsing):
 
@@ -365,7 +365,7 @@ The adapter is registered via a lazy builder (see
 
    register_sglang_adapter(
        SupportedModel.DREAMZERO.value,
-       _build_dreamzero_sglang_adapter,   # lazily imports DreamzeroSglangAdapter inside
+       _build_dreamzero_sglang_adapter,   # lazily imports DreamZeroSGLangAdapter inside
        force=True,
    )
 
@@ -459,7 +459,7 @@ location and hands them to ``parse_response``:
    response["data"][0]["action"]["values"]
 
 These actions are still in DreamZero's normalized and padded action space and cannot be sent directly to the environment; they must pass through
-``DreamzeroSglangAdapter._unapply`` (called inside ``parse_response``).
+``DreamZeroSGLangAdapter._unapply`` (called inside ``parse_response``).
 
 
 Server Parameters and Pipeline Configuration

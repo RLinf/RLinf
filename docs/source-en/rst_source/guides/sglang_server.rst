@@ -140,6 +140,9 @@ long as it carries the keys the launcher consumes:
        ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``.
        Keys must be valid ``ServerArgs`` field names — see the `sglang ServerArgs
        reference <https://docs.sglang.io/docs/advanced_features/server_arguments>`_.
+       Exception: ``server.num_gpus`` is also read by the launcher to size each
+       engine's placement (accelerators per engine), so it doubles as a
+       launcher/placement knob rather than a pure ``ServerArgs`` passthrough.
    * - ``router_group_name``
      - str
      - Worker-group name for the router worker.

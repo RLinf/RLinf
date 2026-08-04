@@ -3,7 +3,7 @@ DreamZero SGLang Evaluation
 
 This guide runs DreamZero LIBERO evaluation through the RLinf SGLang embodied backend. Use this path for inference-only evaluation with an SGLang-native DreamZero checkpoint layout.
 
-Compared with the original DreamZero eval path in :doc:`../../examples/embodied/sft_dreamzero`, this backend does not require ``DREAMZERO_PATH`` or the external DreamZero Python package at runtime. The RLinf rollout worker starts and owns an SGLang action server, sends batched observations over the VLA action API, and denormalizes the returned action chunks before stepping LIBERO.
+Compared with the original DreamZero eval path in :doc:`../../examples/embodied/sft_dreamzero`, this backend runs the large DreamZero network in a separately launched ``sglang serve`` process instead of loading it in the rollout worker. The worker still needs the DreamZero transform stack installed, though: ``rlinf.models.embodiment.dreamzero.sglang_adapter`` imports ``rlinf.data.datasets.dreamzero.data_transforms``, which pulls in the ``groot`` package installed by ``install_dreamzero_deps``. The eval driver launches the SGLang server group and pushes each server URL to the rollout workers; each worker is a thin client that posts batched observations to the URL assigned to its rank over the VLA action API, then denormalizes the returned action chunks before stepping LIBERO.
 
 Install the Test Environment
 ----------------------------
@@ -13,7 +13,7 @@ Set up RLinf with the embodied, LIBERO, and DreamZero SGLang dependencies:
 .. code-block:: bash
 
    cd /path/to/RLinf
-   bash requirements/install.sh embodied --env libero --model dreamzero-sglang \
+   bash requirements/install.sh embodied --env libero --model dreamzero \
      --torch 2.11.0 --python 3.11.14 --venv /path/to/dreamzero_test
 
 DreamZero support is still under review in SGLang, so use SGLang code that
@@ -35,7 +35,7 @@ Point ``rollout.model.model_path`` at the downloaded checkpoint directory.
 
 .. code-block:: bash
 
-   huggingface-cli download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
+   hf download RLinf/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers \
      --local-dir /path/to/RLinf-DreamZero-WAN2.2-5B-LIBERO-SFT-Diffusers
 
 The checkpoint should contain ``experiment_cfg/metadata.json``. If metadata is not available in the checkpoint, generate it from the LIBERO dataset and set ``rollout.model.metadata_json_path`` explicitly:

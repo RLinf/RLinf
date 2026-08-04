@@ -102,7 +102,7 @@ def _run_sglang_server(
 def _wait_for_http_health(
     host: str,
     port: int,
-    timeout: float = 300.0,
+    timeout: float = 900.0,
     is_alive: Optional[Callable[[], bool]] = None,
 ) -> None:
     """Block until ``GET http://host:port/health`` returns 200, or raise."""

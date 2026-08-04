@@ -132,6 +132,9 @@ SGLang Server 与 Router
        ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``；
        key 必须是对应 ``ServerArgs`` 的合法字段名——参见 `sglang ServerArgs 参考
        <https://docs.sglang.io/docs/advanced_features/server_arguments>`_。
+       例外：``server.num_gpus`` 还会被 launcher 读取用于计算每个 engine 的放置GPU数量
+       （每 engine 的gpu数量），因此它兼作 launcher/placement 参数，并非纯粹的
+       ``ServerArgs`` 透传项。
    * - ``router_group_name``
      - str
      - router worker 的 worker group 名字。

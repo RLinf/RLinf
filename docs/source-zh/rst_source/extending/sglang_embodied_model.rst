@@ -34,7 +34,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
   用它创建一个 :class:`InferenceHTTPClient`，加载模型对应的 **sglang adapter**，
   并通过 channel 与环境 Worker 交换 observation 和 action。**向 server 发起的
   HTTP 请求（msgpack 编码 + 重试）由 worker 自己完成**；
-- **sglang adapter**（一个独立的普通类，例如 ``DreamzeroSglangAdapter``）只负责
+- **sglang adapter**（一个独立的普通类，例如 ``DreamZeroSGLangAdapter``）只负责
   模型特有的纯逻辑：``build_request`` 把 env observation 转成请求 payload，
   ``parse_response`` 把 server 响应转成动作，``action_path`` 声明动作端点。它
   **不持有 HTTP client，也不亲自发请求**。
@@ -289,7 +289,7 @@ DreamZero 的 SGLang 评测路径由以下文件组成：
    * - ``rlinf/config.py``
      - 注册 ``dreamzero`` 并加入 ``EMBODIED_MODEL``
    * - ``rlinf/models/embodiment/dreamzero/sglang_adapter.py``
-     - ``DreamzeroSglangAdapter``：观测变换、请求构造、响应解析和动作后处理
+     - ``DreamZeroSGLangAdapter``：观测变换、请求构造、响应解析和动作后处理
    * - ``rlinf/models/embodiment/sglang_adapter.py``
      - adapter registry（``register_sglang_adapter`` / ``get_sglang_adapter_cls``）， DreamZero adapter
    * - ``examples/embodiment/config/model/dreamzero_5b.yaml``
@@ -323,7 +323,7 @@ DreamZero 在 ``rlinf/config.py`` 中的注册如下：
 Adapter 适配
 ~~~~~~~~~~~~~~~~~
 
-``sglang_adapter.py`` 用**一个类** ``DreamzeroSglangAdapter`` 承载全部 DreamZero
+``sglang_adapter.py`` 用**一个类** ``DreamZeroSGLangAdapter`` 承载全部 DreamZero
 适配逻辑（观测/动作变换 + 请求组装 + 响应解析）：
 
 1. ``__init__(cfg, rank)`` 复用训练数据变换（``build_dreamzero_composed_transform``）
@@ -343,7 +343,7 @@ adapter 通过 builder 注册（见
 
    register_sglang_adapter(
        SupportedModel.DREAMZERO.value,
-       _build_dreamzero_sglang_adapter,   # imports DreamzeroSglangAdapter
+       _build_dreamzero_sglang_adapter,   # imports DreamZeroSGLangAdapter
        force=True,
    )
 
@@ -434,7 +434,7 @@ worker 从以下位置读取 Server 返回的归一化动作，并交给 ``parse
    response["data"][0]["action"]["values"]
 
 该动作仍处于 DreamZero 的归一化、补齐后的动作空间，不能直接发送给环境，必须经过
-``DreamzeroSglangAdapter._unapply``（在 ``parse_response`` 内部调用）。
+``DreamZeroSGLangAdapter._unapply``（在 ``parse_response`` 内部调用）。
 
 
 Server 参数和 Pipeline 配置

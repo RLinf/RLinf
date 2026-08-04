@@ -46,10 +46,11 @@ def main(cfg) -> None:
     # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
     rollout_placement = component_placement.get_strategy("rollout")
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    # Default env worker; RTC on the huggingface path overrides it below.
+    env_worker_cls = EnvWorker
     if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 
-        env_worker_cls = EnvWorker
         rollout_group = (
             get_rollout_backend_worker(cfg)
             .create_group(cfg, component_placement)
@@ -69,7 +70,6 @@ def main(cfg) -> None:
             env_worker_cls = RTCEnvWorker
             rollout_worker_cls = RTCMultiStepRolloutWorker
         else:
-            env_worker_cls = EnvWorker
             rollout_worker_cls = MultiStepRolloutWorker
 
         # Create rollout worker group

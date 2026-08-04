@@ -46,31 +46,29 @@ class SGLangEmbodiedWorker(Worker):
         config_rollout: Optional[DictConfig] = None,
     ):
         Worker.__init__(self)
-        self._cfg = config
-        self._cfg_rollout = (
+        self.cfg = config
+        self.cfg_rollout = (
             config_rollout if config_rollout is not None else config.rollout
         )
-        self._placement = placement
-        self.cfg_rollout = self._cfg_rollout
         self.model_type = str(
-            getattr(getattr(self._cfg_rollout, "model", None), "model_type", "")
+            getattr(getattr(self.cfg_rollout, "model", None), "model_type", "")
         ).lower()
+        self.model_cfg = self.cfg_rollout.model
         self.sglang_adapter = None
         self.http_client = None
         self.sglang_server_url = None
         self._sglang_server_urls = None
-        cfg = self._cfg
-        self.cfg = cfg
-        self.model_cfg = self._cfg_rollout.model
-        # This worker now is eval-only (spawn a serve + channel eval; no training).
-        assert cfg.runner.get("only_eval", True), (
+        # This worker is eval-only (drives a serve + channel eval; no training).
+        assert config.runner.get("only_eval", True), (
             "SGLangEmbodiedWorker is eval-only; set runner.only_eval: true"
         )
-        self.only_eval = True
-        eval_env_cfg = cfg.env.get("eval", None)
-        self.num_pipeline_stages = int(cfg.rollout.pipeline_stage_num)
+        # Decoupled env/rollout is not implemented on the sglang embodied path.
+        assert not config.runner.get("enable_decoupled_mode", False), (
+            "SGLangEmbodiedWorker does not support runner.enable_decoupled_mode"
+        )
+        eval_env_cfg = config.env.get("eval", None)
+        self.num_pipeline_stages = int(config.rollout.pipeline_stage_num)
         total_eval = int(eval_env_cfg.total_num_envs) if eval_env_cfg else 0
-        self.total_num_eval_envs = total_eval
         self.eval_batch_size = (
             total_eval // self.num_pipeline_stages
             if self.num_pipeline_stages
@@ -83,8 +81,6 @@ class SGLangEmbodiedWorker(Worker):
             ) // int(self.model_cfg.num_action_chunks)
         else:
             self.n_eval_chunk_steps = 0
-        self.env_decoupled_mode = cfg.runner.get("enable_decoupled_mode", False)
-        self.collect_prev_infos = cfg.rollout.get("collect_prev_infos", True)
 
     async def init_worker(self):
         adapter_cls = None
@@ -103,13 +99,13 @@ class SGLangEmbodiedWorker(Worker):
         from rlinf.utils.http_client import InferenceHTTPClient
 
         self.http_client = InferenceHTTPClient(self.sglang_server_url)
-        sglang_cfg = self._cfg.rollout.get("sglang", {})
+        sglang_cfg = self.cfg.rollout.get("sglang", {})
         self._http_timeout_s = float(
             sglang_cfg.get("http_timeout_s", sglang_cfg.get("timeout_s", 120.0))
         )
         self._http_max_retries = int(sglang_cfg.get("http_max_retries", 5))
         self._http_retry_backoff_s = float(sglang_cfg.get("http_retry_backoff_s", 1.0))
-        self.sglang_adapter = adapter_cls(self._cfg, self._rank)
+        self.sglang_adapter = adapter_cls(self.cfg, self._rank)
 
     def set_sglang_server_urls(self, urls) -> None:
         """Receive the sglang server URLs the driver launched."""
@@ -158,7 +154,8 @@ class SGLangEmbodiedWorker(Worker):
                 merged[key] = [item for sub in values for item in sub]
             else:
                 merged[key] = values
-        return {"obs": merged}
+        reset = any(b.get("final_obs") is not None for b in obs_batches)
+        return {"obs": merged, "reset": reset}
 
     def predict(
         self, env_obs: dict[str, Any], mode: Literal["train", "eval"] = "eval"
@@ -204,6 +201,7 @@ class SGLangEmbodiedWorker(Worker):
                     obs = {
                         **env_output["obs"],
                         "_rlinf_stage_id": stage_id,
+                        "_rlinf_reset": env_output.get("reset", False),
                     }
                     actions, _ = self.predict(obs, mode="eval")
                     if isinstance(actions, torch.Tensor):
