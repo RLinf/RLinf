@@ -89,9 +89,9 @@ def old_to_new_state_dict(
             for suffix in (".weight", ".bias"):
                 source_key = f"{source_prefix}{source_name}{suffix}"
                 if source_key in openpi_pytorch_state_dict:
-                    openpi_rlinf_state_dict[
-                        f"{target_prefix}{target_name}{suffix}"
-                    ] = openpi_pytorch_state_dict[source_key]
+                    openpi_rlinf_state_dict[f"{target_prefix}{target_name}{suffix}"] = (
+                        openpi_pytorch_state_dict[source_key]
+                    )
 
         qkv_weights = []
         qkv_biases = []

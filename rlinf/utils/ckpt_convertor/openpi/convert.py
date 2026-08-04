@@ -42,8 +42,8 @@ from rlinf.utils.ckpt_convertor.openpi import (
     jax_to_openpi_rlinf,
     openpi_pytorch_to_openpi_rlinf,
     openpi_rlinf_to_openpi_pytorch,
-    sft_to_deploy,
     pt_to_safetensors,
+    sft_to_deploy,
 )
 
 # Public mode names describe the layouts explicitly. Internally, the conversion
