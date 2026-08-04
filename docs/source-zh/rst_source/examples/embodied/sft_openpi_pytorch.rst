@@ -136,9 +136,8 @@ BEHAVIOR 流式加载器直接从 ``data:`` 段读取其全部参数（没有隐
 
 归一化统计会在 ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
 PaliGemma tokenizer 则由 OpenPI 的 ``ModelTransformFactory`` 在构建输入 transform
-时按基础模型配置加载。早期文档中的 ``paligemma_tokenizer`` 字段用于显式传入
-SentencePiece 模型路径；当前 ``openpi_pytorch`` SFT YAML 不再消费这个字段，因此无需
-配置它。该变化不影响 tokenizer 的使用，只是将其从实验 YAML 移入 OpenPI transform。
+时按基础模型配置加载，因此 ``openpi_pytorch`` SFT YAML 无需单独配置
+SentencePiece tokenizer 路径。
 
 文件系统路径
 ~~~~~~~~~~~~
@@ -220,7 +219,7 @@ Pi0 RoboTwin 使用对应的配置名：
 
 可以使用 OpenPI checkpoint 转换器，将 SFT 训练得到的 checkpoint 转换为新格式的
 裸 ``Pi0`` 布局（即评估加载器所期望的布局）。当前转换模式名为
-``sft2rlinf_pytorch``（旧名称为 ``sft2new``）：
+``sft2rlinf_pytorch``：
 
 .. code:: bash
 
@@ -249,10 +248,7 @@ Pi0 RoboTwin 使用对应的配置名：
 ``rollout.model.model_path``；评估配置中的 ``openpi_data.norm_stats_path`` 应指向同一
 任务的统计量。
 
-旧文档中的 ``sft2new`` 是该转换流程的旧名称：它同样会去除 wrapper/FSDP key 前缀、
-复制归一化统计，并把输出浮点张量转换为 bf16。现在改用更明确的
-``sft2rlinf_pytorch`` 名称，以表明目标是 RLinf PyTorch 裸 ``Pi0`` 布局；输出 dtype
-由必填的 ``--dtype {fp32,bf16}`` 控制。若需复现旧 ``sft2new`` 的 bf16 输出，请传入
-``--dtype bf16``。其他转换模式与完整参数说明，请参见转换器包的 README
+输出 dtype 由必填的 ``--dtype {fp32,bf16}`` 控制；其他转换模式与完整参数说明，
+请参见转换器包的 README
 （``rlinf/utils/ckpt_convertor/openpi/README.md``）。转换后的 checkpoint 即可用于在
 BEHAVIOR 或 RoboTwin 上评估。
