@@ -8,6 +8,9 @@ JAX 精度对齐的 PyTorch OpenPI 监督微调：BEHAVIOR 与 RoboTwin
 第一阶段：模型先模仿高质量示范，后续强化学习才能在良好先验上继续优化。本文也说明
 同一套 JAX 精度对齐实现如何用于 **Pi0 + RoboTwin**。
 
+关于 PyTorch OpenPI Pi0.5 在双 Franka 真机上的 SFT 与 eval-only 部署，请参见
+:doc:`双 Franka OpenPI PyTorch 指南 <dual_franka_openpi_pytorch>`。
+
 内容包括
 --------
 
@@ -248,7 +251,8 @@ Pi0 RoboTwin 使用对应的配置名：
 ``rollout.model.model_path``；评估配置中的 ``openpi_data.norm_stats_path`` 应指向同一
 任务的统计量。
 
-转换后的 checkpoint 可参照 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`
-或 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行评估。其他转换模式
-与完整参数说明，请参见转换器包的 README
+转换后的 checkpoint 即可分别在
+:doc:`BEHAVIOR-1K <../../evaluations/guides/behavior>` 或
+:doc:`RoboTwin <../../evaluations/guides/robotwin>` 上评估。其他转换模式与完整参数说明，
+请参见转换器包的 README
 （``rlinf/utils/ckpt_convertor/openpi/README.md``）。
