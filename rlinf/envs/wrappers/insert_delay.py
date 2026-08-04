@@ -46,20 +46,20 @@ class InsertDelay(gym.Wrapper):
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        self.delay()
+        self.sample_delay()
         return obs, reward, terminated, truncated, info
 
     def chunk_step(self, *args, **kwargs):
         result = self.env.chunk_step(*args, **kwargs)
-        self.delay()
+        self.sample_delay()
         return result
 
     def reset(self, *args, **kwargs):
         obs, info = self.env.reset(*args, **kwargs)
-        self.delay()
+        self.sample_delay()
         return obs, info
 
-    def delay(self):
+    def sample_delay(self):
         """Sample one delay and hold it until ``wait_delay`` is awaited."""
         delay = self.sampler.sample_one()
         self.delays.append(delay)

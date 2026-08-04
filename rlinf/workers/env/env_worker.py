@@ -436,7 +436,6 @@ class EnvWorker(Worker):
                 if self.eval_enable_offload:
                     get_env_attr(self.eval_env_list[i], "offload")()
 
-    @Worker.timer("env_interact_step")
     async def _wait_env_delay(self, stage_id: int) -> None:
         """Wait out the delay ``InsertDelay`` sampled for this stage, if it is on.
 
@@ -447,6 +446,7 @@ class EnvWorker(Worker):
         if hasattr(env, "wait_delay"):
             await env.wait_delay()
 
+    @Worker.timer("env_interact_step")
     def env_interact_step(
         self, chunk_actions: torch.Tensor, stage_id: int
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
@@ -1046,6 +1046,9 @@ class EnvWorker(Worker):
                 self._prefetched_train_bootstrap = None
             else:
                 env_outputs = self._bootstrap_and_send_train(rollout_channel)
+
+            for stage_id in range(self.stage_num):
+                await self._wait_env_delay(stage_id)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
