@@ -1,5 +1,5 @@
-Franka 真机强化学习
-========================================
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,50 +13,6 @@ Franka 真机强化学习
    基础 RLinf 真机 RL 流程使用的 Franka Emika Panda 机械臂。
 
 使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
-
-相关 Franka 配置
-----------------
-
-探索其他 Franka 硬件、传感器与训练配方。
-
-.. grid:: 1 2 2 3
-   :gutter: 2
-
-   .. grid-item-card:: Reward Model
-      :link: franka_reward_model
-      :link-type: doc
-
-      使用学习到的奖励模型训练 Franka。
-
-   .. grid-item-card:: ZED + Robotiq
-      :link: franka_zed_robotiq
-      :link-type: doc
-
-      使用 ZED 相机与 Robotiq 夹爪。
-
-   .. grid-item-card:: Dexterous Hand
-      :link: franka_dexhand
-      :link-type: doc
-
-      为 Franka 配置灵巧手末端执行器。
-
-   .. grid-item-card:: Collect-GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      使用 GELLO 进行关节级遥操作数据采集。
-
-   .. grid-item-card:: Collect-VR
-      :link: franka_vr
-      :link-type: doc
-
-      使用 VR / PICO 设备进行遥操作。
-
-   .. grid-item-card:: Collect-SFT-Deploy
-      :link: franka_pi0_sft_deploy
-      :link-type: doc
-
-      在 Franka 上部署 π₀ SFT 策略。
 
 概览
 ----------------------------------------
@@ -174,7 +130,6 @@ Franka 真机强化学习
   <div style="flex: 1; text-align: center;">
       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
   </div>
-
 .. warning::
 
   请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
@@ -708,14 +663,3 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
     </video>
     <p><em>充电器插电（Charger）</em></p>
   </div>
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   Dexterous Hand <franka_dexhand>
-   Collect-GELLO <franka_gello>
-   Collect-VR <franka_vr>
-   Collect-SFT-Deploy <franka_pi0_sft_deploy>

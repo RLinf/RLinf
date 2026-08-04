@@ -1,12 +1,12 @@
 Dual-Arm Franka
 ===============
 
-.. figure:: /_static/images/dual_franka.jpg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
    :align: center
    :width: 80%
    :alt: Dual-Arm Franka
 
-   双 Franka 机器人执行双臂操作任务。
+   双 Franka 机器人平台。
 
 本节汇总 RLinf 支持的双 Franka 数据采集、监督微调、部署与 DAgger
 训练流程。请根据使用场景选择对应教程。

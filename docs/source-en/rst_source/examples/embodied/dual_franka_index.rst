@@ -1,12 +1,12 @@
 Dual-Arm Franka
 ===============
 
-.. figure:: /_static/images/dual_franka.jpg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka.jpg
    :align: center
    :width: 80%
    :alt: Dual-Arm Franka
 
-   Dual Franka robots performing a bimanual manipulation task.
+   Dual-Franka robot platform.
 
 This section collects RLinf workflows for dual-Franka data collection,
 supervised fine-tuning, deployment, and DAgger training.

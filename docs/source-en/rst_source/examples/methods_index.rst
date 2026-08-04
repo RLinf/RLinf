@@ -32,17 +32,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dagger.html" style="text-decoration: underline; color: blue;">
-           <b>DAgger for Embodied Policies</b>
-         </a><br>
-         Guide online imitation learning with expert relabeling and replay-buffer updates
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/recap.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/recap.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -117,7 +106,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
 
    SAC-Flow <embodied/sac_flow>
    DSRL <embodied/dsrl>
-   DAgger <embodied/dagger>
    RECAP <embodied/recap>
    STEAM <embodied/steam>
    Co-Training <embodied/co_training>

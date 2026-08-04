@@ -10,18 +10,16 @@
    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: flex-start; justify-items: center; max-width: 980px; margin: 0 auto;">
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/franka.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg"
+       <a href="embodied/franka_index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/franka.html" style="text-decoration: underline; color: blue;">
+         <a href="embodied/franka_index.html" style="text-decoration: underline; color: blue;">
            <b>Single-Arm Franka</b>
          </a><br>
          进入 Single-Arm Franka 章节，查看基础真机 RL、reward model、ZED + Robotiq、GELLO、VR / PICO、双臂、灵巧手、Pi0 SFT 和 HG-DAgger
        </p>
      </div>
       <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dual_franka_index.html" style="display: block;"><img src="../../_static/images/dual_franka.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/dual_franka_index.html" style="text-decoration: underline; color: blue;">
            <b>Dual-Arm Franka</b>
@@ -66,7 +64,7 @@
    :hidden:
    :maxdepth: 3
 
-   Single-Arm Franka <embodied/franka>
+   Single-Arm Franka <embodied/franka_index>
    Dual-Arm Franka <embodied/dual_franka_index>
    GimArm <embodied/gim_arm>
    XSquare Turtle2 <embodied/xsquare_turtle2>

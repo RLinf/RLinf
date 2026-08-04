@@ -1,5 +1,5 @@
-Real-World RL with Franka
-=========================
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,50 +13,6 @@ Real-World RL with Franka
    Franka Emika Panda arm used for the base RLinf real-world RL workflow.
 
 Use RLinf to train and evaluate real-world policies on a Franka Emika Panda arm. You'll set up the controller and training nodes, collect demonstrations, run SAC/RLPD or PPO-style training, and monitor safe online updates on physical hardware.
-
-Related Franka Setups
----------------------
-
-Explore alternative Franka hardware, sensors, and training recipes.
-
-.. grid:: 1 2 2 3
-   :gutter: 2
-
-   .. grid-item-card:: Reward Model
-      :link: franka_reward_model
-      :link-type: doc
-
-      Train Franka with a learned reward model.
-
-   .. grid-item-card:: ZED + Robotiq
-      :link: franka_zed_robotiq
-      :link-type: doc
-
-      Use ZED cameras and Robotiq grippers.
-
-   .. grid-item-card:: Dexterous Hand
-      :link: franka_dexhand
-      :link-type: doc
-
-      Drive a Franka with a dexterous hand end-effector.
-
-   .. grid-item-card:: Collect-GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      Joint-level teleoperation data collection with GELLO.
-
-   .. grid-item-card:: Collect-VR
-      :link: franka_vr
-      :link-type: doc
-
-      Use VR / PICO devices for teleoperation.
-
-   .. grid-item-card:: Collect-SFT-Deploy
-      :link: franka_pi0_sft_deploy
-      :link-type: doc
-
-      Deploy a π₀ SFT policy on Franka.
 
 Overview
 --------
@@ -174,7 +130,6 @@ Please take a note of the firmware version for later use.
   <div style="flex: 1; text-align: center;">
       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
   </div>
-
 .. warning::
 
   Make sure that the Franka firmware version is ``<5.9.0`` for compatibility with the serl_franka_controllers.
@@ -697,14 +652,3 @@ Here we provide demo videos and training curves for the task peg-insertion and c
     </video>
     <p><em>Charger</em></p>
   </div>
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   Dexterous Hand <franka_dexhand>
-   Collect-GELLO <franka_gello>
-   Collect-VR <franka_vr>
-   Collect-SFT-Deploy <franka_pi0_sft_deploy>
