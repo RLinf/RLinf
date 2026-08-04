@@ -34,47 +34,29 @@ Explore alternative Franka hardware, sensors, and training recipes.
 
       Use ZED cameras and Robotiq grippers.
 
-   .. grid-item-card:: GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      Joint-level teleoperation data collection with GELLO.
-
-   .. grid-item-card:: VR / PICO
-      :link: franka_vr
-      :link-type: doc
-
-      Use VR / PICO devices for teleoperation.
-
    .. grid-item-card:: Dexterous Hand
       :link: franka_dexhand
       :link-type: doc
 
       Drive a Franka with a dexterous hand end-effector.
 
-   .. grid-item-card:: Pi0 SFT
+   .. grid-item-card:: Collect-GELLO
+      :link: franka_gello
+      :link-type: doc
+
+      Joint-level teleoperation data collection with GELLO.
+
+   .. grid-item-card:: Collect-VR
+      :link: franka_vr
+      :link-type: doc
+
+      Use VR / PICO devices for teleoperation.
+
+   .. grid-item-card:: Collect-SFT-Deploy
       :link: franka_pi0_sft_deploy
       :link-type: doc
 
       Deploy a π₀ SFT policy on Franka.
-
-   .. grid-item-card:: HG-DAgger
-      :link: hg-dagger
-      :link-type: doc
-
-      Human-gated DAgger interactive training.
-
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
-      :link-type: doc
-
-      Run a two-arm Franka setup.
-
-   .. grid-item-card:: Dual PICO DAgger
-      :link: dual_franka_pico_dagger
-      :link-type: doc
-
-      Collect dual-arm PICO data and run HG-DAgger.
 
 Overview
 --------
@@ -722,11 +704,7 @@ Here we provide demo videos and training curves for the task peg-insertion and c
 
    Reward Model <franka_reward_model>
    ZED + Robotiq <franka_zed_robotiq>
-   GELLO <franka_gello>
-   VR / PICO <franka_vr>
    Dexterous Hand <franka_dexhand>
-   Pi0 SFT <franka_pi0_sft_deploy>
-   HG-DAgger <hg-dagger>
-   Dual-Arm <dual_franka>
-   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
-   Dual PICO DAgger <dual_franka_pico_dagger>
+   Collect-GELLO <franka_gello>
+   Collect-VR <franka_vr>
+   Collect-SFT-Deploy <franka_pi0_sft_deploy>

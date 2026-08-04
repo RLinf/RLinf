@@ -1,6 +1,6 @@
 Using Dual Franka with OpenPI PyTorch
 =====================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+.. figure:: /_static/images/dual_franka.jpg
    :align: center
    :width: 80%
 
@@ -409,6 +409,9 @@ On the training node:
    cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
+
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID

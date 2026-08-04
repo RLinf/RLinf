@@ -6,7 +6,7 @@ showcasing how the framework can be applied across different scenarios and
 demonstrating its efficiency in practice.
 This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
 
-Embodied intelligence is RLinf's primary focus. The embodied gallery is split into five
+Embodied intelligence is RLinf's primary focus. The embodied gallery is split into six
 entry points — pick the one that matches your starting question:
 
 .. grid:: 1 2 3 3
@@ -36,11 +36,17 @@ entry points — pick the one that matches your starting question:
 
       Supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: RL
       :link: methods_index
       :link-type: doc
 
       Algorithm-centric examples — DAgger, RECAP, DSRL, IQL offline RL, sim-real co-training, MLP / SAC-Flow.
+
+   .. grid-item-card:: Deployment Acceleration
+      :link: deployment_index
+      :link-type: doc
+
+      Pipeline policy inference and action execution for lower-latency deployment.
 
 Beyond embodiment:
 
@@ -67,6 +73,7 @@ Beyond embodiment:
    Robots <real_world_index>
    Models <vla_wam_index>
    SFT <sft_index>
-   Algorithms <methods_index>
+   RL <methods_index>
+   Deployment Acceleration <deployment_index>
    Agents <agentic/index>
    Systems <system/index>

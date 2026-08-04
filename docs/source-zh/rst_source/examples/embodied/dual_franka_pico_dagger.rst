@@ -2,7 +2,7 @@
 
 双 Franka 使用 PICO 采集与 DAgger
 ================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+.. figure:: /_static/images/dual_franka.jpg
    :align: center
    :width: 80%
 

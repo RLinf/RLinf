@@ -22,6 +22,17 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_openpi_pytorch.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
+           <b>OpenPI mixed precision</b>
+         </a><br>
+         使用 PyTorch OpenPI 进行混合精度监督微调
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -43,6 +54,17 @@ VLA / WAM 模型监督微调
        </p>
      </div>
 
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/hg-dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/hg-dagger.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/hg-dagger.html" style="text-decoration: underline; color: blue;">
+           <b>HG-DAgger</b>
+         </a><br>
+         采集人工干预数据，运行 SFT，并通过 Human-Gated DAgger 在线提升 Franka 策略
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -53,3 +75,4 @@ VLA / WAM 模型监督微调
    OpenPI_mixed_precision <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
    VLM <embodied/sft_vlm>
+   HG-DAgger <embodied/hg-dagger>
