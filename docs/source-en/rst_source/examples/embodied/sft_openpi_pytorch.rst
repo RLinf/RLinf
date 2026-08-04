@@ -211,10 +211,10 @@ statistics directory for the selected task, such as ``adjust_bottle`` above.
 ``norm_stats.json``, ensuring SFT and evaluation use the same statistics.
 
 The Pi0 RoboTwin recipe also uses fp32 master weights, bf16 FSDP computation,
-and fp32 gradient reduction. To reproduce the RoboTwin JAX reference
-learning-rate curve exactly, set ``actor.optim.lr_scheduler`` to
-``openpi_cosine`` in the experiment YAML. This schedule starts warmup at
-``peak / (warmup + 1)``; generic ``cosine`` uses a different warmup convention.
+and fp32 gradient reduction. Its experiment YAML defaults to
+``actor.optim.lr_scheduler: openpi_cosine``. This schedule starts warmup at
+``peak / (warmup + 1)`` and reproduces the RoboTwin JAX reference learning-rate
+curve.
 
 
 Launch scripts
@@ -247,7 +247,7 @@ Use the OpenPI checkpoint converter to convert an SFT checkpoint to the bare
    # Pi0.5 + BEHAVIOR-1K
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
        --config-name pi05_behavior \
-       --dtype fp32 \
+       --dtype bf16 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
        --input-norm-stats  /path/to/norm_stats.json \
        --output-model      /path/to/pi05_sft_pytorch_new \

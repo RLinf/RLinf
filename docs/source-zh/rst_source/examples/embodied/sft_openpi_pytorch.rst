@@ -191,9 +191,8 @@ RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像；动作在进入模型
 ``norm_stats.json``，因此训练和 eval 会使用同一组归一化统计量。
 
 Pi0 RoboTwin 配方同样使用 fp32 master weights、bf16 FSDP 计算和 fp32
-梯度规约。若要逐项复现 RoboTwin JAX 参考训练器的学习率曲线，请在实验 YAML 中将
-``actor.optim.lr_scheduler`` 设为 ``openpi_cosine``；该调度器从
-``peak / (warmup + 1)`` 开始 warmup，而通用 ``cosine`` 调度器的 warmup 约定不同。
+梯度规约。实验 YAML 默认使用 ``actor.optim.lr_scheduler: openpi_cosine``，该调度器从
+``peak / (warmup + 1)`` 开始 warmup，并复现 RoboTwin JAX 参考训练器的学习率曲线。
 
 
 启动脚本
@@ -228,7 +227,7 @@ Pi0 RoboTwin 使用对应的配置名：
    # Pi0.5 + BEHAVIOR-1K
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
        --config-name pi05_behavior \
-       --dtype fp32 \
+       --dtype bf16 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
        --input-norm-stats  /path/to/norm_stats.json \
        --output-model      /path/to/pi05_sft_pytorch_new \
