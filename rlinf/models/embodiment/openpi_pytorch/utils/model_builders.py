@@ -57,9 +57,6 @@ def _build_rlt_config(model_cfg):
         rlt_alpha=float(OmegaConf.select(model_cfg, "rlt_alpha", default=1.0)),
         rlt_input_dim=int(OmegaConf.select(model_cfg, "rlt_input_dim", default=2048)),
         rlt_embed_dim=int(OmegaConf.select(model_cfg, "rlt_embed_dim", default=2048)),
-        rlt_num_rl_tokens=int(
-            OmegaConf.select(model_cfg, "rlt_num_rl_tokens", default=1)
-        ),
         rlt_prefix_seq_len=int(
             OmegaConf.select(model_cfg, "rlt_prefix_seq_len", default=768)
         ),
