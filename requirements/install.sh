@@ -1647,6 +1647,7 @@ install_molmoact2_model() {
         maniskill_libero|libero)
             create_and_sync_venv
             install_common_embodied_deps
+            uv pip install "numba==0.65.1" "llvmlite==0.47.0"
             install_${ENV_NAME}_env
             ;;
         *)
@@ -1664,9 +1665,15 @@ install_molmoact2_model() {
     fi
     git -C "$molmoact2_lerobot_path" checkout --detach "$molmoact2_lerobot_ref"
 
+    # LeRobot's NumPy 2 stack conflicts with rlinf-libero's NumPy <2 bound.
+    sed -i \
+        -e 's/"numpy>=2.0.0,<2.3.0"/"numpy>=1.26.4,<2.0.0"/' \
+        -e 's/"rerun-sdk>=0.24.0,<0.27.0"/"rerun-sdk==0.22.1"/' \
+        "$molmoact2_lerobot_path/pyproject.toml"
+
     # Avoid RLinf's uv overrides when the checkout is nested under the venv.
     pushd "$molmoact2_lerobot_path" >/dev/null
-    uv pip install --no-config -e . "transformers==5.3.0"
+    uv pip install --no-config -e . "transformers==5.3.0" "numpy==1.26.4"
     popd >/dev/null
 
     uv pip check
