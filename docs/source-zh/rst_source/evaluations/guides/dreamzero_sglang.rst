@@ -14,7 +14,7 @@ DreamZero SGLang 评测
 
    cd /path/to/RLinf
    bash requirements/install.sh embodied --env libero --model dreamzero \
-     --torch 2.11.0 --python 3.11.14 --venv /path/to/dreamzero_test
+     --venv /path/to/dreamzero_test
 
 DreamZero 支持仍在 SGLang PR 中，需使用包含
 `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_

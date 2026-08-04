@@ -14,7 +14,7 @@ Set up RLinf with the embodied, LIBERO, and DreamZero SGLang dependencies:
 
    cd /path/to/RLinf
    bash requirements/install.sh embodied --env libero --model dreamzero \
-     --torch 2.11.0 --python 3.11.14 --venv /path/to/dreamzero_test
+     --venv /path/to/dreamzero_test
 
 DreamZero support is still under review in SGLang, so use SGLang code that
 includes `sgl-project/sglang#30679 <https://github.com/sgl-project/sglang/pull/30679>`_

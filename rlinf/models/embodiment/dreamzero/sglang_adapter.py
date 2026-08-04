@@ -103,9 +103,6 @@ class DreamZeroSGLangAdapter:
         )
         self._relative_action_keys = list(model_cfg.get("relative_action_keys") or [])
 
-    # ------------------------------------------------------------------
-    # Request / response
-    # ------------------------------------------------------------------
     def build_request(
         self, env_obs: dict, mode: Literal["train", "eval"] = "eval"
     ) -> tuple[dict, dict]:
@@ -145,9 +142,6 @@ class DreamZeroSGLangAdapter:
         }
         return actions, info
 
-    # ------------------------------------------------------------------
-    # DreamZero dataset transforms (obs in / actions out)
-    # ------------------------------------------------------------------
     def _observation_convert(self, env_obs: dict[str, Any]) -> dict[str, Any]:
         """Map RLinf env observation keys to DreamZero dataset modality keys.
 
@@ -293,9 +287,6 @@ class DreamZeroSGLangAdapter:
             )
         return actions
 
-    # ------------------------------------------------------------------
-    # Request payload assembly
-    # ------------------------------------------------------------------
     @staticmethod
     def _split_context(env_obs: Any) -> tuple[Any, dict[str, Any]]:
         """Separate RLinf routing metadata (e.g. stage id) from the observation."""

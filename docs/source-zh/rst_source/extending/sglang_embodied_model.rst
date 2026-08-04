@@ -34,7 +34,7 @@ SGLang 具身评测路径将通用逻辑与模型逻辑分开：
   用它创建一个 :class:`InferenceHTTPClient`，加载模型对应的 **sglang adapter**，
   并通过 channel 与环境 Worker 交换 observation 和 action。**向 server 发起的
   HTTP 请求（msgpack 编码 + 重试）由 worker 自己完成**；
-- **sglang adapter**（一个独立的普通类，例如 ``DreamZeroSGLangAdapter``）只负责
+- **sglang adapter**\ （一个独立的普通类，例如 ``DreamZeroSGLangAdapter``）只负责
   模型特有的纯逻辑：``build_request`` 把 env observation 转成请求 payload，
   ``parse_response`` 把 server 响应转成动作，``action_path`` 声明动作端点。它
   **不持有 HTTP client，也不亲自发请求**。
@@ -152,7 +152,7 @@ worker 完成）。在编写 RLinf 代码前，先确认 SGLang 侧已经具备�
 
    rlinf/models/embodiment/<your_model>/sglang_adapter.py
 
-adapter 是一个 **独立的普通类**（不需要继承任何基类），构造签名为
+adapter 是一个 **独立的普通类**\ （不需要继承任何基类），构造签名为
 ``(cfg, rank)``，需要实现 ``build_request`` / ``parse_response`` 两个方法并声明
 ``action_path``：
 
@@ -417,7 +417,7 @@ adapter 的 ``build_request`` 组装发往 ``POST /v1/actions/generations`` 的 
 
 其中：
 
-- ``input.prompt`` 是每个环境的**原始指令文本**（不在客户端 tokenize，由 SGLang
+- ``input.prompt`` 是每个环境的 **原始指令文本**\ （不在客户端 tokenize，由 SGLang
   server 自行 tokenize）；
 - ``input.observation`` 是归一化后的模型输入（``_normalize_obs`` 的输出，去掉
   prompt/token 相关键）；
@@ -757,7 +757,7 @@ HTTP Client 配置
 
 .. note::
 
-   具身 action 请求固定使用 **msgpack**（图像/大 batch 下 ndarray 不必展开成巨大的
+   具身 action 请求固定使用 **msgpack**\ （图像/大 batch 下 ndarray 不必展开成巨大的
    JSON 列表），worker 调用 ``http_client.post(..., msgpack=True)``，无需也不再有
    ``http_payload_format`` 配置项。
 
