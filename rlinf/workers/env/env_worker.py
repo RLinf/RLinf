@@ -1192,7 +1192,10 @@ class EnvWorker(Worker):
                 )
                 final_actions = rollout_result.forward_inputs.get("action", None)
                 final_forward_inputs = rollout_result.forward_inputs
-                if self.cfg.algorithm.loss_type == "embodied_dagger":
+                if (
+                    OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+                    == "embodied_dagger"
+                ):
                     final_actions = None
                     final_forward_inputs = {}
 

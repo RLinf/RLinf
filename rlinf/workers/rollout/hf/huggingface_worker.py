@@ -592,6 +592,8 @@ class MultiStepRolloutWorker(Worker):
                 dtype=torch.bool,
                 device=actions.device,
             )
+            if intervene_flags is None:
+                intervene_flags = save_flags
         return RolloutResult(
             actions=actions,
             prev_logprobs=result["prev_logprobs"] if self.collect_prev_infos else None,
