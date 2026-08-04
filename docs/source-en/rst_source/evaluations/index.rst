@@ -22,7 +22,7 @@ The table below lists benchmarks that have example configs under ``evaluations/`
      - ``behavior/behavior_openpi_pi05_eval.yaml``
    * - LIBERO
      - ``libero_spatial``, ``libero_object``, ``libero_goal``, ``libero_10``
-     - ``libero/libero_spatial_openpi_pi05_eval.yaml``, etc.
+     - ``libero/libero_spatial_openpi_pi05_eval.yaml``, ``libero/libero_spatial_dreamzero_eval_sglang.yaml``, etc.
    * - ManiSkill OOD
      - ``maniskill_ood_template`` (out-of-distribution generalization)
      - ``maniskill/maniskill_ood_openvlaoft_eval.yaml``
