@@ -41,7 +41,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_ppo_mlp_qwentrend_sglang_gtsuccess_1000steps"
+    experiment_name: "maniskill_ppo_mlp_vlm_trend_reward_sglang_gtsuccess_1000steps"
     logger_backends: ["tensorboard"]
   max_epochs: 1000
   max_steps: 1000
@@ -196,7 +196,6 @@ reward:
   group_name: "RewardGroup"
   reward_mode: history_buffer
   history_reward_assign: true
-  reward_threshold: 0.5
   reward_weight: 1.0
   env_reward_weight: 0.0
   api:
@@ -207,13 +206,13 @@ reward:
       temperature: 0.0
   model:
     model_path: "/path/to/Qwen3-VL-4B-Instruct"
-    model_type: "history_vlm"
+    model_type: "buffered_vlm"
     gt_success_bonus: 20.0
     precision: "bf16"
-    input_builder_name: qwentrend_input_builder
+    input_builder_name: vlm_trend_reward_input_builder
     input_builder_params:
       default_task_description: "Pick up the red cube and place it on the green spot on the table."
-    reward_parser_name: qwentrend_reward_parser
+    reward_parser_name: vlm_trend_reward_parser
     reward_parser_params:
       positive_reward: 1.0
       negative_reward: -0.2
