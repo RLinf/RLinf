@@ -616,6 +616,8 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
             hidden_states = layer_outputs[0]
 
         prefix_output = self.model.llm.norm(hidden_states)
+        if isinstance(prefix_output, tuple):
+            prefix_output = prefix_output[0]
         return prefix_output, past_key_values
 
     def _forward_mot_suffix(
@@ -657,6 +659,8 @@ class DexboticPi0ForRLActionPrediction(BasePolicy, Pi0ForCausalLM):
             hidden_states = layer_outputs[0]
 
         suffix_output = self.model.action_expert.norm(hidden_states)
+        if isinstance(suffix_output, tuple):
+            suffix_output = suffix_output[0]
         return suffix_output
 
     def get_suffix_out(

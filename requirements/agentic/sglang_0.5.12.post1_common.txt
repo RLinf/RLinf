@@ -1,0 +1,80 @@
+# sglang 0.5.12.post1 dependencies that are the same on every CUDA line.
+# The torch family is left out: pyproject.toml pins it (torch 2.11.0).
+# See README.md for how these files are installed and regenerated.
+IPython
+aiohttp
+anthropic>=0.20.0
+apache-tvm-ffi==0.1.9
+blobfile==3.0.0
+build
+compressed-tensors
+datasets
+easydict
+einops
+fastapi
+gguf
+interegular
+kernels>=0.12,<0.13
+llguidance>=0.7.11,<0.8.0
+mistral_common>=1.11.0
+modelscope
+msgspec
+ninja
+numpy
+nvidia-ml-py
+openai==2.6.1
+openai-harmony==0.0.4
+orjson
+outlines==0.1.11
+packaging
+partial_json_parser
+pillow
+prometheus-client>=0.20.0
+psutil
+py-spy
+pybase64
+pydantic
+python-multipart
+pyzmq>=25.1.2
+requests
+scipy
+sentencepiece
+setproctitle
+# smg-grpc-servicer pulls grpcio-health-checking / grpcio-reflection, whose
+# current releases require protobuf >= 7.35.1 -- but wandb and swanlab both cap
+# protobuf below 7, and tensorboard needs >= 6.31.1. Hold the window all four
+# accept; the grpcio helpers backtrack to 1.81.x, which sglang is fine with.
+protobuf>=6.31.1,<7
+smg-grpc-servicer>=0.5.0
+soundfile==0.13.1
+tiktoken
+timm==1.0.16
+tokenspeed_mla==0.1.1
+torch_memory_saver>=0.0.9.post1
+torchao==0.17.0
+# torchvision: both engines declare it, and installing the engine --no-deps means
+# nothing else pulls it in -- rlinf.workers.reward imports it transitively, so a
+# venv without it cannot even start a reasoning run. The version comes from
+# pyproject.toml's override, as with the rest of the torch family.
+torchvision
+tqdm
+uvicorn
+uvloop
+watchfiles
+xgrammar==0.2.0
+av; sys_platform == "linux" and (platform_machine == "aarch64" or platform_machine == "arm64" or platform_machine == "armv7l")
+decord2; sys_platform == "linux" and (platform_machine == "aarch64" or platform_machine == "arm64" or platform_machine == "armv7l")
+
+# sglang pins transformers 5.6.0, whose flash-attention path calls s_aux.to()
+# unconditionally and crashes on models with no attention sink; 5.6.1 guards it.
+transformers==5.6.1
+
+# sglang[all] also pulls the tracing and http2 extras.
+granian>=2.6.0
+opentelemetry-api
+opentelemetry-exporter-otlp
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-sdk
+
+# RLinf runs the router in front of the engine.
+sglang-router

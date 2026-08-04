@@ -1,0 +1,24 @@
+# engine: sglang==0.5.12.post1
+# sglang 0.5.12.post1 on CUDA 12 (torch 2.11 cu129).
+#
+# The PyPI sglang-kernel and sgl-deep-gemm wheels link libcudart.so.13 /
+# libcublas.so.13, so they need a CUDA 13 driver; upstream also publishes cu129
+# builds of the same versions, which link the .so.12 sonames and still carry
+# sm_80 (A100) SASS. Those are only on sglang's own index, so they are pinned by
+# URL here rather than through an extra index that would also offer nightlies.
+# nvidia-cutlass-dsl and flashinfer both express the CUDA line as an extra, so
+# dropping [cu13] / asking for [cu12] is all they need. cuda-python has no such
+# split and has to be held below 13.
+-r sglang_0.5.12.post1_common.txt
+
+cuda-python>=12.9,<13
+flash-attn-4>=4.0.0b9
+flashinfer-cubin==0.6.11.post1
+flashinfer-python[cu12]==0.6.11.post1
+nvidia-cutlass-dsl==4.5.1
+quack-kernels>=0.4.1
+tilelang==0.1.8
+sglang-kernel @ https://github.com/sgl-project/whl/releases/download/v0.4.2.post2/sglang_kernel-0.4.2.post2%2Bcu129-cp310-abi3-manylinux2014_x86_64.whl ; platform_machine == "x86_64"
+sglang-kernel @ https://github.com/sgl-project/whl/releases/download/v0.4.2.post2/sglang_kernel-0.4.2.post2%2Bcu129-cp310-abi3-manylinux2014_aarch64.whl ; platform_machine == "aarch64"
+sgl-deep-gemm @ https://github.com/sgl-project/whl/releases/download/v0.1.0/sgl_deep_gemm-0.1.0%2Bcu129-py3-none-manylinux2014_x86_64.whl ; platform_machine == "x86_64"
+sgl-deep-gemm @ https://github.com/sgl-project/whl/releases/download/v0.1.0/sgl_deep_gemm-0.1.0%2Bcu129-py3-none-manylinux2014_aarch64.whl ; platform_machine == "aarch64"
