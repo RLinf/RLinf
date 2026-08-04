@@ -1,90 +1,92 @@
-JAX 精度对齐的 PyTorch OpenPI 监督微调
-========================================
+JAX 精度对齐的 PyTorch OpenPI 监督微调：BEHAVIOR 与 RoboTwin
+================================================================
 
-本文档介绍 RLinf 中自包含、与 OpenPI JAX 参考实现精度对齐的 PyTorch OpenPI
-监督微调（SFT）流程。该实现支持 ``Pi0`` 和 ``Pi0.5`` 两个流匹配 VLA 变体，注册名为
-``model_type: openpi_pytorch``。模型遵循 OpenPI JAX 参考实现的架构和精度行为，并通过
-PyTorch 与 FSDP 完成训练。
+本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI** 流匹配
+（flow-matching）VLA 模型进行 **监督微调（SFT）**。目前维护的配方包括
+**Pi0.5 + BEHAVIOR-1K** 与 **Pi0 + RoboTwin**。模型在 RLinf 中以
+``model_type: openpi_pytorch`` 注册。SFT 通常作为进入强化学习前的第一阶段：
+模型先模仿高质量示范，后续强化学习才能在良好先验上继续优化。
 
-当前维护的 SFT 配方包括：
-
-- **Pi0 + RoboTwin**
-- **Pi0.5 + BEHAVIOR-1K**
-
-当前尚未提供 Pi0 + BEHAVIOR 的维护版 SFT 配置。请使用下面明确列出的模型和数据集配对，
-不要混用未列为同一配方的模型模板和数据集配置。
-
-
-可用配方
+内容包括
 --------
 
-每个配方都是 ``examples/sft/config/`` 下的实验配置。实验配置通过 Hydra 引入对应的无路径
-模型模板，并提供本地数据集、checkpoint 与归一化统计信息路径。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 18 32 32
-
-   * - 模型
-     - 数据集
-     - 实验配置
-     - 模型模板 / OpenPI 配置
-   * - Pi0
-     - RoboTwin
-     - ``robotwin_sft_openpi_pytorch.yaml``
-     - ``model/pi0_pytorch.yaml`` / ``pi0_aloha_robotwin``
-   * - Pi0.5
-     - BEHAVIOR-1K
-     - ``behavior_pi05_vla.yaml``
-     - ``model/pi0_5_pytorch.yaml`` / ``pi05_behavior``
-
-两个配方均以 fp32 加载 master weights，并采用 FSDP 混合精度：参数以 bf16 计算，
-梯度规约与 buffer 保持 fp32。这样既保持参考实现对齐的优化器行为，又能降低计算和激活显存。
-随附配置还启用了梯度检查点。
+- PyTorch OpenPI SFT 流程是什么，以及如何配置
+- FSDP 优化器与混合精度计算所使用的精度约定
+- BEHAVIOR 流式数据加载器的相关字段，以及归一化统计配置
+- 如何启动训练，以及如何转换得到的 checkpoint 用于评估
+- Pi0 RoboTwin 的官方 OpenPI/LeRobot 数据加载、训练和评估流程
 
 
-准备配方
+功能介绍
 --------
 
-从表中选择实验配置，并替换所有 ``/path/to/...`` 占位符。模型 checkpoint 必须是 RLinf PyTorch
-布局（包含 ``model.safetensors`` 与 ``config.json``），对应的
-``norm_stats.json`` 也必须位于配置指定的 asset 路径。若起点为 OpenPI JAX checkpoint，
-请使用 checkpoint 转换器的 ``jax2rlinf_pytorch`` 模式；完整流程见
-``rlinf/utils/ckpt_convertor/openpi/README.md``。
+``openpi_pytorch`` 模型是 Pi0.5 流匹配 VLA 的自包含 PyTorch 移植版本。**需要特别强调的是**：官方 openpi 仓库提供的
+PyTorch 实现并未与其 JAX 参考实现对齐，而此处的移植版本在数值上与 JAX 实现严格
+对齐。与基于 JAX/LeRobot 的 OpenPI 路径（参见 :doc:`sft_openpi`）不同，它直接从一小组配置字段
+构建模型结构（构建阶段不读取 ``config.json``），并且开箱即用地适配 BEHAVIOR-1K。
+在 SFT 阶段，策略通过流匹配去噪目标，从 BEHAVIOR 示范中预测双臂 R1 Pro 机器人
+32 步、23 维的动作块（action chunk）。
 
-RoboTwin
+本 PR 在保留上述 Pi0.5 + BEHAVIOR-1K 配方的基础上，增加了 **Pi0 + RoboTwin**。
+该配方使用同一套 JAX 对齐的 ``openpi_pytorch`` 模型实现，但采用 RoboTwin 的
+ALOHA 观测、14 维动作和任务专属归一化统计。
+
+
+Pi0.5 + BEHAVIOR-1K
+---------------------
+
+配置说明
 ~~~~~~~~
 
-RoboTwin 配方使用 LeRobot 格式的 RoboTwin 数据集，并采用以下数据设置：
+该示例拆分为一个可复用、不含路径的 **模型模板**，以及一个提供文件系统路径的
+**实验配置**：
+
+- 实验配置：``examples/sft/config/behavior_pi05_vla.yaml``
+- 模型模板：``examples/sft/config/model/pi0_5_pytorch.yaml``
+
+实验配置通过 Hydra ``defaults`` 引入该模型模板：
 
 .. code:: yaml
 
-   data:
-     train_data_paths: /path/to/robotwin-data
-     num_workers: 4
-     tolerance_s: 1.0e-4
+   defaults:
+     - model/pi0_5_pytorch@actor.model
+     - hybrid_engines/fsdp@actor.fsdp_config
+     - override hydra/job_logging: stdout
 
-RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像。模型配置会将动作补齐到 OpenPI 的 32 维
-模型动作空间，并设置 ``num_action_chunks: 50``。在所选配方中设置模型和 assets 路径，例如：
+精度约定
+~~~~~~~~
 
-.. code:: yaml
+PyTorch OpenPI 的 SFT 配置刻意将 **加载 dtype** 与 **计算 dtype** 分开：
 
-   actor:
-     model:
-       model_path: /path/to/pi0_base_rlinf_pytorch
-       openpi:
-         assets_dir: ${actor.model.model_path}
-         asset_id: "physical-intelligence/robotwin"
-         num_images_in_input: 3
+- 模型模板将 ``actor.model.precision`` 设为 ``fp32``（位于 ``pi0_5_pytorch.yaml``）。
+  fp32 权重作为 **FSDP 优化器 master** 加载，从而保证 warmup 阶段较小的 LR 更新
+  不会因 bf16 舍入而丢失。
+- FSDP ``MixedPrecision`` 在 bf16 下计算，同时让梯度 all-reduce 与 buffer 保持
+  fp32：
 
-Pi0 checkpoint 对应 ``robotwin_sft_openpi_pytorch.yaml``。
+  .. code:: yaml
 
-BEHAVIOR-1K
-~~~~~~~~~~~
+     actor:
+       fsdp_config:
+         gradient_checkpointing: True
+         mixed_precision:
+           param_dtype: bf16     # FSDP 计算 dtype
+           reduce_dtype: fp32    # 梯度 all-reduce 保持 fp32
 
-``behavior_pi05_vla.yaml`` 使用 Pi0.5 的流式 BEHAVIOR 数据加载器。它以流匹配去噪目标训练
-双臂 R1 Pro 机器人 32 步、23 维的动作块。请在 ``data`` 和 ``actor.model.openpi`` 中配置
-数据集根目录、任务选择和与 Pi0.5 匹配的 assets：
+  ``param_dtype`` 是 FSDP 的 **计算** dtype，这里显式设为 bf16，而非从
+  ``actor.model.precision`` 插值得到：加载 dtype 选择器与计算 dtype 是两个相互
+  独立的开关，因此 fp32-master 加载仍然会以 bf16 进行计算。
+- 在双专家 Gemma + SigLIP 骨干上启用了梯度检查点
+  （``actor.fsdp_config.gradient_checkpointing: True``），以降低激活值显存占用。
+- 学习率调度采用与参考实现完全一致的 warmup + 余弦衰减，通过
+  ``actor.optim.lr_scheduler: openpi_cosine`` 选择（warmup 从
+  ``peak / (warmup + 1)`` 开始，并在 ``total_training_steps`` 内余弦衰减到
+  ``min_lr``）。
+
+流式数据加载器
+~~~~~~~~~~~~~~
+
+BEHAVIOR 流式加载器直接从 ``data:`` 段读取其全部参数（没有隐藏默认值）：
 
 .. code:: yaml
 
@@ -105,66 +107,148 @@ BEHAVIOR-1K
          - "press radio"
          - "place radio on coffee table"
 
+关键数据字段：
+
+- ``train_data_paths`` / ``behavior_dataset_root``：BEHAVIOR 数据集根目录
+  （后者默认等于前者）。
+- ``repo_id``：BEHAVIOR 示范数据 repo id（``behavior-1k/2025-challenge-demos``）。
+- ``modalities``：加载器消费的输入模态（例如 ``["rgb"]``）。
+- ``num_workers``：数据加载器的 worker 进程数。
+- ``fine_grained_level`` 与 ``tolerance_s``：流式读取的时间对齐控制参数。
+- ``tasks``：要训练的 BEHAVIOR 任务。
+- ``use_skill``：为 ``false`` 时在主任务文本上训练；为 ``true`` 时在从
+  ``task_subtasks`` 选取的逐帧 REFERENCE 技能文本上训练。
+- ``task_subtasks``：每个任务的有序技能标签，当 ``use_skill: true`` 时用于构建
+  下标到标签的映射。
+
+归一化统计
+~~~~~~~~~~
+
+归一化统计的路径位于 ``actor.model.openpi`` 下：
+
+.. code:: yaml
+
    actor:
      model:
-       model_path: /path/to/pi05_base_rlinf_pytorch
+       model_path: /path/to/pi05_base_pytorch_new
        openpi:
          assets_dir: /path/to/assets
          asset_id: "behavior-1k/2025-challenge-demos"
 
-``train_data_paths`` 与 ``behavior_dataset_root`` 指向本地 BEHAVIOR 数据集。``tasks`` 选择
-训练任务。``use_skill: false`` 时以主任务文本训练；设为 ``true`` 时，以 ``task_subtasks`` 中
-指定的逐帧 REFERENCE 技能文本训练。启用技能训练时，请为所选任务提供明确且有序的技能标签。
+- ``assets_dir``：存放分位数归一化统计的目录。
+- ``asset_id``：在 ``assets_dir`` 下对应本任务统计信息的子路径。
+
+归一化统计会在 ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
+PaliGemma tokenizer 由 OpenPI 的模型 transform 按基础模型配置处理，无需在此 SFT YAML
+中另行指定路径。
+
+文件系统路径
+~~~~~~~~~~~~
+
+所有文件系统路径都以 ``/path/to/...`` 占位符的形式直接写在配置中。在
+``examples/sft/config/behavior_pi05_vla.yaml`` 中将它们改为你自己暂存的资源路径：
+
+- ``data.train_data_paths`` / ``data.behavior_dataset_root``：BEHAVIOR 流式数据集
+  根目录。
+- ``actor.model.model_path``：训练器加载的新格式 **fp32 基础 checkpoint**。
+- ``actor.model.openpi.assets_dir``：归一化统计目录。
 
 
-启动训练
+Pi0 + RoboTwin
+--------------
+
+RoboTwin Pi0 使用官方 OpenPI/LeRobot 的 map-style 数据加载器；训练配置为：
+
+- 实验配置：``examples/sft/config/robotwin_sft_openpi_pytorch.yaml``
+- 模型模板：``examples/sft/config/model/pi0_pytorch.yaml``
+- OpenPI 数据配置：``pi0_aloha_robotwin``
+
+数据集、基础 checkpoint 与任务专属归一化统计都需替换为本地路径：
+
+.. code:: yaml
+
+   data:
+     train_data_paths: /path/to/robotwin-data
+     num_workers: 4
+     tolerance_s: 1.0e-4
+
+   actor:
+     model:
+       model_path: /path/to/pi0_base_pytorch_new
+       num_action_chunks: 50
+       action_dim: 14
+       openpi:
+         config_name: "pi0_aloha_robotwin"
+         assets_dir: ${actor.model.model_path}
+         asset_id: "physical-intelligence/robotwin/adjust_bottle"
+         num_images_in_input: 3
+       openpi_data:
+         norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
+
+RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像；动作在进入模型前按 OpenPI 规则
+补齐为 32 维。``asset_id`` 应设置为当前任务的统计量目录，例如上例的
+``adjust_bottle``。``openpi_data.norm_stats_path`` 显式传入该任务的
+``norm_stats.json``，因此训练和 eval 会使用同一组归一化统计量。
+
+Pi0 RoboTwin 配方同样使用 fp32 master weights、bf16 FSDP 计算和 fp32
+梯度规约。若要逐项复现 RoboTwin JAX 参考训练器的学习率曲线，请在实验 YAML 中将
+``actor.optim.lr_scheduler`` 设为 ``openpi_cosine``；该调度器从
+``peak / (warmup + 1)`` 开始 warmup，而通用 ``cosine`` 调度器的 warmup 约定不同。
+
+
+启动脚本
 --------
 
-在仓库根目录启动所需模型和数据集对应的配方：
+使用 BEHAVIOR Pi0.5 配置名运行 SFT 辅助脚本：
 
 .. code:: bash
 
-   # Pi0 + RoboTwin
-   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
-
-   # Pi0.5 + BEHAVIOR-1K
+   # 回到仓库根目录
    bash examples/sft/run_vla_sft.sh behavior_pi05_vla
 
-该辅助脚本会设置 SFT 配置路径、记录实际运行命令，并将日志和 checkpoint 写入
-``logs/<timestamp>-<config-name>``。checkpoint 按 ``runner.save_interval`` 保存到
-``checkpoints/global_step_<N>/``。
-
-
-转换 SFT checkpoint
--------------------
-
-所有 SFT checkpoint 都使用 ``sft2rlinf_pytorch``；``--config-name`` 选择匹配的
-Pi0/Pi0.5 架构，``--dtype fp32`` 用于保留 SFT 的主权重精度。
-
-RoboTwin Pi0：
+Pi0 RoboTwin 使用对应的配置名：
 
 .. code:: bash
 
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
-       --config-name pi0_aloha_robotwin \
-       --dtype fp32 \
-       --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/pi0_base_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --output-model /path/to/pi0_robotwin_sft_rlinf_pytorch \
-       --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-       --reference-model /path/to/pi0_base_rlinf_pytorch
+   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
 
-Pi0.5 + BEHAVIOR-1K：
+该脚本会将配置名转发给 SFT 入口，并在配置的 ``runner.logger.log_path`` 下写入
+日志与 checkpoint。checkpoint 每 ``runner.save_interval`` 步保存一次，位于
+``.../checkpoints/global_step_<N>/`` 下。
+
+
+转换 checkpoint 用于评估
+------------------------
+
+可以使用 OpenPI checkpoint 转换器，将 SFT 训练得到的 checkpoint 转换为新格式的
+裸 ``Pi0`` 布局（即评估加载器所期望的布局）。当前转换模式名为
+``sft2rlinf_pytorch``（旧名称为 ``sft2new``）：
 
 .. code:: bash
 
+   # Pi0.5 + BEHAVIOR-1K
    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
        --config-name pi05_behavior \
        --dtype fp32 \
-       --ckpt /path/to/checkpoints/global_step_30000 \
-       --input-norm-stats /path/to/norm_stats.json \
-       --output-model /path/to/pi05_behavior_sft_rlinf_pytorch \
-       --output-norm-stats /path/to/pi05_behavior_sft_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
+       --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
+       --input-norm-stats  /path/to/norm_stats.json \
+       --output-model      /path/to/pi05_sft_pytorch_new \
+       --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
 
-所选的 ``--config-name`` 会在输出配置中保留 RoboTwin 或 BEHAVIOR 的架构。
-所有选项以及对应评估配置请参见转换器 README。
+   # Pi0 + RoboTwin
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+       --config-name pi0_aloha_robotwin \
+       --dtype fp32 \
+       --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
+       --input-norm-stats  /path/to/pi0_base_pytorch_new/physical-intelligence/robotwin/adjust_bottle/norm_stats.json \
+       --output-model      /path/to/pi0_robotwin_sft_hf \
+       --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/adjust_bottle/norm_stats.json \
+       --reference-model   /path/to/pi0_base_pytorch_new
+
+``sft2rlinf_pytorch`` 模式会剥离 wrapper/FSDP key 前缀，按 ``--config-name``
+选择 Pi0 或 Pi0.5 的模型形状，并原样复制归一化统计文件。RoboTwin 转换后的目录可
+直接填入 ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml`` 的
+``rollout.model.model_path``；评估配置中的 ``openpi_data.norm_stats_path`` 应指向同一
+任务的统计量。其他转换模式与完整参数说明，请参见转换器包的 README
+（``rlinf/utils/ckpt_convertor/openpi/README.md``）。转换后的 checkpoint 即可用于在
+BEHAVIOR 或 RoboTwin 上评估。
