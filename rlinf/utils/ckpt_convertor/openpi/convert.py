@@ -40,17 +40,20 @@ import argparse
 
 from rlinf.utils.ckpt_convertor.openpi import (
     jax2rlinf_pytorch,
-    openpi_pytorch2rlinf_pytorch,
-    rlinf_pytorch2openpi_pytorch,
+    openpi_pytorch_to_rlinf_pytorch,
+    rlinf_pytorch_to_openpi_pytorch,
     sft2deploy,
     sft2rlinf_pytorch,
 )
 
+# Public mode names describe the layouts explicitly. Internally, the conversion
+# kernels retain the original terminology: old = OpenPI PyTorch, new = RLinf
+# PyTorch.
 _MODES = {
     "jax2rlinf_pytorch": jax2rlinf_pytorch,
-    "openpi_pytorch2rlinf_pytorch": openpi_pytorch2rlinf_pytorch,
+    "openpi_pytorch2rlinf_pytorch": openpi_pytorch_to_rlinf_pytorch,
     "sft2rlinf_pytorch": sft2rlinf_pytorch,
-    "rlinf_pytorch2openpi_pytorch": rlinf_pytorch2openpi_pytorch,
+    "rlinf_pytorch2openpi_pytorch": rlinf_pytorch_to_openpi_pytorch,
     "sft2deploy": sft2deploy,
 }
 

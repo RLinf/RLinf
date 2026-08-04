@@ -16,10 +16,14 @@
 
 The OpenPI PyTorch layout uses ``paligemma_with_expert.*`` keys; the RLinf
 PyTorch layout uses bare ``Pi0`` keys. The
-``openpi_pytorch_to_rlinf_pytorch_state_dict`` function owns the key renaming
+``old_to_new_state_dict`` function owns the key renaming
 and weight transforms (SigLIP Q/K/V concat, LLM MLP transpose+stack,
 norm-prefix rewrites). When the source directory carries a ``config.json`` it
 is copied verbatim; the norm-stats file is copied across too.
+
+Within this module, ``old`` denotes the OpenPI PyTorch layout and ``new``
+denotes the RLinf PyTorch layout. The public CLI mode remains
+``openpi_pytorch2rlinf_pytorch``.
 """
 
 from __future__ import annotations
@@ -37,16 +41,17 @@ from rlinf.utils.ckpt_convertor.openpi._core import (
 )
 
 
-def openpi_pytorch_to_rlinf_pytorch_state_dict(
-    openpi_pytorch_state_dict: dict[str, torch.Tensor],
+def old_to_new_state_dict(
+    old_sd: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
-    """Convert an OpenPI PyTorch state dict to the RLinf PyTorch layout.
+    """Convert an old-format state dict to the new ``Pi0`` layout.
 
     Handles key renaming and weight transformations:
       - SigLIP Q/K/V concat -> in_proj_weight/bias
       - LLM MLP gate/up transpose+stack -> w_gating (2, features, hidden_dim)
       - LLM MLP down transpose -> w_linear
     """
+    openpi_pytorch_state_dict = old_sd
     rlinf_pytorch_state_dict: dict[str, torch.Tensor] = {}
 
     _OPENPI_PYTORCH_SIGLIP = (
@@ -277,7 +282,7 @@ def convert(
     """Convert an OpenPI PyTorch checkpoint to the RLinf PyTorch layout.
 
     Loads ``model.safetensors`` from ``input_model`` (a directory or file),
-    converts it via :func:`openpi_pytorch_to_rlinf_pytorch_state_dict`, writes
+    converts it via :func:`old_to_new_state_dict`, writes
     ``output_model/model.safetensors`` (copying ``config.json`` if present), and
     copies ``input_norm_stats`` verbatim to ``output_norm_stats``.
     """
@@ -290,10 +295,8 @@ def convert(
         )
 
     openpi_pytorch_state_dict = load_safetensors(openpi_pytorch_path)
-    rlinf_pytorch_state_dict = openpi_pytorch_to_rlinf_pytorch_state_dict(
-        openpi_pytorch_state_dict
-    )
-    save_safetensors(rlinf_pytorch_state_dict, output_model / "model.safetensors")
+    new_sd = old_to_new_state_dict(openpi_pytorch_state_dict)
+    save_safetensors(new_sd, output_model / "model.safetensors")
 
     config_src = input_model if input_model.is_dir() else input_model.parent
     copy_config_json(config_src, output_model)

@@ -14,11 +14,15 @@
 
 """Convert an RLinf PyTorch checkpoint to the OpenPI PyTorch layout.
 
-This is the inverse of :mod:`openpi_pytorch2rlinf_pytorch`. RLinf PyTorch uses
+This implements the internal new-to-old conversion. RLinf PyTorch uses
 bare ``Pi0`` keys while OpenPI PyTorch uses ``paligemma_with_expert.*`` keys.
 RLinf PyTorch does not retain OpenPI's separate 1024-wide action-expert token
 head, so an OpenPI PyTorch reference model is required to produce a complete
 checkpoint.
+
+Within this module, ``new`` denotes the RLinf PyTorch layout and ``old``
+denotes the OpenPI PyTorch layout. The public CLI mode remains
+``rlinf_pytorch2openpi_pytorch``.
 """
 
 from __future__ import annotations
@@ -43,10 +47,11 @@ _OPENPI_PALIGEMMA_LLM = "paligemma_with_expert.paligemma.model.language_model."
 _OPENPI_GEMMA_EXPERT = "paligemma_with_expert.gemma_expert.model."
 
 
-def rlinf_pytorch_to_openpi_pytorch_state_dict(
-    rlinf_pytorch_state_dict: dict[str, torch.Tensor],
+def new_to_old_state_dict(
+    new_sd: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
-    """Map every representable RLinf PyTorch tensor to OpenPI PyTorch keys."""
+    """Convert a new-format state dict to the old OpenPI layout."""
+    rlinf_pytorch_state_dict = new_sd
     openpi_pytorch_state_dict: dict[str, torch.Tensor] = {}
 
     for suffix in (".weight", ".bias"):
@@ -257,9 +262,7 @@ def convert_trained_ckpt(
         key.removeprefix("_orig_mod."): tensor
         for key, tensor in rlinf_pytorch_state_dict.items()
     }
-    openpi_pytorch_state_dict = rlinf_pytorch_to_openpi_pytorch_state_dict(
-        rlinf_pytorch_state_dict
-    )
+    openpi_pytorch_state_dict = new_to_old_state_dict(rlinf_pytorch_state_dict)
 
     reference_safetensors = os.path.join(reference_model, "model.safetensors")
     reference_state_dict = safetensors.torch.load_file(reference_safetensors)
@@ -328,9 +331,7 @@ def convert(
             f"RLinf PyTorch checkpoint not found: {rlinf_pytorch_path}"
         )
     rlinf_pytorch_state_dict = load_safetensors(rlinf_pytorch_path)
-    openpi_pytorch_state_dict = rlinf_pytorch_to_openpi_pytorch_state_dict(
-        rlinf_pytorch_state_dict
-    )
+    openpi_pytorch_state_dict = new_to_old_state_dict(rlinf_pytorch_state_dict)
     if ACTION_EXPERT_LM_HEAD not in openpi_pytorch_state_dict:
         raise RuntimeError(
             "rlinf_pytorch2openpi_pytorch cannot produce a complete OpenPI "
