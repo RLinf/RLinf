@@ -649,7 +649,6 @@ class MultiChannelProcessGroup:
         Callers must hold ``_PROCESS_GROUP_LIFECYCLE_LOCK`` when serialization
         is enabled, or accept the concurrent-init risk when it is disabled.
         """
-        dist.new_group
         from torch.distributed.distributed_c10d import (
             Backend,
             _check_valid_timeout,
