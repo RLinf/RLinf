@@ -25,6 +25,12 @@ from rlinf.workers.actor.fsdp_rlt_ac_policy_worker import (
 class RLTTD3LossMixin(RLTACLossMixin):
     """Ablation-style TD3 actor objective over current RLT replay fields."""
 
+    def _next_actions_for_critic_target(self, next_obs):
+        return self.target_model(
+            forward_type=ForwardType.SAC,
+            obs=next_obs,
+        )
+
     @staticmethod
     def _chunk_delta_loss(
         pred_chunk: torch.Tensor,
