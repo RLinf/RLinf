@@ -584,7 +584,11 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
     ) -> RolloutResult:
         intervene_flags = result.get("intervene_flags")
-        if intervene_flags is None and result.get("expert_label_flag", False):
+        if (
+            intervene_flags is None
+            and self.enable_dagger
+            and result.get("expert_label_flag", False)
+        ):
             intervene_flags = torch.full(
                 (actions.shape[0], self.model_cfg.num_action_chunks),
                 True,
