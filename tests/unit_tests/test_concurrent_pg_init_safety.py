@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -106,9 +106,7 @@ def _run_stress_in_subprocess(timeout_s: float = 180.0) -> dict:
     if proc.is_alive():
         proc.kill()
         proc.join(timeout=10)
-        pytest.fail(
-            f"Concurrent GLOO ProcessGroup stress timed out after {timeout_s}s"
-        )
+        pytest.fail(f"Concurrent GLOO ProcessGroup stress timed out after {timeout_s}s")
     if proc.exitcode != 0:
         # Negative exitcode means killed by signal (-6 == SIGABRT).
         pytest.fail(
