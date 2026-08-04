@@ -180,7 +180,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><b>奖励模型</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/reward_model.html">Qwen</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
           </ul>
           <li><b>世界动作模型</b></li>
           <ul>

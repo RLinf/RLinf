@@ -183,7 +183,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><b>Reward Model</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/reward_model.html">Qwen</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
           </ul>
           <li><b>World Action Model</b></li>
           <ul>
