@@ -30,10 +30,10 @@ Use the ROCm LIBERO image when possible:
       --network host \
       --name rlinf-amd-libero \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-rocm6.4
+      rlinf/rlinf:agentic-rlinf0.3-libero-rocm6.4
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-rocm6.4
-      # rocm7.2.3: rlinf/rlinf:agentic-rlinf0.2-libero-rocm7.2.3
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-rocm6.4
+      # rocm7.2.3: rlinf/rlinf:agentic-rlinf0.3-libero-rocm7.2.3
 
 Inside the container, switch to the OpenVLA-OFT environment:
 

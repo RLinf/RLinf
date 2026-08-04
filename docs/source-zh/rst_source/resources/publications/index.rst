@@ -11,7 +11,10 @@
 
    * - 论文
      - 主题
-     - 预印本
+     - 论文链接
+   * - :doc:`STEAM <steam>`
+     - 面向真实机器人学习的自监督时序集成优势建模。
+     - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
    * - :doc:`RLinf-USER <rlinf_user>`
      - 统一真机在线策略学习系统。
      - `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
@@ -24,6 +27,9 @@
    * - :doc:`RLinf <rlinf_system>`
      - 灵活高效的大规模 RL 系统。
      - `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
+   * - :doc:`DynaRL <dynarl>`
+     - 大规模强化学习训练的灵活动态调度。
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
    * - :doc:`πRL <pi_rl>`
      - 基于流的 VLA 模型在线 RL 微调。
      - `arXiv:2510.25889 <https://arxiv.org/abs/2510.25889>`__
@@ -38,10 +44,12 @@
    :hidden:
    :maxdepth: 2
 
+   steam
    rlinf_user
    rlinf_vla
    rlinf_co
    rlinf_system
+   dynarl
    pi_rl
    wovr
    wideseek_r1

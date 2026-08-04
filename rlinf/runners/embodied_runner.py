@@ -494,7 +494,7 @@ class EmbodiedRunner:
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
 
-            with self.timer("step"):
+            with self.timer("step", trace_args={"step_idx": _step}):
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()
@@ -529,16 +529,17 @@ class EmbodiedRunner:
                     )
 
                 # actor training.
-                actor_training_handle: Handle = self.actor.run_training()
-                env_bootstrap_handle: Handle | None = None
-                if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
-                    env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                        rollout_channel=self.rollout_channel
-                    )
+                with self.timer("actor_training"):
+                    actor_training_handle: Handle = self.actor.run_training()
+                    env_bootstrap_handle: Handle | None = None
+                    if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
+                        env_bootstrap_handle = self.env.prefetch_train_bootstrap(
+                            rollout_channel=self.rollout_channel
+                        )
 
-                actor_training_metrics = actor_training_handle.wait()
-                if env_bootstrap_handle is not None:
-                    env_bootstrap_handle.wait()
+                    actor_training_metrics = actor_training_handle.wait()
+                    if env_bootstrap_handle is not None:
+                        env_bootstrap_handle.wait()
 
                 self.global_step += 1
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
@@ -577,7 +578,7 @@ class EmbodiedRunner:
             if profiled_step is not None:
                 self._open_profiling_window(profiled_step)
 
-            with self.timer("step"):
+            with self.timer("step", trace_args={"step_idx": _step}):
                 with self.timer("sync_weights"):
                     if _step % self.weight_sync_interval == 0:
                         self.update_rollout_weights()

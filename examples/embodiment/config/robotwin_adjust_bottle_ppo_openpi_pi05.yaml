@@ -2,7 +2,7 @@ defaults:
   - env/robotwin_adjust_bottle@env.train
   - env/robotwin_adjust_bottle@env.eval
   - model/pi0_5@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -162,7 +162,7 @@ actor:
     clip_grad: 1.0
     critic_warmup_steps: 0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value

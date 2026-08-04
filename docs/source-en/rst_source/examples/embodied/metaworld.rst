@@ -86,7 +86,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-metaworld``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-metaworld``:
 
 .. code-block:: bash
 
@@ -95,8 +95,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-metaworld
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-metaworld
+      rlinf/rlinf:agentic-rlinf0.3-metaworld
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-metaworld
 
    # Inside the container, switch to the model's virtual environment:
    source switch_env openpi        # or: source switch_env openvla-oft

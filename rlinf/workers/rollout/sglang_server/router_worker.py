@@ -27,9 +27,9 @@ from typing import Optional
 import ray.util
 import requests
 from omegaconf import DictConfig, OmegaConf
-from sglang_router.router_args import RouterArgs
 
 from rlinf.scheduler import Worker
+from rlinf.utils.http_client import no_proxy_env
 
 # RouterArgs fields the launch_router CLI does NOT accept and that we
 # therefore must not forward as flags.
@@ -48,7 +48,21 @@ _FIELD_NAME_TO_FLAG = {
     "server_key_path": "tls-key-path",
 }
 
-_VALID_ROUTER_FIELDS = {f.name for f in dataclasses.fields(RouterArgs)}
+_VALID_ROUTER_FIELDS: Optional[set[str]] = None  # lazily populated
+
+
+def _get_router_args():
+    """Lazily import and return ``sglang_router.router_args.RouterArgs``"""
+    from sglang_router.router_args import RouterArgs
+
+    return RouterArgs
+
+
+def _valid_router_fields() -> set[str]:
+    global _VALID_ROUTER_FIELDS
+    if _VALID_ROUTER_FIELDS is None:
+        _VALID_ROUTER_FIELDS = {f.name for f in dataclasses.fields(_get_router_args())}
+    return _VALID_ROUTER_FIELDS
 
 
 def _flag_for_field(field_name: str) -> str:
@@ -65,11 +79,11 @@ def _router_cfg_to_cli(router_cfg: dict) -> list[str]:
     is dropped. Unknown keys raise.
     """
     args: list[str] = []
+    valid = _valid_router_fields()
     for key, value in router_cfg.items():
-        if key not in _VALID_ROUTER_FIELDS:
+        if key not in valid:
             raise ValueError(
-                f"Unknown router config key {key!r}. Expected one of "
-                f"{sorted(_VALID_ROUTER_FIELDS)}."
+                f"Unknown router config key {key!r}. Expected one of {sorted(valid)}."
             )
         if key in _ROUTER_ARGS_NOT_ON_CLI:
             raise ValueError(
@@ -163,11 +177,18 @@ class SGLangRouterWorker(Worker):
             + " ".join(shlex.quote(c) for c in cmd)
         )
 
-        # start_new_session=True makes the child a session leader, so a
-        # SIGTERM to it doesn't propagate to the Ray actor (and vice
-        # versa). stdout/stderr inherit the actor's so router logs land
-        # in the same place as the worker's own logs.
-        self._proc = subprocess.Popen(cmd, start_new_session=True)
+        # Strip proxy env vars around the spawn so the router's own (Rust)
+        # HTTP client doesn't tunnel intra-cluster /health probes through a
+        # user-configured proxy — that shows up server-side as "Invalid HTTP
+        # request received" and keeps registration stuck retrying. The child
+        # inherits the (stripped) env at fork; the parent's env is restored
+        # on context exit.
+        with no_proxy_env():
+            # start_new_session=True makes the child a session leader, so a
+            # SIGTERM to it doesn't propagate to the Ray actor (and vice
+            # versa). stdout/stderr inherit the actor's so router logs land
+            # in the same place as the worker's own logs.
+            self._proc = subprocess.Popen(cmd, start_new_session=True)
 
         if self._advertise_host is None:
             self._advertise_host = ray.util.get_node_ip_address()
@@ -195,7 +216,12 @@ class SGLangRouterWorker(Worker):
                     f"becoming healthy."
                 )
             try:
-                if requests.get(url, timeout=5).status_code == 200:
+                if (
+                    requests.get(
+                        url, timeout=5, proxies={"http": None, "https": None}
+                    ).status_code
+                    == 200
+                ):
                     return
             except requests.exceptions.RequestException as e:
                 last_err = e
@@ -219,7 +245,12 @@ class SGLangRouterWorker(Worker):
             return False
         try:
             return (
-                requests.get(f"{self._router_url}/health", timeout=2).status_code == 200
+                requests.get(
+                    f"{self._router_url}/health",
+                    timeout=2,
+                    proxies={"http": None, "https": None},
+                ).status_code
+                == 200
             )
         except requests.exceptions.RequestException:
             return False
@@ -265,6 +296,7 @@ class SGLangRouterWorker(Worker):
             f"{self._router_url}/workers",
             json={"url": server_url, "worker_type": worker_type},
             timeout=60,
+            proxies={"http": None, "https": None},
         )
         resp.raise_for_status()
         data = resp.json()
@@ -279,7 +311,11 @@ class SGLangRouterWorker(Worker):
         status: dict = {}
         while time.perf_counter() < deadline:
             time.sleep(poll_interval)
-            r = requests.get(f"{self._router_url}/workers/{worker_id}", timeout=10)
+            r = requests.get(
+                f"{self._router_url}/workers/{worker_id}",
+                timeout=10,
+                proxies={"http": None, "https": None},
+            )
             if r.status_code == 404:
                 continue  # router hasn't persisted the row yet — keep polling
             r.raise_for_status()
@@ -313,7 +349,9 @@ class SGLangRouterWorker(Worker):
             f"Unregistering worker {server_url!r} (id={worker_id}) from router."
         )
         resp = requests.delete(
-            f"{self._router_url}/workers/{worker_id}", timeout=timeout
+            f"{self._router_url}/workers/{worker_id}",
+            timeout=timeout,
+            proxies={"http": None, "https": None},
         )
         if resp.status_code == 404:
             return {}
@@ -339,7 +377,12 @@ class SGLangRouterWorker(Worker):
             body["input_ids"] = input_ids
         if sampling_params is not None:
             body["sampling_params"] = sampling_params
-        resp = requests.post(f"{self._router_url}/generate", json=body, timeout=timeout)
+        resp = requests.post(
+            f"{self._router_url}/generate",
+            json=body,
+            timeout=timeout,
+            proxies={"http": None, "https": None},
+        )
         resp.raise_for_status()
         return resp.json()
 

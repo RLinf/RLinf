@@ -1,0 +1,29 @@
+# Usage: bash tests/e2e_tests/offline_rl/run_steam_compute_advantages.sh steam_compute_advantages_ensemble_libero
+
+advantage:
+  value_checkpoint: /workspace/results/steam_value_model_sft_libero/steam_value_model_sft_libero/checkpoints/global_step_1/actor
+  batch_size: 4
+  num_dataloader_workers_per_gpu: 1
+  prefetch_factor: 1
+  label_mode: quantile
+  rollout_quantile: 0.3
+  expert_quantile: 0.8
+  tag: steam_ci_k8_e1_q30
+
+  model:
+    precision: "bf16"
+
+data:
+  k: 8
+
+  camera_keys:
+    - image
+    - wrist_image
+
+  train_data_paths:
+    - dataset_path: /workspace/dataset/STEAM/libero_partial_dataset
+      type: sft
+
+distributed:
+  backend: "nccl"
+  timeout: 3600

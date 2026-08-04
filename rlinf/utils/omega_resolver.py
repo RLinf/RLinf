@@ -12,23 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+
 import torch
 from omegaconf import OmegaConf
 
 _REGISTERED = False
 
 
+def _register_resolver(name, resolver):
+    if "replace" in inspect.signature(OmegaConf.register_resolver).parameters:
+        OmegaConf.register_resolver(name, resolver, replace=True)
+    elif hasattr(OmegaConf, "register_new_resolver"):
+        OmegaConf.register_new_resolver(name, resolver, replace=True)
+    else:
+        OmegaConf.register_resolver(name, resolver)
+
+
 def omegaconf_register():
     global _REGISTERED
     if _REGISTERED:  # avoid duplicate
         return
-    OmegaConf.register_new_resolver("multiply", lambda x, y: x * y)
-    OmegaConf.register_new_resolver("int_div", lambda x, y: x // y)
-    OmegaConf.register_new_resolver("subtract", lambda x, y: x - y)
-    OmegaConf.register_new_resolver("not", lambda x: not bool(x))
-    OmegaConf.register_new_resolver(
-        "torch.dtype", lambda dtype_name: getattr(torch, dtype_name), replace=True
-    )
+
+    _register_resolver("multiply", lambda x, y: x * y)
+    _register_resolver("int_div", lambda x, y: x // y)
+    _register_resolver("subtract", lambda x, y: x - y)
+    _register_resolver("not", lambda x: not bool(x))
+    _register_resolver("torch.dtype", lambda dtype_name: getattr(torch, dtype_name))
     _REGISTERED = True
 
 

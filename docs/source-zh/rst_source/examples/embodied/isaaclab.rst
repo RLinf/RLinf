@@ -90,10 +90,10 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-isaaclab
+      rlinf/rlinf:agentic-rlinf0.3-isaaclab
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-isaaclab
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-isaaclab
 
 在镜像中切换到对应的虚拟环境：
 

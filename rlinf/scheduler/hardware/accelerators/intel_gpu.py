@@ -107,7 +107,18 @@ class IntelGPUManager(AcceleratorManager):
         """Get the PyTorch platform module."""
         import torch
 
-        return torch.xpu
+        xpu_platform = torch.xpu
+
+        # Some PyTorch/IPEX versions do not expose ipc_collect on torch.xpu.
+        # Keep parity with CUDA call-sites by providing a no-op fallback.
+        if not hasattr(xpu_platform, "ipc_collect"):
+
+            def _ipc_collect_noop() -> None:
+                return None
+
+            setattr(xpu_platform, "ipc_collect", _ipc_collect_noop)
+
+        return xpu_platform
 
     @staticmethod
     def get_device_type() -> str:

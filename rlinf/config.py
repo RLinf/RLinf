@@ -86,8 +86,10 @@ SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
+SupportedModel.OPENPI_PYTORCH = SupportedModel.register("openpi_pytorch", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
+SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
 SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
@@ -99,21 +101,29 @@ SupportedModel.LINGBOTVLA = SupportedModel.register("lingbotvla", force=True)
 SupportedModel.ABOT_M0 = SupportedModel.register("abot_m0", force=True)
 SupportedModel.RESNET_REWARD = SupportedModel.register("resnet", force=True)
 SupportedModel.CFG_MODEL = SupportedModel.register("cfg_model", force=True)
-SupportedModel.VALUE_MODEL = SupportedModel.register("value_model", force=True)
+SupportedModel.RECAP_VALUE_MODEL = SupportedModel.register(
+    "recap_value_model", force=True
+)
+SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
+    "steam_value_model", force=True
+)
 
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
+SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
 EMBODIED_MODEL = set(
     {
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
+        SupportedModel.OPENPI_PYTORCH,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
+        SupportedModel.RLT_MLP_POLICY,
         SupportedModel.GR00T,
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
@@ -127,7 +137,9 @@ EMBODIED_MODEL = set(
         SupportedModel.GR00T_N1D6,
         SupportedModel.GR00T_N1D7,
         SupportedModel.CFG_MODEL,
-        SupportedModel.VALUE_MODEL,
+        SupportedModel.RECAP_VALUE_MODEL,
+        SupportedModel.STEAM_VALUE_MODEL,
+        SupportedModel.EVO1,
     }
 )
 
@@ -298,6 +310,36 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
     return cfg
 
 
+def hf_rope_parameters(hf_config) -> dict:
+    """Read a HuggingFace config's rope settings across transformers 4 and 5.
+
+    transformers 5 replaced the flat ``rope_theta`` / ``rope_scaling`` pair with a
+    single ``rope_parameters`` dict, renamed its ``type`` key to ``rope_type``,
+    and fills it in even for models that use no scaling (``rope_type: "default"``)
+    where transformers 4 left ``rope_scaling`` as ``None``.
+
+    Args:
+        hf_config: A ``PretrainedConfig`` (or its ``text_config``).
+
+    Returns:
+        The rope settings, always keyed the transformers 5 way.
+    """
+    params = getattr(hf_config, "rope_parameters", None)
+    if isinstance(params, dict):
+        return dict(params)
+
+    params = {}
+    scaling = getattr(hf_config, "rope_scaling", None)
+    if isinstance(scaling, dict):
+        params.update(scaling)
+        if "type" in params and "rope_type" not in params:
+            params["rope_type"] = params["type"]
+    theta = getattr(hf_config, "rope_theta", None)
+    if theta is not None:
+        params["rope_theta"] = theta
+    return params
+
+
 def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     # validate by hf config
     from transformers import AutoConfig
@@ -324,16 +366,16 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         qk_layernorm = getattr(cfg.model, "qk_layernorm", False)
 
     with open_dict(cfg):
-        rs = getattr(hf_config, "rope_scaling", None)
-        if isinstance(rs, dict):
-            rtype = rs.get("type", "")
-            if rtype in {"linear", "dynamic", "ntk", "yarn"}:
-                f = rs.get("factor")
-                if f is not None:
-                    cfg.model.seq_len_interpolation_factor = float(f)
-            else:
-                # mrope
-                cfg.model.seq_len_interpolation_factor = None
+        rs = hf_rope_parameters(hf_config)
+        rtype = rs.get("rope_type", "")
+        if rtype in {"linear", "dynamic", "ntk", "yarn"}:
+            f = rs.get("factor")
+            if f is not None:
+                cfg.model.seq_len_interpolation_factor = float(f)
+        elif rtype and rtype != "default":
+            # mrope. "default" means no scaling at all, which transformers 4
+            # reported as rope_scaling=None and so left this untouched.
+            cfg.model.seq_len_interpolation_factor = None
         model_type = getattr(cfg.model, "model_type", None)
         if model_type == "qwen3_vl" or model_type == "qwen3_vl_moe":
             # qwen3_vl and qwen3_vl_moe config.json set the model config in text_config
@@ -341,7 +383,7 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
 
         cfg.model.padded_vocab_size = hf_config.vocab_size
         cfg.model.max_position_embeddings = hf_config.max_position_embeddings
-        cfg.model.rotary_base = hf_config.rope_theta
+        cfg.model.rotary_base = hf_rope_parameters(hf_config)["rope_theta"]
         cfg.model.share_embeddings_and_output_weights = getattr(
             hf_config, "tie_word_embeddings", False
         )
@@ -923,6 +965,42 @@ def validate_embodied_cfg(cfg):
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
 
+    use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
+    standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
+    if use_reward_model and not standalone_realworld:
+        assert stage_num == 1, (
+            "use_reward_model requires rollout.pipeline_stage_num to be 1"
+        )
+        reward_worker_type = str(cfg.reward.get("worker_type", "model")).lower()
+        assert reward_worker_type in {"model", "api"}, (
+            "reward.worker_type must be either 'model' or 'api'."
+        )
+        reward_model_cfg = cfg.reward.get("model", {})
+        if reward_worker_type == "api":
+            assert reward_model_cfg.get("model_type") == "buffered_vlm", (
+                "reward.worker_type='api' currently requires "
+                "reward.model.model_type='buffered_vlm'."
+            )
+            api_cfg = cfg.reward.get("api", {})
+            api_base = str(api_cfg.get("api_base") or "").strip()
+            # Empty api_base means the trainer will call
+            # launch_sglang_router_and_server with top-level router_server_args.
+            if not api_base:
+                assert "router_server_args" in cfg, (
+                    "reward.worker_type='api' requires either reward.api.api_base or "
+                    "the standard top-level router_server_args block for "
+                    "Ray-managed SGLang."
+                )
+                assert "reward_server" in cfg.cluster.get("component_placement", {}), (
+                    "Ray-managed SGLang reward API requires "
+                    "cluster.component_placement.reward_server."
+                )
+
+    if cfg.runner.get("enable_decoupled_mode", False):
+        assert stage_num == 1, (
+            "enable_decoupled_mode requires rollout.pipeline_stage_num to be 1"
+        )
+
     if enable_eval:
         assert cfg.env.get("eval", None) is not None, (
             "env.eval config is required when runner.val_check_interval > 0, "
@@ -982,7 +1060,6 @@ def validate_embodied_cfg(cfg):
         ), (
             "env.train.max_steps_per_rollout_epoch must be divisible by actor.model.num_action_chunks"
         )
-
     with open_dict(cfg):
         weight_sync_interval = cfg.runner.get("weight_sync_interval", 1)
         assert weight_sync_interval > 0, "weight_sync_interval must be greater than 0"
@@ -1174,7 +1251,34 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
 
+        _validate_steam_ensemble_cfg(cfg.actor)
+
     return cfg
+
+
+def _validate_steam_ensemble_cfg(actor_cfg: DictConfig) -> None:
+    """Validate STEAM ensemble-specific settings."""
+    model_cfg = actor_cfg.get("model", None)
+    if model_cfg is None or model_cfg.get("model_type", None) != "steam_value_model":
+        return
+
+    # Import lazily to avoid a circular dependency:
+    # rlinf.config -> rlinf.models.embodiment... -> rlinf.models -> rlinf.config
+    from rlinf.models.embodiment.value_model.steam.configuration import (
+        validate_steam_ensemble_settings,
+    )
+
+    try:
+        ensemble_size = validate_steam_ensemble_settings(
+            ensemble_size=model_cfg.get("ensemble_size", 1),
+            micro_batch_size=actor_cfg.micro_batch_size,
+            global_batch_size=actor_cfg.global_batch_size,
+        )
+    except ValueError as exc:
+        raise AssertionError(str(exc)) from exc
+
+    with open_dict(model_cfg):
+        model_cfg.ensemble_size = ensemble_size
 
 
 def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
@@ -1302,6 +1406,21 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
                         "profiling",
                     )
                 )
+
+    # Tracing defaults. The tracer is a cluster manager, so its config lives under
+    # `cluster.tracer` and is launched by the Cluster below when enabled.
+    with open_dict(cfg):
+        if "tracer" not in cfg.cluster:
+            cfg.cluster.tracer = {}
+        cfg.cluster.tracer.enable = bool(cfg.cluster.tracer.get("enable", False))
+        if cfg.cluster.tracer.enable and not cfg.cluster.tracer.get(
+            "output_file", None
+        ):
+            cfg.cluster.tracer.output_file = os.path.join(
+                cfg.runner.logger.log_path,
+                cfg.runner.logger.experiment_name,
+                "trace/trace_events.jsonl",
+            )
 
     # Init cluster
     Cluster(

@@ -140,7 +140,7 @@ In embodied YAMLs, the recommended usage looks like this:
 .. code-block:: yaml
 
    defaults:
-     - training_backend/fsdp@actor.fsdp_config
+     - hybrid_engines/fsdp@actor.fsdp_config
      - weight_syncer/patch_syncer@weight_syncer
 
 The corresponding config files are:

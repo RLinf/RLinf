@@ -99,10 +99,10 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-calvin
+      rlinf/rlinf:agentic-rlinf0.3-calvin
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-calvin
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-calvin
 
 在镜像中切换到 OpenPI 虚拟环境：
 

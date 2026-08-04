@@ -480,7 +480,8 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 **LeRobot 数据集**
 
 使用 ``toolkits/lerobot/visualize_lerobot_dataset.py`` 将 LeRobot 数据集
-展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据：
+展开为按 episode 分目录的 ``.jpg`` 图像和 ``.txt`` step 元数据；可选导出
+``.mp4`` 视频（需安装 ``opencv-python``）：
 
 .. code-block:: bash
 
@@ -488,6 +489,29 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
        --dataset-path logs/{timestamp}/collected_data \
        --output-dir logs/{timestamp}/collected_data_visualized
 
+启用 MP4 导出（默认 30 FPS，可通过 ``--mp4-fps`` 调整）：
+
+.. code-block:: bash
+
+   python toolkits/lerobot/visualize_lerobot_dataset.py \
+       --dataset-path logs/{timestamp}/collected_data \
+       --output-dir logs/{timestamp}/collected_data_visualized \
+       --export-mp4 --mp4-fps 30
+
 该工具会读取 ``meta/info.json`` 和各个 ``episode_*.parquet`` 文件，输出类似
 ``episode_000000/step_000003_image.jpg`` 与
 ``episode_000000/step_000003.txt`` 的结构，便于快速人工检查。
+
+启用 ``--export-mp4`` 时，每个 episode 目录还会生成：
+
+- ``episode_{image_key}.mp4``：每个图像字段一条独立视频
+- ``episode_merged.mp4`` （仅当存在 2 个及以上图像字段时）：多视角拼接视频
+
+多视角拼接规则（各面板统一高度并标注字段名）：
+
+- 2 路：横向排列（非 wrist 在左，wrist 在右）
+- 3–4 路：2 列网格（按行优先）
+- 5 路及以上：横向排列
+
+``episode.txt`` 中会记录 ``mp4_videos``、``mp4_merged_video`` 与
+``mp4_layout`` 等导出信息。

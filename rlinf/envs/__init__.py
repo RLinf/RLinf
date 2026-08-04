@@ -17,6 +17,7 @@ from enum import Enum
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"
+    MANISKILL_RLT = "maniskill_rlt"
     LIBERO = "libero"
     ROBOTWIN = "robotwin"
     ISAACLAB = "isaaclab"
@@ -24,6 +25,7 @@ class SupportedEnvType(Enum):
     BEHAVIOR = "behavior"
     CALVIN = "calvin"
     ROBOCASA = "robocasa"
+    ROBOCASA365 = "robocasa365"
     REALWORLD = "realworld"
     FRANKASIM = "frankasim"
     HABITAT = "habitat"
@@ -59,6 +61,10 @@ def get_env_cls(env_type: str, env_cfg=None):
             from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 
             return ManiskillEnv
+    elif env_type == SupportedEnvType.MANISKILL_RLT:
+        from rlinf.envs.maniskill.maniskill_rlt_env import ManiskillRLTEnv
+
+        return ManiskillRLTEnv
     elif env_type == SupportedEnvType.LIBERO:
         from rlinf.envs.libero.libero_env import LiberoEnv
 
@@ -98,6 +104,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.robocasa.robocasa_env import RobocasaEnv
 
         return RobocasaEnv
+    elif env_type == SupportedEnvType.ROBOCASA365:
+        from rlinf.envs.robocasa365.robocasa365_env import Robocasa365Env
+
+        return Robocasa365Env
     elif env_type == SupportedEnvType.REALWORLD:
         from rlinf.envs.realworld import RealWorldEnv
 

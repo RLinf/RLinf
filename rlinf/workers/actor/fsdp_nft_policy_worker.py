@@ -189,7 +189,7 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                     loss, metrics_data = self.nft_forward_and_loss(batch)
 
                     if self.enable_sft_co_train:
-                        self._train_sft_epoch(metrics_data, loss)
+                        loss = self._train_sft_epoch(metrics_data, loss)
 
                     loss /= self.gradient_accumulation
                     with backward_ctx:

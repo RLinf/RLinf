@@ -24,11 +24,17 @@
 
       基于 RLinf 的论文与技术报告。
 
-   .. grid-item-card:: 发布说明
-      :link: release
+   .. grid-item-card:: v0.1 & v0.2 发布说明
+      :link: release_v0.1_v0.2
       :link-type: doc
 
-      RLinf 各版本的更新内容。
+      RLinf v0.1 与 v0.2 的更新内容。
+
+   .. grid-item-card:: v0.3 发布说明
+      :link: release_v0.3
+      :link-type: doc
+
+      RLinf v0.3 的更新内容。
 
    .. grid-item-card:: FAQ
       :link: faq
@@ -42,5 +48,6 @@
    为什么选择 RLinf <why_rlinf>
    博客 <blog/index>
    论文 <publications/index>
-   发布说明 <release>
+   v0.1 & v0.2 发布说明 <release_v0.1_v0.2>
+   v0.3 发布说明 <release_v0.3>
    FAQ <faq>

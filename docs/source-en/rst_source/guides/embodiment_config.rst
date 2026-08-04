@@ -14,7 +14,7 @@ defaults
     - env/maniskill_put_on_plate_in_scene_25_main@env.train
     - env/maniskill_ood_template@env.eval
     - model/openvla_oft@actor.model
-    - training_backend/fsdp@actor.fsdp_config
+    - hybrid_engines/fsdp@actor.fsdp_config
     - weight_syncer/patch_syncer@weight_syncer
 
 ``defaults``: Hydra configuration inheritance. Selects the environment, model,
@@ -425,7 +425,7 @@ actor
 
 The tokenizer (``actor.tokenizer.*``) and FSDP (``actor.fsdp_config.*``) sub-sections
 follow the shared schemas in :doc:`agentic_config` and :doc:`basic_config`; the FSDP
-preset is mounted from ``training_backend/fsdp``.
+preset is mounted from ``hybrid_engines/fsdp``.
 
 Environment-Specific Configuration
 ------------------------------------

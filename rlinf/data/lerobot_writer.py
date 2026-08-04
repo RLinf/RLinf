@@ -100,7 +100,11 @@ class LeRobotDatasetWriter:
                 in-episode sub-task boundaries set by KeyboardStartEndWrapper.
 
         """
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
         _silence_hf_datasets_progress_bars()
 

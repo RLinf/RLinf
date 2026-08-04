@@ -81,6 +81,18 @@ def put_tensor_device(data_dict, device):
     return data_dict
 
 
+def _split_list_by_sizes(value: list, split_sizes: list[int] | int) -> list[list]:
+    if isinstance(split_sizes, int):
+        chunks = split_sizes
+        k, m = divmod(len(value), chunks)
+        split_sizes = [k + (1 if i < m else 0) for i in range(chunks)]
+    out, i = [], 0
+    for n in split_sizes:
+        out.append(value[i : i + n])
+        i += n
+    return out
+
+
 def split_dict_to_chunk(data: dict, split_size, dim=0):
     splited_list = [{} for _ in range(split_size)]
     for key, value in data.items():
@@ -88,6 +100,9 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
             split_vs = [
                 chunk.contiguous() for chunk in torch.chunk(value, split_size, dim=dim)
             ]
+        elif isinstance(value, list):
+            assert dim == 0, f"List field only supports dim=0, got {dim}."
+            split_vs = _split_list_by_sizes(value, split_size)
         elif value is None:
             split_vs = [None for _ in range(split_size)]
         elif isinstance(value, dict):

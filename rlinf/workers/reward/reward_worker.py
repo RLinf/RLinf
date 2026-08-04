@@ -25,7 +25,6 @@ from rlinf.data.datasets.reward_model import RewardBinaryDataset
 from rlinf.data.io_struct import RolloutResult
 from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models.embodiment.reward import get_reward_model_class
 from rlinf.scheduler import (
     Channel,
     Cluster,
@@ -252,6 +251,8 @@ class EmbodiedRewardWorker(Worker):
             }
 
     def model_provider_func(self):
+        from rlinf.models.embodiment.reward import get_reward_model_class
+
         reward_cls = get_reward_model_class(self.cfg.reward.model.model_type)
 
         model_cfg = self.cfg.reward.model
@@ -297,7 +298,7 @@ class EmbodiedRewardWorker(Worker):
             ).async_wait()
             last_run = merged_data.get("last_run", None)
             last_run_count = int(last_run.sum().item()) if last_run is not None else 0
-            rewards = self.compute_image_rewards(observations=merged_data)
+            rewards = self.compute_reward(observations=merged_data)
             if isinstance(rewards, torch.Tensor):
                 rewards = rewards.contiguous()
             self.send_to(
@@ -314,30 +315,32 @@ class EmbodiedRewardWorker(Worker):
         if self.enable_offload:
             self.model.to("cpu")
 
-    @Worker.timer("compute_image_rewards")
-    def compute_image_rewards(
-        self, observations: dict[str, Any]
-    ) -> torch.Tensor | np.ndarray:
-        """Compute reward scores from observation input.
+    @staticmethod
+    def _format_reward_output(
+        rewards: torch.Tensor | np.ndarray | None,
+    ) -> torch.Tensor | np.ndarray | None:
+        """Normalize reward tensors for env/bootstrap broadcasting and RPC.
 
-        Interface:
-            - Input: ``observations`` (batched observation payload passed to
-              ``self.model.compute_reward``).
-            - Output: ``torch.Tensor`` or ``np.ndarray`` reward results. Tensor
-              outputs are detached to CPU, and 1-D tensors are reshaped to ``(N, 1)``.
-
-        Called from:
-            - ``RewardWorker.compute_rewards`` (in-process)
-            - ``RewardWorker._compute_rewards`` (in-process)
-            - ``FrankaEnv._compute_reward_model`` via worker RPC
-            - ``RealworldTeleopEvaluator._teleop_loop`` via worker RPC
+        Env rewards are typically ``(N, T)``; a 1-D ``(N,)`` model output must
+        become ``(N, 1)`` to broadcast correctly. Detach to CPU for channel/RPC.
         """
-        rewards = self.model.compute_reward(observations)
-        if rewards is not None and rewards.dim() == 1:
-            rewards = rewards.unsqueeze(-1)
         if isinstance(rewards, torch.Tensor):
+            if rewards.dim() == 1:
+                rewards = rewards.unsqueeze(-1)
             return rewards.detach().cpu()
         return rewards
+
+    @Worker.timer("compute_reward")
+    def compute_reward(
+        self, observations: dict[str, Any]
+    ) -> torch.Tensor | np.ndarray | None:
+        """Score a batched observation payload for embodied reward inference.
+
+        Default path uses the local ``self.model``. Subclasses (e.g. API workers)
+        may override this method; they should return through
+        :meth:`_format_reward_output` so env-side broadcasting stays consistent.
+        """
+        return self._format_reward_output(self.model.compute_reward(observations))
 
     async def compute_rewards_async(
         self, input_channel: Channel, output_channel: Channel
@@ -354,20 +357,10 @@ class EmbodiedRewardWorker(Worker):
             pass
 
     async def _compute_rewards(self, input_channel: Channel, output_channel: Channel):
-        """Continuously compute image rewards for embodied env batches.
+        """Continuously compute rewards for embodied env batches.
 
-        This private coroutine is used by ``compute_rewards_async`` in embodied RL. It
-        receives image observations from Env Workers through routed worker communication,
-        runs the embodied reward model with ``compute_image_rewards``, and sends the
-        resulting rewards back to the Env Worker group.
-
-        Unlike ``RewardWorker.compute_rewards``, this path operates on image data from
-        ``train_reward_obs`` messages, can use ``env_decoupled_mode`` routing, and runs
-        as a long-lived async loop until the task is stopped.
-
-        Args:
-            input_channel: Channel used to receive reward inputs from Env Workers.
-            output_channel: Channel used to return computed rewards to Env Workers.
+        Used by ``compute_rewards_async``. Receives observations from Env Workers,
+        runs :meth:`compute_reward`, and sends results back until cancelled.
         """
         while True:
             merged_data = await self.recv_from(
@@ -378,7 +371,7 @@ class EmbodiedRewardWorker(Worker):
                 batch_size=self.train_batch_size,
                 decoupled_mode=self.env_decoupled_mode,
             ).async_wait()
-            rewards = self.compute_image_rewards(observations=merged_data)
+            rewards = self.compute_reward(observations=merged_data)
             if isinstance(rewards, torch.Tensor):
                 rewards = rewards.contiguous()
             self.send_to(
@@ -422,6 +415,8 @@ class FSDPRewardWorker(FSDPModelManager, Worker):
         )
 
     def model_provider_func(self):
+        from rlinf.models.embodiment.reward import get_reward_model_class
+
         reward_cls = get_reward_model_class(self.cfg.actor.model.model_type)
 
         model_cfg = self.cfg.actor.model

@@ -24,18 +24,78 @@ Megatron-Bridge resources:
 Environment Setup
 -----------------
 
-MBridge currently uses RLinf's agentic environment. Install it with:
+MBridge currently uses RLinf's agentic environment. Install the base
+environment first:
 
 .. code:: bash
 
    bash requirements/install.sh agentic
    source .venv/bin/activate
 
-In addition, update and install the following extra packages:
+Install the extra Python packages required by the MBridge path:
 
 .. code:: bash
 
    uv pip install transformers==4.57.1 bitsandbytes
+
+The reasoning image does not include the ``megatron.bridge`` package.
+Clone Megatron-Bridge and the matching Megatron-LM revision, then add both
+source trees to ``PYTHONPATH``:
+
+.. code:: bash
+
+   export MBRIDGE_ROOT=/path/to/Megatron-Bridge-0.3.0
+   export MEGATRON_LM_ROOT=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8
+
+   mkdir -p "$(dirname "${MBRIDGE_ROOT}")" "$(dirname "${MEGATRON_LM_ROOT}")"
+   git clone --branch v0.3.0 https://github.com/NVIDIA-NeMo/Megatron-Bridge.git "${MBRIDGE_ROOT}"
+   git clone https://github.com/NVIDIA/Megatron-LM.git "${MEGATRON_LM_ROOT}"
+   git -C "${MEGATRON_LM_ROOT}" checkout b0cc2706ddc60d2aefd5fff346445b5c013036a8
+
+   export PYTHONPATH="${MBRIDGE_ROOT}/src:${MEGATRON_LM_ROOT}:${PYTHONPATH}"
+   export CUDA_DEVICE_MAX_CONNECTIONS=1
+   python -c "from megatron.bridge import AutoBridge; print('Megatron-Bridge OK')"
+
+If your cluster image already mounts these repositories, keep the same
+``PYTHONPATH`` exports and skip the two ``git clone`` commands.
+
+Download the model and dataset used by the reasoning example:
+
+.. code:: bash
+
+   # For faster downloads in mainland China, you can set:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B \
+       --local-dir /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
+
+   mkdir -p /dataset/boba
+   hf download inclusionAI/AReaL-boba-Data AReaL-boba-106k.jsonl \
+       --repo-type dataset \
+       --local-dir /dataset/boba
+
+Download the model and dataset used by the VLM SFT example:
+
+.. code:: bash
+
+   # For faster downloads in mainland China, you can set:
+   # export HF_ENDPOINT=https://hf-mirror.com
+   hf download Qwen/Qwen2.5-VL-3B-Instruct \
+       --local-dir /path/to/Qwen2.5-VL-3B-Instruct
+
+   hf download keplerccc/Robo2VLM-1 \
+       --repo-type dataset \
+       --local-dir /path/to/Robo2VLM-1
+
+.. warning::
+
+   The Robo2VLM download places training and evaluation files in the same
+   directory, for example ``train-00000-of-00262.parquet`` and
+   ``test-0000X-of-00003.parquet``. Move them into separate directories before
+   training. Otherwise, RLinf will read the whole dataset as training data.
+
+The example SFT config expects ``/path/to/Robo2VLM-1/data`` and
+``/path/to/Robo2VLM-1/eval_data``. If you store the dataset elsewhere, update
+``data.train_data_paths`` and ``data.eval_data_paths`` accordingly.
 
 Overview
 --------
@@ -56,7 +116,7 @@ For reasoning tasks:
        mbridge: True
        use_hf_ckpt: True
        ckpt_convertor:
-         hf_model_path: /path/to/huggingface_model
+         hf_model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
 
 When ``actor.megatron.mbridge`` is ``True`` and ``use_hf_ckpt`` is ``True``,
 RLinf reads the model path from ``actor.megatron.ckpt_convertor.hf_model_path``
@@ -69,7 +129,7 @@ For SFT tasks:
    actor:
      training_backend: megatron
      model:
-       model_path: /path/to/huggingface_model
+       model_path: /path/to/Qwen2.5-VL-3B-Instruct
        megatron_checkpoint: null
      megatron:
        use_hf_ckpt: True
@@ -81,22 +141,27 @@ When ``actor.megatron.mbridge`` is ``True``, RLinf reads the model path from
 Quick Start
 -----------
 
-1. Add Megatron-Bridge and the corresponding Megatron-LM version to
-   ``PYTHONPATH``:
+1. Export the MBridge paths before launching training:
 
 .. code:: bash
 
-   export PYTHONPATH=/path/to/Megatron-Bridge/src:$PYTHONPATH
-   export PYTHONPATH=/path/to/Megatron-LM:$PYTHONPATH
+   export PYTHONPATH=/path/to/Megatron-Bridge-0.3.0/src:$PYTHONPATH
+   export PYTHONPATH=/path/to/Megatron-LM-b0cc2706ddc60d2aefd5fff346445b5c013036a8:$PYTHONPATH
    export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-2. Prepare a HuggingFace model directory, for example:
+2. Prepare the HuggingFace model and data directories:
 
 .. code:: text
 
+   # Reasoning tasks need:
+   /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
+   /dataset/boba/AReaL-boba-106k.jsonl
+   # SFT tasks need:
    /path/to/Qwen2.5-VL-3B-Instruct
+   /path/to/Robo2VLM-1/data
+   /path/to/Robo2VLM-1/eval_data
 
-3. Update the model and tokenizer paths in the config.
+3. Update the model, tokenizer, and dataset paths in the config.
 
 Path Differences
 ----------------
@@ -128,7 +193,11 @@ Reasoning task example:
        mbridge: True
        use_hf_ckpt: True
        ckpt_convertor:
-         hf_model_path: /path/to/huggingface_model
+         hf_model_path: /path/to/model/DeepSeek-R1-Distill-Qwen-1.5B
+
+   data:
+     train_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
+     val_data_paths: ["/dataset/boba/AReaL-boba-106k.jsonl"]
 
 SFT example:
 
@@ -147,13 +216,21 @@ SFT example:
        use_hf_ckpt: True
        mbridge: True
 
+   data:
+     train_data_paths: "/path/to/Robo2VLM-1/data"
+     eval_data_paths: "/path/to/Robo2VLM-1/eval_data"
+
 4. Launch the corresponding training script.
 
-Start reasoning training from the repository root:
+Start reasoning training from the repository root. Use the Python entrypoint so
+the MBridge override is applied explicitly:
 
 .. code:: bash
 
-   bash examples/reasoning/run_main_grpo_math.sh qwen2.5-1.5b-grpo-megatron
+   python examples/reasoning/main_grpo.py \
+       --config-path "$(pwd)/examples/reasoning/config/math" \
+       --config-name qwen2.5-1.5b-grpo-megatron \
+       +actor.megatron.mbridge=True
 
 Start VLM SFT training from the repository root:
 

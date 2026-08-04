@@ -42,7 +42,7 @@ def gather_along_first_dim(input_, group):
 
 class FuscoInfo(NamedTuple):
     # cross-node
-    global_fusco = None
+    global_fusco: object
     sendindices_s1: torch.Tensor
     recvindices_s1: torch.Tensor
     backindices_s1: torch.Tensor
@@ -52,7 +52,7 @@ class FuscoInfo(NamedTuple):
     recv_tokens_s1: int
     seq_len: int
     # intra-node
-    intra_fusco = None
+    intra_fusco: object = None
     sendindices_s2: torch.Tensor = None
     recvindices_s2: torch.Tensor = None
     backindices_s2: torch.Tensor = None

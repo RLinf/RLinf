@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import gc
+import inspect
 import itertools
 from contextlib import contextmanager, nullcontext
 from functools import partial
@@ -368,11 +369,29 @@ class MegatronModelManager:
 
         return model, optimizer, lr_scheduler
 
-    def model_provider_func(self, pre_process, post_process):
-        """Model depends on pipeline paralellism."""
+    def model_provider_func(self, pre_process, post_process, config=None, **kwargs):
+        """Model depends on pipeline paralellism.
+
+        Args:
+            pre_process: Whether this rank holds the embedding.
+            post_process: Whether this rank holds the output layer.
+            config: Transformer config Megatron built from its own args, passed
+                from 0.17 on. Ignored: RLinf derives ``self.transformer_config``
+                from its own YAML, which is what the rest of the manager uses.
+            **kwargs: Other arguments Megatron added in 0.17 (``vp_stage``,
+                ``pg_collection``). Forwarded when the installed Megatron's model
+                accepts them, so virtual pipeline stages and process groups stay
+                correct without breaking 0.13.
+        """
         use_te = HAVE_TE
 
         if self.mcore_gpt:
+            mcore_kwargs = {
+                key: value
+                for key, value in kwargs.items()
+                if value is not None
+                and key in inspect.signature(MCoreGPTModel.__init__).parameters
+            }
             model = MCoreGPTModel(
                 config=self.transformer_config,
                 transformer_layer_spec=get_specs(
@@ -390,6 +409,7 @@ class MegatronModelManager:
                 rotary_percent=self._cfg.model.rotary_percentage,
                 seq_len_interpolation_factor=self._cfg.model.seq_len_interpolation_factor,
                 rotary_base=self._cfg.model.rotary_base,
+                **mcore_kwargs,
             )
 
         else:

@@ -70,7 +70,7 @@ actor:
     total_training_steps: ${runner.max_steps}
     lr_warmup_steps: 200 
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"

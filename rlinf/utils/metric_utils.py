@@ -15,14 +15,249 @@
 import math
 import os
 import time
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import torch.distributed
 
+if TYPE_CHECKING:
+    from rlinf.data.embodied_io_struct import Trajectory
+
+
+def mean_bool_tensor_rate(
+    tensors: Sequence[torch.Tensor | None],
+    *,
+    sum_key: str,
+    count_key: str,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> float | None:
+    """Mean of flattened bool-like tensors, optionally reduced across ranks."""
+    shards = [
+        tensor.detach().reshape(-1).to(torch.float32)
+        for tensor in tensors
+        if isinstance(tensor, torch.Tensor) and tensor.numel() > 0
+    ]
+    if not shards:
+        return None
+
+    local_values = torch.cat(shards, dim=0)
+    reduced = {
+        sum_key: float(local_values.sum().item()),
+        count_key: float(local_values.numel()),
+    }
+    if reducer is not None:
+        reduced = reducer(reduced)
+    if reduced[count_key] <= 0:
+        return 0.0
+    return reduced[sum_key] / reduced[count_key]
+
+
+def mean_bool_tensor_rate_from_trajectories(
+    trajectories: Sequence["Trajectory"],
+    tensor_getter: Callable[["Trajectory"], torch.Tensor | None],
+    *,
+    sum_key: str,
+    count_key: str,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> float | None:
+    return mean_bool_tensor_rate(
+        [tensor_getter(trajectory) for trajectory in trajectories],
+        sum_key=sum_key,
+        count_key=count_key,
+        reducer=reducer,
+    )
+
+
+def trajectory_forward_input_tensor(
+    trajectory: "Trajectory", key: str
+) -> torch.Tensor | None:
+    forward_inputs = trajectory.forward_inputs
+    if not isinstance(forward_inputs, dict):
+        return None
+    value = forward_inputs.get(key)
+    return value if isinstance(value, torch.Tensor) else None
+
+
+def trajectory_has_bool_tensor(tensor: torch.Tensor | None) -> bool:
+    return bool(
+        isinstance(tensor, torch.Tensor) and tensor.detach().to(torch.bool).any()
+    )
+
+
+def collect_trajectory_replay_metrics(
+    trajectories: Sequence["Trajectory"],
+    *,
+    reducer: Callable[[dict[str, float]], dict[str, float]] | None = None,
+) -> dict[str, float]:
+    """Replay-route diagnostics aggregated from received trajectories."""
+    metrics: dict[str, float] = {}
+    rate_specs = (
+        (
+            "replay/record_transition_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "record_transition"
+            ),
+            "record_transition_sum",
+            "record_transition_count",
+        ),
+        (
+            "replay/actor_switch_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actor_switch"
+            ),
+            "actor_switch_sum",
+            "actor_switch_count",
+        ),
+        (
+            "replay/intervention_requested_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "intervention_requested"
+            ),
+            "intervention_requested_sum",
+            "intervention_requested_count",
+        ),
+        (
+            "replay/intervention_rate",
+            lambda trajectory: trajectory.intervene_flags,
+            "intervention_sum",
+            "intervention_count",
+        ),
+    )
+    for metric_key, tensor_getter, sum_key, count_key in rate_specs:
+        rate = mean_bool_tensor_rate_from_trajectories(
+            trajectories,
+            tensor_getter,
+            sum_key=sum_key,
+            count_key=count_key,
+            reducer=reducer,
+        )
+        if rate is not None:
+            metrics[metric_key] = rate
+    return metrics
+
+
+METRIC_SUM_PREFIX = "__sum__/"
+
+CRITIC_EXPLAINED_VARIANCE_KEY = "critic/explained_variance"
+CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX = (
+    f"{METRIC_SUM_PREFIX}_critic_explained_variance/"
+)
+CRITIC_EXPLAINED_VARIANCE_COUNT_KEY = f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}count"
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}returns_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}returns_sq_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}errors_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY = (
+    f"{CRITIC_EXPLAINED_VARIANCE_STATS_PREFIX}errors_sq_sum"
+)
+CRITIC_EXPLAINED_VARIANCE_STAT_KEYS = (
+    CRITIC_EXPLAINED_VARIANCE_COUNT_KEY,
+    CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY,
+    CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY,
+)
+
 
 def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
+
+
+def compute_critic_explained_variance_stats(
+    returns: torch.Tensor,
+    values: torch.Tensor,
+    loss_mask: torch.Tensor | None = None,
+) -> dict[str, torch.Tensor]:
+    """Compute sufficient statistics for critic explained variance."""
+    returns = returns.detach().float()
+    values = values.detach().float()
+    if loss_mask is not None:
+        mask = loss_mask.to(device=returns.device, dtype=torch.bool)
+        if mask.shape != returns.shape:
+            mask = torch.broadcast_to(mask, returns.shape)
+        returns = returns[mask]
+        values = values[mask]
+    else:
+        returns = returns.reshape(-1)
+        values = values.reshape(-1)
+
+    errors = returns - values
+    count = torch.tensor(float(returns.numel()), device=returns.device)
+    return {
+        CRITIC_EXPLAINED_VARIANCE_COUNT_KEY: count,
+        CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY: returns.sum(),
+        CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY: (returns * returns).sum(),
+        CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY: errors.sum(),
+        CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY: (errors * errors).sum(),
+    }
+
+
+def compute_critic_explained_variance_from_stats(
+    stats: dict[str, float | torch.Tensor],
+) -> torch.Tensor:
+    """Compute critic explained variance from summed sufficient statistics."""
+    tensor_value = next(
+        (v for v in stats.values() if isinstance(v, torch.Tensor)), None
+    )
+    device = tensor_value.device if tensor_value is not None else torch.device("cpu")
+
+    def as_tensor(key: str) -> torch.Tensor:
+        return torch.as_tensor(stats[key], dtype=torch.float32, device=device)
+
+    count = as_tensor(CRITIC_EXPLAINED_VARIANCE_COUNT_KEY)
+    returns_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_RETURNS_SUM_KEY)
+    returns_sq_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_RETURNS_SQ_SUM_KEY)
+    errors_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_ERRORS_SUM_KEY)
+    errors_sq_sum = as_tensor(CRITIC_EXPLAINED_VARIANCE_ERRORS_SQ_SUM_KEY)
+
+    nan = torch.tensor(float("nan"), device=device)
+    if count < 2:
+        return nan
+
+    returns_centered_sq_sum = returns_sq_sum - returns_sum * returns_sum / count
+    if torch.isnan(returns_centered_sq_sum) or returns_centered_sq_sum == 0:
+        return nan
+
+    errors_centered_sq_sum = errors_sq_sum - errors_sum * errors_sum / count
+    if torch.isnan(errors_centered_sq_sum):
+        return nan
+    return 1 - errors_centered_sq_sum / returns_centered_sq_sum
+
+
+def pop_critic_explained_variance_stats(
+    metrics: dict[str, object],
+) -> dict[str, torch.Tensor]:
+    """Pop hidden critic explained-variance stats and sum list values."""
+
+    def sum_metric_values(value: object) -> torch.Tensor:
+        if isinstance(value, list):
+            if not value:
+                return torch.tensor(0.0)
+            tensors = [
+                item.detach()
+                if isinstance(item, torch.Tensor)
+                else torch.as_tensor(item)
+                for item in value
+            ]
+            return torch.stack([tensor.float() for tensor in tensors]).sum()
+        if isinstance(value, torch.Tensor):
+            return value.detach().float()
+        return torch.as_tensor(value, dtype=torch.float32)
+
+    stats = {}
+    for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+        if key in metrics:
+            stats[key] = sum_metric_values(metrics.pop(key))
+    if stats:
+        metrics.pop(CRITIC_EXPLAINED_VARIANCE_KEY, None)
+    return stats
 
 
 def _normalize_metric_shard(shard: object) -> torch.Tensor:
@@ -157,6 +392,8 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         if loss_mask is None:
             return values.reshape(-1)
         mask = loss_mask.to(device=values.device, dtype=torch.bool)
+        if mask.ndim == values.ndim - 1:
+            mask = mask.unsqueeze(-1)
         if mask.shape != values.shape:
             mask = torch.broadcast_to(mask, values.shape)
         return values[mask]

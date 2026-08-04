@@ -16,6 +16,7 @@ from .coll_manager import CollectiveGroupInfo, CollectiveManager
 from .lock_manager import DeviceLockManager, PortLockManager
 from .manager import Manager
 from .node_manager import NodeInfo, NodeManager
+from .tracer import Tracer
 from .worker_manager import WorkerAddress, WorkerInfo, WorkerManager
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "PortLockManager",
     "NodeManager",
     "NodeInfo",
+    "Tracer",
     "WorkerAddress",
     "WorkerManager",
     "WorkerInfo",

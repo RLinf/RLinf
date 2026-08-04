@@ -14,12 +14,8 @@
 
 import asyncio
 
-import torch
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.data.embodied_io_struct import (
-    RolloutResult,
-)
 from rlinf.scheduler import Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
@@ -77,7 +73,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             while True:
                 if self._background_weight_sync_active:
                     await self._poll_background_weight_sync()
-                await self.wait_if_stale()
+
                 for _ in range(self.rollout_epoch):
                     await self.generate_one_epoch(input_channel, output_channel)
                 if self.finished_episodes is not None:
@@ -179,31 +175,16 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 timeout_time=0.02,
                 recv_queue_size=self.rollout_queue_size,
             )
-            actions, result = self.predict(env_output["obs"])
-            save_flags = None
-            if result.get("expert_label_flag", False):
-                save_flags = torch.full(
-                    (actions.shape[0], self.cfg.actor.model.num_action_chunks),
-                    True,
-                    dtype=torch.bool,
-                    device=actions.device,
-                )
-            rollout_result = RolloutResult(
-                actions=actions,
-                prev_logprobs=result["prev_logprobs"]
-                if self.collect_prev_infos
-                else None,
-                prev_values=result["prev_values"] if self.collect_prev_infos else None,
-                bootstrap_values=self.get_bootstrap_values(
-                    env_output.get("final_obs", None)
-                ),
-                save_flags=save_flags,
-                forward_inputs=result["forward_inputs"],
-                versions=torch.full_like(
-                    result["prev_logprobs"],
-                    float(self.version),
-                    dtype=torch.float32,
-                ),
+            actions, result = self._predict_rollout_actions(
+                env_output["obs"],
+                final_obs=env_output.get("final_obs", None),
+                rlt_switch_flags=env_output.get("rlt_switch_flags", None),
+                intervene_requested=env_output.get("intervene_flags", None),
+            )
+            rollout_result = self._build_rollout_result(
+                actions,
+                result,
+                final_obs=env_output.get("final_obs", None),
             )
             self.send_to_recorded_batch_routes(
                 group_name=self.cfg.env.group_name,

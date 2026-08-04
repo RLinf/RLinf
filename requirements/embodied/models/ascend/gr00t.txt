@@ -1,0 +1,9 @@
+# TensorFlow 2.21 breaks GR00T training on Ascend; last verified working set.
+tensorflow==2.15.0
+tensorflow-cpu-aws==2.15.0; platform_machine == "aarch64"
+tensorflow-estimator==2.15.0
+tensorflow-io-gcs-filesystem==0.37.1
+keras==2.15.0
+tensorboard==2.15.2
+ml-dtypes==0.2.0
+protobuf==3.20.3

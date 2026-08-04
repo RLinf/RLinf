@@ -74,6 +74,7 @@ class FrankaEEInputs(transforms.DataTransformFn):
     # Determines which model will be used.
     # Do not change this for your own dataset.
     model_type: _model.ModelType = _model.ModelType.PI0
+    pad_state: bool = True
 
     def __call__(self, data: dict) -> dict:
         if isinstance(data["observation/state"], np.ndarray):
@@ -82,7 +83,8 @@ class FrankaEEInputs(transforms.DataTransformFn):
             ).float()
 
         state = data["observation/state"]
-        state = transforms.pad_to_dim(state, self.action_dim)
+        if self.pad_state:
+            state = transforms.pad_to_dim(state, self.action_dim)
 
         base_image = _parse_image(data["observation/image"])
 

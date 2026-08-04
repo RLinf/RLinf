@@ -112,7 +112,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
 
 .. code:: bash
 
@@ -121,8 +121,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
    # Inside the container, switch to the StarVLA virtual environment:
    source switch_env starvla
