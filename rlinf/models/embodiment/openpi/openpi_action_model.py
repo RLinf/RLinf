@@ -110,7 +110,6 @@ class OpenPi0Config(Pi0Config):
     rlt_mlp_ratio: float = 4.0
     rlt_image_only: bool = True
     rlt_use_mask: bool = False
-    rlt_num_base_candidates: int = 1
     state_indices: list[int] | None = None
 
 
@@ -580,24 +579,17 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             dtype=torch.float32
         )
 
-        num_base_candidates = max(
-            int(getattr(self.config, "rlt_num_base_candidates", 1)), 1
+        outputs = self._sample_actions_with_prefix_cache(
+            state,
+            prefix_output,
+            prefix_pad_masks,
+            past_key_values,
+            mode="eval",
+            compute_values=False,
         )
-        base_chunks = []
-        for _ in range(num_base_candidates):
-            outputs = self._sample_actions_with_prefix_cache(
-                state,
-                prefix_output,
-                prefix_pad_masks,
-                past_key_values,
-                mode="eval",
-                compute_values=False,
-            )
-            base_chunk = self.output_transform(
-                {"actions": outputs["actions"], "state": observation.state}
-            )["actions"]
-            base_chunks.append(base_chunk.to(device=z_rl.device, dtype=torch.float32))
-        ref_chunk = base_chunks[0]
+        ref_chunk = self.output_transform(
+            {"actions": outputs["actions"], "state": observation.state}
+        )["actions"]
         raw_proprio = self._select_configured_state(env_obs["states"])
         if (
             isinstance(self.config.config_name, str)
@@ -614,14 +606,11 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if not torch.is_tensor(proprio):
             proprio = torch.as_tensor(proprio)
 
-        rlt_obs = {
+        return {
             "z_rl": z_rl,
             "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
-            "ref_chunk": ref_chunk,
+            "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
         }
-        if num_base_candidates > 1:
-            rlt_obs["base_chunks"] = torch.stack(base_chunks, dim=1)
-        return rlt_obs
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""

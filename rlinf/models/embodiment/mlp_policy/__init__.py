@@ -35,7 +35,6 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             add_q_head=cfg.get("add_q_head", True),
             q_head_type=cfg.get("q_head_type", "default"),
             fixed_std=cfg.get("fixed_std", 0.002),
-            num_q_heads=cfg.get("num_q_heads", 2),
         )
     elif cfg.model_type == "rlt_td3_mlp_policy":
         model = RLTTD3MLPPolicy(
@@ -52,7 +51,6 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             mlp_num_hidden_layers=cfg.get("mlp_num_hidden_layers", 2),
             actor_noise_sigma=cfg.get("actor_noise_sigma", 0.1),
             ref_action_dropout=cfg.get("ref_action_dropout", 0.0),
-            num_q_heads=cfg.get("num_q_heads", 2),
         )
     elif iql_config is not None:
         model = IQLMLPPolicy(
@@ -62,7 +60,6 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             add_value_head=cfg.add_value_head,
             add_q_head=cfg.get("add_q_head", False),
             q_head_type=cfg.get("q_head_type", "default"),
-            num_q_heads=cfg.get("num_q_heads", 2),
         )
         model.configure_iql(iql_config)
     else:
@@ -73,7 +70,6 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             add_value_head=cfg.add_value_head,
             add_q_head=cfg.get("add_q_head", False),
             q_head_type=cfg.get("q_head_type", "default"),
-            num_q_heads=cfg.get("num_q_heads", 2),
         )
 
     return model

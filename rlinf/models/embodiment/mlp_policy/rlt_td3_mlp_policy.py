@@ -171,7 +171,6 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
         mlp_num_hidden_layers: int = 2,
         actor_noise_sigma: float = 0.1,
         ref_action_dropout: float = 0.0,
-        num_q_heads: int = 2,
     ) -> None:
         super().__init__()
         if not add_q_head:
@@ -180,11 +179,6 @@ class RLTTD3MLPPolicy(nn.Module, BasePolicy):
             raise ValueError(
                 "RLTTD3MLPPolicy only supports q_head_type='default', got "
                 f"{q_head_type!r}."
-            )
-        if int(num_q_heads) != 2:
-            raise ValueError(
-                "RLTTD3MLPPolicy uses a twin-Q critic and requires num_q_heads=2, "
-                f"got {num_q_heads}."
             )
 
         self.z_dim = int(z_dim)

@@ -263,7 +263,6 @@ rollout:
     mlp_num_hidden_layers: ${actor.model.mlp_num_hidden_layers}
     actor_noise_sigma: ${actor.model.actor_noise_sigma}
     ref_action_dropout: ${actor.model.ref_action_dropout}
-    num_q_heads: ${actor.model.num_q_heads}
     is_lora: False
     lora_rank: 32
 
@@ -347,7 +346,6 @@ actor:
     mlp_num_hidden_layers: 2
     actor_noise_sigma: 0.1
     ref_action_dropout: 0.0
-    num_q_heads: 2
     is_lora: False
     lora_rank: 32
 
@@ -374,6 +372,9 @@ actor:
     backward_prefetch: null
     use_orig_params: False
     use_liger_kernel: False
+    wrap_policy:
+      module_classes_to_wrap:
+        - TwinQCritic
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}

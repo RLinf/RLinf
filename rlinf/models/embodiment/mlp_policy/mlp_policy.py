@@ -35,14 +35,12 @@ class MLPPolicy(nn.Module, BasePolicy):
         q_head_type="default",
         value_granularity="action_level",
         critic_obs_dim=None,
-        num_q_heads=2,
     ):
         super().__init__()
         self.obs_dim = obs_dim
         self.critic_obs_dim = critic_obs_dim or obs_dim
         self.action_dim = action_dim
         self.num_action_chunks = num_action_chunks
-        self.num_q_heads = int(num_q_heads)
         self.torch_compile_enabled = False
         # default setting
         self.independent_std = True
@@ -73,7 +71,7 @@ class MLPPolicy(nn.Module, BasePolicy):
                 self.q_head = MultiQHead(
                     hidden_size=self.critic_obs_dim,
                     hidden_dims=[256, 256, 256],
-                    num_q_heads=self.num_q_heads,
+                    num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
                 )
@@ -81,7 +79,7 @@ class MLPPolicy(nn.Module, BasePolicy):
                 self.q_head = MultiCrossQHead(
                     hidden_size=self.critic_obs_dim,
                     hidden_dims=[256, 256, 256],
-                    num_q_heads=self.num_q_heads,
+                    num_q_heads=2,
                     output_dim=output_dim,
                     action_feature_dim=action_dim * self.num_action_chunks,
                 )
