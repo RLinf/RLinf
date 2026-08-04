@@ -218,8 +218,7 @@ Pi0 RoboTwin 使用对应的配置名：
 ------------------------
 
 可以使用 OpenPI checkpoint 转换器，将 SFT 训练得到的 checkpoint 转换为新格式的
-裸 ``Pi0`` 布局（即评估加载器所期望的布局）。当前转换模式名为
-``sft2rlinf_pytorch``：
+裸 ``Pi0`` 布局（即评估加载器所期望的布局）：
 
 .. code:: bash
 
@@ -243,12 +242,13 @@ Pi0 RoboTwin 使用对应的配置名：
        --reference-model   /path/to/pi0_base_pytorch_new
 
 ``sft2rlinf_pytorch`` 模式会剥离 wrapper/FSDP key 前缀，按 ``--config-name``
-选择 Pi0 或 Pi0.5 的模型形状，并原样复制归一化统计文件。RoboTwin 转换后的目录可
-直接填入 ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml`` 的
+选择 Pi0 或 Pi0.5 的模型形状，复制归一化统计文件，并按 ``--dtype {fp32,bf16}``
+写出浮点张量。RoboTwin 转换后的目录可直接填入
+``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml`` 的
 ``rollout.model.model_path``；评估配置中的 ``openpi_data.norm_stats_path`` 应指向同一
 任务的统计量。
 
-输出 dtype 由必填的 ``--dtype {fp32,bf16}`` 控制；其他转换模式与完整参数说明，
-请参见转换器包的 README
-（``rlinf/utils/ckpt_convertor/openpi/README.md``）。转换后的 checkpoint 即可用于在
-BEHAVIOR 或 RoboTwin 上评估。
+转换后的 checkpoint 可参照 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`
+或 :doc:`RoboTwin 评测指南 <../../evaluations/guides/robotwin>` 运行评估。其他转换模式
+与完整参数说明，请参见转换器包的 README
+（``rlinf/utils/ckpt_convertor/openpi/README.md``）。
