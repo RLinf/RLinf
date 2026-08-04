@@ -97,17 +97,18 @@ Rollout Worker 部署在不同集群或云区域时。
        enabled: true
        symmetric: true
        crossdc_pairs:
-         - src: ["Env:0", "Env:1"]
-           dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+         - src: ["Env:0-1"]
+           dst: ["Rollout:0-1", "Actor:0-1"]
            delay_ms: 50
        bandwidth_groups:
-         - members: ["Env:0", "Env:1"]
+         - members: ["Env:0-1"]
            bandwidth_mbps: 1000
-         - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+         - members: ["Rollout:0-1", "Actor:0-1"]
            bandwidth_mbps: 500
 
 端点名称使用 ``GroupName:Rank`` 格式——``Env:0`` 表示第一个 Env Worker，
-``Rollout:1`` 表示第二个 Rollout Worker。``Group`` 后缀会自动去除。
+``Rollout:1`` 表示第二个 Rollout Worker。支持闭区间 Rank 范围，例如
+``Env:0-3`` 会展开为 ``Env:0`` 到 ``Env:3``。``Group`` 后缀会自动去除。
 
 使用要求：
 

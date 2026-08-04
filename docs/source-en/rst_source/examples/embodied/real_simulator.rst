@@ -106,18 +106,19 @@ separate clusters or cloud regions.
        enabled: true
        symmetric: true
        crossdc_pairs:
-         - src: ["Env:0", "Env:1"]
-           dst: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+         - src: ["Env:0-1"]
+           dst: ["Rollout:0-1", "Actor:0-1"]
            delay_ms: 50
        bandwidth_groups:
-         - members: ["Env:0", "Env:1"]
+         - members: ["Env:0-1"]
            bandwidth_mbps: 1000
-         - members: ["Rollout:0", "Rollout:1", "Actor:0", "Actor:1"]
+         - members: ["Rollout:0-1", "Actor:0-1"]
            bandwidth_mbps: 500
 
 Endpoint names use the ``GroupName:Rank`` convention — ``Env:0`` for the
-first Env Worker, ``Rollout:1`` for the second Rollout Worker. The ``Group``
-suffix is stripped automatically.
+first Env Worker, ``Rollout:1`` for the second Rollout Worker. Inclusive rank
+ranges are supported, so ``Env:0-3`` expands to ``Env:0`` through ``Env:3``.
+The ``Group`` suffix is stripped automatically.
 
 Requirements:
 

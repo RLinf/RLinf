@@ -23,13 +23,13 @@ cluster:
     enabled: true
     symmetric: true
     crossdc_pairs:
-      - src: ["Env:0", "Env:1", "Env:2", "Env:3"]
-        dst: ["Rollout:0", "Rollout:1", "Rollout:2", "Rollout:3", "Actor:0", "Actor:1", "Actor:2", "Actor:3"]
+      - src: ["Env:0-3"]
+        dst: ["Rollout:0-3", "Actor:0-3"]
         delay_ms: 10
     bandwidth_groups:
-      - members: ["Env:0", "Env:1", "Env:2", "Env:3"]
+      - members: ["Env:0-3"]
         bandwidth_mbps: 1000
-      - members: ["Rollout:0", "Rollout:1", "Rollout:2", "Rollout:3", "Actor:0", "Actor:1", "Actor:2", "Actor:3"]
+      - members: ["Rollout:0-3", "Actor:0-3"]
         bandwidth_mbps: 1000
 
 

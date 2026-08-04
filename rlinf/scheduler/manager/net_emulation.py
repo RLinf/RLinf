@@ -24,6 +24,8 @@ from typing import Any
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.scheduler.cluster.utils import parse_rank_config
+
 from .manager import Manager
 
 # Rough per-tensor protocol overhead for shape, dtype, and size metadata.
@@ -92,7 +94,7 @@ class NetEmulationConfig:
                     )
         bandwidth_groups = tuple(
             BandwidthGroup(
-                members=tuple(str(member) for member in item["members"]),
+                members=cls._expand_endpoints(item["members"], field_name="members"),
                 bandwidth_mbps=float(item["bandwidth_mbps"]),
             )
             for item in cfg_dict.get("bandwidth_groups", [])
@@ -108,14 +110,18 @@ class NetEmulationConfig:
     def _expand_endpoints(
         value: str | list[Any] | tuple[Any, ...], field_name: str
     ) -> tuple[str, ...]:
-        if isinstance(value, str):
-            return (value,)
-        if isinstance(value, (list, tuple)):
-            endpoints = tuple(str(item) for item in value)
-            if endpoints:
-                return endpoints
+        values = (value,) if isinstance(value, str) else value
+        if isinstance(values, (list, tuple)) and values:
+            endpoints = []
+            for item in values:
+                group, ranks = str(item).split(":", 1)
+                endpoints.extend(
+                    f"{group}:{rank}"
+                    for rank in parse_rank_config(ranks, rank_type=field_name)
+                )
+            return tuple(endpoints)
         raise ValueError(
-            "net_emulation.crossdc_pairs entries must define a non-empty "
+            "net_emulation endpoint entries must define a non-empty "
             f"string or list for '{field_name}'"
         )
 

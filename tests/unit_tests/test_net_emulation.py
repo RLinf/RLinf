@@ -45,31 +45,31 @@ def test_net_emulation_config_parses_legacy_crossdc_pairs():
     )
 
 
-def test_net_emulation_config_expands_crossdc_pair_endpoint_lists():
-    cfg = OmegaConf.create(
-        {
-            "enabled": True,
-            "symmetric": True,
-            "crossdc_pairs": [
-                {
-                    "src": ["Env:0", "Env:1"],
-                    "dst": ["Actor:0", "Actor:1"],
-                    "delay_ms": 10,
-                },
-            ],
-            "bandwidth_groups": [],
-        }
+def test_net_emulation_config_endpoint_ranges_equal_explicit_lists():
+    def build_cfg(src, dst, members):
+        return OmegaConf.create(
+            {
+                "enabled": True,
+                "symmetric": True,
+                "crossdc_pairs": [
+                    {"src": src, "dst": dst, "delay_ms": 10},
+                ],
+                "bandwidth_groups": [
+                    {"members": members, "bandwidth_mbps": 1000},
+                ],
+            }
+        )
+
+    explicit_cfg = build_cfg(
+        ["Env:0", "Env:1"],
+        ["Actor:0", "Actor:1"],
+        ["Env:0", "Env:1", "Actor:0", "Actor:1"],
     )
+    range_cfg = build_cfg(["Env:0-1"], ["Actor:0-1"], ["Env:0-1", "Actor:0-1"])
 
-    net_cfg = NetEmulationConfig.from_cfg(cfg)
-
-    assert net_cfg is not None
-    assert [(pair.src, pair.dst, pair.delay_ms) for pair in net_cfg.crossdc_pairs] == [
-        ("Env:0", "Actor:0", 10.0),
-        ("Env:0", "Actor:1", 10.0),
-        ("Env:1", "Actor:0", 10.0),
-        ("Env:1", "Actor:1", 10.0),
-    ]
+    assert NetEmulationConfig.from_cfg(range_cfg) == NetEmulationConfig.from_cfg(
+        explicit_cfg
+    )
 
 
 @pytest.mark.parametrize("field_name", ["src", "dst"])
