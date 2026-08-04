@@ -112,6 +112,13 @@ SGLang Server 与 Router
    * - ``pipeline_parallel_size``
      - int
      - 单引擎 PP 大小。
+   * - ``server_type``
+     - str
+     - 选择 server 子进程走哪条 sglang 分派分支，默认 ``srt``：``srt`` = 语言模型
+       走 ``sglang.srt.entrypoints.http_server.launch_server``；``embodied`` = 具身
+       模型（VLA/diffusion）走 ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``。
+       两种都由同一个 ``SGLangServerWorker`` 类承载，``server_type`` 只决定子进程内
+       调哪条 sglang 入口。其它值会抛错。
    * - ``group_name``
      - str
      - sglang server worker group 的名字。
@@ -120,9 +127,14 @@ SGLang Server 与 Router
      - 设为 ``False`` 可跳过 server group（例如挂载已有的外部 server）。
    * - ``server``
      - dict
-     - **原样** 作为 ``sglang.srt.server_args.ServerArgs(**)`` 的关键字参数；
-       key 必须是 ``ServerArgs`` 合法字段名——参见 `sglang ServerArgs 参考
+     - **原样** 作为所选 sglang ``ServerArgs`` 的关键字参数：``srt`` 走
+       ``sglang.srt.server_args.ServerArgs(**)``，``embodied`` 走
+       ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``；
+       key 必须是对应 ``ServerArgs`` 的合法字段名——参见 `sglang ServerArgs 参考
        <https://docs.sglang.io/docs/advanced_features/server_arguments>`_。
+       例外：``server.num_gpus`` 还会被 launcher 读取用于计算每个 engine 的放置GPU数量
+       （每 engine 的gpu数量），因此它兼作 launcher/placement 参数，并非纯粹的
+       ``ServerArgs`` 透传项。
    * - ``router_group_name``
      - str
      - router worker 的 worker group 名字。
