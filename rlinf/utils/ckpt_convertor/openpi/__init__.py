@@ -14,10 +14,10 @@
 
 """Consolidated OpenPI 0.5 checkpoint convertors.
 
-Five layout convertors (``jax2rlinf_pytorch``,
-``openpi_pytorch2rlinf_pytorch``, ``sft2rlinf_pytorch``,
-``rlinf_pytorch2openpi_pytorch``, ``sft2deploy``) share one core.
-``sft2rlinf_pytorch`` reads its model architecture from the same OpenPI
+Five layout convertors (``jax_to_openpi_rlinf``,
+``openpi_pytorch_to_openpi_rlinf``, ``sft_to_openpi_rlinf``,
+``openpi_rlinf_to_openpi_pytorch``, ``sft2deploy``) share one core.
+``sft_to_openpi_rlinf`` reads its model architecture from the same OpenPI
 TrainConfig used by SFT and eval. See
 :mod:`rlinf.utils.ckpt_convertor.openpi.convert` for the unified ``--mode``
 dispatcher and the package README for per-mode layouts and examples.

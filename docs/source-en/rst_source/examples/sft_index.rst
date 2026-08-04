@@ -26,7 +26,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
-           <b>JAX-Aligned PyTorch OpenPI SFT</b>
+           <b>OpenPI_RLinf SFT</b>
          </a><br>
          Train Pi0 on RoboTwin, plus Pi0.5 on BEHAVIOR-1K
        </p>
@@ -61,6 +61,6 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
-   JAX-aligned PyTorch OpenPI <embodied/sft_openpi_pytorch>
+   OpenPI_RLinf <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
    VLM <embodied/sft_vlm>

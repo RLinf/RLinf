@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert an RLinf SFT checkpoint to the RLinf PyTorch layout.
+"""Convert an RLinf SFT checkpoint to the OpenPI_RLinf layout.
 
 The ``--config-name`` argument is the single source of truth for the target
 Pi0/Pi0.5 architecture. It is resolved through
@@ -72,7 +72,7 @@ _WEIGHTS_CANDIDATES = (
 
 
 @dataclasses.dataclass(frozen=True)
-class Sft2RLinfPytorchModelSpec:
+class SftToOpenPIRLinfModelSpec:
     """Architecture contract derived from one OpenPI TrainConfig."""
 
     config_name: str
@@ -99,7 +99,7 @@ def _model_attr(model_config: Any, name: str) -> Any:
         ) from exc
 
 
-def resolve_model_spec(config_name: str) -> Sft2RLinfPytorchModelSpec:
+def resolve_model_spec(config_name: str) -> SftToOpenPIRLinfModelSpec:
     """Resolve model shape and Pi0/Pi0.5 semantics from ``config_name``."""
     train_config = _get_openpi_train_config(config_name)
     model_config = train_config.model
@@ -131,7 +131,7 @@ def resolve_model_spec(config_name: str) -> Sft2RLinfPytorchModelSpec:
         required_keys = _REQUIRED_PI0_KEYS
         forbidden_keys = ("time_mlp_in.weight", "time_mlp_out.weight")
 
-    return Sft2RLinfPytorchModelSpec(
+    return SftToOpenPIRLinfModelSpec(
         config_name=config_name,
         pi05=pi05,
         config=config,
@@ -156,7 +156,7 @@ def _resolve_full_weights(ckpt: str | pathlib.Path) -> pathlib.Path:
 
 
 def _validate_state_dict(
-    state_dict: Mapping[str, torch.Tensor], spec: Sft2RLinfPytorchModelSpec
+    state_dict: Mapping[str, torch.Tensor], spec: SftToOpenPIRLinfModelSpec
 ) -> None:
     """Reject checkpoints whose architecture differs from the selected config."""
     missing = [key for key in spec.required_keys if key not in state_dict]
@@ -178,9 +178,9 @@ def _validate_state_dict(
 def _validate_against_reference(
     state_dict: Mapping[str, torch.Tensor],
     reference_model: str | pathlib.Path,
-    spec: Sft2RLinfPytorchModelSpec,
+    spec: SftToOpenPIRLinfModelSpec,
 ) -> None:
-    """Validate keys and tensor shapes against a matching RLinf PyTorch model."""
+    """Validate keys and tensor shapes against a matching OpenPI_RLinf model."""
     reference_path = resolve_model_safetensors(reference_model)
     if not reference_path.is_file():
         raise FileNotFoundError(
@@ -193,7 +193,7 @@ def _validate_against_reference(
     unexpected = sorted(actual_keys - reference_keys)
     if missing or unexpected:
         raise ValueError(
-            "SFT checkpoint keys do not match the RLinf PyTorch reference model for "
+            "SFT checkpoint keys do not match the OpenPI_RLinf reference model for "
             f"--config-name {spec.config_name!r}: "
             f"missing={missing[:8]}, unexpected={unexpected[:8]}"
         )
@@ -266,7 +266,7 @@ def add_arguments(parser) -> None:
     parser.add_argument(
         "--output-model",
         required=True,
-        help="output RLinf PyTorch checkpoint dir with config.json + model.safetensors",
+        help="output OpenPI_RLinf checkpoint dir with config.json + model.safetensors",
     )
     parser.add_argument("--output-norm-stats", required=True)
     parser.add_argument(
@@ -286,7 +286,7 @@ def add_arguments(parser) -> None:
     parser.add_argument(
         "--reference-model",
         default=None,
-        help="optional matching RLinf PyTorch model used to validate keys and shapes",
+        help="optional matching OpenPI_RLinf model used to validate keys and shapes",
     )
 
 

@@ -429,7 +429,7 @@ guide must first be converted from the ``openpi-jax`` format. See
 
 .. code-block:: text
 
-   rlinf/utils/ckpt_convertor/openpi/sft2rlinf_pytorch.py
+   rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
 
 Before deployment, convert the checkpoint produced by SFT into the deployment
 checkpoint format:

@@ -16,7 +16,7 @@
 
 This mode converts a consolidated RLinf SFT ``full_weights.pt`` checkpoint into
 the OpenPI PyTorch deploy ``full_weights.pt`` layout. It first strips the SFT
-wrapper prefixes to recover the RLinf PyTorch Pi0 checkpoint, converts it to the
+wrapper prefixes to recover the OpenPI_RLinf Pi0 checkpoint, converts it to the
 ``paligemma_with_expert.*`` layout with an OpenPI PyTorch reference model, then
 packs the resulting state dict as one deploy ``full_weights.pt``.
 
@@ -263,7 +263,7 @@ def convert_sft_to_deploy_pt(
     import torch
 
     from rlinf.utils.ckpt_convertor.openpi import (
-        rlinf_pytorch_to_openpi_pytorch as new2old,
+        openpi_rlinf_to_openpi_pytorch as new2old,
     )
     from rlinf.utils.ckpt_convertor.openpi._core import load_safetensors
 

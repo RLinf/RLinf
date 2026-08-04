@@ -43,7 +43,7 @@ _WRAPPER_PREFIXES = (
     "model.",
 )
 
-# The norm-stats asset tree the RLinf PyTorch eval loader expects.
+# The norm-stats asset tree the OpenPI_RLinf eval loader expects.
 NORM_STATS_SUBDIR = pathlib.Path("physical-intelligence") / "behavior"
 
 
@@ -136,7 +136,7 @@ def strip_wrapper_prefix(
 
     Removes any leading combination of the known wrapper/FSDP prefixes from each
     key. When ``cast_dtype`` is given, floating-point tensors are cast to it (the
-    RLinf PyTorch eval loader validates that every checkpoint tensor is bf16);
+    OpenPI_RLinf eval loader validates that every checkpoint tensor is bf16);
     integer/bool buffers are passed through. Two distinct source keys must never
     collapse to the same bare key, or a tensor would be silently dropped, so that
     raises instead.

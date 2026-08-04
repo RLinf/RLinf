@@ -1,4 +1,4 @@
-JAX-Aligned PyTorch OpenPI Supervised Fine-Tuning
+OpenPI_RLinf Supervised Fine-Tuning
 =================================================
 
 This page explains how to run **supervised fine-tuning (SFT)** of the
@@ -245,7 +245,7 @@ Use the OpenPI checkpoint converter to convert an SFT checkpoint to the bare
 .. code:: bash
 
    # Pi0.5 + BEHAVIOR-1K
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
        --config-name pi05_behavior \
        --dtype bf16 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
@@ -254,7 +254,7 @@ Use the OpenPI checkpoint converter to convert an SFT checkpoint to the bare
        --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
 
    # Pi0 + RoboTwin
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
        --config-name pi0_aloha_robotwin \
        --dtype fp32 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
@@ -263,7 +263,7 @@ Use the OpenPI checkpoint converter to convert an SFT checkpoint to the bare
        --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/adjust_bottle/norm_stats.json \
        --reference-model   /path/to/pi0_base_pytorch_new
 
-``sft2rlinf_pytorch`` strips wrapper/FSDP key prefixes, selects the Pi0 or
+``sft_to_openpi_rlinf`` strips wrapper/FSDP key prefixes, selects the Pi0 or
 Pi0.5 model shape using ``--config-name``, copies normalization statistics, and
 writes floating-point tensors using ``--dtype {fp32,bf16}``. For RoboTwin, the
 converted directory can be placed in ``rollout.model.model_path`` in

@@ -21,7 +21,7 @@ import pytest
 import torch
 
 from rlinf.utils.ckpt_convertor.openpi import convert as openpi_convert
-from rlinf.utils.ckpt_convertor.openpi import sft2rlinf_pytorch
+from rlinf.utils.ckpt_convertor.openpi import pt_to_safetensors
 from rlinf.utils.ckpt_convertor.openpi._core import load_safetensors
 
 
@@ -56,11 +56,11 @@ def _write_checkpoint(tmp_path, required_keys: tuple[str, ...]):
     return checkpoint_dir, input_norm_stats
 
 
-def test_sft2rlinf_pytorch_uses_robotwin_pi0_dataconfig_and_explicit_fp32(
+def test_sft_to_openpi_rlinf_uses_robotwin_pi0_dataconfig_and_explicit_fp32(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr(
-        sft2rlinf_pytorch,
+        pt_to_safetensors,
         "_get_openpi_train_config",
         lambda config_name: _train_config(
             pi05=False, action_horizon=50, max_token_len=48
@@ -81,7 +81,7 @@ def test_sft2rlinf_pytorch_uses_robotwin_pi0_dataconfig_and_explicit_fp32(
         output_model / "physical-intelligence" / "robotwin" / "norm_stats.json"
     )
 
-    sft2rlinf_pytorch.convert(
+    pt_to_safetensors.convert(
         checkpoint_dir.parent.parent,
         input_norm_stats,
         output_model,
@@ -108,11 +108,11 @@ def test_sft2rlinf_pytorch_uses_robotwin_pi0_dataconfig_and_explicit_fp32(
     assert output_norm_stats.read_text() == '{"state": {}}'
 
 
-def test_sft2rlinf_pytorch_uses_behavior_dataconfig_and_explicit_bf16(
+def test_sft_to_openpi_rlinf_uses_behavior_dataconfig_and_explicit_bf16(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr(
-        sft2rlinf_pytorch,
+        pt_to_safetensors,
         "_get_openpi_train_config",
         lambda config_name: _train_config(
             pi05=True, action_horizon=32, max_token_len=200
@@ -132,7 +132,7 @@ def test_sft2rlinf_pytorch_uses_behavior_dataconfig_and_explicit_bf16(
         output_model / "physical-intelligence" / "behavior" / "norm_stats.json"
     )
 
-    sft2rlinf_pytorch.convert(
+    pt_to_safetensors.convert(
         checkpoint_dir.parent.parent,
         input_norm_stats,
         output_model,
@@ -151,10 +151,10 @@ def test_sft2rlinf_pytorch_uses_behavior_dataconfig_and_explicit_bf16(
     assert config["dtype"] == "bfloat16"
 
 
-def test_sft2rlinf_pytorch_cli_requires_shared_config_name_and_dtype():
+def test_sft_to_openpi_rlinf_cli_requires_shared_config_name_and_dtype():
     args = openpi_convert.build_parser().parse_args(
         [
-            "sft2rlinf_pytorch",
+            "sft_to_openpi_rlinf",
             "--config-name",
             "pi0_aloha_robotwin",
             "--dtype",
@@ -171,14 +171,14 @@ def test_sft2rlinf_pytorch_cli_requires_shared_config_name_and_dtype():
     )
     assert args.config_name == "pi0_aloha_robotwin"
     assert args.dtype == "fp32"
-    assert args._run is sft2rlinf_pytorch.run
+    assert args._run is pt_to_safetensors.run
 
 
-def test_sft2rlinf_pytorch_cli_rejects_an_implicit_storage_dtype():
+def test_sft_to_openpi_rlinf_cli_rejects_an_implicit_storage_dtype():
     with pytest.raises(SystemExit):
         openpi_convert.build_parser().parse_args(
             [
-                "sft2rlinf_pytorch",
+                "sft_to_openpi_rlinf",
                 "--config-name",
                 "pi0_aloha_robotwin",
                 "--ckpt",

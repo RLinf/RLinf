@@ -1,4 +1,4 @@
-JAX 精度对齐的 PyTorch OpenPI 监督微调
+OpenPI_RLinf 监督微调
 ========================================
 
 本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI Pi0.5** 流匹配
@@ -225,7 +225,7 @@ Pi0 RoboTwin 使用对应的配置名：
 .. code:: bash
 
    # Pi0.5 + BEHAVIOR-1K
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
        --config-name pi05_behavior \
        --dtype bf16 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
@@ -234,7 +234,7 @@ Pi0 RoboTwin 使用对应的配置名：
        --output-norm-stats /path/to/pi05_sft_pytorch_new/physical-intelligence/behavior/norm_stats.json
 
    # Pi0 + RoboTwin
-   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+   python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
        --config-name pi0_aloha_robotwin \
        --dtype fp32 \
        --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
@@ -243,7 +243,7 @@ Pi0 RoboTwin 使用对应的配置名：
        --output-norm-stats /path/to/pi0_robotwin_sft_hf/physical-intelligence/robotwin/adjust_bottle/norm_stats.json \
        --reference-model   /path/to/pi0_base_pytorch_new
 
-``sft2rlinf_pytorch`` 模式会剥离 wrapper/FSDP key 前缀，按 ``--config-name``
+``sft_to_openpi_rlinf`` 模式会剥离 wrapper/FSDP key 前缀，按 ``--config-name``
 选择 Pi0 或 Pi0.5 的模型形状，复制归一化统计文件，并按 ``--dtype {fp32,bf16}``
 写出浮点张量。RoboTwin 转换后的目录可直接填入
 ``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml`` 的

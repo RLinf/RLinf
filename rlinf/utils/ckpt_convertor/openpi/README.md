@@ -9,12 +9,12 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax2rlinf_pytorch,openpi_pytorch2rlinf_pytorch,sft2rlinf_pytorch,rlinf_pytorch2openpi_pytorch,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
 
-- **RLinf PyTorch** — the bare `Pi0` layout this package loads: a directory with
+- **OpenPI_RLinf** — the bare `Pi0` layout this package loads: a directory with
   `model.safetensors` (keys like `img.*`, `llm.*`, `action_in_proj.*`) plus a
   `config.json`, and a norm-stats asset under
   `physical-intelligence/behavior/norm_stats.json`.
@@ -26,9 +26,9 @@ The norm-stats file is never modified: every mode copies the input
 
 ---
 
-## `jax2rlinf_pytorch`
+## `jax_to_openpi_rlinf`
 
-JAX Pi0/Pi05 orbax checkpoint -> RLinf PyTorch bare `Pi0` layout.
+JAX Pi0/Pi05 orbax checkpoint -> OpenPI_RLinf bare `Pi0` layout.
 
 - **Input**: a JAX checkpoint directory containing a `params/` subdir (orbax
   pytree). The `--input-norm-stats` path points at the matching
@@ -41,11 +41,11 @@ JAX Pi0/Pi05 orbax checkpoint -> RLinf PyTorch bare `Pi0` layout.
 - **Norm-stats**: input copied verbatim to the output path.
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax2rlinf_pytorch \
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi_rlinf \
     --input-model       /path/to/pi05_base \
     --input-norm-stats  /path/to/norm_stats.json \
-    --output-model      /path/to/pi05_base_rlinf_pytorch \
-    --output-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
+    --output-model      /path/to/pi05_base_openpi_rlinf \
+    --output-norm-stats /path/to/pi05_base_openpi_rlinf/physical-intelligence/behavior/norm_stats.json
 ```
 
 Optional shape flags: `--no-pi05`, `--action-dim`, `--action-horizon`,
@@ -53,9 +53,9 @@ Optional shape flags: `--no-pi05`, `--action-dim`, `--action-horizon`,
 
 ---
 
-## `openpi_pytorch2rlinf_pytorch`
+## `openpi_pytorch_to_openpi_rlinf`
 
-OpenPI PyTorch `paligemma_with_expert.*` checkpoint -> RLinf PyTorch bare `Pi0` layout.
+OpenPI PyTorch `paligemma_with_expert.*` checkpoint -> OpenPI_RLinf bare `Pi0` layout.
 
 - **Input**: `--input-model` is an OpenPI PyTorch checkpoint directory or a direct
   `model.safetensors` file.
@@ -68,18 +68,18 @@ OpenPI PyTorch `paligemma_with_expert.*` checkpoint -> RLinf PyTorch bare `Pi0` 
 - **Norm-stats**: input copied verbatim to the output path.
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_pytorch2rlinf_pytorch \
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_pytorch_to_openpi_rlinf \
     --input-model       /path/to/pi05_base_pytorch \
     --input-norm-stats  /path/to/norm_stats.json \
-    --output-model      /path/to/pi05_base_rlinf_pytorch \
-    --output-norm-stats /path/to/pi05_base_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
+    --output-model      /path/to/pi05_base_openpi_rlinf \
+    --output-norm-stats /path/to/pi05_base_openpi_rlinf/physical-intelligence/behavior/norm_stats.json
 ```
 
 ---
 
-## `sft2rlinf_pytorch`
+## `sft_to_openpi_rlinf`
 
-RLinf SFT-trained checkpoint -> RLinf PyTorch bare `Pi0` layout.
+RLinf SFT-trained checkpoint -> OpenPI_RLinf bare `Pi0` layout.
 
 - **Input**: `--ckpt` points at a saved SFT checkpoint — the `global_step_<N>`
   dir, its `actor/` subdir, the `model_state_dict/` dir, or the consolidated
@@ -100,7 +100,7 @@ RLinf SFT-trained checkpoint -> RLinf PyTorch bare `Pi0` layout.
   `fp32` to preserve a full-precision SFT checkpoint and choose `bf16` only when
   a smaller, lossy artifact is intended.
 - **Validation**: `--reference-model` optionally checks all keys and tensor
-  shapes against a matching RLinf PyTorch base model.
+  shapes against a matching OpenPI_RLinf base model.
 - **Norm-stats**: input copied verbatim to the output path.
 
 ### Behavior and RoboTwin precision
@@ -119,36 +119,36 @@ bf16 compute through its runtime `precision` setting.
 
 ```bash
 # BEHAVIOR Pi0.5, preserving SFT weights in fp32.
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
     --config-name       pi05_behavior \
     --dtype              fp32 \
     --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
     --input-norm-stats  /path/to/norm_stats.json \
-    --output-model      /path/to/pi05_sft_rlinf_pytorch \
-    --output-norm-stats /path/to/pi05_sft_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json
+    --output-model      /path/to/pi05_sft_openpi_rlinf \
+    --output-norm-stats /path/to/pi05_sft_openpi_rlinf/physical-intelligence/behavior/norm_stats.json
 ```
 
 ```bash
 # RoboTwin Pi0, preserving SFT weights in fp32.
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2rlinf_pytorch \
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
     --config-name       pi0_aloha_robotwin \
     --dtype              fp32 \
     --ckpt              /path/to/checkpoints/global_step_30000 \
     --input-norm-stats /path/to/robotwin/norm_stats.json \
-    --output-model      /path/to/pi0_robotwin_sft_rlinf_pytorch \
-    --output-norm-stats /path/to/pi0_robotwin_sft_rlinf_pytorch/physical-intelligence/robotwin/norm_stats.json \
-    --reference-model   /path/to/pi0_base_rlinf_pytorch
+    --output-model      /path/to/pi0_robotwin_sft_openpi_rlinf \
+    --output-norm-stats /path/to/pi0_robotwin_sft_openpi_rlinf/physical-intelligence/robotwin/norm_stats.json \
+    --reference-model   /path/to/pi0_base_openpi_rlinf
 ```
 
 ---
 
-## `rlinf_pytorch2openpi_pytorch`
+## `openpi_rlinf_to_openpi_pytorch`
 
-RLinf PyTorch bare `Pi0` layout -> OpenPI PyTorch `paligemma_with_expert.*` layout.
+OpenPI_RLinf bare `Pi0` layout -> OpenPI PyTorch `paligemma_with_expert.*` layout.
 
-RLinf PyTorch carries only PaliGemma's single 2048-wide shared embedder. OpenPI
+OpenPI_RLinf carries only PaliGemma's single 2048-wide shared embedder. OpenPI
 PyTorch additionally requires the separate 1024-wide action-expert head
-`paligemma_with_expert.gemma_expert.lm_head.weight`, which RLinf PyTorch does not
+`paligemma_with_expert.gemma_expert.lm_head.weight`, which OpenPI_RLinf does not
 carry and cannot be reconstructed. Therefore:
 
 - **`--reference-model` is mandatory in practice.** With it, the head is sourced
@@ -159,7 +159,7 @@ carry and cannot be reconstructed. Therefore:
   writing anything, rather than emit an incomplete OpenPI PyTorch checkpoint missing the
   action-expert head.
 
-- **Input**: `--input-model` is an RLinf PyTorch checkpoint dir, a `model.safetensors`,
+- **Input**: `--input-model` is an OpenPI_RLinf checkpoint dir, a `model.safetensors`,
   or a torch `model.pt`. `--reference-model` is an OpenPI PyTorch model dir.
 - **Output**: `<output-model>/model.safetensors` (+ `config.json` from the
   reference); norm-stats copied to `--output-norm-stats`.
@@ -167,9 +167,9 @@ carry and cannot be reconstructed. Therefore:
 - **Norm-stats**: input copied verbatim to the output path.
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode rlinf_pytorch2openpi_pytorch \
-    --input-model       /path/to/pi05_sft_rlinf_pytorch/model.safetensors \
-    --input-norm-stats  /path/to/pi05_sft_rlinf_pytorch/physical-intelligence/behavior/norm_stats.json \
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openpi_pytorch \
+    --input-model       /path/to/pi05_sft_openpi_rlinf/model.safetensors \
+    --input-norm-stats  /path/to/pi05_sft_openpi_rlinf/physical-intelligence/behavior/norm_stats.json \
     --output-model      /path/to/pi05_sft_openpi_pytorch \
     --output-norm-stats /path/to/pi05_sft_openpi_pytorch/physical-intelligence/behavior/norm_stats.json \
     --reference-model   /path/to/pi05_base_pytorch
@@ -187,7 +187,7 @@ This mode does not copy norm-stats or other assets.
 - **Output**: `--output` accepts a direct `.pt` path or a deploy directory. For a
   directory, the converter writes `actor/model_state_dict/full_weights.pt`.
 - **Reference model**: `--reference-model` is the OpenPI PyTorch model used to
-  supply the action-expert `lm_head`, which RLinf PyTorch cannot reconstruct.
+  supply the action-expert `lm_head`, which OpenPI_RLinf cannot reconstruct.
 - **Dtype reference**: `--dtype-reference` is an existing deploy
   `full_weights.pt` or its checkpoint directory. Its key set, shapes, and
   per-key dtypes define the output checkpoint.
