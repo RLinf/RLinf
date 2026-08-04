@@ -29,7 +29,7 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
     load_vlm_processor,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    HistoryVLMInputBuilder,
+    BufferedVLMInputBuilder,
     get_input_builder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
@@ -64,10 +64,10 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
 
         self.model_cfg = self.cfg.reward.model
         self.api_cfg = self.cfg.reward.get("api", {})
-        if self.model_cfg.get("model_type") != "history_vlm":
+        if self.model_cfg.get("model_type") != "buffered_vlm":
             raise ValueError(
                 "EmbodiedAPIRewardWorker currently supports only "
-                "reward.model.model_type='history_vlm'."
+                "reward.model.model_type='buffered_vlm'."
             )
 
         self.model_path = self.model_cfg.get("model_path")
@@ -97,7 +97,7 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
         self.model_name = str(
             self.api_cfg.get("model")
             or str(self.model_path).rstrip("/").split("/")[-1]
-            or "history_vlm_reward"
+            or "buffered_vlm_reward"
         )
         self.sampling_params = dict(
             OmegaConf.to_container(
@@ -109,14 +109,14 @@ class EmbodiedAPIRewardWorker(EmbodiedRewardWorker):
             self.model_path, self.model_cfg.get("subprocessor_kwargs", {})
         )
         self.input_builder = get_input_builder(
-            self.model_cfg.get("input_builder_name", "history_vlm_input_builder")
+            self.model_cfg.get("input_builder_name", "buffered_vlm_input_builder")
         )(
             **self.model_cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
-        assert isinstance(self.input_builder, HistoryVLMInputBuilder), (
-            "EmbodiedAPIRewardWorker only supports HistoryVLMInputBuilder."
+        assert isinstance(self.input_builder, BufferedVLMInputBuilder), (
+            "EmbodiedAPIRewardWorker only supports BufferedVLMInputBuilder."
         )
         self.reward_parser = get_reward_parser(
             self.model_cfg.get("reward_parser_name", "base_reward_parser")

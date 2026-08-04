@@ -69,7 +69,7 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
-def _parse_qwentrend_output(text: str) -> str | None:
+def _parse_vlm_trend_reward_output(text: str) -> str | None:
     valid_labels = {"positive", "negative", "unclear"}
     obj = _extract_json_object(text)
     if obj is not None:
@@ -81,8 +81,8 @@ def _parse_qwentrend_output(text: str) -> str | None:
     return matches[-1] if matches else None
 
 
-@register_reward_parser("qwentrend_reward_parser")
-class QwentrendRewardParser(BaseRewardParser):
+@register_reward_parser("vlm_trend_reward_parser")
+class VLMTrendRewardParser(BaseRewardParser):
     def __init__(
         self,
         positive_reward: float = 1.0,
@@ -107,7 +107,7 @@ class QwentrendRewardParser(BaseRewardParser):
         pos_count, neg_count, unclear_count, invalid_count = 0, 0, 0, 0
         invalid_examples: list[str] = []
         for output in outputs:
-            label = _parse_qwentrend_output(output)
+            label = _parse_vlm_trend_reward_output(output)
             if label == "positive":
                 rewards.append(self.positive_reward)
                 pos_count += 1
