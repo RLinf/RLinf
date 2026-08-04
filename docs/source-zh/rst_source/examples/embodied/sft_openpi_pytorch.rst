@@ -2,8 +2,7 @@ JAX 精度对齐的 PyTorch OpenPI 监督微调：BEHAVIOR 与 RoboTwin
 ================================================================
 
 本文档介绍如何在 RLinf 框架中，对自包含的 **PyTorch OpenPI** 流匹配
-（flow-matching）VLA 模型进行 **监督微调（SFT）**。目前维护的配方包括
-**Pi0.5 + BEHAVIOR-1K** 与 **Pi0 + RoboTwin**。模型在 RLinf 中以
+（flow-matching）VLA 模型进行 **监督微调（SFT）**。模型在 RLinf 中以
 ``model_type: openpi_pytorch`` 注册。SFT 通常作为进入强化学习前的第一阶段：
 模型先模仿高质量示范，后续强化学习才能在良好先验上继续优化。
 
@@ -26,11 +25,6 @@ PyTorch 实现并未与其 JAX 参考实现对齐，而此处的移植版本在�
 构建模型结构（构建阶段不读取 ``config.json``），并且开箱即用地适配 BEHAVIOR-1K。
 在 SFT 阶段，策略通过流匹配去噪目标，从 BEHAVIOR 示范中预测双臂 R1 Pro 机器人
 32 步、23 维的动作块（action chunk）。
-
-本 PR 在保留上述 Pi0.5 + BEHAVIOR-1K 配方的基础上，增加了 **Pi0 + RoboTwin**。
-该配方使用同一套 JAX 对齐的 ``openpi_pytorch`` 模型实现，但采用 RoboTwin 的
-ALOHA 观测、14 维动作和任务专属归一化统计。
-
 
 Pi0.5 + BEHAVIOR-1K
 ---------------------
