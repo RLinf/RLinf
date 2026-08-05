@@ -6,7 +6,7 @@ RLinf-VLA: A Unified and Efficient Framework for VLA+RL Training
    :height: 16px
    :class: inline-icon
 
-**论文：** `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ | **模型：** `RLinf-OpenVLA <https://huggingface.co/collections/RLinf/openvla>`__ | `RLinf-OpenVLAOFT <https://huggingface.co/collections/RLinf/openvla-oft>`__
+**论文：** `RSS 2026 <https://roboticsconference.org/program/papers/89/>`__ | `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__ | **模型：** `RLinf-OpenVLA <https://huggingface.co/collections/RLinf/openvla>`__ | `RLinf-OpenVLAOFT <https://huggingface.co/collections/RLinf/openvla-oft>`__
 
 概述
 ----
