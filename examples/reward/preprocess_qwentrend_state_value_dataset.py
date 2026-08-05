@@ -222,8 +222,11 @@ def infer_delta_thresholds(
 
     deltas: list[float] = []
     for pkl_path in tqdm(pkl_files, desc="Scanning value deltas", unit="episode"):
-        with open(pkl_path, "rb") as f:
-            episode = pickle.load(f)
+        try:
+            with open(pkl_path, "rb") as f:
+                episode = pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, OSError):
+            continue
         observations = episode.get("observations", [])
         if len(observations) < args.window_size:
             continue
@@ -325,8 +328,11 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
             for label in ("positive", "negative", "unclear")
         ):
             break
-        with open(pkl_path, "rb") as f:
-            episode = pickle.load(f)
+        try:
+            with open(pkl_path, "rb") as f:
+                episode = pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, OSError):
+            continue
         observations = episode.get("observations", [])
         if len(observations) < args.window_size:
             continue

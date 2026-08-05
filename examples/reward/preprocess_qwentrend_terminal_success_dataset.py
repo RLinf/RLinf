@@ -41,8 +41,13 @@ def _as_bool(value: Any) -> bool:
 
 def inspect_episode(path: Path, window_size: int) -> dict[str, Any] | None:
     """Read the metadata needed to sample one rollout episode."""
-    with path.open("rb") as stream:
-        episode = pickle.load(stream)
+    try:
+        with path.open("rb") as stream:
+            episode = pickle.load(stream)
+    except (EOFError, pickle.UnpicklingError, OSError) as error:
+        # Collection can leave truncated pickles if a worker is killed mid-write.
+        logger.warning("Skipping unreadable episode %s: %s", path, error)
+        return None
     observations = episode.get("observations", [])
     actions = episode.get("actions", [])
     if len(observations) < window_size or not actions:

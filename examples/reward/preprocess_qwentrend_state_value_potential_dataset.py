@@ -158,11 +158,15 @@ def _bucket_capacity(args: argparse.Namespace, split: str, sample_type: str) -> 
 
 def _cached_episode(
     source_path: str, source_cache: dict[str, dict[str, Any]]
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     episode = source_cache.get(source_path)
     if episode is None:
-        with open(source_path, "rb") as handle:
-            episode = pickle.load(handle)
+        try:
+            with open(source_path, "rb") as handle:
+                episode = pickle.load(handle)
+        except (EOFError, pickle.UnpicklingError, OSError) as error:
+            logger.warning("Skipping unreadable episode %s: %s", source_path, error)
+            return None
         source_cache.clear()
         source_cache[source_path] = episode
     return episode
@@ -202,6 +206,8 @@ def _write_sample(
     window_size: int,
 ) -> dict[str, Any] | None:
     episode = _cached_episode(candidate.source_path, source_cache)
+    if episode is None:
+        return None
     frames = _candidate_frames(candidate, episode.get("observations", []), window_size)
     if frames is None:
         return None
@@ -400,8 +406,13 @@ def _score_episodes_into_reservoirs(
     skipped: Counter[str] = Counter()
 
     for pkl_path in tqdm(pkl_files, desc="Scoring episodes", unit="episode"):
-        with open(pkl_path, "rb") as handle:
-            episode = pickle.load(handle)
+        try:
+            with open(pkl_path, "rb") as handle:
+                episode = pickle.load(handle)
+        except (EOFError, pickle.UnpicklingError, OSError) as error:
+            logger.warning("Skipping unreadable episode %s: %s", pkl_path, error)
+            skipped["unreadable_episode"] += 1
+            continue
         observations = episode.get("observations", [])
         if len(observations) < args.window_size * 2:
             skipped["short_episode"] += 1
