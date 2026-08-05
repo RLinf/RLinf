@@ -40,7 +40,7 @@
       :link: advanced-integrations/index
       :link-type: doc
 
-      添加 Megatron-Bridge、权重同步或奖励模型工作流。
+      添加 Megatron-Bridge 与权重同步工作流。
 
    .. grid-item-card:: SGLang 具身模型
       :link: sglang_embodied_model

@@ -159,6 +159,53 @@ def _worker(
                 env = OffScreenRenderEnv(**data)
                 env.seed(seed)
                 p.send(None)
+            elif cmd == "get_camera_meta":
+                # Compute camera intrinsics/extrinsics and depth near/far
+                # from the robosuite sim, which is only reachable inside the
+                # worker subprocess.  Returns picklable lists/floats so the
+                # driver can back-project pixels to world without GT poses.
+                from robosuite.utils import camera_utils
+
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 256))
+                w = int(data.get("width", 256))
+                K = camera_utils.get_camera_intrinsic_matrix(sim, cam, h, w)
+                E = camera_utils.get_camera_extrinsic_matrix(sim, cam)
+                extent = float(sim.model.stat.extent)
+                near = float(sim.model.vis.map.znear) * extent
+                far = float(sim.model.vis.map.zfar) * extent
+                p.send(
+                    {
+                        "camera_name": cam,
+                        "height": h,
+                        "width": w,
+                        "intrinsic_K": K.tolist(),
+                        "extrinsic_cam2world": E.tolist(),
+                        "depth_near": near,
+                        "depth_far": far,
+                    }
+                )
+            elif cmd == "render_camera":
+                rob = getattr(env, "env", env)
+                while hasattr(rob, "env"):
+                    rob = rob.env
+                sim = rob.sim
+                cam = data.get("camera_name", "agentview")
+                h = int(data.get("height", 1024))
+                w = int(data.get("width", 1024))
+                depth = bool(data.get("depth", False))
+                p.send(
+                    sim.render(
+                        width=w,
+                        height=h,
+                        camera_name=cam,
+                        depth=depth,
+                    )
+                )
             else:
                 p.close()
                 raise NotImplementedError
