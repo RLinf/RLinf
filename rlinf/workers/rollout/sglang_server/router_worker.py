@@ -27,7 +27,6 @@ from typing import Optional
 import ray.util
 import requests
 from omegaconf import DictConfig, OmegaConf
-from sglang_router.router_args import RouterArgs
 
 from rlinf.scheduler import Worker
 from rlinf.utils.http_client import no_proxy_env
@@ -49,7 +48,21 @@ _FIELD_NAME_TO_FLAG = {
     "server_key_path": "tls-key-path",
 }
 
-_VALID_ROUTER_FIELDS = {f.name for f in dataclasses.fields(RouterArgs)}
+_VALID_ROUTER_FIELDS: Optional[set[str]] = None  # lazily populated
+
+
+def _get_router_args():
+    """Lazily import and return ``sglang_router.router_args.RouterArgs``"""
+    from sglang_router.router_args import RouterArgs
+
+    return RouterArgs
+
+
+def _valid_router_fields() -> set[str]:
+    global _VALID_ROUTER_FIELDS
+    if _VALID_ROUTER_FIELDS is None:
+        _VALID_ROUTER_FIELDS = {f.name for f in dataclasses.fields(_get_router_args())}
+    return _VALID_ROUTER_FIELDS
 
 
 def _flag_for_field(field_name: str) -> str:
@@ -66,11 +79,11 @@ def _router_cfg_to_cli(router_cfg: dict) -> list[str]:
     is dropped. Unknown keys raise.
     """
     args: list[str] = []
+    valid = _valid_router_fields()
     for key, value in router_cfg.items():
-        if key not in _VALID_ROUTER_FIELDS:
+        if key not in valid:
             raise ValueError(
-                f"Unknown router config key {key!r}. Expected one of "
-                f"{sorted(_VALID_ROUTER_FIELDS)}."
+                f"Unknown router config key {key!r}. Expected one of {sorted(valid)}."
             )
         if key in _ROUTER_ARGS_NOT_ON_CLI:
             raise ValueError(

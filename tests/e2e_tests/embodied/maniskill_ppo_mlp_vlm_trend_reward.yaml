@@ -3,7 +3,6 @@ defaults:
   - env/maniskill_pick_cube@env.eval
   - model/mlp_policy@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
-  - hybrid_engines/sglang_router_server@router_server_args
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -21,27 +20,13 @@ cluster:
     env: 0-0
     rollout: 0-0
     reward: 0-0
-    reward_server: 0-1:0
-
-router_server_args:
-  model_path: ${reward.model.model_path}
-  tensor_parallel_size: 2
-  pipeline_parallel_size: 1
-  server:
-    trust_remote_code: true
-    enable_multimodal: true
-    dtype: bfloat16
-    disable_cuda_graph: true
-    attention_backend: triton
-    sampling_backend: pytorch
-    grammar_backend: none
 
 runner:
   task_type: embodied
   logger:
-    log_path: "/workspace/results/maniskill_ppo_mlp_qwentrend_sglang_reward"
+    log_path: "/workspace/results/maniskill_ppo_mlp_vlm_trend_reward"
     project_name: rlinf
-    experiment_name: "ci-test-sglang"
+    experiment_name: "ci-test"
     logger_backends: ["tensorboard"]
 
   max_epochs: 2
@@ -82,20 +67,6 @@ algorithm:
 
   gamma: 0.99
   gae_lambda: 0.9
-
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 0
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 data:
   rollout_batch_size: 32
 
@@ -248,33 +219,27 @@ actor:
 
 reward:
   use_reward_model: true
-  worker_type: api
   group_name: RewardGroup
   reward_mode: history_buffer
   history_reward_assign: true
-  reward_threshold: 0.5
   reward_weight: 1.0
   env_reward_weight: 0.0
-  api:
-    api_base: null
-    model: Qwen3-VL-4B-Instruct
-    sampling_params:
-      max_tokens: 16
-      temperature: 0.0
   model:
-    model_type: history_vlm
+    model_type: buffered_vlm
     model_path: "/workspace/dataset/Qwen3-VL-4B-Instruct"
+    lora_path: null
     gt_success_bonus: 20.0
     precision: bf16
-    input_builder_name: qwentrend_input_builder
+    input_builder_name: vlm_trend_reward_input_builder
     input_builder_params:
       default_task_description: "Pick up the red cube and place it on the green spot on the table."
-    reward_parser_name: qwentrend_reward_parser
+    reward_parser_name: vlm_trend_reward_parser
     reward_parser_params:
       positive_reward: 1.0
       negative_reward: -0.2
       unclear_reward: 0.0
       invalid_reward: 0.0
+    inference_mode: generate
     history_buffers:
       history_window:
         history_size: 5
@@ -286,9 +251,14 @@ reward:
         input_on_done: false
     interval_reward: 0.0
     enable_history_offload: true
+    infer_micro_batch_size: 64
     subprocessor_kwargs:
       video_processor:
         do_sample_frames: true
+    max_new_tokens: 16
+    do_sample: false
+    temperature: 0.0
+    use_chat_template: true
 
 critic:
   use_critic_model: false
