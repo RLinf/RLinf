@@ -226,6 +226,20 @@ class Scheduler(_Scheduler):
             self.batch_load_hf_weight(state_dict)
         state_dict = None
 
+        # set w2_input_scale to 1.0 (only used in sglang 0.4.6)
+        restore_model = self.tp_worker.worker.model_runner.model
+        for restore_layer in restore_model.model.layers:
+            restore_experts = getattr(restore_layer.mlp, "experts", None)
+            if restore_experts is not None:
+                for restore_scale_name in ("w2_input_scale", "w2_weight_scale"):
+                    restore_scale_param = getattr(
+                        restore_experts, restore_scale_name, None
+                    )
+                    if restore_scale_param is not None:
+                        restore_scale_param.fill_(1.0)
+
+        self.flush_cache()
+
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
             model = self.tp_worker.worker.model_runner.model
@@ -240,7 +254,6 @@ class Scheduler(_Scheduler):
                 )
             self.weight_norm_dict = None
 
-        self.flush_cache()
         return SyncHFWeightOutput()
 
     def run_task_method(self, obj: TaskMethodInput):

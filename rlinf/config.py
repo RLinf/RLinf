@@ -112,6 +112,8 @@ SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
+SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
+SupportedModel.KIMI_K2 = SupportedModel.register("kimi_k2", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
@@ -412,6 +414,35 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             hf_config, "moe_intermediate_size", None
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
+
+        # DeepSeek-V3 / Kimi K2 text backbone: MLA + MoE with shared expert.
+        if model_type in ("deepseek_v3", "kimi_k2"):
+            cfg.model.num_moe_experts = getattr(
+                hf_config, "n_routed_experts", cfg.model.num_moe_experts
+            )
+            cfg.model.num_experts = cfg.model.num_moe_experts
+            cfg.model.multi_latent_attention = True
+            for _mla_field in (
+                "q_lora_rank",
+                "kv_lora_rank",
+                "qk_nope_head_dim",
+                "qk_rope_head_dim",
+                "v_head_dim",
+            ):
+                _mla_v = getattr(hf_config, _mla_field, None)
+                if _mla_v is not None:
+                    cfg.model[_mla_field] = _mla_v
+            _moe_inter = getattr(hf_config, "moe_intermediate_size", 0) or 0
+            _n_shared = getattr(hf_config, "n_shared_experts", 1) or 1
+            cfg.model.moe_shared_expert_intermediate_size = (
+                _moe_inter * _n_shared or None
+            )
+            cfg.model.first_k_dense_replace = getattr(
+                hf_config, "first_k_dense_replace", 0
+            )
+            cfg.model.moe_router_topk_scaling_factor = getattr(
+                hf_config, "routed_scaling_factor", None
+            )
 
     return cfg
 

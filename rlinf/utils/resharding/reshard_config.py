@@ -19,7 +19,12 @@ from megatron.core.transformer import TransformerConfig
 
 from rlinf.utils.convertor.utils import get_mg2hf_convertor
 
-from .utils import get_pp_reshard_fn, get_tp_reshard_fn, get_tpe_reshard_fn
+from .utils import (
+    get_ep_reshard_fn,
+    get_pp_reshard_fn,
+    get_tp_reshard_fn,
+    get_tpe_reshard_fn,
+)
 
 
 @dataclass
@@ -62,6 +67,12 @@ class ReshardConfig:
     tpe_reshard_fn: Callable = None
     """Resharding function to use for resharding the model parallelism from expert_tensor_parallel_size to reshard_tpe_size."""
 
+    rollout_ep_size: int = 1
+    """Rollout expert-model-parallel size >1 means the rollout engine shards MoE experts across its TP ranks via EP"""
+
+    ep_reshard_fn: Callable = None
+    """Resharding function to use for resharding the model parallelism from expert_parallel_size to reshard_ep_size."""
+
     def __post_init__(self):
         if self.model_config.tensor_model_parallel_size < self.reshard_tp_size:
             raise ValueError(
@@ -91,3 +102,12 @@ class ReshardConfig:
             and self.tpe_reshard_fn is None
         ):
             self.tpe_reshard_fn = get_tpe_reshard_fn(self.model_type)
+
+        # ep_reshard_fn only used when rollout shards experts via EP
+        # otherwise tpe_reshard_fn (TP-slice) is used.
+        if (
+            self.model_config.num_moe_experts is not None
+            and self.rollout_ep_size > 1
+            and self.ep_reshard_fn is None
+        ):
+            self.ep_reshard_fn = get_ep_reshard_fn(self.model_type)
