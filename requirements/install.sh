@@ -1642,13 +1642,13 @@ EOF
 install_molmoact2_model() {
     # MolmoAct2's upstream LeRobot extra requires Python 3.12.
     PYTHON_VERSION="3.12"
+    local molmoact2_constraints="$SCRIPT_DIR/embodied/models/molmoact2.txt"
 
     case "$ENV_NAME" in
         maniskill_libero|libero)
             create_and_sync_venv
-            install_common_embodied_deps
-            uv pip install "numba==0.65.1" "llvmlite==0.47.0"
-            install_${ENV_NAME}_env
+            UV_CONSTRAINT="$molmoact2_constraints" install_common_embodied_deps
+            UV_CONSTRAINT="$molmoact2_constraints" install_${ENV_NAME}_env
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for MolmoAct2 model." >&2
