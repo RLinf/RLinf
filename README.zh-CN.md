@@ -29,6 +29,8 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/07] 🔥 RLinf 支持 RTC，覆盖仿真（LIBERO）和真机（Franka）场景。文档：[RTC](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rtc.html)。
+- [2026/07] 🔥 RLinf 支持在 LIBERO 模拟器上对 Evo-1 进行全参数 SFT 和 GRPO 微调。文档：[Evo-1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html)。
 - [2026/07] 🔥 RLinf 使用 PyTorch 重新实现了 π₀ 和 π₀.₅，数值表现与 JAX 参考实现对齐。文档：[PyTorch OpenPI](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_pytorch.html)。
 - [2026/07] 🔥 RLinf 支持 OPD，用于在 LIBERO 上对 OpenVLA-OFT 进行在线策略蒸馏。文档：[OPD](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/opd.html)。
 - [2026/07] 🎉 RLinf v0.3 发布，主要升级：真机 RL 全流程（数据采集 → SFT → RL → 部署）、更多模拟器与 SOTA 模型、系统级优化。发布说明：[RLinf v0.3](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/release_v0.3.html)。
@@ -134,6 +136,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/calvin.html">CALVIN</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robocasa.html">RoboCasa</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/robocasa365.html">RoboCasa365</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/frankasim.html">Franka-Sim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/embodichain.html">EmbodiChain</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/genesis.html">Genesis</a> ✅</li>
@@ -148,12 +151,13 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅（OpenPI-PyTorch）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_pytorch.html">π₀ / π₀.₅（RLinf-PyTorch）</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>
@@ -176,6 +180,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
           <li><b>奖励模型</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
           </ul>
           <li><b>世界动作模型</b></li>
           <ul>
@@ -187,7 +192,6 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL 算法</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
@@ -198,6 +202,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/rlpd.html">RLPD</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>

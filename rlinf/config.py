@@ -981,9 +981,9 @@ def validate_embodied_cfg(cfg):
         )
         reward_model_cfg = cfg.reward.get("model", {})
         if reward_worker_type == "api":
-            assert reward_model_cfg.get("model_type") == "history_vlm", (
+            assert reward_model_cfg.get("model_type") == "buffered_vlm", (
                 "reward.worker_type='api' currently requires "
-                "reward.model.model_type='history_vlm'."
+                "reward.model.model_type='buffered_vlm'."
             )
             api_cfg = cfg.reward.get("api", {})
             api_base = str(api_cfg.get("api_base") or "").strip()
