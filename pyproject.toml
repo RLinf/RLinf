@@ -32,7 +32,8 @@ dependencies = [
     # These are the dependencies of the core scheduler
     "ray[default]>=2.47.0",
     "torch>=2.5.0",
-    "hydra-core",
+    # dev8 rejects our version_base="1.1"; prerelease bound keeps agentic's dev1 pin valid
+    "hydra-core<1.4.0.dev8",
     "numpy",
 
     # Data processing
