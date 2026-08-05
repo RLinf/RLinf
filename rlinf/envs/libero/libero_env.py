@@ -743,6 +743,39 @@ class LiberoEnv(gym.Env):
         infos = {}
         return obs, infos
 
+    def get_camera_meta(
+        self, camera_name: str = "agentview", height: int = 256, width: int = 256
+    ) -> dict:
+        """Fetch camera intrinsics/extrinsics and depth planes.
+
+        Returns camera calibration from worker 0's robosuite sim: intrinsic
+        matrix, cam-to-world transform, and depth near/far.  The agentview
+        camera is fixed in the world, so this is constant per episode.
+        """
+        return self.env.workers[0].get_camera_meta(
+            camera_name=camera_name, height=height, width=width
+        )
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Render an arbitrary camera at the requested resolution.
+
+        Returns:
+            The rendered RGB image, or a ``(rgb, depth)`` tuple when
+            *depth* is True.
+        """
+        return self.env.workers[0].render_camera(
+            camera_name=camera_name,
+            height=height,
+            width=width,
+            depth=depth,
+        )
+
     def step(self, actions=None, auto_reset=True):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
