@@ -31,17 +31,6 @@ class RLTTD3LossMixin(RLTACLossMixin):
             obs=next_obs,
         )
 
-    @staticmethod
-    def _chunk_delta_loss(
-        pred_chunk: torch.Tensor,
-        target_chunk: torch.Tensor,
-    ) -> torch.Tensor:
-        if pred_chunk.shape[1] <= 1:
-            return torch.zeros((), device=pred_chunk.device, dtype=pred_chunk.dtype)
-        pred_delta = pred_chunk[:, 1:, :] - pred_chunk[:, :-1, :]
-        target_delta = target_chunk[:, 1:, :] - target_chunk[:, :-1, :]
-        return torch.nn.functional.mse_loss(pred_delta, target_delta)
-
     def _human_mask(
         self,
         intervene_flags: torch.Tensor | None,
@@ -69,7 +58,7 @@ class RLTTD3LossMixin(RLTACLossMixin):
         actions: torch.Tensor,
         ref_chunk: torch.Tensor,
         intervene_flags: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         chunk_len, action_dim = self._chunk_shape()
         pi_chunk = self._flatten_chunk(pi).reshape(-1, chunk_len, action_dim)
         action_chunk = self._flatten_chunk(actions).reshape(-1, chunk_len, action_dim)
@@ -85,7 +74,6 @@ class RLTTD3LossMixin(RLTACLossMixin):
         bc_target = torch.where(human_mask[..., None], action_chunk, ref_chunk)
         bc_error = torch.mean(torch.square(pi_chunk - bc_target), dim=-1)
         bc_loss = torch.mean(bc_error)
-        delta_loss = self._chunk_delta_loss(pi_chunk, bc_target)
 
         policy_mask = ~human_mask
         ref_error = torch.mean(torch.square(pi_chunk - ref_chunk), dim=-1)
@@ -102,11 +90,10 @@ class RLTTD3LossMixin(RLTACLossMixin):
             "bc_loss": bc_loss.detach().item(),
             "bc_ref_loss": bc_ref.detach().item(),
             "bc_human_loss": bc_human.detach().item(),
-            "delta_loss": delta_loss.detach().item(),
             "human_mask_ratio": human_ratio,
             "policy_mask_ratio": 1.0 - human_ratio,
         }
-        return bc_loss, delta_loss, metrics
+        return bc_loss, metrics
 
     def _td3_actor_q(self, all_q_values: torch.Tensor) -> torch.Tensor:
         actor_agg_q = self.cfg.algorithm.get("actor_agg_q", "min")
@@ -126,10 +113,7 @@ class RLTTD3LossMixin(RLTACLossMixin):
 
         curr_obs = batch["curr_obs"]
         reference_dropout_prob = float(
-            self.cfg.actor.model.get(
-                "ref_action_dropout",
-                self.cfg.algorithm.get("reference_dropout_prob", 0.0),
-            )
+            self.cfg.algorithm.get("reference_dropout_prob", 0.0)
         )
         pi, log_pi, _ = self.model(
             forward_type=ForwardType.SAC,
@@ -164,7 +148,7 @@ class RLTTD3LossMixin(RLTACLossMixin):
         metrics["q_pi"] = qf_pi.mean().item()
 
         ref_chunk = self._ref_chunk(curr_obs)
-        bc_loss, delta_loss, td3_metrics = self._td3_bc_metrics(
+        bc_loss, td3_metrics = self._td3_bc_metrics(
             pi=pi,
             actions=batch["actions"],
             ref_chunk=ref_chunk,
@@ -173,17 +157,10 @@ class RLTTD3LossMixin(RLTACLossMixin):
         metrics.update(td3_metrics)
 
         bc_weight, q_weight, weight_metrics = self._actor_objective_weights()
-        delta_weight = float(self.cfg.algorithm.get("delta_weight", 0.0))
-        actor_loss = (
-            -q_weight * qf_pi.mean()
-            + bc_weight * bc_loss
-            + delta_weight * delta_loss
-        )
+        actor_loss = -q_weight * qf_pi.mean() + bc_weight * bc_loss
         metrics.update(weight_metrics)
-        metrics["delta_weight"] = delta_weight
         metrics["weighted_q"] = (q_weight * qf_pi.mean()).detach().item()
         metrics["weighted_bc"] = (bc_weight * bc_loss).detach().item()
-        metrics["weighted_delta"] = (delta_weight * delta_loss).detach().item()
         metrics["action_ref_abs_mean"] = (
             (self._flatten_chunk(pi) - self._flatten_chunk(ref_chunk))
             .abs()

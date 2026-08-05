@@ -1,3 +1,10 @@
+defaults:
+  - env/maniskill_rlt@env.train
+  - env/maniskill_rlt@env.eval
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
 hydra:
   run:
     dir: .
@@ -52,10 +59,9 @@ algorithm:
   gamma: 0.99
   tau: 0.005
 
-  # TD3 actor objective: -q_weight * Q + bc_weight * BC + delta_weight * delta.
+  # TD3 actor objective: -q_weight * Q + bc_weight * BC.
   q_weight: 1.0
   bc_weight: 1.0
-  delta_weight: 0.0
   actor_update_action_noise: True
   reference_dropout_prob: 0.5
   # Schedule for the BC/Q weights in the actor objective. Disable it to use
@@ -95,15 +101,11 @@ algorithm:
 env:
   group_name: "EnvGroup"
   train:
-    env_type: maniskill_rlt
     rollout_epoch: 1
     total_num_envs: 64
     seed: 2026
-    group_size: 1
-    use_full_state: False
     auto_reset: False
     ignore_terminations: False
-    use_rel_reward: False
     use_fixed_reset_state_ids: False
     wrap_obs_mode: rlt_openpi_joint
     reward_mode: only_success
@@ -141,13 +143,6 @@ env:
           min_score_progress: 0.002
           progress_yz_weight: 1.0
           fallback_hole_radius: 0.03
-    video_cfg:
-      save_video: False
-      info_on_video: True
-      fps: 10
-      record_every: 1
-      video_base_dir: ${runner.logger.log_path}/video/train
-    enable_offload: False
     max_episode_steps: 500
     max_steps_per_rollout_epoch: 500
     action_dim: 8
@@ -155,30 +150,22 @@ env:
     ref_num_action_chunks: 10
     init_params:
       id: "PegInsertionSideWideClearance-v1"
-      num_envs: null
       obs_mode: "rgb"
       control_mode: "pd_joint_delta_pos"
-      sim_backend: "gpu"
       reward_mode: "sparse"
       sim_config:
         sim_freq: 100
         control_freq: 10
-      max_episode_steps: 500
       sensor_configs:
-        shader_pack: "default"
         width: 384
         height: 384
-      render_mode: all
   eval:
-    env_type: maniskill_rlt
     rollout_epoch: 1
     total_num_envs: 256
     seed: 2026
     group_size: 1
-    use_full_state: False
     auto_reset: False
     ignore_terminations: False
-    use_rel_reward: False
     use_fixed_reset_state_ids: True
     wrap_obs_mode: rlt_openpi_joint
     reward_mode: only_success
@@ -217,27 +204,20 @@ env:
     ref_num_action_chunks: 10
     video_cfg:
       save_video: False
-      info_on_video: True
       fps: 10
       record_every: 1
       video_base_dir: ${runner.logger.log_path}/video/eval
-    enable_offload: False
     init_params:
       id: "PegInsertionSideWideClearance-v1"
-      num_envs: null
       obs_mode: "rgb"
       control_mode: "pd_joint_delta_pos"
-      sim_backend: "gpu"
       reward_mode: "sparse"
       sim_config:
         sim_freq: 100
         control_freq: 10
-      max_episode_steps: 500
       sensor_configs:
-        shader_pack: "default"
         width: 384
         height: 384
-      render_mode: all
 
 rollout:
   group_name: "RolloutGroup"
@@ -262,7 +242,6 @@ rollout:
     mlp_hidden_dim: ${actor.model.mlp_hidden_dim}
     mlp_num_hidden_layers: ${actor.model.mlp_num_hidden_layers}
     actor_noise_sigma: ${actor.model.actor_noise_sigma}
-    ref_action_dropout: ${actor.model.ref_action_dropout}
     is_lora: False
     lora_rank: 32
 
@@ -362,7 +341,6 @@ actor:
     mlp_hidden_dim: 256
     mlp_num_hidden_layers: 2
     actor_noise_sigma: 0.1
-    ref_action_dropout: 0.0
     is_lora: False
     lora_rank: 32
 
@@ -379,16 +357,6 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
-    gradient_checkpointing: False
-    cpu_offload: False
-    offload_pin_memory: False
-    reshard_after_forward: True
-    enable_gradient_accumulation: True
-    forward_prefetch: False
-    limit_all_gathers: False
-    backward_prefetch: null
-    use_orig_params: False
-    use_liger_kernel: False
     wrap_policy:
       module_classes_to_wrap:
         - TwinQCritic
@@ -396,22 +364,6 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
-    amp_autocast:
-      enabled: False
-      precision: "bf16"
-    grad_scaler:
-      enabled: False
-
-weight_syncer:
-  type: patch
-  patch:
-    snapshot_device: cpu
-    delta_encoding: True
-    compression: none
-    init_sync:
-      enabled: True
-      prefixes: null
-      bucket_size: 134217728
 
 reward:
   use_reward_model: False
