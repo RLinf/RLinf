@@ -30,6 +30,9 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/08] 🎉 Two papers accepted to **OSDI 2026**: [RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) and [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing). DynaRL dynamically reallocates compute, memory, and communication across heterogeneous RL components to improve end-to-end training throughput. Doc: [DynaRL](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/dynarl.html).
+- [2026/08] 🎉 Two papers accepted to **RSS 2026**: [RLinf-VLA](https://roboticsconference.org/program/papers/89/) and [RLinf-USER](https://roboticsconference.org/program/papers/37/). RLinf-VLA is a unified and efficient framework for scalable RL training of VLA models across diverse architectures, algorithms, and simulators. Doc: [RLinf-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_vla.html). RLinf-USER is a unified and extensible system for real-world online policy learning that treats robots as first-class resources alongside GPUs. Doc: [RLinf-USER](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_user.html).
+- [2026/08] 🎉 One paper accepted to **NSDI 2027**: [FUSCO](https://arxiv.org/abs/2512.22036). FUSCO accelerates MoE All-to-All communication by fusing data transformation and communication for high-performance distributed data shuffling. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html).
 - [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rtc.html).
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [PyTorch OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html).
@@ -379,14 +382,36 @@ We welcome contributions to RLinf. Please read [contribution guide](https://gith
 If you find **RLinf** helpful, please cite the paper:
 
 ```bibtex
-@article{yu2025rlinf,
-  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation},
-  author={Yu, Chao and Wang, Yuanqing and Guo, Zhen and Lin, Hao and Xu, Si and Zang, Hongzhi and Zhang, Quanlu and Wu, Yongji and Zhu, Chunyang and Hu, Junhao and others},
-  journal={arXiv preprint arXiv:2509.15965},
-  year={2025}
+@inproceedings{yu2026rlinf,
+  author = {Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Jiakun Du and Xiangyuan Wang and Xu Fu and Letong Shi and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
+  title = {{RLinf}: Flexible and Efficient {Large-Scale} Reinforcement Learning via {Macro-to-Micro} Flow Transformation},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {829--846},
+  url = {https://www.usenix.org/conference/osdi26/presentation/yu-chao},
+  publisher = {USENIX Association},
+  month = jul
 }
 ```
 
+If you use dynamic scheduling in RLinf, please also cite **DynaRL**:
+
+```bibtex
+@inproceedings{wang2026dynarl,
+  author = {Yuanqing Wang and Hao Lin and Junhao Hu and Chunyang Zhu and Quanlu Zhang and Zhen Guo and Yuchen Zhang and Xu Fu and Si Xu and Bo Dai and Zixiao Huang and Chao Yu and Boxun Li and Guohao Dai and Zhi Yang and Yu Wang},
+  title = {{DynaRL}: Flexible and Dynamic Scheduling of {Large-Scale} Reinforcement Learning Training},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {847--862},
+  url = {https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing},
+  publisher = {USENIX Association},
+  month = jul
+}
+```
 If you use RL+VLA in RLinf, you can also cite our technical report and empirical study paper:
 
 ```bibtex
@@ -457,7 +482,17 @@ If you use WideSeek-R1 in RLinf, you can cite our paper:
   journal={arXiv preprint arXiv:2602.04634},
   year={2026},
 }
-```   
+```
+
+If you use FUSCO for MoE communication in RLinf, you can cite our paper:
+```bibtex
+@article{zhu2025fusco,
+  title={FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion},
+  author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
+  journal={arXiv preprint arXiv:2512.22036},
+  year={2025}
+}
+```
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
