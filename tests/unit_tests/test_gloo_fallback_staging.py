@@ -104,21 +104,27 @@ def new_recv_buffer(tensor: torch.Tensor) -> torch.Tensor:
     return torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
 
 
-@pytest.mark.parametrize("layout", ["contiguous", "transposed"])
-def test_empty_like_recv_buffer_scrambles(layout):
-    """Show why the recv sites allocate with ``empty`` rather than ``empty_like``."""
-    src, dst = make_tensors(layout)
+def test_empty_like_recv_buffer_scrambles():
+    """Show why the recv sites allocate with ``empty`` rather than ``empty_like``.
+
+    Whether ``empty_like`` preserves the source strides is backend dependent:
+    it does on CUDA and does not on Ascend, which is itself why the call sites
+    must not depend on it. Skip where the buffer already comes back contiguous,
+    since there is then no corruption to demonstrate.
+    """
+    src, dst = make_tensors("transposed")
+    bad_buffer = torch.empty_like(dst, device="cpu")
+    if bad_buffer.is_contiguous():
+        pytest.skip("empty_like already yields a contiguous host buffer here")
+
     pg = object.__new__(MultiChannelProcessGroup)
     pg._no_accel_ccl = True
-
     staged = MultiChannelProcessGroup._stage_to_pinned_cpu(src)
-    bad_buffer = torch.empty_like(dst, device="cpu")
     fake_gloo_transfer(staged, bad_buffer)
     pg._copy_to_accel_tensor(CollectiveGroup.ACCEL, dst, bad_buffer)
     Worker.torch_platform.synchronize()
 
-    # A contiguous destination is unaffected; a strided one comes back wrong.
-    assert torch.equal(dst, src) == (layout == "contiguous")
+    assert not torch.equal(dst, src)
 
 
 @pytest.mark.parametrize("layout", ["contiguous", "transposed"])
