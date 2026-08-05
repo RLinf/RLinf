@@ -29,6 +29,9 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/08] 🎉 两篇论文被 **OSDI 2026** 接收：[RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) 与 [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing)。DynaRL 在异构 RL 组件之间动态重分配计算、内存与通信资源，提升端到端训练吞吐。文档：[DynaRL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/dynarl.html)。
+- [2026/08] 🎉 两篇论文被 **RSS 2026** 接收：[RLinf-VLA](https://roboticsconference.org/program/papers/89/) 与 [RLinf-USER](https://roboticsconference.org/program/papers/37/)。RLinf-VLA 是面向 VLA 模型的统一高效强化学习训练框架，可对接多样架构、算法与仿真器。文档：[RLinf-VLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_vla.html)。RLinf-USER 是面向真机在线策略学习的统一可扩展系统，将机器人与 GPU 一并作为一等硬件资源管理。文档：[RLinf-USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
+- [2026/08] 🎉 一篇论文被 **NSDI 2027** 接收：[FUSCO](https://arxiv.org/abs/2512.22036)。FUSCO 通过融合数据变换与通信加速 MoE All-to-All，实现高性能分布式数据 shuffle。文档：[FUSCO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/system/fusco.html)。
 - [2026/07] 🔥 RLinf 支持 RTC，覆盖仿真（LIBERO）和真机（Franka）场景。文档：[RTC](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/rtc.html)。
 - [2026/07] 🔥 RLinf 支持在 LIBERO 模拟器上对 Evo-1 进行全参数 SFT 和 GRPO 微调。文档：[Evo-1](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html)。
 - [2026/07] 🔥 RLinf 使用 PyTorch 重新实现了 π₀ 和 π₀.₅，数值表现与 JAX 参考实现对齐。文档：[PyTorch OpenPI](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sft_openpi_pytorch.html)。
@@ -379,14 +382,36 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 如果您觉得 **RLinf** 对您的研究或工作有所帮助，请引用以下论文：
 
 ```bibtex
-@article{yu2025rlinf,
-  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation},
-  author={Yu, Chao and Wang, Yuanqing and Guo, Zhen and Lin, Hao and Xu, Si and Zang, Hongzhi and Zhang, Quanlu and Wu, Yongji and Zhu, Chunyang and Hu, Junhao and others},
-  journal={arXiv preprint arXiv:2509.15965},
-  year={2025}
+@inproceedings{yu2026rlinf,
+  author = {Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Jiakun Du and Xiangyuan Wang and Xu Fu and Letong Shi and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
+  title = {{RLinf}: Flexible and Efficient {Large-Scale} Reinforcement Learning via {Macro-to-Micro} Flow Transformation},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {829--846},
+  url = {https://www.usenix.org/conference/osdi26/presentation/yu-chao},
+  publisher = {USENIX Association},
+  month = jul
 }
 ```
 
+如果您使用了 RLinf 的动态调度功能，也请引用 **DynaRL**：
+
+```bibtex
+@inproceedings{wang2026dynarl,
+  author = {Yuanqing Wang and Hao Lin and Junhao Hu and Chunyang Zhu and Quanlu Zhang and Zhen Guo and Yuchen Zhang and Xu Fu and Si Xu and Bo Dai and Zixiao Huang and Chao Yu and Boxun Li and Guohao Dai and Zhi Yang and Yu Wang},
+  title = {{DynaRL}: Flexible and Dynamic Scheduling of {Large-Scale} Reinforcement Learning Training},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {847--862},
+  url = {https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing},
+  publisher = {USENIX Association},
+  month = jul
+}
+```
 如果你在 RLinf 中使用了 RL+VLA，欢迎引用我们的算法技术报告和实证研究论文：
 
 ```bibtex
@@ -426,7 +451,6 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
   url={https://arxiv.org/abs/2602.07837}, 
 }
 ```
-
 如果您在 RLinf 中使用了 World Model + VLA + RL，欢迎引用我们的文章：
 ```bibtex
 @article{jiang2026wovr,
@@ -457,7 +481,17 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
   journal={arXiv preprint arXiv:2602.04634},
   year={2026},
 }
-```  
+```
+
+如果您在 RLinf 中使用了 FUSCO 加速 MoE 通信，欢迎引用我们的文章：
+```bibtex
+@article{zhu2025fusco,
+  title={FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion},
+  author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
+  journal={arXiv preprint arXiv:2512.22036},
+  year={2025}
+}
+```
 
 **致谢**
 RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
