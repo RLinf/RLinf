@@ -44,11 +44,11 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_openpi_pytorch_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
-        if model_type == SupportedModel.OPENPI:
-            return self._build_official_openpi_dataloader(data_paths)
-        elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA
-        ]:
+        elif model_type == SupportedModel.OPENPI:
+            return self._build_official_openpi_dataloader(
+                data_paths, eval_dataset=eval_dataset
+            )
+        elif model_type == SupportedModel.LINGBOTVLA:
             from rlinf.models.embodiment.lingbotvla.sft_builder import (
                 build_lingbot_sft_dataloader,
             )
@@ -56,9 +56,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
-        elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.DREAMZERO
-        ]:
+        elif model_type == SupportedModel.DREAMZERO:
             from rlinf.data.datasets.dreamzero import (
                 build_dreamzero_sft_dataloader,
             )
@@ -66,7 +64,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_dreamzero_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
-        elif SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.EVO1]:
+        elif model_type == SupportedModel.EVO1:
             from rlinf.models.embodiment.evo1.sft_builder import (
                 build_evo1_sft_dataloader,
             )
@@ -216,14 +214,15 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
         if model_type == SupportedModel.OPENPI_PYTORCH:
-            if hasattr(self.data_loader, "_data_loader"):
+            if "robotwin" in str(self.cfg.actor.model.openpi.config_name).lower():
                 num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
-                return max(1, num_batches // self.gradient_accumulation)
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        if model_type == SupportedModel.OPENPI:
+            else:
+                num_batches = len(self.data_loader)
+        elif model_type == SupportedModel.OPENPI:
             num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
-            return max(1, num_batches // self.gradient_accumulation)
-        return super().get_max_steps_per_epoch()
+        else:
+            return super().get_max_steps_per_epoch()
+        return max(1, num_batches // self.gradient_accumulation)
 
     @staticmethod
     def _openpi_pytorch_dataloader(openpi_dataloader: Any):
