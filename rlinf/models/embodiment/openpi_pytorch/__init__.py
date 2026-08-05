@@ -46,6 +46,8 @@ _BARE_PI0_PREFIXES = (
     "pointnet.",
 )
 
+_OLD_OPENPI_PREFIX = "paligemma_with_expert."
+
 
 def _resolve_model_safetensors(model_path: Any):
     import pathlib
@@ -146,6 +148,22 @@ def _load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> No
         )
 
 
+def _load_base_safetensors(model, safetensors_path) -> None:
+    """Load a base checkpoint, accepting both new and legacy OpenPI layouts."""
+    import safetensors.torch
+
+    state_dict = safetensors.torch.load_file(str(safetensors_path), device="cpu")
+    if any(key.startswith(_OLD_OPENPI_PREFIX) for key in state_dict):
+        from rlinf.utils.ckpt_convertor.openpi.old2new import old_to_new_state_dict
+
+        state_dict = old_to_new_state_dict(state_dict)
+        logger.info(
+            "openpi_pytorch: converted legacy OpenPI checkpoint keys from %s in memory",
+            safetensors_path,
+        )
+    model.load_state_dict(state_dict, strict=True)
+
+
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0.5 model from ``actor.model`` config.
 
@@ -157,7 +175,6 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """
     import pathlib
 
-    import safetensors.torch
     from omegaconf import OmegaConf
 
     from rlinf.models.embodiment.openpi_pytorch.pi0_model import gemma as pi0_gemma
@@ -206,8 +223,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     pi0_config = Pi0Config(**pi0_kwargs)
     model = pi0_config.create()
     if safetensors_path is not None and full_weights_path is None:
-        state_dict = safetensors.torch.load_file(str(safetensors_path), device="cpu")
-        model.load_state_dict(state_dict, strict=True)
+        _load_base_safetensors(model, safetensors_path)
     n_params = sum(param.numel() for param in model.parameters())
     if target_dtype is not None:
         model = model.to(target_dtype)

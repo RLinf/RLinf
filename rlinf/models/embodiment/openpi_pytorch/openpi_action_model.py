@@ -30,7 +30,6 @@ class OpenPiPytorchRLTConfig:
     rlt_alpha: float = 1.0
     rlt_input_dim: int = 2048
     rlt_embed_dim: int = 2048
-    rlt_num_rl_tokens: int = 1
     rlt_prefix_seq_len: int = 768
     rlt_num_layers: int = 2
     rlt_num_heads: int = 8
@@ -69,7 +68,6 @@ class OpenPiPytorchActionModel(nn.Module):
             self.rlt_module = RLTTokenTransformer(
                 input_dim=self.rlt_cfg.rlt_input_dim,
                 embed_dim=self.rlt_cfg.rlt_embed_dim,
-                num_rl_tokens=self.rlt_cfg.rlt_num_rl_tokens,
                 prefix_seq_len=self.rlt_cfg.rlt_prefix_seq_len,
                 num_layers=self.rlt_cfg.rlt_num_layers,
                 num_heads=self.rlt_cfg.rlt_num_heads,
