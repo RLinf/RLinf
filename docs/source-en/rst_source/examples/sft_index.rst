@@ -26,9 +26,9 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
-           <b>OpenPI_RLinf SFT</b>
+           <b>OpenPI Mixed-Precision SFT</b>
          </a><br>
-         Train Pi0 on RoboTwin, plus Pi0.5 on BEHAVIOR-1K
+         Run mixed-precision supervised fine-tuning with PyTorch OpenPI
        </p>
      </div>
 
@@ -48,9 +48,20 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_vlm.html" style="text-decoration: underline; color: blue;">
-           <b>VLM Supervised Fine-Tuning</b>
+           <b>Qwen-VL</b>
          </a><br>
          Run full-parameter SFT and evaluation for VLM models such as Qwen
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/dagger.html" style="text-decoration: underline; color: blue;">
+           <b>DAgger for Embodied Policies</b>
+         </a><br>
+         Guide online imitation learning with expert relabeling and replay-buffer updates
        </p>
      </div>
 
@@ -63,4 +74,5 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    OpenPI <embodied/sft_openpi>
    OpenPI_RLinf <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
-   VLM <embodied/sft_vlm>
+   Qwen-VL <embodied/sft_vlm>
+   DAgger <embodied/dagger>

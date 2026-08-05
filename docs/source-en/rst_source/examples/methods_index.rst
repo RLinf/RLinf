@@ -1,5 +1,5 @@
-Algorithms for Embodiment
-=========================
+RL
+==
 
 This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover offline RL, imitation learning, hybrid sim-real co-training, and residual / noise-space policy steering.
 
@@ -28,28 +28,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
            <b>DSRL for Pi0</b>
          </a><br>
          Steer a frozen Pi0 diffusion policy with lightweight SAC in noise space
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/rtc.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/rtc.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/rtc.html" style="text-decoration: underline; color: blue;">
-           <b>RTC: Real-Time Control Inference Hiding</b>
-         </a><br>
-         Overlap action chunk execution with inference for faster deployment (Sim &amp; Real)
-       </p>
-      </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/dagger.html" style="text-decoration: underline; color: blue;">
-           <b>DAgger for Embodied Policies</b>
-         </a><br>
-         Guide online imitation learning with expert relabeling and replay-buffer updates
        </p>
      </div>
 
@@ -128,8 +106,6 @@ Use this section when you are choosing *how* to train (PPO vs SAC vs IQL vs DAgg
 
    SAC-Flow <embodied/sac_flow>
    DSRL <embodied/dsrl>
-   RTC <embodied/rtc>
-   DAgger <embodied/dagger>
    RECAP <embodied/recap>
    STEAM <embodied/steam>
    Co-Training <embodied/co_training>
