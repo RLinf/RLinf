@@ -788,9 +788,9 @@ def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
     return path
 
 
-@VLMDatasetRegistry.register("qwentrend_progress_sft")
-class QwenTrendProgressSFTDataset(VLMBaseDataset):
-    """SFT dataset for QwenTrend progress: full_video + video_clip input, aligned with the pilot.
+@VLMDatasetRegistry.register("vlm_trend_reward_sft")
+class VLMTrendRewardSFTDataset(VLMBaseDataset):
+    """SFT dataset for VLM Trend reward: full_video + video_clip input.
 
     Each record: full_video (mp4), video_clip (mp4), question, answer.
     Qwen3-VL uses videos input, matching the dataset format.
@@ -827,30 +827,9 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         videos: list[Any] | list[list[Any]],
         answer_text: Optional[str] | list[Optional[str]] = None,
     ) -> tuple[str | list[str], dict[str, Any], dict[str, Any]]:
-        """Build Qwen3-VL processor inputs for QwenTrend progress SFT.
-
-        Accepts both a single sample and a batch (list-of-lists) of prompts and
-        videos. Chat templates are always applied for Qwen3-VL, so
-        ``system_prompt`` and ``use_chat_template`` are accepted only for parity
-        with the shared ``process_inputs`` interface and are unused here.
-
-        Args:
-            processor: The Qwen3-VL ``AutoProcessor``.
-            system_prompt: Unused; kept for interface parity.
-            use_chat_template: Unused; kept for interface parity.
-            prompt_texts: Prompt string(s); a list of strings for a single
-                sample or a list of per-sample string lists for a batch.
-            videos: Dual-view frame data aligned with ``prompt_texts``.
-            answer_text: Optional gold answer(s); ``None`` renders an
-                inference prompt without a label turn.
-
-        Returns:
-            A tuple ``(rendered_prompt, full_inputs, label_inputs)`` where
-            ``rendered_prompt`` is a string (single) or list of strings (batch),
-            and the two dicts are processor tensor inputs for the prompt and the
-            label mask respectively.
         """
-        del system_prompt, use_chat_template  # Unused; interface parity only.
+        Build Qwen3-VL processor inputs for VLM Trend reward SFT.
+        """
 
         def _render_prompt_text(
             prompt_text: str, answer_text_i: Optional[str]
@@ -879,13 +858,7 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
                         tokenize=False,
                         add_generation_prompt=True,
                     )
-            except Exception as error:
-                # Fall back to a hand-written Qwen chat template when the
-                # processor cannot render one (e.g. missing chat template).
-                logging.warning(
-                    f"apply_chat_template failed ({error!r}); "
-                    "using manual Qwen chat template fallback."
-                )
+            except Exception:
                 rendered_prompt = (
                     f"<|im_start|>user\n{user_content}<|im_end|>\n"
                     f"<|im_start|>assistant\n"
@@ -901,11 +874,9 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
             batch_size = len(prompt_texts_batch)
 
             if isinstance(answer_text, list):
-                if len(answer_text) != batch_size:
-                    raise ValueError(
-                        f"answer_text list size {len(answer_text)} does not "
-                        f"match batch size {batch_size}"
-                    )
+                assert len(answer_text) == batch_size, (
+                    f"answer_text list size {len(answer_text)} does not match batch size {batch_size}"
+                )
                 answer_text_batch = answer_text
             else:
                 answer_text_batch = [answer_text for _ in range(batch_size)]
@@ -1058,33 +1029,7 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         main_frames = payload.get("main_frames")
         extra_view_frames = payload.get("extra_view_frames")
         if main_frames is None or extra_view_frames is None:
-            observations = payload.get("observations")
-            metadata = raw.get("segment_metadata", {})
-            start = metadata.get("start_step")
-            end = metadata.get("end_step")
-            if observations is None or start is None or end is None:
-                raise ValueError(
-                    f"Sample {idx} pkl missing dual-view frames or episode window metadata"
-                )
-            selected = observations[int(start) : int(end) + 1]
-            main_frames = [observation.get("main_images") for observation in selected]
-            extra_view_frames = []
-            for observation in selected:
-                extra = observation.get("third_view_images")
-                if extra is None:
-                    extra = observation.get("extra_view_images")
-                    if extra is not None and getattr(extra, "ndim", 0) == 4:
-                        extra = extra[0]
-                extra_view_frames.append(extra)
-            expected = int(end) - int(start) + 1
-            if (
-                len(selected) != expected
-                or any(frame is None for frame in main_frames)
-                or any(frame is None for frame in extra_view_frames)
-            ):
-                raise ValueError(
-                    f"Sample {idx} has an invalid dual-view episode window"
-                )
+            raise ValueError(f"Sample {idx} pkl missing dual-view frame arrays")
         return (
             question,
             answer_text,
@@ -1122,9 +1067,9 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         )
 
 
-@VLMDatasetRegistry.register("simple_qwentrend_sft")
-class SimpleQwenTrendSFTDataset(QwenTrendProgressSFTDataset):
-    """SFT dataset for a single-video, single-word QwenTrend format."""
+@VLMDatasetRegistry.register("simple_vlm_trend_reward_sft")
+class SimpleVLMTrendRewardSFTDataset(VLMTrendRewardSFTDataset):
+    """SFT dataset for a single-video, single-word VLM Trend reward format."""
 
     @classmethod
     def _build_video_user_content(

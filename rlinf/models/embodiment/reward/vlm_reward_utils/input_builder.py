@@ -12,37 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Input builders that turn env observations into VLM processor batches.
-
-Builders are registered in ``INPUT_BUILDER_REGISTRY`` and looked up via
-``get_input_builder``. Each builder prepares prompt text and images/videos,
-then calls the matching VLM dataset ``process_inputs`` helper.
-"""
-
-from collections.abc import Callable
+import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional, Union
 
 import torch
 from PIL import Image
 from transformers import AutoProcessor
 
 from rlinf.data.datasets.vlm import (
-    QwenTrendProgressSFTDataset,
     VLMBaseDataset,
+    VLMTrendRewardSFTDataset,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _to_pil_images(
-    images: torch.Tensor | list[torch.Tensor],
+    images: Union[torch.Tensor, list[torch.Tensor]],
 ) -> list[Image.Image]:
-    """Convert EnvOutput image tensors to per-sample PIL images.
+    """Convert EnvOutput image tensors to per-sample PIL image lists.
 
-    Args:
-        images: A batch of images shaped ``[B, H, W, C]`` (or a list thereof).
-
-    Returns:
-        A list of RGB ``PIL.Image`` objects, one per batch element.
+    Expected EnvOutput image formats: [B, H, W, C]
     """
     if isinstance(images, torch.Tensor):
         arr = images.detach().cpu().numpy()
@@ -91,17 +82,8 @@ def extract_images(
 INPUT_BUILDER_REGISTRY: dict[str, type] = {}
 
 
-def register_input_builder(name: str) -> Callable[[type], type]:
-    """Register an input-builder class under ``name`` (case-insensitive).
-
-    Args:
-        name: Registry key used to look the builder up later.
-
-    Returns:
-        A class decorator that records the class and returns it unchanged.
-    """
-
-    def decorator(cls: type) -> type:
+def register_input_builder(name: str):
+    def decorator(cls: type):
         INPUT_BUILDER_REGISTRY[name.lower()] = cls
         return cls
 
@@ -109,17 +91,6 @@ def register_input_builder(name: str) -> Callable[[type], type]:
 
 
 def get_input_builder(name: str) -> type:
-    """Return the registered input-builder class for ``name``.
-
-    Args:
-        name: Registry key (case-insensitive).
-
-    Returns:
-        The registered builder class.
-
-    Raises:
-        ValueError: If ``name`` is not registered.
-    """
     name_lower = name.lower()
     if name_lower not in INPUT_BUILDER_REGISTRY:
         raise ValueError(f"InputBuilder '{name}' not registered")
@@ -129,32 +100,23 @@ def get_input_builder(name: str) -> type:
 @register_input_builder("base_input_builder")
 @dataclass
 class BaseInputBuilder:
-    """Base builder that prepares and processes VLM inputs for a batch."""
-
-    system_prompt: str | None = None
+    system_prompt: Optional[str] = None
     use_chat_template: bool = True
     image_keys: list[str] = field(default_factory=lambda: ["main_images"])
-    _processor: AutoProcessor | None = field(default=None)
+    _processor: Optional[AutoProcessor] = field(default=None)
 
     def get_valid_input_ids(self, observations: dict[str, Any]) -> list[int]:
-        """Return env indices that have enough data to build a prompt."""
         return list(range(len(observations[self.image_keys[0]])))
 
     def prepare_inputs(
         self, observations: dict[str, Any], valid_input_ids: list[int]
-    ) -> dict[str, Any]:
-        """Collect images/videos and prompt texts for ``valid_input_ids``."""
-        del observations, valid_input_ids
+    ) -> torch.Tensor:
         return {"images_list": None, "videos_list": None, "prompt_texts_list": None}
 
-    def process_inputs(self, prepared_inputs: dict[str, Any]) -> dict[str, Any]:
-        """Turn prepared image/video/prompt data into processor tensors."""
+    def process_inputs(self, prepared_inputs: dict[str, Any]):
         return prepared_inputs
 
-    def build_inputs(
-        self, observations: dict[str, Any], device: torch.device
-    ) -> dict[str, Any]:
-        """Prepare, process and move inputs onto ``device``."""
+    def build_inputs(self, observations: dict[str, Any], device: torch.device):
         valid_input_ids = self.get_valid_input_ids(observations)
         prepared_inputs = self.prepare_inputs(observations, valid_input_ids)
         processed_inputs = self.process_inputs(prepared_inputs)
@@ -168,11 +130,7 @@ class BaseInputBuilder:
 @register_input_builder("base_vlm_input_builder")
 @dataclass
 class BaseVLMInputBuilder(BaseInputBuilder):
-    """Build single-frame VLM prompts from current observations."""
-
-    def prepare_inputs(
-        self, observations: dict[str, Any], valid_input_ids: list[int]
-    ) -> dict[str, Any]:
+    def prepare_inputs(self, observations: dict[str, Any], valid_input_ids: list[int]):
         images = extract_images(observations, self.image_keys)
         images_list = [images[env_idx] for env_idx in valid_input_ids]
         task_descriptions = [
@@ -180,7 +138,7 @@ class BaseVLMInputBuilder(BaseInputBuilder):
             for env_idx in valid_input_ids
         ]
 
-        prompt_texts_list: list[list[str]] = []
+        prompt_texts_list: list[str] = []
         for task_description in task_descriptions:
             task_description = task_description.strip()
             prompt_texts = [
@@ -195,7 +153,7 @@ class BaseVLMInputBuilder(BaseInputBuilder):
             "prompt_texts_list": prompt_texts_list,
         }
 
-    def process_inputs(self, prepared_inputs: dict[str, Any]) -> dict[str, Any]:
+    def process_inputs(self, prepared_inputs: dict[str, Any]):
         prompt_texts_list = prepared_inputs.get("prompt_texts_list")
         images_list = prepared_inputs.get("images_list")
 
@@ -220,11 +178,9 @@ class BaseVLMInputBuilder(BaseInputBuilder):
         return processed_inputs
 
 
-@register_input_builder("history_vlm_input_builder")
+@register_input_builder("buffered_vlm_input_builder")
 @dataclass(kw_only=True)
-class HistoryVLMInputBuilder(BaseVLMInputBuilder):
-    """Build VLM inputs from named history buffers over recent frames."""
-
+class BufferedVLMInputBuilder(BaseVLMInputBuilder):
     history_buffer_names: list[str]
 
     def get_valid_input_ids(
@@ -232,8 +188,6 @@ class HistoryVLMInputBuilder(BaseVLMInputBuilder):
         observations: dict[str, Any],
         history_input: dict[str, dict[str, list[list[Any]]]],
     ) -> list[int]:
-        """Return env indices whose history buffers are all non-empty."""
-        del observations
         histories = tuple(
             history
             for history_buffer in history_input.values()
@@ -251,9 +205,8 @@ class HistoryVLMInputBuilder(BaseVLMInputBuilder):
         observations: dict[str, Any],
         history_input: dict[str, dict[str, list[list[Any]]]],
         valid_input_ids: list[int],
-    ) -> dict[str, Any]:
-        """Default history prepare; subclasses fill videos and prompts."""
-        del observations, history_input, valid_input_ids
+    ):
+        del history_input
         return {"images_list": None, "videos_list": None, "prompt_texts_list": None}
 
     def build_inputs(
@@ -261,8 +214,7 @@ class HistoryVLMInputBuilder(BaseVLMInputBuilder):
         observations: dict[str, Any],
         device: torch.device,
         history_input: dict[str, dict[str, list[list[Any]]]],
-    ) -> tuple[dict[str, Any], list[int]]:
-        """Prepare history inputs and return ``(tensors, valid_input_ids)``."""
+    ):
         valid_input_ids = self.get_valid_input_ids(observations, history_input)
         if len(valid_input_ids) == 0:
             return {}, valid_input_ids
@@ -280,24 +232,16 @@ class HistoryVLMInputBuilder(BaseVLMInputBuilder):
 
 @register_input_builder("video_vlm_input_builder")
 @dataclass
-class VideoVLMInputBuilder(HistoryVLMInputBuilder):
-    """History builder that packs frame sequences into dual-view videos."""
-
+class VideoVLMInputBuilder(BufferedVLMInputBuilder):
     video_keys: list[str] = field(default_factory=lambda: ["main_images"])
 
     def extract_videos(
         self,
         history_buffer: dict[str, list[list[Any]]],
-        video_keys: list[str] | None = None,
+        video_keys: Optional[list[str]] = None,
     ) -> list[list[Any]]:
-        """Convert one history-buffer payload into processor-ready videos.
-
-        Args:
-            history_buffer: Mapping from video key to per-env frame lists.
-            video_keys: Keys to pack; defaults to ``self.video_keys``.
-
-        Returns:
-            Nested list shaped ``[batch, num_views, frames]`` of PIL images.
+        """
+        Convert one named history buffer payload into processor-ready videos.
         """
         video_keys = video_keys or self.video_keys
         if not video_keys:
@@ -321,11 +265,9 @@ class VideoVLMInputBuilder(HistoryVLMInputBuilder):
         return videos
 
 
-@register_input_builder("qwentrend_input_builder")
+@register_input_builder("vlm_trend_reward_input_builder")
 @dataclass
-class QwentrendInputBuilder(VideoVLMInputBuilder):
-    """Build dual-view trend prompts for QwenTrend reward inference."""
-
+class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
     video_keys: list[str] = field(
         default_factory=lambda: ["main_images", "extra_view_images"]
     )
@@ -336,7 +278,7 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
         observations: dict[str, Any],
         history_input: dict[str, dict[str, list[list[Any]]]],
         valid_input_ids: list[int],
-    ) -> dict[str, Any]:
+    ):
         history_window = history_input.get("history_window", {})
         videos_clip = self.extract_videos(history_window, self.video_keys)
         videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
@@ -363,11 +305,11 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
             "prompt_texts_list": prompt_texts_list,
         }
 
-    def process_inputs(self, prepared_inputs: dict[str, Any]) -> dict[str, Any]:
+    def process_inputs(self, prepared_inputs: dict[str, Any]):
         prompt_texts_list = prepared_inputs.get("prompt_texts_list")
         videos_list = prepared_inputs.get("videos_list")
 
-        _, processed_inputs, _ = QwenTrendProgressSFTDataset.process_inputs(
+        _, processed_inputs, _ = VLMTrendRewardSFTDataset.process_inputs(
             processor=self._processor,
             system_prompt=self.system_prompt,
             use_chat_template=self.use_chat_template,
@@ -376,91 +318,3 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
             answer_text=None,
         )
         return processed_inputs
-
-
-@register_input_builder("qwentrend_terminal_success_input_builder")
-@dataclass
-class QwentrendTerminalSuccessInputBuilder(QwentrendInputBuilder):
-    """Build the exact binary prompt used by terminal-success SFT."""
-
-    include_task: bool = True
-
-    def prepare_inputs(
-        self,
-        observations: dict[str, Any],
-        history_input: dict[str, dict[str, list[list[Any]]]],
-        valid_input_ids: list[int],
-    ) -> dict[str, Any]:
-        history_window = history_input.get("history_window", {})
-        videos_clip = self.extract_videos(history_window, self.video_keys)
-        videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
-        task_descriptions = observations.get(
-            "task_descriptions",
-            [self.default_task_description] * len(videos_clip),
-        )
-
-        prompt_texts_list: list[list[str]] = []
-        for env_id in valid_input_ids:
-            task = str(
-                task_descriptions[env_id] or self.default_task_description
-            ).strip()
-            task_text = f" Task: {task}." if self.include_task and task else ""
-            prompt_texts_list.append(
-                [
-                    "Estimate task-conditioned success potential for this robot "
-                    f"manipulation state.{task_text} The two synchronized videos show "
-                    "the same 5-frame history from two camera views."
-                ]
-            )
-
-        return {
-            "images_list": None,
-            "videos_list": videos_list,
-            "prompt_texts_list": prompt_texts_list,
-        }
-
-
-@register_input_builder("qwentrend_potential_input_builder")
-@dataclass
-class QwentrendPotentialInputBuilder(QwentrendInputBuilder):
-    """Build the online five-frame input used by potential SFT."""
-
-    include_task: bool = True
-    num_bins: int = 10
-
-    def prepare_inputs(
-        self,
-        observations: dict[str, Any],
-        history_input: dict[str, dict[str, list[list[Any]]]],
-        valid_input_ids: list[int],
-    ) -> dict[str, Any]:
-        history_window = history_input.get("history_window", {})
-        videos_clip = self.extract_videos(history_window, self.video_keys)
-        videos_list = [videos_clip[env_id] for env_id in valid_input_ids]
-        task_descriptions = observations.get(
-            "task_descriptions",
-            [self.default_task_description] * len(videos_clip),
-        )
-
-        prompt_texts_list: list[list[str]] = []
-        for env_id in valid_input_ids:
-            task = str(
-                task_descriptions[env_id] or self.default_task_description
-            ).strip()
-            task_text = f" Task: {task}." if self.include_task and task else ""
-            prompt_texts_list.append(
-                [
-                    "You are estimating task-conditioned success potential for a "
-                    f"robot manipulation state.{task_text} The two synchronized "
-                    "videos show the same 5-frame history from two camera views. "
-                    "Predict the final state's potential as exactly one digit from "
-                    f"0 to {self.num_bins - 1}, where 0 is furthest from eventual "
-                    f"success and {self.num_bins - 1} is closest."
-                ]
-            )
-
-        return {
-            "images_list": None,
-            "videos_list": videos_list,
-            "prompt_texts_list": prompt_texts_list,
-        }
