@@ -30,6 +30,10 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rtc.html).
+- [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
+- [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [PyTorch OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html).
+- [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
 - [2026/07] 🔥 RLinf supports batched LIBERO / LIBERO-Plus evaluation and FSDP supervised fine-tuning for [FastWAM](https://github.com/yuantianyuan01/FastWAM). Doc: [FastWAM Evaluation and SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
 - [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
@@ -136,6 +140,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/isaaclab.html">IsaacLab</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/calvin.html">CALVIN</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa.html">RoboCasa</a> ✅</li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa365.html">RoboCasa365</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/frankasim.html">Franka-Sim</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/embodichain.html">EmbodiChain</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/genesis.html">Genesis</a> ✅</li>
@@ -147,15 +152,16 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>VLA</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html">π₀</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0.html">π₀.₅</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI-PyTorch)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html">π₀ / π₀.₅ (RLinf-PyTorch)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dexbotic.html">Dexbotic</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/starvla.html">StarVLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
           </ul>
           <li><b>VLM</b></li>
           <ul>
@@ -178,6 +184,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <li><b>Reward Model</b></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_reward_model.html">ResNet</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/extending/reward_model.html">Qwen3-VL</a> ✅</li>
           </ul>
           <li><b>World Action Model</b></li>
           <ul>
@@ -190,7 +197,6 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
         <ul style="margin-left: 0; padding-left: 16px;">
           <li><b>RL Algos</b></li>
           <ul>
-            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/grpo.html">GRPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/ppo.html">PPO</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/async_ppo.html">Async PPO</a> ✅</li>
@@ -201,9 +207,11 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/rlpd.html">RLPD</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2509.25756">SAC-Flow</a> ✅</li>
             <li><a href="https://arxiv.org/abs/2506.15799">DSRL</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/reference/algorithms/iql.html">IQL</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/recap.html">RECAP (CFG)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html">STEAM</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html">RLT</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html">OPD</a> ✅</li>
           </ul>
           <li><b>SFT</b></li>
           <ul>
@@ -460,4 +468,5 @@ In particular, we would like to thank the teams and contributors behind VeRL, AR
 **Contact:**
 We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
 - Chao Yu: zoeyuchao@gmail.com
+- Quanlu Zhang: zhangquanlu@infini-ai.com
 - Yu Wang: yu-wang@tsinghua.edu.cn

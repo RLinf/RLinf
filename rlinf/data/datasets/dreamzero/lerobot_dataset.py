@@ -81,7 +81,7 @@ class DreamZeroLeRobotDataset(Dataset):
         relative_action_keys: list[str] | None = None,
         pq_cache_max_episodes: int = 128,
         video_tolerance_s: float = 0.1,
-        video_backend: str = "pyav",
+        video_backend: str = "torchcodec",
         sampling_mode: SamplingMode = "multi_anchor",
         multi_anchor_resample_attempts: int = 8,
         macro_stride: int | None = None,
@@ -1236,7 +1236,7 @@ def build_single_dreamzero_lerobot_dataset(
         relative_action_keys=list(model_cfg.get("relative_action_keys", [])),
         pq_cache_max_episodes=cfg.data.get("parquet_cache_size", 128),
         video_tolerance_s=cfg.data.get("video_tolerance_s", 0.1),
-        video_backend=data_cfg.get("video_backend", "pyav"),
+        video_backend=data_cfg.get("video_backend", "torchcodec"),
         max_chunk_size=max_chunk_size,
         sampling_mode=sampling_mode,  # type: ignore[arg-type]
         multi_anchor_resample_attempts=data_cfg.get(

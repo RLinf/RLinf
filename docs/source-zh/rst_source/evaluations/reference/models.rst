@@ -21,7 +21,7 @@
      - ``libero_spatial_starvla_eval``
    * - DreamZero
      - ``dreamzero``
-     - ``libero_spatial_dreamzero_eval``、``realworld_pnp_eval_dreamzero``
+     - ``libero_spatial_dreamzero_eval``、``libero_spatial_dreamzero_eval_sglang``、``realworld_pnp_eval_dreamzero``
    * - FastWAM
      - ``fastwam``
      - ``libero_spatial_fastwam_eval``

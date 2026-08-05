@@ -23,8 +23,8 @@ import torch
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
+from rlinf.algorithms.expert import build_expert_model_config
 from rlinf.algorithms.rlt import (
-    build_expert_model_config,
     build_rlt_route,
     predict_rlt_actions,
 )
@@ -76,6 +76,8 @@ class MultiStepRolloutWorker(Worker):
         )
         self.eval_rollout_epoch = eval_env_cfg.rollout_epoch if self.enable_eval else 1
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
+        self.enable_dagger = self.algorithm_cfg.get("loss_type") == "embodied_dagger"
+        self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
         self.expert_model = None
         self.rlt_feature_model = None
         self.rlt_route = None
@@ -157,7 +159,7 @@ class MultiStepRolloutWorker(Worker):
             self.rlt_feature_model.requires_grad_(False)
             self.rlt_route = build_rlt_route(self.cfg)
 
-        if self.cfg.rollout.get("expert_model", None):
+        if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
                 self.cfg,
                 self.model_cfg,
@@ -217,7 +219,7 @@ class MultiStepRolloutWorker(Worker):
             self._train_sampling_params = {}
             self._eval_sampling_params = {}
 
-        if self.expert_model is not None:
+        if self.expert_model is not None and self.enable_dagger:
             self._dagger_sampling_params = {
                 "beta": self.algorithm_cfg.get("dagger", {}).get("init_beta", 0.5),
                 "beta_schedule": self.algorithm_cfg.get("dagger", {}).get(
@@ -451,7 +453,7 @@ class MultiStepRolloutWorker(Worker):
         return AsyncRouteWork(works, lambda _: None)
 
     def update_dagger_beta(self):
-        if self.expert_model is None:
+        if self.expert_model is None or not self.enable_dagger:
             return
 
         if self._dagger_sampling_params["beta_schedule"] == "exponential":
@@ -477,6 +479,8 @@ class MultiStepRolloutWorker(Worker):
 
         if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.OPENPI,
+            SupportedModel.OPENPI_PYTORCH,
+            SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,
             SupportedModel.GR00T_N1D6,
@@ -486,8 +490,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
         ]:
-            loss_type = self.algorithm_cfg.get("loss_type", "actor")
-            if loss_type == "embodied_dagger":
+            if self.enable_dagger:
                 kwargs = {"mode": "eval"}
             else:
                 kwargs = {"mode": mode}
@@ -503,7 +506,7 @@ class MultiStepRolloutWorker(Worker):
             "only_save_expert", True
         )
 
-        if mode == "train" and self.expert_model is not None:
+        if mode == "train" and self.expert_model is not None and self.enable_dagger:
             # training with expert model. Beta-probability acting.
             use_expert = torch.rand(1).item() < self._dagger_sampling_params["beta"]
         else:
@@ -529,6 +532,7 @@ class MultiStepRolloutWorker(Worker):
                 not only_save_expert  # only re-label in classic dagger mode
                 and not use_expert  # only re-label if not using expert
                 and self.expert_model is not None  # only re-label if expert exists
+                and self.enable_dagger  # only re-label in DAgger mode
                 and mode == "train"  # only re-label in train mode
             ):
                 _, expert_result = self.expert_model.predict_action_batch(
@@ -580,7 +584,11 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
     ) -> RolloutResult:
         intervene_flags = result.get("intervene_flags")
-        if intervene_flags is None and result.get("expert_label_flag", False):
+        if (
+            intervene_flags is None
+            and self.enable_dagger
+            and result.get("expert_label_flag", False)
+        ):
             intervene_flags = torch.full(
                 (actions.shape[0], self.model_cfg.num_action_chunks),
                 True,
@@ -618,6 +626,7 @@ class MultiStepRolloutWorker(Worker):
                 final_values = torch.zeros_like(actions[:, :1], dtype=torch.float32)
         return final_values[:, :1].cpu().contiguous()
 
+    @Worker.timer("sync_model_from_actor")
     async def sync_model_from_actor(self):
         """Sync model parameters from the actor worker."""
 
@@ -720,18 +729,28 @@ class MultiStepRolloutWorker(Worker):
                 intervene_requested=env_output.get("intervene_flags", None),
             )
 
-            rollout_result = RolloutResult(
-                actions=actions,
-                prev_values=result["prev_values"] if self.collect_prev_infos else None,
-                bootstrap_values=self.get_bootstrap_values(
-                    env_output.get("final_obs", None)
-                ),
-                forward_inputs=(
-                    result["forward_inputs"]
-                    if self.rlt_feature_model is not None
-                    else {}
-                ),
-            )
+            if self.enable_opd:
+                # OPD keeps this path separate to retain student action tokens for post-rollout teacher logprobs.
+                rollout_result = self._build_rollout_result(
+                    actions,
+                    result,
+                    final_obs=env_output.get("final_obs", None),
+                )
+            else:
+                rollout_result = RolloutResult(
+                    actions=actions,
+                    prev_values=(
+                        result["prev_values"] if self.collect_prev_infos else None
+                    ),
+                    bootstrap_values=self.get_bootstrap_values(
+                        env_output.get("final_obs", None)
+                    ),
+                    forward_inputs=(
+                        result["forward_inputs"]
+                        if self.rlt_feature_model is not None
+                        else {}
+                    ),
+                )
             self.send_to(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
@@ -762,6 +781,7 @@ class MultiStepRolloutWorker(Worker):
         if self.enable_offload:
             self.offload_model()
 
+    @Worker.timer("evaluate")
     async def evaluate(self, input_channel: Channel, output_channel: Channel):
         if self.enable_offload:
             self.reload_model()

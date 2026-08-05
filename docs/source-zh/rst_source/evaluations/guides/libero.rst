@@ -38,6 +38,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_dreamzero_eval.yaml``
      - Spatial
      - DreamZero
+   * - ``libero_spatial_dreamzero_eval_sglang.yaml``
+     - Spatial
+     - DreamZero（SGLang backend）
    * - ``libero_spatial_fastwam_eval.yaml``
      - Spatial / LIBERO-Plus
      - FastWAM
@@ -59,6 +62,8 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+
+DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。
 
 完整评测流程
 ------------
@@ -226,3 +231,9 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 
 - **渲染问题：** 若 headless 环境报错，尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
 - **评测覆盖范围：** 见上文 :ref:`libero-eval-config`；核心是 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch`` 三者的配合。
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   dreamzero_sglang

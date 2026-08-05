@@ -140,7 +140,11 @@ class InMemoryArrowStore:
     ) -> dict[str, Any]:
         import PIL.Image as PILImage
         from datasets import Dataset
-        from lerobot.common.datasets.utils import hf_transform_to_torch
+
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.utils import hf_transform_to_torch
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.utils import hf_transform_to_torch
 
         n = len(ep_frames)
         if n == 0:

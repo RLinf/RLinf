@@ -38,6 +38,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_dreamzero_eval.yaml``
      - Spatial
      - DreamZero
+   * - ``libero_spatial_dreamzero_eval_sglang.yaml``
+     - Spatial
+     - DreamZero (SGLang backend)
    * - ``libero_spatial_fastwam_eval.yaml``
      - Spatial / LIBERO-Plus
      - FastWAM
@@ -59,6 +62,8 @@ Available under ``evaluations/libero/``:
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+
+For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`.
 
 End-to-End Workflow
 -------------------
@@ -226,3 +231,9 @@ FAQ
 
 - **Rendering issues:** On headless systems, try ``export MUJOCO_GL=osmesa`` and ``export PYOPENGL_PLATFORM=osmesa`` (``run_eval.sh`` sets these by default).
 - **Test coverage:** See :ref:`libero-eval-config` above; the key is coordinating ``total_num_envs``, ``auto_reset``, and ``max_steps_per_rollout_epoch``.
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   dreamzero_sglang

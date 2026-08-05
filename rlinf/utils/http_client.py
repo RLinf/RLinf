@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
@@ -99,7 +101,7 @@ class InferenceHTTPClient:
         sampling_params: Optional[dict] = None,
         return_logprob: bool = False,
     ) -> dict:
-        return self._post(
+        return self.post(
             "/generate",
             self._generate_body(prompt, input_ids, sampling_params, return_logprob),
         )
@@ -111,7 +113,7 @@ class InferenceHTTPClient:
         **kwargs: Any,
     ) -> dict:
         body = {"model": model, "messages": messages, **kwargs}
-        return self._post("/v1/chat/completions", body)
+        return self.post("/v1/chat/completions", body)
 
     def health(self) -> bool:
         try:
@@ -207,17 +209,110 @@ class InferenceHTTPClient:
             body["sampling_params"] = sampling_params
         return body
 
-    def _post(self, path: str, body: dict) -> dict:
-        # (connect, read) tuple: bound the TCP connect phase only;
-        # let the response take as long as it needs.
-        resp = requests.post(
-            f"{self.base_url}{path}",
-            json=body,
-            timeout=(self.connect_timeout, None),
-            proxies={"http": None, "https": None},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    def post(
+        self,
+        path: str,
+        body: dict,
+        *,
+        msgpack: bool = False,
+        timeout_s: Optional[float] = None,
+        max_retries: int = 0,
+        retry_backoff_s: float = 0.0,
+    ) -> dict:
+        """POST ``body`` to ``path`` and return the decoded response dict.
+
+        JSON by default. With ``msgpack=True`` the body (including torch tensors
+        / numpy arrays) is serialized with the sglang msgpack codec and the
+        response is msgpack-decoded; transient 5xx / connection errors are then
+        retried with linear backoff. Proxies are always stripped. Heavy deps
+        (sglang codec, torch, tianshou) are imported lazily so this module stays
+        importable without them.
+        """
+        url = f"{self.base_url}{path}"
+        retries = max(0, int(max_retries))
+        retry_statuses = {500, 502, 503, 504}
+        if msgpack:
+            from sglang.multimodal_gen.runtime.entrypoints.vla.protocol import (
+                pack_msgpack,
+                unpack_msgpack,
+            )
+
+            ct = "application/msgpack"
+            request_kwargs = {
+                "data": pack_msgpack(self._to_msgpackable(body)),
+                "headers": {"Content-Type": ct, "Accept": ct},
+                "timeout": timeout_s,
+            }
+        else:
+            # (connect, read) tuple: bound the TCP connect phase only.
+            request_kwargs = {
+                "json": body,
+                "timeout": (self.connect_timeout, timeout_s),
+            }
+
+        last_error: Optional[Exception] = None
+        for attempt in range(retries + 1):
+            is_last = attempt >= retries
+            try:
+                resp = requests.post(
+                    url, proxies={"http": None, "https": None}, **request_kwargs
+                )
+            except requests.exceptions.RequestException as exc:
+                last_error = exc
+                if is_last:
+                    raise RuntimeError(
+                        f"POST {url} failed after {retries + 1} attempt(s): {exc}"
+                    ) from exc
+                self._sleep_before_retry(attempt, retry_backoff_s)
+                continue
+            if resp.status_code in retry_statuses and not is_last:
+                last_error = RuntimeError(
+                    f"status={resp.status_code}, body={resp.text[:500]}"
+                )
+                self._sleep_before_retry(attempt, retry_backoff_s)
+                continue
+            if not resp.ok:
+                detail = f"status={resp.status_code}, body={resp.text[:500]}"
+                if last_error is not None:
+                    detail += (
+                        f" (after {retries + 1} attempt(s); prior error: {last_error})"
+                    )
+                raise RuntimeError(f"POST {url} failed: {detail}")
+            if msgpack:
+                if "msgpack" not in resp.headers.get("content-type", "").lower():
+                    raise RuntimeError(
+                        "expected a msgpack response, got content-type="
+                        f"{resp.headers.get('content-type')!r}"
+                    )
+                return unpack_msgpack(resp.content)
+            return resp.json()
+
+    @staticmethod
+    def _sleep_before_retry(attempt: int, retry_backoff_s: float) -> None:
+        if retry_backoff_s > 0:
+            time.sleep(retry_backoff_s * float(attempt + 1))
+
+    @staticmethod
+    def _to_msgpackable(value: Any) -> Any:
+        """Recursively convert torch tensors / tianshou Batch to plain types."""
+        import torch
+
+        try:
+            from tianshou.data import Batch
+
+            if isinstance(value, Batch):
+                value = value.__getstate__()
+        except ImportError:
+            pass
+        if torch.is_tensor(value):
+            return value.detach().cpu().numpy()
+        if isinstance(value, Mapping):
+            return {
+                str(k): InferenceHTTPClient._to_msgpackable(v) for k, v in value.items()
+            }
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return [InferenceHTTPClient._to_msgpackable(v) for v in value]
+        return value
 
     async def _apost(self, path: str, body: dict) -> dict:
         session = self._get_or_create_session()

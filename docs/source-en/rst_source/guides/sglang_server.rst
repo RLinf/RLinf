@@ -118,6 +118,15 @@ long as it carries the keys the launcher consumes:
    * - ``pipeline_parallel_size``
      - int
      - Per-engine PP size.
+   * - ``server_type``
+     - str
+     - Picks which sglang dispatch branch the server subprocess runs, default
+       ``srt``: ``srt`` = language model via
+       ``sglang.srt.entrypoints.http_server.launch_server``; ``embodied`` =
+       embodied (VLA/diffusion) model via
+       ``sglang.multimodal_gen.runtime.launch_server.dispatch_launch``. Both are
+       served by the same ``SGLangServerWorker`` class; ``server_type`` only
+       selects the in-subprocess sglang entrypoint. Other values raise.
    * - ``group_name``
      - str
      - Worker-group name for the sglang server group.
@@ -126,9 +135,14 @@ long as it carries the keys the launcher consumes:
      - Set ``False`` to skip the server group (e.g. attach an external server).
    * - ``server``
      - dict
-     - Forwarded **verbatim** to ``sglang.srt.server_args.ServerArgs(**)``. Keys
-       must be valid ``ServerArgs`` field names — see the `sglang ServerArgs
+     - Forwarded **verbatim** to the selected sglang ``ServerArgs``: ``srt`` uses
+       ``sglang.srt.server_args.ServerArgs(**)``, ``embodied`` uses
+       ``sglang.multimodal_gen.runtime.server_args.ServerArgs.from_kwargs(**)``.
+       Keys must be valid ``ServerArgs`` field names — see the `sglang ServerArgs
        reference <https://docs.sglang.io/docs/advanced_features/server_arguments>`_.
+       Exception: ``server.num_gpus`` is also read by the launcher to size each
+       engine's placement (accelerators per engine), so it doubles as a
+       launcher/placement knob rather than a pure ``ServerArgs`` passthrough.
    * - ``router_group_name``
      - str
      - Worker-group name for the router worker.

@@ -39,6 +39,23 @@ setup_mirror() {
 	fi
 }
 
+# Ride out transient network / HF Hub errors (e.g. HTTP 429 rate limits during
+# parallel Docker builds) with exponential backoff.
+retry_cmd() {
+	local max=5 delay=15 attempt=1
+	until "$@"; do
+		if [ "$attempt" -ge "$max" ]; then
+			echo "[download_assets] '$*' failed after ${max} attempts" >&2
+			return 1
+		fi
+		local wait=$((delay + RANDOM % 10))
+		echo "[download_assets] '$*' failed (attempt ${attempt}/${max}); retrying in ${wait}s" >&2
+		sleep "$wait"
+		attempt=$((attempt + 1))
+		delay=$((delay * 2))
+	done
+}
+
 download_maniskill_assets() {
 	local root_dir=$1
 
@@ -78,8 +95,8 @@ main(parse_args([sys.argv[1], "-y"]))
 PYEOF
 			done
 		else
-			python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
-			python -m mani_skill.utils.download_asset widowx250s -y
+			retry_cmd python -m mani_skill.utils.download_asset bridge_v2_real2sim -y
+			retry_cmd python -m mani_skill.utils.download_asset widowx250s -y
 		fi
 	fi
 
@@ -90,7 +107,7 @@ PYEOF
 		echo "[download_assets] SAPIEN PhysX assets already exist at $PHYSX_DIR, skipping download."
 	else
 		mkdir -p "$PHYSX_DIR"
-		wget -O "$PHYSX_DIR/linux-so.zip" "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
+		retry_cmd wget -O "$PHYSX_DIR/linux-so.zip" "${GITHUB_PREFIX}https://github.com/sapien-sim/physx-precompiled/releases/download/${PHYSX_VERSION}/linux-so.zip"
 		unzip "$PHYSX_DIR/linux-so.zip" -d "$PHYSX_DIR" && rm "$PHYSX_DIR/linux-so.zip"
 	fi
 }
@@ -104,7 +121,7 @@ download_openpi_assets() {
 		echo "[download_assets] OpenPI tokenizer already exists at $TOKENIZER_DIR, skipping download."
 	else
 		mkdir -p "$TOKENIZER_DIR"
-		hf download RLinf/openpi_tokenizer --local-dir "$TOKENIZER_DIR"
+		retry_cmd hf download RLinf/openpi_tokenizer --local-dir "$TOKENIZER_DIR"
 	fi
 }
 

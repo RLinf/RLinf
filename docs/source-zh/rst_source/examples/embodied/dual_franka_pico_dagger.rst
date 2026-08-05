@@ -2,11 +2,13 @@
 
 双 Franka 使用 PICO 采集与 DAgger
 ================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
    :align: center
    :width: 80%
+   :alt: 双 Franka VR 遥操作
 
-   双 Franka 真实世界任务中，PICO 可用于双手遥操作采集和在线 HG-DAgger 接管。
+   使用 VR / PICO 进行双 Franka 遥操作数据采集。
 
 本指南介绍如何在双 Franka TCP-rot6d 环境中使用 PICO 进行示教数据采集，并以
 PICO 人工接管运行在线 Human-Gated DAgger。双臂硬件、实时内核和相机检查请先参考

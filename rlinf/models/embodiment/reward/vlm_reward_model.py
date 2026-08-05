@@ -26,12 +26,24 @@ from peft import (
     get_peft_model,
     set_peft_model_state_dict,
 )
-from transformers import AutoModelForVision2Seq, AutoProcessor
+
+# AutoModelForVision2Seq was renamed to AutoModelForImageTextToText in transformers >= 5.0
+try:
+    from transformers import AutoModelForVision2Seq
+except ImportError:
+    try:
+        from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
+    except ImportError:
+        AutoModelForVision2Seq = None
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
+from rlinf.models.embodiment.reward.vlm_reward_utils.common import (
+    apply_gt_success_bonus,
+    load_vlm_processor,
+)
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    HistoryVLMInputBuilder,
+    BufferedVLMInputBuilder,
     get_input_builder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
@@ -70,18 +82,9 @@ class VLMRewardModel(BaseRewardModel):
         }
 
     def setup_processor(self) -> None:
-        self._processor = AutoProcessor.from_pretrained(
-            self.model_path, trust_remote_code=True
+        self._processor = load_vlm_processor(
+            self.model_path, self.cfg.get("subprocessor_kwargs", {})
         )
-        subprocessor_kwargs = self.cfg.get("subprocessor_kwargs", {})
-        for subprocessor_name, subprocessor_cfg in subprocessor_kwargs.items():
-            subprocessor_cfg = dict(subprocessor_cfg)
-            subprocessor = getattr(self._processor, subprocessor_name, None)
-            if subprocessor is None:
-                continue
-            for key, value in subprocessor_cfg.items():
-                if hasattr(subprocessor, key):
-                    setattr(subprocessor, key, value)
 
     def setup_input_builder(self) -> None:
         self.input_builder = get_input_builder(
@@ -96,38 +99,7 @@ class VLMRewardModel(BaseRewardModel):
     def apply_gt_success_bonus(
         self, rewards: torch.Tensor, reward_input: dict[str, Any]
     ) -> torch.Tensor:
-        if rewards is None or self.gt_success_bonus == 0.0:
-            return rewards
-        env_infos = (
-            reward_input.get("env_infos") if isinstance(reward_input, dict) else None
-        )
-        if not isinstance(env_infos, dict):
-            return rewards
-
-        success = None
-        final_info = env_infos.get("final_info", {})
-        for info_dict in (
-            env_infos,
-            env_infos.get("episode"),
-            final_info,
-            final_info.get("episode") if isinstance(final_info, dict) else None,
-        ):
-            if not isinstance(info_dict, dict):
-                continue
-            for key in ("success", "success_at_end", "success_once"):
-                value = info_dict.get(key)
-                if value is not None:
-                    success = torch.as_tensor(value).reshape(-1).bool()
-                    break
-            if success is not None:
-                break
-
-        if success is None or success.shape[0] != rewards.shape[0]:
-            return rewards
-        bonus = success.to(device=rewards.device, dtype=rewards.dtype)
-        return rewards + (bonus * self.gt_success_bonus).view(
-            -1, *([1] * (rewards.dim() - 1))
-        )
+        return apply_gt_success_bonus(rewards, reward_input, self.gt_success_bonus)
 
     def forward(
         self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
@@ -219,7 +191,7 @@ class VLMRewardModel(BaseRewardModel):
         return self.apply_gt_success_bonus(rewards, observations)
 
 
-class HistoryVLMRewardModel(VLMRewardModel):
+class BufferedVLMRewardModel(VLMRewardModel):
     def __init__(self, cfg: DictConfig):
         self.history_buffer_names = list(cfg.history_buffers.keys())
         self.infer_micro_batch_size: int = int(cfg.get("infer_micro_batch_size", 0))
@@ -229,21 +201,21 @@ class HistoryVLMRewardModel(VLMRewardModel):
 
     def setup_input_builder(self) -> None:
         self.input_builder = get_input_builder(
-            self.cfg.get("input_builder_name", "history_vlm_input_builder")
+            self.cfg.get("input_builder_name", "buffered_vlm_input_builder")
         )(
             **self.cfg.get("input_builder_params", {}),
             _processor=self._processor,
             history_buffer_names=self.history_buffer_names,
         )
-        assert isinstance(self.input_builder, HistoryVLMInputBuilder), (
-            "HistoryVLMRewardModel only supports HistoryVLMInputBuilder"
+        assert isinstance(self.input_builder, BufferedVLMInputBuilder), (
+            "BufferedVLMRewardModel only supports BufferedVLMInputBuilder"
         )
 
     def forward(
         self, input_data: torch.Tensor, labels: Optional[torch.Tensor] = None
     ) -> dict[str, Any]:
         raise NotImplementedError(
-            "HistoryVLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
+            "BufferedVLMRewardModel is a frozen inference-time reward model; training via forward() is not supported."
         )
 
     def slice_history_input(

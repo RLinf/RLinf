@@ -216,11 +216,14 @@ class AgentLoopWorker(Worker):
         """
         wo_messages = [{"role": "user", "content": "hi"}]
         wi_messages = [*wo_messages, *tool_messages]
+        # return_dict=False: transformers 5 returns a BatchEncoding here, whose
+        # [0] is an Encoding rather than a token id, and the slice below needs the
+        # plain list[int]. The argument is accepted from transformers 4.46 on.
         wo_ids = self.tokenizer.apply_chat_template(
-            wo_messages, add_generation_prompt=False, tokenize=True
+            wo_messages, add_generation_prompt=False, tokenize=True, return_dict=False
         )
         wi_ids = self.tokenizer.apply_chat_template(
-            wi_messages, add_generation_prompt=True, tokenize=True
+            wi_messages, add_generation_prompt=True, tokenize=True, return_dict=False
         )
         return wi_ids[len(wo_ids) :]
 
