@@ -26,7 +26,7 @@
      - `arXiv:2602.12628 <https://arxiv.org/abs/2602.12628>`__
    * - :doc:`RLinf <rlinf_system>`
      - 灵活高效的大规模 RL 系统。
-     - `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__
    * - :doc:`DynaRL <dynarl>`
      - 大规模强化学习训练的灵活动态调度。
      - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
