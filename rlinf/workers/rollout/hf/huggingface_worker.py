@@ -722,7 +722,7 @@ class MultiStepRolloutWorker(Worker):
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
             if not self.collect_final_values:
-                rollout_result = RolloutResult(
+                policy_output = PolicyOutput(
                     versions=torch.zeros_like(
                         result["prev_logprobs"], dtype=torch.float32
                     ),
@@ -730,12 +730,12 @@ class MultiStepRolloutWorker(Worker):
                 self.send_to(
                     group_name=self.cfg.env.group_name,
                     channel=output_channel,
-                    data=rollout_result,
+                    data=policy_output,
                     tag="train_rollout_results",
                     route_key=stage_id,
                     async_op=True,
                     batch_size=self.train_batch_size,
-                    split_fn=self._split_rollout_result,
+                    split_fn=self._split_policy_output,
                 )
                 continue
 
