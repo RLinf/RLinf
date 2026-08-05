@@ -20,7 +20,7 @@ writes ``meta/advantages_{new_tag}.parquet`` plus a new ``tags[new_tag]`` entry.
 
 Self-contained: inlines the STEAM-specific labelling + relabel logic and imports
 only the model-agnostic helpers (quantile threshold + boolean label,
-mixture_config I/O) from ``rlinf.data.process``.
+mixture_config I/O) from ``rlinf.algorithms.offline.process``.
 """
 
 from __future__ import annotations
@@ -37,11 +37,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from rlinf.data.process.advantage import (  # noqa: E402
+from rlinf.algorithms.offline.process.advantage import (  # noqa: E402
     apply_boolean_label as _label_by_threshold,
 )
-from rlinf.data.process.advantage import quantile_threshold  # noqa: E402
-from rlinf.data.process.mixture_config import (  # noqa: E402
+from rlinf.algorithms.offline.process.advantage import quantile_threshold  # noqa: E402
+from rlinf.algorithms.offline.process.mixture_config import (  # noqa: E402
     read_mixture_config,
     write_mixture_config_tag,
 )

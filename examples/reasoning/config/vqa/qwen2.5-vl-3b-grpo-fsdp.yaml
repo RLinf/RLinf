@@ -124,7 +124,7 @@ rollout:
   cuda_graph_max_bs: 128 # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
 data:
-  type: vision_language
+  type: vlm
   dataset_name: robo2vlm
   max_prompt_length: 1024
   filter_prompt_by_length: True

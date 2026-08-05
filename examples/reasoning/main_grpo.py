@@ -19,8 +19,9 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
-from rlinf.data.datasets import create_rl_dataset
-from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.data.datasets.reasoning import create_reasoning_datasets
+from rlinf.data.datasets.vlm import VLM_DATA_TYPE, create_vlm_datasets
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.runners.reasoning_runner import ReasoningRunner
 from rlinf.scheduler import Cluster, NodePlacementStrategy
 from rlinf.scheduler.dynamic_scheduler.scheduler_worker import SchedulerWorker
@@ -133,7 +134,10 @@ def main(cfg) -> None:
         scheduler = None
 
     tokenizer = hf_tokenizer(cfg.actor.tokenizer.tokenizer_model)
-    train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
+    if cfg.data.type == VLM_DATA_TYPE:
+        train_ds, val_ds = create_vlm_datasets(cfg, tokenizer)
+    else:
+        train_ds, val_ds = create_reasoning_datasets(cfg, tokenizer)
 
     runner = ReasoningRunner(
         cfg=cfg,

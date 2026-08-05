@@ -1,5 +1,5 @@
-Franka 真机强化学习
-========================================
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,68 +13,6 @@ Franka 真机强化学习
    基础 RLinf 真机 RL 流程使用的 Franka Emika Panda 机械臂。
 
 使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
-
-相关 Franka 配置
-----------------
-
-探索其他 Franka 硬件、传感器与训练配方。
-
-.. grid:: 1 2 2 3
-   :gutter: 2
-
-   .. grid-item-card:: Reward Model
-      :link: franka_reward_model
-      :link-type: doc
-
-      使用学习到的奖励模型训练 Franka。
-
-   .. grid-item-card:: ZED + Robotiq
-      :link: franka_zed_robotiq
-      :link-type: doc
-
-      使用 ZED 相机与 Robotiq 夹爪。
-
-   .. grid-item-card:: GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      使用 GELLO 进行关节级遥操作数据采集。
-
-   .. grid-item-card:: VR / PICO
-      :link: franka_vr
-      :link-type: doc
-
-      使用 VR / PICO 设备进行遥操作。
-
-   .. grid-item-card:: Dexterous Hand
-      :link: franka_dexhand
-      :link-type: doc
-
-      为 Franka 配置灵巧手末端执行器。
-
-   .. grid-item-card:: Pi0 SFT
-      :link: franka_pi0_sft_deploy
-      :link-type: doc
-
-      在 Franka 上部署 π₀ SFT 策略。
-
-   .. grid-item-card:: HG-DAgger
-      :link: hg-dagger
-      :link-type: doc
-
-      人类介入的 DAgger 交互式训练。
-
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
-      :link-type: doc
-
-      运行双臂 Franka 配置。
-
-   .. grid-item-card:: Dual PICO DAgger
-      :link: dual_franka_pico_dagger
-      :link-type: doc
-
-      使用 PICO 采集双臂数据并运行 HG-DAgger。
 
 概览
 ----------------------------------------
@@ -192,7 +130,6 @@ Franka 真机强化学习
   <div style="flex: 1; text-align: center;">
       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
   </div>
-
 .. warning::
 
   请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
@@ -726,18 +663,3 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
     </video>
     <p><em>充电器插电（Charger）</em></p>
   </div>
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   GELLO <franka_gello>
-   VR / PICO <franka_vr>
-   Dexterous Hand <franka_dexhand>
-   Pi0 SFT <franka_pi0_sft_deploy>
-   HG-DAgger <hg-dagger>
-   Dual-Arm <dual_franka>
-   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
-   Dual PICO DAgger <dual_franka_pico_dagger>

@@ -30,6 +30,7 @@ import yaml
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import Dataset
 
+from rlinf.data.datasets.common.seed import safe_hash
 from rlinf.data.datasets.dreamzero.sampling_strategy import (
     DEFAULT_VIDEO_IN_CHUNK_OFFSETS,
     EmptyTemporalSampleError,
@@ -50,8 +51,7 @@ from rlinf.data.datasets.dreamzero.utils import (
     probe_video_container_fps,
     safe_lang_text,
 )
-from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
-from rlinf.data.utils import safe_hash
+from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
