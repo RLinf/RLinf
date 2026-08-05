@@ -26,7 +26,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "vidar_rl_action_similarity_video_level_g8_env64_s8_idmbs4_temp2_lr1e5_20260613_221215"
+    experiment_name: "vidar_robotwin_nft_action_similarity"
     logger_backends: ["tensorboard"]
   max_epochs: 60
   max_steps: -1

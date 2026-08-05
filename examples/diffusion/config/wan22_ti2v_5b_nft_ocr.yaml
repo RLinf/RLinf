@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "ocr_nft_wan22_ti2v_5b_compile_lr4e4_clip02_tau0_50"
+    experiment_name: "wan22_ti2v_5b_nft_ocr"
     logger_backends: ["tensorboard"]
   max_epochs: 70
   max_steps: -1

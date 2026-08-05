@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "ocr_nft_sd3_diffusionnft"
+    experiment_name: "sd3_nft_ocr"
     logger_backends: ["tensorboard"]
   max_epochs: 70
   max_steps: -1
