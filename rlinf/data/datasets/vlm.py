@@ -788,9 +788,9 @@ def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
     return path
 
 
-@VLMDatasetRegistry.register("qwentrend_progress_sft")
-class QwenTrendProgressSFTDataset(VLMBaseDataset):
-    """SFT dataset for QwenTrend progress: full_video + video_clip input, aligned with the pilot.
+@VLMDatasetRegistry.register("vlm_trend_reward_sft")
+class VLMTrendRewardSFTDataset(VLMBaseDataset):
+    """SFT dataset for VLM Trend reward: full_video + video_clip input.
 
     Each record: full_video (mp4), video_clip (mp4), question, answer.
     Qwen3-VL uses videos input, matching the dataset format.
@@ -828,7 +828,7 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         answer_text: Optional[str] | list[Optional[str]] = None,
     ) -> tuple[str | list[str], dict[str, Any], dict[str, Any]]:
         """
-        Build Qwen3-VL processor inputs for QwenTrend progress SFT.
+        Build Qwen3-VL processor inputs for VLM Trend reward SFT.
         """
 
         def _render_prompt_text(
@@ -1067,9 +1067,9 @@ class QwenTrendProgressSFTDataset(VLMBaseDataset):
         )
 
 
-@VLMDatasetRegistry.register("simple_qwentrend_sft")
-class SimpleQwenTrendSFTDataset(QwenTrendProgressSFTDataset):
-    """SFT dataset for a single-video, single-word QwenTrend format."""
+@VLMDatasetRegistry.register("simple_vlm_trend_reward_sft")
+class SimpleVLMTrendRewardSFTDataset(VLMTrendRewardSFTDataset):
+    """SFT dataset for a single-video, single-word VLM Trend reward format."""
 
     @classmethod
     def _build_video_user_content(
