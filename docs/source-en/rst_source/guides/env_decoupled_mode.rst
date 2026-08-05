@@ -90,8 +90,9 @@ may fetch any Env batch. Setting ``rollout.enable_group_route_binding: true``
 (default ``false``) instead partitions the pool into fixed per-group bindings:
 Rollout Worker rank ``k`` serves only its own Env group (env ranks
 ``k * ratio .. k * ratio + ratio - 1``, where ``ratio = env_world_size //
-rollout_world_size``), via an isolated ``route_key`` per group. There is no
-global pool and no cross-group work-stealing.
+rollout_world_size`` rounded up), via an isolated ``route_key`` per group. The
+last group may contain fewer Env Workers. There is no global pool and no
+cross-group work-stealing.
 
 .. code-block:: yaml
 
@@ -103,9 +104,8 @@ global pool and no cross-group work-stealing.
 
 This gives a fixed ``1`` Rollout : ``N`` Env-Worker overlap, replicable as
 independent groups across a robot fleet — useful for real-robot rollout where
-each Rollout Worker drives a fixed set of robots. It requires ``env_world_size``
-to be divisible by ``rollout_world_size`` (validated at startup); plain decoupled
-mode allows an arbitrary ratio.
+each Rollout Worker drives a fixed set of robots. Non-divisible Env-to-Rollout
+ratios are supported as long as ``env_world_size >= rollout_world_size``.
 
 Training Flow
 -------------

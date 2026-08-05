@@ -176,12 +176,9 @@ class EnvWorker(Worker):
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
             if self.enable_group_route_binding:
-                assert env_world_size % rollout_world_size == 0, (
-                    f"enable_group_route_binding requires env world size ({env_world_size}) "
-                    f"to be divisible by rollout world size ({rollout_world_size}) so each "
-                    "rollout worker is bound to a whole, equal-sized env group."
-                )
-                ratio = env_world_size // rollout_world_size
+                ratio = (
+                    env_world_size + rollout_world_size - 1
+                ) // rollout_world_size
                 # env ranks (ratio*k .. ratio*k+ratio-1) are bound to rollout rank k.
                 self._group_id = self._rank // ratio
                 self.log_info(

@@ -136,13 +136,6 @@ class MultiStepRolloutWorker(Worker):
                 "rollout_results": [],
             }
             if self.enable_group_route_binding:
-                env_world_size = self.placement.get_world_size("env")
-                rollout_world_size = self.placement.get_world_size("rollout")
-                assert env_world_size % rollout_world_size == 0, (
-                    f"enable_group_route_binding requires env world size ({env_world_size}) "
-                    f"to be divisible by rollout world size ({rollout_world_size}) so each "
-                    "rollout worker is bound to a whole, equal-sized env group."
-                )
                 # rollout rank k owns group k; env ranks (ratio*k .. ratio*k+ratio-1) bind to it.
                 self._group_id = self._rank
                 self.log_info(
