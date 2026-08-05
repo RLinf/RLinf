@@ -20,7 +20,7 @@ SftDataLoaderBuilder = Callable[..., tuple[Any, Any]]
 
 
 def _load_behavior_sft_dataloader() -> SftDataLoaderBuilder:
-    from rlinf.data.datasets.openpi_pytorch.behavior import (
+    from rlinf.data.datasets.openpi_rlinf.behavior import (
         build_behavior_sft_dataloader,
     )
 
@@ -28,7 +28,7 @@ def _load_behavior_sft_dataloader() -> SftDataLoaderBuilder:
 
 
 def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
-    from rlinf.data.datasets.openpi_pytorch.dual_franka import (
+    from rlinf.data.datasets.openpi_rlinf.dual_franka import (
         build_dual_franka_sft_dataloader,
     )
 
@@ -48,22 +48,22 @@ def _resolve_env(config_name: str) -> str:
         if env_type in config_name:
             return env_type
     raise ValueError(
-        f"No openpi_pytorch SFT dataloader registered matching "
+        f"No openpi_rlinf SFT dataloader registered matching "
         f"config_name={config_name!r}; known envs: {list(_SFT_DATALOADER_BUILDERS)}."
     )
 
 
-def build_openpi_pytorch_sft_dataloader(
+def build_openpi_rlinf_sft_dataloader(
     cfg: Any,
     world_size: int,
     rank: int,
     data_paths: Any,
     eval_dataset: bool = False,
 ) -> tuple[Any, Any]:
-    """Build the environment-specific openpi_pytorch SFT dataloader."""
+    """Build the environment-specific openpi_rlinf SFT dataloader."""
     env_type = _resolve_env(str(cfg.actor.model.openpi.config_name))
     builder = _SFT_DATALOADER_BUILDERS[env_type]()
     return builder(cfg, world_size, rank, data_paths, eval_dataset)
 
 
-__all__ = ["build_openpi_pytorch_sft_dataloader"]
+__all__ = ["build_openpi_rlinf_sft_dataloader"]

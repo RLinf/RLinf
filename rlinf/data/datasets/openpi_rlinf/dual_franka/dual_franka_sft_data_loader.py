@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-Franka tcp_rot6d SFT data loader for the openpi_pytorch path.
+"""Dual-Franka tcp_rot6d SFT data loader for the openpi_rlinf path.
 
 The loader owns dataset access, distributed sampling, and collation into the
-openpi_pytorch ``Observation`` type. Input semantics come from the canonical
+openpi_rlinf ``Observation`` type. Input semantics come from the canonical
 RLinf OpenPI config selected by ``config_name``::
 
     repack LeRobot keys
@@ -37,12 +37,12 @@ import torch
 from openpi.transforms import DataTransformFn, compose
 from torch.utils.data.distributed import DistributedSampler
 
-from rlinf.data.datasets.openpi_pytorch.dual_franka.dual_franka_sft_dataset import (
+from rlinf.data.datasets.openpi_rlinf.dual_franka.dual_franka_sft_dataset import (
     DualFrankaSftDataset,
 )
 from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.transforms_pipeline import (
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
     build_openpi_transforms,
 )
 from rlinf.utils.logging import get_logger
@@ -302,14 +302,12 @@ def build_dual_franka_sft_dataloader(
     data_paths: typing.Any,
     eval_dataset: bool = False,
 ) -> tuple[DualFrankaSftDataLoader, DualFrankaSftDataConfig]:
-    """Build the dual-franka openpi_pytorch loader for the SFT worker."""
+    """Build the dual-franka openpi_rlinf loader for the SFT worker."""
     from omegaconf import OmegaConf
 
     data_path = resolve_lerobot_repo_id(data_paths)
     if data_path is None:
-        raise ValueError(
-            "openpi_pytorch dual_franka SFT requires data.train_data_paths."
-        )
+        raise ValueError("openpi_rlinf dual_franka SFT requires data.train_data_paths.")
 
     model_cfg = cfg.actor.model
     data_cfg = cfg.data

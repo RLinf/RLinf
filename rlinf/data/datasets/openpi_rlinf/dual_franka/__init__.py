@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dual-Franka tcp_rot6d SFT data pipeline for openpi_pytorch.
+"""Dual-Franka tcp_rot6d SFT data pipeline for openpi_rlinf.
 
 The dataset loader owns sampling and collation while the canonical RLinf
 ``DualFrankaTcpRot6dDataConfig`` supplies model-facing transforms.
 """
 
-from rlinf.data.datasets.openpi_pytorch.dual_franka.dual_franka_sft_data_loader import (
+from rlinf.data.datasets.openpi_rlinf.dual_franka.dual_franka_sft_data_loader import (
     DualFrankaSftDataConfig,
     DualFrankaSftDataLoader,
     build_dual_franka_sft_dataloader,
     collate_dual_franka_sft_items,
     create_dual_franka_sft_data_loader,
 )
-from rlinf.data.datasets.openpi_pytorch.dual_franka.dual_franka_sft_dataset import (
+from rlinf.data.datasets.openpi_rlinf.dual_franka.dual_franka_sft_dataset import (
     DualFrankaSftDataset,
 )
 

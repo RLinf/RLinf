@@ -21,11 +21,11 @@ import numpy as np
 import torch
 from torch.utils._pytree import tree_map
 
-from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
+from rlinf.models.embodiment.openpi_rlinf.openpi_action_model import (
     OpenPiPytorchActionModel,
 )
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0 import Pi0
 
 
 def _to_numpy(x):

@@ -1,4 +1,4 @@
-model_type: "openpi_pytorch"
+model_type: "openpi_rlinf"
 
 # Pi0 JAX-aligned PyTorch model-shape template for RoboTwin ALOHA SFT.
 # Filesystem paths are supplied by robotwin_sft_openpi.yaml.

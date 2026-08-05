@@ -35,9 +35,9 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     import safetensors.torch
     from omegaconf import OmegaConf
 
-    from rlinf.models.embodiment.openpi_pytorch.pi0_model import gemma as pi0_gemma
-    from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0_config import Pi0Config
-    from rlinf.models.embodiment.openpi_pytorch.utils.model_builders import (
+    from rlinf.models.embodiment.openpi_rlinf.pi0_model import gemma as pi0_gemma
+    from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0_config import Pi0Config
+    from rlinf.models.embodiment.openpi_rlinf.utils.model_builders import (
         _build_eval_model,
         _build_rl_model,
         _build_sft_model,
@@ -56,7 +56,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     model_path = pathlib.Path(cfg.model_path)
     weights_path = model_path / "model.safetensors"
     if not weights_path.exists():
-        raise FileNotFoundError(f"openpi_pytorch checkpoint not found: {weights_path}")
+        raise FileNotFoundError(f"openpi_rlinf checkpoint not found: {weights_path}")
 
     pi0_kwargs = {
         "pi05": pi05,
@@ -97,7 +97,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     task = str(task).lower()
 
     logger.info(
-        "openpi_pytorch[%s]: loaded %s (%.2fB params) strict from %s "
+        "openpi_rlinf[%s]: loaded %s (%.2fB params) strict from %s "
         "precision=%s num_steps=%s",
         task,
         pi0_config,

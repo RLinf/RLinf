@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from rlinf.data.datasets.openpi_pytorch.behavior.behavior_sft_data_loader import (
+from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_data_loader import (
     BehaviorSftDataConfig,
     BehaviorSftDataLoader,
     build_behavior_sft_dataloader,
     create_behavior_sft_data_loader,
 )
-from rlinf.data.datasets.openpi_pytorch.behavior.behavior_sft_dataset import (
+from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_dataset import (
     BehaviorSftDataset,
 )
 

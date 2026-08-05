@@ -84,7 +84,7 @@ def build_openpi_transforms(
     norm_stats = _checkpoints.load_norm_stats(stats_dir, asset_id)
     if norm_stats is None:
         raise FileNotFoundError(
-            f"openpi_pytorch: norm_stats not found at {stats_dir}/{asset_id}/"
+            f"openpi_rlinf: norm_stats not found at {stats_dir}/{asset_id}/"
             "norm_stats.json. For eval/RL the checkpoint dir must bundle them; "
             "for SFT set actor.model.openpi.assets_dir/asset_id to the stats dir."
         )

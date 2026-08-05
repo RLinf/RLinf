@@ -2,10 +2,10 @@ OpenPI_RLinf Supervised Fine-Tuning
 =================================================
 
 This page explains how to run **supervised fine-tuning (SFT)** of the
-self-contained **PyTorch OpenPI Pi0.5** flow-matching VLA on the
+self-contained **OpenPI_RLinf Pi0.5** flow-matching VLA on the
 **BEHAVIOR-1K** task with RLinf. The model is a pure-PyTorch reimplementation
 of the Pi0.5 architecture (dual-expert Gemma + SigLIP with a flow-matching
-action head), registered in RLinf under ``model_type: openpi_pytorch``. SFT is
+action head), registered in RLinf under ``model_type: openpi_rlinf``. SFT is
 typically the first stage before reinforcement learning: the model imitates
 high-quality demonstrations so that RL can continue optimization from a strong
 prior. This page also describes use of the same JAX-aligned implementation for
@@ -18,7 +18,7 @@ setup, see :doc:`the Dual-Franka PyTorch OpenPI guide <dual_franka_openpi_pytorc
 Contents
 --------
 
-- The PyTorch OpenPI SFT flow and its configuration
+- The OpenPI_RLinf SFT flow and its configuration
 - The FSDP optimizer and mixed-precision contract
 - BEHAVIOR streaming-loader fields and norm-stat/tokenizer handling
 - Launching training and converting checkpoints for evaluation
@@ -28,7 +28,7 @@ Contents
 What it is
 ----------
 
-The ``openpi_pytorch`` model is a self-contained PyTorch port of the Pi0.5
+The ``openpi_rlinf`` model is a self-contained PyTorch port of the Pi0.5
 flow-matching VLA. **It is worth emphasizing that** the PyTorch implementation
 shipped in the official OpenPI repository is not numerically aligned with its
 JAX reference, whereas this port is numerically aligned with the JAX
@@ -50,25 +50,25 @@ The example is split into a reusable, path-free **model template** and an
 **experiment config** that supplies filesystem paths:
 
 - Experiment config: ``examples/sft/config/behavior_pi05_vla.yaml``
-- Model template: ``examples/sft/config/model/pi0_5_pytorch.yaml``
+- Model template: ``examples/sft/config/model/pi0_5_rlinf.yaml``
 
 The experiment config imports the model template through Hydra ``defaults``:
 
 .. code:: yaml
 
    defaults:
-     - model/pi0_5_pytorch@actor.model
+     - model/pi0_5_rlinf@actor.model
      - hybrid_engines/fsdp@actor.fsdp_config
      - override hydra/job_logging: stdout
 
 Precision contract
 ~~~~~~~~~~~~~~~~~~
 
-The PyTorch OpenPI SFT configuration deliberately separates the **load dtype**
+The OpenPI_RLinf SFT configuration deliberately separates the **load dtype**
 from the **compute dtype**:
 
 - The model template sets ``actor.model.precision`` to ``fp32`` (in
-  ``pi0_5_pytorch.yaml``). fp32 weights are loaded as the **FSDP optimizer
+  ``pi0_5_rlinf.yaml``). fp32 weights are loaded as the **FSDP optimizer
   master**, preventing small warmup-LR updates from being lost to bf16 rounding.
 - FSDP ``MixedPrecision`` computes in bf16 while keeping gradient all-reduce
   and buffers in fp32:
@@ -155,7 +155,7 @@ Normalization-statistics paths are configured under ``actor.model.openpi``:
 Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``. The
 PaliGemma tokenizer is loaded from the base-model configuration by OpenPI's
 ``ModelTransformFactory`` when constructing the input transform, so the
-``openpi_pytorch`` SFT YAML does not need a separate SentencePiece tokenizer
+``openpi_rlinf`` SFT YAML does not need a separate SentencePiece tokenizer
 path.
 
 Filesystem paths
@@ -177,8 +177,8 @@ Pi0 + RoboTwin
 
 Pi0 RoboTwin uses the official OpenPI/LeRobot map-style data loader:
 
-- Experiment config: ``examples/sft/config/robotwin_sft_openpi_pytorch.yaml``
-- Model template: ``examples/sft/config/model/pi0_pytorch.yaml``
+- Experiment config: ``examples/sft/config/robotwin_sft_openpi_rlinf.yaml``
+- Model template: ``examples/sft/config/model/pi0_rlinf.yaml``
 - OpenPI data config: ``pi0_aloha_robotwin``
 
 Replace the dataset, base checkpoint, and task-specific normalization-statistics
@@ -228,7 +228,7 @@ Run the SFT helper from the repository root:
    bash examples/sft/run_vla_sft.sh behavior_pi05_vla
 
    # Pi0 + RoboTwin
-   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_pytorch
+   bash examples/sft/run_vla_sft.sh robotwin_sft_openpi_rlinf
 
 The script forwards the config name to the SFT entry point and writes logs and
 checkpoints under the configured ``runner.logger.log_path``. Checkpoints are
@@ -267,7 +267,7 @@ Use the OpenPI checkpoint converter to convert an SFT checkpoint to the bare
 Pi0.5 model shape using ``--config-name``, copies normalization statistics, and
 writes floating-point tensors using ``--dtype {fp32,bf16}``. For RoboTwin, the
 converted directory can be placed in ``rollout.model.model_path`` in
-``evaluations/robotwin/robotwin_adjust_bottle_openpi_pytorch_eval.yaml``;
+``evaluations/robotwin/robotwin_adjust_bottle_openpi_rlinf_eval.yaml``;
 ``openpi_data.norm_stats_path`` in the evaluation config must select the same
 task statistics.
 

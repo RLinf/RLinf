@@ -17,7 +17,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0 import Pi0
 
 
 class OpenPiPytorchActionModel(nn.Module):

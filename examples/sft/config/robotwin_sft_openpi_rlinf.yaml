@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_pytorch@actor.model
+  - model/pi0_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
   - _self_
@@ -21,7 +21,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "robotwin_pi0_openpi_pytorch_sft"
+    experiment_name: "robotwin_pi0_openpi_rlinf_sft"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: -1

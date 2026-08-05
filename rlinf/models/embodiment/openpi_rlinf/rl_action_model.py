@@ -22,13 +22,13 @@ import torch
 
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.modules.value_head import ValueHead
-from rlinf.models.embodiment.openpi_pytorch.eval_action_model import (
+from rlinf.models.embodiment.openpi_rlinf.eval_action_model import (
     OpenPiPytorchEvalActionModel,
 )
-from rlinf.models.embodiment.openpi_pytorch.pi0_model import model as pi0_model_module
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
-from rlinf.models.embodiment.openpi_pytorch.utils import rl_sampler
+from rlinf.models.embodiment.openpi_rlinf.pi0_model import model as pi0_model_module
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_rlinf.utils import rl_sampler
 
 
 @dataclasses.dataclass(frozen=True)
@@ -153,7 +153,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         # silently produce zero-logprob trajectories.
         if rl_cfg.joint_logprob:
             raise NotImplementedError(
-                "openpi_pytorch RL port supports joint_logprob=False only "
+                "openpi_rlinf RL port supports joint_logprob=False only "
                 "(single random denoise step). Set actor.model.openpi.joint_logprob=False."
             )
         if not rl_cfg.add_value_head:
@@ -285,7 +285,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         rl_cfg = self.rl_cfg
         if rl_cfg.joint_logprob:
             raise NotImplementedError(
-                "openpi_pytorch RL port supports joint_logprob=False only."
+                "openpi_rlinf RL port supports joint_logprob=False only."
             )
 
         compute_values = kwargs.get("compute_values", True)

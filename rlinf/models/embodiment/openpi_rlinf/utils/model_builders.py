@@ -14,7 +14,7 @@
 
 """Per-task model builders for the OpenPI 0.5 factory.
 
-:func:`rlinf.models.embodiment.openpi_pytorch.get_model` loads the vendored
+:func:`rlinf.models.embodiment.openpi_rlinf.get_model` loads the vendored
 ``Pi0`` core and then dispatches on ``actor.model.openpi.task`` to one of the
 builders here, each of which wraps the core in the concrete variant:
 
@@ -62,10 +62,10 @@ def _build_eval_model(
     """
     from omegaconf import OmegaConf
 
-    from rlinf.models.embodiment.openpi_pytorch.eval_action_model import (
+    from rlinf.models.embodiment.openpi_rlinf.eval_action_model import (
         OpenPiPytorchEvalActionModel,
     )
-    from rlinf.models.embodiment.openpi_pytorch.transforms_pipeline import (
+    from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
         build_openpi_transforms,
     )
 
@@ -105,7 +105,7 @@ def _build_sft_model(
     pipeline the eval/RL paths use, so the SFT model holds no processor and no
     transforms — it just computes the flow-matching loss.
     """
-    from rlinf.models.embodiment.openpi_pytorch.sft_action_model import (
+    from rlinf.models.embodiment.openpi_rlinf.sft_action_model import (
         OpenPiPytorchSFTActionModel,
     )
 
@@ -135,11 +135,11 @@ def _build_rl_model(
     """
     from omegaconf import OmegaConf
 
-    from rlinf.models.embodiment.openpi_pytorch.rl_action_model import (
+    from rlinf.models.embodiment.openpi_rlinf.rl_action_model import (
         OpenPiPytorchRLActionModel,
         OpenPiPytorchRLConfig,
     )
-    from rlinf.models.embodiment.openpi_pytorch.transforms_pipeline import (
+    from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
         build_openpi_transforms,
     )
 
@@ -195,7 +195,7 @@ def _build_rl_model(
         # ``actor/run_training`` parity lever vs the legacy implementation.
         frozen = rl_model.freeze_vlm()
         logger.info(
-            "openpi_pytorch[rl]: train_expert_only=True; froze %d parameter tensors "
+            "openpi_rlinf[rl]: train_expert_only=True; froze %d parameter tensors "
             "(SigLIP + gemma expert-0)",
             frozen,
         )

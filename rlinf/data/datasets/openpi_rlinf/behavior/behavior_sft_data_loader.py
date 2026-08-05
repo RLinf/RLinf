@@ -23,14 +23,14 @@ import numpy as np
 import torch
 from openpi.transforms import DataTransformFn, compose
 
-from rlinf.data.datasets.openpi_pytorch.behavior.behavior_sft_dataset import (
+from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_dataset import (
     BehaviorSftDataset,
 )
 from rlinf.data.lerobot_paths import (
     resolve_lerobot_repo_id,
 )
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.transforms_pipeline import (
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
     build_openpi_transforms,
 )
 
@@ -363,7 +363,7 @@ def build_behavior_sft_dataloader(
 
     data_path = resolve_lerobot_repo_id(data_paths)
     if data_path is None:
-        raise ValueError("openpi_pytorch BEHAVIOR SFT requires data.train_data_paths.")
+        raise ValueError("openpi_rlinf BEHAVIOR SFT requires data.train_data_paths.")
 
     model_cfg = cfg.actor.model
     data_cfg = cfg.data
@@ -390,14 +390,14 @@ def build_behavior_sft_dataloader(
         # list and the fixed window recipe below.
         if len(tasks) != 1:
             raise ValueError(
-                "openpi_pytorch BEHAVIOR SFT use_skill:true supports exactly one task "
+                "openpi_rlinf BEHAVIOR SFT use_skill:true supports exactly one task "
                 f"(the task-0000 skill recipe); got data.tasks={tasks}."
             )
         subtask_labels = data_cfg.task_subtasks
         labels = subtask_labels.get(tasks[0]) if subtask_labels else None
         if not labels:
             raise ValueError(
-                "openpi_pytorch BEHAVIOR SFT use_skill:true requires the reference "
+                "openpi_rlinf BEHAVIOR SFT use_skill:true requires the reference "
                 f"skill labels at data.task_subtasks.{tasks[0]}; none was configured."
             )
         skill_labels = {i: str(label) for i, label in enumerate(labels)}

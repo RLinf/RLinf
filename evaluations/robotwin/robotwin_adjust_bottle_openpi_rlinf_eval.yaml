@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "robotwin_adjust_bottle_openpi_pytorch_eval"
+    experiment_name: "robotwin_adjust_bottle_openpi_rlinf_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -74,7 +74,7 @@ rollout:
   enable_offload: True
   pipeline_stage_num: 1
   model:
-    model_type: "openpi_pytorch"
+    model_type: "openpi_rlinf"
     model_path: "/path/to/pi0_robotwin_adjust_bottle_sft_hf"
     precision: "bf16"
     is_lora: false

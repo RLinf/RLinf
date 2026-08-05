@@ -1,4 +1,4 @@
-model_type: "openpi_pytorch"
+model_type: "openpi_rlinf"
 
 # Model-shape template only. The real checkpoint path (model_path) is set in the
 # eval experiment config (behavior_openpi_pi05_pytorch_eval.yaml); the values here
@@ -24,7 +24,7 @@ num_steps: 5
 # No value head in the eval-only model.
 add_value_head: False
 
-# openpi_pytorch model-shape parameters. get_model builds Pi0Config from
+# openpi_rlinf model-shape parameters. get_model builds Pi0Config from
 # num_action_chunks (action_horizon) + the openpi.* shape fields; no config.json
 # is read. Norm stats + the PaliGemma tokenizer are resolved by the shared openpi
 # transform pipeline (checkpoint-relative for eval; the tokenizer from openpi's
@@ -34,7 +34,7 @@ add_value_head: False
 # mount-agnostic — it composes under `@rollout.model` (eval) and `@actor.model`
 # (RL training) alike.
 openpi:
-  # Concrete openpi_pytorch variant: eval / sft / rl.
+  # Concrete openpi_rlinf variant: eval / sft / rl.
   task: eval
   # openpi TrainConfig key selecting the shared transform pipeline
   # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env

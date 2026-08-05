@@ -1,7 +1,7 @@
 defaults:
   - env/behavior_r1pro@env.train
   - env/behavior_r1pro@env.eval
-  - model/pi0_5_pytorch@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -126,7 +126,7 @@ actor:
     openpi:
       # Selects the RL variant (chain-collecting SDE sampler + VLM value head).
       task: rl
-      # config_name + all shape fields are inherited from model/pi0_5_pytorch.
+      # config_name + all shape fields are inherited from model/pi0_5_rlinf.
       # VLM-pooled value head over the paligemma prefix — the only combination the
       # pytorch RL port supports (value_after_vlm=False raises NotImplementedError).
       value_after_vlm: True

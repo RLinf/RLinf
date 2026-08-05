@@ -1,6 +1,6 @@
 defaults:
   - env/behavior_r1pro@env.eval
-  - model/pi0_5_pytorch@rollout.model
+  - model/pi0_5_rlinf@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:
@@ -13,19 +13,19 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    rollout,env: 0-1
+    rollout,env: all
 
 runner:
   task_type: embodied_eval
   logger:
-    log_path: "../results/behavior_openpi_pytorch_eval"
+    log_path: "../results"
     project_name: rlinf
-    experiment_name: "test_openpi_pytorch_eval"
+    experiment_name: "behavior_openpi05_pytorch_eval"
     logger_backends: ["tensorboard"]
 
   only_eval: True
 
-  max_epochs: 1
+  max_epochs: 1000
   max_steps: 1
 
   val_check_interval: -1
@@ -38,12 +38,14 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    rollout_epoch: 1
-    total_num_envs: 2
-    max_episode_steps: 512
-    max_steps_per_rollout_epoch: 512
+    rollout_epoch: 4
+    total_num_envs: 4
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
     video_cfg:
-      save_video: False
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
+      fps: 15
 
 rollout:
   group_name: "RolloutGroup"
@@ -61,7 +63,5 @@ rollout:
     max_new_tokens: null
 
   model:
-    # Minimal CI fixture: the new-format eval checkpoint staged under /workspace.
-    # Norm stats resolve checkpoint-relative; tokenizer from openpi's cache.
-    model_path: /workspace/dataset/ci_behavior/model
+    model_path: /path/to/pi05_sft_pytorch_new
     add_value_head: False

@@ -430,7 +430,7 @@ Checkpoints are saved under
 is the ``repo_id`` under which ``norm_stats.json`` is stored; and ``model_path``
 is the model path selected for training. The model used in this
 guide must first be converted from the ``openpi-jax`` format. See
-``sft_openpi_pytorch.rst`` for details. The conversion utility is located at:
+``sft_openpi_rlinf.rst`` for details. The conversion utility is located at:
 
 .. code-block:: text
 

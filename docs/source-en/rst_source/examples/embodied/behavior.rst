@@ -372,13 +372,13 @@ RLinf YAML directly and preserves ``activity_definition_id``.
 
 --------------
 
-**5. Evaluate with the PyTorch OpenPI (Pi0.5) code**
+**5. Evaluate with OpenPI_RLinf (Pi0.5)**
 
-BEHAVIOR evaluation is also supported with the new **self-contained PyTorch
-OpenPI** code (model ``model_type: openpi_pytorch``; see
-:doc:`sft_openpi_pytorch` for the matching SFT flow). The eval config is:
+BEHAVIOR evaluation is also supported with the self-contained
+**OpenPI_RLinf** code (model ``model_type: openpi_rlinf``; see
+:doc:`sft_openpi_rlinf` for the matching SFT flow). The eval config is:
 
-- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
 
 This config runs in eval-only mode (``runner.only_eval: True``) and consumes an
 **OpenPI_RLinf** checkpoint, i.e. one produced by the OpenPI checkpoint

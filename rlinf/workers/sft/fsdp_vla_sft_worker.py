@@ -32,16 +32,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI_PYTORCH:
+        if model_type == SupportedModel.OPENPI_RLINF:
             if "robotwin" in str(self.cfg.actor.model.openpi.config_name).lower():
                 return self._build_official_openpi_dataloader(
                     data_paths, eval_dataset=eval_dataset
                 )
-            from rlinf.data.datasets.openpi_pytorch import (
-                build_openpi_pytorch_sft_dataloader,
+            from rlinf.data.datasets.openpi_rlinf import (
+                build_openpi_rlinf_sft_dataloader,
             )
 
-            return build_openpi_pytorch_sft_dataloader(
+            return build_openpi_rlinf_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
         elif model_type == SupportedModel.OPENPI:
@@ -104,7 +104,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             repo_id=repo_id,
             data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
         )
-        if model_type == SupportedModel.OPENPI_PYTORCH:
+        if model_type == SupportedModel.OPENPI_RLINF:
             config = dataclasses.replace(
                 config,
                 num_workers=int(
@@ -114,21 +114,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 ),
                 seed=int(OmegaConf.select(self.cfg, "actor.seed", default=config.seed)),
             )
-            self._validate_openpi_pytorch_model_shape(config)
+            self._validate_openpi_rlinf_model_shape(config)
 
         data_loader = openpi_data_loader.create_data_loader(
             config, framework="pytorch", shuffle=not eval_dataset
         )
         return data_loader, data_loader.data_config()
 
-    def _validate_openpi_pytorch_model_shape(self, openpi_config: Any) -> None:
+    def _validate_openpi_rlinf_model_shape(self, openpi_config: Any) -> None:
         """Keep the local Pi0 architecture consistent with the OpenPI config."""
         model_cfg = self.cfg.actor.model
         local_horizon = int(model_cfg.num_action_chunks)
         official_horizon = int(openpi_config.model.action_horizon)
         if local_horizon != official_horizon:
             raise ValueError(
-                "openpi_pytorch SFT action horizon must match the official OpenPI "
+                "openpi_rlinf SFT action horizon must match the official OpenPI "
                 f"config: actor.model.num_action_chunks={local_horizon}, "
                 f"{model_cfg.openpi.config_name}.model.action_horizon="
                 f"{official_horizon}."
@@ -138,7 +138,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         official_action_dim = int(openpi_config.model.action_dim)
         if local_action_dim != official_action_dim:
             raise ValueError(
-                "openpi_pytorch SFT model action dim must match the official OpenPI "
+                "openpi_rlinf SFT model action dim must match the official OpenPI "
                 f"config: actor.model.openpi.model_action_dim={local_action_dim}, "
                 f"{model_cfg.openpi.config_name}.model.action_dim="
                 f"{official_action_dim}."
@@ -213,19 +213,21 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI_PYTORCH:
+        if model_type == SupportedModel.OPENPI_RLINF:
             if "robotwin" in str(self.cfg.actor.model.openpi.config_name).lower():
-                num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
+                num_batches = len(
+                    self._unwrap_openpi_torch_dataloader(self.data_loader)
+                )
             else:
                 num_batches = len(self.data_loader)
         elif model_type == SupportedModel.OPENPI:
-            num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
+            num_batches = len(self._unwrap_openpi_torch_dataloader(self.data_loader))
         else:
             return super().get_max_steps_per_epoch()
         return max(1, num_batches // self.gradient_accumulation)
 
     @staticmethod
-    def _openpi_pytorch_dataloader(openpi_dataloader: Any):
+    def _unwrap_openpi_torch_dataloader(openpi_dataloader: Any):
         """Unwrap OpenPI `DataLoaderImpl` to the inner PyTorch DataLoader.
 
         OpenPI torch path:

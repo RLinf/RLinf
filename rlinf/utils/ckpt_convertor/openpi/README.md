@@ -1,7 +1,7 @@
 # OpenPI 0.5 checkpoint convertors
 
 Consolidated convertors for the self-contained OpenPI 0.5 (`Pi0`) checkpoints
-used by the `openpi_pytorch` model package. Five conversion modes share one core
+used by the `openpi_rlinf` model package. Five conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
 wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
@@ -110,7 +110,7 @@ The two SFT configurations use the same mixed-precision policy for training:
 | Configuration | Base/model checkpoint | FSDP `param_dtype` | FSDP reduction and buffer dtype |
 | --- | --- | --- | --- |
 | `behavior_pi05_vla.yaml` | fp32 | bf16 | fp32 |
-| `robotwin_sft_openpi_pytorch.yaml` | fp32 | bf16 | fp32 |
+| `robotwin_sft_openpi_rlinf.yaml` | fp32 | bf16 | fp32 |
 
 This training compute policy is separate from converter storage dtype. Both
 Behavior and RoboTwin `full_weights.pt` checkpoints should be converted with

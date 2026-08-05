@@ -268,13 +268,13 @@ OpenPI-Comet 作为示例来源：
 
 --------------
 
-**5. 使用 PyTorch OpenPI (Pi0.5) 代码进行评估**
+**5. 使用 OpenPI_RLinf (Pi0.5) 代码进行评估**
 
-BEHAVIOR 评估同样支持新的 **自包含 PyTorch OpenPI** 代码（模型
-``model_type: openpi_pytorch``；对应的 SFT 流程参见 :doc:`sft_openpi_pytorch`）。
+BEHAVIOR 评估同样支持自包含的 **OpenPI_RLinf** 代码（模型
+``model_type: openpi_rlinf``；对应的 SFT 流程参见 :doc:`sft_openpi_rlinf`）。
 评估配置为：
 
-- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+- ``evaluations/behavior/behavior_openpi_pi05_rlinf_eval.yaml``
 
 该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **OpenPI_RLinf**
 checkpoint，即由 OpenPI checkpoint 转换器

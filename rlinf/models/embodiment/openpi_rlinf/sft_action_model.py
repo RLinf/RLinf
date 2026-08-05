@@ -19,11 +19,11 @@ from typing import Any
 import torch
 
 from rlinf.models.embodiment.base_policy import ForwardType
-from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
+from rlinf.models.embodiment.openpi_rlinf.openpi_action_model import (
     OpenPiPytorchActionModel,
 )
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0 import Pi0
 
 
 class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
@@ -125,7 +125,7 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
             return actions.to(device=self.device, dtype=torch.float32)
         raise ValueError(
             "SFT actions must arrive normalized + padded to the model action "
-            f"dim {model_action_dim} (the openpi_pytorch SFT data loader applies the "
+            f"dim {model_action_dim} (the openpi_rlinf SFT data loader applies the "
             f"openpi transform pipeline before collation); got last dim "
             f"{actions.shape[-1]}."
         )
