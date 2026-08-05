@@ -77,7 +77,8 @@ Channel 排队时间。
 设置 ``rollout.enable_group_route_binding: true``（默认 ``false``）会将全局池划分为固定的
 分组绑定：Rollout Worker rank ``k`` 只服务自己的 Env 分组（env rank
 ``k * ratio .. k * ratio + ratio - 1``，其中 ``ratio = env_world_size //
-rollout_world_size``），每组通过独立的 ``route_key`` 隔离，不存在全局池，也没有跨组抢任务。
+rollout_world_size`` 并向上取整），最后一组可以包含较少的 Env Worker。每组通过独立的
+``route_key`` 隔离，不存在全局池，也没有跨组抢任务。
 
 .. code-block:: yaml
 
@@ -88,8 +89,8 @@ rollout_world_size``），每组通过独立的 ``route_key`` 隔离，不存在
      enable_group_route_binding: true
 
 由此得到固定的 ``1`` Rollout : ``N`` Env-Worker 重叠，并可作为多个独立分组在机器人集群上复制，
-适用于每个 Rollout Worker 驱动一组固定机器人的真机 rollout 场景。它要求 ``env_world_size``
-能被 ``rollout_world_size`` 整除（启动时校验）；普通 decoupled 模式则允许任意比例。
+适用于每个 Rollout Worker 驱动一组固定机器人的真机 rollout 场景。只要
+``env_world_size >= rollout_world_size``，Env 与 Rollout 数量无需整除。
 
 训练流程
 --------
