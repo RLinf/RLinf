@@ -36,14 +36,15 @@ _THIRD_PARTY_LOGGING_CONFIGURED = False
 
 
 def configure_third_party_logging() -> None:
-    """Silence verbose third-party INFO logs when ``RLINF_DBG_LEVEL`` is low.
+    """Silence verbose third-party INFO logs unless running in DEBUG.
 
-    Idempotent. Reads ``RLINF_DBG_LEVEL`` (same knob that gates our own
-    ``[DBG-*]`` prints):
-      * ``0`` or ``1`` (production / key-info): raise the noisy Megatron-Core
-        loggers to ``WARNING`` so the per-bucket param dump is suppressed.
-      * ``>= 2`` (full debug): leave third-party loggers at their default
-        (INFO) level so the full mcore dump is available when debugging.
+    Mirrors ``RLINF_LOG_LEVEL`` (the same knob ``Worker._setup_logging``
+    reads, default ``INFO``): when it is anything other than ``DEBUG``,
+    raise the noisy Megatron-Core loggers to ``WARNING`` so the per-bucket
+    param dump is suppressed. Under ``DEBUG`` the full mcore dump is left
+    at its default (INFO) level for debugging.
+
+    Idempotent.
     """
     global _THIRD_PARTY_LOGGING_CONFIGURED
     if _THIRD_PARTY_LOGGING_CONFIGURED:
@@ -51,8 +52,8 @@ def configure_third_party_logging() -> None:
 
     import logging
 
-    level = int(os.environ.get("RLINF_DBG_LEVEL", "2"))
-    if level >= 2:
+    level = os.environ.get("RLINF_LOG_LEVEL", "INFO").upper()
+    if level == "DEBUG":
         _THIRD_PARTY_LOGGING_CONFIGURED = True
         return
 

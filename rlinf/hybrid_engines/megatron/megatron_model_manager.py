@@ -319,23 +319,8 @@ class MegatronModelManager:
                 if not hasattr(self.transformer_config, name):
                     continue
                 user_val = getattr(self.transformer_config, name)
-                provider_val = getattr(provider, name, None)
                 if name in _mbridge_user_override_fields:
                     setattr(provider, name, user_val)
-                else:
-                    # Raise to inform the user of the correct value.
-                    if (
-                        provider_val is not None
-                        and user_val is not None
-                        and user_val != provider_val
-                    ):
-                        raise ValueError(
-                            f"Field '{name}' mismatch: config has {user_val}, "
-                            f"but model (HF config via bridge provider) has "
-                            f"{provider_val}. This field is model architecture "
-                            f"and cannot be overridden. Set '{name}: "
-                            f"{provider_val}' or remove it from your config."
-                        )
         else:
             for name in provider_field_names:
                 if hasattr(self.transformer_config, name):

@@ -761,7 +761,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh agentic --sglang 0.5.12 --torch 2.11.0 --no-apex
+          bash requirements/install.sh agentic
 
       - name: Train Moonlight-16B with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
