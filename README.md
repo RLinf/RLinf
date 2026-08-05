@@ -32,6 +32,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 ## What's NEW!
 - [2026/08] 🎉 Two papers accepted to **OSDI 2026**: [RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) and [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing). DynaRL dynamically reallocates compute, memory, and communication across heterogeneous RL components to improve end-to-end training throughput. Doc: [DynaRL](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/dynarl.html).
 - [2026/08] 🎉 Two papers accepted to **RSS 2026**: [RLinf-VLA](https://roboticsconference.org/program/papers/89/) and [RLinf-USER](https://roboticsconference.org/program/papers/37/). RLinf-VLA is a unified and efficient framework for scalable RL training of VLA models across diverse architectures, algorithms, and simulators. Doc: [RLinf-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_vla.html). RLinf-USER is a unified and extensible system for real-world online policy learning that treats robots as first-class resources alongside GPUs. Doc: [RLinf-USER](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_user.html).
+- [2026/08] 🎉 One paper accepted to **NSDI 2027**: [FUSCO](https://arxiv.org/abs/2512.22036). FUSCO accelerates MoE All-to-All communication by fusing data transformation and communication for high-performance distributed data shuffling. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html).
 - [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rtc.html).
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [PyTorch OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html).
@@ -481,7 +482,17 @@ If you use WideSeek-R1 in RLinf, you can cite our paper:
   journal={arXiv preprint arXiv:2602.04634},
   year={2026},
 }
-```   
+```
+
+If you use FUSCO for MoE communication in RLinf, you can cite our paper:
+```bibtex
+@article{zhu2025fusco,
+  title={FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion},
+  author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
+  journal={arXiv preprint arXiv:2512.22036},
+  year={2025}
+}
+```
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
