@@ -170,8 +170,8 @@ carry and cannot be reconstructed. Therefore:
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openpi_pytorch \
     --input-model       /path/to/pi05_sft_openpi_rlinf/model.safetensors \
     --input-norm-stats  /path/to/pi05_sft_openpi_rlinf/physical-intelligence/behavior/norm_stats.json \
-    --output-model      /path/to/pi05_sft_openpi_pytorch \
-    --output-norm-stats /path/to/pi05_sft_openpi_pytorch/physical-intelligence/behavior/norm_stats.json \
+    --output-model      /path/to/pi05_sft_openpi_rlinf_to_openpi_pytorch \
+    --output-norm-stats /path/to/pi05_sft_openpi_rlinf_to_openpi_pytorch/physical-intelligence/behavior/norm_stats.json \
     --reference-model   /path/to/pi05_base_pytorch
 ```
 

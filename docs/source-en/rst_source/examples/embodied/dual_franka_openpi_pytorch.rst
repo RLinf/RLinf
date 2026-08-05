@@ -440,7 +440,7 @@ checkpoint format:
      --mode sft2deploy \
      --ckpt INPUT \
      --output OUTPUT \
-     --reference-model OPENPI_PYTORCH_MODEL \
+     --reference-model OLD_MODEL \
      --dtype-reference DEPLOY_FULL_WEIGHTS_PT
 
 

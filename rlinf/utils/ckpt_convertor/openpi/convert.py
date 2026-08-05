@@ -43,7 +43,7 @@ from rlinf.utils.ckpt_convertor.openpi import (
     openpi_pytorch_to_openpi_rlinf,
     openpi_rlinf_to_openpi_pytorch,
     pt_to_safetensors,
-    sft_to_deploy,
+    sft2deploy,
 )
 
 # Public mode names describe the layouts explicitly. Internally, the conversion
@@ -54,7 +54,7 @@ _MODES = {
     "openpi_pytorch_to_openpi_rlinf": openpi_pytorch_to_openpi_rlinf,
     "sft_to_openpi_rlinf": pt_to_safetensors,
     "openpi_rlinf_to_openpi_pytorch": openpi_rlinf_to_openpi_pytorch,
-    "sft2deploy": sft_to_deploy,
+    "sft2deploy": sft2deploy,
 }
 
 
