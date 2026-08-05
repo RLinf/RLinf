@@ -396,6 +396,42 @@ class SubprocEnvWorker(EnvWorker):
     def set_env_attr(self, key: str, value: Any) -> None:
         self.parent_remote.send(["setattr", {"key": key, "value": value}])
 
+    def get_camera_meta(self, camera_name: str = "agentview",
+                        height: int = 256, width: int = 256) -> Any:
+        """Fetch camera calibration from the worker subprocess.
+
+        Returns intrinsics (K), cam-to-world extrinsics, and depth near/far
+        for the named camera.  Requires a worker loop that has access to the
+        underlying simulator (e.g. robosuite-based envs).
+        """
+        self.parent_remote.send([
+            "get_camera_meta",
+            {"camera_name": camera_name, "height": height, "width": width},
+        ])
+        return self.parent_remote.recv()
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> Any:
+        """Render an arbitrary camera at the requested resolution.
+
+        Requires a worker loop that has access to the underlying simulator.
+        """
+        self.parent_remote.send([
+            "render_camera",
+            {
+                "camera_name": camera_name,
+                "height": height,
+                "width": width,
+                "depth": depth,
+            },
+        ])
+        return self.parent_remote.recv()
+
     def _decode_obs(self) -> Union[dict, tuple, np.ndarray]:
         def decode_obs(
             buffer: Optional[Union[dict, tuple, ShArray]]

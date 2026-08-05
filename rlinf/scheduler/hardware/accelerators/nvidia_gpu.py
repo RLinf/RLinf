@@ -41,6 +41,23 @@ logger = logging.getLogger(__name__)
 _nv_profiling_active: bool = False
 
 
+def _torch_needs_avoid_record_streams() -> bool:
+    """Whether TORCH_NCCL_AVOID_RECORD_STREAMS still does anything.
+
+    PyTorch 2.8 made the behaviour the default and warns once when the variable
+    is set, so only older versions need it.
+    """
+    try:
+        from importlib.metadata import version as pkg_version
+
+        from packaging import version
+
+        installed = pkg_version("torch").split("+", 1)[0]
+        return version.parse(installed) < version.parse("2.8.0")
+    except Exception:
+        return True
+
+
 # ---------------------------------------------------------------------------
 # NsightConfig — NVIDIA-specific profiling configuration
 # ---------------------------------------------------------------------------
@@ -262,7 +279,8 @@ class NvidiaGPUManager(AcceleratorManager):
 
         # NCCL env vars
         env_vars["NCCL_CUMEM_ENABLE"] = "0"
-        env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+        if _torch_needs_avoid_record_streams():
+            env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         if os.environ.get("NCCL_CUMEM_ENABLE", "0") != "0":
             warnings.warn(
                 f"NCCL_CUMEM_ENABLE is set to {os.environ['NCCL_CUMEM_ENABLE']}. However, "

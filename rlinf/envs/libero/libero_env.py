@@ -38,6 +38,24 @@ from rlinf.envs.libero.venv import ReconfigureSubprocEnv
 from rlinf.envs.utils import list_of_dict_to_dict_of_list, to_tensor
 from rlinf.utils.logging import get_logger
 
+
+def _repoint_libero_config(libero_module) -> None:
+    """Point LIBERO's cached config at the package that is actually installed.
+
+    LIBERO writes absolute paths into a config file under ``$HOME`` the first
+    time it is imported and afterwards only reads it back, so a config left by
+    another venv on the same machine silently redirects asset and init-state
+    lookups to directories this venv does not have.
+    """
+    installed_root = os.path.dirname(os.path.abspath(libero_module.__file__))
+    try:
+        configured_root = libero_module.get_libero_path("benchmark_root")
+    except Exception:
+        configured_root = None
+    if configured_root != installed_root:
+        libero_module.set_libero_default_path(installed_root)
+
+
 logger = get_logger()
 
 libero_type = get_libero_type()
@@ -76,11 +94,18 @@ if libero_type in ["pro", "plus"]:
         )
 
 if libero_type == "pro":
+    import liberopro.liberopro as _libero_core
     from liberopro.liberopro.benchmark import Benchmark
 elif libero_type == "plus":
+    import liberoplus.liberoplus as _libero_core
     from liberoplus.liberoplus.benchmark import Benchmark
 else:
+    import libero.libero as _libero_core
     from libero.libero.benchmark import Benchmark
+
+# Must run before any benchmark lookup: get_task_init_states() reads the cached
+# config, so repointing it later (e.g. when resolving bddl_files) is too late.
+_repoint_libero_config(_libero_core)
 
 
 class LiberoEnv(gym.Env):
@@ -227,15 +252,18 @@ class LiberoEnv(gym.Env):
         if variant == "pro":
             import liberopro.liberopro as l_pro
 
+            _repoint_libero_config(l_pro)
             bddl_root = l_pro.get_libero_path("bddl_files")
         elif variant == "plus":
             import liberoplus.liberoplus as l_plus
 
+            _repoint_libero_config(l_plus)
             bddl_root = l_plus.get_libero_path("bddl_files")
         else:
-            from libero.libero import get_libero_path
+            import libero.libero as l_base
 
-            bddl_root = get_libero_path("bddl_files")
+            _repoint_libero_config(l_base)
+            bddl_root = l_base.get_libero_path("bddl_files")
 
         suite_name = self.cfg.task_suite_name.lower()
         suite_keyword = suite_name.replace("libero_", "").strip()
@@ -714,6 +742,39 @@ class LiberoEnv(gym.Env):
         self._reset_metrics(env_idx)
         infos = {}
         return obs, infos
+
+    def get_camera_meta(
+        self, camera_name: str = "agentview", height: int = 256, width: int = 256
+    ) -> dict:
+        """Fetch camera intrinsics/extrinsics and depth planes.
+
+        Returns camera calibration from worker 0's robosuite sim: intrinsic
+        matrix, cam-to-world transform, and depth near/far.  The agentview
+        camera is fixed in the world, so this is constant per episode.
+        """
+        return self.env.workers[0].get_camera_meta(
+            camera_name=camera_name, height=height, width=width
+        )
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Render an arbitrary camera at the requested resolution.
+
+        Returns:
+            The rendered RGB image, or a ``(rgb, depth)`` tuple when
+            *depth* is True.
+        """
+        return self.env.workers[0].render_camera(
+            camera_name=camera_name,
+            height=height,
+            width=width,
+            depth=depth,
+        )
 
     def step(self, actions=None, auto_reset=True):
         """Step the environment with the given actions."""

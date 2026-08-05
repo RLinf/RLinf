@@ -1,0 +1,53 @@
+model_type: "openpi_pytorch"
+
+# Model-shape template for dual-franka tcp_rot6d. Filesystem paths (model_path,
+# openpi.assets_dir, and openpi.asset_id) live in the experiment config, not
+# here, so this template stays path-free and reusable.
+
+# Weight dtype for SFT: fp32. The fp32 weights are the FSDP optimizer master; FSDP
+# MixedPrecision casts params to bf16 only for compute (param_dtype is a separate
+# knob in the experiment config), so warmup-LR updates are not lost to bf16
+# rounding. (Eval casts the weights to bf16; see the embodiment template.)
+precision: fp32
+
+# LoRA is not used, but the shared model factory reads these keys.
+is_lora: False
+lora_rank: 32
+
+# Action and chunk settings (Dual-Franka tcp_rot6d): 20-dim env actions
+# ([L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]), 20-step chunk
+# (action_horizon). `num_action_chunks` is the Pi0 action_horizon.
+num_action_chunks: 20
+action_dim: 20
+use_proprio: True
+
+# Flow-matching denoising steps (used by the eval sampler; carried here so the
+# shared factory reads one uniform field).
+num_steps: 5
+
+# No value head in the SFT model.
+add_value_head: False
+
+# openpi_pytorch model-shape parameters (clean/minimal: no full_pi05, dsrl,
+# value-head, RL). get_model builds Pi0Config from num_action_chunks
+# (action_horizon) + the openpi.* shape fields below; no config.json is read.
+openpi:
+  # Concrete openpi_pytorch variant: eval / sft / rl. This template feeds SFT
+  # experiments, so it defaults to `sft`.
+  task: sft
+  # openpi TrainConfig key selecting the shared transform pipeline
+  # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env
+  # selector for the SFT dataloader registry. The SFT data loader and the eval/RL
+  # model factory both build their transforms from it.
+  config_name: "pi05_dualfranka_tcp_rot6d"
+  # Three camera views: base, left wrist, and right wrist.
+  num_images_in_input: 3
+  action_chunk: 20
+  action_env_dim: 20
+  # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
+  # Classic pi05_dualfranka_tcp_rot6d keeps state continuous, not in the prompt.
+  discrete_state_input: false

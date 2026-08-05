@@ -31,6 +31,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-openpi-test:
@@ -68,7 +70,44 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
+
+  sft-openpi-pytorch-behavior-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create sft environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export BEHAVIOR_PATH=/workspace/dataset/BEHAVIOR-1K
+          export ISAAC_SIM_WHEEL_PATH=/workspace/dataset/isaac_sim_wheels
+          bash requirements/install.sh embodied --model openpi --env behavior
+
+      - name: SFT BEHAVIOR OpenPI-PyTorch test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
+          export ISAAC_PATH=/workspace/dataset/isaac-sim
+          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_pytorch_sft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
+          uv cache prune
+          rm -rf /tmp/tmp*
 
   sft-robo2vlm-test:
     runs-on: reason
@@ -87,7 +126,10 @@ jobs:
           bash requirements/install.sh agentic
           source .venv/bin/activate
           uv pip install transformers==4.57.1
-          uv pip install bitsandbytes
+          # --no-deps: bitsandbytes' torch requirement is unpinned, so a plain
+          # install re-resolves torch through pyproject's override and replaces
+          # the version install.sh chose for this stack.
+          uv pip install --no-deps bitsandbytes
 
       - name: SFT Robo2vlm train test
         timeout-minutes: 20
@@ -120,6 +162,8 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
 
   sft-maniskill-reward-model-test:
@@ -157,4 +201,6 @@ jobs:
       - name: Clean up
         run: |
           rm -rf .venv
+          find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
+               -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
