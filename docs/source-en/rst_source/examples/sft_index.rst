@@ -72,7 +72,7 @@ After running SFT here, continue to :doc:`vla_wam_index` (model-centric RL) or :
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
-   OpenPI_mixed_precision <embodied/sft_openpi_pytorch>
+   OpenPI Mixed Precision <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
    Qwen-VL <embodied/sft_vlm>
    DAgger <embodied/dagger>

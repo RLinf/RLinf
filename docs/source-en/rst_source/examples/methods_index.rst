@@ -1,5 +1,5 @@
-Algorithms for Embodiment
-=========================
+RL
+==
 
 This category groups examples in which the **training algorithm or recipe** is the headline — independent of any single benchmark or model. They cover offline RL, imitation learning, hybrid sim-real co-training, and residual / noise-space policy steering.
 
