@@ -21,8 +21,8 @@ from PIL import Image
 from transformers import AutoProcessor
 
 from rlinf.data.datasets.vlm import (
-    QwenTrendProgressSFTDataset,
     VLMBaseDataset,
+    VLMTrendRewardSFTDataset,
 )
 
 logger = logging.getLogger(__name__)
@@ -178,9 +178,9 @@ class BaseVLMInputBuilder(BaseInputBuilder):
         return processed_inputs
 
 
-@register_input_builder("history_vlm_input_builder")
+@register_input_builder("buffered_vlm_input_builder")
 @dataclass(kw_only=True)
-class HistoryVLMInputBuilder(BaseVLMInputBuilder):
+class BufferedVLMInputBuilder(BaseVLMInputBuilder):
     history_buffer_names: list[str]
 
     def get_valid_input_ids(
@@ -232,7 +232,7 @@ class HistoryVLMInputBuilder(BaseVLMInputBuilder):
 
 @register_input_builder("video_vlm_input_builder")
 @dataclass
-class VideoVLMInputBuilder(HistoryVLMInputBuilder):
+class VideoVLMInputBuilder(BufferedVLMInputBuilder):
     video_keys: list[str] = field(default_factory=lambda: ["main_images"])
 
     def extract_videos(
@@ -265,9 +265,9 @@ class VideoVLMInputBuilder(HistoryVLMInputBuilder):
         return videos
 
 
-@register_input_builder("qwentrend_input_builder")
+@register_input_builder("vlm_trend_reward_input_builder")
 @dataclass
-class QwentrendInputBuilder(VideoVLMInputBuilder):
+class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
     video_keys: list[str] = field(
         default_factory=lambda: ["main_images", "extra_view_images"]
     )
@@ -309,7 +309,7 @@ class QwentrendInputBuilder(VideoVLMInputBuilder):
         prompt_texts_list = prepared_inputs.get("prompt_texts_list")
         videos_list = prepared_inputs.get("videos_list")
 
-        _, processed_inputs, _ = QwenTrendProgressSFTDataset.process_inputs(
+        _, processed_inputs, _ = VLMTrendRewardSFTDataset.process_inputs(
             processor=self._processor,
             system_prompt=self.system_prompt,
             use_chat_template=self.use_chat_template,

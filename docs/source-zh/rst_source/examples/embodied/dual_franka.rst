@@ -1,10 +1,12 @@
 使用双 Franka
 ================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy.jpg
    :align: center
    :width: 80%
+   :alt: 双 Franka 部署
 
-   双 Franka GELLO 采集与 π₀.₅ 部署流程所基于的 Franka 机械臂硬件。
+   双 Franka 数据采集、微调与部署流程。
 
 运行受支持的双 Franka 流程：用 GELLO 采集关节空间示教，将数据转换为 tcp_rot6d，微调 OpenPI π₀.₅，并把 checkpoint 部署回机器人节点。
 

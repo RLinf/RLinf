@@ -1,9 +1,9 @@
 Reward Model 使用指南
 ======================
 
-在 RLinf 中使用 reward model——既包括 ``ResNetRewardModel`` 这类图像分类
-reward，也包括 QwenTrend / ``HistoryVLMRewardModel`` 这类 VLM reward。
-这里的 QwenTrend 指使用 Qwen3-VL 模型判断一段历史视频中的动作趋势，并据此转换为标量 reward。
+在 RLinf 中使用 reward model——包括 ``ResNetRewardModel`` 这类图像分类 reward，
+以及基于 ``VLMRewardModel`` 的 VLM reward。``BufferedVLMRewardModel`` 继承
+``VLMRewardModel``，用于处理 env worker 维护的历史窗口。
 
 仿真场景 Reward Model
 ---------------------
@@ -40,11 +40,11 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 启动训练或评估后，环境会自动将 episode 保存到 ``save_dir``。当 ``export_format="pickle"`` 时，
 每个 episode 会被写入一个独立的 ``.pkl`` 文件，便于后续离线预处理。
 
-对于 QwenTrend VLM reward，RLinf 也提供了可直接运行的数据采集配置：
+对于 VLM Trend reward，RLinf 也提供了可直接运行的数据采集配置：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_collect
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_collect
 
 该配置保持 ``reward.use_reward_model: false``，并在 eval 环境上开启数据采集。
 保存下来的 episode 会包含 VLM 流程后续需要的双视角图像观测，例如
@@ -92,11 +92,11 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 
 训练阶段，``RewardBinaryDataset`` 会直接加载上述 ``RewardDatasetPayload`` 格式的 ``train.pt`` / ``val.pt``。
 
-1.3 转换为 QwenTrend VLM dataset
-""""""""""""""""""""""""""""""""
+1.3 转换为 VLM Trend reward dataset
+""""""""""""""""""""""""""""""""""""""""""""""""
 
-QwenTrend 使用短时间双视角历史窗口，而不是单张图像。使用
-``examples/reward/preprocess_qwentrend_reward_dataset.py`` 可以将采集到的
+VLM Trend reward 使用短时间双视角历史窗口，而不是单张图像。使用
+``examples/reward/preprocess_vlm_trend_reward_dataset.py`` 可以将采集到的
 episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，并给每个
 窗口标注 ``positive``、``negative`` 或 ``unclear``。
 
@@ -104,9 +104,9 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path logs/xxx/collected_data \
-       --output-dir logs/xxx/processed_qwentrend_reward_data \
+       --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
        --stride 1 \
        --delta-threshold 0.05
@@ -115,7 +115,7 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: text
 
-   logs/xxx/processed_qwentrend_reward_data/
+   logs/xxx/processed_vlm_trend_reward_data/
    ├── dataset_info.json
    ├── train/
    │   ├── segments.jsonl
@@ -131,12 +131,33 @@ train/eval 按 episode 划分，因此同一个 episode 中切出的窗口不会
 
 RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.sh``
 用于训练 ResNet 图像 reward model，``examples/sft/run_vlm_sft.sh``
-用于微调 QwenTrend 这类 VLM reward model。
+用于微调 VLM Trend reward model。
 
-2.1 微调 ResNet Reward Model
+2.1 在线 Reward Model 类型
+""""""""""""""""""""""""""
+
+在线 embodied reward worker 通过 ``reward.model.model_type`` 选择实现类：
+
+.. code-block:: python
+
+   reward_model_registry = {
+       "resnet": ResNetRewardModel,
+       "vlm": VLMRewardModel,
+       "buffered_vlm": BufferedVLMRewardModel,
+   }
+
+其中：
+
+- ``resnet``：单帧图像二分类，输出 sigmoid 概率。
+- ``vlm``：对当前观测运行 VLM（单步/终止帧等，由 ``reward_mode`` 决定）。
+- ``buffered_vlm``：对 env worker 维护的历史窗口运行 VLM；具体 prompt、视频格式与
+  标量映射由 ``input_builder_name`` / ``reward_parser_name`` 决定。
+  VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
+
+2.2 微调 ResNet Reward Model
 """"""""""""""""""""""""""""
 
-2.1.1 配置 ResNet 数据路径
+2.2.1 配置 ResNet 数据路径
 ..........................
 
 训练前需要先修改 ``examples/reward/config/reward_training.yaml`` 中的数据路径，
@@ -154,7 +175,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
    训练数据路径以 ``reward_training.yaml`` 中的 ``data.train_data_paths`` 和
    ``data.val_data_paths`` 配置为准。
 
-2.1.2 配置 ResNet 模型
+2.2.2 配置 ResNet 模型
 ......................
 
 对于 ResNet 路径，需要将 ``actor.model.model_type`` 设置为 ``"resnet"``：
@@ -166,25 +187,12 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        model_type: "resnet"
        arch: "resnet18"
        pretrained: False
-       image_size: [3, 128, 128]
+       image_size: [3, 224, 224]
 
 如果需要从已有权重继续训练，可以通过 ``model_path`` 指定 checkpoint；
 如果希望从头训练，则保持 ``model_path: null``。
 
-在线 reward worker 的模型注册表目前包含以下类型：
-
-.. code-block:: python
-
-   reward_model_registry = {
-       "resnet": ResNetRewardModel,
-       "vlm": VLMRewardModel,
-       "history_vlm": HistoryVLMRewardModel,
-   }
-
-``resnet`` 是图像分类 reward 路径；``vlm`` 会基于当前观测运行 VLM；
-``history_vlm`` 会基于 env worker 维护的历史窗口运行 VLM。
-
-2.1.3 启动 ResNet 训练
+2.2.3 启动 ResNet 训练
 ......................
 
 完成数据与模型配置后，执行：
@@ -195,16 +203,16 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
 训练日志会保存到新建的 ``logs/<timestamp>-reward_training`` 目录下。
 
-2.2 微调 QwenTrend VLM Reward Model
-"""""""""""""""""""""""""""""""""""
+2.3 微调 VLM Trend Reward Model
+""""""""""""""""""""""""""""""""""""""""""""""""
 
-使用 ``preprocess_qwentrend_reward_dataset.py`` 转换数据后，将
-``DUALVIEW_SFT_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT：
+使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
+``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT：
 
 .. code-block:: bash
 
-   export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_reward_data
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
+   export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 对应配置会读取 JSONL manifest 和逐样本 pickle 文件：
 
@@ -212,10 +220,10 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
    data:
      type: vlm
-     dataset_name: "qwentrend_progress_sft"
-     train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
-     val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
-     video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+     dataset_name: "vlm_trend_reward_sft"
+     train_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/train/segments.jsonl"
+     val_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/eval/segments.jsonl"
+     video_root: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}"
      video_nframes: 5
 
    actor:
@@ -235,7 +243,8 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 - ``examples/embodiment/config/maniskill_ppo_mlp_resnet_reward.yaml``
 - ``examples/embodiment/config/maniskill_sac_mlp_resnet_reward_async.yaml``
-- ``examples/embodiment/config/maniskill_ppo_mlp_qwentrend_reward.yaml``
+- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward.yaml`` （VLM Trend reward，本地 Hugging Face）
+- ``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml`` （VLM Trend reward，SGLang API）
 
 这些配置展示了如何在 RL 训练中启用 reward worker，同时让策略网络继续使用状态观测，
 而 reward model 使用图像观测或 VLM 观测。
@@ -257,13 +266,15 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
      model:
        model_path: /path/to/reward_model_checkpoint
-       model_type: "resnet"    # 或 "vlm" / "history_vlm"
+       model_type: "resnet"    # 或 "vlm" / "buffered_vlm"
 
 其中：
 
 - ``reward_mode`` 控制 reward model 在每一步、终止帧，还是历史窗口上推理。
 - ``reward_weight`` 和 ``env_reward_weight`` 控制 learned reward 与环境 reward 的加权组合。
-- ``reward_threshold`` 用于对 reward model 输出的成功概率做阈值过滤；低于阈值的项会被置为 ``0``。
+- ``reward_threshold`` 仅对 ``model_type: resnet`` 生效：低于阈值的 sigmoid 概率会被置为 ``0``。
+  对 ``buffered_vlm`` / VLM Trend reward，标量 reward 由 ``reward_parser_params`` 定义；
+  配置里的 ``reward_threshold`` 当前不会被 VLM 路径读取。
 - ``model_path`` 指向用于在线推理的 reward model 权重。
 
 3.2 Rollout 阶段的 worker 交互
@@ -279,7 +290,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
       | 3. 当启用 reward model 时，将 reward input dict 发送给 Reward worker
       v
    Reward worker
-      | 4. 执行 ``compute_reward(...)``，返回 reward model output
+      | 4. 执行 compute_reward(...)，返回 reward model output
       v
    Env worker
       | 5. 接收 Rollout worker 的 bootstrap values
@@ -305,8 +316,8 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 因此，从系统视角看，reward model 在 RL 中并不会替代原有的 bootstrap reward，
 而是作为 env worker 中的附加 reward 来源参与最终 reward 的构造。
 
-3.4 部署 QwenTrend 进行 MLP RL
-""""""""""""""""""""""""""""""
+3.4 部署 VLM Trend reward 进行 MLP RL
+""""""""""""""""""""""""""""""""""""""""""""""""
 
 进行 VLM reward 推理前，需要安装带 VLM reward 支持的 embodied 依赖：
 
@@ -315,14 +326,82 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-随后在 reward 配置中使用 ``history_vlm``。本地 Hugging Face 推理时不需要设置
-``reward.worker_type``；如果要调用 OpenAI-compatible API，则设置
-``reward.worker_type: api``，并填写 ``reward.api.api_base`` 与
-``reward.api.model``。如果希望 RLinf 自动拉起 Ray 托管的 SGLang
-server/router，则将 ``reward.api.api_base`` 留空，并按
-:doc:`../guides/sglang_server` 使用顶层 ``router_server_args`` 配置。
-QwenTrend 示例使用 ``reward_mode: history_buffer``，因此 env worker 会按 env
-维护历史窗口，只在窗口有效时将历史输入发送给 reward worker：
+VLM Trend reward 使用 buffered VLM 接口（ ``model_type: buffered_vlm`` ），并通过
+``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
+本地推理会实例化 ``BufferedVLMRewardModel`` ；API 推理则使用
+``EmbodiedAPIRewardWorker`` ，并遵循相同的 input builder 和 reward parser 约定。
+
+VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终为 ``buffered_vlm`` ）：
+
+- ``input_builder_name: vlm_trend_reward_input_builder``
+- ``reward_parser_name: vlm_trend_reward_parser``
+- ``reward_mode: history_buffer`` 与 ``history_buffers`` （双视角 5 帧窗口）
+- ``interval_reward`` ：历史窗口尚未填满时使用的默认标量（通常为 ``0.0`` ）
+
+.. note::
+
+   env worker 在 ``reward_mode: history_buffer`` 下 **每步都会** 向 reward worker 发送
+   ``history_input``；窗口未满足 ``min_history_size`` 时，reward worker 会返回
+   ``interval_reward``，而不是跳过 RPC。
+
+3.4.1 本地 Hugging Face 推理
+............................
+
+不设置 ``reward.worker_type``（默认 ``model``，使用 ``EmbodiedRewardWorker``）。
+参考 ``maniskill_ppo_mlp_vlm_trend_reward.yaml``：
+
+.. code-block:: yaml
+
+   reward:
+     use_reward_model: true
+     group_name: "RewardGroup"
+     reward_mode: history_buffer
+     history_reward_assign: true
+     reward_weight: 1.0
+     env_reward_weight: 0.0
+     model:
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
+       model_type: "buffered_vlm"
+       lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+       gt_success_bonus: 20.0
+       precision: "bf16"
+       input_builder_name: vlm_trend_reward_input_builder
+       input_builder_params:
+         default_task_description: "Pick up the red cube and place it on the green spot on the table."
+       reward_parser_name: vlm_trend_reward_parser
+       reward_parser_params:
+         positive_reward: 1.0
+         negative_reward: -0.2
+         unclear_reward: 0.0
+         invalid_reward: 0.0
+       history_buffers:
+         history_window:
+           history_size: 5
+           min_history_size: 5
+           input_interval: 1
+           history_keys:
+             - main_images
+             - extra_view_images
+           input_on_done: false
+       interval_reward: 0.0
+       infer_micro_batch_size: 64
+       max_new_tokens: 16
+       do_sample: false
+       temperature: 0.0
+
+启动：
+
+.. code-block:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
+
+3.4.2 SGLang API 推理
+.....................
+
+设置 ``reward.worker_type: api``（``EmbodiedAPIRewardWorker``）。可指向外部
+OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
+:doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
+参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
 
 .. code-block:: yaml
 
@@ -342,13 +421,13 @@ QwenTrend 示例使用 ``reward_mode: history_buffer``，因此 env worker 会�
          temperature: 0.0
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
-       model_type: "history_vlm"
+       model_type: "buffered_vlm"
        gt_success_bonus: 20.0
        precision: "bf16"
-       input_builder_name: qwentrend_input_builder
+       input_builder_name: vlm_trend_reward_input_builder
        input_builder_params:
          default_task_description: "Pick up the red cube and place it on the green spot on the table."
-       reward_parser_name: qwentrend_reward_parser
+       reward_parser_name: vlm_trend_reward_parser
        reward_parser_params:
          positive_reward: 1.0
          negative_reward: -0.2
@@ -365,27 +444,19 @@ QwenTrend 示例使用 ``reward_mode: history_buffer``，因此 env worker 会�
            input_on_done: false
        interval_reward: 0.0
 
-关键字段说明：
+SGLang 路径额外说明：
 
-- ``worker_type: api`` 选择 OpenAI-compatible API reward worker。
-- ``reward.api.api_base`` 指向外部 OpenAI-compatible endpoint；只有使用 Ray 托管 SGLang 时才留空。
-- ``router_server_args`` 使用标准 SGLang server/router 配置，由 RLinf 自动拉起 SGLang reward API。
-- ``cluster.component_placement.reward_server`` 决定使用 ``router_server_args`` 时 SGLang server worker 的放置位置。
-- ``history_buffers`` 定义需要缓存的 observation key、窗口长度和最小有效历史长度。
-- ``input_builder_name`` 将历史窗口转换为双视角 VLM 输入。
-- ``reward_parser_name`` 将模型生成的标签映射为标量 reward，标量由 ``positive_reward``、``negative_reward``、``unclear_reward`` 和 ``invalid_reward`` 控制。
-- ``gt_success_bonus`` 可以从环境 info 中读取成功信号并额外加分。
+- ``router_server_args`` 使用标准 SGLang server/router 配置。
+- ``cluster.component_placement.reward_server`` 决定 SGLang server worker 的放置位置。
+- 当 ``reward.api.api_base`` 为空且配置了 ``router_server_args`` 时，
+  ``train_embodied_agent.py`` 会在创建 reward worker 前解析 endpoint 并写入
+  ``reward.api.api_base``。
 
-当 ``reward.api.api_base`` 为空且配置了 ``router_server_args`` 时，
-``train_embodied_agent.py`` 会负责启动 Ray 托管的 SGLang server/router，
-完成 server 注册，并在创建 reward worker 之前把解析出的 endpoint 写入
-``reward.api.api_base``。
-
-启动 MLP RL：
+启动：
 
 .. code-block:: bash
 
-   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_qwentrend_sglang_reward
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
 
 4. 总结
 ^^^^^^^^^^^^
@@ -394,7 +465,7 @@ QwenTrend 示例使用 ``reward_mode: history_buffer``，因此 env worker 会�
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
 2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 QwenTrend VLM reward，使用 ``preprocess_qwentrend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
 4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 

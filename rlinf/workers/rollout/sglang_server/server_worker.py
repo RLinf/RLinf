@@ -20,19 +20,30 @@ import multiprocessing as mp
 import os
 import signal
 import time
-from dataclasses import asdict
-from typing import Optional
+from typing import Callable, Optional
 
 import ray.util
 import requests
 from omegaconf import DictConfig, OmegaConf
-from sglang.srt.server_args import ServerArgs
 
 from rlinf.scheduler import Worker
 from rlinf.utils.http_client import no_proxy_env
 
 
-def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
+def _ensure_no_proxy_for_localhost() -> None:
+    """Make sure sglang's intra-node IPC never tunnels through a proxy."""
+    local = "127.0.0.1,localhost,::1"
+    current = os.environ.get("NO_PROXY", os.environ.get("no_proxy", ""))
+    if not any(h in current for h in ("127.0.0.1", "localhost")):
+        os.environ["NO_PROXY"] = f"{current},{local}".strip(",") if current else local
+
+
+def _run_sglang_server(
+    server_type: str,
+    server_args_kwargs: dict,
+    dist_port: int,
+    ready_pipe,
+) -> None:
     """Child-process entrypoint: launches a single sglang HTTP server.
 
     Runs in a *spawned* subprocess so the parent's Ray actor isn't blocked
@@ -48,37 +59,62 @@ def _run_sglang_server(server_args_dict: dict, ready_pipe) -> None:
     except OSError:
         pass
 
-    from sglang.srt.entrypoints.http_server import launch_server
-
-    server_args = ServerArgs(**server_args_dict)
-
-    # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
-    # polling /health either way, so the pipe is only used to surface exceptions.
-    launch_kwargs = {}
-    if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
-        launch_kwargs["pipe_finish_writer"] = ready_pipe
+    _ensure_no_proxy_for_localhost()
+    os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
 
     # Strip proxy env vars so sglang's internal HTTP calls (e.g. the
     # tokenizer-manager / scheduler IPC that /get_server_info touches)
     # don't tunnel through a user-configured proxy — otherwise the router's
     # discover_metadata step hangs and worker registration fails.
     with no_proxy_env():
-        try:
-            launch_server(server_args, **launch_kwargs)
-        except Exception as e:  # pragma: no cover — surface failures to parent
+        if server_type == "embodied":
+            from sglang.multimodal_gen.runtime.launch_server import dispatch_launch
+            from sglang.multimodal_gen.runtime.server_args import (
+                ServerArgs,
+                set_global_server_args,
+            )
+
+            server_args_kwargs["master_port"] = dist_port
+            server_args = ServerArgs.from_kwargs(**server_args_kwargs)
+            set_global_server_args(server_args)
+            dispatch_launch(server_args)
+        else:
+            from sglang.srt.entrypoints.http_server import launch_server
+            from sglang.srt.server_args import ServerArgs
+
+            server_args_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
+            server_args = ServerArgs(**server_args_kwargs)
+            # sglang dropped pipe_finish_writer after 0.5.4; readiness is established by
+            # polling /health either way, so the pipe is only used to surface exceptions.
+            launch_kwargs = {}
+            if "pipe_finish_writer" in inspect.signature(launch_server).parameters:
+                launch_kwargs["pipe_finish_writer"] = ready_pipe
             try:
-                ready_pipe.send(repr(e))
-            except Exception:
-                pass
-            raise
+                launch_server(server_args, **launch_kwargs)
+            except Exception as e:  # pragma: no cover — surface to parent
+                try:
+                    ready_pipe.send(repr(e))
+                except Exception:
+                    pass
+                raise
 
 
-def _wait_for_http_health(host: str, port: int, timeout: float = 300.0) -> None:
+def _wait_for_http_health(
+    host: str,
+    port: int,
+    timeout: float = 900.0,
+    is_alive: Optional[Callable[[], bool]] = None,
+) -> None:
     """Block until ``GET http://host:port/health`` returns 200, or raise."""
     deadline = time.perf_counter() + timeout
     url = f"http://{host}:{port}/health"
     last_err: Optional[BaseException] = None
     while time.perf_counter() < deadline:
+        if is_alive is not None and not is_alive():
+            raise RuntimeError(
+                f"sglang server subprocess exited before /health went 200 "
+                f"({url}); see the worker log for the child's error."
+            )
         try:
             resp = requests.get(url, timeout=5, proxies={"http": None, "https": None})
             if resp.status_code == 200:
@@ -124,12 +160,19 @@ class SGLangServerWorker(Worker):
         sglang_cfg: DictConfig,
         bind_host: str = "0.0.0.0",
         advertise_host: Optional[str] = None,
+        server_type: str = "srt",
     ):
         Worker.__init__(self)
+        if server_type not in ("srt", "embodied"):
+            raise ValueError(
+                f"Unsupported server_type {server_type!r}; "
+                "expected 'srt' (language model) or 'embodied' (VLA/diffusion)."
+            )
         self._cfg = config
         self._sglang_cfg = sglang_cfg
         self._bind_host = bind_host
         self._advertise_host = advertise_host
+        self._server_type = server_type
 
         self._server_proc: Optional[mp.Process] = None
         self._server_port: Optional[int] = None
@@ -154,15 +197,13 @@ class SGLangServerWorker(Worker):
         http_port = self.acquire_free_port(max_port_num=MAX_SGLANG_HTTP_PORT)
         dist_port = self.acquire_free_port()
 
-        sglang_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True)
-        sglang_kwargs["host"] = self._bind_host
-        sglang_kwargs["port"] = http_port
-        sglang_kwargs["dist_init_addr"] = f"127.0.0.1:{dist_port}"
-        server_args = ServerArgs(**sglang_kwargs)
+        server_kwargs = OmegaConf.to_container(self._sglang_cfg, resolve=True) or {}
+        server_kwargs["host"] = self._bind_host
+        server_kwargs["port"] = http_port
 
         self.log_info(
-            f"Launching sglang server: tp_size={server_args.tp_size}, "
-            f"http=:{http_port}, dist_init={server_args.dist_init_addr}, "
+            f"Launching sglang server (server_type={self._server_type}): "
+            f"http=:{http_port}, dist_port={dist_port}, "
             f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')}"
         )
 
@@ -195,7 +236,7 @@ class SGLangServerWorker(Worker):
         self._ready_pipe = parent_pipe
         proc = ctx.Process(
             target=_run_sglang_server,
-            args=(asdict(server_args), child_pipe),
+            args=(self._server_type, server_kwargs, dist_port, child_pipe),
             daemon=False,
         )
         proc.start()
@@ -211,7 +252,11 @@ class SGLangServerWorker(Worker):
             self._advertise_host = ray.util.get_node_ip_address()
 
         try:
-            _wait_for_http_health(self._advertise_host, http_port)
+            _wait_for_http_health(
+                host=self._advertise_host,
+                port=http_port,
+                is_alive=lambda: self._server_proc.is_alive(),
+            )
         except RuntimeError as e:
             self.log_error(f"sglang server failed to become healthy: {e!r}")
             self.shutdown()

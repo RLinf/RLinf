@@ -2,11 +2,13 @@
 
 Dual Franka PICO Collection and DAgger
 ======================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-vr.jpg
    :align: center
    :width: 80%
+   :alt: Dual-Franka VR teleoperation
 
-   In dual-Franka real-world tasks, PICO can be used for two-hand teleoperation collection and online HG-DAgger intervention.
+   Collect dual-Franka teleoperation data with VR / PICO.
 
 This guide explains how to use PICO to collect demonstrations in the dual-Franka
 TCP-rot6d environment, then run online Human-Gated DAgger with PICO human

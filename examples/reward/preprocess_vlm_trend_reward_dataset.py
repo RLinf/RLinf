@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Preprocess Qwen trend reward data into split train/eval pkl datasets.
+"""Preprocess VLM Trend reward data into split train/eval pkl datasets.
 
 Example:
-    python examples/reward/preprocess_qwentrend_reward_dataset.py \
+    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
         --raw-data-path logs/xxx/collected_data \
-        --output-dir logs/xxx/processed_qwentrend_reward_data
+        --output-dir logs/xxx/processed_vlm_trend_reward_data
 
-The exported JSONL points to per-sample pkl files. QwenTrendProgressSFTDataset
+The exported JSONL points to per-sample pkl files. VLMTrendRewardSFTDataset
 loads the two 5-frame video arrays directly from those pkl files, avoiding the
 slow small-mp4 export path.
 """
@@ -131,10 +131,10 @@ def _extract_dual_view_frames(
 def _build_prompt(task: str, window_size: int) -> str:
     return (
         f"You are currently performing the task: {task}. "
-        f"Please judge whether the operation shown in these two {window_size}-frame "
-        "videos, which capture the same time window from two different views, makes "
-        "the task better, worse, or unclear. Answer with exactly one word: "
-        "positive, negative, or unclear."
+        f"You are given two synchronized {window_size}-frame videos from different "
+        "camera views (main view and third-person view) of the same robot action "
+        "window. Judge whether the action trend is positive, negative, or unclear. "
+        "Answer with exactly one word: positive, negative, or unclear."
     )
 
 
@@ -434,7 +434,7 @@ def preprocess_and_save_reward_datasets(
     load_workers: int = 256,
     write_workers: int = 512,
 ) -> dict:
-    """Build train/eval Qwen trend reward datasets from raw data."""
+    """Build train/eval VLM Trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
         raw_data_path,
         window_size=window_size,
@@ -550,7 +550,7 @@ def preprocess_and_save_reward_datasets(
 
         label_counts = dict(Counter(row["answer"] for row in rows))
         logger.info(
-            f"Saved processed Qwen trend reward {split_name} split to "
+            f"Saved processed VLM Trend reward {split_name} split to "
             f"{manifest_path}: {len(rows)}"
         )
         return manifest_path, label_counts
@@ -595,7 +595,7 @@ def preprocess_and_save_reward_datasets(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preprocess Qwen trend reward dataset from raw episode .pkl files."
+        description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
     )
     parser.add_argument(
         "--raw-data-path",
@@ -606,7 +606,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="logs/processed_qwentrend_reward_data",
+        default="logs/processed_vlm_trend_reward_data",
         help="Output directory for processed train/eval pkl datasets.",
     )
     parser.add_argument(
@@ -758,7 +758,7 @@ def main() -> None:
     )
 
     print("=" * 80)
-    print("Qwen trend reward dataset preprocessing complete")
+    print("Dual-view trend reward dataset preprocessing complete")
     print(
         f"Train split: {metadata['train_manifest']} "
         f"({metadata['num_train_samples']} samples)"

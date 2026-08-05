@@ -2006,6 +2006,10 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        libero|maniskill_libero)
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1

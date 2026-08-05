@@ -21,6 +21,7 @@ from omegaconf.omegaconf import OmegaConf
 from rlinf.config import validate_cfg
 from rlinf.runners.embodied_eval_runner import EmbodiedEvalRunner
 from rlinf.scheduler import Cluster
+from rlinf.utils.logging import get_logger
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
@@ -41,28 +42,66 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
-    if cfg.runner.get("rtc", {}).get("enabled", False):
-        from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
-        from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
-            RTCMultiStepRolloutWorker,
-        )
-
-        env_worker_cls = RTCEnvWorker
-        rollout_worker_cls = RTCMultiStepRolloutWorker
-    else:
-        env_worker_cls = EnvWorker
-        rollout_worker_cls = MultiStepRolloutWorker
-
-    # Create rollout worker group
+    # Create rollout worker group. Select the worker by ``rollout_backend``:
+    # only ``sglang`` and ``huggingface`` are supported here (vllm is intentionally not wired in);
     rollout_placement = component_placement.get_strategy("rollout")
-    rollout_group = rollout_worker_cls.create_group(cfg).launch(
-        cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
-    )
+    rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
+    # Default env worker; RTC on the huggingface path overrides it below.
+    env_worker_cls = EnvWorker
+    if rollout_backend == "sglang":
+        from rlinf.workers.rollout.utils import get_rollout_backend_worker
+
+        rollout_group = (
+            get_rollout_backend_worker(cfg)
+            .create_group(cfg, component_placement)
+            .launch(
+                cluster,
+                name=cfg.rollout.group_name,
+                placement_strategy=rollout_placement,
+            )
+        )
+    elif rollout_backend == "huggingface":
+        if cfg.runner.get("rtc", {}).get("enabled", False):
+            from rlinf.workers.env.rtc_env_worker import RTCEnvWorker
+            from rlinf.workers.rollout.hf.rtc_huggingface_worker import (
+                RTCMultiStepRolloutWorker,
+            )
+
+            env_worker_cls = RTCEnvWorker
+            rollout_worker_cls = RTCMultiStepRolloutWorker
+        else:
+            rollout_worker_cls = MultiStepRolloutWorker
+
+        # Create rollout worker group
+        rollout_placement = component_placement.get_strategy("rollout")
+        rollout_group = rollout_worker_cls.create_group(cfg).launch(
+            cluster, name=cfg.rollout.group_name, placement_strategy=rollout_placement
+        )
+    else:
+        raise ValueError(f"Unsupported rollout backend: {rollout_backend}")
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
     env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
+
+    # launch the sglang server
+    if rollout_backend == "sglang":
+        from rlinf.workers.rollout.sglang_server import (
+            launch_sglang_router_and_server,
+        )
+
+        server_group, _ = launch_sglang_router_and_server(
+            cfg,
+            cluster,
+            rollout_hardware_ranks=component_placement.get_hardware_ranks("rollout"),
+            router_server_args=cfg.rollout.sglang,
+        )
+        _server_urls = list(server_group.get_server_url().wait())
+        get_logger().info(
+            f"[eval] launched {len(_server_urls)} sglang server(s): {_server_urls}"
+        )
+        rollout_group.set_sglang_server_urls(_server_urls).wait()
 
     runner = EmbodiedEvalRunner(
         cfg=cfg,

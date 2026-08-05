@@ -1,5 +1,5 @@
-Real-World RL with Franka
-=========================
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,68 +13,6 @@ Real-World RL with Franka
    Franka Emika Panda arm used for the base RLinf real-world RL workflow.
 
 Use RLinf to train and evaluate real-world policies on a Franka Emika Panda arm. You'll set up the controller and training nodes, collect demonstrations, run SAC/RLPD or PPO-style training, and monitor safe online updates on physical hardware.
-
-Related Franka Setups
----------------------
-
-Explore alternative Franka hardware, sensors, and training recipes.
-
-.. grid:: 1 2 2 3
-   :gutter: 2
-
-   .. grid-item-card:: Reward Model
-      :link: franka_reward_model
-      :link-type: doc
-
-      Train Franka with a learned reward model.
-
-   .. grid-item-card:: ZED + Robotiq
-      :link: franka_zed_robotiq
-      :link-type: doc
-
-      Use ZED cameras and Robotiq grippers.
-
-   .. grid-item-card:: GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      Joint-level teleoperation data collection with GELLO.
-
-   .. grid-item-card:: VR / PICO
-      :link: franka_vr
-      :link-type: doc
-
-      Use VR / PICO devices for teleoperation.
-
-   .. grid-item-card:: Dexterous Hand
-      :link: franka_dexhand
-      :link-type: doc
-
-      Drive a Franka with a dexterous hand end-effector.
-
-   .. grid-item-card:: Pi0 SFT
-      :link: franka_pi0_sft_deploy
-      :link-type: doc
-
-      Deploy a π₀ SFT policy on Franka.
-
-   .. grid-item-card:: HG-DAgger
-      :link: hg-dagger
-      :link-type: doc
-
-      Human-gated DAgger interactive training.
-
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
-      :link-type: doc
-
-      Run a two-arm Franka setup.
-
-   .. grid-item-card:: Dual PICO DAgger
-      :link: dual_franka_pico_dagger
-      :link-type: doc
-
-      Collect dual-arm PICO data and run HG-DAgger.
 
 Overview
 --------
@@ -192,7 +130,6 @@ Please take a note of the firmware version for later use.
   <div style="flex: 1; text-align: center;">
       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
   </div>
-
 .. warning::
 
   Make sure that the Franka firmware version is ``<5.9.0`` for compatibility with the serl_franka_controllers.
@@ -715,18 +652,3 @@ Here we provide demo videos and training curves for the task peg-insertion and c
     </video>
     <p><em>Charger</em></p>
   </div>
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   GELLO <franka_gello>
-   VR / PICO <franka_vr>
-   Dexterous Hand <franka_dexhand>
-   Pi0 SFT <franka_pi0_sft_deploy>
-   HG-DAgger <hg-dagger>
-   Dual-Arm <dual_franka>
-   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
-   Dual PICO DAgger <dual_franka_pico_dagger>
