@@ -41,7 +41,7 @@ to RLinf.
       :link: advanced-integrations/index
       :link-type: doc
 
-      Add Megatron-Bridge, weight synchronization, or reward model workflows.
+      Add Megatron-Bridge and weight synchronization workflows.
 
    .. grid-item-card:: SGLang Embodied Model
       :link: sglang_embodied_model
