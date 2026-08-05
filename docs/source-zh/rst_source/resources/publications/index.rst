@@ -17,16 +17,16 @@
      - `arXiv:2606.29834 <https://arxiv.org/abs/2606.29834>`__
    * - :doc:`RLinf-USER <rlinf_user>`
      - 统一真机在线策略学习系统。
-     - `arXiv:2602.07837 <https://arxiv.org/abs/2602.07837>`__
+     - `RSS 2026 <https://roboticsconference.org/program/papers/37/>`__
    * - :doc:`RLinf-VLA <rlinf_vla>`
      - VLA+RL 统一框架。
-     - `arXiv:2510.06710 <https://arxiv.org/abs/2510.06710>`__
+     - `RSS 2026 <https://roboticsconference.org/program/papers/89/>`__
    * - :doc:`RLinf-Co <rlinf_co>`
      - 基于强化学习的仿真-真实协同训练 VLA 模型。
      - `arXiv:2602.12628 <https://arxiv.org/abs/2602.12628>`__
    * - :doc:`RLinf <rlinf_system>`
      - 灵活高效的大规模 RL 系统。
-     - `arXiv:2509.15965 <https://arxiv.org/abs/2509.15965>`__
+     - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/yu-chao>`__
    * - :doc:`DynaRL <dynarl>`
      - 大规模强化学习训练的灵活动态调度。
      - `OSDI 2026 <https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing>`__
