@@ -72,6 +72,8 @@ Available under ``evaluations/libero/``:
 
 For the DreamZero SGLang backend, see :doc:`dreamzero_sglang`.
 
+To hide inference latency by overlapping it with action-chunk execution, see :doc:`RTC <../../guides/rtc>`.
+
 End-to-End Workflow
 -------------------
 

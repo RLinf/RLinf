@@ -123,7 +123,7 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 真机实验
 --------
 
-真机部署请参考 :doc:`Franka 真机强化学习 <franka>`。此处仅说明 RTC 评测的差异。
+真机部署请参考 :doc:`Franka 真机强化学习 </rst_source/examples/embodied/franka>`。此处仅说明 RTC 评测的差异。
 
 控制节点安装
 

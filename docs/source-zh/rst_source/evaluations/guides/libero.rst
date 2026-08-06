@@ -72,6 +72,8 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。
 
+如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
+
 完整评测流程
 ------------
 

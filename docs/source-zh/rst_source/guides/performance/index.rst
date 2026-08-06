@@ -21,6 +21,8 @@
      - 使用 LoRA adapter 训练。
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
      - 解耦 Env Worker 与 Rollout Worker，用于具身任务中的动态 rollout 调度。
+   * - :doc:`RTC <../rtc>`
+     - 将策略推理与动作块执行重叠，隐藏推理延迟，支持仿真与真机。
 
 .. toctree::
    :hidden:
@@ -31,3 +33,4 @@
    5D 并行 <../5D>
    LoRA <../lora>
    Env Decoupled Mode <../env_decoupled_mode>
+   RTC <../rtc>

@@ -193,6 +193,7 @@ Launch a config with ``run_embodiment.sh``:
    :class: note
 
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+   - Hiding inference latency during evaluation → :doc:`RTC <../../guides/rtc>`
    - All config keys → :doc:`Configuration <../../guides/index>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
    - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
