@@ -1438,10 +1438,10 @@ class CollectiveGroup:
         Returns:
             Tuple of (definitely_same, uncertain, definitely_diff):
             - definitely_same: same node, both have exactly one accelerator, identical
-              device → use P2P IPC directly.
+              device -> use P2P IPC directly.
             - uncertain: same node, accelerator sets overlap but at least one side has
-              multiple accelerators → exchange current-device at runtime to decide.
-            - definitely_diff: different node or no accelerator overlap → accelerator collective.
+              multiple accelerators -> exchange current-device at runtime to decide.
+            - definitely_diff: different node or no accelerator overlap -> accelerator collective.
         """
         src = self._group_info.workers[src_rank]
         src_devices = set(src.available_accelerators)
