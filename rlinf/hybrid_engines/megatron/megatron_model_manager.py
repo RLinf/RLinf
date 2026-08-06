@@ -311,6 +311,11 @@ class MegatronModelManager:
                 "recompute_granularity",
                 "recompute_method",
                 "recompute_num_layers",
+                "sequence_parallel",
+                "tensor_model_parallel_size",
+                "pipeline_model_parallel_size",
+                "expert_model_parallel_size",
+                "context_parallel_size",
                 "gradient_accumulation_fusion",
                 "moe_aux_loss_coeff",
                 "moe_router_bias_update_rate",
@@ -318,9 +323,9 @@ class MegatronModelManager:
             for name in provider_field_names:
                 if not hasattr(self.transformer_config, name):
                     continue
-                user_val = getattr(self.transformer_config, name)
                 if name in _mbridge_user_override_fields:
-                    setattr(provider, name, user_val)
+                    # Runtime/training field: user override is legitimate.
+                    setattr(provider, name, getattr(self.transformer_config, name))
         else:
             for name in provider_field_names:
                 if hasattr(self.transformer_config, name):
@@ -363,9 +368,6 @@ class MegatronModelManager:
 
         provider.finalize()
         self.provider = provider
-        # Override sequence_parallel after finalize()
-        # required by moe_layer.py:547 validation when MoE+TP
-        provider.sequence_parallel = self.transformer_config.sequence_parallel
         ddp_config = DistributedDataParallelConfig(
             use_distributed_optimizer=self._cfg.optim.use_distributed_optimizer,
             overlap_grad_reduce=self._cfg.optim.get("overlap_grad_reduce", False),
