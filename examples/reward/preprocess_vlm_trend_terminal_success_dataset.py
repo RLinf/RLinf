@@ -25,6 +25,8 @@ from typing import Any
 
 from rlinf.data.datasets.vlm_trend_io import (
     inspect_episode as shared_inspect_episode,
+)
+from rlinf.data.datasets.vlm_trend_io import (
     split_for,
 )
 from rlinf.utils.logging import get_logger
