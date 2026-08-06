@@ -31,10 +31,8 @@ from rlinf.algorithms.registry import (
     policy_loss,
 )
 from rlinf.algorithms.utils import kl_penalty
-from rlinf.data.io_struct import (
-    DynamicRolloutResult,
-    get_seq_length,
-)
+from rlinf.data.schema.reasoning_requests import get_seq_length
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel
 from rlinf.utils.data_iter_utils import (
     get_iterator_k_split,

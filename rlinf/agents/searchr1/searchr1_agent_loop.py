@@ -18,8 +18,8 @@ from typing import Any
 
 from omegaconf import DictConfig
 
+from rlinf.agents.tool_call.schema import ToolResponse
 from rlinf.algorithms.rewards.searchr1 import compute_score
-from rlinf.data.tool_call.tool_io_struct import ToolResponse
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
     AgentLoopOutput,
