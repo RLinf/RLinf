@@ -23,7 +23,7 @@ from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from torch.utils.data import Dataset
 
-from rlinf.data.io_struct import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.runners.agent_eval_runner import AgentEvalRunner
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.utils.runner_utils import local_mkdir_safe

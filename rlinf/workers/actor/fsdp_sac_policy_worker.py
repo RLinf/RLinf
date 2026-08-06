@@ -23,13 +23,13 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
 from rlinf.config import SupportedModel
-from rlinf.data.embodied_buffer_dataset import (
+from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.data.storage.replay import (
     PreloadReplayBufferDataset,
     ReplayBufferDataset,
+    TrajectoryReplayBuffer,
     replay_buffer_collate_fn,
 )
-from rlinf.data.embodied_io_struct import Trajectory
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
 from rlinf.scheduler import Channel, Worker

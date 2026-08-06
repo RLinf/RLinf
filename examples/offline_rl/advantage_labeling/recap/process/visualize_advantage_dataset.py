@@ -56,8 +56,8 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 from tqdm import tqdm
 
+from rlinf.algorithms.offline.process.mixture_config import read_mixture_config
 from rlinf.data.datasets.recap.utils import decode_image_struct_batch
-from rlinf.data.process.mixture_config import read_mixture_config
 
 
 def to_numpy(x):

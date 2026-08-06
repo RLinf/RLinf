@@ -283,7 +283,7 @@ wrapper 从 info 字典中按以下优先级推断 episode 是否成功（从最
 
 1. 初始化 ``RealWorldEnv`` 和 ``TrajectoryReplayBuffer``。
 2. 循环执行 step，从 ``info["intervene_action"]`` 读取 SpaceMouse 干预动作。
-3. 构造 ``ChunkStepResult``，追加到 ``EmbodiedRolloutResult``。
+3. 构造 ``ChunkStepResult``，追加到 ``EmbodiedTrajectoryBuilder``。
 4. episode 结束（``done=True``）且奖励 ``>= 0.5`` 时，记为一次成功，将轨迹写入 buffer。
 5. 成功次数达到 ``num_data_episodes`` 后自动停止并 finalize buffer。
 

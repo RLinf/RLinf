@@ -71,7 +71,7 @@ rollout worker按时间累积 step 结果，收集轨迹的过程。其中
 
    time →
    [ obs₀, obs₁, act₀, r₀, dones₀, ... ] ──┐
-   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── EmbodiedRolloutResult── Trajectory 
+   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── EmbodiedTrajectoryBuilder── Trajectory 
    [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                                │
    [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                           Channel(put)   
 
