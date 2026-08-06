@@ -1,5 +1,5 @@
 defaults:
-  - env/libero_10@env.eval
+  - env/libero_object@env.eval
   - model/molmoact2@rollout.model
   - override hydra/job_logging: stdout
   - _self_
@@ -21,7 +21,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_10_molmoact2_eval"
+    experiment_name: "libero_object_molmoact2_eval"
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1000
@@ -43,10 +43,10 @@ env:
     auto_reset: True
     ignore_terminations: True
     group_size: 1
-    # Full LIBERO-Long defaults: 20 envs x 25 episodes = 500 trajectories.
+    # Full LIBERO-Object defaults: 20 envs x 25 episodes = 500 trajectories.
     # The other task suites have their own libero_<suite>_molmoact2_eval.yaml.
-    max_episode_steps: 520
-    max_steps_per_rollout_epoch: 13000
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 6000
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     reset_gripper_open: False
