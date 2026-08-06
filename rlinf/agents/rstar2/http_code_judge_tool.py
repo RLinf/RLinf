@@ -16,7 +16,7 @@ import base64
 import time
 from typing import Callable, Optional
 
-from rlinf.data.tool_call.tool_io_struct import ToolChannelRequest, ToolChannelResponse
+from rlinf.agents.tool_call.schema import ToolChannelRequest, ToolChannelResponse
 
 
 class ToolBase:

@@ -26,11 +26,8 @@ from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import (
-    RolloutRequest,
-    RolloutResult,
-    SeqGroupInfo,
-)
+from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
+from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (

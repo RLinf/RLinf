@@ -27,7 +27,7 @@ from megatron.core import tensor_parallel
 from omegaconf import DictConfig
 
 from rlinf.config import build_config, build_transformer_config
-from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args

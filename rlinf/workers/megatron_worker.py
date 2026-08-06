@@ -30,12 +30,8 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
 )
-from rlinf.data.io_struct import (
-    BatchResizingIterator,
-    RolloutResult,
-    get_batch_size,
-    get_seq_length,
-)
+from rlinf.data.schema.reasoning_requests import get_batch_size, get_seq_length
+from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )

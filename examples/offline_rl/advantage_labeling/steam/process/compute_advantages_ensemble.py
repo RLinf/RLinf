@@ -24,7 +24,7 @@ happen on rank 0.
 This single file inlines the STEAM-specific labelling, ensemble inference and
 pipeline; only the model-agnostic helpers (quantile threshold + boolean label,
 distributed sharding, mixture_config I/O) are imported from
-``rlinf.data.process``.
+``rlinf.algorithms.offline.process``.
 """
 
 from __future__ import annotations
@@ -56,6 +56,19 @@ from omegaconf import DictConfig, OmegaConf  # noqa: E402
 from torch.utils.data import DataLoader, Dataset, Subset  # noqa: E402
 from tqdm import tqdm  # noqa: E402
 
+from rlinf.algorithms.offline.process.advantage import (  # noqa: E402
+    apply_boolean_label as _label_by_threshold,
+)
+from rlinf.algorithms.offline.process.advantage import quantile_threshold  # noqa: E402
+from rlinf.algorithms.offline.process.distributed import (  # noqa: E402
+    cleanup_distributed,
+    gather_dataframes_to_rank0,
+    get_shard_indices,
+    setup_distributed,
+)
+from rlinf.algorithms.offline.process.mixture_config import (  # noqa: E402
+    write_mixture_config_tag,  # noqa: E402
+)
 from rlinf.data.datasets.steam.binning import (  # noqa: E402
     entropy_nats,
     expected_signed_stride,
@@ -64,17 +77,6 @@ from rlinf.data.datasets.steam.pair_dataset import (  # noqa: E402
     BinaryPairDataCollator,
     BinaryPairInferenceDataset,
 )
-from rlinf.data.process.advantage import (  # noqa: E402
-    apply_boolean_label as _label_by_threshold,
-)
-from rlinf.data.process.advantage import quantile_threshold  # noqa: E402
-from rlinf.data.process.distributed import (  # noqa: E402
-    cleanup_distributed,
-    gather_dataframes_to_rank0,
-    get_shard_indices,
-    setup_distributed,
-)
-from rlinf.data.process.mixture_config import write_mixture_config_tag  # noqa: E402
 from rlinf.models.embodiment.value_model.steam.ensemble_modeling_critic import (  # noqa: E402
     EnsembleSteamCriticModel,
     coerce_to_ensemble,

@@ -22,7 +22,7 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 import numpy as np
 from torch.utils.data import Dataset
 
-from rlinf.data.utils import forward_set_epoch, safe_hash
+from rlinf.data.datasets.common import forward_set_epoch, safe_hash
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,7 @@ from unittest import mock
 import pytest
 from omegaconf import DictConfig
 
-from rlinf.data.datasets.reasoning import ReasoningDataset
+from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 
 
 class TestMathDatasetMultithread:
