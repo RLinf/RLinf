@@ -31,7 +31,7 @@ import torch
 from matplotlib.backend_bases import KeyEvent
 from matplotlib.widgets import TextBox
 
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.storage.replay import TrajectoryReplayBuffer
 
 
 class MultiTrajectoryVisualizer:

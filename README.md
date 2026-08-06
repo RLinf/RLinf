@@ -30,6 +30,9 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/08] 🎉 Two papers accepted to **OSDI 2026**: [RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) and [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing). DynaRL dynamically reallocates compute, memory, and communication across heterogeneous RL components to improve end-to-end training throughput. Doc: [DynaRL](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/dynarl.html).
+- [2026/08] 🎉 Two papers accepted to **RSS 2026**: [RLinf-VLA](https://roboticsconference.org/program/papers/89/) and [RLinf-USER](https://roboticsconference.org/program/papers/37/). RLinf-VLA is a unified and efficient framework for scalable RL training of VLA models across diverse architectures, algorithms, and simulators. Doc: [RLinf-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_vla.html). RLinf-USER is a unified and extensible system for real-world online policy learning that treats robots as first-class resources alongside GPUs. Doc: [RLinf-USER](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_user.html).
+- [2026/08] 🎉 One paper accepted to **NSDI 2027**: [FUSCO](https://arxiv.org/abs/2512.22036). FUSCO accelerates MoE All-to-All communication by fusing data transformation and communication for high-performance distributed data shuffling. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html).
 - [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rtc.html).
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [PyTorch OpenPI](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_pytorch.html).
@@ -61,7 +64,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 <details>
 <summary><b>More updates</b></summary>
 
-- [2026/03] 🎉 RLinf v0.2 is released with major upgrades in Real-World RL and Multi-Agent RL. Release notes: [RLinf v0.2](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release.html).
+- [2026/03] 🎉 RLinf v0.2 is released with major upgrades in Real-World RL and Multi-Agent RL. Release notes: [RLinf v0.2](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.1_v0.2.html).
 - [2026/03] 🔥 RLinf supports reinforcement learning fine-tuning for LIBERO-Pro & LIBERO-Plus. Doc: [LIBERO-Pro & LIBERO-Plus](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html#liberopro-plus-benchmark).
 - [2026/03] 🔥 RLinf supports DAgger for embodied policies. Doc: [DAgger for Embodied Policies](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dagger.html).
 - [2026/03] 🔥 RLinf now supports evaluating and fine-tuning LingBot-VLA within the RoboTwin environment! Doc: [LingBot-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/lingbotvla.html).
@@ -81,7 +84,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/02] 🔥 RLinf supports reinforcement learning with [GSEnv](https://github.com/chenkang455/ManiSkill-GS) for Real2Sim2Real. Doc: [RL with GSEnv](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gsenv.html).
 - [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [OpenSora World Model](https://github.com/hpcaitech/Open-Sora). Doc: [RL on OpenSora World Model](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opensora.html).
 - [2026/01] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboTwin](https://github.com/robotwin-Platform/RoboTwin). Doc: [RL on RoboTwin](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robotwin.html).
-- [2026/01] 🔥 RLinf supports SAC training for flow matching policy. Doc: [SAC-Flow](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/sac_flow.html), paper: [SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756).
+- [2026/01] 🔥 RLinf supports SAC training for flow matching policy. Doc: [SAC-Flow](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sac_flow.html), paper: [SAC Flow: Sample-Efficient Reinforcement Learning of Flow-Based Policies via Velocity-Reparameterized Sequential Modeling](https://arxiv.org/abs/2509.25756).
 - [2025/12] 🔥 RLinf supports agentic reinforcement learning on [Search-R1](https://github.com/PeterGriffinJin/Search-R1). Doc: [Search-R1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/searchr1.html).
 - [2025/12] 🔥 RLinf v0.2-pre is open-sourced. We support real-world RL with Franka. Doc: [RL on Franka in the RealWorld](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html).
 - [2025/12] 🔥 RLinf supports reinforcement learning fine-tuning for [RoboCasa](https://github.com/robocasa/robocasa). Doc: [RL on Robocasa](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/robocasa.html).
@@ -236,7 +239,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
     <tr>
       <td>
         <ul style="margin-left: 0; padding-left: 16px;">
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Franka Arm</a></li>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_index.html">Single-Arm Franka</a></li>
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka.html">Intel RealSense</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Stereolabs ZED</a> ✅</li>
@@ -245,8 +248,8 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_dexhand.html">Ruiyan Hand</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/franka_zed_robotiq.html">Robotiq 2F-85 / 2F-140</a> ✅</li>
           </ul>
+          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dual_franka_index.html">Dual-Arm Franka</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/xsquare_turtle2.html">XSquare Turtle2</a> ✅</li>
-          <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/guides/data_collection.html">Dual-franka</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/dosw1.html">DOS-W1</a> ✅</li>
           <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gim_arm.html">GimArm</a> ✅</li>
           <li>More...</li>
@@ -339,6 +342,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
 
 ## Awesome Community Projects with RLinf
 We are excited to see a growing ecosystem of projects building on top of or integrate with RLinf, spanning embodied AI, robotics, and long-horizon agentic systems. Here are some awesome community projects:
+- [Qwen-VLA](https://github.com/QwenLM/Qwen-VLA): A unified vision-language-action model that uses RLinf for reinforcement learning to optimize closed-loop task success.
 - [i4h-workflows](https://github.com/isaac-for-healthcare/i4h-workflows/tree/main/workflows/rheo): NVIDIA team open sourced RL-based workflow built on Isaac ecosystem, integrating RLinf for healthcare-oriented embodied intelligence.
 - [pi-StepNFT](https://github.com/wangst0181/pi-StepNFT): Extends RLinf for step-level training and optimization of π-series VLA models.
 - [Dexbotic](https://github.com/dexmal/dexbotic): A robotics + RL system integrating RLinf for scalable training and deployment of embodied agents.
@@ -379,14 +383,36 @@ We welcome contributions to RLinf. Please read [contribution guide](https://gith
 If you find **RLinf** helpful, please cite the paper:
 
 ```bibtex
-@article{yu2025rlinf,
-  title={RLinf: Flexible and Efficient Large-scale Reinforcement Learning via Macro-to-Micro Flow Transformation},
-  author={Yu, Chao and Wang, Yuanqing and Guo, Zhen and Lin, Hao and Xu, Si and Zang, Hongzhi and Zhang, Quanlu and Wu, Yongji and Zhu, Chunyang and Hu, Junhao and others},
-  journal={arXiv preprint arXiv:2509.15965},
-  year={2025}
+@inproceedings{yu2026rlinf,
+  author = {Chao Yu and Yuanqing Wang and Zhen Guo and Hao Lin and Si Xu and Hongzhi Zang and Quanlu Zhang and Yongji Wu and Chunyang Zhu and Junhao Hu and Zixiao Huang and Mingjie Wei and Yuqing Xie and Ke Yang and Bo Dai and Zhexuan Xu and Jiakun Du and Xiangyuan Wang and Xu Fu and Letong Shi and Zhihao Liu and Kang Chen and Weilin Liu and Gang Liu and Boxun Li and Jianlei Yang and Zhi Yang and Guohao Dai and Yu Wang},
+  title = {{RLinf}: Flexible and Efficient {Large-Scale} Reinforcement Learning via {Macro-to-Micro} Flow Transformation},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {829--846},
+  url = {https://www.usenix.org/conference/osdi26/presentation/yu-chao},
+  publisher = {USENIX Association},
+  month = jul
 }
 ```
 
+If you use dynamic scheduling in RLinf, please also cite **DynaRL**:
+
+```bibtex
+@inproceedings{wang2026dynarl,
+  author = {Yuanqing Wang and Hao Lin and Junhao Hu and Chunyang Zhu and Quanlu Zhang and Zhen Guo and Yuchen Zhang and Xu Fu and Si Xu and Bo Dai and Zixiao Huang and Chao Yu and Boxun Li and Guohao Dai and Zhi Yang and Yu Wang},
+  title = {{DynaRL}: Flexible and Dynamic Scheduling of {Large-Scale} Reinforcement Learning Training},
+  booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+  year = {2026},
+  isbn = {978-1-939133-55-7},
+  address = {Seattle, WA},
+  pages = {847--862},
+  url = {https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing},
+  publisher = {USENIX Association},
+  month = jul
+}
+```
 If you use RL+VLA in RLinf, you can also cite our technical report and empirical study paper:
 
 ```bibtex
@@ -457,7 +483,17 @@ If you use WideSeek-R1 in RLinf, you can cite our paper:
   journal={arXiv preprint arXiv:2602.04634},
   year={2026},
 }
-```   
+```
+
+If you use FUSCO for MoE communication in RLinf, you can cite our paper:
+```bibtex
+@article{zhu2025fusco,
+  title={FUSCO: High-Performance Distributed Data Shuffling via Transformation-Communication Fusion},
+  author={Zhu, Zhuoran and Zhu, Chunyang and Lin, Hao and Fu, Xu and Zhou, Yiming and Zhang, Quanlu and Li, Zhenhua and Qian, Feng and Yu, Chao and Li, Boxun and Dai, Guohao and Wang, Yu},
+  journal={arXiv preprint arXiv:2512.22036},
+  year={2025}
+}
+```
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.

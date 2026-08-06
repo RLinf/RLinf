@@ -22,18 +22,15 @@ from uuid import uuid4
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
-from rlinf.algorithms.registry import get_toolcall_parser
-from rlinf.data.io_struct import (
-    DynamicRolloutResult,
-    RolloutRequest,
-    RolloutResult,
-)
-from rlinf.data.tool_call.tool_io_struct import (
+from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
     ToolChannelResponse,
     ToolRequest,
     ToolResponse,
 )
+from rlinf.algorithms.registry import get_toolcall_parser
+from rlinf.data.schema.reasoning_requests import RolloutRequest
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo

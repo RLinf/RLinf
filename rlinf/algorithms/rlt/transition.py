@@ -60,17 +60,17 @@ def extract_rlt_obs_from_forward_inputs(
 def update_rlt_transitions(
     stage_id: int,
     pending_obs: list[dict[str, Any] | None],
-    rollout_results: list[Any],
-    rollout_result: Any,
+    trajectory_builders: list[Any],
+    policy_output: Any,
     *,
     cache_current: bool,
 ) -> None:
     if pending_obs[stage_id] is not None:
         next_obs = extract_rlt_obs_from_forward_inputs(
-            rollout_result.forward_inputs,
+            policy_output.forward_inputs,
             transition=True,
         )
-        rollout_results[stage_id].append_transitions(
+        trajectory_builders[stage_id].append_transitions(
             pending_obs[stage_id],
             next_obs,
         )
@@ -78,5 +78,5 @@ def update_rlt_transitions(
 
     if cache_current:
         pending_obs[stage_id] = extract_rlt_obs_from_forward_inputs(
-            rollout_result.forward_inputs
+            policy_output.forward_inputs
         )

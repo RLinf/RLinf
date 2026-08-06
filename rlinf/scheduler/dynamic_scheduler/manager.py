@@ -34,7 +34,7 @@ from rlinf.scheduler.dynamic_scheduler.utils import (
 from rlinf.utils.placement import ModelParallelComponentPlacement
 
 if TYPE_CHECKING:
-    from rlinf.data.io_struct import SeqGroupInfo
+    from rlinf.data.schema.reasoning_requests import SeqGroupInfo
     from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
 

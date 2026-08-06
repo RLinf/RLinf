@@ -1642,6 +1642,7 @@ EOF
 install_molmoact2_model() {
     # MolmoAct2's upstream LeRobot extra requires Python 3.12.
     PYTHON_VERSION="3.12"
+    local molmoact2_constraints="$SCRIPT_DIR/embodied/models/molmoact2.txt"
 
     case "$ENV_NAME" in
         maniskill_libero|libero)

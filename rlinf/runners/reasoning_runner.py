@@ -24,10 +24,9 @@ from torch.utils.data import Dataset, RandomSampler, SequentialSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
 
-from rlinf.data.io_struct import RolloutRequest
+from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
-from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
@@ -160,7 +159,7 @@ class ReasoningRunner:
         """
         self.train_dataset, self.val_dataset = train_dataset, val_dataset
         if collate_fn is None:
-            from rlinf.data.datasets import collate_fn
+            from rlinf.data.datasets.reasoning import collate_fn
 
         # Use a sampler to facilitate checkpoint resumption.
         # If shuffling is enabled in the data configuration, create a random sampler.
@@ -391,28 +390,16 @@ class ReasoningRunner:
         return self.global_steps // self.num_steps_per_epoch
 
     def _put_batch(self, batch: dict[str, torch.Tensor], split_size=None):
-        prompt_ids = batch["prompt"].tolist()
-        lengths = batch["length"].tolist()
-        answers = batch["answer"]
-        image_data = batch["image_data"]
-        multi_modal_inputs = batch["multi_modal_inputs"]
-        prompt_ids = [ids[-pmp_len:] for ids, pmp_len in zip(prompt_ids, lengths)]
         if split_size is None:
             split_size = self.component_placement.rollout_dp_size
 
-        for input_ids, answers, image_data, multi_modal_inputs in zip(
-            split_list(prompt_ids, split_size, enforce_divisible_batch=False),
-            split_list(answers, split_size, enforce_divisible_batch=False),
-            split_list(image_data, split_size, enforce_divisible_batch=False),
-            split_list(multi_modal_inputs, split_size, enforce_divisible_batch=False),
-        ):
-            request = RolloutRequest(
-                n=self.cfg.algorithm.group_size,
-                input_ids=input_ids,
-                answers=answers,
-                image_data=image_data,
-                multi_modal_inputs=multi_modal_inputs,
-            )
+        requests = build_rollout_requests_from_batch(
+            batch,
+            group_size=self.cfg.algorithm.group_size,
+            split_size=split_size,
+            enforce_divisible_batch=False,
+        )
+        for request in requests:
             self.dataloader_channel.put(request, async_op=True)
 
     def _sync_weights(self):
