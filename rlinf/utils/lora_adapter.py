@@ -19,7 +19,7 @@ checkpoint and exports the Peft adapter separately via
 ``peft.PeftModel.save_pretrained`` under ``actor/lora_adapter/``. Consumers
 (VLM reward models, feature-extraction scripts) load adapters explicitly with
 ``peft.PeftModel.from_pretrained`` through this single module; a legacy
-``full_weights.pt`` fallback keeps older QwenTrend checkpoints loadable.
+``full_weights.pt`` fallback keeps older VLM Trend checkpoints loadable.
 
 Division of labor with ``rlinf.models.apply_lora``:
   * ``apply_lora`` — attach/create LoRA while constructing an actor from a

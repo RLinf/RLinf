@@ -3,7 +3,7 @@
 # Extract frozen VLM features, then train the scalar potential head.
 set -euo pipefail
 
-: "${QWEN_MODEL_PATH:?Set the Qwen3-VL-4B-Instruct path}"
+: "${VLM_MODEL_PATH:?Set the VLM base model path (e.g. Qwen3-VL-4B-Instruct)}"
 : "${POTENTIAL_SFT_DATA_ROOT:?Set the processed dense potential dataset root}"
 : "${VLM_TREND_POTENTIAL_CHECKPOINT:?Set the dense potential LoRA checkpoint dir}"
 : "${FEAT_ROOT:?Set the feature shard output root}"
@@ -35,7 +35,7 @@ for split in train eval; do
     for rank in $(seq 0 $((FEATURE_WORLD_SIZE - 1))); do
       gpu="${FEATURE_GPUS[$rank]}"
       CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON_BIN}" scripts/extract_vlm_trend_potential_features.py \
-        --model-path "${QWEN_MODEL_PATH}" \
+        --model-path "${VLM_MODEL_PATH}" \
         --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
         --manifest "${manifest}" \
         --output "${FEAT_ROOT}/${split}_${sample_type}_rank${rank}.pt" \

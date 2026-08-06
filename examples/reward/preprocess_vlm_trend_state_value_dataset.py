@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Label QwenTrend VLM SFT windows with a state success value model."""
+"""Label VLM Trend SFT windows with a state success value model."""
 
 from __future__ import annotations
 
@@ -33,17 +33,12 @@ from tqdm.auto import tqdm
 from examples.reward.train_vlm_trend_state_success_value import StateSuccessValue
 from rlinf.data.datasets.vlm_trend_io import (
     extract_dual_view_frames,
+    to_numpy_float32,
     to_uint8_rgb,
 )
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
-
-
-def _to_numpy(value: Any) -> np.ndarray:
-    if torch.is_tensor(value):
-        value = value.detach().cpu().numpy()
-    return np.asarray(value, dtype=np.float32)
 
 
 def _build_prompt(task: str, window_size: int) -> str:
@@ -189,7 +184,7 @@ def infer_delta_thresholds(
             if "states" not in obs:
                 states = []
                 break
-            states.append(_to_numpy(obs["states"]).reshape(-1))
+            states.append(to_numpy_float32(obs["states"]).reshape(-1))
         if len(states) < args.window_size:
             continue
         values = score_states(
@@ -295,7 +290,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
             if "states" not in obs:
                 states = []
                 break
-            states.append(_to_numpy(obs["states"]).reshape(-1))
+            states.append(to_numpy_float32(obs["states"]).reshape(-1))
         if len(states) < args.window_size:
             continue
         values = score_states(

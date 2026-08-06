@@ -27,12 +27,10 @@ from typing import Any
 import torch
 from omegaconf import OmegaConf
 
-from examples.reward.preprocess_vlm_trend_state_value_potential_dataset import (
-    potential_prompt,
-)
 from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
 from rlinf.data.datasets.vlm_trend_io import (
     extract_extra_view_image,
+    potential_prompt,
     source_episode_hash,
     to_uint8_rgb,
 )

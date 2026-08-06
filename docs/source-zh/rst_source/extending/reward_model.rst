@@ -94,14 +94,14 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 微调 Qwen3-VL-4B，让它输出终局成功的 ``0`` / ``1``
-（配置 ``qwen3vl_sft_vlm_trend_success``）。
+（配置 ``vlm_trend_sft_success``）。
 
 .. code-block:: bash
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_success
 
 这一步会：
 
@@ -160,14 +160,14 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 在 potential / progress 标签上微调 Qwen3-VL
-（配置 ``qwen3vl_sft_vlm_trend_reward``）。
+（配置 ``vlm_trend_sft_potential``）。
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_dense_potential_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_potential
 
 这一步会：
 
@@ -185,7 +185,7 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 
 .. code-block:: bash
 
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
@@ -207,7 +207,7 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 
 .. code-block:: bash
 
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export VLM_TREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
    export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
@@ -429,22 +429,23 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
 ``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT。
 
-``qwen3vl_sft_vlm_trend_reward.yaml`` 的默认超参对齐 **双线 Success 稠密 LoRA**
-（micro 4 / global 256、``max_steps=400``）。若跑本文档的 **单线** Trend
-reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``），请把训练
-预算调大，例如：
+``vlm_trend_sft_reward.yaml`` 是 **单线** Trend reward
+（``inference_mode=generate`` + ``vlm_trend_reward_parser``）的默认配置
+（micro 4 / global 256、``max_steps=3000``）。如需调整训练预算，可继续加
+override，例如：
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_reward_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward \
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_reward \
        runner.max_steps=3000 \
        runner.max_epochs=3000 \
        actor.optim.total_training_steps=3000
 
-双线 Success 稠密支路（步骤 5）直接用 YAML 默认即可，不必再传上述 override。
+双线 Success 稠密支路（步骤 5）请改用专用配置
+``vlm_trend_sft_potential.yaml``（400 步），与本节的单线配置互不影响。
 
 对应配置会读取 JSONL manifest 和逐样本 pickle 文件：
 

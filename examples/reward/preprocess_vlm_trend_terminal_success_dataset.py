@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build terminal success data from QwenTrend rollout episodes."""
+"""Build terminal success data from VLM Trend rollout episodes."""
 
 from __future__ import annotations
 
@@ -25,8 +25,6 @@ from typing import Any
 
 from rlinf.data.datasets.vlm_trend_io import (
     inspect_episode as shared_inspect_episode,
-)
-from rlinf.data.datasets.vlm_trend_io import (
     split_for,
 )
 from rlinf.utils.logging import get_logger

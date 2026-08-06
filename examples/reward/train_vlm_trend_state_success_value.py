@@ -17,7 +17,7 @@
 The model predicts a success-conditioned potential from state history. For a
 successful episode, targets increase toward 1 near the final successful state;
 for a failed episode, targets are 0. The saved checkpoint can then be used to
-label image windows for QwenTrend VLM reward SFT.
+label image windows for VLM Trend reward SFT.
 """
 
 from __future__ import annotations

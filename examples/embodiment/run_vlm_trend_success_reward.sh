@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 export EMBODIED_PATH=${EMBODIED_PATH:-${SCRIPT_DIR}}
 
-: "${QWEN_MODEL_PATH:?Set the Qwen3-VL base model path}"
+: "${VLM_MODEL_PATH:?Set the VLM base model path (e.g. Qwen3-VL-4B-Instruct)}"
 : "${VLM_TREND_POTENTIAL_CHECKPOINT:?Set the potential VLM checkpoint}"
 : "${VLM_TREND_SCALAR_HEAD:?Set the scalar potential head checkpoint}"
 : "${VLM_TREND_SUCCESS_CHECKPOINT:?Set the selected VLM success checkpoint}"
@@ -75,7 +75,7 @@ DEFAULT_TASK_DESCRIPTION=${DEFAULT_TASK_DESCRIPTION:-"Pick up the red cube and p
   reward.env_reward_weight=0.0 \
   reward.reward_mode=history_buffer \
   reward.history_reward_assign=false \
-  reward.model.model_path="${QWEN_MODEL_PATH}" \
+  reward.model.model_path="${VLM_MODEL_PATH}" \
   reward.model.lora_path="${VLM_TREND_POTENTIAL_CHECKPOINT}" \
   reward.model.inference_mode=scalar_head \
   +reward.model.scalar_head_path="${VLM_TREND_SCALAR_HEAD}" \

@@ -98,14 +98,14 @@ Step 3 — Train the sparse success LoRA
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Fine-tune Qwen3-VL-4B to answer ``0`` / ``1`` for terminal success
-(``qwen3vl_sft_vlm_trend_success``).
+(``vlm_trend_sft_success``).
 
 .. code-block:: bash
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_success
 
 What this does:
 
@@ -165,14 +165,14 @@ Step 5 — Train the dense potential LoRA
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Fine-tune Qwen3-VL on the potential / progress labels
-(``qwen3vl_sft_vlm_trend_reward``).
+(``vlm_trend_sft_potential``).
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_dense_potential_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_potential
 
 What this does:
 
@@ -190,7 +190,7 @@ Freeze the potential LoRA, extract features with
 
 .. code-block:: bash
 
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
@@ -213,7 +213,7 @@ term, and ``vlm_trend_binary_digit_reward_parser`` for the sparse success term.
 
 .. code-block:: bash
 
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export VLM_TREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
    export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
@@ -438,23 +438,24 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
 point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT.
 
-``qwen3vl_sft_vlm_trend_reward.yaml`` defaults match the **dual-line Success dense
-LoRA** recipe (micro 4 / global 256, ``max_steps=400``). For the **single-line**
-Trend reward in this section (``inference_mode=generate`` +
-``vlm_trend_reward_parser``), raise the training budget, for example:
+``vlm_trend_sft_reward.yaml`` is the default config for the
+**single-line** Trend reward (``inference_mode=generate`` +
+``vlm_trend_reward_parser``; micro 4 / global 256, ``max_steps=3000``). To tune
+the training budget further, keep passing overrides, for example:
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
-   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_reward_sft
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward \
+   bash examples/sft/run_vlm_sft.sh vlm_trend_sft_reward \
        runner.max_steps=3000 \
        runner.max_epochs=3000 \
        actor.optim.total_training_steps=3000
 
-The dual-line Success dense branch (Step 5) can use the YAML defaults as-is and
-does not need those overrides.
+The dual-line Success dense branch (Step 5) uses the dedicated
+``vlm_trend_sft_potential.yaml`` config (400 steps) instead, which is
+independent of this single-line config.
 
 The corresponding config reads the JSONL manifests and per-sample pickle files:
 

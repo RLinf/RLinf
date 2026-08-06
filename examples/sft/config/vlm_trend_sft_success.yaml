@@ -37,14 +37,14 @@ runner:
   max_steps: 400
   val_check_interval: 100
   save_interval: 100
-  experiment_name: qwen3_vl_4b_dualview_terminal_success
+  experiment_name: vlm_trend_success_sft
   output_dir: ${oc.env:OUTPUT_ROOT,logs/vlm_trend_sparse_success_sft}
   resume_dir: null
   per_worker_log: true
 
 # Build this dataset with preprocess_vlm_trend_terminal_success_dataset.py and
 # evaluate all checkpoints before selecting the model for PPO.
-# Requires DUALVIEW_SFT_DATA_ROOT; set QWEN_MODEL_PATH (and optionally OUTPUT_ROOT).
+# Requires DUALVIEW_SFT_DATA_ROOT; set VLM_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:
   type: vlm
   dataset_name: "vlm_trend_reward_sft"
@@ -77,7 +77,7 @@ actor:
   model:
     model_type: qwen3_vl
     precision: bf16
-    model_path: ${oc.env:QWEN_MODEL_PATH}
+    model_path: ${oc.env:VLM_MODEL_PATH}
     attn_implementation: flash_attention_2
     is_lora: true
     lora_rank: 16

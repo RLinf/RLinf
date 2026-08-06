@@ -44,6 +44,13 @@ def to_uint8_rgb(image: Any) -> np.ndarray:
     return image[..., :3]
 
 
+def to_numpy_float32(value: Any) -> np.ndarray:
+    """Convert tensor/array metadata to a float32 numpy array."""
+    if torch.is_tensor(value):
+        value = value.detach().cpu().numpy()
+    return np.asarray(value, dtype=np.float32)
+
+
 def extract_extra_view_image(extra_view_images: Any) -> Any | None:
     """Pick one extra-view frame from a (T, ...) or single-frame payload."""
     if extra_view_images is None:
@@ -134,3 +141,31 @@ def split_for(path: str, val_split: float) -> str:
 def source_episode_hash(path: str) -> int:
     """Stable integer hash of a source-episode path for rank sharding."""
     return int(hashlib.sha256(path.encode()).hexdigest()[:16], 16)
+
+
+def potential_prompt(task: str, window_size: int, num_bins: int) -> str:
+    """Build the absolute potential VLM user prompt for one window."""
+    return (
+        "You are estimating task-conditioned success potential for a robot "
+        f"manipulation state. Task: {task}. The two synchronized videos show "
+        f"the same {window_size}-frame history from two camera views. Predict "
+        f"the final state's potential as exactly one digit from 0 to {num_bins - 1}, "
+        f"where 0 is furthest from eventual success and {num_bins - 1} is closest."
+    )
+
+
+def progress_prompt(task: str, window_size: int, gap_steps: int | None = None) -> str:
+    """Build the relative progress VLM user prompt for a pair of windows."""
+    gap_steps = window_size if gap_steps is None else gap_steps
+    relation = (
+        "immediately adjacent"
+        if gap_steps == window_size
+        else f"separated by {gap_steps} environment steps"
+    )
+    return (
+        "You are judging local task progress in a robot manipulation trajectory. "
+        f"Task: {task}. In each synchronized camera video, the first {window_size} "
+        f"frames are the earlier clip and the next {window_size} frames are the "
+        f"later clip; their final states are {relation}. Compare their final states. "
+        "Answer with exactly one word: up, same, or down."
+    )
