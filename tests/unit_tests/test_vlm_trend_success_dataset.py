@@ -17,7 +17,7 @@ import pickle
 
 import numpy as np
 
-from examples.reward.preprocess_qwentrend_terminal_success_dataset import build_rows
+from examples.reward.preprocess_vlm_trend_terminal_success_dataset import build_rows
 from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
 
 
@@ -126,7 +126,7 @@ def test_global_seed_makes_manifest_rows_deterministic(tmp_path):
     assert keys(first["train"]) == keys(second["train"])
 
 
-def test_qwentrend_loader_slices_raw_episode_window(tmp_path):
+def test_vlm_trend_loader_slices_raw_episode_window(tmp_path):
     path = tmp_path / "episode.pkl"
     _write_episode(path, observation_count=20, success=True)
 

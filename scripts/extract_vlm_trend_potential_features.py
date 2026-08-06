@@ -27,7 +27,7 @@ from typing import Any
 import torch
 from omegaconf import OmegaConf
 
-from examples.reward.preprocess_qwentrend_state_value_potential_dataset import (
+from examples.reward.preprocess_vlm_trend_state_value_potential_dataset import (
     potential_prompt,
 )
 from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset

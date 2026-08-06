@@ -22,8 +22,11 @@ this guide.
 Run every command from the repo root. Sparse steps (2–3) and dense steps (4–6)
 both need step 1; you can run the two branches in parallel after collection.
 
-The examples below use 4 GPUs (placement ``0-3``) and ``NUM_ENVS=1024``, matching
-the script defaults.
+The examples below use 4 GPUs (placement ``0-3``) and ``NUM_ENVS=1024``.
+Training steps use YAML configs plus ``run_vlm_sft.sh``; only collection,
+scalar-head training, and PPO keep dedicated shell launchers under
+``examples/embodiment/vlm_trend_success/`` and
+``examples/embodiment/run_vlm_trend_success_reward.sh``.
 
 Step 1 — Collect rollouts
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -38,7 +41,7 @@ Roll out fixed 50-step episodes from checkpoints that cover your policy range.
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
    NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
 
 What this does:
 
@@ -53,7 +56,7 @@ To redo a few failed steps only:
 .. code-block:: bash
 
    STEPS="80 120 160" \
-       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
 
 Matching episode filenames are overwritten.
 
@@ -66,7 +69,22 @@ Turn the collection into dual-view 5-frame windows labeled ``0`` / ``1``.
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   bash examples/embodiment/qwentrend_success/run_preprocess_sparse_success_dataset.sh
+   python examples/reward/preprocess_vlm_trend_terminal_success_dataset.py \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step60" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step80" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step100" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step120" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step140" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step160" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step180" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step200" \
+       --output-dir "${DUALVIEW_SFT_DATA_ROOT}" \
+       --window-size 5 \
+       --online-interval 5 \
+       --workers 32
 
 What this does:
 
@@ -75,8 +93,6 @@ What this does:
   ``infos[end_step]["success"]``. Keeps the natural class balance.
 - Writes manifests under ``${DUALVIEW_SFT_DATA_ROOT}/{train,eval}/`` that point
   at the original pickles (no image copies). Only load trusted pickles.
-
-Debug with a subset: ``UNIFORM_STEPS="0 100 200"``.
 
 Step 3 — Train the sparse success LoRA
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -88,18 +104,15 @@ Fine-tune Qwen3-VL-4B to answer ``0`` / ``1`` for terminal success
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
-   export PLACEMENT=0-3
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_train_sparse_success_vlm.sh
+   # YAML reads DUALVIEW_SFT_DATA_ROOT; override model path / output as needed.
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
 
 What this does:
 
-- LoRA rank 16, ``lr=1e-5``, micro batch 4 / global batch 256, 400 steps,
-  eval/save every 100 steps, class-weighted success loss.
+- LoRA SFT via the shared ``run_vlm_sft.sh`` + YAML config.
 - Pick the checkpoint with the best **balanced accuracy** (also check positive
   recall and negative accuracy). Do not trust aggregate accuracy alone.
-- Use that directory later as ``QWENTREND_SUCCESS_CHECKPOINT``.
+- Use that directory later as ``VLM_TREND_SUCCESS_CHECKPOINT``.
   SFT keeps ``actor/model_state_dict/full_weights.pt`` as the full model state
   and writes the Peft adapter under ``actor/lora_adapter/`` via
   ``PeftModel.save_pretrained``. The shared loader in
@@ -117,8 +130,30 @@ the same collection.
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export STATE_VALUE_ROOT=/path/to/vlm_trend_state_success_value
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_preprocess_dense_potential_dataset.sh
+   export FLAT_ROOT=/path/to/vlm_trend_uniform_collection_flat
+   mkdir -p "${FLAT_ROOT}"
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     for f in "${UNIFORM_DATA_ROOT}/step${step}"/*.pkl; do
+       ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
+     done
+   done
+   python examples/reward/train_vlm_trend_state_success_value.py \
+       --raw-data-path "${FLAT_ROOT}" \
+       --output-dir "${STATE_VALUE_ROOT}"
+   python examples/reward/preprocess_vlm_trend_state_value_potential_dataset.py \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step60" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step80" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step100" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step120" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step140" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step160" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step180" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step200" \
+       --value-checkpoint "${STATE_VALUE_ROOT}/best.pt" \
+       --output-dir "${POTENTIAL_SFT_DATA_ROOT}"
 
 What this does:
 
@@ -133,20 +168,17 @@ Fine-tune Qwen3-VL on the potential / progress labels
 
 .. code-block:: bash
 
-   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export OUTPUT_ROOT=/path/to/vlm_trend_potential_vlm_train
-   export PLACEMENT=0-3
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_train_dense_potential_vlm.sh
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 What this does:
 
-- Same LoRA recipe as step 3, but on the potential config.
-- Writes the chosen checkpoint path to ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``.
-  Use that file in steps 6–7 instead of typing the path by hand. The directory
-  keeps full ``full_weights.pt`` and a separate ``actor/lora_adapter/`` artifact
-  for the reward / feature-extraction loaders.
+- Same LoRA recipe as step 3, but on the potential config
+  (``VLM_TREND_REWARD_DATA_ROOT`` is read by the YAML).
+- Select a checkpoint directory under the SFT log path for steps 6–7.
+  The directory keeps full ``full_weights.pt`` and a separate
+  ``actor/lora_adapter/`` artifact for the reward / feature-extraction loaders.
 
 Step 6 — Train the scalar potential head
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -158,11 +190,11 @@ Freeze the potential LoRA, extract features with
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
    CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/qwentrend_success/run_train_dense_scalar_head.sh
+       bash examples/embodiment/vlm_trend_success/run_train_dense_scalar_head.sh
 
 What this does:
 
@@ -180,14 +212,14 @@ term, and ``vlm_trend_binary_digit_reward_parser`` for the sparse success term.
 .. code-block:: bash
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
-   export QWENTREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
-   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
+   export VLM_TREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
    export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
    export PPO_OUTPUT_ROOT=/path/to/ppo-output
    CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
        INFER_BATCH_SIZE=32 \
-       bash examples/embodiment/run_qwentrend_success_reward.sh
+       bash examples/embodiment/run_vlm_trend_success_reward.sh
 
 What this does:
 

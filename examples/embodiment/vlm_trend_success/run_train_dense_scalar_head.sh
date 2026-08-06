@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Copyright 2026 The RLinf Authors.
-# Step 3c (dense): extract frozen Qwen features, then train scalar potential head.
+# Extract frozen VLM features, then train the scalar potential head.
 set -euo pipefail
 
 : "${QWEN_MODEL_PATH:?Set the Qwen3-VL-4B-Instruct path}"
 : "${POTENTIAL_SFT_DATA_ROOT:?Set the processed dense potential dataset root}"
-: "${QWENTREND_POTENTIAL_CHECKPOINT:?Set the dense potential LoRA checkpoint dir}"
+: "${VLM_TREND_POTENTIAL_CHECKPOINT:?Set the dense potential LoRA checkpoint dir}"
 : "${FEAT_ROOT:?Set the feature shard output root}"
 : "${SCALAR_OUTPUT_ROOT:?Set the scalar-head output root}"
 
@@ -34,9 +34,9 @@ for split in train eval; do
     pids=()
     for rank in $(seq 0 $((FEATURE_WORLD_SIZE - 1))); do
       gpu="${FEATURE_GPUS[$rank]}"
-      CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON_BIN}" scripts/extract_qwentrend_potential_features.py \
+      CUDA_VISIBLE_DEVICES="${gpu}" "${PYTHON_BIN}" scripts/extract_vlm_trend_potential_features.py \
         --model-path "${QWEN_MODEL_PATH}" \
-        --checkpoint "${QWENTREND_POTENTIAL_CHECKPOINT}" \
+        --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
         --manifest "${manifest}" \
         --output "${FEAT_ROOT}/${split}_${sample_type}_rank${rank}.pt" \
         --sample-type "${sample_type}" \
@@ -52,7 +52,7 @@ for split in train eval; do
   done
 done
 
-CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" "${PYTHON_BIN}" scripts/train_qwentrend_scalar_head.py \
+CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" "${PYTHON_BIN}" scripts/train_vlm_trend_scalar_head.py \
   --train-pattern "${FEAT_ROOT}/train_potential_rank*.pt" \
   --eval-pattern "${FEAT_ROOT}/eval_potential_rank*.pt" \
   --progress-pattern "${FEAT_ROOT}/eval_progress_rank*.pt" \

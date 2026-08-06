@@ -30,7 +30,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from examples.reward.train_state_success_value import StateSuccessValue
+from examples.reward.train_vlm_trend_state_success_value import StateSuccessValue
 from rlinf.data.datasets.vlm_trend_io import (
     extract_dual_view_frames,
     to_uint8_rgb,

@@ -27,8 +27,10 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with examples/reward/preprocess_vlm_trend_reward_dataset.py
-# and point VLM_TREND_REWARD_DATA_ROOT to the output root.
+# For the dual-line Success pipeline, build data with
+# preprocess_vlm_trend_state_value_potential_dataset.py and point
+# VLM_TREND_REWARD_DATA_ROOT to that output root.
+# For the single-line Trend reward, use preprocess_vlm_trend_reward_dataset.py.
 data:
   type: vlm
   dataset_name: "vlm_trend_reward_sft"

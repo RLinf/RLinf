@@ -6,9 +6,9 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 export EMBODIED_PATH=${EMBODIED_PATH:-${SCRIPT_DIR}}
 
 : "${QWEN_MODEL_PATH:?Set the Qwen3-VL base model path}"
-: "${QWENTREND_POTENTIAL_CHECKPOINT:?Set the potential Qwen checkpoint}"
-: "${QWENTREND_SCALAR_HEAD:?Set the scalar potential head checkpoint}"
-: "${QWENTREND_SUCCESS_CHECKPOINT:?Set the selected Qwen success checkpoint}"
+: "${VLM_TREND_POTENTIAL_CHECKPOINT:?Set the potential VLM checkpoint}"
+: "${VLM_TREND_SCALAR_HEAD:?Set the scalar potential head checkpoint}"
+: "${VLM_TREND_SUCCESS_CHECKPOINT:?Set the selected VLM success checkpoint}"
 : "${POLICY_CHECKPOINT:?Set the starting policy full_weights.pt path}"
 : "${PPO_OUTPUT_ROOT:?Set the PPO output directory}"
 
@@ -20,7 +20,7 @@ INFER_BATCH_SIZE=${INFER_BATCH_SIZE:-32}
 ACTOR_MICRO_BATCH_SIZE=${ACTOR_MICRO_BATCH_SIZE:-1600}
 ACTOR_GLOBAL_BATCH_SIZE=${ACTOR_GLOBAL_BATCH_SIZE:-6400}
 RESUME_DIR=${RESUME_DIR:-null}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwentrend_success_ppo}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-vlm_trend_success_ppo}
 PYTHON_BIN=${PYTHON_BIN:-/opt/venv/openvla/bin/python}
 RAY_TMPDIR=${RAY_TMPDIR:-/dev/shm/qppo_$$}
 export RAY_TMPDIR
@@ -76,9 +76,9 @@ DEFAULT_TASK_DESCRIPTION=${DEFAULT_TASK_DESCRIPTION:-"Pick up the red cube and p
   reward.reward_mode=history_buffer \
   reward.history_reward_assign=false \
   reward.model.model_path="${QWEN_MODEL_PATH}" \
-  reward.model.lora_path="${QWENTREND_POTENTIAL_CHECKPOINT}" \
+  reward.model.lora_path="${VLM_TREND_POTENTIAL_CHECKPOINT}" \
   reward.model.inference_mode=scalar_head \
-  +reward.model.scalar_head_path="${QWENTREND_SCALAR_HEAD}" \
+  +reward.model.scalar_head_path="${VLM_TREND_SCALAR_HEAD}" \
   reward.model.input_builder_name=vlm_trend_reward_input_builder \
   "++reward.model.input_builder_params={default_task_description: \"${DEFAULT_TASK_DESCRIPTION}\", include_task: true, num_bins: 10, prompt_template: \"You are estimating task-conditioned success potential for a robot manipulation state.{task_text} The two synchronized videos show the same 5-frame history from two camera views. Predict the final state'\''s potential as exactly one digit from 0 to {num_bins_max}, where 0 is furthest from eventual success and {num_bins_max} is closest.\"}" \
   reward.model.history_buffers.history_window.history_size=5 \
@@ -94,7 +94,7 @@ DEFAULT_TASK_DESCRIPTION=${DEFAULT_TASK_DESCRIPTION:-"Pick up the red cube and p
   +reward.model.success_threshold=0.5 \
   +reward.model.success_confirmation_windows=1 \
   +reward.model.success_bonus=1.0 \
-  +reward.model.success_lora_path="${QWENTREND_SUCCESS_CHECKPOINT}" \
+  +reward.model.success_lora_path="${VLM_TREND_SUCCESS_CHECKPOINT}" \
   +reward.model.success_input_builder_name=vlm_trend_reward_input_builder \
   "++reward.model.success_input_builder_params={default_task_description: \"${DEFAULT_TASK_DESCRIPTION}\", include_task: true, prompt_template: \"Estimate task-conditioned success potential for this robot manipulation state.{task_text} The two synchronized videos show the same 5-frame history from two camera views.\"}" \
   +reward.model.success_reward_parser_name=vlm_trend_binary_digit_reward_parser \

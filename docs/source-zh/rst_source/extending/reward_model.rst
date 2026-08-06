@@ -19,7 +19,10 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 所有命令都在仓库根目录执行。稀疏支路（步骤 2–3）和稠密支路（步骤 4–6）都依赖
 步骤 1；采完数据后两条支路可以并行。
 
-下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``，与脚本默认值一致。
+下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``。
+训练步骤使用 YAML + ``run_vlm_sft.sh``；仅采集、scalar head 训练与 PPO 保留独立
+启动脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
+``examples/embodiment/run_vlm_trend_success_reward.sh``。
 
 步骤 1 — 采集 rollout
 ^^^^^^^^^^^^^^^^^^^^^
@@ -34,7 +37,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
    NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
 
 这一步会：
 
@@ -49,7 +52,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 .. code-block:: bash
 
    STEPS="80 120 160" \
-       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
 
 同名 episode 文件会被覆盖。
 
@@ -62,7 +65,22 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   bash examples/embodiment/qwentrend_success/run_preprocess_sparse_success_dataset.sh
+   python examples/reward/preprocess_vlm_trend_terminal_success_dataset.py \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step60" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step80" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step100" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step120" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step140" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step160" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step180" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step200" \
+       --output-dir "${DUALVIEW_SFT_DATA_ROOT}" \
+       --window-size 5 \
+       --online-interval 5 \
+       --workers 32
 
 这一步会：
 
@@ -71,8 +89,6 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
   ``infos[end_step]["success"]``，保留自然类别比例。
 - 在 ``${DUALVIEW_SFT_DATA_ROOT}/{train,eval}/`` 写 manifest，引用原始 pickle
   （不复制图像）。只加载可信 pickle。
-
-调试时可只处理部分 step：``UNIFORM_STEPS="0 100 200"``。
 
 步骤 3 — 训练稀疏 success LoRA
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -84,18 +100,15 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
-   export PLACEMENT=0-3
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_train_sparse_success_vlm.sh
+   # YAML 读取 DUALVIEW_SFT_DATA_ROOT；可按需覆盖 model path / output。
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
 
 这一步会：
 
-- LoRA rank 16、``lr=1e-5``、micro batch 4 / global batch 256、共 400 步，
-  每 100 步评估并保存，并用类别加权的 success loss。
+- 通过共享的 ``run_vlm_sft.sh`` + YAML 做 LoRA SFT。
 - 按 **balanced accuracy** 选 checkpoint（同时看 positive recall 和 negative
   accuracy），不要只看整体 accuracy。
-- 选出的目录稍后设为 ``QWENTREND_SUCCESS_CHECKPOINT``。
+- 选出的目录稍后设为 ``VLM_TREND_SUCCESS_CHECKPOINT``。
   SFT 会保留 ``actor/model_state_dict/full_weights.pt`` 作为完整模型权重，
   并通过 ``PeftModel.save_pretrained`` 把 Peft adapter 写到
   ``actor/lora_adapter/``。共享加载逻辑在 ``rlinf/utils/lora_adapter.py``，
@@ -112,8 +125,30 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export STATE_VALUE_ROOT=/path/to/vlm_trend_state_success_value
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_preprocess_dense_potential_dataset.sh
+   export FLAT_ROOT=/path/to/vlm_trend_uniform_collection_flat
+   mkdir -p "${FLAT_ROOT}"
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     for f in "${UNIFORM_DATA_ROOT}/step${step}"/*.pkl; do
+       ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
+     done
+   done
+   python examples/reward/train_vlm_trend_state_success_value.py \
+       --raw-data-path "${FLAT_ROOT}" \
+       --output-dir "${STATE_VALUE_ROOT}"
+   python examples/reward/preprocess_vlm_trend_state_value_potential_dataset.py \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step60" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step80" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step100" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step120" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step140" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step160" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step180" \
+       --raw-data-path "${UNIFORM_DATA_ROOT}/step200" \
+       --value-checkpoint "${STATE_VALUE_ROOT}/best.pt" \
+       --output-dir "${POTENTIAL_SFT_DATA_ROOT}"
 
 这一步会：
 
@@ -128,18 +163,15 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
 .. code-block:: bash
 
-   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export OUTPUT_ROOT=/path/to/vlm_trend_potential_vlm_train
-   export PLACEMENT=0-3
-   CUDA_VISIBLE_DEVICES=0,1,2,3 \
-       bash examples/embodiment/qwentrend_success/run_train_dense_potential_vlm.sh
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 这一步会：
 
-- 超参与步骤 3 同类，但走 potential 配置。
-- 把选中的 checkpoint 路径写入 ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``。
-  步骤 6–7 直接读这个文件，不用手写路径。该目录保留完整的
+- 超参与步骤 3 同类，但走 potential 配置（YAML 读取
+  ``VLM_TREND_REWARD_DATA_ROOT``）。
+- 在 SFT 日志目录下选出 checkpoint，供步骤 6–7 使用。该目录保留完整的
   ``full_weights.pt``，并单独写出 ``actor/lora_adapter/`` 供 reward /
   特征提取加载。
 
@@ -153,11 +185,11 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
-   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
    CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/qwentrend_success/run_train_dense_scalar_head.sh
+       bash examples/embodiment/vlm_trend_success/run_train_dense_scalar_head.sh
 
 这一步会：
 
@@ -174,14 +206,14 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 .. code-block:: bash
 
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
-   export QWENTREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
-   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
+   export VLM_TREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
    export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
    export PPO_OUTPUT_ROOT=/path/to/ppo-output
    CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
        INFER_BATCH_SIZE=32 \
-       bash examples/embodiment/run_qwentrend_success_reward.sh
+       bash examples/embodiment/run_vlm_trend_success_reward.sh
 
 这一步会：
 
