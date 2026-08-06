@@ -14,6 +14,8 @@
 
 import errno
 import os
+import select
+import stat
 import threading
 import time
 from collections import deque
@@ -28,32 +30,70 @@ class KeyboardListener:
 
     REQUIRED_KEY_NAMES = ("KEY_A", "KEY_B", "KEY_C", "KEY_Q")
 
-    def __init__(self):
-        try:
-            from evdev import InputDevice, ecodes, list_devices
-        except ImportError as exc:
-            raise RuntimeError(
-                "KeyboardListener requires the 'evdev' package. "
-                "Install the real-world extras with evdev support."
-            ) from exc
-
-        self._input_device_cls = InputDevice
-        self._ecodes = ecodes
-        self._list_devices = list_devices
-
+    def __init__(self, fifo_path: str | None = None):
         self.state_lock = threading.Lock()
         self.latest_data = {"key": None}
         # Edge-press queue so a sub-period tap isn't missed (get_key() only reports the held key).
         self._press_events: deque[str] = deque()
-        self.device = self._open_keyboard_device()
+        self._stop_event = threading.Event()
+        self._fifo_path = fifo_path
+        self.device = None
+        self.listener = None
+        self.fifo_listener = None
 
-        self.listener = threading.Thread(
-            target=self._listen_loop,
-            name=f"KeyboardListener:{self.device.path}",
-            daemon=True,
-        )
-        self.listener.start()
+        if fifo_path is not None and not stat.S_ISFIFO(os.stat(fifo_path).st_mode):
+            raise RuntimeError(f"Keyboard relay path is not a FIFO: {fifo_path}")
+
+        use_evdev = fifo_path is None or bool(os.environ.get("RLINF_KEYBOARD_DEVICE"))
+        if use_evdev:
+            try:
+                from evdev import InputDevice, ecodes, list_devices
+            except ImportError as exc:
+                raise RuntimeError(
+                    "KeyboardListener requires the 'evdev' package. "
+                    "Install the real-world extras with evdev support."
+                ) from exc
+            self._input_device_cls = InputDevice
+            self._ecodes = ecodes
+            self._list_devices = list_devices
+            self.device = self._open_keyboard_device()
+            self.listener = threading.Thread(
+                target=self._listen_loop,
+                name=f"KeyboardListener:{self.device.path}",
+                daemon=True,
+            )
+            self.listener.start()
+
+        if fifo_path is not None:
+            self.fifo_listener = threading.Thread(
+                target=self._listen_fifo_loop,
+                name=f"KeyboardListenerFIFO:{fifo_path}",
+                daemon=True,
+            )
+            self.fifo_listener.start()
         self.last_intervene = 0
+
+    def _enqueue_key(self, key: str) -> None:
+        with self.state_lock:
+            self.latest_data["key"] = key
+            self._press_events.append(key)
+
+    def _listen_fifo_loop(self) -> None:
+        fifo_fd = os.open(self._fifo_path, os.O_RDONLY | os.O_NONBLOCK)
+        try:
+            while not self._stop_event.is_set():
+                readable, _, _ = select.select([fifo_fd], [], [], 0.5)
+                if not readable:
+                    continue
+                data = os.read(fifo_fd, 64)
+                if not data:
+                    time.sleep(0.05)
+                    continue
+                for key in data.decode("ascii", errors="ignore").lower():
+                    if key in "abc":
+                        self._enqueue_key(key)
+        finally:
+            os.close(fifo_fd)
 
     def _open_keyboard_device(self):
         override_path = os.environ.get("RLINF_KEYBOARD_DEVICE")
@@ -150,8 +190,9 @@ class KeyboardListener:
 
     def _listen_loop(self) -> None:
         # Cache path so we can reopen after a USB hiccup (errno=19 ENODEV); pedal shares a flaky bus with Lumos.
+        assert self.device is not None
         device_path = self.device.path
-        while True:
+        while not self._stop_event.is_set():
             try:
                 for event in self.device.read_loop():
                     if event.type != self._ecodes.EV_KEY:
@@ -163,9 +204,7 @@ class KeyboardListener:
 
                     if event.value == 1:
                         # Initial press only; autorepeat (value==2) does not re-enqueue.
-                        with self.state_lock:
-                            self.latest_data["key"] = key
-                            self._press_events.append(key)
+                        self._enqueue_key(key)
                     elif event.value == 2:
                         with self.state_lock:
                             self.latest_data["key"] = key
@@ -174,6 +213,8 @@ class KeyboardListener:
                             if self.latest_data["key"] == key:
                                 self.latest_data["key"] = None
             except OSError as exc:
+                if self._stop_event.is_set():
+                    return
                 if exc.errno != errno.ENODEV:
                     _logger.error(
                         "Keyboard device %s read failed (errno=%s): %s",
@@ -194,13 +235,15 @@ class KeyboardListener:
                 except Exception:
                     pass
                 # Reopen forever; daemon thread dies with the process.
-                while True:
+                while not self._stop_event.is_set():
                     time.sleep(0.5)
                     try:
                         self.device = self._input_device_cls(device_path)
                         break
                     except (FileNotFoundError, OSError):
                         continue
+                if self._stop_event.is_set():
+                    return
                 _logger.info("Keyboard device %s reopened.", device_path)
 
     def _event_to_key(self, key_code: int) -> str | None:
@@ -237,3 +280,11 @@ class KeyboardListener:
             pressed = list(self._press_events)
             self._press_events.clear()
             return pressed
+
+    def close(self) -> None:
+        self._stop_event.set()
+        if self.device is not None:
+            self.device.close()
+        for thread in (self.listener, self.fifo_listener):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.0)

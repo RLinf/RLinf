@@ -1,0 +1,33 @@
+/**:
+  controller_manager:
+    ros__parameters:
+      update_rate: 1000
+      thread_priority: 98
+
+      joint_impedance_controller:
+        type: rlinf_franka_controller/JointImpedanceController
+
+      joint_state_broadcaster:
+        type: joint_state_broadcaster/JointStateBroadcaster
+
+      franka_robot_state_broadcaster:
+        type: franka_robot_state_broadcaster/FrankaRobotStateBroadcaster
+
+  joint_impedance_controller:
+    ros__parameters:
+      arm_id: fr3
+      k_alpha: 0.99
+      # Joint 7 needs enough stiffness to hold the reset target within 0.03 rad
+      # under the installed wrist-camera payload.
+      k_gains: [240.0, 240.0, 240.0, 240.0, 100.0, 60.0, 30.0]
+      d_gains: [20.0, 20.0, 20.0, 10.0, 10.0, 10.0, 5.0]
+      reset_speed_factor: 0.02
+      command_timeout: 0.5
+      max_tracking_error: 0.10
+      command_topic: rlinf/joint_targets
+      reset_topic: rlinf/reset_joint_target
+
+  franka_robot_state_broadcaster:
+    ros__parameters:
+      lock_update_success: true
+      lock_log_error: false

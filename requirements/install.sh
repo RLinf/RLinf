@@ -9,6 +9,7 @@ ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+FRANKA_LEROBOT_COMMIT="33cad37054c2b594ceba57463e8f11ee374fa93c"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 ENGINE=""
@@ -1969,7 +1970,8 @@ install_lerobot() {
 
 install_franka_realworld_env() {
     uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
-    install_lerobot
+    env -u UV_TORCH_BACKEND uv pip install \
+        "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${FRANKA_LEROBOT_COMMIT}"
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
             bash $SCRIPT_DIR/embodied/ros_install.sh

@@ -38,9 +38,9 @@ class KeyboardStartEndWrapper(gym.Wrapper):
     SEGMENT_DEBOUNCE_S = 1.0
     PEDAL_DEBOUNCE_S = 0.2
 
-    def __init__(self, env: gym.Env):
+    def __init__(self, env: gym.Env, fifo_path: str | None = None):
         super().__init__(env)
-        self.listener = KeyboardListener()
+        self.listener = KeyboardListener(fifo_path=fifo_path)
         self._recording = False
         self._last_segment_ts = -math.inf
         self._last_press_ts: dict[str, float] = {}
@@ -108,3 +108,9 @@ class KeyboardStartEndWrapper(gym.Wrapper):
         info["keyboard_event"] = event
         info["segment_advance"] = segment_advance
         return obs, reward, terminated, truncated, info
+
+    def close(self):
+        try:
+            self.listener.close()
+        finally:
+            self.env.close()

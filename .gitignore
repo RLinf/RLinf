@@ -4,6 +4,7 @@ __pycache__
 *.idx
 *.npy
 *.txt
+!ros2_ws/src/rlinf_franka_controller/CMakeLists.txt
 !requirements/**
 !docs/*
 *.DS_Store

@@ -231,6 +231,9 @@ class RealWorldEnv(gym.Env):
         obs["task_descriptions"] = self.task_descriptions
         return obs
 
+    def close(self):
+        return self.env.close()
+
     def step(self, actions=None, auto_reset=True):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()

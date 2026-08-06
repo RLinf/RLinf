@@ -16,7 +16,11 @@ from typing import Optional
 
 import numpy as np
 
+from rlinf.utils.logging import get_logger
+
 from .base_camera import BaseCamera, CameraInfo
+
+_logger = get_logger()
 
 
 class RealSenseCamera(BaseCamera):
@@ -62,6 +66,8 @@ class RealSenseCamera(BaseCamera):
                 camera_info.fps,
             )
         self.profile = self._pipeline.start(self._config)
+        self._last_frame_number: int | None = None
+        self._dropped_frames = 0
 
         # rs.align allows us to perform alignment of depth frames to color frames
         self._align = rs.align(rs.stream.color)
@@ -74,6 +80,20 @@ class RealSenseCamera(BaseCamera):
             depth_frame = aligned_frames.get_depth_frame()
 
         if color_frame.is_video_frame():
+            frame_number = color_frame.get_frame_number()
+            if (
+                self._last_frame_number is not None
+                and frame_number > self._last_frame_number + 1
+            ):
+                dropped = frame_number - self._last_frame_number - 1
+                self._dropped_frames += dropped
+                _logger.warning(
+                    "RealSense %s skipped %d SDK frame(s); total=%d",
+                    self._serial_number,
+                    dropped,
+                    self._dropped_frames,
+                )
+            self._last_frame_number = frame_number
             frame = np.asarray(color_frame.get_data())
             if self._enable_depth and depth_frame.is_depth_frame():
                 depth = np.expand_dims(np.asarray(depth_frame.get_data()), axis=2)

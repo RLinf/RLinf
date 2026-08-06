@@ -40,24 +40,45 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         action_scale: float = 0.1,
         direct_stream: bool = False,
         stream_period: float = 0.001,
+        ready_timeout: float = 10.0,
+        left_expert: GelloJointExpert | None = None,
+        right_expert: GelloJointExpert | None = None,
     ):
         super().__init__(env)
 
         self.gripper_enabled = gripper_enabled
         self.use_delta = use_delta
         self.action_scale = action_scale
-        self.left_expert = GelloJointExpert(port=left_port)
-        self.right_expert = GelloJointExpert(port=right_port)
+        self.left_expert = left_expert or GelloJointExpert(port=left_port)
+        self.right_expert = right_expert or GelloJointExpert(port=right_port)
         self.last_intervene = 0.0
 
         self._direct_stream = direct_stream
         self._stream_period = stream_period
+        self._ready_timeout = ready_timeout
         self._stream_thread: threading.Thread | None = None
         self._stream_running = False
+        self._stream_error: Exception | None = None
+        self._closed = False
         self._stream_last_gripper_open: list[bool | None] = [None, None]
         self._stream_gate = threading.Event()
         self._stream_gate.set()  # gate open = stream tick allowed
         self._aligned = False
+        try:
+            self._wait_for_experts()
+        except Exception:
+            self.left_expert.close()
+            self.right_expert.close()
+            raise
+
+    def _wait_for_experts(self) -> None:
+        deadline = time.monotonic() + self._ready_timeout
+        while not (self.left_expert.ready and self.right_expert.ready):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "timed out waiting for both GELLO devices to become ready"
+                )
+            time.sleep(0.01)
 
     def _resolve_controllers(self):
         inner = self.unwrapped
@@ -65,6 +86,8 @@ class DualGelloJointIntervention(gym.ActionWrapper):
 
     def _start_stream_thread(self) -> None:
         if self._resolve_controllers() == (None, None):
+            return
+        if self._stream_thread is not None and self._stream_thread.is_alive():
             return
         self._stream_running = True
         self._stream_thread = threading.Thread(
@@ -84,42 +107,51 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         period = self._stream_period
         ctrls = (left_ctrl, right_ctrl)
 
-        while self._stream_running:
-            self._stream_gate.wait()
-            if not self._stream_running:
-                break
+        try:
+            while self._stream_running:
+                self._stream_gate.wait()
+                if not self._stream_running:
+                    break
 
-            loop_start = time.time()
+                loop_start = time.time()
 
-            if not (self.left_expert.ready and self.right_expert.ready):
-                time.sleep(period)
-                continue
+                if not (self.left_expert.ready and self.right_expert.ready):
+                    raise RuntimeError(
+                        "GELLO input was lost; controlled realignment is required"
+                    )
 
-            left_q, left_g = self.left_expert.get_action()
-            right_q, right_g = self.right_expert.get_action()
+                left_q, left_g = self.left_expert.get_action()
+                right_q, right_g = self.right_expert.get_action()
 
-            lf = left_ctrl.move_joints(left_q.astype(np.float32))
-            rf = right_ctrl.move_joints(right_q.astype(np.float32))
-            lf.wait()
-            rf.wait()
+                lf = left_ctrl.move_joints(left_q.astype(np.float32))
+                rf = right_ctrl.move_joints(right_q.astype(np.float32))
+                lf.wait()
+                rf.wait()
 
-            if self.gripper_enabled:
-                for arm_idx, (ctrl, grip) in enumerate(zip(ctrls, (left_g, right_g))):
-                    is_open_now = grip.item() < 0.5
-                    prev = self._stream_last_gripper_open[arm_idx]
-                    if prev is None:
-                        self._stream_last_gripper_open[arm_idx] = is_open_now
-                    elif is_open_now != prev:
-                        if is_open_now:
-                            ctrl.open_gripper()
-                        else:
-                            ctrl.close_gripper()
-                        self._stream_last_gripper_open[arm_idx] = is_open_now
+                if self.gripper_enabled:
+                    for arm_idx, (ctrl, grip) in enumerate(
+                        zip(ctrls, (left_g, right_g))
+                    ):
+                        is_open_now = grip.item() < 0.5
+                        prev = self._stream_last_gripper_open[arm_idx]
+                        if prev is None:
+                            self._stream_last_gripper_open[arm_idx] = is_open_now
+                        elif is_open_now != prev:
+                            if is_open_now:
+                                ctrl.open_gripper()
+                            else:
+                                ctrl.close_gripper()
+                            self._stream_last_gripper_open[arm_idx] = is_open_now
 
-            elapsed = time.time() - loop_start
-            sleep_for = period - elapsed
-            if sleep_for > 0:
-                time.sleep(sleep_for)
+                elapsed = time.time() - loop_start
+                sleep_for = period - elapsed
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+        except Exception as exc:
+            self._stream_error = exc
+            self._aligned = False
+            self._stream_running = False
+            self._stream_gate.clear()
 
     def _get_current_joint_positions(self) -> np.ndarray:
         return self.get_wrapper_attr("get_joint_positions")()
@@ -195,18 +227,29 @@ class DualGelloJointIntervention(gym.ActionWrapper):
 
         self._stream_gate.clear()
         try:
+            self._wait_for_experts()
             result = self.env.reset(**kwargs)
             if self._direct_stream:
-                self._align_to_gello()
-        finally:
+                if not self._align_to_gello():
+                    raise RuntimeError("failed to align both Frankas to GELLO")
+                _, info = result
+                result = (self.env.get_wrapper_attr("_get_observation")(), info)
+            self._stream_error = None
             self._stream_gate.set()
-            if self._direct_stream and self._aligned and self._stream_thread is None:
+            if self._direct_stream and self._aligned:
                 self._start_stream_thread()
+        except Exception:
+            self._aligned = False
+            self._stream_gate.clear()
+            raise
         return result
 
     def step(self, action):
+        if self._stream_error is not None:
+            raise RuntimeError("dual GELLO stream failed") from self._stream_error
         new_action, replaced = self.action(action)
-        if self._direct_stream and self._aligned and self._stream_thread is None:
+        if self._direct_stream and self._aligned:
+            replaced = True
             self._start_stream_thread()
         obs, rew, done, truncated, info = self.env.step(new_action)
         if replaced:
@@ -215,10 +258,19 @@ class DualGelloJointIntervention(gym.ActionWrapper):
         return obs, rew, done, truncated, info
 
     def close(self):
+        if self._closed:
+            return None
+        self._closed = True
         self._stream_running = False
+        self._stream_gate.set()
         t = self._stream_thread
         if t is not None and t.is_alive():
             t.join(timeout=2.0)
-        self.left_expert.close()
-        self.right_expert.close()
-        return super().close()
+        try:
+            self.left_expert.close()
+        finally:
+            try:
+                self.right_expert.close()
+            finally:
+                super().close()
+        return None

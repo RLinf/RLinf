@@ -48,7 +48,6 @@ Byte   Register  Description
 
 import inspect
 import time
-from typing import Optional
 
 import numpy as np
 
@@ -108,7 +107,8 @@ class RobotiqGripper(BaseGripper):
         self._max_width = max_width
 
         self._client = _create_modbus_client(port, baudrate)
-        self._client.connect()
+        if not self._client.connect():
+            raise RuntimeError(f"Failed to open Robotiq Modbus port {port}")
 
         # pymodbus >=3.10 renamed "slave" to "device_id"
         sig = inspect.signature(self._client.write_registers)
@@ -145,8 +145,7 @@ class RobotiqGripper(BaseGripper):
     def position(self) -> float:
         """Current opening width in metres (consistent with Franka convention)."""
         status = self._read_status()
-        if status is not None:
-            self._cached_position = status["position"]
+        self._cached_position = status["position"]
         return self._max_width * (1.0 - self._cached_position / 255.0)
 
     @property
@@ -174,7 +173,7 @@ class RobotiqGripper(BaseGripper):
         for _ in range(50):
             time.sleep(0.1)
             status = self._read_status()
-            if status is not None and status["gSTA"] == 0x03:
+            if status["gSTA"] == 0x03:
                 self._activated = True
                 return
 
@@ -203,22 +202,23 @@ class RobotiqGripper(BaseGripper):
         self._write_output_regs(reg0, reg1, reg2)
 
     def _write_output_regs(self, reg0: int, reg1: int, reg2: int) -> None:
-        self._client.write_registers(
+        response = self._client.write_registers(
             address=_OUTPUT_REG_ADDR,
             values=[reg0, reg1, reg2],
             **{self._slave_kwarg: self._slave_id},
         )
+        if response is None or response.isError():
+            raise RuntimeError(f"Robotiq Modbus write failed: {response}")
 
-    def _read_status(self) -> Optional[dict]:
+    def _read_status(self) -> dict:
         """Read the three input registers and decode the status fields."""
         resp = self._client.read_holding_registers(
             address=_INPUT_REG_ADDR,
             count=_NUM_REGS,
             **{self._slave_kwarg: self._slave_id},
         )
-        if resp.isError():
-            self._logger.warning(f"Robotiq Modbus read error: {resp}")
-            return None
+        if resp is None or resp.isError():
+            raise RuntimeError(f"Robotiq Modbus read failed: {resp}")
 
         r0, r1, r2 = resp.registers
         status_byte = (r0 >> 8) & 0xFF

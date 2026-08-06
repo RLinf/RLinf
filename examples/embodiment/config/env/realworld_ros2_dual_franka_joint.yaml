@@ -1,0 +1,24 @@
+defaults:
+  - realworld_dual_franka_joint
+  - _self_
+
+max_episode_steps: null
+main_image_key: base_0_rgb
+keyboard_reward_wrapper: start_end
+keyboard_fifo_path: null
+use_gello_joint: true
+
+init_params:
+  id: Ros2DualFrankaJointEnv-v1
+
+override_cfg:
+  camera_fps: 30
+  step_frequency: 30
+  joint_action_mode: absolute
+  max_num_steps: 1000000
+  teleop_direct_stream: true
+  controlled_motion_tolerance: 0.03
+  controlled_motion_timeout: 180.0
+  controlled_motion_stable_time: 0.5
+  ros_discovery_timeout: 2.0
+  ros_state_max_age: 0.5

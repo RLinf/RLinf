@@ -41,6 +41,9 @@ from rlinf.envs.realworld.franka.tasks.franka_bin_relocation import (
 from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
     PegInsertionEnv as PegInsertionEnv,
 )
+from rlinf.envs.realworld.franka.tasks.ros2_dual_franka_joint_env import (
+    Ros2DualFrankaJointEnv as Ros2DualFrankaJointEnv,
+)
 
 
 def create_franka_env(
@@ -72,7 +75,31 @@ def create_dual_franka_joint_env(
         hardware_info=hardware_info,
         env_idx=env_idx,
     )
-    return apply_dual_franka_joint_wrappers(env, env_cfg)
+    try:
+        return apply_dual_franka_joint_wrappers(env, env_cfg)
+    except Exception:
+        env.close()
+        raise
+
+
+def create_ros2_dual_franka_joint_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = Ros2DualFrankaJointEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    try:
+        return apply_dual_franka_joint_wrappers(env, env_cfg)
+    except Exception:
+        env.close()
+        raise
 
 
 def create_dual_franka_tcp_env(
@@ -163,6 +190,11 @@ register(
 register(
     id="DualFrankaJointEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_joint_env",
+)
+
+register(
+    id="Ros2DualFrankaJointEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_ros2_dual_franka_joint_env",
 )
 
 register(

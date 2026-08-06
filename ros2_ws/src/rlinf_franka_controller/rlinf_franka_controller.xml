@@ -1,0 +1,8 @@
+<library path="rlinf_franka_controller">
+  <class
+    name="rlinf_franka_controller/JointImpedanceController"
+    type="rlinf_franka_controller::JointImpedanceController"
+    base_class_type="controller_interface::ControllerInterface">
+    <description>RLinf joint-target impedance controller for Franka FR3.</description>
+  </class>
+</library>
