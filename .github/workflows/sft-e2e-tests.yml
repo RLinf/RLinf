@@ -48,7 +48,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: SFT ManiSkill OpenPI test
@@ -179,7 +178,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ResNet Reward Model Training test

@@ -13,8 +13,6 @@ Environment Setup
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
-
 Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
 
 Example Configs

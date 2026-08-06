@@ -1250,7 +1250,7 @@ clone_or_reuse_repo() {
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
     #   already exists (no pull), otherwise clone GIT_URL into it. This lets a single
     #   path be shared across multiple venvs/models — clone once, reuse everywhere
-    #   (e.g. set LIBERO_PATH so every model in an env image reuses one LIBERO clone).
+    #   (e.g. set GR00T_PATH so every GR00T venv reuses one Isaac-GR00T clone).
     # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
     # If env var is not set and the directory already exists as a git repo, check if it is intact and re-clone it if not.
     # The resolved directory path is printed to stdout.
