@@ -440,15 +440,16 @@ class EnvWorker(Worker):
                 if self.eval_enable_offload:
                     get_env_attr(self.eval_env_list[i], "offload")()
 
-    async def _wait_env_delay(self, stage_id: int) -> None:
+    async def _maybe_wait_env_delay(self, stage_id: int) -> None:
         """Wait out the delay ``InsertDelay`` sampled for this stage, if it is on.
 
         The wrapper only samples the delay; waiting here keeps the emulated sensor
         latency off the event loop so co-scheduled coroutines keep running.
         """
         env = self.env_list[stage_id]
-        if hasattr(env, "wait_delay"):
-            await env.wait_delay()
+        if not hasattr(env, "wait_delay"):
+            return
+        await env.wait_delay()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -1052,7 +1053,7 @@ class EnvWorker(Worker):
                 env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
             for stage_id in range(self.stage_num):
-                await self._wait_env_delay(stage_id)
+                await self._maybe_wait_env_delay(stage_id)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1142,7 +1143,7 @@ class EnvWorker(Worker):
                     )
                     # Emulated observation latency: wait before the obs goes out,
                     # without blocking the other coroutines in this worker.
-                    await self._wait_env_delay(stage_id)
+                    await self._maybe_wait_env_delay(stage_id)
                     stage_builder = self.trajectory_builders[stage_id]
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
                         stage_builder.append_chunk_episode_data(
