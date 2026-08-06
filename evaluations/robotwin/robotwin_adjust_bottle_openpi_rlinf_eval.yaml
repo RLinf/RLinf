@@ -1,6 +1,5 @@
 defaults:
   - env/robotwin_adjust_bottle@env.eval
-  # - model/pi0@rollout.model
   - override hydra/job_logging: stdout
 
 hydra:

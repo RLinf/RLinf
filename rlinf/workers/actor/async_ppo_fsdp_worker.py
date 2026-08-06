@@ -23,8 +23,8 @@ import torch
 
 from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
-from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
-from rlinf.data.priority_store import PriorityStore
+from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.storage.replay import PriorityStore
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.metric_utils import (

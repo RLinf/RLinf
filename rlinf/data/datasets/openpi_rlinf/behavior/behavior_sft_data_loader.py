@@ -26,7 +26,7 @@ from openpi.transforms import DataTransformFn, compose
 from rlinf.data.datasets.openpi_rlinf.behavior.behavior_sft_dataset import (
     BehaviorSftDataset,
 )
-from rlinf.data.lerobot_paths import (
+from rlinf.data.storage.lerobot import (
     resolve_lerobot_repo_id,
 )
 from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation

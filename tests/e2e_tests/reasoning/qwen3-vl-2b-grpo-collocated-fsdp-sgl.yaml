@@ -118,7 +118,7 @@ rollout:
   cuda_graph_max_bs: 128
 
 data:
-  type: vision_language
+  type: vlm
   dataset_name: base
   max_prompt_length: 1024
   filter_prompt_by_length: True

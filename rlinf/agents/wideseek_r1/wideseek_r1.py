@@ -18,6 +18,10 @@ from typing import Optional
 
 from omegaconf import DictConfig
 
+from rlinf.agents.tool_call.schema import (
+    ToolRequest,
+    ToolResponse,
+)
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_rollout_metrics
 from rlinf.agents.wideseek_r1.utils.prompt_utils import (
     get_access_summary_messages,
@@ -42,11 +46,7 @@ from rlinf.agents.wideseek_r1.utils.tool_description import (
     tools_description_en,
     tools_description_zh,
 )
-from rlinf.data.io_struct import DynamicRolloutResult
-from rlinf.data.tool_call.tool_io_struct import (
-    ToolRequest,
-    ToolResponse,
-)
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
     AgentLoopOutput,

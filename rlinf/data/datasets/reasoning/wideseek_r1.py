@@ -20,9 +20,9 @@ import torch
 from omegaconf import DictConfig
 from transformers import PreTrainedTokenizer
 
-from rlinf.data.datasets.item import DatasetItem
-from rlinf.data.datasets.reasoning import ReasoningDataset
-from rlinf.data.utils import batch_pad_to_fixed_len
+from rlinf.data.datasets.common.item import DatasetItem
+from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
+from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 
 
 class WideSeekR1Dataset(ReasoningDataset):
