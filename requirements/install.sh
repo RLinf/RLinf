@@ -1359,7 +1359,7 @@ EOF
 
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt "$@"
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -1646,8 +1646,9 @@ install_molmoact2_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
             create_and_sync_venv
-            install_common_embodied_deps
-            uv pip install "numba==0.65.1" "llvmlite==0.47.0"
+            install_common_embodied_deps \
+                "numba==0.65.1" \
+                "llvmlite==0.47.0"
             install_${ENV_NAME}_env
             ;;
         *)
