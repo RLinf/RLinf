@@ -17,7 +17,7 @@ from typing import Union
 from omegaconf import DictConfig
 from transformers import PreTrainedTokenizer
 
-from rlinf.data.datasets.reasoning import ReasoningDataset
+from rlinf.data.datasets.reasoning.dataset import ReasoningDataset
 
 
 def get_tool_schemas():

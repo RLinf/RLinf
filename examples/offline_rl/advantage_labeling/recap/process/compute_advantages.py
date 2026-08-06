@@ -54,21 +54,24 @@ from tqdm import tqdm
 # Make the rlinf package importable regardless of the cwd the user launched from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 
-from rlinf.data.datasets.recap.utils import (
-    decode_image_struct_batch,
-    load_return_stats_from_dataset,
-    load_returns_sidecar,
+from rlinf.algorithms.offline.process.advantage import (
+    apply_boolean_label,
+    quantile_threshold,
 )
-from rlinf.data.process.advantage import apply_boolean_label, quantile_threshold
-from rlinf.data.process.distributed import (
+from rlinf.algorithms.offline.process.distributed import (
     cleanup_distributed,
     gather_dataframes_to_rank0,
     get_shard_indices,
     setup_distributed,
 )
-from rlinf.data.process.mixture_config import (
+from rlinf.algorithms.offline.process.mixture_config import (
     read_mixture_config,
     write_mixture_config,
+)
+from rlinf.data.datasets.recap.utils import (
+    decode_image_struct_batch,
+    load_return_stats_from_dataset,
+    load_returns_sidecar,
 )
 from rlinf.models.embodiment.value_model.recap.modeling_critic import ValueCriticModel
 
@@ -1074,7 +1077,7 @@ def compute_advantages(cfg: DictConfig) -> None:
 
         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
         combined_advantages = np.concatenate(all_advantages)
-        # Shared with STEAM: same top-fraction quantile rule (rlinf.data.process.advantage).
+        # Shared with STEAM: same top-fraction quantile rule (rlinf.algorithms.offline.process.advantage).
         unified_threshold = quantile_threshold(combined_advantages, positive_quantile)
 
         if rank == 0:

@@ -28,7 +28,7 @@ if "gymnasium" not in sys.modules:
 if "rlinf.envs.wrappers" not in sys.modules:
     sys.modules["rlinf.envs.wrappers"] = MagicMock()
 
-from rlinf.data.embodied_io_struct import EnvOutput  # noqa: E402
+from rlinf.data.schema.embodied_types import EnvOutput  # noqa: E402
 from rlinf.models.embodiment.reward.vlm_reward_model import (  # noqa: E402
     BufferedVLMRewardModel,
 )
