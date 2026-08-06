@@ -1,0 +1,34 @@
+# Usage:
+#   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble
+#   bash examples/offline_rl/advantage_labeling/steam/process/run_compute_advantages_ensemble.sh steam_compute_advantages_ensemble --nproc 4
+
+advantage:
+  value_checkpoint: /path/to/steam_value_ensemble/checkpoints/global_step_N/actor
+  batch_size: 256
+  num_dataloader_workers_per_gpu: 12
+  prefetch_factor: 2
+  label_mode: quantile
+  rollout_quantile: 0.3
+  expert_quantile: 0.8
+  tag: steam_k32_ensemble3_ckpt16000_wco_exp_and_rollout
+
+  model:
+    precision: "bf16"
+
+data:
+  k: 32
+
+  camera_keys:
+    - face_view
+    - left_wrist_view
+    - right_wrist_view
+
+  train_data_paths:
+    - dataset_path: /path/to/expert_dataset
+      type: sft
+    - dataset_path: /path/to/rollout_dataset
+      type: rollout
+
+distributed:
+  backend: "nccl"
+  timeout: 3600

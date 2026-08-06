@@ -151,7 +151,7 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
 
 .. include:: _setup_common.rst
 
-**方式一：使用 Docker 镜像** —— 镜像标签 ``agentic-rlinf0.2-maniskill_libero``：
+**方式一：使用 Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
 
 .. code:: bash
 
@@ -160,8 +160,8 @@ OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统
         --network host \
         --name rlinf \
         -v .:/workspace/RLinf \
-        rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-        # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+        rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+        # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
     # 进入容器后，切换到 OpenPI 虚拟环境：
     source switch_env openpi

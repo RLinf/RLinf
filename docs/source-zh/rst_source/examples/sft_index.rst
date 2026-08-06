@@ -11,8 +11,8 @@ VLA / WAM 模型监督微调
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <!-- TODO(thumbnail): replace placeholder cover image URL for sft_openpi -->
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/sft_openpi.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_openpi.html" style="text-decoration: underline; color: blue;">
            <b>OpenPI 监督微调</b>
@@ -22,8 +22,19 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://dreamzero0.github.io/images/project_overview.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/sft_openpi_pytorch.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_openpi_pytorch.html" style="text-decoration: underline; color: blue;">
+           <b>OpenPI 混合精度监督微调</b>
+         </a><br>
+         使用 PyTorch OpenPI 进行混合精度监督微调
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_dreamzero.html" style="display: block;"><img src="https://dreamzero0.github.io/images/project_overview.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_dreamzero.html" style="text-decoration: underline; color: blue;">
            <b>DreamZero 监督微调</b>
@@ -33,13 +44,24 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" />
+       <a href="embodied/sft_vlm.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/release_0.2/qwen2_5_sft_vlm.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
          <a href="embodied/sft_vlm.html" style="text-decoration: underline; color: blue;">
-           <b>VLM模型监督微调训练</b>
+           <b>Qwen-VL</b>
          </a><br>
          支持 Qwen 系列等 VLM 的全量监督微调与结果评估
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/dagger.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/dagger.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/dagger.html" style="text-decoration: underline; color: blue;">
+           <b>具身策略的 DAgger 训练</b>
+         </a><br>
+         通过专家重标注与回放缓冲区训练推进在线模仿学习
        </p>
      </div>
 
@@ -50,5 +72,7 @@ VLA / WAM 模型监督微调
    :maxdepth: 2
 
    OpenPI <embodied/sft_openpi>
+   OpenPI Mixed Precision <embodied/sft_openpi_pytorch>
    DreamZero <embodied/sft_dreamzero>
-   VLM <embodied/sft_vlm>
+   Qwen-VL <embodied/sft_vlm>
+   DAgger <embodied/dagger>

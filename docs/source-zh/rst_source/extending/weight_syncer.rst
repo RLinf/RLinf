@@ -123,7 +123,7 @@ State Dict 设备要求
 .. code-block:: yaml
 
    defaults:
-     - training_backend/fsdp@actor.fsdp_config
+     - hybrid_engines/fsdp@actor.fsdp_config
      - weight_syncer/patch_syncer@weight_syncer
 
 对应的配置文件位于：

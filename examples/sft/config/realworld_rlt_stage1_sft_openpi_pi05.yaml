@@ -1,0 +1,89 @@
+defaults:
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-0
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf-rlt
+    experiment_name: "realworld_rlt_stage1_sft_openpi_pi05"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 20000
+  val_check_interval: -1
+  save_interval: 2000
+
+data:
+  # Local LeRobot dataset root. It should directly contain data/ and meta/.
+  train_data_paths: "/path/to/data"
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 64
+  seed: 42
+
+  model:
+    model_type: "openpi"
+    precision: null
+    is_lora: False
+    model_path: "/path/to/model"
+    num_action_chunks: 20
+    num_steps: 4
+    openpi_data:
+      # Used as OpenPI's norm-stats asset id. Keep this identical in Stage2.
+      repo_id: "realworld_peg_insertion_rlt_stage1"
+
+    openpi:
+      config_name: "pi05_franka_state"
+      num_images_in_input: 1
+      train_expert_only: False
+      noise_method: "flow_noise"
+      noise_params: [0.16, 0.12, 200]
+      joint_logprob: True
+      detach_critic_input: True
+
+      # Joint SFT objective: loss = rlt_loss + rlt_alpha * vla_loss.
+      use_rlt: True
+      rlt_alpha: 1.0
+      rlt_prefix_seq_len: 1024
+      rlt_image_only: False
+      rlt_use_mask: True
+
+  optim:
+    lr: 1e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    total_training_steps: ${runner.max_steps}
+    lr_warmup_steps: 1000
+    lr_scheduler: "cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: False
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}

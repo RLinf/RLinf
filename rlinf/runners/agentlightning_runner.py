@@ -40,8 +40,29 @@ if typing.TYPE_CHECKING:
         AgentLightningRolloutWorker,
     )
     from rlinf.workers.inference.megatron_inference_worker import MegatronInference
-    from rlinf.workers.rollout.sglang.sglang_worker_server import (
-        SGLangWorkerWithHTTPServer,
+    from rlinf.workers.rollout.sglang.sglang_agent_worker import (
+        SGLangAgentWorkerWithHTTPServer,
+    )
+
+
+def _get_lightning_store_endpoint(store: "LightningStore") -> str:
+    """Get the HTTP endpoint used by a LightningStore server or client.
+
+    The AgentLightning rollout worker is a Ray actor, so the in-process
+    ``LightningStoreServer`` cannot be passed to it: the server holds thread
+    locks that Ray cannot serialize. Pass only its HTTP endpoint instead.
+    """
+    endpoint = getattr(store, "endpoint", None)
+    if isinstance(endpoint, str):
+        return endpoint
+
+    endpoint = getattr(store, "server_address_root", None)
+    if isinstance(endpoint, str):
+        return endpoint
+
+    raise TypeError(
+        "AgentLightning rollout workers require a LightningStoreServer or "
+        "LightningStoreClient with an HTTP endpoint."
     )
 
 
@@ -52,7 +73,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         placement: ModelParallelComponentPlacement,
         train_dataset: Dataset,
         val_dataset: Dataset,
-        rollout: SGLangWorkerWithHTTPServer,
+        rollout: SGLangAgentWorkerWithHTTPServer,
         inference: Optional["MegatronInference"],
         actor: MAMegatronActor,
         store: LightningStore,
@@ -135,7 +156,7 @@ class AgentLightningRLinfRunner(ReasoningRunner):
         agl_server_addresses = self.rollout.get_server_address().wait()
 
         self.agentlightning_rollout_worker.init_worker(
-            store=self.store,
+            store_endpoint=_get_lightning_store_endpoint(self.store),
             adapter=self.adapter,
             server_addresses=agl_server_addresses,
             group_size=self.cfg.algorithm.group_size,
@@ -291,7 +312,7 @@ class AgentLightningEvalRunner:
         cfg: DictConfig,
         placement: ModelParallelComponentPlacement,
         val_dataset: Dataset,
-        rollout: "SGLangWorkerWithHTTPServer",
+        rollout: "SGLangAgentWorkerWithHTTPServer",
         actor: "MAMegatronActor",
         store: LightningStore,
         adapter: TraceToTripletBase,
@@ -353,7 +374,7 @@ class AgentLightningEvalRunner:
             agl_server_addresses,
         )
         self.agentlightning_rollout_worker.init_worker(
-            store=self.store,
+            store_endpoint=_get_lightning_store_endpoint(self.store),
             adapter=self.adapter,
             server_addresses=agl_server_addresses,
             group_size=self.cfg.algorithm.group_size,

@@ -407,7 +407,7 @@ class RoboTwinEnv(gym.Env):
         infos["_elapsed_steps"] = dones
         return extracted_obs, infos
 
-    def close(self, clear_cache=True):
+    def offload(self, clear_cache=True):
         if hasattr(self, "venv"):
             self.venv.close(clear_cache)
 

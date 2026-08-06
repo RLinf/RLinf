@@ -1,0 +1,20 @@
+# engine: sglang==0.5.12.post1
+# sglang 0.5.12.post1 on CUDA 13 (torch 2.11 cu130, driver >= 580).
+-r sglang_0.5.12.post1_common.txt
+
+cuda-python>=13.0
+flash-attn-4>=4.0.0b9
+# nvidia-cutlass-dsl: sglang declares 4.5.1, but nvidia-cutlass-dsl-libs-cu13 up
+# to and including 4.5.2 ships a generated MLIR dialect that calls an OpView
+# constructor its own native bindings lack, so cute.compile dies with
+# "GPUModuleOp.__init__(): incompatible function arguments". flashinfer's rmsnorm
+# takes that path whenever the GPU has no prebuilt cubin, i.e. on sm80, which
+# kills the whole rollout. 4.5.3 is the first fixed release. The cu12 libs are
+# not affected, so sglang_0.5.12.post1_cu12.txt keeps the declared 4.5.1.
+flashinfer-cubin==0.6.12
+flashinfer-python==0.6.12
+nvidia-cutlass-dsl[cu13]==4.5.3
+quack-kernels>=0.4.1
+sgl-deep-gemm==0.1.0
+sglang-kernel==0.4.2.post2
+tilelang==0.1.8

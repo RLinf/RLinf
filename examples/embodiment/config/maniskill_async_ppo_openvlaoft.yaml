@@ -2,7 +2,7 @@ defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
   - env/maniskill_ood_template@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -98,11 +98,11 @@ rollout:
   group_name: "RolloutGroup"
   backend: "huggingface"
   recompute_logprobs: False
-  enable_offload: True
+  enable_offload: False
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     precision: ${actor.model.precision}
 
 actor:
@@ -111,11 +111,11 @@ actor:
   micro_batch_size: 40
   global_batch_size: 640
   seed: 1234
-  enable_offload: True
+  enable_offload: False
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
@@ -124,8 +124,7 @@ actor:
 
     is_lora: True
     lora_rank: 32
-    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-    lora_path: /path/to/models/oft-sft/lora_004000/
+    lora_path: /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Lora # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
     max_prompt_length: 30
 
   optim:
@@ -138,7 +137,7 @@ actor:
     clip_grad: 10.0
     critic_warmup_steps: 20
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True
@@ -146,6 +145,10 @@ actor:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
       buffer_dtype: ${actor.model.precision}
+
+weight_syncer:
+  snapshot_device: cpu
+  transport_device: cpu
 
 reward:
   use_reward_model: False

@@ -30,12 +30,8 @@ import rlinf.algorithms  # noqa: F401
 from rlinf.algorithms.registry import (
     calculate_adv_and_returns,
 )
-from rlinf.data.io_struct import (
-    BatchResizingIterator,
-    RolloutResult,
-    get_batch_size,
-    get_seq_length,
-)
+from rlinf.data.schema.reasoning_requests import get_batch_size, get_seq_length
+from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
 from rlinf.hybrid_engines.megatron.megatron_model_manager import (
     MegatronModelManager,
 )
@@ -59,6 +55,11 @@ from rlinf.utils.distributed import (
     broadcast_tensor_within_pp,
     compute_rollout_metrics,
     masked_normalization,
+)
+from rlinf.utils.metric_utils import (
+    CRITIC_EXPLAINED_VARIANCE_KEY,
+    CRITIC_EXPLAINED_VARIANCE_STAT_KEYS,
+    compute_critic_explained_variance_from_stats,
 )
 from rlinf.utils.placement import ModelParallelComponentPlacement, PlacementMode
 from rlinf.utils.resharding.mcore_weight_reshard import MegatronCoreWeightReshard
@@ -565,11 +566,33 @@ class MegatronWorker(MegatronModelManager, Worker):
             outputs = {}
             if forward_outputs:
                 keys = forward_outputs[0].keys()
+                explained_variance_stats = {}
+                has_explained_variance_stats = any(
+                    key in keys for key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS
+                )
                 for key in keys:
+                    if key in CRITIC_EXPLAINED_VARIANCE_STAT_KEYS:
+                        explained_variance_stats[key] = torch.stack(
+                            [loss_reduced[key] for loss_reduced in forward_outputs]
+                        ).sum()
+                        continue
+                    if (
+                        key == CRITIC_EXPLAINED_VARIANCE_KEY
+                        and has_explained_variance_stats
+                    ):
+                        continue
                     metric_mean = torch.stack(
                         [loss_reduced[key] for loss_reduced in forward_outputs]
                     ).mean()
                     outputs[key] = metric_mean.cpu().item()
+                if explained_variance_stats:
+                    outputs[CRITIC_EXPLAINED_VARIANCE_KEY] = (
+                        compute_critic_explained_variance_from_stats(
+                            explained_variance_stats
+                        )
+                        .cpu()
+                        .item()
+                    )
             output_list = [outputs]
             torch.distributed.broadcast_object_list(output_list, get_last_rank())
             outputs = output_list[0]

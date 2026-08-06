@@ -28,6 +28,15 @@ Usage with RLinf training ``config.yaml`` (auto-discovered near ``ckpt_path``):
         convertor.save_path=/path/to/hf_model \
         convertor.torch_dtype=bf16
 
+Usage with OpenPI SFT training config (e.g. RLT stage1):
+    export REPO_PATH=/path/to/RLinf  # required when train yaml uses hydra searchpath
+    python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+        --config-path /path/to/RLinf/rlinf/utils/ckpt_convertor/fsdp_convertor/config \
+        --config-name fsdp_openpi_convertor \
+        convertor.train_config_path=/path/to/maniskill_rlt_stage1_sft_openpi_pi05.yaml \
+        convertor.ckpt_path=/path/to/model.pt \
+        convertor.save_path=/path/to/hf_model
+
 Usage with an explicit convertor config:
     python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
         --config-path /path/to/config \
@@ -98,14 +107,43 @@ def _resolve_train_config_path(cfg: DictConfig) -> str | None:
     return found
 
 
+def _load_train_cfg(train_config_path: str) -> DictConfig:
+    """Load a training yaml with Hydra defaults/searchpath, then resolve interpolations."""
+    train_config_path = os.path.abspath(train_config_path)
+    config_dir = Path(train_config_path).parent
+    config_name = Path(train_config_path).stem
+
+    try:
+        from hydra import compose
+        from hydra.core.global_hydra import GlobalHydra
+        from hydra.initialize import initialize_config_dir
+
+        GlobalHydra.instance().clear()
+        with initialize_config_dir(config_dir=str(config_dir), version_base="1.1"):
+            train_cfg = compose(config_name=config_name)
+        return train_cfg
+    except Exception as exc:
+        print(
+            f"Hydra compose failed for {train_config_path} ({exc}); "
+            "falling back to OmegaConf.load + resolve."
+        )
+        train_cfg = OmegaConf.load(train_config_path)
+        OmegaConf.resolve(train_cfg)
+        return train_cfg
+
+
 def _model_cfg_from_train_file(train_config_path: str, cfg: DictConfig) -> DictConfig:
-    train_cfg = OmegaConf.load(train_config_path)
+    train_cfg = _load_train_cfg(train_config_path)
     if "actor" not in train_cfg or "model" not in train_cfg.actor:
         raise KeyError(
             f"Could not find actor.model in training config: {train_config_path}"
         )
 
-    model_cfg = OmegaConf.create(OmegaConf.to_container(train_cfg.actor.model))
+    # Resolve ${actor.model.*} while still attached to the full training config,
+    # then detach so downstream get_model() does not need actor.* in scope.
+    model_cfg = OmegaConf.create(
+        OmegaConf.to_container(train_cfg.actor.model, resolve=True)
+    )
     model_overrides = cfg.convertor.get("model_overrides", None)
     if model_overrides:
         model_cfg = OmegaConf.merge(model_cfg, model_overrides)
@@ -146,6 +184,54 @@ def _prepare_model_cfg(model_cfg: DictConfig) -> DictConfig:
 
         return validate_dreamzero_sft_model_cfg(model_cfg)
     return model_cfg
+
+
+def _openpi_use_rlt(model_cfg: DictConfig) -> bool:
+    openpi_cfg = model_cfg.get("openpi", None)
+    if openpi_cfg is None:
+        return False
+    return bool(openpi_cfg.get("use_rlt", False))
+
+
+def _verify_openpi_rlt_conversion(
+    model,
+    model_cfg: DictConfig,
+    checkpoint_state_dict: Mapping,
+    missing_keys: list[str],
+) -> None:
+    if SupportedModel(model_cfg.get("model_type", "")) != SupportedModel.OPENPI:
+        return
+    if not _openpi_use_rlt(model_cfg):
+        return
+
+    ckpt_keys = list(_normalize_state_dict_keys(dict(checkpoint_state_dict)).keys())
+    ckpt_rlt_keys = [key for key in ckpt_keys if key.startswith("rlt_module.")]
+    if not ckpt_rlt_keys:
+        raise ValueError(
+            "OpenPI use_rlt=True but checkpoint has no rlt_module.* weights. "
+            "Train Stage1 with use_rlt enabled before converting."
+        )
+
+    missing_rlt = [key for key in missing_keys if key.startswith("rlt_module.")]
+    if missing_rlt:
+        raise ValueError(
+            "Failed to load RLT transformer weights into the OpenPI model. "
+            f"Missing keys (first 10): {missing_rlt[:10]}"
+        )
+
+    if not hasattr(model, "rlt_module"):
+        raise ValueError(
+            "OpenPI use_rlt=True but converted model has no rlt_module submodule. "
+            "Check actor.model.openpi in the training config."
+        )
+
+    saved_rlt_keys = [
+        key for key in model.state_dict().keys() if key.startswith("rlt_module.")
+    ]
+    if not saved_rlt_keys:
+        raise ValueError(
+            "Converted OpenPI model state_dict has no rlt_module.* tensors to save."
+        )
 
 
 def _extract_state_dict(checkpoint) -> Mapping:
@@ -275,6 +361,8 @@ def main(cfg) -> None:
             print(f"First missing keys: {missing_keys[:20]}")
         if unexpected_keys:
             print(f"First unexpected keys: {unexpected_keys[:20]}")
+
+    _verify_openpi_rlt_conversion(model, model_cfg, model_dict, missing_keys)
 
     _save_hf_checkpoint(model, model_cfg, cfg, cfg.convertor.save_path)
 

@@ -103,13 +103,19 @@ def calculate_adv_and_returns(**kwargs) -> tuple[torch.Tensor, Optional[torch.Te
 
     task_type = kwargs["task_type"]
     if task_type == "embodied":
-        kwargs = preprocess_embodied_advantages_inputs(**kwargs)
-        if adv_type != "gae":
-            kwargs = calculate_scores(**kwargs)
-        advantages, returns = fn(**kwargs)
-        res = postprocess_embodied_advantages_outputs(
-            advantages=advantages, returns=returns, **kwargs
-        )
+        if adv_type == "opd":
+            advantages, returns = fn(**kwargs)
+            res = {"advantages": advantages}
+            if returns is not None:
+                res["returns"] = returns
+        else:
+            kwargs = preprocess_embodied_advantages_inputs(**kwargs)
+            if adv_type != "gae":
+                kwargs = calculate_scores(**kwargs)
+            advantages, returns = fn(**kwargs)
+            res = postprocess_embodied_advantages_outputs(
+                advantages=advantages, returns=returns, **kwargs
+            )
     else:
         # reasoning tasks
         kwargs = preprocess_reasoning_advantages_inputs(**kwargs)
@@ -151,7 +157,7 @@ def register_toolcall_parser(name: str):
 
 def get_toolcall_parser(name: str) -> Callable:
     if not TOOLCALL_PARSER_REGISTRY:
-        from rlinf.algorithms import toolcall_parsers  # noqa: F401
+        from rlinf.agents.tool_call import parsers  # noqa: F401
 
     if name not in TOOLCALL_PARSER_REGISTRY:
         raise ValueError(f"Toolcall parser {name} not registered")

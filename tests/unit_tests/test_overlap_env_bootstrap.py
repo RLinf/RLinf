@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import torch
 from omegaconf import OmegaConf
 
-from rlinf.data.embodied_io_struct import EnvOutput
+from rlinf.data.schema.embodied_types import EnvOutput
 
 # Mock gymnasium and rlinf.envs.wrappers before importing EnvWorker
 # to avoid ModuleNotFoundError when gymnasium is not installed.
@@ -91,10 +91,12 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker.train_num_envs_per_stage = 2
         self.worker.n_train_chunk_steps = 2
         self.worker.rollout_epoch = 1
+        self.worker.enable_online_lerobot = False
         self.worker.enable_offload = False
         self.worker.train_enable_offload = False
         self.worker.use_training_pipeline = False
         self.worker.collect_transitions = False
+        self.worker.enable_rlt = False
         self.worker.collect_prev_infos = True
         self.worker.reward_mode = self.cfg.get("reward", {}).get(
             "reward_mode", "per_step"
@@ -125,16 +127,16 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         rollout_channel = MagicMock()
         input_channel = MagicMock()
 
-        # Mock recv_from to return a dummy RolloutResult
-        mock_rollout_result = MagicMock()
-        mock_rollout_result.actions = torch.zeros(2, 28)
-        mock_rollout_result.bootstrap_values = None
-        mock_rollout_result.forward_inputs = {"action": torch.zeros(2, 28)}
-        mock_rollout_result.versions = torch.zeros(2, 1)
-        mock_rollout_result.save_flags = None
+        # Mock recv_from to return a dummy PolicyOutput
+        mock_policy_output = MagicMock()
+        mock_policy_output.actions = torch.zeros(2, 28)
+        mock_policy_output.bootstrap_values = None
+        mock_policy_output.forward_inputs = {"action": torch.zeros(2, 28)}
+        mock_policy_output.versions = torch.zeros(2, 1)
+        mock_policy_output.intervene_flags = None
 
         # Patch methods on the instance
-        self.worker.recv_from = MagicMock(return_value=mock_rollout_result)
+        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
@@ -143,6 +145,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
                     truncations=torch.zeros(2, 4, dtype=torch.bool),
                     terminations=torch.zeros(2, 4, dtype=torch.bool),
                 ),
+                {},
                 {},
             )
         )
@@ -235,14 +238,14 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         rollout_channel = MagicMock()
         input_channel = MagicMock()
 
-        mock_rollout_result = MagicMock()
-        mock_rollout_result.actions = torch.zeros(2, 28)
-        mock_rollout_result.bootstrap_values = None
-        mock_rollout_result.forward_inputs = {"action": torch.zeros(2, 28)}
-        mock_rollout_result.versions = torch.zeros(2, 1)
-        mock_rollout_result.save_flags = None
+        mock_policy_output = MagicMock()
+        mock_policy_output.actions = torch.zeros(2, 28)
+        mock_policy_output.bootstrap_values = None
+        mock_policy_output.forward_inputs = {"action": torch.zeros(2, 28)}
+        mock_policy_output.versions = torch.zeros(2, 1)
+        mock_policy_output.intervene_flags = None
 
-        self.worker.recv_from = MagicMock(return_value=mock_rollout_result)
+        self.worker.recv_from = MagicMock(return_value=mock_policy_output)
         self.worker.env_interact_step = MagicMock(
             return_value=(
                 EnvOutput(
@@ -252,6 +255,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
                     terminations=torch.zeros(2, 4, dtype=torch.bool),
                 ),
                 {"episode_len": torch.tensor([1, 2])},
+                {},
             )
         )
         self.worker.send_env_batch = MagicMock()

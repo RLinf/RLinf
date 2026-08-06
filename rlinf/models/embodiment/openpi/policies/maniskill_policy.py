@@ -49,6 +49,8 @@ class ManiSkillInputs(transforms.DataTransformFn):
     # Determines which model will be used.
     # Do not change this for your own dataset.
     model_type: _model.ModelType
+    use_wrist_image: bool = False
+    default_prompt: str | None = None
 
     def __call__(self, data: dict) -> dict:
         """
@@ -65,20 +67,28 @@ class ManiSkillInputs(transforms.DataTransformFn):
         """
 
         base_image = _parse_image(data["observation/image"])
+        wrist_image = (
+            _parse_image(data["observation/wrist_image"])
+            if self.use_wrist_image and data.get("observation/wrist_image") is not None
+            else np.zeros_like(base_image)
+        )
+        has_wrist_image = (
+            self.use_wrist_image and data.get("observation/wrist_image") is not None
+        )
 
         # Create inputs dict. Do not change the keys in the dict below.
         inputs = {
             "state": data["observation/state"],
             "image": {
                 "base_0_rgb": base_image,
-                "left_wrist_0_rgb": np.zeros_like(base_image),
+                "left_wrist_0_rgb": wrist_image,
                 # Pad any non-existent images with zero-arrays of the appropriate shape.
                 "right_wrist_0_rgb": np.zeros_like(base_image),
                 # Pad any non-existent images with zero-arrays of the appropriate shape.
             },
             "image_mask": {
                 "base_0_rgb": np.True_,
-                "left_wrist_0_rgb": np.False_,
+                "left_wrist_0_rgb": np.True_ if has_wrist_image else np.False_,
                 "right_wrist_0_rgb": np.False_,
             },
         }
@@ -93,6 +103,10 @@ class ManiSkillInputs(transforms.DataTransformFn):
         # stored in "prompt"; the output dict always needs to have the key "prompt").
         if "prompt" in data:
             inputs["prompt"] = data["prompt"]
+        elif "task" in data:
+            inputs["prompt"] = data["task"]
+        elif self.default_prompt is not None:
+            inputs["prompt"] = self.default_prompt
 
         return inputs
 
@@ -106,9 +120,11 @@ class ManiSkillOutputs(transforms.DataTransformFn):
     For your own dataset, you can copy this class and modify the action dimension based on the comments below.
     """
 
+    output_action_dim: int = 7
+
     def __call__(self, data: dict) -> dict:
         # Only return the first N actions -- since we padded actions above to fit the model action
         # dimension, we need to now parse out the correct number of actions in the return dict.
         # For Libero, we only return the first 7 actions (since the rest is padding).
         # For your own dataset, replace `7` with the action dimension of your dataset.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][:, : self.output_action_dim])}

@@ -97,7 +97,7 @@ Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as 
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
 
 .. code:: bash
 
@@ -106,8 +106,8 @@ Install ABot-M0, VGGT, and the LIBERO runtime in the same Python environment as 
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
    # Inside the container, switch to the ABot-M0 virtual environment:
    source switch_env abot_m0

@@ -532,3 +532,25 @@ html[data-theme="dark"] {
     max-width: 100% !important;
   }
 }
+
+/* --- Sphinx copybutton --------------------------------------------------
+   pydata-sphinx-theme sets code blocks to flex column. sphinx-copybutton
+   inserts the button after <pre>; without absolute positioning it becomes a
+   full-width row below the block. Pin it to the top-right inside instead. */
+div.highlight,
+div[class*="highlight-"] {
+  position: relative;
+}
+
+div.highlight button.copybtn {
+  position: absolute;
+  top: 0.3em;
+  right: 0.3em;
+  width: 1.7em;
+  height: 1.7em;
+  margin: 0;
+  padding: 0;
+  z-index: 1;
+  flex: none;
+  align-self: auto;
+}

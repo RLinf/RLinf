@@ -1,0 +1,86 @@
+name: Offline RL End-to-End Tests
+
+on:
+  workflow_call:
+
+jobs:
+  steam-sft-cfg-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create STEAM test environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+
+      - name: STEAM value model SFT test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_steam_value_model_sft.sh steam_value_model_sft_libero
+
+      - name: STEAM compute ensemble advantages test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_steam_compute_advantages.sh steam_compute_advantages_ensemble_libero --nproc 1
+
+      - name: STEAM CFG OpenPI 0.5 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_cfg_rl.sh steam_cfg_openpi_libero
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  recap-sft-cfg-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create RECAP test environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model openpi --env maniskill_libero
+
+      - name: RECAP value model SFT test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh recap_value_model_sft_libero
+
+      - name: RECAP CFG OpenPI 0.5 test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_cfg_rl.sh recap_cfg_openpi_libero
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune

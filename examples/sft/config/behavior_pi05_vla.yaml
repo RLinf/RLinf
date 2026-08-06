@@ -1,0 +1,106 @@
+defaults:
+  - model/pi0_5_pytorch@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "sft_behavior_pi05_vla"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 20
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  # Set this to your local BEHAVIOR streaming dataset folder (the
+  # 2025-challenge-demos repo folder). The streaming loader reads its remaining
+  # parameters from this section directly (no hidden defaults).
+  train_data_paths: /path/to/2025-challenge-demos
+  behavior_dataset_root: /path/to/2025-challenge-demos
+  repo_id: "behavior-1k/2025-challenge-demos"
+  modalities: ["rgb"]
+  num_workers: 8
+  fine_grained_level: 0
+  tolerance_s: 1.0e-4
+  # BEHAVIOR task-0000. `use_skill: false` trains on the main-task text;
+  # `true` trains on the per-frame REFERENCE skill text selected by the window
+  # logic from `task_subtasks` below. The dataset's collapsed orchestrators are NOT
+  # a valid label source.
+  tasks: ["turning_on_radio"]
+  use_skill: false
+  # Reference per-task skill labels (same as env/behavior_skill_library.yaml). When
+  # `use_skill: true`, the builder maps task_subtasks[<task>] -> {0: label0, ...}.
+  task_subtasks:
+    turning_on_radio:
+      - "move to radio"
+      - "pick up radio from coffee table"
+      - "press radio"
+      - "place radio on coffee table"
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  eval_batch_size: 1
+  global_batch_size: 256
+  seed: 42
+
+  # actor.model comes from `defaults: model/pi0_5_pytorch@actor.model` (the
+  # path-free shape template). The experiment config supplies the filesystem
+  # paths so the model template stays reusable.
+  model:
+    # New-format fp32 base checkpoint (exactly what the reference trainer loads).
+    model_path: /path/to/pi05_base_pytorch_new
+    openpi:
+      assets_dir: /path/to/assets
+      asset_id: "behavior-1k/2025-challenge-demos"
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1e-10
+    clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 1000
+    lr_scheduler: "openpi_cosine"
+    num_cycles: 0.5
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: True
+    gradient_checkpointing: True
+    gradient_checkpointing_use_reentrant: False
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

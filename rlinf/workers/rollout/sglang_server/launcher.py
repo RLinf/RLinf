@@ -14,14 +14,21 @@
 
 """Top-level helper that wires placement → server group → router group.
 
-Single entrypoint :func:`launch_sglang_router_and_server` keeps the
-launch script short. The function:
+Entrypoints:
+
+* :func:`launch_sglang_router_and_server` — returns the worker-group
+  handles.
+* :func:`launch_sglang_api` — same launch, but also resolves the
+  OpenAI-compatible API base URL for callers that only need an endpoint.
+
+``launch_sglang_router_and_server``:
 
 1. Takes the flat list of hardware ranks the sglang engines should
    occupy (typically ``ComponentPlacement.get_hardware_ranks("<name>")``)
    and builds a ``PackedPlacementStrategy`` whose process width is
-   ``tensor_parallel_size * pipeline_parallel_size`` GPUs — one sglang
-   engine per process.
+   ``server.num_gpus`` GPUs when specified, otherwise
+   ``tensor_parallel_size * pipeline_parallel_size`` GPUs — one sglang engine
+   per process.
 2. Launches a ``SGLangServerWorker`` group on that strategy.
 3. Spawns each server's sglang process and collects its URL.
 4. Launches a single ``SGLangRouterWorker`` on the chosen node and
@@ -71,8 +78,8 @@ def launch_sglang_router_and_server(
             ``placement_strategy`` is provided or when ``launch_server``
             is ``False``.
         router_server_args: ``DictConfig`` carrying the
-            ``{tensor_parallel_size, pipeline_parallel_size, server,
-            router, group_name, router_group_name, launch_server,
+            ``{tensor_parallel_size, pipeline_parallel_size, server_type,
+            server, router, group_name, router_group_name, launch_server,
             launch_router}`` keys the launcher consumes directly
             (typically ``config.rollout``).
         rollout_node_group: Optional node-group label(s) to forward to
@@ -92,8 +99,7 @@ def launch_sglang_router_and_server(
             ``FlexiblePlacementStrategy`` produced from a fancy
             ``placement: 0-1:0-3,3-5`` config). The caller is responsible
             for ensuring the strategy already encodes
-            ``tensor_parallel_size * pipeline_parallel_size`` accelerators
-            per process.
+            the server's accelerator width per process.
         router_node_rank: Cluster-global node rank on which to place the
             router. Defaults to node 0 (the head).
 
@@ -114,9 +120,9 @@ def launch_sglang_router_and_server(
                 "rollout_hardware_ranks must be provided when "
                 "placement_strategy is not."
             )
-            num_accelerators_per_engine = int(
-                router_server_args.tensor_parallel_size
-            ) * int(router_server_args.pipeline_parallel_size)
+            num_accelerators_per_engine = _num_accelerators_per_engine(
+                router_server_args
+            )
             ranks = sorted(int(r) for r in rollout_hardware_ranks)
             assert ranks, "rollout_hardware_ranks must not be empty."
             assert ranks == list(range(ranks[0], ranks[-1] + 1)), (
@@ -133,6 +139,7 @@ def launch_sglang_router_and_server(
         server_group = SGLangServerWorker.create_group(
             config=config,
             sglang_cfg=router_server_args.server,
+            server_type=router_server_args.get("server_type", "srt"),
         ).launch(
             cluster=cluster,
             name=router_server_args.group_name,
@@ -172,3 +179,58 @@ def launch_sglang_router_and_server(
             router_group.register_server(url).wait()
 
     return server_group, router_group
+
+
+def get_sglang_api_url(server_group, router_group) -> str:
+    """Resolve the OpenAI-compatible API base URL from launched groups.
+
+    Prefers the router URL when a router was launched; otherwise falls
+    back to the first server URL.
+    """
+    if router_group is not None:
+        return router_group.get_router_url().wait()[0].rstrip("/")
+    if server_group is not None:
+        server_urls = server_group.get_server_url().wait()
+        if server_urls:
+            return str(server_urls[0]).rstrip("/")
+    raise RuntimeError(
+        "Unable to resolve SGLang API URL: neither router nor server group "
+        "is available."
+    )
+
+
+def launch_sglang_api(
+    config: DictConfig,
+    cluster: Cluster,
+    rollout_hardware_ranks: list[int] | None,
+    router_server_args: DictConfig,
+    *,
+    rollout_node_group: str | Sequence[str] | None = None,
+    placement_strategy: PlacementStrategy | None = None,
+    router_node_rank: int = 0,
+) -> tuple[str, "object | None", "object | None"]:
+    """Launch SGLang and return ``(api_url, server_group, router_group)``.
+
+    Same arguments as :func:`launch_sglang_router_and_server`. Use this when
+    the caller needs a ready-to-use OpenAI-compatible base URL (for example
+    ``reward.api.api_base``) rather than only the worker-group handles.
+    """
+    server_group, router_group = launch_sglang_router_and_server(
+        config=config,
+        cluster=cluster,
+        rollout_hardware_ranks=rollout_hardware_ranks,
+        router_server_args=router_server_args,
+        rollout_node_group=rollout_node_group,
+        placement_strategy=placement_strategy,
+        router_node_rank=router_node_rank,
+    )
+    return get_sglang_api_url(server_group, router_group), server_group, router_group
+
+
+def _num_accelerators_per_engine(router_server_args: DictConfig) -> int:
+    server_args = router_server_args.get("server") or {}
+    if (num_gpus := int(server_args.get("num_gpus", 0) or 0)) > 0:
+        return num_gpus
+    return int(router_server_args.tensor_parallel_size) * int(
+        router_server_args.pipeline_parallel_size
+    )

@@ -22,7 +22,7 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
      - ``behavior/behavior_openpi_pi05_eval.yaml``
    * - LIBERO
      - ``libero_spatial``、``libero_object``、``libero_goal``、``libero_10``
-     - ``libero/libero_spatial_openpi_pi05_eval.yaml`` 等
+     - ``libero/libero_spatial_openpi_pi05_eval.yaml``、``libero/libero_spatial_dreamzero_eval_sglang.yaml`` 等
    * - ManiSkill OOD
      - ``maniskill_ood_template`` （分布外泛化评测）
      - ``maniskill/maniskill_ood_openvlaoft_eval.yaml``
@@ -32,6 +32,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboTwin
      - ``robotwin_place_empty_cup``、``robotwin_adjust_bottle``、``robotwin_place_shoe``、``robotwin_click_bell``
      - ``robotwin/robotwin_place_empty_cup_openvlaoft_eval.yaml`` 等
+   * - RoboCasa365
+     - ``robocasa365`` pretrain 任务切片
+     - ``robocasa365/robocasa365_eval_openpi.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 

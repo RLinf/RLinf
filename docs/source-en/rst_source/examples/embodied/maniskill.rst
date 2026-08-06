@@ -90,12 +90,16 @@ Observation and Action
 
 The walkthrough below uses **OpenVLA / OpenVLA-OFT** with **PPO/GRPO**; switch the config to use another supported model.
 
+.. seealso::
+
+   To run ManiSkill with **OpenPI** (π\ :sub:`0`\  / π\ :sub:`0.5`\ ), see :doc:`RL on π₀ and π₀.₅ Models <pi0>`.
+
 Installation
 ------------
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.2-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
 
 .. code:: bash
 
@@ -104,8 +108,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
 
    # Inside the container, switch to the model's virtual environment:
    source switch_env openvla        # or: source switch_env openvla-oft
@@ -122,13 +126,20 @@ Installation
 Download the Assets
 -------------------
 
-Download the ManiSkill assets into the env package directory:
+Download the ManiSkill assets:
 
 .. code:: bash
 
-   cd <path_to_RLinf>/rlinf/envs/maniskill
    # Set HF_ENDPOINT=https://hf-mirror.com in mainland China.
-   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
+   hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./maniskill_assets
+
+.. important::
+
+   The assets **must** be placed under ``rlinf/envs/maniskill/assets`` — this is where the env loads them from. Copy them into the env package directory:
+
+.. code:: bash
+
+   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/maniskill/assets
 
 Download the Model
 ------------------

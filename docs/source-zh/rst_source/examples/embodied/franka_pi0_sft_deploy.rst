@@ -1,11 +1,5 @@
 在 Franka 上运行 Pi0 SFT
 ================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg
-   :align: center
-   :width: 80%
-
-   用于 Franka bin-relocation 实验的 OpenPI π₀ SFT 与部署流程。
-
 使用 OpenPI π₀ 端到端运行 Bin-relocation 流程：采集 Franka 数据，转换为 LeRobot 风格数据集，计算归一化统计，执行 SFT，并在真机硬件上部署 checkpoint。
 
 概览

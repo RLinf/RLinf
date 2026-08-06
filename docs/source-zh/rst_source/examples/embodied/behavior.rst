@@ -86,20 +86,32 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** — 镜像标签 ``agentic-rlinf0.2-behavior``：
+**选项 1：Docker 镜像** — BEHAVIOR 提供 **两个独立镜像**，每个对应一个模型：
+``agentic-rlinf0.3-behavior``（OpenVLA-OFT）和 ``agentic-rlinf0.3-behavior-openpi``
+（OpenPI）。每个镜像只内置各自的虚拟环境，因此请根据要训练的模型拉取对应镜像
+（两者之间无法通过 ``switch_env`` 互相切换）：
 
 .. code-block:: bash
 
+   # OpenVLA-OFT 模型：
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-behavior
-      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-behavior
+      rlinf/rlinf:agentic-rlinf0.3-behavior
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior
 
-   # 在容器内切换到对应模型的虚拟环境：
-   source switch_env openvla-oft        # 或：source switch_env openpi
+   # OpenPI 模型（独立镜像）：
+   docker run -it --rm --gpus all \
+      --shm-size 20g \
+      --network host \
+      --name rlinf \
+      -v .:/workspace/RLinf \
+      rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+      # 国内镜像：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-behavior-openpi
+
+   # 两个镜像都会默认激活各自对应的虚拟环境。
 
 **选项 2：自定义环境** — 安装 ``--env behavior`` 依赖组合：
 
@@ -130,6 +142,7 @@
 
    # 数据集会占用超过 30 GB。
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   # 之后的 python 命令会下载数据集到 $OMNIGIBSON_DATA_PATH 中。
    mkdir -p $OMNIGIBSON_DATA_PATH
 
    # 在已激活的 venv 中运行。国内用户可设置 HF_ENDPOINT=https://hf-mirror.com。
@@ -252,6 +265,38 @@ OpenPI-Comet 作为示例来源：
 独立评估请走 :doc:`BEHAVIOR-1K 评测指南 <../../evaluations/guides/behavior>`。
 该指南负责 ``ISAAC_PATH`` / ``OMNIGIBSON_DATA_PATH`` 设置、
 ``behavior_openpi_pi05_eval`` 启动命令和结果解读。
+
+--------------
+
+**5. 使用 PyTorch OpenPI (Pi0.5) 代码进行评估**
+
+BEHAVIOR 评估同样支持新的 **自包含 PyTorch OpenPI** 代码（模型
+``model_type: openpi_pytorch``；对应的 SFT 流程参见 :doc:`sft_openpi_pytorch`）。
+评估配置为：
+
+- ``evaluations/behavior/behavior_openpi_pi05_pytorch_eval.yaml``
+
+该配置以纯评估模式运行（``runner.only_eval: True``），并消费 **新格式** 的
+PyTorch checkpoint，即由 OpenPI checkpoint 转换器
+（``ckpt_convertor.openpi`` 的 ``old2new`` / ``sft2new``）产出的 checkpoint。
+将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
+
+- ``rollout.model.model_path``：新格式评估 checkpoint。
+- ``rollout.model.openpi.assets_dir``：存放 BEHAVIOR 归一化统计的目录。归一化统计在
+  ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
+- ``rollout.model.openpi.paligemma_tokenizer``：PaliGemma SentencePiece tokenizer
+  模型。
+
+.. code:: bash
+
+   export ISAAC_PATH=/path/to/isaac-sim
+   export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+
+.. note::
+
+   评估时流匹配动作头使用非确定性（随机）采样噪声，因此重复运行之间，单次轨迹与
+   成功次数会有轻微差异。
 
 
 配置参考

@@ -95,21 +95,19 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         ]:
             from torch.utils.data import DataLoader, DistributedSampler
 
-            from rlinf.data.datasets import sft_collate_fn
-            from rlinf.data.datasets.vlm import VLMDatasetRegistry
+            from rlinf.data.datasets.vlm import collate_fn, create_vlm_datasets
 
             # vlm sft before load dataloader should build the tokenizer
             if not hasattr(self, "tokenizer"):
                 self.tokenizer = self.build_tokenizer()
 
-            dataset_name = self.cfg.data.get("dataset_name", "robo2vlmsft")
-            train_dataset = VLMDatasetRegistry.create(
-                dataset_name,
+            train_dataset, _ = create_vlm_datasets(
+                self.cfg,
+                self.tokenizer,
                 data_paths=data_paths,
-                config=self.cfg,
-                tokenizer=self.tokenizer,
                 eval_dataset=eval_dataset,
             )
+            dataset_name = self.cfg.data.get("dataset_name", "robo2vlmsft")
 
             import torch.distributed as dist
 
@@ -137,7 +135,7 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 shuffle=(sampler is None),
                 num_workers=self.cfg.data.get("num_workers", 4),
                 drop_last=True,
-                collate_fn=sft_collate_fn,
+                collate_fn=collate_fn,
             )
             logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"

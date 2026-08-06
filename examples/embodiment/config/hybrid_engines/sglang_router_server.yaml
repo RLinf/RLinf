@@ -1,0 +1,36 @@
+model_path: "/path/to/model"
+tensor_parallel_size: 1
+pipeline_parallel_size: 1
+
+return_logprobs: False
+validate_weight: False
+validate_save_dir: null
+rollout_backend: sglang
+
+group_name: SGLangServerGroup
+launch_server: True   # set False to skip the sglang server group
+server:
+  model_path: ${..model_path}
+  tp_size: ${..tensor_parallel_size}
+  pp_size: ${..pipeline_parallel_size}
+  mem_fraction_static: 0.85
+  max_running_requests: 64
+  cuda_graph_max_bs: 64
+  disable_cuda_graph: False
+  enable_memory_saver: True
+  enable_torch_compile: False
+  torch_compile_max_bs: 64
+  dtype: bfloat16
+  skip_tokenizer_init: False
+  decode_log_interval: 500000
+  attention_backend: triton
+  log_level: warning
+  tool_call_parser: null
+
+router_group_name: SGLangRouterGroup
+launch_router: True   # set False to skip the sglang router
+router:
+  policy: cache_aware
+  log_level: warn
+  worker_startup_timeout_secs: 1800
+  request_timeout_secs: 1800

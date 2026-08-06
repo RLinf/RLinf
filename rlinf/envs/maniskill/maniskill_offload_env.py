@@ -21,7 +21,6 @@ import torch.multiprocessing as mp
 
 from rlinf.envs.maniskill.maniskill_env import ManiskillEnv
 from rlinf.envs.maniskill.utils import (
-    cleanup_cuda_tensors,
     get_batch_rng_state,
     recursive_to_own,
     set_batch_rng_state,
@@ -253,7 +252,6 @@ def _maniskill_worker_main(
     finally:
         command_queue.close()
         result_queue.close()
-        cleanup_cuda_tensors()
 
 
 class ManiskillOffloadEnv(EnvOffloadMixin):
@@ -283,6 +281,17 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
         "result_queue",
         "state_buffer",
         "_has_valid_state_buffer",
+    }
+    # Proxy lifecycle methods must resolve locally, not via worker RPC.
+    _PROXY_METHODS = {
+        "offload",
+        "onload",
+        "start_env",
+        "stop_env",
+        "close",
+        "get_state",
+        "load_state",
+        "get_wrapper_attr",
     }
 
     def __init__(
@@ -407,6 +416,19 @@ class ManiskillOffloadEnv(EnvOffloadMixin):
                 raise RuntimeError(f"{result.get('error')}\n{trace}")
             raise RuntimeError(result.get("error", "Unknown offload RPC error"))
         return result.get("data")
+
+    def get_wrapper_attr(self, name: str):
+        """Resolve attributes for gymnasium wrapper compatibility.
+
+        ``RecordVideo`` and ``get_env_attr`` walk the wrapper stack via
+        ``get_wrapper_attr``. Without this method, lookups fall through to
+        ``__getattr__`` and are incorrectly forwarded to the worker process.
+        """
+        if name in self._LOCAL_ATTRS:
+            return object.__getattribute__(self, name)
+        if name in self._PROXY_METHODS or name in type(self).__dict__:
+            return getattr(self, name)
+        return self.__getattr__(name)
 
     def _force_shutdown(self):
         if self.command_queue is not None:

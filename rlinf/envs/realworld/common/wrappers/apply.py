@@ -31,6 +31,9 @@ from rlinf.envs.realworld.common.wrappers.gripper_close import GripperCloseEnv
 from rlinf.envs.realworld.common.wrappers.keyboard_eval_control_wrapper import (
     KeyboardEvalControlWrapper,
 )
+from rlinf.envs.realworld.common.wrappers.keyboard_rlt_policy_switch_wrapper import (
+    KeyboardRLTPolicySwitchWrapper,
+)
 from rlinf.envs.realworld.common.wrappers.keyboard_start_end_wrapper import (
     KeyboardStartEndWrapper,
 )
@@ -86,6 +89,8 @@ def _apply_keyboard_wrapper(env: gym.Env, mode: Optional[str]) -> gym.Env:
         return KeyboardStartEndWrapper(env)
     if mode == "eval_control":
         return KeyboardEvalControlWrapper(env)
+    if mode == "rlt_policy_switch":
+        return KeyboardRLTPolicySwitchWrapper(env)
     return env
 
 

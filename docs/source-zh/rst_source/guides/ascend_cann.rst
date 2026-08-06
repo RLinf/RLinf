@@ -27,11 +27,26 @@ privileged 模式运行，并挂载宿主机 Ascend 驱动目录：
       --shm-size 20g \
       --network host \
       --name rlinf-ascend-libero \
+      -v /usr/local/dcmi:/usr/local/dcmi \
       -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+      -v /etc/ascend_install.info:/etc/ascend_install.info \
+      -v /var/log/npu:/usr/slog \
+      -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+      -v /sys/fs/cgroup:/sys/fs/cgroup:ro \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
       # 为提升国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.2-libero-cann9.0
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero-cann9.0
+
+如果不想使用privileged，则需要额外添加设备，并手动添加NPU：
+
+.. code-block:: bash
+
+      # 上述指令中添加下面字段
+      --device=/dev/davinci_manager \
+      --device=/dev/devmm_svm \
+      --device=/dev/hisi_hdc \
+      --device=/dev/davinci0 # 第一个npu为例
 
 进入容器后，切换到 OpenVLA-OFT 环境：
 
@@ -107,6 +122,31 @@ Ascend 芯片运行 LIBERO 时建议使用 CPU 渲染。启动训练前设置以
    PYOPENGL_PLATFORM=osmesa \
    ROBOT_PLATFORM=LIBERO \
    bash examples/embodiment/run_embodiment.sh libero_10_ppo_openvlaoft
+
+Ascend 上的 GR00T N1.5
+----------------------
+
+GR00T N1.5 同样可以在 Ascend 上运行。使用 ``gr00t`` 模型和涵盖 LIBERO 任务的
+``maniskill_libero`` 环境进行安装：
+
+.. code-block:: bash
+
+   bash requirements/install.sh --platform ascend embodied --model gr00t --env maniskill_libero
+   source .venv/bin/activate
+
+在 Ascend 上，``install.sh`` 会从源码编译 ``decord``\ （aarch64 没有官方 wheel），
+并固定一个为 GR00T 验证过的 TensorFlow 版本。flash-attention 会被跳过，GR00T 在
+加载时自动切换到 NPU 算子，因此无需修改配置。
+
+使用 OSMesa 渲染启动 GR00T 的 LIBERO 训练，配置见
+:doc:`GR00T 示例 <../examples/embodied/gr00t>`\ ：
+
+.. code-block:: bash
+
+   MUJOCO_GL=osmesa \
+   PYOPENGL_PLATFORM=osmesa \
+   ROBOT_PLATFORM=LIBERO \
+   bash examples/embodiment/run_embodiment.sh libero_spatial_ppo_gr00t
 
 保持不变的部分
 --------------

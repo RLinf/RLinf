@@ -27,6 +27,7 @@
 # limitations under the License.
 
 import functools
+import math
 import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
@@ -556,6 +557,35 @@ def get_lr_scheduler(
             min_lr_rate=min_lr_rate,
             min_lr=min_lr,
         )
+    elif lr_scheduler in ("openpi_cosine", "ref_warmup_cosine"):
+        # Warmup starts at peak/(warmup+1) (not 0), ramps linearly to the peak at
+        # `num_warmup_steps`, then cosine-decays to `min_lr` over the remaining
+        # `num_training_steps - num_warmup_steps` steps. Returned as a multiplier on
+        # the optimizer's base lr (the peak).
+        from torch.optim.lr_scheduler import LambdaLR
+
+        base_lr = optimizer.param_groups[0]["lr"]
+        if min_lr_rate is not None:
+            min_mult = min_lr_rate
+        elif min_lr and base_lr > 0:
+            min_mult = min_lr / base_lr
+        else:
+            min_mult = 0.0
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                init_mult = 1.0 / (num_warmup_steps + 1)
+                return init_mult + (1.0 - init_mult) * current_step / max(
+                    1, num_warmup_steps
+                )
+            progress = (current_step - num_warmup_steps) / max(
+                1, num_training_steps - num_warmup_steps
+            )
+            progress = min(1.0, progress)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_mult + (1.0 - min_mult) * cosine
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
     # PyTorch native
     elif lr_scheduler == "torch_constant":
         from torch.optim.lr_scheduler import ConstantLR

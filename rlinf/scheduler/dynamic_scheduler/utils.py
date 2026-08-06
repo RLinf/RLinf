@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from omegaconf import DictConfig
 
 if TYPE_CHECKING:
-    from rlinf.data.io_struct import SeqGroupInfo
+    from rlinf.data.schema.reasoning_requests import SeqGroupInfo
     from rlinf.scheduler.dynamic_scheduler.manager import ComponentManager
 
 

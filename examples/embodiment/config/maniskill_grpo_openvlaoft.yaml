@@ -2,7 +2,7 @@ defaults:
   - env/maniskill_put_on_plate_in_scene_25_main@env.train
   - env/maniskill_ood_template@env.eval
   - model/openvla_oft@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -99,7 +99,7 @@ rollout:
   pipeline_stage_num: 1
 
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     precision: ${actor.model.precision}
 
 actor:
@@ -112,13 +112,12 @@ actor:
 
   # Override the default values in model/openvla_oft
   model:
-    model_path: "/path/to/model/Openvla-oft-SFT-libero10-trajall/" # https://huggingface.co/RLinf/Openvla-oft-SFT-libero10-trajall
+    model_path: "/path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/" # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main
     model_type: "openvla_oft"
 
     unnorm_key: bridge_orig
     is_lora: True
-    # aka RLinf-OpenVLAOFT-ManiSkill-Base-Lora. It can be downloaded from https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
-    lora_path: /path/to/model/oft-sft/lora_004000
+    lora_path: /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Lora # https://huggingface.co/RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora
 
     max_prompt_length: 30
 
@@ -131,7 +130,7 @@ actor:
     weight_decay: 0.01
     clip_grad: 10.0
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     gradient_checkpointing: True

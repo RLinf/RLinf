@@ -15,7 +15,7 @@ convertor:
   ckpt_path: /path/to/fsdp_checkpoint_dir/full_weights.pt
 
 model:
-  model_type: "value_model"
+  model_type: "recap_value_model"
   model_path: "/path/to/pi05_base_pytorch"
 
   # ----- Critic architecture (must match training config) -----

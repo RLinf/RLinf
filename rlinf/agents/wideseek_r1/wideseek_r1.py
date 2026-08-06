@@ -18,6 +18,10 @@ from typing import Optional
 
 from omegaconf import DictConfig
 
+from rlinf.agents.tool_call.schema import (
+    ToolRequest,
+    ToolResponse,
+)
 from rlinf.agents.wideseek_r1.utils.metrics import _compute_rollout_metrics
 from rlinf.agents.wideseek_r1.utils.prompt_utils import (
     get_access_summary_messages,
@@ -42,11 +46,7 @@ from rlinf.agents.wideseek_r1.utils.tool_description import (
     tools_description_en,
     tools_description_zh,
 )
-from rlinf.data.io_struct import DynamicRolloutResult
-from rlinf.data.tool_call.tool_io_struct import (
-    ToolRequest,
-    ToolResponse,
-)
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.agent_loop import (
     AgentLoopOutput,
@@ -145,8 +145,10 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         }
 
     async def local_judge_llm_generator(self, messages: list) -> str:
+        # return_dict=False so this stays a list[int]; transformers 5 otherwise
+        # returns a BatchEncoding, which sglang cannot classify as a single prompt.
         prompt_ids = self.tokenizer.apply_chat_template(
-            messages, tokenize=True, add_generation_prompt=True
+            messages, tokenize=True, add_generation_prompt=True, return_dict=False
         )
 
         # invocate generate method
@@ -400,7 +402,11 @@ class WideSeekR1AgentLoopWorker(MultiAgentLoopWorker):
         message_history[-1]["content"] = message_history[-1]["content"] + turn_hint
 
         prompt_ids = self.tokenizer.apply_chat_template(
-            message_history, tokenize=True, add_generation_prompt=True, tools=tools
+            message_history,
+            tokenize=True,
+            add_generation_prompt=True,
+            tools=tools,
+            return_dict=False,
         )
         prompt_ids = prompt_ids[: self.max_total_len]
 

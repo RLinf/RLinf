@@ -22,18 +22,15 @@ from uuid import uuid4
 from omegaconf import DictConfig
 from transformers import AutoTokenizer
 
-from rlinf.algorithms.registry import get_toolcall_parser
-from rlinf.data.io_struct import (
-    DynamicRolloutResult,
-    RolloutRequest,
-    RolloutResult,
-)
-from rlinf.data.tool_call.tool_io_struct import (
+from rlinf.agents.tool_call.schema import (
     ToolChannelRequest,
     ToolChannelResponse,
     ToolRequest,
     ToolResponse,
 )
+from rlinf.algorithms.registry import get_toolcall_parser
+from rlinf.data.schema.reasoning_requests import RolloutRequest
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult, RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 from rlinf.workers.agent.tool_worker import ToolChannelInfo
@@ -216,11 +213,14 @@ class AgentLoopWorker(Worker):
         """
         wo_messages = [{"role": "user", "content": "hi"}]
         wi_messages = [*wo_messages, *tool_messages]
+        # return_dict=False: transformers 5 returns a BatchEncoding here, whose
+        # [0] is an Encoding rather than a token id, and the slice below needs the
+        # plain list[int]. The argument is accepted from transformers 4.46 on.
         wo_ids = self.tokenizer.apply_chat_template(
-            wo_messages, add_generation_prompt=False, tokenize=True
+            wo_messages, add_generation_prompt=False, tokenize=True, return_dict=False
         )
         wi_ids = self.tokenizer.apply_chat_template(
-            wi_messages, add_generation_prompt=True, tokenize=True
+            wi_messages, add_generation_prompt=True, tokenize=True, return_dict=False
         )
         return wi_ids[len(wo_ids) :]
 

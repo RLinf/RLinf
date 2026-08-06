@@ -36,8 +36,8 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 .. code-block:: bash
 
    # 下载 OpenVLA-OFT 预训练模型
-   hf download RLinf/Openvla-oft-SFT-libero10-trajall \
-   --local-dir /path/to/model/Openvla-oft-SFT-libero10-trajall/
+   hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main \
+   --local-dir /path/to/model/RLinf-OpenVLAOFT-ManiSkill-Base-Main/
    
    # 下载在maniskill上lora微调过的检查点
    hf download RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora \
@@ -64,7 +64,7 @@ ManiSkill3 是一个基于 GPU 加速的机器人研究仿真平台，
 
 
 
-对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/Openvla-oft-SFT-libero10-trajall` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
+对于 **OpenVLA-OFT**，修改 ``maniskill_ppo_openvlaoft_quickstart.yaml`` 文件。将下列模型配置项设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Main` 检查点所在的路径。同时，将 LoRA 路径设置为 `RLinf/RLinf-OpenVLAOFT-ManiSkill-Base-Lora` 检查点所在的路径。
 
 - ``rollout.model.model_path``  
 - ``actor.model.model_path``  

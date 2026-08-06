@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 import torch.nn.functional as F
 
 
@@ -30,3 +31,40 @@ def pad_tensor_to_length(tensors, max_seq_len, pad_token_id, left_pad=False):
         else (0, max_seq_len - tensors.shape[-1])
     )
     return F.pad(tensors, pad_tuple, "constant", pad_token_id)
+
+
+def batch_pad_to_fixed_len(
+    batch: list[torch.Tensor],
+    max_batch_len: int,
+    pad_token: int,
+    left_pad: bool = False,
+) -> torch.Tensor:
+    if left_pad:
+        batch_pad = torch.stack(
+            [
+                torch.cat(
+                    [
+                        torch.full(
+                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
+                        ),
+                        seq,
+                    ]
+                )
+                for seq in batch
+            ]
+        )
+    else:
+        batch_pad = torch.stack(
+            [
+                torch.cat(
+                    [
+                        seq,
+                        torch.full(
+                            (max_batch_len - len(seq),), pad_token, dtype=seq.dtype
+                        ),
+                    ]
+                )
+                for seq in batch
+            ]
+        )
+    return batch_pad

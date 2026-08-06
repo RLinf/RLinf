@@ -43,18 +43,18 @@ Option 2: Docker
 ----------------
 
 Each image bundles a ready-to-run stack (for example,
-``agentic-rlinf0.2-maniskill_libero``). Pull and run it, then select the model
+``agentic-rlinf0.3-maniskill_libero``). Pull and run it, then select the model
 environment inside the container:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.2-maniskill_libero
+   docker pull rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.2-maniskill_libero /bin/bash
+      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero /bin/bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf

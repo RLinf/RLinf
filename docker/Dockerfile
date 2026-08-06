@@ -4,7 +4,7 @@ ARG TARGETARCH
 ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
-ARG CUDA_VER=12.4.1
+ARG CUDA_VER=12.8.1
 ARG ROCM_VER=6.4
 ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.0.0-910b
@@ -49,6 +49,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-liberoplus
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-embodichain
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-roboverse
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-polaris
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
@@ -104,6 +105,8 @@ ENV UV_DEFAULT_INDEX=${NO_MIRROR:+"https://pypi.org/simple/"}
 ENV UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX:-"https://mirrors.ustc.edu.cn/pypi/simple"}
 ENV INSTALL_MIRROR_OPTION=${NO_MIRROR:+" "}
 ENV INSTALL_MIRROR_OPTION=${INSTALL_MIRROR_OPTION:-"--use-mirror"}
+ENV HF_ENDPOINT=${NO_MIRROR:+"https://huggingface.co"}
+ENV HF_ENDPOINT=${HF_ENDPOINT:-"https://hf-mirror.com"}
 
 RUN pip config set global.index-url ${PIP_INDEX}
 RUN python3 -m pip install -i ${PIP_INDEX} --upgrade pip setuptools wheel uv
@@ -150,7 +153,12 @@ RUN chmod +x /usr/local/bin/switch_env
 ##################################################################################################
 FROM base-image AS reason-image
 
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason
+# One venv per rollout engine: sglang and vllm pin the same kernel libraries
+# (nvidia-cutlass-dsl, flashinfer, tilelang, tokenspeed-mla) to different
+# versions, so sharing a venv means whichever is installed second downgrades the
+# other's kernels. Activate `reason-vllm` for vLLM rollout.
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason --engine sglang && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} agentic --venv reason-vllm --engine vllm
 
 # Set default env
 RUN echo "source ${UV_PATH}/reason/bin/activate" >> ~/.bashrc
@@ -211,6 +219,7 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d6 --model gr00t_n1d6 --env maniskill_libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t_n1d7 --model gr00t_n1d7 --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dexbotic --model dexbotic --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv starvla --model starvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv abot_m0 --model abot_m0 --env maniskill_libero
@@ -396,10 +405,12 @@ FROM embodied-common-image AS embodied-libero-image
 # (via clone_or_reuse_repo) instead of re-downloading it per venv.
 ENV LIBERO_PATH=/opt/envs/LIBERO
 
-# Install openvla, openvla-oft, and dreamzero envs
+# Install openvla, openvla-oft, dreamzero, gr00t, and evo1 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc
@@ -447,6 +458,17 @@ RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLA
 
 # Set default env
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+##################################################################################################
+# Embodied: Genesis
+##################################################################################################
+FROM embodied-common-image AS embodied-genesis-image
+
+# Install genesis env (MLP/CNN policy, no VLA model)
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv genesis --env genesis
+
+# Set default env
+RUN echo "source ${UV_PATH}/genesis/bin/activate" >> ~/.bashrc
 
 ##################################################################################################
 # Final image selection

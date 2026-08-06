@@ -273,6 +273,10 @@ class RealWorldEnv(gym.Env):
                     intervene_action[env_id] = env_intervene_action.copy()
         infos["intervene_action"] = to_tensor(intervene_action)
         infos["intervene_flag"] = to_tensor(intervene_flag)
+        if "rlt_switch_flags" in infos:
+            infos["rlt_switch_flags"] = to_tensor(
+                np.asarray(infos["rlt_switch_flags"], dtype=bool)
+            )
 
         dones = terminations | truncations
         _auto_reset = auto_reset and self.auto_reset
@@ -299,6 +303,7 @@ class RealWorldEnv(gym.Env):
 
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
+        raw_chunk_rlt_switch_flags = []
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(
@@ -309,6 +314,8 @@ class RealWorldEnv(gym.Env):
             if "intervene_action" in infos:
                 raw_chunk_intervene_actions.append(infos["intervene_action"])
                 raw_chunk_intervene_flag.append(infos["intervene_flag"])
+            if "rlt_switch_flags" in infos:
+                raw_chunk_rlt_switch_flags.append(infos["rlt_switch_flags"])
 
             chunk_rewards.append(step_reward)
             raw_chunk_terminations.append(terminations)
@@ -332,6 +339,11 @@ class RealWorldEnv(gym.Env):
                 raw_chunk_intervene_actions, dim=1
             ).reshape(self.num_envs, -1)
             infos_last["intervene_flag"] = torch.stack(raw_chunk_intervene_flag, dim=1)
+            infos_list[-1] = infos_last
+        if raw_chunk_rlt_switch_flags:
+            infos_last["rlt_switch_flags"] = torch.stack(
+                raw_chunk_rlt_switch_flags, dim=1
+            )
             infos_list[-1] = infos_last
 
         if past_dones.any() and self.auto_reset:

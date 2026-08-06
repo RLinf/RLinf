@@ -43,12 +43,14 @@ data:
   answer_key: "correct_answer"
   image_keys: ["image"]
   max_prompt_length: 1024
-  lazy_loading: false
+  lazy_loading: true
   num_workers: 16
   answer_separator: ""
 
 algorithm:
   adv_type: gae
+  sampling_params:
+    temperature: 1.0
 
 actor:
   group_name: "ActorGroup"

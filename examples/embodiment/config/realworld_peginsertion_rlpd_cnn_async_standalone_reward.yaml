@@ -2,7 +2,7 @@ defaults:
   - env/realworld_peg_insertion@env.train
   - env/realworld_peg_insertion@env.eval
   - model/cnn_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -129,7 +129,7 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     precision: ${actor.model.precision}
     num_q_heads: 10
 
@@ -145,7 +145,7 @@ actor:
   enable_offload: False
 
   model:
-    model_path: "/path/to/model" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
     state_dim: 19
     action_dim: 6
     num_q_heads: 10 # number of Q heads for critic, passed to policy module
@@ -160,7 +160,7 @@ actor:
     lr: 3e-4
     lr_scheduler: torch_constant
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"

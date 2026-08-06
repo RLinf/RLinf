@@ -1,0 +1,23 @@
+# Usage:
+#   bash examples/offline_rl/advantage_labeling/recap/process/run_compute_returns.sh recap_compute_returns
+
+data:
+  data_root: null
+  train_data_paths:
+    - dataset_path: /path/to/sft_dataset
+      type: sft
+    - dataset_path: /path/to/rollout_dataset
+      type: rollout
+
+  dataset_type: "sft"
+  gamma: 1.0
+  failure_reward: -300.0
+  tag: null
+  num_workers: 128
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

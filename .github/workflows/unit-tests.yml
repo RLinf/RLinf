@@ -12,9 +12,9 @@ jobs:
 
       - name: Create environment and install dependencies
         run: |
-          uv venv
+          unset UV_DEFAULT_INDEX
+          bash requirements/install.sh --no-flash-attn embodied --env dummy
           source .venv/bin/activate
-          UV_TORCH_BACKEND=auto uv sync
           uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
@@ -137,6 +137,7 @@ jobs:
           source .venv/bin/activate
           uv build
           export WHL_FILE=$(ls $(pwd)/dist/rlinf-*.whl)
+          export REQ_DIR=$(pwd)/requirements/agentic
           cd
           unset UV_DEFAULT_INDEX
           export UV_PATH=/workspace/dataset/.uv
@@ -144,8 +145,10 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           uv pip install $WHL_FILE[embodied]
-          uv pip install $WHL_FILE[agentic-sglang]
-          uv pip install $WHL_FILE[agentic-vllm]
+          uv pip install $WHL_FILE[agentic]
+          env -u UV_TORCH_BACKEND uv pip install -r $REQ_DIR/vllm_0.8.5_cu12.txt
+          env -u UV_TORCH_BACKEND uv pip install --no-deps vllm==0.8.5
+          env -u UV_TORCH_BACKEND uv pip install -r $REQ_DIR/sglang_0.4.6.post5_cu12.txt
           cd -
 
       - name: Check package import

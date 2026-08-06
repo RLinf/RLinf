@@ -1,6 +1,6 @@
 defaults:
-  - ../training_backend/fsdp@inference.fsdp_config
-  - ../training_backend/fsdp@actor.fsdp_config
+  - ../hybrid_engines/fsdp@inference.fsdp_config
+  - ../hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
 hydra:
@@ -130,7 +130,7 @@ rollout:
 
 
 data:
-  type: vision_language
+  type: vlm
   dataset_name: base
   max_prompt_length: 4096
   filter_prompt_by_length: False
