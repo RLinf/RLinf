@@ -622,52 +622,45 @@ class LiberoEnv(gym.Env):
             for env_id in env_idx:
                 task = self.task_suite.get_task(self.task_ids[env_id])
                 folder = self._pert_init_folders[env_id] or task.problem_folder
-                candidates = [
-                    os.path.join(init_root, folder, task.init_states_file),
-                    os.path.join(
-                        init_root, task.problem_folder, task.init_states_file
-                    ),
-                ]
-                # Deduplicate while preserving order
-                seen = set()
-                candidates = [
-                    p for p in candidates if not (p in seen or seen.add(p))
-                ]
+                pert_init_path = os.path.join(
+                    init_root, folder, task.init_states_file
+                )
                 states = None
                 init_path = None
                 used_folder = folder
-                for cand in candidates:
-                    if not os.path.exists(cand):
-                        continue
-                    loaded = torch.load(cand, weights_only=False)
+                if os.path.exists(pert_init_path):
+                    loaded = torch.load(pert_init_path, weights_only=False)
                     n = len(loaded) if hasattr(loaded, "__len__") else 0
                     if n == 0:
                         if self.is_eval:
                             logger.warning(
                                 "[LIBERO-PRO init] empty pruned_init, skip: %s",
-                                cand,
+                                pert_init_path,
                             )
-                        continue
-                    states = loaded
-                    init_path = cand
-                    used_folder = os.path.basename(os.path.dirname(cand))
-                    break
+                    else:
+                        states = loaded
+                        init_path = pert_init_path
                 if states is None:
-                    # Last resort: suite API (original folder); LOUD failure in eval
+                    msg = (
+                        "[LIBERO-PRO init] perturbation init missing or empty; "
+                        "suite fallback is invalid for eval "
+                        f"env={env_id} wanted_folder={folder} "
+                        f"file={task.init_states_file} path={pert_init_path}"
+                    )
+                    if self.is_eval:
+                        logger.error(msg)
+                        raise RuntimeError(msg)
                     states = self.task_suite.get_task_init_states(
                         self.task_ids[env_id]
                     )
                     init_path = f"<suite:{task.problem_folder}/{task.init_states_file}>"
                     used_folder = task.problem_folder
-                    msg = (
-                        "[LIBERO-PRO init] FALLBACK to suite init (wrong for pert) "
-                        f"env={env_id} wanted_folder={folder} "
-                        f"file={task.init_states_file} suite_path={init_path} n={len(states)}"
+                    logger.warning(
+                        "%s; falling back to suite init for training: %s n=%s",
+                        msg,
+                        init_path,
+                        len(states),
                     )
-                    if self.is_eval:
-                        logger.error(msg)
-                        raise RuntimeError(msg)
-                    logger.warning(msg)
                 trial = int(self.trial_ids[env_id])
                 if trial >= len(states):
                     trial = trial % len(states)
