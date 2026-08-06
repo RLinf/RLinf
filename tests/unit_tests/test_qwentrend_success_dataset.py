@@ -18,7 +18,7 @@ import pickle
 import numpy as np
 
 from examples.reward.preprocess_qwentrend_terminal_success_dataset import build_rows
-from rlinf.data.datasets.vlm import QwenTrendProgressSFTDataset
+from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
 
 
 def _write_episode(path, *, observation_count, success=False, complete=True):
@@ -131,7 +131,7 @@ def test_qwentrend_loader_slices_raw_episode_window(tmp_path):
     _write_episode(path, observation_count=20, success=True)
 
     question, answer, videos, image_data = (
-        QwenTrendProgressSFTDataset._parse_raw_record(
+        VLMTrendRewardSFTDataset._parse_raw_record(
             {
                 "question": "potential",
                 "answer": "1",

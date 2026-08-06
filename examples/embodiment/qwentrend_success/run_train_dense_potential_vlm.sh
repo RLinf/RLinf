@@ -15,8 +15,8 @@ MAX_STEPS=${MAX_STEPS:-400}
 MAX_EPOCHS=${MAX_EPOCHS:-400}
 mkdir -p "${RAY_DIR}/ray" "${RAY_DIR}/tmp" "${OUTPUT_ROOT}"
 
-# qwen3vl_sft_qwentrend.yaml reads DUALVIEW_SFT_DATA_ROOT for train/eval jsonl.
-export DUALVIEW_SFT_DATA_ROOT="${POTENTIAL_SFT_DATA_ROOT}"
+# qwen3vl_sft_vlm_trend_reward.yaml reads VLM_TREND_REWARD_DATA_ROOT for train/eval jsonl.
+export VLM_TREND_REWARD_DATA_ROOT="${POTENTIAL_SFT_DATA_ROOT}"
 
 RAY_TMPDIR="${RAY_DIR}/ray" \
   RLINF_FORCE_LOCAL_RAY=1 \
@@ -24,7 +24,7 @@ RAY_TMPDIR="${RAY_DIR}/ray" \
   TMPDIR="${RAY_DIR}/tmp" \
   "${PYTHON_BIN}" examples/sft/train_vlm_sft.py \
   --config-path "${PWD}/examples/sft/config" \
-  --config-name qwen3vl_sft_qwentrend \
+  --config-name qwen3vl_sft_vlm_trend_reward \
   cluster.component_placement.actor="${PLACEMENT}" \
   actor.model.model_path="${QWEN_MODEL_PATH}" \
   runner.output_dir="${OUTPUT_ROOT}" \

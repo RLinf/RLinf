@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import torch
 
 from rlinf.models.embodiment.reward.vlm_reward_model import (
-    HistoryVLMRewardModel,
+    BufferedVLMRewardModel,
     VLMRewardModel,
 )
 
@@ -61,7 +61,7 @@ def _potential_model(
     ema_alpha: float = 1.0,
     clip: float = 0.0,
 ):
-    model = object.__new__(HistoryVLMRewardModel)
+    model = object.__new__(BufferedVLMRewardModel)
     model.potential_scale = scale
     model.potential_gamma = gamma
     model.potential_ema_alpha = ema_alpha

@@ -22,7 +22,7 @@ RAY_TMPDIR="${RAY_DIR}/ray" \
   TMPDIR="${RAY_DIR}/tmp" \
   "${PYTHON_BIN}" examples/sft/train_vlm_sft.py \
   --config-path "${PWD}/examples/sft/config" \
-  --config-name qwen3vl_sft_qwentrend_success \
+  --config-name qwen3vl_sft_vlm_trend_success \
   cluster.component_placement.actor="${PLACEMENT}" \
   actor.model.model_path="${QWEN_MODEL_PATH}" \
   runner.output_dir="${OUTPUT_ROOT}" \

@@ -161,8 +161,12 @@ def load_state_dataset(
 
     state_dim = None
     for pkl_path in tqdm(pkl_files, desc="Loading state episodes", unit="episode"):
-        with open(pkl_path, "rb") as f:
-            episode = pickle.load(f)
+        try:
+            with open(pkl_path, "rb") as f:
+                episode = pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, OSError) as exc:
+            print(f"Skipping unreadable episode {pkl_path}: {exc}")
+            continue
         observations = episode.get("observations", [])
         if not observations:
             continue

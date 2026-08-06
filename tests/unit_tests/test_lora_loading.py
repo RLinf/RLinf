@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for QwenTrend LoRA checkpoint export and loading."""
+"""Unit tests for the shared LoRA adapter export / load API."""
 
 from __future__ import annotations
 
@@ -21,25 +21,41 @@ import os
 import tempfile
 from pathlib import Path
 
-import pytest
 import torch
-from peft import LoraConfig
+from peft import LoraConfig, get_peft_model
 from torch import nn
 
-from rlinf.models.embodiment.reward.vlm_reward_utils.lora_loading import (
-    attach_default_lora,
-    load_lora_adapter_artifacts,
-    resolve_lora_adapter_dir,
-)
-from rlinf.workers.sft.lora_checkpoint import (
-    ADAPTER_CONFIG_FILENAME,
-    ADAPTER_WEIGHTS_FILENAME,
+from rlinf.utils.lora_adapter import (
     _broadcast_rank0_outcome,
     export_lora_adapter,
+    export_lora_state_dict,
     full_weights_path,
+    load_adapter_onto_model,
     lora_adapter_path,
-    save_lora_adapter_files,
+    resolve_lora_adapter_dir,
 )
+
+
+class TinyModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.q_proj = nn.Linear(4, 4, bias=False)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return self.q_proj(inputs)
+
+
+def _tiny_peft_model() -> nn.Module:
+    return get_peft_model(
+        TinyModel(),
+        LoraConfig(
+            r=2,
+            lora_alpha=2,
+            target_modules=["q_proj"],
+            lora_dropout=0.0,
+            init_lora_weights="gaussian",
+        ),
+    )
 
 
 def test_checkpoint_paths() -> None:
@@ -57,75 +73,63 @@ def test_save_lora_adapter_preserves_full_weights(tmp_path: Path) -> None:
     full_payload = {"base.weight": torch.ones(2, 2)}
     torch.save(full_payload, full_weights)
 
-    lora_state = {
-        "base_model.model.q_proj.lora_A.weight": torch.ones(4, 8),
-        "base_model.model.q_proj.lora_B.weight": torch.ones(8, 4),
-    }
-    peft_config = LoraConfig(
-        r=4,
-        lora_alpha=4,
-        target_modules=["q_proj"],
-        lora_dropout=0.0,
-        init_lora_weights="gaussian",
-    )
+    peft_model = _tiny_peft_model()
     adapter_dir = lora_adapter_path(str(actor_dir))
-    save_lora_adapter_files(adapter_dir, lora_state, peft_config)
+    peft_model.save_pretrained(adapter_dir)
 
     reloaded_full = torch.load(full_weights, map_location="cpu", weights_only=True)
     assert set(reloaded_full) == {"base.weight"}
-    assert (Path(adapter_dir) / ADAPTER_WEIGHTS_FILENAME).is_file()
-    assert (Path(adapter_dir) / ADAPTER_CONFIG_FILENAME).is_file()
+    assert (Path(adapter_dir) / "adapter_config.json").is_file()
 
-    loaded_state, loaded_config = load_lora_adapter_artifacts(adapter_dir)
-    assert set(loaded_state) == set(lora_state)
-    assert loaded_config.r == 4
-    assert set(loaded_config.target_modules) == {"q_proj"}
+    resolved = resolve_lora_adapter_dir(str(actor_dir))
+    assert Path(resolved) == Path(adapter_dir)
 
 
 def test_resolve_lora_adapter_dir_from_global_step(tmp_path: Path) -> None:
     adapter_dir = tmp_path / "global_step_100" / "actor" / "lora_adapter"
     adapter_dir.mkdir(parents=True)
-    peft_config = LoraConfig(
-        r=2,
-        lora_alpha=2,
-        target_modules=["v_proj"],
-        lora_dropout=0.0,
-        init_lora_weights="gaussian",
-    )
-    lora_state = {
-        "base_model.model.v_proj.lora_A.weight": torch.zeros(2, 4),
-        "base_model.model.v_proj.lora_B.weight": torch.zeros(4, 2),
-    }
-    save_lora_adapter_files(str(adapter_dir), lora_state, peft_config)
+    _tiny_peft_model().save_pretrained(str(adapter_dir))
 
     resolved = resolve_lora_adapter_dir(str(tmp_path / "global_step_100"))
     assert Path(resolved) == adapter_dir
 
 
-def test_attach_default_lora_loads_explicit_adapter(tmp_path: Path) -> None:
-    class TinyModel(nn.Module):
-        def __init__(self) -> None:
-            super().__init__()
-            self.q_proj = nn.Linear(4, 4, bias=False)
-
-        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-            return self.q_proj(inputs)
-
-    peft_config = LoraConfig(
-        r=2,
-        lora_alpha=2,
-        target_modules=["q_proj"],
-        lora_dropout=0.0,
-        init_lora_weights="gaussian",
-    )
-    lora_state = {
-        "base_model.model.q_proj.lora_A.weight": torch.ones(2, 4),
-        "base_model.model.q_proj.lora_B.weight": torch.ones(4, 2),
-    }
+def test_load_adapter_onto_model_from_peft_artifact(tmp_path: Path) -> None:
+    source = _tiny_peft_model()
+    with torch.no_grad():
+        source.base_model.model.q_proj.lora_A.default.weight.fill_(1.0)
     adapter_dir = tmp_path / "lora_adapter"
-    save_lora_adapter_files(str(adapter_dir), lora_state, peft_config)
+    source.save_pretrained(str(adapter_dir))
 
-    model = attach_default_lora(TinyModel(), str(tmp_path))
+    target = TinyModel()
+    model = load_adapter_onto_model(target, str(tmp_path), adapter_name="default")
+    loaded = {
+        key: value.detach().cpu()
+        for key, value in model.state_dict().items()
+        if "lora_A" in key
+    }
+    assert len(loaded) == 1
+    torch.testing.assert_close(next(iter(loaded.values())), torch.ones(2, 4))
+
+
+def test_load_adapter_from_legacy_full_weights(tmp_path: Path) -> None:
+    """Legacy full_weights.pt fallback must return the Peft-wrapped model."""
+    from peft import get_peft_model_state_dict
+
+    source = _tiny_peft_model()
+    with torch.no_grad():
+        source.base_model.model.q_proj.lora_A.default.weight.fill_(1.0)
+    lora_state = {
+        key: value.detach().cpu()
+        for key, value in get_peft_model_state_dict(source).items()
+    }
+    weights_dir = tmp_path / "actor" / "model_state_dict"
+    weights_dir.mkdir(parents=True)
+    torch.save(lora_state, weights_dir / "full_weights.pt")
+
+    model = load_adapter_onto_model(
+        TinyModel(), str(tmp_path / "actor"), adapter_name="default"
+    )
     assert hasattr(model, "peft_config")
     loaded = {
         key: value.detach().cpu()
@@ -136,20 +140,23 @@ def test_attach_default_lora_loads_explicit_adapter(tmp_path: Path) -> None:
     torch.testing.assert_close(next(iter(loaded.values())), torch.ones(2, 4))
 
 
-def test_save_lora_adapter_files_requires_lora_keys(tmp_path: Path) -> None:
-    peft_config = LoraConfig(
-        r=2,
-        lora_alpha=2,
-        target_modules=["q_proj"],
-        lora_dropout=0.0,
-        init_lora_weights="gaussian",
+def test_export_lora_adapter_skip_non_peft(tmp_path: Path) -> None:
+    warnings: list[str] = []
+    wrote = export_lora_adapter(
+        TinyModel(),
+        str(tmp_path / "actor"),
+        rank=0,
+        log_warning=warnings.append,
     )
-    with pytest.raises(RuntimeError, match="no lora_\\* keys"):
-        save_lora_adapter_files(
-            str(tmp_path / "lora_adapter"),
-            {"base.weight": torch.ones(2)},
-            peft_config,
-        )
+    assert wrote is False
+    assert warnings and "peft_config" in warnings[0]
+
+
+def test_export_lora_state_dict_collects_lora_keys() -> None:
+    model = _tiny_peft_model()
+    state = export_lora_state_dict(model)
+    assert state
+    assert any("lora_" in key for key in state)
 
 
 def _distributed_save_failure_worker(

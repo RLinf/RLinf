@@ -8,6 +8,192 @@ Reward Model 使用指南
 仿真场景 Reward Model
 ---------------------
 
+推荐的 VLM Trend Success 流程
+-----------------------------
+
+在 ``BufferedVLMRewardModel`` 上用两路信号搭 PPO reward：稀疏的终局成功 LoRA，
+加上稠密的 potential head（``inference_mode=scalar_head``）。标签只来自环境
+success 和轨迹时序，不写死任务规则。该双线路由与本指南后文的单线 VLM Trend
+reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
+
+所有命令都在仓库根目录执行。稀疏支路（步骤 2–3）和稠密支路（步骤 4–6）都依赖
+步骤 1；采完数据后两条支路可以并行。
+
+下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``，与脚本默认值一致。
+
+步骤 1 — 采集 rollout
+^^^^^^^^^^^^^^^^^^^^^
+
+从覆盖策略分布的 checkpoint 各跑一轮固定 50 步轨迹。
+
+.. code-block:: bash
+
+   export CHECKPOINT_TEMPLATE_EARLY='/path/to/clean_gt_0_120/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
+   export CHECKPOINT_TEMPLATE_LATE='/path/to/clean_gt_0_200/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
+   export OUTPUT_ROOT=/path/to/vlm_trend_uniform_collection
+   export CUDA_DEVICES=0,1,2,3
+   export PLACEMENT=0-3
+   NUM_ENVS=1024 SEED=0 \
+       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+这一步会：
+
+- 把 episode pickle 写到 ``${OUTPUT_ROOT}/step0``、``step20``、…、``step200``。
+- step 0 是随机策略；20–120 用 early 模板；140–200 用 late 模板。每个
+  checkpoint 固定 seed 0、四卡 Ray 任务。
+- 使用 ``simple`` observation，忽略提前终止，始终跑满 50 步，避免“很快成功”
+  被存成短失败样本。
+
+只重采失败的几步时：
+
+.. code-block:: bash
+
+   STEPS="80 120 160" \
+       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+同名 episode 文件会被覆盖。
+
+步骤 2 — 构建稀疏 success SFT 数据
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+把采集结果打成双视角、5 帧窗口，标签为 ``0`` / ``1``。
+
+.. code-block:: bash
+
+   export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
+   bash examples/embodiment/qwentrend_success/run_preprocess_sparse_success_dataset.sh
+
+这一步会：
+
+- 先按 source episode 划分 train/eval（有泄漏会直接退出）。
+- 在 observation 索引 ``5, 10, …, 50`` 各生成一个窗口；标签来自
+  ``infos[end_step]["success"]``，保留自然类别比例。
+- 在 ``${DUALVIEW_SFT_DATA_ROOT}/{train,eval}/`` 写 manifest，引用原始 pickle
+  （不复制图像）。只加载可信 pickle。
+
+调试时可只处理部分 step：``UNIFORM_STEPS="0 100 200"``。
+
+步骤 3 — 训练稀疏 success LoRA
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+微调 Qwen3-VL-4B，让它输出终局成功的 ``0`` / ``1``
+（配置 ``qwen3vl_sft_vlm_trend_success``）。
+
+.. code-block:: bash
+
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
+   export PLACEMENT=0-3
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_sparse_success_vlm.sh
+
+这一步会：
+
+- LoRA rank 16、``lr=1e-5``、micro batch 4 / global batch 256、共 400 步，
+  每 100 步评估并保存，并用类别加权的 success loss。
+- 按 **balanced accuracy** 选 checkpoint（同时看 positive recall 和 negative
+  accuracy），不要只看整体 accuracy。
+- 选出的目录稍后设为 ``QWENTREND_SUCCESS_CHECKPOINT``。
+  SFT 会保留 ``actor/model_state_dict/full_weights.pt`` 作为完整模型权重，
+  并通过 ``PeftModel.save_pretrained`` 把 Peft adapter 写到
+  ``actor/lora_adapter/``。共享加载逻辑在 ``rlinf/utils/lora_adapter.py``，
+  会读取该 adapter 产物（并兼容旧版 ``full_weights.pt`` fallback）。
+
+步骤 4 — 构建稠密 potential SFT 数据
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+先训一个小的 state-value teacher，再用同一批采集数据生成 potential / progress
+窗口。
+
+.. code-block:: bash
+
+   export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export STATE_VALUE_ROOT=/path/to/vlm_trend_state_success_value
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_preprocess_dense_potential_dataset.sh
+
+这一步会：
+
+- 产出 ``${STATE_VALUE_ROOT}/best.pt``，并把 potential SFT manifest 写到
+  ``${POTENTIAL_SFT_DATA_ROOT}``。
+
+步骤 5 — 训练稠密 potential LoRA
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+在 potential / progress 标签上微调 Qwen3-VL
+（配置 ``qwen3vl_sft_vlm_trend_reward``）。
+
+.. code-block:: bash
+
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export OUTPUT_ROOT=/path/to/vlm_trend_potential_vlm_train
+   export PLACEMENT=0-3
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_dense_potential_vlm.sh
+
+这一步会：
+
+- 超参与步骤 3 同类，但走 potential 配置。
+- 把选中的 checkpoint 路径写入 ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``。
+  步骤 6–7 直接读这个文件，不用手写路径。该目录保留完整的
+  ``full_weights.pt``，并单独写出 ``actor/lora_adapter/`` 供 reward /
+  特征提取加载。
+
+步骤 6 — 训练 scalar potential head
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+冻结 potential LoRA，用 ``VLMRewardModel.extract_prompt_features`` 抽特征，
+再训一个小的标量头。
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export FEAT_ROOT=/path/to/vlm_trend_potential_features
+   export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
+   CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
+       bash examples/embodiment/qwentrend_success/run_train_dense_scalar_head.sh
+
+这一步会：
+
+- 多卡分片抽特征，训练得到 ``${SCALAR_OUTPUT_ROOT}/best.pt``。
+
+步骤 7 — 跑 PPO
+^^^^^^^^^^^^^^^
+
+把两路 reward 接到 embodied PPO，从策略 checkpoint 起步。
+在线推理使用 ``vlm_trend_reward_input_builder``（各路径通过
+``prompt_template`` 区分），稠密项为 ``inference_mode=scalar_head``，
+稀疏 success 项使用 ``vlm_trend_binary_digit_reward_parser``。
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export QWENTREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
+   export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
+   export PPO_OUTPUT_ROOT=/path/to/ppo-output
+   CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
+       INFER_BATCH_SIZE=32 \
+       bash examples/embodiment/run_qwentrend_success_reward.sh
+
+这一步会：
+
+- 稠密项：potential LoRA + scalar head → 受限的 potential difference。
+- 稀疏项：success LoRA 生成 ``1`` 时发一次 ``+1``（``0`` / 非法输出为 0）。
+  环境 reward 关闭；VLM 每 5 步推理一次；episode 固定 50 步，与预处理对齐。
+- 每 5 步评估、每 20 步保存；actor / rollout / env / reward 使用 GPU
+  ``0-3``。reward server placement 会自动跟随 ``PLACEMENT``。
+- 续训：``RESUME_DIR`` 指到已有 ``checkpoints/global_step_N``，并把
+  ``MAX_STEPS`` 设成目标总步数（例如从 60 续到 160）。
+
+
 完整流程包括四个阶段：
 
 1. 数据收集：在 RL 运行过程中采集原始 episode 数据。
@@ -235,6 +421,23 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        lora_rank: 16
 
 训练得到的 LoRA checkpoint 后续可通过 ``reward.model.lora_path`` 传给在线 reward 配置。
+
+.. note::
+
+   SFT 会保留框架的 ``actor/model_state_dict/full_weights.pt``，并通过
+   ``PeftModel.save_pretrained`` 在 ``actor/lora_adapter/`` 下单独导出 Peft
+   adapter（``adapter_config.json`` + ``adapter_model.safetensors``）。在线 reward
+   模型通过共享的 ``rlinf.utils.lora_adapter`` API 把 ``lora_path`` 解析到该
+   adapter 产物（并保留对旧版 ``full_weights.pt`` 的回退）。
+
+   与 ``rlinf.models.apply_lora`` 的分工：
+
+   * ``apply_lora`` — 在根据 ``cfg.actor.model`` 构造训练 actor 时挂载或创建
+     LoRA（``is_lora``、``lora_path`` 等）。
+   * ``rlinf.utils.lora_adapter`` — 解析 SFT checkpoint 目录布局
+     （``global_step_*/actor/lora_adapter``），在保留 ``full_weights.pt`` 的同时
+     导出 adapter，并将这些产物（或 legacy ``full_weights.pt``）加载到冻结的
+     reward 模型与离线特征脚本中。
 
 3. Reward Model 在 RL 中推理
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

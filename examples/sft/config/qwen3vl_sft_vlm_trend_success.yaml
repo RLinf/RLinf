@@ -45,7 +45,7 @@ runner:
 # checkpoints before selecting the model for PPO.
 data:
   type: vlm
-  dataset_name: "qwentrend_progress_sft"
+  dataset_name: "vlm_trend_reward_sft"
   apply_chat_template: true
   use_chat_template: true
   train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"

@@ -40,11 +40,13 @@ import torch
 from tqdm.auto import tqdm
 
 from examples.reward.preprocess_qwentrend_state_value_dataset import (
-    _extract_dual_view_frames,
     _to_numpy,
-    _to_uint8_rgb,
     load_value_model,
     score_states,
+)
+from rlinf.data.datasets.vlm_trend_io import (
+    extract_dual_view_frames,
+    to_uint8_rgb,
 )
 from rlinf.utils.logging import get_logger
 
@@ -177,12 +179,12 @@ def _candidate_frames(
 ) -> tuple[list[Any], list[Any]] | None:
     """Extract dual-view frames for a potential or progress candidate."""
     if candidate.sample_type == "progress":
-        earlier_frames = _extract_dual_view_frames(
+        earlier_frames = extract_dual_view_frames(
             observations,
             candidate.start_idx,
             candidate.start_idx + window_size - 1,
         )
-        later_frames = _extract_dual_view_frames(
+        later_frames = extract_dual_view_frames(
             observations,
             candidate.end_idx - window_size + 1,
             candidate.end_idx,
@@ -193,7 +195,7 @@ def _candidate_frames(
             earlier_frames[0] + later_frames[0],
             earlier_frames[1] + later_frames[1],
         )
-    return _extract_dual_view_frames(
+    return extract_dual_view_frames(
         observations, candidate.start_idx, candidate.end_idx
     )
 
@@ -230,8 +232,8 @@ def _write_sample(
     with sample_pkl.open("wb") as handle:
         pickle.dump(
             {
-                "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
-                "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
+                "main_frames": [to_uint8_rgb(frame) for frame in main_frames],
+                "extra_view_frames": [to_uint8_rgb(frame) for frame in extra_frames],
                 "label": candidate.answer,
                 "sample_type": candidate.sample_type,
                 "teacher_value": candidate.teacher_value,

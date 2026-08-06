@@ -9,6 +9,198 @@ maintained by the env worker.
 Simulation Reward Model
 -----------------------
 
+Recommended VLM Trend Success Pipeline
+--------------------------------------
+
+Build a PPO reward from two signals on ``BufferedVLMRewardModel``: a sparse
+terminal-success LoRA and a dense potential head (``inference_mode=scalar_head``).
+Labels come only from environment success and timing — not from hand-written task
+rules. This dual-path recipe is separate from the single-path VLM Trend reward
+(``inference_mode=generate`` + ``vlm_trend_reward_parser``) documented later in
+this guide.
+
+Run every command from the repo root. Sparse steps (2–3) and dense steps (4–6)
+both need step 1; you can run the two branches in parallel after collection.
+
+The examples below use 4 GPUs (placement ``0-3``) and ``NUM_ENVS=1024``, matching
+the script defaults.
+
+Step 1 — Collect rollouts
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Roll out fixed 50-step episodes from checkpoints that cover your policy range.
+
+.. code-block:: bash
+
+   export CHECKPOINT_TEMPLATE_EARLY='/path/to/clean_gt_0_120/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
+   export CHECKPOINT_TEMPLATE_LATE='/path/to/clean_gt_0_200/checkpoints/global_step_%d/actor/model_state_dict/full_weights.pt'
+   export OUTPUT_ROOT=/path/to/vlm_trend_uniform_collection
+   export CUDA_DEVICES=0,1,2,3
+   export PLACEMENT=0-3
+   NUM_ENVS=1024 SEED=0 \
+       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+What this does:
+
+- Writes episode pickles under ``${OUTPUT_ROOT}/step0``, ``step20``, …, ``step200``.
+- Step 0 is a random policy; 20–120 use the early template; 140–200 use the late
+  template. Each job uses seed 0 on four GPUs.
+- Uses ``simple`` observations, ignores early termination, and always runs 50
+  steps so a quick success cannot become a short failure sample.
+
+To redo a few failed steps only:
+
+.. code-block:: bash
+
+   STEPS="80 120 160" \
+       bash examples/embodiment/qwentrend_success/run_collect_uniform_checkpoints.sh
+
+Matching episode filenames are overwritten.
+
+Step 2 — Build sparse success SFT data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Turn the collection into dual-view 5-frame windows labeled ``0`` / ``1``.
+
+.. code-block:: bash
+
+   export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
+   bash examples/embodiment/qwentrend_success/run_preprocess_sparse_success_dataset.sh
+
+What this does:
+
+- Splits by source episode first (exits if train/eval leak).
+- Emits one window at observation indices ``5, 10, …, 50``; labels come from
+  ``infos[end_step]["success"]``. Keeps the natural class balance.
+- Writes manifests under ``${DUALVIEW_SFT_DATA_ROOT}/{train,eval}/`` that point
+  at the original pickles (no image copies). Only load trusted pickles.
+
+Debug with a subset: ``UNIFORM_STEPS="0 100 200"``.
+
+Step 3 — Train the sparse success LoRA
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Fine-tune Qwen3-VL-4B to answer ``0`` / ``1`` for terminal success
+(``qwen3vl_sft_vlm_trend_success``).
+
+.. code-block:: bash
+
+   export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
+   export PLACEMENT=0-3
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_sparse_success_vlm.sh
+
+What this does:
+
+- LoRA rank 16, ``lr=1e-5``, micro batch 4 / global batch 256, 400 steps,
+  eval/save every 100 steps, class-weighted success loss.
+- Pick the checkpoint with the best **balanced accuracy** (also check positive
+  recall and negative accuracy). Do not trust aggregate accuracy alone.
+- Use that directory later as ``QWENTREND_SUCCESS_CHECKPOINT``.
+  SFT keeps ``actor/model_state_dict/full_weights.pt`` as the full model state
+  and writes the Peft adapter under ``actor/lora_adapter/`` via
+  ``PeftModel.save_pretrained``. The shared loader in
+  ``rlinf/utils/lora_adapter.py`` consumes that adapter artifact (with a
+  legacy ``full_weights.pt`` fallback).
+
+Step 4 — Build dense potential SFT data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Train a small state-value teacher, then build potential / progress windows from
+the same collection.
+
+.. code-block:: bash
+
+   export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export STATE_VALUE_ROOT=/path/to/vlm_trend_state_success_value
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_preprocess_dense_potential_dataset.sh
+
+What this does:
+
+- Fits ``${STATE_VALUE_ROOT}/best.pt``, then writes potential SFT manifests under
+  ``${POTENTIAL_SFT_DATA_ROOT}``.
+
+Step 5 — Train the dense potential LoRA
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Fine-tune Qwen3-VL on the potential / progress labels
+(``qwen3vl_sft_vlm_trend_reward``).
+
+.. code-block:: bash
+
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export OUTPUT_ROOT=/path/to/vlm_trend_potential_vlm_train
+   export PLACEMENT=0-3
+   CUDA_VISIBLE_DEVICES=0,1,2,3 \
+       bash examples/embodiment/qwentrend_success/run_train_dense_potential_vlm.sh
+
+What this does:
+
+- Same LoRA recipe as step 3, but on the potential config.
+- Writes the chosen checkpoint path to ``${OUTPUT_ROOT}/SELECTED_CKPT.txt``.
+  Use that file in steps 6–7 instead of typing the path by hand. The directory
+  keeps full ``full_weights.pt`` and a separate ``actor/lora_adapter/`` artifact
+  for the reward / feature-extraction loaders.
+
+Step 6 — Train the scalar potential head
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Freeze the potential LoRA, extract features with
+``VLMRewardModel.extract_prompt_features``, and train a small scalar head.
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export POTENTIAL_SFT_DATA_ROOT=/path/to/vlm_trend_potential_sft
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export FEAT_ROOT=/path/to/vlm_trend_potential_features
+   export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
+   CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
+       bash examples/embodiment/qwentrend_success/run_train_dense_scalar_head.sh
+
+What this does:
+
+- Shards feature extraction across GPUs, then trains
+  ``${SCALAR_OUTPUT_ROOT}/best.pt``.
+
+Step 7 — Run PPO
+^^^^^^^^^^^^^^^^
+
+Plug both reward pieces into embodied PPO from a policy checkpoint.
+Online inference uses ``vlm_trend_reward_input_builder`` with per-path
+``prompt_template`` overrides, ``inference_mode=scalar_head`` for the dense
+term, and ``vlm_trend_binary_digit_reward_parser`` for the sparse success term.
+
+.. code-block:: bash
+
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export QWENTREND_POTENTIAL_CHECKPOINT="$(cat /path/to/vlm_trend_potential_vlm_train/SELECTED_CKPT.txt)"
+   export QWENTREND_SCALAR_HEAD=/path/to/vlm_trend_scalar_head/best.pt
+   export QWENTREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
+   export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
+   export PPO_OUTPUT_ROOT=/path/to/ppo-output
+   CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
+       INFER_BATCH_SIZE=32 \
+       bash examples/embodiment/run_qwentrend_success_reward.sh
+
+What this does:
+
+- Dense term: potential LoRA + scalar head → bounded potential differences.
+- Sparse term: success LoRA → one-shot ``+1`` when it emits ``1`` (``0`` / invalid
+  → 0). Env reward is off; VLM runs every 5 steps; episodes stay 50 steps to
+  match preprocessing.
+- Eval every 5 steps, save every 20. Actor / rollout / env / reward use GPUs
+  ``0-3``. Reward-server placement follows ``PLACEMENT`` automatically.
+- Resume: set ``RESUME_DIR`` to a saved ``checkpoints/global_step_N`` and set
+  ``MAX_STEPS`` to the target total (e.g. 160 when continuing from step 60).
+
+
 The full workflow has four stages:
 
 1. Data collection: collect raw episode data during RL runs.
@@ -239,6 +431,24 @@ The corresponding config reads the JSONL manifests and per-sample pickle files:
 
 The trained LoRA checkpoint can then be passed to the online reward config through
 ``reward.model.lora_path``.
+
+.. note::
+
+   SFT preserves the framework ``actor/model_state_dict/full_weights.pt`` and
+   exports the Peft adapter separately under ``actor/lora_adapter/`` via
+   ``PeftModel.save_pretrained`` (``adapter_config.json`` +
+   ``adapter_model.safetensors``). The online reward model resolves
+   ``lora_path`` to that adapter artifact (with a legacy ``full_weights.pt``
+   fallback) through the shared ``rlinf.utils.lora_adapter`` API.
+
+   Division of labor with ``rlinf.models.apply_lora``:
+
+   * ``apply_lora`` — attach or create LoRA while constructing a training actor
+     from ``cfg.actor.model`` (``is_lora``, ``lora_path``, etc.).
+   * ``rlinf.utils.lora_adapter`` — resolve SFT checkpoint directory layouts
+     (``global_step_*/actor/lora_adapter``), export adapters beside preserved
+     ``full_weights.pt``, and load those artifacts (or legacy ``full_weights.pt``)
+     into frozen reward models and offline feature scripts.
 
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

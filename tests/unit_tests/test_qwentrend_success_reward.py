@@ -15,15 +15,15 @@
 import torch
 
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    QwentrendTerminalSuccessInputBuilder,
+    VLMTrendRewardInputBuilder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
-    QwentrendBinaryDigitRewardParser,
+    VLMTrendBinaryDigitRewardParser,
 )
 
 
 def test_binary_digit_parser_uses_sparse_rewards():
-    parser = QwentrendBinaryDigitRewardParser(unclear_reward=-0.2)
+    parser = VLMTrendBinaryDigitRewardParser()
 
     rewards = parser.parse_rewards(["1", "0", "answer: 1", "unclear", "10"])
 
@@ -34,9 +34,15 @@ def test_binary_digit_parser_uses_sparse_rewards():
 
 
 def test_terminal_success_builder_matches_sft_prompt(monkeypatch):
-    builder = QwentrendTerminalSuccessInputBuilder(
+    builder = VLMTrendRewardInputBuilder(
         history_buffer_names=["history_window"],
         default_task_description="fallback task",
+        include_task=True,
+        prompt_template=(
+            "Estimate task-conditioned success potential for this robot "
+            "manipulation state.{task_text} The two synchronized videos show "
+            "the same 5-frame history from two camera views."
+        ),
         _processor=None,
     )
     videos = [[["main frames"], ["extra frames"]]]
@@ -56,10 +62,10 @@ def test_terminal_success_builder_matches_sft_prompt(monkeypatch):
     ]
 
 
-def test_history_vlm_returns_zero_before_first_window(monkeypatch):
-    from rlinf.models.embodiment.reward.vlm_reward_model import HistoryVLMRewardModel
+def test_buffered_vlm_returns_zero_before_first_window(monkeypatch):
+    from rlinf.models.embodiment.reward.vlm_reward_model import BufferedVLMRewardModel
 
-    model = object.__new__(HistoryVLMRewardModel)
+    model = object.__new__(BufferedVLMRewardModel)
     model.interval_reward = 0.0
     monkeypatch.setattr(model, "apply_gt_success_bonus", lambda rewards, _: rewards)
 

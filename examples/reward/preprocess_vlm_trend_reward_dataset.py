@@ -38,6 +38,10 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
+from rlinf.data.datasets.vlm_trend_io import (
+    extract_dual_view_frames,
+    to_uint8_rgb,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -77,55 +81,6 @@ def _to_scalar(value: Any) -> float:
     if isinstance(value, np.ndarray):
         return float(value.item())
     return float(value)
-
-
-def _to_uint8_rgb(image: Any) -> np.ndarray:
-    if torch.is_tensor(image):
-        image = image.detach().cpu().numpy()
-    image = np.asarray(image)
-    if image.dtype != np.uint8:
-        image = np.clip(image, 0, 255).astype(np.uint8)
-    if image.ndim == 2:
-        image = np.stack([image, image, image], axis=-1)
-    if image.ndim != 3:
-        raise ValueError(f"Invalid image shape: {image.shape}")
-    return image[..., :3]
-
-
-def _extract_extra_view_image(extra_view_images: Any) -> Any | None:
-    if extra_view_images is None:
-        return None
-    if torch.is_tensor(extra_view_images):
-        if extra_view_images.ndim == 3:
-            return extra_view_images
-        if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-            return extra_view_images[0]
-        return None
-
-    extra_view_images = np.asarray(extra_view_images)
-    if extra_view_images.ndim == 3:
-        return extra_view_images
-    if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-        return extra_view_images[0]
-    return None
-
-
-def _extract_dual_view_frames(
-    observations: list[dict[str, Any]], start_idx: int, end_idx: int
-) -> tuple[list[Any], list[Any]] | None:
-    main_frames = []
-    extra_view_frames = []
-    for idx in range(start_idx, end_idx + 1):
-        obs = observations[idx]
-        main_image = obs.get("main_images")
-        extra_view_image = obs.get("third_view_images")
-        if extra_view_image is None:
-            extra_view_image = _extract_extra_view_image(obs.get("extra_view_images"))
-        if main_image is None or extra_view_image is None:
-            return None
-        main_frames.append(main_image)
-        extra_view_frames.append(extra_view_image)
-    return main_frames, extra_view_frames
 
 
 def _build_prompt(task: str, window_size: int) -> str:
@@ -211,7 +166,7 @@ def load_episodes_with_labels(
             all_samples = []
             for sample_idx, start_idx in enumerate(start_indices):
                 end_idx = start_idx + window_size - 1
-                frames = _extract_dual_view_frames(observations, start_idx, end_idx)
+                frames = extract_dual_view_frames(observations, start_idx, end_idx)
                 if frames is None:
                     continue
 
@@ -473,10 +428,10 @@ def preprocess_and_save_reward_datasets(
                     pickle.dump(
                         {
                             "main_frames": [
-                                _to_uint8_rgb(frame) for frame in sample["main_frames"]
+                                to_uint8_rgb(frame) for frame in sample["main_frames"]
                             ],
                             "extra_view_frames": [
-                                _to_uint8_rgb(frame)
+                                to_uint8_rgb(frame)
                                 for frame in sample["extra_view_frames"]
                             ],
                             "label": sample["label"],

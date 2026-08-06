@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import functools
-import hashlib
 import json
 import pickle
 from pathlib import Path
@@ -28,14 +27,15 @@ from typing import Any
 import torch
 from omegaconf import OmegaConf
 
-from examples.reward.preprocess_qwentrend_state_value_dataset import (
-    _extract_extra_view_image,
-    _to_uint8_rgb,
-)
 from examples.reward.preprocess_qwentrend_state_value_potential_dataset import (
     potential_prompt,
 )
-from rlinf.data.datasets.vlm import QwenTrendProgressSFTDataset
+from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
+from rlinf.data.datasets.vlm_trend_io import (
+    extract_extra_view_image,
+    source_episode_hash,
+    to_uint8_rgb,
+)
 from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
 from rlinf.utils.logging import get_logger
 
@@ -92,13 +92,13 @@ def load_history_frames(
         main = observation.get("main_images")
         extra = observation.get("third_view_images")
         if extra is None:
-            extra = _extract_extra_view_image(observation.get("extra_view_images"))
+            extra = extract_extra_view_image(observation.get("extra_view_images"))
         if main is None or extra is None:
             raise ValueError(
                 f"Missing dual-view image at {row['source_episode_path']}:{index}"
             )
-        main_frames.append(_to_uint8_rgb(main))
-        extra_frames.append(_to_uint8_rgb(extra))
+        main_frames.append(to_uint8_rgb(main))
+        extra_frames.append(to_uint8_rgb(extra))
     return main_frames, extra_frames
 
 
@@ -108,7 +108,7 @@ def encode(
     prompts: list[str],
     videos: list[list[Any]],
 ) -> torch.Tensor:
-    _, inputs, _ = QwenTrendProgressSFTDataset.process_inputs(
+    _, inputs, _ = VLMTrendRewardSFTDataset.process_inputs(
         processor=model._processor,
         system_prompt=None,
         use_chat_template=True,
@@ -120,20 +120,8 @@ def encode(
         key: value.to(model._model.device) if torch.is_tensor(value) else value
         for key, value in inputs.items()
     }
-    outputs = model._model(
-        **inputs,
-        output_hidden_states=True,
-        use_cache=False,
-        return_dict=True,
-    )
-    hidden = outputs.hidden_states[-1]
-    attention_mask = inputs["attention_mask"].bool()
-    positions = torch.arange(
-        attention_mask.shape[1], device=attention_mask.device
-    ).unsqueeze(0)
-    last_positions = positions.masked_fill(~attention_mask, -1).amax(dim=1)
-    batch_ids = torch.arange(hidden.shape[0], device=hidden.device)
-    return hidden[batch_ids, last_positions].float().cpu()
+    # Reuse the reward model's pooling so offline features match online inference.
+    return model.extract_prompt_features(inputs).cpu()
 
 
 def extract_potential(
@@ -210,11 +198,7 @@ def main(args: argparse.Namespace) -> None:
     rows = [
         row
         for row in rows
-        if int(
-            hashlib.sha256(row["source_episode_path"].encode()).hexdigest()[:16],
-            16,
-        )
-        % args.world_size
+        if source_episode_hash(row["source_episode_path"]) % args.world_size
         == args.rank
     ]
     rows.sort(
@@ -231,8 +215,14 @@ def main(args: argparse.Namespace) -> None:
             "lora_path": args.checkpoint,
             "precision": "bf16",
             "inference_mode": "generate",
-            "input_builder_name": "qwentrend_potential_input_builder",
-            "input_builder_params": {"history_buffer_names": ["history_window"]},
+            "input_builder_name": "vlm_trend_reward_input_builder",
+            "input_builder_params": {
+                "history_buffer_names": ["history_window"],
+                "prompt_template": (
+                    "You are currently performing the task: {task}. "
+                    "Given the current state, predict the success potential."
+                ),
+            },
             "reward_parser_name": "base_reward_parser",
             "reward_parser_params": {},
         }

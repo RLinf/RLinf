@@ -33,7 +33,7 @@ for step in ${STEPS}; do
     EMBODIED_PATH="${PWD}" \
     "${PYTHON_BIN}" evaluations/eval_embodied_agent.py \
     --config-path ../examples/embodiment/config \
-    --config-name maniskill_ppo_mlp_qwentrend_collect \
+    --config-name maniskill_ppo_mlp_vlm_trend_reward_collect \
     runner.only_eval=true \
     runner.ckpt_path="${checkpoint}" \
     runner.logger.log_path="${run_dir}" \

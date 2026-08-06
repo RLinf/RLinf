@@ -31,6 +31,10 @@ import torch
 from tqdm.auto import tqdm
 
 from examples.reward.train_state_success_value import StateSuccessValue
+from rlinf.data.datasets.vlm_trend_io import (
+    extract_dual_view_frames,
+    to_uint8_rgb,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -40,56 +44,6 @@ def _to_numpy(value: Any) -> np.ndarray:
     if torch.is_tensor(value):
         value = value.detach().cpu().numpy()
     return np.asarray(value, dtype=np.float32)
-
-
-def _to_uint8_rgb(image: Any) -> np.ndarray:
-    if torch.is_tensor(image):
-        image = image.detach().cpu().numpy()
-    image = np.asarray(image)
-    if image.dtype != np.uint8:
-        image = np.clip(image, 0, 255).astype(np.uint8)
-    if image.ndim == 2:
-        image = np.stack([image, image, image], axis=-1)
-    if image.ndim != 3:
-        raise ValueError(f"Invalid image shape: {image.shape}")
-    return image[..., :3]
-
-
-def _extract_extra_view_image(extra_view_images: Any) -> Any | None:
-    if extra_view_images is None:
-        return None
-    if torch.is_tensor(extra_view_images):
-        if extra_view_images.ndim == 3:
-            return extra_view_images
-        if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-            return extra_view_images[0]
-        return None
-    extra_view_images = np.asarray(extra_view_images)
-    if extra_view_images.ndim == 3:
-        return extra_view_images
-    if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-        return extra_view_images[0]
-    return None
-
-
-def _extract_dual_view_frames(
-    observations: list[dict[str, Any]],
-    start_idx: int,
-    end_idx: int,
-) -> tuple[list[Any], list[Any]] | None:
-    main_frames = []
-    extra_view_frames = []
-    for idx in range(start_idx, end_idx + 1):
-        obs = observations[idx]
-        main_image = obs.get("main_images")
-        extra_view_image = obs.get("third_view_images")
-        if extra_view_image is None:
-            extra_view_image = _extract_extra_view_image(obs.get("extra_view_images"))
-        if main_image is None or extra_view_image is None:
-            return None
-        main_frames.append(main_image)
-        extra_view_frames.append(extra_view_image)
-    return main_frames, extra_view_frames
 
 
 def _build_prompt(task: str, window_size: int) -> str:
@@ -395,7 +349,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
                 >= args.max_samples_per_label_per_split
             ):
                 continue
-            frames = _extract_dual_view_frames(observations, start_idx, end_idx)
+            frames = extract_dual_view_frames(observations, start_idx, end_idx)
             if frames is None:
                 continue
             sample_id = (
@@ -407,9 +361,9 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
             with sample_pkl.open("wb") as f:
                 pickle.dump(
                     {
-                        "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
+                        "main_frames": [to_uint8_rgb(frame) for frame in main_frames],
                         "extra_view_frames": [
-                            _to_uint8_rgb(frame) for frame in extra_view_frames
+                            to_uint8_rgb(frame) for frame in extra_view_frames
                         ],
                         "label": label,
                         "score": delta,

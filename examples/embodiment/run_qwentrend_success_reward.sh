@@ -17,14 +17,19 @@ REWARD_SERVER_PLACEMENT=${REWARD_SERVER_PLACEMENT:-"${PLACEMENT}:0"}
 NUM_ENVS=${NUM_ENVS:-1024}
 MAX_STEPS=${MAX_STEPS:-160}
 INFER_BATCH_SIZE=${INFER_BATCH_SIZE:-32}
+ACTOR_MICRO_BATCH_SIZE=${ACTOR_MICRO_BATCH_SIZE:-1600}
+ACTOR_GLOBAL_BATCH_SIZE=${ACTOR_GLOBAL_BATCH_SIZE:-6400}
 RESUME_DIR=${RESUME_DIR:-null}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-qwentrend_success_ppo}
 PYTHON_BIN=${PYTHON_BIN:-/opt/venv/openvla/bin/python}
 RAY_TMPDIR=${RAY_TMPDIR:-/dev/shm/qppo_$$}
 export RAY_TMPDIR
 
+DEFAULT_TASK_DESCRIPTION=${DEFAULT_TASK_DESCRIPTION:-"Pick up the red cube and place it on the green spot on the table."}
+
+# Pass prompt templates via Hydra struct overrides (quoted strings keep {placeholders}).
 "${PYTHON_BIN}" examples/embodiment/train_embodied_agent.py \
-  --config-name maniskill_ppo_mlp_qwentrend_reward \
+  --config-name maniskill_ppo_mlp_vlm_trend_reward \
   cluster.component_placement.actor="${PLACEMENT}" \
   cluster.component_placement.env="${PLACEMENT}" \
   cluster.component_placement.rollout="${PLACEMENT}" \
@@ -53,8 +58,8 @@ export RAY_TMPDIR
   env.eval.max_episode_steps=50 \
   env.eval.max_steps_per_rollout_epoch=50 \
   data.rollout_batch_size="${NUM_ENVS}" \
-  actor.micro_batch_size=1600 \
-  actor.global_batch_size=6400 \
+  actor.micro_batch_size="${ACTOR_MICRO_BATCH_SIZE}" \
+  actor.global_batch_size="${ACTOR_GLOBAL_BATCH_SIZE}" \
   "rollout.model=\${actor.model}" \
   rollout.enable_torch_compile=false \
   rollout.enable_cuda_graph=false \
@@ -74,8 +79,8 @@ export RAY_TMPDIR
   reward.model.lora_path="${QWENTREND_POTENTIAL_CHECKPOINT}" \
   reward.model.inference_mode=scalar_head \
   +reward.model.scalar_head_path="${QWENTREND_SCALAR_HEAD}" \
-  reward.model.input_builder_name=qwentrend_potential_input_builder \
-  '++reward.model.input_builder_params={default_task_description: "Pick up the red cube and place it on the green spot on the table.", include_task: true, num_bins: 10}' \
+  reward.model.input_builder_name=vlm_trend_reward_input_builder \
+  "++reward.model.input_builder_params={default_task_description: \"${DEFAULT_TASK_DESCRIPTION}\", include_task: true, num_bins: 10, prompt_template: \"You are estimating task-conditioned success potential for a robot manipulation state.{task_text} The two synchronized videos show the same 5-frame history from two camera views. Predict the final state'\''s potential as exactly one digit from 0 to {num_bins_max}, where 0 is furthest from eventual success and {num_bins_max} is closest.\"}" \
   reward.model.history_buffers.history_window.history_size=5 \
   reward.model.history_buffers.history_window.min_history_size=5 \
   reward.model.history_buffers.history_window.input_interval=5 \
@@ -90,9 +95,9 @@ export RAY_TMPDIR
   +reward.model.success_confirmation_windows=1 \
   +reward.model.success_bonus=1.0 \
   +reward.model.success_lora_path="${QWENTREND_SUCCESS_CHECKPOINT}" \
-  +reward.model.success_input_builder_name=qwentrend_terminal_success_input_builder \
-  '++reward.model.success_input_builder_params={default_task_description: "Pick up the red cube and place it on the green spot on the table.", include_task: true}' \
-  +reward.model.success_reward_parser_name=qwentrend_binary_digit_reward_parser \
+  +reward.model.success_input_builder_name=vlm_trend_reward_input_builder \
+  "++reward.model.success_input_builder_params={default_task_description: \"${DEFAULT_TASK_DESCRIPTION}\", include_task: true, prompt_template: \"Estimate task-conditioned success potential for this robot manipulation state.{task_text} The two synchronized videos show the same 5-frame history from two camera views.\"}" \
+  +reward.model.success_reward_parser_name=vlm_trend_binary_digit_reward_parser \
   '++reward.model.success_reward_parser_params={positive_reward: 1.0, negative_reward: 0.0, invalid_reward: 0.0}' \
   reward.model.gt_success_bonus=0.0 \
   "$@"

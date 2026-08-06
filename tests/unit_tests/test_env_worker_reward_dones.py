@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests for EnvWorker → HistoryVLMRewardModel reward path."""
+"""Integration tests for EnvWorker → BufferedVLMRewardModel reward path."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ if "rlinf.envs.wrappers" not in sys.modules:
 
 from rlinf.data.embodied_io_struct import EnvOutput  # noqa: E402
 from rlinf.models.embodiment.reward.vlm_reward_model import (  # noqa: E402
-    HistoryVLMRewardModel,
+    BufferedVLMRewardModel,
 )
 from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 from rlinf.workers.env.history_manager import HistoryManager  # noqa: E402
@@ -129,9 +129,9 @@ def test_get_reward_model_output_reduces_2d_dones_with_any():
 
 def _make_history_reward_model(
     monkeypatch, score_queue: list[tuple]
-) -> HistoryVLMRewardModel:
-    """HistoryVLMRewardModel that uses real compute_reward / state reset paths."""
-    model = object.__new__(HistoryVLMRewardModel)
+) -> BufferedVLMRewardModel:
+    """BufferedVLMRewardModel that uses real compute_reward / state reset paths."""
+    model = object.__new__(BufferedVLMRewardModel)
     model.interval_reward = 0.0
     model.infer_micro_batch_size = 0
     model.inference_mode = "scalar_head"
@@ -168,7 +168,7 @@ def test_reward_computation_across_two_episodes_through_env_worker_path(monkeypa
     """Integration requested by reviewer: two episodes via the env-worker path.
 
     Flow: EnvWorker builds ``reward_input`` (including 1-D ``dones``) →
-    ``HistoryVLMRewardModel.compute_reward`` consumes it. Without attaching
+    ``BufferedVLMRewardModel.compute_reward`` consumes it. Without attaching
     1-D dones, potential / success state would leak across auto-reset.
     """
     worker = _make_env_worker(num_envs=1)

@@ -17,14 +17,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-import pickle
 import random
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+from rlinf.data.datasets.vlm_trend_io import (
+    inspect_episode as shared_inspect_episode,
+)
+from rlinf.data.datasets.vlm_trend_io import (
+    split_for,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -41,20 +45,16 @@ def _as_bool(value: Any) -> bool:
 
 def inspect_episode(path: Path, window_size: int) -> dict[str, Any] | None:
     """Read the metadata needed to sample one rollout episode."""
-    try:
-        with path.open("rb") as stream:
-            episode = pickle.load(stream)
-    except (EOFError, pickle.UnpicklingError, OSError) as error:
-        # Collection can leave truncated pickles if a worker is killed mid-write.
-        logger.warning("Skipping unreadable episode %s: %s", path, error)
+    base = shared_inspect_episode(str(path), window_size)
+    if base is None:
+        logger.warning("Skipping unreadable episode %s", path)
         return None
-    observations = episode.get("observations", [])
-    actions = episode.get("actions", [])
-    if len(observations) < window_size or not actions:
-        return None
-    terminated = episode.get("terminated", [])
-    truncated = episode.get("truncated", [])
-    success = bool(episode.get("success", False))
+    observations = base["observations"]
+    actions = base["actions"]
+    terminated = base["terminated"]
+    truncated = base["truncated"]
+    success = base["success"]
+    infos = base["infos"]
     is_complete = (
         success
         or bool(terminated and terminated[-1])
@@ -63,30 +63,23 @@ def inspect_episode(path: Path, window_size: int) -> dict[str, Any] | None:
     end_step = min(len(observations) - 1, len(actions))
     success_steps = [
         index
-        for index, info in enumerate(episode.get("infos", [])[: end_step + 1])
+        for index, info in enumerate(infos[: end_step + 1])
         if isinstance(info, dict) and _as_bool(info.get("success"))
     ]
     if success and not success_steps:
         success_steps = [end_step]
     return {
-        "path": str(path.resolve()),
+        "path": base["path"],
         "success": success,
         "end_step": end_step,
         "success_steps": success_steps,
         "is_complete": is_complete,
         "task": str(
-            episode.get("task")
-            or episode.get("task_description")
+            base["task"]
             or "Pick up the red cube and place it on the green spot on the table."
         ),
         "source_run": path.parent.parent.name,
     }
-
-
-def split_for(path: str, val_split: float) -> str:
-    """Assign an episode to a stable source-level split."""
-    fraction = int(hashlib.sha256(path.encode()).hexdigest()[:8], 16) / 2**32
-    return "eval" if fraction < val_split else "train"
 
 
 def make_row(
