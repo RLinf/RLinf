@@ -436,12 +436,25 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
-point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT:
+point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT.
+
+``qwen3vl_sft_vlm_trend_reward.yaml`` defaults match the **dual-line Success dense
+LoRA** recipe (micro 4 / global 256, ``max_steps=400``). For the **single-line**
+Trend reward in this section (``inference_mode=generate`` +
+``vlm_trend_reward_parser``), raise the training budget, for example:
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_reward_sft
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward \
+       runner.max_steps=3000 \
+       runner.max_epochs=3000 \
+       actor.optim.total_training_steps=3000
+
+The dual-line Success dense branch (Step 5) can use the YAML defaults as-is and
+does not need those overrides.
 
 The corresponding config reads the JSONL manifests and per-sample pickle files:
 

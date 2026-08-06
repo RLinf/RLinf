@@ -427,12 +427,24 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
-``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT：
+``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT。
+
+``qwen3vl_sft_vlm_trend_reward.yaml`` 的默认超参对齐 **双线 Success 稠密 LoRA**
+（micro 4 / global 256、``max_steps=400``）。若跑本文档的 **单线** Trend
+reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``），请把训练
+预算调大，例如：
 
 .. code-block:: bash
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
+   export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_reward_sft
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward \
+       runner.max_steps=3000 \
+       runner.max_epochs=3000 \
+       actor.optim.total_training_steps=3000
+
+双线 Success 稠密支路（步骤 5）直接用 YAML 默认即可，不必再传上述 override。
 
 对应配置会读取 JSONL manifest 和逐样本 pickle 文件：
 

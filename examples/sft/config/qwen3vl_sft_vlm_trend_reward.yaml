@@ -19,8 +19,9 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
   # Defaults match the dual-line Success dense LoRA recipe
-  # (former run_train_dense_potential_vlm.sh). Raise max_steps for longer
-  # single-line Trend SFT if needed.
+  # (former run_train_dense_potential_vlm.sh). For single-line Trend SFT
+  # (docs §2.3), override runner.max_steps / max_epochs / total_training_steps
+  # (e.g. 3000) via run_vlm_sft.sh extras.
   max_epochs: 400
   max_steps: 400
   val_check_interval: 100
