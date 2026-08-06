@@ -197,9 +197,7 @@ def load_adapter_onto_model(
             model.set_adapter("default")
         return model
 
-    legacy_model = _attach_lora_from_legacy_full_weights(
-        model, lora_path, adapter_name
-    )
+    legacy_model = _attach_lora_from_legacy_full_weights(model, lora_path, adapter_name)
     if legacy_model is not None:
         if adapter_name != "default" and hasattr(legacy_model, "set_adapter"):
             legacy_model.set_adapter("default")

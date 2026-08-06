@@ -308,9 +308,7 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
 
         prompt_texts_list: list[list[str]] = []
         for env_id in valid_input_ids:
-            prompt_texts_list.append(
-                [self._render_prompt(task_descriptions[env_id])]
-            )
+            prompt_texts_list.append([self._render_prompt(task_descriptions[env_id])])
 
         return {
             "images_list": None,

@@ -130,17 +130,15 @@ def test_vlm_trend_loader_slices_raw_episode_window(tmp_path):
     path = tmp_path / "episode.pkl"
     _write_episode(path, observation_count=20, success=True)
 
-    question, answer, videos, image_data = (
-        VLMTrendRewardSFTDataset._parse_raw_record(
-            {
-                "question": "potential",
-                "answer": "1",
-                "pkl_path": str(path),
-                "segment_metadata": {"start_step": 10, "end_step": 14},
-            },
-            idx=0,
-            data_root=None,
-        )
+    question, answer, videos, image_data = VLMTrendRewardSFTDataset._parse_raw_record(
+        {
+            "question": "potential",
+            "answer": "1",
+            "pkl_path": str(path),
+            "segment_metadata": {"start_step": 10, "end_step": 14},
+        },
+        idx=0,
+        data_root=None,
     )
 
     assert question == "potential"
