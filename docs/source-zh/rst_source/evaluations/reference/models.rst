@@ -24,7 +24,7 @@
      - ``libero_spatial_dreamzero_eval``、``libero_spatial_dreamzero_eval_sglang``、``realworld_pnp_eval_dreamzero``
    * - MolmoAct2
      - ``molmoact2``
-     - ``libero_10_molmoact2_eval``
+     - ``libero_spatial_molmoact2_eval``、``libero_object_molmoact2_eval``、``libero_goal_molmoact2_eval``、``libero_10_molmoact2_eval``
    * - LingBotVLA
      - ``lingbotvla``
      - ``robotwin_click_bell_lingbotvla_eval``、``robotwin_place_shoe_lingbotvla_eval``

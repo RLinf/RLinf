@@ -41,18 +41,27 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero (SGLang backend)
+   * - ``libero_spatial_molmoact2_eval.yaml``
+     - Spatial
+     - MolmoAct2
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_molmoact2_eval.yaml``
+     - Object
+     - MolmoAct2
    * - ``libero_goal_openpi_eval.yaml``
      - Goal
      - π₀
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_molmoact2_eval.yaml``
+     - Goal
+     - MolmoAct2
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅

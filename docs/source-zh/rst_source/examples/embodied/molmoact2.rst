@@ -15,9 +15,8 @@ MolmoAct2 评测
 
 本命令会：
 
-1. 使用 Python 3.12 配置 MolmoAct2 环境。
-2. 安装 LIBERO 环境和 RLinf embodied 依赖。
-3. 检出 MolmoAct2 adapter 使用的固定 LeRobot revision。
+1. 安装 LIBERO 环境和 RLinf embodied 依赖。
+2. 安装 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__：RLinf 的 LeRobot fork，其 ``RLinf/molmoact2-hf-inference`` 分支提供 MolmoAct2 policy，并固定了 LIBERO 依赖栈所需的版本。
 
 下载模型
 --------
@@ -27,7 +26,7 @@ MolmoAct2 评测
 .. code-block:: bash
 
    hf download allenai/MolmoAct2-LIBERO \
-     --local-dir /path/to/models/MolmoAct2-LIBERO
+     --local-dir /path/to/model/MolmoAct2-LIBERO
 
 运行
 ----
@@ -37,7 +36,7 @@ MolmoAct2 评测
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_10_molmoact2_eval \
-     rollout.model.model_path=/path/to/models/MolmoAct2-LIBERO
+     rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
 
 本命令会：
 
@@ -49,10 +48,49 @@ MolmoAct2 评测
 
    默认配置会覆盖完整 LIBERO-Long suite，可能需要数小时。如果只需 smoke test，请通过 ``env.eval`` Hydra 覆盖项缩小评测规模。
 
+其他 Task Suite
+---------------
+
+每个 LIBERO task suite 都有对应的配置文件。每个配置使用 20 个并行环境、每个环境 25 个 episode，即完整的 500 条轨迹；step 预算为 ``max_steps_per_rollout_epoch = max_episode_steps x 25``。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 38 20 20
+
+   * - Suite
+     - 配置
+     - ``max_episode_steps``
+     - 轨迹数
+   * - Spatial
+     - ``libero_spatial_molmoact2_eval``
+     - 240
+     - 500
+   * - Object
+     - ``libero_object_molmoact2_eval``
+     - 240
+     - 500
+   * - Goal
+     - ``libero_goal_molmoact2_eval``
+     - 320
+     - 500
+   * - Long
+     - ``libero_10_molmoact2_eval``
+     - 520
+     - 500
+
+以 LIBERO-Spatial 为例：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_molmoact2_eval \
+     rollout.model.model_path=/path/to/model/MolmoAct2-LIBERO
+
 输入与推理设置
 --------------
 
-RLinf 将 ``main_images`` 映射为 MolmoAct2-LIBERO 所需的 agent view，将 ``wrist_images`` 映射为 wrist view。模型 preset 已设置连续动作推理、``norm_tag: libero`` 和 ``num_steps: 10``，无需在命令行中重复设置。
+RLinf 将 ``main_images`` 映射为 MolmoAct2-LIBERO 所需的 agent view，将 ``wrist_images`` 映射为 wrist view，并原样传入 ``states`` 与 ``task_descriptions``；这四个键都是必需的。模型 preset 已在 ``molmoact2`` 配置块中设置连续动作推理、``norm_tag: libero`` 和 ``num_steps: 10``，无需在命令行中重复设置。
+
+MolmoAct2 在上游以 fp32 加载权重，因此 ``rollout.model.precision`` 不会生效。它还会为每个 batch 索引维护独立的动作队列，因此请保持 ``rollout.pipeline_stage_num: 1``。
 
 查看结果
 --------
