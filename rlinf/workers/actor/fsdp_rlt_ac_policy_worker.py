@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
-from rlinf.data.embodied_io_struct import Trajectory
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -527,7 +527,7 @@ class RLTACReplayMixin:
 
                 # Dones have one extra initial slot, so transition t reads
                 # terminal flags from t+1. Rewards are already action-aligned
-                # by EmbodiedRolloutResult because the initial empty reward is
+                # by EmbodiedTrajectoryBuilder because the initial empty reward is
                 # skipped and the final reward is appended after rollout.
                 done_idx = min(
                     t + 1,

@@ -1,5 +1,5 @@
-RL on Embodied Models
-=====================
+Embodied Models
+===============
 
 This category groups examples in which the **model or policy class** is the headline. They show how to onboard a specific model family in RLinf — checkpoint loading, processor / config wiring, action head, lightweight MLP policies, and a reference RL fine-tuning recipe — independent of any single benchmark.
 
@@ -43,17 +43,6 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/lingbotvla.html" style="text-decoration: underline; color: blue;">
-           <b>RL with Lingbot-VLA Model</b>
-         </a><br>
-         Support Lingbot-VLA + RoboTwin + GRPO training
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/dexbotic.html" style="display: block;"><img src="https://raw.githubusercontent.com/dexmal/dexbotic/main/resources/intro.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -76,6 +65,28 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/lingbotvla.html" style="text-decoration: underline; color: blue;">
+           <b>RL with Lingbot-VLA Model</b>
+         </a><br>
+         Support Lingbot-VLA + RoboTwin + GRPO training
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/evo1.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/evo1.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/evo1.html" style="text-decoration: underline; color: blue;">
+           <b>RL on Evo-1 Models</b>
+         </a><br>
+         Train the Evo-1 vision-language-action model with embodied RL
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/abot_m0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ABot-M0.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -83,30 +94,6 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
            <b>RL on ABot-M0 Model</b>
          </a><br>
          ABot-M0 native integration with LIBERO-plus PPO training
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/opensora.html" style="display: block;"><img src="https://raw.githubusercontent.com/hpcaitech/Open-Sora-Demo/main/readme/icon.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/opensora.html" style="text-decoration: underline; color: blue;">
-           <b>RL with OpenSora World Model</b>
-         </a><br>
-         Support OpenSora World Model + OpenVLA-OFT + GRPO training
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/wan.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/wan.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);"
-            data-target="animated-image.originalImage"></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/wan.html" style="text-decoration: underline; color: blue;">
-           <b>RL with Wan World Model</b>
-         </a><br>
-         Support Wan World Model + OpenVLA-OFT + GRPO training
        </p>
      </div>
 
@@ -119,10 +106,8 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
    GR00T <embodied/gr00t>
-   Lingbot-VLA <embodied/lingbotvla>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
+   Lingbot-VLA <embodied/lingbotvla>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
-   OpenSora <embodied/opensora>
-   Wan <embodied/wan>

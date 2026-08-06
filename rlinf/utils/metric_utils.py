@@ -23,7 +23,7 @@ import torch
 import torch.distributed
 
 if TYPE_CHECKING:
-    from rlinf.data.embodied_io_struct import Trajectory
+    from rlinf.data.schema.embodied_types import Trajectory
 
 
 def mean_bool_tensor_rate(

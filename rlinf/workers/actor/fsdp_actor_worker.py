@@ -30,9 +30,9 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel, torch_dtype_from_precision
-from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
-from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
+from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
