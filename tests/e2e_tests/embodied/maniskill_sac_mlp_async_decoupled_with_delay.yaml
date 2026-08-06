@@ -23,13 +23,16 @@ cluster:
     enabled: true
     symmetric: true
     crossdc_pairs:
-      - src: ["Env:0", "Env:1"]
-        dst: ["Rollout:0", "Rollout:1", "Actor:0"]
+      - src: ["Env:0-1"]
+        dst: ["Rollout:0-1", "Actor:0"]
         delay_ms: 10
+      - src: ["Rollout:0-1"]
+        dst: ["Actor:0"]
+        delay_ms: 100
     bandwidth_groups:
-      - members: ["Env:0", "Env:1"]
+      - members: ["Env:0-1"]
         bandwidth_mbps: 1000
-      - members: ["Rollout:0", "Rollout:1", "Actor:0"]
+      - members: ["Rollout:0-1", "Actor:0"]
         bandwidth_mbps: 1000
 
 runner:
