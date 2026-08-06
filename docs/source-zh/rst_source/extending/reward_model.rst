@@ -21,7 +21,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
 下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``。
 训练步骤使用 YAML + ``run_vlm_sft.sh``；仅采集、scalar head 训练与 PPO 保留独立
-启动脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
+launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 ``examples/embodiment/run_vlm_trend_success_reward.sh``。
 
 步骤 1 — 采集 rollout
@@ -37,7 +37,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
    NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
 
 这一步会：
 
@@ -52,7 +52,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 .. code-block:: bash
 
    STEPS="80 120 160" \
-       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
 
 同名 episode 文件会被覆盖。
 
@@ -191,7 +191,7 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
    CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/vlm_trend_success/run_train_dense_scalar_head.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_train_scalar_head.sh
 
 这一步会：
 

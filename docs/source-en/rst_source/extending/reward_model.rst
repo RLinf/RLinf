@@ -41,7 +41,7 @@ Roll out fixed 50-step episodes from checkpoints that cover your policy range.
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
    NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
 
 What this does:
 
@@ -56,7 +56,7 @@ To redo a few failed steps only:
 .. code-block:: bash
 
    STEPS="80 120 160" \
-       bash examples/embodiment/vlm_trend_success/run_collect_uniform_checkpoints.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
 
 Matching episode filenames are overwritten.
 
@@ -196,7 +196,7 @@ Freeze the potential LoRA, extract features with
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
    CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/vlm_trend_success/run_train_dense_scalar_head.sh
+       bash examples/embodiment/vlm_trend_success/run_vlm_trend_train_scalar_head.sh
 
 What this does:
 
