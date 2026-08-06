@@ -209,10 +209,6 @@ RUN chmod +x /usr/local/bin/download_assets
 ##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
-# Clone the LIBERO env repo once into a shared path; every model below reuses it
-# (via clone_or_reuse_repo) instead of re-downloading it per venv.
-ENV LIBERO_PATH=/opt/envs/LIBERO
-
 # Install openvla env
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
@@ -400,10 +396,6 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 # Embodied: LIBERO
 ##################################################################################################
 FROM embodied-common-image AS embodied-libero-image
-
-# Clone the LIBERO env repo once into a shared path; every model below reuses it
-# (via clone_or_reuse_repo) instead of re-downloading it per venv.
-ENV LIBERO_PATH=/opt/envs/LIBERO
 
 # Install openvla, openvla-oft, dreamzero, gr00t, and evo1 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \

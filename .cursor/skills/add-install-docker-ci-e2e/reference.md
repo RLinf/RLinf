@@ -82,7 +82,7 @@ So `run.sh <name>` runs the config `<name>.yaml`.
 
 **Workflow:** In `.github/workflows/embodied-e2e-tests.yml`, add a job patterned on existing ones:
 - Job id: `embodied-<model>-<env>-test`
-- “Create embodied environment”: set `UV_PATH`, `UV_LINK_MODE`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and any path vars (`LIBERO_PATH`, `GR00T_PATH`, `BEHAVIOR_PATH`, etc.), then `bash requirements/install.sh embodied --model <model> --env <env>`
+- “Create embodied environment”: set `UV_PATH`, `UV_LINK_MODE`, `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR`, and any path vars (`GR00T_PATH`, `BEHAVIOR_PATH`, etc.), then `bash requirements/install.sh embodied --model <model> --env <env>`
 - “<Description> test”: `source .venv/bin/activate`, `export REPO_PATH=$(pwd)`, then `bash tests/e2e_tests/embodied/run.sh <config_name>` (or `run_async.sh` for async)
 - “Clean up”: `rm -rf .venv`, `uv cache prune`
 
