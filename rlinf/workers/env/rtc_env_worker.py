@@ -27,7 +27,7 @@ import numpy as np
 import torch
 from omegaconf.omegaconf import DictConfig
 
-from rlinf.data.embodied_io_struct import (
+from rlinf.data.schema.embodied_types import (
     EnvOutput,
     RTCActionResponse,
     RTCRequest,

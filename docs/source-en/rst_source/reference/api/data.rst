@@ -9,14 +9,14 @@ It includes two fundamental structures: `RolloutRequest` and `RolloutResult`.
 RolloutRequest
 ---------------
 
-.. autoclass:: rlinf.data.io_struct.RolloutRequest
+.. autoclass:: rlinf.data.schema.reasoning_requests.RolloutRequest
    :members: 
    :member-order: bysource
 
 RolloutResult
 -----------------------
 
-.. autoclass:: rlinf.data.io_struct.RolloutResult
+.. autoclass:: rlinf.data.schema.reasoning_results.RolloutResult
    :members: 
    :member-order: bysource
    

@@ -28,7 +28,7 @@ try:  # lerobot >= 0.2 layout
 except ModuleNotFoundError:  # lerobot < 0.2
     from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
-from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
+from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()

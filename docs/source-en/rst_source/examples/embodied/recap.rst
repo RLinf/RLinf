@@ -809,7 +809,7 @@ File Structure
    rlinf/
    ├── models/embodiment/value_model/recap/     # value critic, config, checkpoint utils
    ├── data/datasets/recap/                     # value_dataset.py, cfg_model.py, ...
-   └── data/process/                            # shared, model-agnostic (RECAP + STEAM)
+   └── algorithms/offline/process/              # shared, model-agnostic (RECAP + STEAM)
        ├── advantage.py                          # quantile threshold + boolean label
        ├── distributed.py                        # sharded-inference helpers
        └── mixture_config.py                     # meta/mixture_config.yaml tag I/O

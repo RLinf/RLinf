@@ -9,7 +9,7 @@ Replay Buffer 使用教程
 
 .. code-block:: python
 
-   from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+   from rlinf.data.storage.replay import TrajectoryReplayBuffer
 
    buffer = TrajectoryReplayBuffer(
        seed=1234,
@@ -77,7 +77,7 @@ Replay Buffer 使用教程
 
 .. code-block:: bash
 
-   python rlinf/data/replay_buffer.py \
+   python rlinf/data/storage/replay/buffer.py \
      --load-path /path/to/buffer \
      --num-chunks 1024 \
      --cache-size 10 \
