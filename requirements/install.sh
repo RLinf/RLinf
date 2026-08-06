@@ -1359,7 +1359,7 @@ EOF
 
 install_common_embodied_deps() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt "$@"
+    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -1640,16 +1640,10 @@ EOF
 }
 
 install_molmoact2_model() {
-    # MolmoAct2's upstream LeRobot extra requires Python 3.12.
-    PYTHON_VERSION="3.12"
-    local molmoact2_constraints="$SCRIPT_DIR/embodied/models/molmoact2.txt"
-
     case "$ENV_NAME" in
         maniskill_libero|libero)
             create_and_sync_venv
-            install_common_embodied_deps \
-                "numba==0.65.1" \
-                "llvmlite==0.47.0"
+            install_common_embodied_deps
             install_${ENV_NAME}_env
             ;;
         *)
@@ -1658,33 +1652,14 @@ install_molmoact2_model() {
             ;;
     esac
 
+    # RLinf's LeRobot fork carries the MolmoAct2 inference branch on top of
+    # huggingface/lerobot, with the Python 3.11 backports and the NumPy 1.x /
+    # transformers pins the LIBERO stack needs (branch RLinf/molmoact2-hf-inference).
     local molmoact2_lerobot_path
-    local molmoact2_lerobot_ref="${MOLMOACT2_LEROBOT_REF:-28b4f721f931aab554cb176412223f098023705f}"
-    molmoact2_lerobot_path=$(clone_or_reuse_repo MOLMOACT2_LEROBOT_PATH "$VENV_DIR/lerobot-molmoact2" https://github.com/allenai/lerobot.git -b molmoact2-hf-inference)
+    molmoact2_lerobot_path=$(clone_or_reuse_repo MOLMOACT2_LEROBOT_PATH "$VENV_DIR/lerobot" https://github.com/RLinf/lerobot.git -b "${MOLMOACT2_LEROBOT_REF:-RLinf/molmoact2-hf-inference}" --depth 1)
 
-    if ! git -C "$molmoact2_lerobot_path" rev-parse --verify "${molmoact2_lerobot_ref}^{commit}" >/dev/null 2>&1; then
-        git -C "$molmoact2_lerobot_path" fetch origin "$molmoact2_lerobot_ref"
-    fi
-    git -C "$molmoact2_lerobot_path" checkout --detach "$molmoact2_lerobot_ref"
+    uv pip install "$molmoact2_lerobot_path"
 
-    # LeRobot's NumPy 2 stack conflicts with rlinf-libero's NumPy <2 bound.
-    sed -i \
-        -e 's/"numpy>=2.0.0,<2.3.0"/"numpy>=1.26.4,<2.0.0"/' \
-        -e 's/"rerun-sdk>=0.24.0,<0.27.0"/"rerun-sdk==0.22.1"/' \
-        "$molmoact2_lerobot_path/pyproject.toml"
-
-    # Avoid RLinf's uv overrides when the checkout is nested under the venv.
-    pushd "$molmoact2_lerobot_path" >/dev/null
-    uv pip install --no-config -e . "transformers==5.3.0" "numpy==1.26.4"
-    popd >/dev/null
-
-    uv pip check
-
-    python - <<'EOF'
-from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
-
-assert MolmoAct2Config is not None
-EOF
     uv pip uninstall pynvml || true
 }
 
