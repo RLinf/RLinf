@@ -116,10 +116,8 @@ episode，即完整的 500 条轨迹；step 预算为 ``max_episode_steps × 25`
    bash requirements/install.sh embodied --model molmoact2 --env libero
    source .venv/bin/activate
 
-该脚本会安装 `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__：
-RLinf 的 LeRobot fork，其 ``RLinf/molmoact2-hf-inference`` 分支提供 MolmoAct2
-policy，并固定了 LIBERO 依赖栈所需的版本。安装前设置 ``MOLMOACT2_LEROBOT_PATH``
-可以复用已有的 checkout。
+安装前设置 ``MOLMOACT2_LEROBOT_PATH``，可以复用已有的
+`RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__ checkout。
 
 下载模型
 --------

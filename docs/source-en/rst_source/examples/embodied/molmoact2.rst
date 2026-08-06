@@ -119,10 +119,8 @@ Installation
    bash requirements/install.sh embodied --model molmoact2 --env libero
    source .venv/bin/activate
 
-The script installs `RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__,
-RLinf's LeRobot fork whose ``RLinf/molmoact2-hf-inference`` branch provides the
-MolmoAct2 policy and pins the dependency versions the LIBERO stack needs. Set
-``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout.
+Set ``MOLMOACT2_LEROBOT_PATH`` before installing to reuse an existing checkout of
+`RLinf/lerobot <https://github.com/RLinf/lerobot/tree/RLinf/molmoact2-hf-inference>`__.
 
 Download the Model
 ------------------
