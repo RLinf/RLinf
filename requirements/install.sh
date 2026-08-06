@@ -11,6 +11,7 @@ PYTHON_VERSION="3.11.14"
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
+ENGINE=""
 TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
@@ -49,6 +50,9 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 DISABLE_FLASH_ATTN=0
 # User-level opt-out for apex, set by --no-apex. Wins over the platform default.
 DISABLE_APEX=0
+# Platform torchcodec pin; when set it wins over the version-derived one (the
+# derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
+PLATFORM_TORCHCODEC_SPEC=""
 # Whether apply_torch_override should rewrite the pyproject.toml `torchcodec`
 # pin from ==0.2 to >=0.5. The ==0.2 line in override-dependencies has wheels
 # only for x86_64 + torch 2.5/2.6, so it breaks on AMD (torch 2.8 from rocm
@@ -80,7 +84,8 @@ GITHUB_PREFIX=""
 NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0")
+SUPPORTED_ENGINES=("sglang" "vllm")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "evo1")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -107,8 +112,14 @@ Common options:
                            duration of the install; the original is restored on exit. On
                            --platform amd, defaults to the lowest torch version with a matching
                            +rocm<version> wheel on https://download.pytorch.org/whl/torch/.
-    --sglang <version>    Override sglang version (e.g., 0.5.4). xgrammar is
-                           auto-derived from the sglang version.
+    --engine <name>        Rollout engine for target=agentic: ${SUPPORTED_ENGINES[*]}
+                           (default: sglang). One venv holds one engine -- they pin the
+                           same kernel libraries to different versions, so run install.sh
+                           twice with different --venv to get both.
+    --sglang <version>     Override sglang version (e.g., 0.5.4). Must be one of the
+                           versions in requirements/agentic/; torch is derived from it.
+    --vllm <version>       Override vllm version (e.g., 0.23.0). Must be one of the
+                           versions in requirements/agentic/.
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
@@ -173,6 +184,22 @@ parse_args() {
                     exit 1
                 fi
                 SGLANG_VERSION="${2:-}"
+                shift 2
+                ;;
+            --vllm)
+                if [ -z "${2:-}" ]; then
+                    echo "--vllm requires a version argument (e.g. 0.23.0)." >&2
+                    exit 1
+                fi
+                VLLM_VERSION="${2:-}"
+                shift 2
+                ;;
+            --engine)
+                if [[ ! " ${SUPPORTED_ENGINES[*]} " =~ " ${2:-} " ]]; then
+                    echo "--engine requires one of: ${SUPPORTED_ENGINES[*]}." >&2
+                    exit 1
+                fi
+                ENGINE="${2:-}"
                 shift 2
                 ;;
             --transformers)
@@ -395,6 +422,31 @@ EOF
     echo "${ver%%.*} ${ver#*.}"
 }
 
+detect_nvidia_driver_max_cuda() {
+    command -v nvidia-smi &>/dev/null || return 1
+    local ver maj min
+    ver=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | head -1 | grep -oE '[0-9]+\.[0-9]+')
+    [ -n "$ver" ] || return 1
+    maj=${ver%%.*}
+    min=${ver#*.}
+    echo "$(( maj * 10 + min ))"
+}
+
+detect_nvidia_torch_cuda_tag() {
+    local torch_ver="$1" index_base="$2" driver_num="$3"
+    local ver_re n listing
+    ver_re=$(printf '%s' "$torch_ver" | sed 's/\./\\./g')
+    for n in 130 129 128 126 124 121 118; do
+        [ "$n" -le "$driver_num" ] || continue
+        listing=$(curl -fsSL --max-time 60 "${index_base}/cu${n}/torch/" 2>/dev/null) || continue
+        if grep -qE "torch-${ver_re}(%2B|\+)cu${n}-" <<< "$listing"; then
+            echo "cu${n}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 configure_nvidia() {
     PLATFORM_TORCH_STR=""
     PLATFORM_TORCH_INDEX=""
@@ -407,9 +459,67 @@ configure_nvidia() {
     PLATFORM_FLASH_ATTN_INSTALL=1
     PLATFORM_FLASH_ATTN_PREBUILT=1
     PLATFORM_RELAX_TORCHCODEC=0
+    PLATFORM_TORCHCODEC_SPEC=""
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_CUDA_TAG=""
+    local _uvtb_user_set=1
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
+        _uvtb_user_set=0
         export UV_TORCH_BACKEND="$DEFAULT_BACKEND_NVIDIA"
+    fi
+
+    local _torch_ver _tmaj _tmin _rest _driver_num _index_base _cuda_tag
+    _torch_ver="$TORCH_VERSION"
+    if [ -z "$_torch_ver" ] && [ -f "$PYPROJECT_FILE" ]; then
+        _torch_ver=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
+    fi
+    _tmaj=${_torch_ver%%.*}
+    _rest=${_torch_ver#*.}
+    _tmin=${_rest%%.*}
+    if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]] \
+        && { [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
+        local _cpu_only=0
+        # An explicit UV_TORCH_BACKEND=cuXXX wins over driver detection, for
+        # hosts with CUDA forward-compatibility libraries installed.
+        if [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^cu[0-9]+$ ]]; then
+            _driver_num="${UV_TORCH_BACKEND#cu}"
+            echo "[install.sh] UV_TORCH_BACKEND=${UV_TORCH_BACKEND} was set explicitly; using it instead of the detected driver CUDA version."
+        elif ! _driver_num=$(detect_nvidia_driver_max_cuda); then
+            local _cmm _cmaj _cmin
+            if _cmm=$(detect_cuda_major_minor); then
+                read -r _cmaj _cmin <<< "$_cmm"
+                _driver_num=$(( _cmaj * 10 + _cmin ))
+                echo "[install.sh] No NVIDIA driver detected; using CUDA toolkit ${_cmaj}.${_cmin} (cu${_driver_num}) for the torch build (e.g. docker build)."
+            else
+                _cpu_only=1
+                echo "[install.sh] No NVIDIA driver or CUDA toolkit detected; using CPU-only torch."
+            fi
+        fi
+        if [ "$USE_MIRRORS" -eq 1 ]; then
+            _index_base="https://mirrors.tencent.com/pytorch-wheels/whl"
+        else
+            _index_base="https://download.pytorch.org/whl"
+        fi
+        if [ "$_cpu_only" -eq 1 ]; then
+            PLATFORM_TORCH_STR=""
+            PLATFORM_TORCH_INDEX="${_index_base}/cpu"
+            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+            if [ "$_uvtb_user_set" -eq 0 ]; then
+                export UV_TORCH_BACKEND="cpu"
+            fi
+            echo "[install.sh] Routing torch ${_torch_ver} (cpu) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
+        elif _cuda_tag=$(detect_nvidia_torch_cuda_tag "$_torch_ver" "$_index_base" "$_driver_num"); then
+            PLATFORM_CUDA_TAG="$_cuda_tag"
+            PLATFORM_TORCH_STR="+${_cuda_tag}"
+            PLATFORM_TORCH_INDEX="${_index_base}/${_cuda_tag}"
+            PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+            if [ "$_uvtb_user_set" -eq 0 ]; then
+                export UV_TORCH_BACKEND="$_cuda_tag"
+            fi
+            echo "[install.sh] Driver supports CUDA <= ${_driver_num}; routing torch ${_torch_ver} (${_cuda_tag}) through ${PLATFORM_TORCH_INDEX} (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})."
+        else
+            echo "[install.sh] Could not resolve a driver-compatible CUDA wheel for torch ${_torch_ver}; leaving torch on the default index (UV_TORCH_BACKEND=${UV_TORCH_BACKEND})." >&2
+        fi
     fi
 }
 
@@ -456,6 +566,7 @@ configure_amd() {
     PLATFORM_FLASH_ATTN_INSTALL=1
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
+    PLATFORM_TORCHCODEC_SPEC=""
     PLATFORM_EXTRA_OVERRIDES=()
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="rocm${ROCM_VERSION}"
@@ -476,7 +587,15 @@ configure_ascend() {
     PLATFORM_FLASH_ATTN_INSTALL=0
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
+    # The derived pin (==0.2 for torch 2.6) is x86_64-only; Ascend is aarch64.
+    PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.5"
     PLATFORM_EXTRA_OVERRIDES=()
+    # torch-npu tracks torch 1:1 and needs a matching CANN (2.11.0 wants CANN
+    # 8.5.0), so Ascend stays on torch 2.6. Bump with the hosts' CANN.
+    if [ -z "$TORCH_VERSION" ]; then
+        TORCH_VERSION="2.6.0"
+        echo "[install.sh] ascend: pinning torch ${TORCH_VERSION} to match torch-npu/CANN (pass --torch to override)."
+    fi
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         # `cpu` keeps `uv pip install torch ...` calls fetching the CPU build
         # from download.pytorch.org/whl/cpu instead of PyPI's CUDA wheel.
@@ -489,6 +608,23 @@ configure_ascend() {
     # C compilations during this install so the constants are always visible.
     if [ -f /usr/include/linux/input-event-codes.h ]; then
         export CFLAGS="${CFLAGS:+$CFLAGS }-include /usr/include/linux/input-event-codes.h"
+    fi
+}
+
+# Envs that need a different torch than the project default (Isaac Sim /
+# OmniGibson need 2.5.1) declare it here, so configure_platform and
+# apply_torch_override re-point TORCH_VERSION, the wheel index and
+# UV_TORCH_BACKEND together instead of a mid-install `uv pip install torch==...`
+# that leaves a mixed torch tree. An explicit --torch always wins.
+apply_env_default_torch() {
+    [ -n "$TORCH_VERSION" ] && return 0
+    local env_torch=""
+    case "$ENV_NAME" in
+        behavior) env_torch="2.5.1" ;;
+    esac
+    if [ -n "$env_torch" ]; then
+        TORCH_VERSION="$env_torch"
+        echo "[install.sh] Environment '${ENV_NAME}' pins torch ${TORCH_VERSION}; overriding the project default."
     fi
 }
 
@@ -595,45 +731,111 @@ restore_pyproject() {
     fi
 }
 
-apply_sglang_override() {
-    if [ -z "$SGLANG_VERSION" ] && [ -z "$TRANSFORMERS_VERSION" ] && [ -z "$XGRAMMAR_VERSION" ]; then
-        return 0
-    fi
+AGENTIC_DEFAULT_ENGINE="sglang"
 
-    if [ ! -f "$PYPROJECT_FILE" ]; then
-        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
+agentic_latest_version() {
+    ls "$SCRIPT_DIR/agentic/" 2>/dev/null \
+        | sed -nE "s/^$1_(.*)_(cu1[23])\.txt\$/\1/p" \
+        | sort -Vu \
+        | tail -n1
+}
+
+effective_engine() {
+    printf '%s\n' "${ENGINE:-$AGENTIC_DEFAULT_ENGINE}"
+}
+
+effective_engine_version() {
+    local engine
+    engine=$(effective_engine)
+    case "$engine" in
+        sglang) printf '%s\n' "${SGLANG_VERSION:-$(agentic_latest_version sglang)}" ;;
+        vllm)   printf '%s\n' "${VLLM_VERSION:-$(agentic_latest_version vllm)}" ;;
+    esac
+}
+
+agentic_torch_for_engine() {
+    case "$(effective_engine):$(effective_engine_version)" in
+        sglang:0.4.6.post5)        echo "2.6.0" ;;
+        sglang:0.5.2|sglang:0.5.4) echo "2.8.0" ;;
+        vllm:0.8.5)                echo "2.6.0" ;;
+        *)                         echo "-" ;;
+    esac
+}
+
+engine_needs_torch211() {
+    [ "$(agentic_torch_for_engine)" = "-" ]
+}
+
+agentic_cuda_line() {
+    case "${PLATFORM_CUDA_TAG:-}" in
+        cu13*) echo "cu13" ;;
+        *)     echo "cu12" ;;
+    esac
+}
+
+agentic_requirements_file() {
+    # $1 = engine (sglang|vllm), $2 = version
+    local line path
+    line=$(agentic_cuda_line)
+    path="$SCRIPT_DIR/agentic/$1_$2_${line}.txt"
+    if [ ! -f "$path" ]; then
+        echo "[install.sh] ERROR: no $1 $2 build for ${line}. Available:" >&2
+        ls "$SCRIPT_DIR/agentic/" | sed -nE "s/^$1_(.*)_(cu1[23])\.txt$/  $1 \1 (\2)/p" >&2
         exit 1
     fi
+    printf '%s\n' "$path"
+}
 
-    # Reuse an existing backup if apply_torch_override already created one.
-    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
-        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-sglang-bak.$$"
-        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
-        trap 'restore_pyproject' EXIT INT TERM HUP
+install_engine_requirements() {
+    local req="$1" engine_specs engine_req
+    engine_specs=$(sed -n 's/^# engine: //p' "$req")
+    local index_args=()
+    if [ -n "${PLATFORM_TORCH_INDEX:-}" ]; then
+        index_args=(--extra-index-url "$PLATFORM_TORCH_INDEX" --index-strategy unsafe-best-match)
     fi
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$req"
+    if [ -n "$engine_specs" ]; then
+        engine_req=$(mktemp)
+        printf '%s\n' "$engine_specs" > "$engine_req"
+        env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" --no-deps -r "$engine_req"
+        rm -f "$engine_req"
+    fi
+}
 
-    if [ -n "$SGLANG_VERSION" ]; then
-        sed -i \
-            -e "s/\"sglang\[all\]==[^\"]*\"/\"sglang[all]==${SGLANG_VERSION}\"/" \
-            "$PYPROJECT_FILE"
-        echo "[install.sh] Patched pyproject.toml optional-dependencies: sglang[all]==${SGLANG_VERSION}"
-    fi
-
-    if [ -n "$TRANSFORMERS_VERSION" ]; then
-        sed -i \
-            -e "s/\"transformers==[^\"]*\"/\"transformers==${TRANSFORMERS_VERSION}\"/" \
-            "$PYPROJECT_FILE"
-        echo "[install.sh] Patched pyproject.toml optional-dependencies: transformers==${TRANSFORMERS_VERSION}"
-    fi
+derive_torchcodec_spec() {
+    local tmaj="$1" tmin="$2"
+    [ "$tmaj" = "2" ] || { echo ""; return 0; }
+    case "$tmin" in
+        6)  echo "torchcodec==0.2" ;;
+        7)  echo "torchcodec>=0.3,<0.6" ;;
+        8)  echo "torchcodec>=0.6,<0.8" ;;
+        9)  echo "torchcodec>=0.8,<0.10" ;;
+        10) echo "torchcodec>=0.10,<0.11" ;;
+        11) echo "torchcodec>=0.11,<0.12" ;;
+        *)
+            if [ "$tmin" -le 5 ] 2>/dev/null; then
+                echo "torchcodec==0.1"
+            elif [ "$tmin" -ge 12 ] 2>/dev/null; then
+                echo "torchcodec>=0.12"
+            else
+                echo ""
+            fi
+            ;;
+    esac
+}
 
 VLLM_VERSION=""
 
-    if [ -n "$XGRAMMAR_VERSION" ]; then
-        sed -i \
-            -e "s/\"xgrammar==[^\"]*\"/\"xgrammar==${XGRAMMAR_VERSION}\"/" \
-            "$PYPROJECT_FILE"
-        echo "[install.sh] Patched pyproject.toml override-dependencies: xgrammar==${XGRAMMAR_VERSION}"
-    fi
+apply_agentic_torch_default() {
+    [ "$TARGET" = "agentic" ] || return 0
+    # --torch wins; on AMD, configure_amd derives torch from the ROCm version.
+    [ -z "$TORCH_VERSION" ] || return 0
+    [ "$PLATFORM" != "amd" ] || return 0
+    local torch_ver
+    torch_ver=$(agentic_torch_for_engine)
+    [ "$torch_ver" != "-" ] || return 0
+    TORCH_VERSION="$torch_ver"
+    echo "[install.sh] agentic: $(effective_engine) $(effective_engine_version) needs torch ${TORCH_VERSION}; pinning it (pass --torch to override)."
 }
 
 apply_torch_override() {
@@ -645,18 +847,23 @@ apply_torch_override() {
     # torchcodec pin for non-x86_64 / non-CUDA torch combos), or
     # PLATFORM_EXTRA_OVERRIDES has entries (insert extra override pins).
 
-    # torchcodec==0.2 only has wheels for torch<=2.6. Relax the pin whenever
-    # the effective torch version exceeds 2.6, regardless of platform.
     local _eff_torch="${TORCH_VERSION}"
     if [ -z "$_eff_torch" ] && [ -f "$PYPROJECT_FILE" ]; then
         _eff_torch=$(sed -nE 's/.*"torch==([^"+]+).*".*/\1/p' "$PYPROJECT_FILE" | head -1)
     fi
-    if [ -n "$_eff_torch" ]; then
+    local _torchcodec_spec="" _cur_torchcodec=""
+    if [ -n "$PLATFORM_TORCHCODEC_SPEC" ]; then
+        _torchcodec_spec="$PLATFORM_TORCHCODEC_SPEC"
+    elif [ -n "$_eff_torch" ]; then
         local _tmaj _tmin _tpatch
         IFS='.' read -r _tmaj _tmin _tpatch <<< "$_eff_torch"
-        if [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -gt 6 ]; }; then
-            PLATFORM_RELAX_TORCHCODEC=1
-        fi
+        _torchcodec_spec=$(derive_torchcodec_spec "$_tmaj" "$_tmin")
+    fi
+    if [ -f "$PYPROJECT_FILE" ]; then
+        _cur_torchcodec=$(sed -nE 's/.*"(torchcodec[<>=!][^"]*)".*/\1/p' "$PYPROJECT_FILE" | head -1)
+    fi
+    if [ -n "$_torchcodec_spec" ] && [ "$_torchcodec_spec" != "$_cur_torchcodec" ]; then
+        PLATFORM_RELAX_TORCHCODEC=1
     fi
 
     local needs_torch_rewrite=0
@@ -678,15 +885,9 @@ apply_torch_override() {
     cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
     trap 'restore_pyproject' EXIT INT TERM HUP
 
-    if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ]; then
-        # The pyproject.toml `torchcodec==0.2` override only has wheels for
-        # x86_64 + torch ~2.5/2.6. It breaks on AMD (our torch override pins
-        # 2.8 from the rocm index) and on Ascend (typically aarch64, where
-        # 0.2.x has no wheels). Relaxing to >=0.5 lets uv pick a wheel for
-        # the resolved environment; transitive pins like lerobot==0.1.0's
-        # ==0.2 are superseded by override-dependencies.
-        sed -i 's/"torchcodec==0\.2"/"torchcodec>=0.5"/' "$PYPROJECT_FILE"
-        echo "[install.sh] Relaxed torchcodec override to >=0.5 for ${PLATFORM} compatibility"
+    if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$_torchcodec_spec" ]; then
+        sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${_torchcodec_spec}\"/" "$PYPROJECT_FILE"
+        echo "[install.sh] Set torchcodec override to ${_torchcodec_spec} for torch ${_eff_torch}"
     fi
 
     if [ ${#PLATFORM_EXTRA_OVERRIDES[@]} -gt 0 ]; then
@@ -874,7 +1075,6 @@ EOF
 }
 
 install_flash_attn() {
-    # Base release info – adjust when bumping flash-attn
     local flash_ver="2.7.4.post1"
 
     if [ "$DISABLE_FLASH_ATTN" -eq 1 ]; then
@@ -906,9 +1106,6 @@ EOF
     fi
 
     local prebuilt_flash_versions=("$flash_ver")
-    if [ "$flash_ver" != "2.8.3" ]; then
-        prebuilt_flash_versions+=("2.8.3")
-    fi
 
     if [ "$PLATFORM_FLASH_ATTN_PREBUILT" -ne 1 ]; then
         echo "[install.sh] Building flash-attn==${flash_ver} from source on platform=${PLATFORM}..."
@@ -945,7 +1142,7 @@ EOF
     local cuda_mm cuda_major
     cuda_mm=$(detect_cuda_major_minor) || {
         echo "[install.sh] Could not detect CUDA version; falling back to source build." >&2
-        uv pip install "flash-attn==${flash_ver}" --no-build-isolation
+        FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
         return 0
     }
     cuda_major="${cuda_mm%% *}"
@@ -964,15 +1161,21 @@ EOF
 )
 
     uv pip uninstall flash-attn || true
-    local prebuilt_ver base_url wheel_name
+    local prebuilt_ver base_url wheel_name flash_attn_release_hosts host
+    flash_attn_release_hosts=(
+        "https://github.com/Dao-AILab/flash-attention/releases/download"
+        "https://github.com/RLinf/flash-attention/releases/download"
+    )
     for prebuilt_ver in "${prebuilt_flash_versions[@]}"; do
-        base_url="${GITHUB_PREFIX}https://github.com/Dao-AILab/flash-attention/releases/download/v${prebuilt_ver}"
         wheel_name="flash_attn-${prebuilt_ver}+${cu_tag}${torch_tag}${cxx_abi}-${py_tag}-${abi_tag}-${platform_tag}.whl"
-        echo "[install.sh] Installing flash-attn prebuilt wheel from v${prebuilt_ver}..."
-        if uv pip install "${base_url}/${wheel_name}"; then
-            return 0
-        fi
-        echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install."
+        for host in "${flash_attn_release_hosts[@]}"; do
+            base_url="${GITHUB_PREFIX}${host}/v${prebuilt_ver}"
+            echo "[install.sh] Installing flash-attn prebuilt wheel ${wheel_name} from ${host}..."
+            if uv pip install "${base_url}/${wheel_name}"; then
+                return 0
+            fi
+            echo "[install.sh] flash-attn prebuilt wheel v${prebuilt_ver} was unavailable or failed to install from ${host}."
+        done
     done
     echo "Flash attn installation via prebuilt wheels failed. Attempting to install from source..."
     FLASH_ATTENTION_FORCE_BUILD=TRUE uv pip install "flash-attn==${flash_ver}" --no-build-isolation
@@ -1015,13 +1218,31 @@ EOF
     local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
     local abi_tag="${py_tag}"                 # we assume cpXY-cpXY ABI, adjust if needed
     local platform_tag="linux_x86_64"
-    local wheel_name="apex-0.1+${torch_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
-        
+    # Newer wheels embed the CUDA major (e.g. +cu13torch2.11); prefer that, then
+    # fall back to the legacy torch-only name, then a source build.
+    local torch_cu
+    torch_cu=$(python - <<'EOF'
+import torch
+v = (torch.version.cuda or "").split(".")
+print("cu" + v[0] if v and v[0] else "")
+EOF
+)
+    local wheel_cu=""
+    [ -n "$torch_cu" ] && wheel_cu="apex-0.1+${torch_cu}${torch_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
+    local wheel_legacy="apex-0.1+${torch_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
+
     uv pip uninstall apex || true
     export NUM_THREADS=$(nproc)
     export NVCC_APPEND_FLAGS=${NVCC_APPEND_FLAGS:-"--threads ${NUM_THREADS}"}
     export APEX_PARALLEL_BUILD=${APEX_PARALLEL_BUILD:-${NUM_THREADS}}
-    uv pip install "${base_url}/${wheel_name}" || (echo "Apex installation via wheel failed. Attempting to install from source..."; APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/apex.git --no-build-isolation)
+    if [ -n "$wheel_cu" ] && uv pip install "${base_url}/${wheel_cu}"; then
+        :
+    elif uv pip install "${base_url}/${wheel_legacy}"; then
+        :
+    else
+        echo "Apex installation via wheel failed. Attempting to install from source..."
+        APEX_CPP_EXT=1 APEX_CUDA_EXT=1 uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/apex.git --no-build-isolation
+    fi
 }
 
 clone_or_reuse_repo() {
@@ -1050,6 +1271,17 @@ clone_or_reuse_repo() {
             git clone "$@" "$git_url" "$target_dir" >&2
         else
             echo "Reusing existing checkout at $env_var_name=$target_dir." >&2
+            local want_ref="" prev="" arg current_ref
+            for arg in "$@"; do
+                [ "$prev" = "-b" ] && want_ref="$arg"
+                prev="$arg"
+            done
+            if [ -n "$want_ref" ] && [ -d "$target_dir/.git" ]; then
+                current_ref=$(git -C "$target_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+                if [ -n "$current_ref" ] && [ "$current_ref" != "$want_ref" ]; then
+                    echo "[install.sh] WARNING: $env_var_name=$target_dir is on '${current_ref}', but this install asked for '${want_ref}'. Unset $env_var_name to have install.sh clone the right one." >&2
+                fi
+            fi
         fi
     else
         target_dir="$default_dir"
@@ -1096,7 +1328,9 @@ install_qwen3_vl_sglang_deps() {
         exit 1
     fi
 
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic --inexact --active $NO_INSTALL_RLINF_CMD
+    install_engine_requirements "$(agentic_requirements_file sglang "$SGLANG_VERSION")"
+    uv pip install "transformers==${TRANSFORMERS_VERSION}"
     python - "$TORCH_VERSION" "$SGLANG_VERSION" "$TRANSFORMERS_VERSION" <<'EOF'
 from importlib.metadata import version
 import sys
@@ -1293,7 +1527,7 @@ install_openpi_model() {
             PYTHON_VERSION="3.10"
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
             uv pip install protobuf==6.33.0
             pushd ~ >/dev/null
@@ -1304,27 +1538,27 @@ install_openpi_model() {
             create_and_sync_venv
             install_common_embodied_deps
             install_${ENV_NAME}_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
         metaworld)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_metaworld_env
             ;;
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_calvin_env
             ;;
         robocasa)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_robocasa_env
             ;;
@@ -1338,14 +1572,14 @@ install_openpi_model() {
         robotwin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_robotwin_env
             ;;
         isaaclab)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_isaaclab_env
             # Torch is modified in Isaac Lab, install flash-attn afterwards
             install_flash_attn
@@ -1354,7 +1588,7 @@ install_openpi_model() {
         roboverse)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_roboverse_env
             ;;
@@ -1366,14 +1600,14 @@ install_openpi_model() {
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
             install_franka_franky_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             ;;
         polaris)
             create_and_sync_venv
             install_common_embodied_deps
             install_polaris_env
-            uv pip install git+${GITHUB_PREFIX}https://github.com/RLinf/openpi
+            uv pip install "rlinf-openpi==0.1.1"
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for OpenPI model." >&2
@@ -1396,6 +1630,12 @@ EOF
         "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
+    # rlinf-openpi pulls rlinf-transformer-openpi (a transformers 4.53 fork) into
+    # the same package dir as the stock transformers, so two distributions claim
+    # `transformers` with conflicting tokenizers bounds. The fork's files win at
+    # runtime, so re-assert its bound; otherwise a later resolve drifts tokenizers
+    # past 0.22 and transformers refuses to import.
+    uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
 }
 
@@ -1437,6 +1677,34 @@ install_starvla_model() {
     uv pip uninstall pynvml || true
 }
 
+install_evo1_model() {
+    # Evo-1 = InternVL3-1B + flow-matching action head (branch: evo1-flash).
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Evo-1 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local evo1_path
+    evo1_path=$(clone_or_reuse_repo EVO1_PATH "$VENV_DIR/Evo-1" https://github.com/RLinf/Evo-1.git -b "${EVO1_GIT_REF:-evo1-flash}" --depth 1)
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/evo1.txt"
+
+    # The RLinf fork carries packaging metadata, so 'import scripts.Evo1' and
+    # 'import config' resolve from a normal install. Editable, because Evo-1
+    # resolves its dataset cache relative to __file__.
+    uv pip install -e "$evo1_path"
+
+    install_flash_attn
+    uv pip uninstall pynvml || true
+}
+
 install_gr00t_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -1446,14 +1714,11 @@ install_gr00t_model() {
     uv pip install -e "$gr00t_path" --no-deps
     maybe_build_decord_from_source
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
-    if [ "$PLATFORM" = "ascend" ]; then
-        echo "[install.sh] Applying Ascend GR00T compatibility pins"
-        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/gr00t.txt"
-    fi
     case "$ENV_NAME" in
         maniskill_libero|libero)
             install_${ENV_NAME}_env
             install_flash_attn
+            uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t.txt"
             ;;
         isaaclab)
             install_isaaclab_env
@@ -1466,6 +1731,10 @@ install_gr00t_model() {
             exit 1
             ;;
     esac
+    if [ "$PLATFORM" = "ascend" ]; then
+        echo "[install.sh] Applying Ascend GR00T compatibility pins"
+        uv pip install -r "$SCRIPT_DIR/embodied/models/ascend/gr00t.txt"
+    fi
     uv pip uninstall pynvml || true
 }
 
@@ -1474,7 +1743,7 @@ install_gr00t_n1d6_model() {
     install_common_embodied_deps
 
     local gr00t_path
-    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/NVIDIA/Isaac-GR00T.git" -b n1.6.1-release)
+    gr00t_path=$(clone_or_reuse_repo GR00T_PATH "$VENV_DIR/gr00t" "https://github.com/RLinf/Isaac-GR00T.git" -b n1.6.1-release)
     uv pip install -e "$gr00t_path" --no-deps
     uv pip install -r "$SCRIPT_DIR/embodied/models/gr00t_n1d6.txt"
 
@@ -1737,6 +2006,10 @@ install_env_only() {
         polaris)
             install_polaris_env
             ;;
+        libero|maniskill_libero)
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for env-only installation." >&2
             exit 1
@@ -1750,15 +2023,54 @@ install_dummy_env() {
     uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
 }
 
-install_libero_env() {
-    # Use LIBERO_PATH as the checkout location if set (shared, cloned on first use);
-    # otherwise clone into the venv.
-    local libero_dir
-    libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
+# LIBERO and its forks cache absolute paths in ~/.libero, ~/.liberopro and
+# ~/.liberoplus on first import and never refresh them, so a config left by an
+# earlier install points at assets this venv does not have.
+# LIBERO resolves its data paths with os.path.realpath(__file__), so under
+# UV_LINK_MODE=symlink (what CI uses) they point into the shared uv cache
+# archive, while libero-download-assets writes into site-packages. Reinstall the
+# package with copied files so both agree.
+materialize_package_files() {
+    local dist="$1" ver
+    ver=$(uv pip show "$dist" 2>/dev/null | sed -n 's/^Version: //p')
+    [ -n "$ver" ] || return 0
+    UV_LINK_MODE=copy uv pip install --force-reinstall --no-deps "${dist}==${ver}"
+}
 
-    uv pip install -e "$libero_dir"
-    uv pip install "mujoco<=3.9.0"
-    echo "export PYTHONPATH=$(realpath "$libero_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
+reset_libero_config() {
+    python - <<'EOF'
+import importlib
+
+for package in ("libero.libero", "liberopro.liberopro", "liberoplus.liberoplus"):
+    try:
+        module = importlib.import_module(package)
+    except ImportError:
+        continue
+    module.set_libero_default_path()
+    print(f"[install.sh] Reset {package} config paths to the installed package")
+EOF
+}
+
+retry_cmd() {
+    local max=5 delay=15 attempt=1
+    until "$@"; do
+        if [ "$attempt" -ge "$max" ]; then
+            echo "[install.sh] '$*' failed after ${max} attempts" >&2
+            return 1
+        fi
+        local wait=$((delay + RANDOM % 10))
+        echo "[install.sh] '$*' failed (attempt ${attempt}/${max}); retrying in ${wait}s" >&2
+        sleep "$wait"
+        attempt=$((attempt + 1))
+        delay=$((delay * 2))
+    done
+}
+
+install_libero_env() {
+    uv pip install rlinf-libero
+    materialize_package_files rlinf-libero
+    retry_cmd libero-download-assets --skip-existing
+    reset_libero_config
 }
 
 install_maniskill_libero_env() {
@@ -1832,27 +2144,22 @@ install_d4rl_env() {
 }
 
 install_liberopro_env() {
-    # Base LIBERO + ManiSkill required for LIBERO-Pro.
-    local libero_dir
-    libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
-    uv pip install -e "$libero_dir"
-
-    local libero_pro_dir
-    libero_pro_dir=$(clone_or_reuse_repo LIBERO_PRO_PATH "$VENV_DIR/libero_pro" https://github.com/RLinf/LIBERO-PRO.git)
-    uv pip install -e "$libero_pro_dir"
-    uv pip install "mujoco<=3.9.0"
+    uv pip install rlinf-libero rlinf-liberopro
+    materialize_package_files rlinf-libero
+    materialize_package_files rlinf-liberopro
+    retry_cmd libero-download-assets --skip-existing
+    retry_cmd liberopro-download-assets --skip-existing
+    reset_libero_config
 }
 
 install_liberoplus_env() {
-    local libero_dir
-    libero_dir=$(clone_or_reuse_repo LIBERO_PATH "$VENV_DIR/libero" https://github.com/RLinf/LIBERO.git)
-    uv pip install -e "$libero_dir"
-
-    local libero_plus_dir
-    libero_plus_dir=$(clone_or_reuse_repo LIBERO_PLUS_PATH "$VENV_DIR/libero_plus" https://github.com/RLinf/LIBERO-plus.git)
-    uv pip install -r $libero_plus_dir/extra_requirements.txt
-    uv pip install -e "$libero_plus_dir"
-    uv pip install "mujoco<=3.9.0"
+    uv pip install rlinf-libero "rlinf-liberoplus>=0.1.3"
+    materialize_package_files rlinf-libero
+    materialize_package_files rlinf-liberoplus
+    retry_cmd libero-download-assets --skip-existing
+    export LIBERO_PLUS_ASSETS_REPO="${LIBERO_PLUS_ASSETS_REPO:-RLinf/LIBERO-plus-assets}"
+    retry_cmd liberoplus-download-assets --skip-existing
+    reset_libero_config
 }
 
 install_behavior_env() {
@@ -1871,9 +2178,9 @@ install_behavior_env() {
     uv pip install ml_dtypes==0.5.3 protobuf==3.20.3
     uv pip install click==8.2.1
     uv pip install llvmlite==0.47.0 numba==0.65.1
-    pushd ~ >/dev/null
+    # Re-assert the pin after OmniGibson's setup, which otherwise leaves a torch
+    # tree mixing two versions (inductor then fails in _pad_mm_init).
     uv pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1
-    popd >/dev/null
 }
 
 install_metaworld_env() {
@@ -2208,17 +2515,29 @@ install_opensora_world_model() {
     
     uv pip install -e "$opensora_dir"
     
-    # xformers 0.0.29.post2 only has wheels for torch<=2.5, but we pin
-    # torch==2.6.0. UV_TORCH_BACKEND=auto rejects mismatched torch-version
-    # labels, so unset UV_TORCH_BACKEND entirely for this install so uv
-    # picks the non-CUDA wheel without torch-version filtering.
-    env -u UV_TORCH_BACKEND uv pip install "xformers==0.0.29.post2"
+    # xformers embeds the torch version in its local label; 0.0.35 ships
+    # wheels for torch 2.11. Install it against the resolved torch build.
+    uv pip install "xformers==0.0.35"
 
     # Install remaining opensora dependencies (xformers handled above).
     uv pip install -r $SCRIPT_DIR/embodied/models/opensora.txt
-    uv pip install git+${GITHUB_PREFIX}https://github.com/fangqi-Zhu/TensorNVMe.git --no-build-isolation
+    install_tensornvme
     echo "export LD_LIBRARY_PATH=~/.tensornvme/lib:\$LD_LIBRARY_PATH" >> "$VENV_DIR/bin/activate"
     install_apex
+}
+
+install_tensornvme() {
+    local url="git+${GITHUB_PREFIX}https://github.com/fangqi-Zhu/TensorNVMe.git"
+    uv pip install "$url" --no-build-isolation
+
+    local tnvme_env=(env "LD_LIBRARY_PATH=$HOME/.tensornvme/lib:${LD_LIBRARY_PATH:-}")
+    if ! "${tnvme_env[@]}" python -c "import tensornvme._C" >/dev/null 2>&1; then
+        echo "[install.sh] tensornvme does not load against this torch; rebuilding."
+        uv cache clean tensornvme || true
+        uv pip install "$url" --no-build-isolation --reinstall-package tensornvme
+        "${tnvme_env[@]}" python -c "import tensornvme._C" >/dev/null 2>&1 \
+            || echo "[install.sh] WARNING: tensornvme still does not import; expected without a GPU, otherwise check the torch ABI."
+    fi
 }
 
 install_wan_world_model() {
@@ -2245,9 +2564,100 @@ install_roboverse_env() {
 
 #=======================AGENTIC INSTALLER=======================
 
+install_te_2_17() {
+    local torch_cu_major te_extra
+    torch_cu_major=$(python - <<'EOF'
+import torch
+
+cuda = torch.version.cuda or ""
+print(cuda.split(".")[0] if cuda else "")
+EOF
+)
+    if [ -z "$torch_cu_major" ]; then
+        echo "[install.sh] ERROR: torch has no CUDA build; cannot install transformer-engine." >&2
+        exit 1
+    fi
+    te_extra="core_cu${torch_cu_major}"
+    if [ "$torch_cu_major" != "12" ]; then
+        echo "[install.sh] Installing TE 2.17.0 (${te_extra})..."
+        NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation \
+            "transformer-engine[pytorch,${te_extra}]==2.17.0"
+        echo "[install.sh] TE 2.17.0 installed."
+        return 0
+    fi
+
+    echo "[install.sh] Installing TE 2.17.0 (${te_extra}, source build with nvcc)..."
+    uv pip install --no-build-isolation "transformer-engine[${te_extra}]==2.17.0"
+    uv pip install einops onnx onnxscript packaging pydantic nvdlfw-inspect
+    NVTE_PYTORCH_FORCE_BUILD=TRUE uv pip install --no-build-isolation --no-deps \
+        --no-binary transformer-engine-torch "transformer-engine-torch==2.17.0"
+    if uv pip show transformer-engine-cu13 >/dev/null 2>&1; then
+        echo "[install.sh] ERROR: transformer-engine-cu13 present on a CUDA 12 torch; its core would shadow the cu12 one." >&2
+        exit 1
+    fi
+    echo "[install.sh] TE 2.17.0 installed."
+}
+
+install_mbridge() {
+    # megatron-bridge 0.4.2 requires python >= 3.12, so RLinf publishes a
+    # py3.10/3.11 fork. --no-deps avoids re-resolving torch and nemo-toolkit.
+    echo "[install.sh] Installing rlinf-megatron-bridge 0.4.2 (PyPI wheel)..."
+    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge==0.4.2"
+    echo "[install.sh] rlinf-megatron-bridge 0.4.2 installed (import: megatron.bridge)."
+}
+
+# FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
+uninstall_fa4_conditional() {
+    local gpu_cc
+    gpu_cc=$(python -c "import torch;print(torch.cuda.get_device_capability(0)[0])" 2>/dev/null || true)
+    if [ -z "$gpu_cc" ]; then
+        echo "[install.sh] WARNING: Could not detect GPU compute capability; keeping FA4."
+        return 0
+    fi
+    if [ "$gpu_cc" -lt 9 ]; then
+        echo "[install.sh] GPU sm${gpu_cc} < sm90: FA4 backward unsupported, uninstalling flash-attn-4 → TE will use FA2."
+        uv pip uninstall flash-attn-4 || true
+    else
+        echo "[install.sh] GPU sm${gpu_cc} >= sm90: FA4 usable, keeping flash-attn-4."
+    fi
+}
+
+# TE 2.17's .so files carry no RPATH, so the venv's NVIDIA libs must precede a
+# stale system libnccl.
+setup_nccl_env() {
+    local nvlib
+    nvlib="$(python -c 'import nvidia; print(nvidia.__path__[0])' 2>/dev/null || true)"
+    if [ -z "$nvlib" ]; then
+        echo "[install.sh] WARNING: nvidia package not found in venv; skipping NCCL env setup."
+        return 0
+    fi
+    if grep -q "^# RLinf NCCL fix$" "$VENV_DIR/bin/activate" 2>/dev/null; then
+        return 0
+    fi
+    cat >> "$VENV_DIR/bin/activate" <<EOF
+
+# RLinf NCCL fix
+export LD_LIBRARY_PATH="\$(ls -d ${nvlib}/*/lib 2>/dev/null | tr '\n' ':')\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+EOF
+    echo "[install.sh] NCCL LD_LIBRARY_PATH export added to $VENV_DIR/bin/activate."
+}
+
 install_agentic() {
-    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    local engine engine_ver torch211_stack=0
+    engine=$(effective_engine)
+    engine_ver=$(effective_engine_version)
+    if engine_needs_torch211; then
+        torch211_stack=1
+        echo "[install.sh] ${engine} ${engine_ver} runs on torch 2.11: using TE 2.17, mcore 0.17, megatron-bridge."
+    fi
+
+    local engine_req
+    engine_req=$(agentic_requirements_file "$engine" "$engine_ver")
+
+    uv sync --extra agentic --active $NO_INSTALL_RLINF_CMD
+    install_engine_requirements "$engine_req"
+    echo "[install.sh] Installed engine: $(basename "$engine_req")"
+    uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -2255,15 +2665,36 @@ install_agentic() {
     # Megatron-LM
     # Use MEGATRON_PATH as the checkout location if set (shared, cloned on first use);
     # otherwise clone into the venv.
+    local megatron_branch="core_r0.13.0"
+    [ "$torch211_stack" -eq 1 ] && megatron_branch="core_r0.17.0"
     local megatron_dir
-    megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b core_r0.13.0)
+    megatron_dir=$(clone_or_reuse_repo MEGATRON_PATH "$VENV_DIR/Megatron-LM" https://github.com/NVIDIA/Megatron-LM.git -b "$megatron_branch")
 
     echo "export PYTHONPATH=$(realpath "$megatron_dir"):\$PYTHONPATH" >> "$VENV_DIR/bin/activate"
 
-    # If TEST_BUILD is 1, skip installing megatron.txt
+    # If TEST_BUILD is 1, skip the heavy transformer-engine build (megatron.txt
+    # pins TE 2.1.0; the torch 2.11 stack builds TE 2.17 instead).
     if [ "$TEST_BUILD" -ne 1 ]; then
-        uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
+        if [ "$torch211_stack" -eq 1 ]; then
+            if [ -f /etc/profile.d/cuda.sh ]; then
+                source /etc/profile.d/cuda.sh
+            fi
+            install_te_2_17
+        else
+            uv pip install -r $SCRIPT_DIR/agentic/megatron.txt --no-build-isolation
+        fi
     fi
+
+    if [ "$torch211_stack" -eq 1 ]; then
+        install_mbridge
+        uninstall_fa4_conditional
+        setup_nccl_env
+    fi
+
+    # --transformers / --xgrammar (and the version derived from --sglang) win
+    # over the engine's own pins.
+    [ -n "$TRANSFORMERS_VERSION" ] && uv pip install "transformers==${TRANSFORMERS_VERSION}"
+    [ -n "$XGRAMMAR_VERSION" ] && uv pip install "xgrammar==${XGRAMMAR_VERSION}"
 
     install_apex
     install_flash_attn
@@ -2273,8 +2704,9 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic-vllm --active $NO_INSTALL_RLINF_CMD
-    uv sync --extra agentic-sglang --inexact --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic --active $NO_INSTALL_RLINF_CMD
+    install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
+    install_engine_requirements "$(agentic_requirements_file sglang "$(agentic_latest_version sglang)")"
     uv sync --extra embodied --active --inexact $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/docs/requirements.txt
     uv pip uninstall pynvml || true
@@ -2283,10 +2715,11 @@ install_docs() {
 main() {
     parse_args "$@"
     validate_python_version
+    apply_env_default_torch
+    apply_agentic_torch_default
     configure_platform
     setup_mirror
     apply_torch_override
-    apply_sglang_override
 
     case "$TARGET" in
         embodied)
@@ -2344,6 +2777,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                evo1)
+                    install_evo1_model
                     ;;
                 "")
                     install_env_only

@@ -347,7 +347,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.1 本地 Hugging Face 推理
 ............................
 
-不设置 ``reward.worker_type``（默认 ``model``，使用 ``EmbodiedRewardWorker``）。
+不设置 ``reward.worker_type`` （默认 ``model``，使用 ``EmbodiedRewardWorker``）。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward.yaml``：
 
 .. code-block:: yaml
@@ -398,7 +398,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``（``EmbodiedAPIRewardWorker``）。可指向外部
+设置 ``reward.worker_type: api`` （``EmbodiedAPIRewardWorker``）。可指向外部
 OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 :doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
