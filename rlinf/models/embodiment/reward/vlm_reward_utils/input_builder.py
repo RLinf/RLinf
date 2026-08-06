@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Union
 
@@ -24,8 +23,6 @@ from rlinf.data.datasets.vlm import (
     VLMBaseDataset,
     VLMTrendRewardSFTDataset,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def _to_pil_images(

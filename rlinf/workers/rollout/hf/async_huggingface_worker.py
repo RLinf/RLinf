@@ -181,7 +181,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                 intervene_requested=env_output.get("intervene_flags", None),
             )
-            rollout_result = self._build_rollout_result(
+            policy_output = self._build_policy_output(
                 actions,
                 result,
                 final_obs=env_output.get("final_obs", None),
@@ -189,8 +189,8 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
             self.send_to_recorded_batch_routes(
                 group_name=self.cfg.env.group_name,
                 channel=output_channel,
-                data=rollout_result,
+                data=policy_output,
                 tag="rollout_results",
-                split_fn=self._split_rollout_result,
+                split_fn=self._split_policy_output,
                 split_sizes=split_sizes,
             )

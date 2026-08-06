@@ -20,7 +20,7 @@ from typing import Any, Iterator, Optional
 import torch
 from torch.utils.data import IterableDataset
 
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.storage.replay.buffer import TrajectoryReplayBuffer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.nested_dict_process import concat_batch
 
@@ -73,7 +73,6 @@ class ReplayBufferDataset(IterableDataset):
         self.demo_buffer = demo_buffer
         self.min_replay_buffer_size = min_replay_buffer_size
         self.min_demo_buffer_size = min_demo_buffer_size
-
         self.batch_size = batch_size
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:

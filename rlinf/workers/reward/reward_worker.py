@@ -22,9 +22,9 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from torch.utils.data import DataLoader, DistributedSampler
 
 from rlinf.data.datasets.reward_model import RewardBinaryDataset
-from rlinf.data.io_struct import RolloutResult
-from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import (
     Channel,
     Cluster,

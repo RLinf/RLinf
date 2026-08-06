@@ -24,8 +24,8 @@ from omegaconf import DictConfig
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizer
 
-from rlinf.data.datasets.item import DatasetItem
-from rlinf.data.utils import batch_pad_to_fixed_len
+from rlinf.data.datasets.common.item import DatasetItem
+from rlinf.utils.torch_functionals import batch_pad_to_fixed_len
 
 
 class ReasoningDataset(Dataset):

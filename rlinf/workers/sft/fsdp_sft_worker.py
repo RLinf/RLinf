@@ -22,7 +22,7 @@ import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
 
-from rlinf.data.utils import forward_set_epoch
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
