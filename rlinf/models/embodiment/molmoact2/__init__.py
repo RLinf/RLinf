@@ -4,7 +4,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,138 +12,83 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import types
+"""MolmoAct2 embodied policy wrapper for RLinf (evaluation only).
+
+Exposes ``get_model``, which builds the official LeRobot ``MolmoAct2Policy`` from
+a checkpoint directory (local path or HuggingFace repo id) and wraps it in
+``MolmoAct2ForRLActionPrediction``.
+
+MolmoAct2 is installed externally (see ``requirements/install.sh --model
+molmoact2``), which installs RLinf's LeRobot fork (branch
+``RLinf/molmoact2-hf-inference``) providing ``lerobot.policies.molmoact2``.
+"""
+
+from __future__ import annotations
 
 import torch
 from omegaconf import DictConfig
 
+from rlinf.models.embodiment.molmoact2.molmoact2_policy import (
+    MolmoAct2ForRLActionPrediction,
+)
+from rlinf.utils.logging import get_logger
 
-def _molmoact2_predict_action_batch(self, env_obs=None, mode="eval", **kwargs):
+logger = get_logger()
+
+
+def get_model(cfg: DictConfig, torch_dtype: torch.dtype | None = None):
+    """Load a MolmoAct2 checkpoint and wrap it for RLinf.
+
+    Args:
+        cfg: Model config. Requires ``model_path`` (or ``checkpoint_path``);
+            MolmoAct2-specific options live under the ``molmoact2`` block.
+        torch_dtype: Ignored. MolmoAct2 loads its weights in fp32 upstream; a
+            warning is logged when another precision is requested.
+
+    Returns:
+        A ``MolmoAct2ForRLActionPrediction`` instance.
     """
-    RLinf adapter for MolmoAct2.
-
-    RLinf rollout worker calls:
-        model.predict_action_batch(env_obs=env_obs, mode="eval")
-
-    Official MolmoAct2 policy provides:
-        model.select_action(batch)
-
-    This adapter converts RLinf env_obs into MolmoAct2 batch format.
-    """
-    if env_obs is None:
-        raise ValueError("MolmoAct2 predict_action_batch requires env_obs.")
-
-    batch = {}
-
-    # RLinf LIBERO provides:
-    #   main_images  -> agent/front view
-    #   wrist_images -> wrist view
-    # MolmoAct2-LIBERO expects camera order: [agentview_rgb, wrist_rgb].
-    #
-    # Use separate observation.images.* keys instead of batch["images"].
-    # Otherwise MolmoAct2 may infer the two views as batch_size=2.
-    if "main_images" in env_obs:
-        main_images = env_obs["main_images"]
-        if "wrist_images" in env_obs and env_obs["wrist_images"] is not None:
-            batch["observation.images.agentview"] = main_images
-            batch["observation.images.wrist"] = env_obs["wrist_images"]
-        else:
-            batch["image"] = main_images
-    elif "image" in env_obs:
-        main_images = env_obs["image"]
-        batch["image"] = main_images
-    else:
-        raise KeyError(
-            f"Cannot find image in env_obs. Available keys: {list(env_obs.keys())}"
-        )
-
-    batch_size = main_images.shape[0]
-
-    # Language instruction
-    if "task_descriptions" in env_obs:
-        task_descriptions = env_obs["task_descriptions"]
-        if isinstance(task_descriptions, str):
-            task_descriptions = [task_descriptions]
-        batch["language_instruction"] = task_descriptions
-    elif "language_instruction" in env_obs:
-        batch["language_instruction"] = env_obs["language_instruction"]
-    elif "instruction" in env_obs:
-        batch["language_instruction"] = env_obs["instruction"]
-    else:
-        batch["language_instruction"] = [""] * batch_size
-
-    # Raw robot state for MolmoAct2-LIBERO.
-    if "states" in env_obs:
-        batch["state"] = env_obs["states"]
-    elif "proprio" in env_obs:
-        batch["state"] = env_obs["proprio"]
-    elif "robot_states" in env_obs:
-        batch["state"] = env_obs["robot_states"]
-
-    with torch.no_grad():
-        actions = self.select_action(batch)
-
-    if isinstance(actions, torch.Tensor):
-        actions = actions.detach().cpu()
-
-    # RLinf expects action chunks: [B, num_chunks, action_dim]
-    if actions.ndim == 2:
-        chunk_actions = actions.unsqueeze(1)
-    elif actions.ndim == 3:
-        chunk_actions = actions
-    else:
-        raise ValueError(f"Unexpected MolmoAct2 action shape: {actions.shape}")
-
-    batch_size = chunk_actions.shape[0]
-    device = chunk_actions.device
-
-    result = {
-        "prev_logprobs": torch.zeros(batch_size, 1, device=device),
-        "prev_values": torch.zeros(batch_size, 1, device=device),
-        "forward_inputs": {
-            "action": chunk_actions,
-        },
-    }
-
-    return chunk_actions, result
-
-
-def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
-    """
-    Minimal MolmoAct2 wrapper for RLinf.
-
-    First-stage goal:
-    - reuse official MolmoAct2 LeRobot policy
-    - support inference / eval / rollout
-    - do not implement PPO training yet
-    """
-
-    from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
-    from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+    try:
+        from lerobot.policies.molmoact2.configuration_molmoact2 import MolmoAct2Config
+        from lerobot.policies.molmoact2.modeling_molmoact2 import MolmoAct2Policy
+    except ModuleNotFoundError as e:
+        raise ModuleNotFoundError(
+            "MolmoAct2 requires the pinned LeRobot checkout. Install it with "
+            "'bash requirements/install.sh embodied --model molmoact2 --env libero'."
+        ) from e
 
     checkpoint_path = cfg.get("checkpoint_path", None) or cfg.get("model_path", None)
-    if checkpoint_path is None:
+    if not checkpoint_path:
         raise ValueError(
-            "MolmoAct2 requires `checkpoint_path` or `model_path` in config."
+            "MolmoAct2 requires 'checkpoint_path' or 'model_path' in the model config."
         )
 
+    if torch_dtype is not None and torch_dtype != torch.float32:
+        logger.warning(
+            f"MolmoAct2 loads its weights in fp32 upstream; "
+            f"model.precision={cfg.get('precision', None)} has no effect."
+        )
+
+    molmoact2_cfg = cfg.get("molmoact2", None) or {}
     molmo_cfg = MolmoAct2Config(
         checkpoint_path=checkpoint_path,
-        num_steps=cfg.get("num_steps", None),
-        inference_action_mode=cfg.get("inference_action_mode", "continuous"),
-        discrete_action_tokenizer=cfg.get(
+        num_steps=molmoact2_cfg.get("num_steps", None),
+        inference_action_mode=molmoact2_cfg.get("inference_action_mode", "continuous"),
+        discrete_action_tokenizer=molmoact2_cfg.get(
             "discrete_action_tokenizer",
             "allenai/MolmoAct2-FAST-Tokenizer",
         ),
-        enable_depth_reasoning=cfg.get("enable_depth_reasoning", False),
-        norm_tag=cfg.get("norm_tag", ""),
+        enable_depth_reasoning=molmoact2_cfg.get("enable_depth_reasoning", False),
+        # Empty by default: upstream raises rather than silently skipping action
+        # un-normalization when the checkpoint's norm_tag is not configured.
+        norm_tag=molmoact2_cfg.get("norm_tag", ""),
     )
 
-    model = MolmoAct2Policy(molmo_cfg)
-
-    # Add RLinf-required action interface
-    model.predict_action_batch = types.MethodType(
-        _molmoact2_predict_action_batch, model
+    return MolmoAct2ForRLActionPrediction(
+        MolmoAct2Policy(molmo_cfg),
+        action_dim=cfg.get("action_dim", 7),
+        num_action_chunks=cfg.get("num_action_chunks", 1),
     )
 
-    return model
+
+__all__ = ["MolmoAct2ForRLActionPrediction", "get_model"]

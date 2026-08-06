@@ -169,7 +169,7 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        "molmoact2",
+        SupportedModel.MOLMOACT2.value,
         _build_molmoact2,
         category="embodied",
         force=True,
