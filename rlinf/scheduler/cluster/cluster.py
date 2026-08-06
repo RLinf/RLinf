@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 import logging
 import os
 import re
@@ -110,6 +111,8 @@ class PathEnvMergeMode(str, Enum):
 class Cluster:
     """A singleton class that manages the cluster resources for Ray workers."""
 
+    _run_failed = False
+
     SYS_NAME = "RLinf"
     NAMESPACE = SYS_NAME
     LOGGING_LEVEL = os.getenv(
@@ -140,13 +143,22 @@ class Cluster:
         """Raised when there is a namespace conflict in Ray initialization."""
 
     @classmethod
-    def find_free_port(cls):
-        """Find a free port on the node."""
+    def find_free_port(cls, max_port_num: Optional[int] = None):
+        """Find a free port on the node.
+
+        Args:
+            max_port_num (Optional[int]): Largest acceptable port. Use it for servers that
+                derive a second port from this one and would overflow past 65535.
+        """
         import socket
 
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return s.getsockname()[1]
+        for _ in range(1000):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                port = s.getsockname()[1]
+            if max_port_num is None or port <= max_port_num:
+                return port
+        raise RuntimeError(f"Failed to find a free port at most {max_port_num}.")
 
     @classmethod
     def has_initialized(cls):
@@ -339,6 +351,9 @@ class Cluster:
                 ray_init_kwargs["runtime_env"] = dict(self._ray_code_sync_fragment)
             ray.init(**ray_init_kwargs)
 
+        Cluster._install_failure_hook()
+        atexit.register(Cluster._shutdown_ray_at_exit)
+
         # Ray log collector
         if distributed_log_dir is not None:
             self._distributed_log_collector = DistributedRayLogCollector(
@@ -383,6 +398,7 @@ class Cluster:
             Manager,
             NodeManager,
             PortLockManager,
+            Tracer,
             WorkerManager,
         )
 
@@ -409,6 +425,12 @@ class Cluster:
             self._port_lock_manager = self._launch_manager_actor(
                 PortLockManager, manager_node, runtime_env
             )
+            # Optional tracer manager, launched only when tracing is enabled
+            tracer_cfg = cluster_cfg.get("tracer", None) if cluster_cfg else None
+            if tracer_cfg is not None and tracer_cfg.get("enable", False):
+                self._tracer = self._launch_manager_actor(
+                    Tracer, manager_node, runtime_env, tracer_cfg.get("output_file")
+                )
         except ValueError:
             raise Cluster.NamespaceConflictError
 
@@ -434,10 +456,32 @@ class Cluster:
                 # Mimic ray's sleep before shutdown to ensure log messages are flushed
                 time.sleep(0.5)
                 ray.shutdown(_exiting_interpreter=True)
+            Cluster._run_failed = True
             print("Exiting main process due to a failure upon worker execution.")
             exit(-1)
 
         signal.signal(signal.SIGUSR1, signal_handler)
+
+    @staticmethod
+    def _install_failure_hook():
+        previous = sys.excepthook
+
+        def hook(exc_type, exc_value, exc_tb):
+            Cluster._run_failed = True
+            previous(exc_type, exc_value, exc_tb)
+
+        sys.excepthook = hook
+
+    @staticmethod
+    def _shutdown_ray_at_exit():
+        if Cluster._run_failed:
+            return
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os._exit(0)
 
     def _init_from_existing_managers(self):
         if not ray.is_initialized():

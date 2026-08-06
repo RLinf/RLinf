@@ -49,8 +49,9 @@ _JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
 
-_CART_TRANS_STIFFNESS = float(os.environ.get("RLINF_CART_K_T", 1000.0))  # N/m
-_CART_ROT_STIFFNESS = float(os.environ.get("RLINF_CART_K_R", 50.0))  # Nm/rad
+_CART_TRANS_STIFFNESS = float(os.environ.get("RLINF_CART_K_T", 500.0))  # N/m
+_CART_ROT_STIFFNESS = float(os.environ.get("RLINF_CART_K_R", 40.0))  # Nm/rad
+_CART_NULLSPACE_STIFFNESS = float(os.environ.get("RLINF_CART_K_NS", 5.0))  # Nm/rad
 _CART_MAX_DELTA_TAU = float(
     os.environ.get("RLINF_CART_MAX_DTAU", 0.3)
 )  # Nm / 1 kHz cycle
@@ -59,9 +60,9 @@ _CART_ROT_ERROR_CLIP_RAD = float(os.environ.get("RLINF_CART_ERR_CLIP_RAD", 0.3))
 _CART_GAINS_TC = float(os.environ.get("RLINF_CART_GAINS_TC", 0.1))  # s
 
 # Per-call slew limit so a single-frame dataset jump becomes a ramp.
-_CART_MAX_STEP_M = float(os.environ.get("RLINF_CART_MAX_STEP_M", 0.03))  # m / call
+_CART_MAX_STEP_M = float(os.environ.get("RLINF_CART_MAX_STEP_M", 0.10))  # m / call
 _CART_MAX_STEP_RAD = float(
-    os.environ.get("RLINF_CART_MAX_STEP_RAD", 0.15)
+    os.environ.get("RLINF_CART_MAX_STEP_RAD", 0.30)
 )  # rad / call
 
 _DYNAMICS_FACTOR = 0.2
@@ -279,12 +280,15 @@ class FrankyController(Worker):
         self._stop_tracking_motion()
         self._safe_join()
         self._robot.recover_from_errors()
+        nullspace_target = np.asarray(self._robot.state.q, dtype=np.float64).copy()
         trans_clip = np.full(3, _CART_TRANS_ERROR_CLIP_M, dtype=np.float64)
         rot_clip = np.full(3, _CART_ROT_ERROR_CLIP_RAD, dtype=np.float64)
         self._cart_tracker = self._franky.CartesianImpedanceTracker(
             self._robot,
             translational_stiffness=_CART_TRANS_STIFFNESS,
             rotational_stiffness=_CART_ROT_STIFFNESS,
+            nullspace_target=nullspace_target,
+            nullspace_stiffness=_CART_NULLSPACE_STIFFNESS,
             translational_error_clip=trans_clip,
             rotational_error_clip=rot_clip,
             max_delta_tau=_CART_MAX_DELTA_TAU,
@@ -293,7 +297,8 @@ class FrankyController(Worker):
         self._logger.info(
             f"Cartesian impedance tracker started "
             f"(K_t={_CART_TRANS_STIFFNESS:.0f} N/m, "
-            f"K_r={_CART_ROT_STIFFNESS:.1f} Nm/rad)"
+            f"K_r={_CART_ROT_STIFFNESS:.1f} Nm/rad, "
+            f"K_ns={_CART_NULLSPACE_STIFFNESS:.1f} Nm/rad)"
         )
 
     def _stop_cart_tracking_motion(self) -> None:

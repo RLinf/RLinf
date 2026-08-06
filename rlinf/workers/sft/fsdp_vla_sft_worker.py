@@ -19,7 +19,7 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -83,6 +83,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
             return build_dreamzero_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+            )
+        elif SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.EVO1]:
+            from rlinf.models.embodiment.evo1.sft_builder import (
+                build_evo1_sft_dataloader,
+            )
+
+            return build_evo1_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths
             )
         else:
             raise KeyError(

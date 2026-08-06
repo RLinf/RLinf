@@ -253,7 +253,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
             "action": actions.reshape(B, -1).contiguous(),
             "model_action": x_0.reshape(B, -1).contiguous(),
         }
-        # Flat keys: the rollout layer's `_split_rollout_result` uses a flat
+        # Flat keys: the rollout layer's `_split_policy_output` uses a flat
         # torch.split over forward_inputs values, so nested image / mask dicts
         # are unsupported. Encode them with prefixed scalar keys here and decode
         # symmetrically in default_forward.

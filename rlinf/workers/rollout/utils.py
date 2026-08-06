@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from omegaconf import DictConfig
 
-from rlinf.data.io_struct import SeqGroupInfo
+from rlinf.data.schema.reasoning_requests import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,
@@ -335,20 +335,24 @@ def get_rollout_backend_worker(cfg: DictConfig) -> Worker:
         return VLLMWorker
     elif rollout_backend == "sglang":
         serving_mode = cfg.rollout.sglang.get("serving_mode", None)
-        if serving_mode is None:
+        if serving_mode == "embodied":
+            from rlinf.workers.rollout.sglang.sglang_embodied_worker import (
+                SGLangEmbodiedWorker,
+            )
+
+            return SGLangEmbodiedWorker
+        elif serving_mode == "worker_http":
+            from rlinf.workers.rollout.sglang.sglang_agent_worker import (
+                SGLangAgentWorkerWithHTTPServer,
+            )
+
+            return SGLangAgentWorkerWithHTTPServer
+        elif serving_mode is None:
             from rlinf.workers.rollout.sglang.sglang_worker import SGLangWorker
 
             return SGLangWorker
         else:
-            assert serving_mode in ("worker_http",), (
-                f"Got serving_mode={serving_mode!r}; only 'worker_http' is supported when set."
-            )
-            if serving_mode == "worker_http":
-                from rlinf.workers.rollout.sglang.sglang_worker_server import (
-                    SGLangWorkerWithHTTPServer,
-                )
-
-                return SGLangWorkerWithHTTPServer
+            raise ValueError(f"Unsupported sglang serving_mode: {serving_mode}.")
 
 
 class RunningStatusManager:

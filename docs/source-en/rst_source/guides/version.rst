@@ -6,61 +6,79 @@ reinforcement-learning pipeline. For the current release **SGLang and vLLM** is 
 
 .. note::
 
-   RLinf is compatible with **SGLang 0.4.4 → 0.5.4**, **vLLM 0.8.5  → 0.8.5.post1**.  
-   No manual patching is required – the framework detects the installed
-   version and loads the matching shim automatically.
+   RLinf is compatible with **SGLang 0.4.4 -> 0.5.13** and **vLLM 0.8.5 ->
+   0.23.x**.  No manual patching is required - the framework detects the
+   installed version and loads the matching shim automatically.
 
-Installation Requirements
--------------------------
+Supported engine builds
+-----------------------
 
-* **CUDA** ≥ 11.8 (or 12.x matching your PyTorch build)  
-* **Python** ≥ 3.8  
-* Sufficient **GPU memory** for the chosen model  
-* Compatible versions of **PyTorch** and *transformers*
+Each engine build RLinf can install is described by one file under
+``requirements/agentic/``, named ``<engine>_<version>_<cu12|cu13>.txt``.  The
+set of files *is* the set of supported versions, so listing the directory
+answers "what can I install?".
 
-.. note::
+============  ==============  =========  =======
+Engine        Version         CUDA line  torch
+============  ==============  =========  =======
+SGLang        0.5.12.post1    cu12,cu13  2.11.0
+SGLang        0.5.4           cu12       2.8.0
+SGLang        0.5.2           cu12       2.8.0
+SGLang        0.4.6.post5     cu12       2.6.0
+vLLM          0.23.0          cu12,cu13  2.11.0
+vLLM          0.8.5           cu12       2.6.0
+============  ==============  =========  =======
 
-   Mismatched CUDA / PyTorch wheels are the most common installation
-   issue.  Verify both before installing SGLang.
+The default is the highest version listed above -- SGLang 0.5.12.post1 and vLLM
+0.23.0 today, both on torch 2.11 -- derived from the files themselves, so adding
+a newer one moves the default with it.  The CUDA line follows the torch wheel
+rather than the driver, so a torch version with no cu13 build stays on cu12 even
+on a CUDA 13 host.
 
-Install via pip
-~~~~~~~~~~~~~~~~~
+One venv per engine
+-------------------
+
+A venv holds exactly one engine.  SGLang and vLLM pin the same kernel libraries
+(``nvidia-cutlass-dsl``, ``flashinfer-python``, ``tilelang``,
+``tokenspeed-mla``) to different versions, and sometimes a different torch, so
+sharing a venv means whichever is installed second downgrades the other's
+kernels -- silently, until a kernel actually runs.  ``--engine`` selects the
+engine; install twice with different ``--venv`` to get both:
 
 .. code-block:: bash
 
-   # Reference version
-   pip install sglang==0.4.4
+   bash requirements/install.sh agentic --engine sglang
+   bash requirements/install.sh agentic --venv .venv-vllm --engine vllm
 
-   # Recommended for production
-   pip install sglang==0.4.8
+The reason Docker image ships both, in ``reason`` (SGLang, activated by default)
+and ``reason-vllm``.
 
-   # Latest supported
-   pip install sglang==0.5.4
+Switching versions
+------------------
 
-   # Install vLLM
-   pip install vllm==0.8.5
-
-Install from Source
-~~~~~~~~~~~~~~~~~~~
+Pass the version to the installer; torch follows from it, so it need not be
+given as well:
 
 .. code-block:: bash
 
-   # Install SGLang
-   git clone https://github.com/sgl-project/sglang.git
-   cd sglang
-   git checkout v0.4.8          # pick the tag you need
-   pip install -e "python[all]"
+   # default: SGLang 0.5.12.post1 on torch 2.11
+   bash requirements/install.sh agentic
 
-   # Install vLLM
-   git clone https://github.com/vllm-project/vllm.git
-   cd vllm
-   git checkout v0.8.5          # pick the tag you need
-   pip install -e .
+   # the SGLang 0.4.x line, on torch 2.6
+   bash requirements/install.sh agentic --sglang 0.4.6.post5
+
+   # vLLM 0.8.5, on torch 2.6
+   bash requirements/install.sh agentic --engine vllm --vllm 0.8.5
+
+An unsupported version fails immediately and prints the builds that do exist,
+rather than resolving into a broken environment.
 
 .. note::
 
-   Building from source can be time-consuming and heavy on disk space;
-   prefer the pre-built wheels unless you need bleeding-edge fixes.
+   Avoid ``pip install sglang`` / ``pip install vllm`` into an existing
+   environment.  Both pin the whole torch family, and their CUDA 13 releases
+   pin CUDA 13 runtime wheels that overwrite their CUDA 12 counterparts in
+   place -- the requirements files exist precisely to keep that from happening.
 
 ----------------------------
 

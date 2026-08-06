@@ -26,11 +26,8 @@ from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import (
-    RolloutRequest,
-    RolloutResult,
-    SeqGroupInfo,
-)
+from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
+from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
@@ -169,6 +166,12 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
+            # sglang >=0.5.11 drops the `enable_ep_moe` flag and enables EP via ep_size > 1.
+            ep_size=(
+                self._cfg_rollout.tensor_parallel_size
+                if self._cfg_rollout.sglang.get("enable_ep_moe", False)
+                else 1
+            ),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,

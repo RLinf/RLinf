@@ -14,7 +14,7 @@
 
 import torch
 
-from rlinf.data.embodied_io_struct import EnvOutput, RolloutResult
+from rlinf.data.schema.embodied_types import EnvOutput, PolicyOutput
 from rlinf.scheduler import (
     build_recv_plan,
     build_route_channel_key,
@@ -183,8 +183,8 @@ def test_split_and_merge_nested_batches():
     assert torch.equal(merged["rewards"], batch["rewards"])
 
 
-def test_rollout_result_split_merge_invariant():
-    rollout_result = RolloutResult(
+def test_policy_output_split_merge_invariant():
+    policy_output = PolicyOutput(
         actions=torch.arange(12, dtype=torch.float32).view(6, 2),
         prev_logprobs=torch.arange(12, dtype=torch.float32).view(6, 2),
         prev_values=torch.arange(6, dtype=torch.float32).view(6, 1),
@@ -198,21 +198,21 @@ def test_rollout_result_split_merge_invariant():
     )
 
     worker = object.__new__(MultiStepRolloutWorker)
-    shards = worker._split_rollout_result(rollout_result, [4, 2])
-    merged = RolloutResult.merge_rollout_results(shards)
+    shards = worker._split_policy_output(policy_output, [4, 2])
+    merged = PolicyOutput.merge(shards)
 
-    assert torch.equal(merged.actions, rollout_result.actions)
-    assert torch.equal(merged.prev_logprobs, rollout_result.prev_logprobs)
-    assert torch.equal(merged.prev_values, rollout_result.prev_values)
-    assert torch.equal(merged.bootstrap_values, rollout_result.bootstrap_values)
-    assert torch.equal(merged.intervene_flags, rollout_result.intervene_flags)
+    assert torch.equal(merged.actions, policy_output.actions)
+    assert torch.equal(merged.prev_logprobs, policy_output.prev_logprobs)
+    assert torch.equal(merged.prev_values, policy_output.prev_values)
+    assert torch.equal(merged.bootstrap_values, policy_output.bootstrap_values)
+    assert torch.equal(merged.intervene_flags, policy_output.intervene_flags)
     assert torch.equal(
-        merged.forward_inputs["action"], rollout_result.forward_inputs["action"]
+        merged.forward_inputs["action"], policy_output.forward_inputs["action"]
     )
     assert torch.equal(
-        merged.forward_inputs["states"], rollout_result.forward_inputs["states"]
+        merged.forward_inputs["states"], policy_output.forward_inputs["states"]
     )
-    assert torch.equal(merged.versions, rollout_result.versions)
+    assert torch.equal(merged.versions, policy_output.versions)
 
 
 def test_merge_env_outputs_with_partial_optional_fields():

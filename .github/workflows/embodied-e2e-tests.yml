@@ -451,13 +451,13 @@ jobs:
           export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-      - name: ManiSkill API Reward PPO test (managed SGLang)
+      - name: ManiSkill VLM Trend Reward PPO test (managed SGLang)
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_sglang_reward
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
 
       - name: ManiSkill ResNet Reward PPO test
         timeout-minutes: 20
@@ -1250,6 +1250,38 @@ jobs:
           source .venv/bin/activate
           export LIBERO_TYPE=plus
           bash tests/e2e_tests/embodied/run.sh liberoplus_10_grpo_openvlaoft
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-evo1-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          export EVO1_PATH=/workspace/dataset/Evo-1
+          bash requirements/install.sh embodied --model evo1 --env libero
+
+      - name: LIBERO Evo-1 GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_grpo_evo1
 
       - name: Clean up
         run: |

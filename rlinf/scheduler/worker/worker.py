@@ -67,6 +67,13 @@ class WorkerMeta(type):
         if func_name.startswith("_") and func_name != "__init__":
             return func
 
+        # staticmethod is callable on Python 3.10+, and wrapping it into a plain
+        # function would let the class rebind self onto its first argument.
+        if isinstance(func, staticmethod):
+            return staticmethod(
+                cls._catch_failure_for_cls_func(cls_name, func_name, func.__func__)
+            )
+
         def func_wrapper(func: Callable):
             @functools.wraps(func)
             def sync_func(*args, **kwargs):
@@ -1247,11 +1254,16 @@ class Worker(metaclass=WorkerMeta):
         """
         return self._worker_address.get_parent_rank()
 
-    def acquire_free_port(self):
-        """Safely acquire a free port on the current node without causing conflicts within the node."""
+    def acquire_free_port(self, max_port_num: Optional[int] = None):
+        """Safely acquire a free port on the current node without causing conflicts within the node.
+
+        Args:
+            max_port_num (Optional[int]): Largest acceptable port. Use it for servers that
+                derive a second port from this one and would overflow past 65535.
+        """
         max_tries = 10000  # Retry up to 10000 times to find a free port
         for _ in range(max_tries):
-            port = Cluster.find_free_port()
+            port = Cluster.find_free_port(max_port_num)
             success = self._port_lock.acquire(port)
             if success:
                 return port
@@ -1299,28 +1311,45 @@ class Worker(metaclass=WorkerMeta):
         self._timer_metrics.clear()
         return metrics
 
+    @property
+    def _trace_category(self) -> str:
+        """The trace event category of this worker, i.e., its root group name."""
+        if getattr(self, "_worker_address", None) is not None:
+            return self._worker_address.root_group_name
+        return "worker"
+
     @contextmanager
-    def worker_timer(self, tag: Optional[str] = None):
+    def worker_timer(self, tag: Optional[str] = None, trace: bool = True):
         """Context manager to time the execution of a worker function.
 
         Args:
             tag (str): The name of the timer to record the execution time for. Default is the current function name.
+            trace (bool): Whether to also emit a trace event; no-op if the tracer is not initialized.
         """
         if tag is None:
             frame_num = 2
             frame = inspect.stack()[frame_num]
             tag = frame.function
         assert tag is not None, "Timer tag must be provided."
+        if trace:
+            # Lazy import to avoid a circular import (Tracer lives under ..manager).
+            from ..manager import Tracer
+        else:
+            Tracer = None
+        if Tracer is not None:
+            Tracer.trace_begin(tag, cat=self._trace_category)
         try:
             start_time = time.perf_counter()
             yield
         finally:
             duration = time.perf_counter() - start_time
             self._timer_metrics[tag] = self._timer_metrics.get(tag, 0.0) + duration
+            if Tracer is not None:
+                Tracer.trace_end(tag, cat=self._trace_category)
 
     @staticmethod
-    def timer(tag: Optional[str] = None):
-        """Decorator to time a worker function and emit a profiling annotation."""
+    def timer(tag: Optional[str] = None, trace: bool = True):
+        """Decorator to time a worker function, emitting a profiling annotation and optionally a trace event."""
 
         def decorator(func):
             label = tag or func.__name__
@@ -1328,7 +1357,7 @@ class Worker(metaclass=WorkerMeta):
 
                 @functools.wraps(func)
                 async def wrapper(self, *args, **kwargs):
-                    with self.worker_timer(label):
+                    with self.worker_timer(label, trace=trace):
                         with AcceleratorUtil.profiling_range(
                             self._accelerator_type, label
                         ):
@@ -1338,7 +1367,7 @@ class Worker(metaclass=WorkerMeta):
 
             @functools.wraps(func)
             def wrapper(self, *args, **kwargs):
-                with self.worker_timer(label):
+                with self.worker_timer(label, trace=trace):
                     with AcceleratorUtil.profiling_range(self._accelerator_type, label):
                         return func(self, *args, **kwargs)
 

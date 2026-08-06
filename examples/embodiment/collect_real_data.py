@@ -20,11 +20,11 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from rlinf.data.embodied_io_struct import (
+from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
+from rlinf.data.schema.embodied_types import (
     ChunkStepResult,
-    EmbodiedRolloutResult,
 )
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
 from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 
@@ -92,7 +92,7 @@ class DataCollector(Worker):
         self._target_step_period = 1.0 / float(fps) if fps else None
 
     def _process_obs(self, obs):
-        """Reshape env obs into the dict EmbodiedRolloutResult expects."""
+        """Reshape env obs into the dict EmbodiedTrajectoryBuilder expects."""
         if not self.cfg.runner.record_task_description:
             obs.pop("task_descriptions", None)
 
@@ -121,7 +121,7 @@ class DataCollector(Worker):
             desc="Collecting Data Episodes:",
         )
 
-        current_rollout = EmbodiedRolloutResult(
+        current_rollout = EmbodiedTrajectoryBuilder(
             max_episode_length=self.cfg.env.eval.max_episode_steps,
         )
 
@@ -163,7 +163,7 @@ class DataCollector(Worker):
 
             # Rebuild rollout on rec-start or abort; ``restart`` kept for older wrappers.
             if kb_event in ("start", "restart", "abort"):
-                current_rollout = EmbodiedRolloutResult(
+                current_rollout = EmbodiedTrajectoryBuilder(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
             if kb_phase in (None, "rec"):
@@ -224,7 +224,7 @@ class DataCollector(Worker):
                     reset_options = {"skip_wait_for_start": True}
                 obs, _ = self.env.reset(options=reset_options)
                 current_obs_processed = self._process_obs(obs)
-                current_rollout = EmbodiedRolloutResult(
+                current_rollout = EmbodiedTrajectoryBuilder(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
 

@@ -30,9 +30,9 @@ from rlinf.algorithms.utils import (
     kl_penalty,
 )
 from rlinf.config import SupportedModel, torch_dtype_from_precision
-from rlinf.data.embodied_io_struct import Trajectory, convert_trajectories_to_batch
-from rlinf.data.io_struct import BatchResizingIterator, RolloutResult
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
+from rlinf.data.schema.reasoning_results import BatchResizingIterator, RolloutResult
+from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.hybrid_engines.fsdp.utils import (
     pack_fsdp_input,
@@ -749,6 +749,7 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
 
+    @Worker.timer("training_step")
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
     ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
@@ -960,6 +961,7 @@ class FSDPActor(FSDPModelManager, Worker):
         )
         return batch
 
+    @Worker.timer("run_training")
     def run_training(
         self, input_channel: Channel, do_offload=False
     ) -> tuple[dict, list]:
@@ -1033,6 +1035,7 @@ class FSDPActor(FSDPModelManager, Worker):
         return rollout_metrics, training_metrics_list
 
     # Advantages and returns
+    @Worker.timer("compute_advantages_and_returns")
     def compute_advantages_and_returns(self, batch: dict[str, torch.Tensor]):
         """Compute the advantages and returns.
 
