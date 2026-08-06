@@ -8,7 +8,7 @@
    在 RLinf 中使用 Diffusion-NFT 训练视频生成模型。
 
 使用 RLinf 对 SD3 和 Wan2.2 生成模型进行 Diffusion-NFT 强化学习微调。该流程复用
-具身 runner，将图像/视频生成模型接入 ``actor.model``，并通过 ``generation`` 环境
+具身 runner，将图像/视频生成模型接入 ``actor.model``，并通过 ``diffusion`` 环境
 对生成媒体进行一步式 reward 打分。
 
 概览
@@ -22,7 +22,7 @@
    .. grid-item-card:: 环境
       :text-align: center
 
-      ``generation``
+      ``diffusion``
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -96,14 +96,14 @@
 .. code:: bash
 
    # 为提高国内依赖安装速度，可以添加 --use-mirror 到下面的 install.sh 命令
-   bash requirements/install.sh embodied --model generation
+   bash requirements/install.sh embodied --model diffusion
    source .venv/bin/activate
 
 如果要使用自定义虚拟环境目录，可以传入 ``--venv <dir>``：
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model generation --venv /path/to/venv
+   bash requirements/install.sh embodied --model diffusion --venv /path/to/venv
    source /path/to/venv/bin/activate
 
 该命令会创建 Python 3.10 环境，并安装 SD3、Wan2.2 和 OCR reward 所需的
@@ -111,7 +111,7 @@ Diffusers、PEFT、Transformers、PaddleOCR、PaddlePaddle 等依赖。
 
 .. warning::
 
-   当前 generation 配置使用 ``/path/to/...`` 占位路径。在启动前，请按配置文件旁边的注释替换模型与数据集路径，或通过命令行覆盖 ``actor.model.model_path`` 和 ``env.*.dataset.path``。
+   当前 diffusion 配置使用 ``/path/to/...`` 占位路径。在启动前，请按配置文件旁边的注释替换模型与数据集路径，或通过命令行覆盖 ``actor.model.model_path`` 和 ``env.*.dataset.path``。
 
 .. note::
 

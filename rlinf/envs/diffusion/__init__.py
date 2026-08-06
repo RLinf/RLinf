@@ -42,7 +42,7 @@ def build_reward_backend(cfg: Any) -> Any:
         return _build_single_reward_backend(cfg)
     if reward_type == "multi":
         return MultiRewardBackend.from_config(cfg, _build_single_reward_backend)
-    raise ValueError(f"Unknown generation reward type: {reward_type}")
+    raise ValueError(f"Unknown diffusion reward type: {reward_type}")
 
 
 from rlinf.envs.diffusion.generation_env import GenerationEnv  # noqa: E402

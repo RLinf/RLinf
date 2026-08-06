@@ -17,8 +17,8 @@ from typing import Callable, Optional
 from omegaconf import DictConfig
 
 from rlinf.config import (
+    DIFFUSION_MODELS,
     EMBODIED_MODEL,
-    GENERATION_MODEL,
     SupportedModel,
     torch_dtype_from_precision,
 )
@@ -49,8 +49,8 @@ def register_model(
     model_kind = SupportedModel(model_type)
     if category == "embodied":
         EMBODIED_MODEL.add(model_kind)
-    elif category == "generation":
-        GENERATION_MODEL.add(model_kind)
+    elif category == "diffusion":
+        DIFFUSION_MODELS.add(model_kind)
 
 
 def _register_builtin_models():
@@ -280,13 +280,13 @@ def _register_builtin_models():
     register_model(
         SupportedModel.SD3.value,
         _build_sd3,
-        category="generation",
+        category="diffusion",
         force=True,
     )
     register_model(
         SupportedModel.WAN22_TI2V_5B.value,
         _build_wan22_ti2v_5b,
-        category="generation",
+        category="diffusion",
         force=True,
     )
     register_model(

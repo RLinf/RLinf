@@ -9,7 +9,7 @@ RL for Video Generation Models
 
 Use RLinf to fine-tune SD3 and Wan2.2 generation models with Diffusion-NFT.
 The workflow reuses the embodied runner, registers image/video generation
-models under ``actor.model``, and uses the ``generation`` environment to score generated media
+models under ``actor.model``, and uses the ``diffusion`` environment to score generated media
 with a one-step reward.
 
 Overview
@@ -24,7 +24,7 @@ models on the OCR prompt dataset.
    .. grid-item-card:: Environments
       :text-align: center
 
-      ``generation``
+      ``diffusion``
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -98,14 +98,14 @@ Installation
 .. code:: bash
 
    # Add --use-mirror for faster downloads in mainland China.
-   bash requirements/install.sh embodied --model generation
+   bash requirements/install.sh embodied --model diffusion
    source .venv/bin/activate
 
 To use a custom virtual environment directory, pass ``--venv <dir>``:
 
 .. code:: bash
 
-   bash requirements/install.sh embodied --model generation --venv /path/to/venv
+   bash requirements/install.sh embodied --model diffusion --venv /path/to/venv
    source /path/to/venv/bin/activate
 
 This command creates a Python 3.10 environment and installs the SD3, Wan2.2,
@@ -114,7 +114,7 @@ PaddleOCR, and PaddlePaddle.
 
 .. warning::
 
-   The checked-in generation configs use ``/path/to/...`` placeholders.
+   The checked-in diffusion configs use ``/path/to/...`` placeholders.
    Replace the model and dataset paths following the comments in the configs,
    or override ``actor.model.model_path`` and ``env.*.dataset.path`` at launch.
 
