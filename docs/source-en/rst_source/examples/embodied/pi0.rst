@@ -382,6 +382,7 @@ If you still encounter OOM issues under the minimum parameter configuration, we 
 For models after SFT or RL training, we provide two evaluation methods:
 
 - Use RLinf's unified evaluation script; see :doc:`evaluation <../../evaluations/index>` for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
+- To hide inference latency during evaluation or deployment, π\ :sub:`0.5`\  is also integrated with RTC, which overlaps action-chunk execution with the next chunk's inference; see :doc:`RTC <../../guides/rtc>`.
 
 .. note::
 

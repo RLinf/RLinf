@@ -581,6 +581,9 @@ An example configuration for two Franka robots is shown in ``examples/embodiment
 Naturally, the settings can be extended to more robots by following the same pattern.
 For more details regarding the configuration syntax of this kind of heterogeneous hardware setup, please refer to :doc:`../../guides/hetero`.
 
+To hide policy inference latency on the real robot by overlapping it with action-chunk
+execution, see :doc:`RTC <../../guides/rtc>`.
+
 Visualization and Results
 -------------------------
 

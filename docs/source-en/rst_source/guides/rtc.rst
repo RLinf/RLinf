@@ -123,7 +123,7 @@ RTC reduces ``wait_inference_time`` from several seconds to ~2ms (near zero), al
 Real-World Experiment
 ---------------------
 
-For real-world deployment, see :doc:`Franka Real-World RL <franka>`. This section covers only the differences for RTC evaluation.
+For real-world deployment, see :doc:`Franka Real-World RL </rst_source/examples/embodied/franka>`. This section covers only the differences for RTC evaluation.
 
 Control node installation
 
