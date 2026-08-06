@@ -570,7 +570,7 @@ class CollectEpisode(gym.Wrapper):
 
     def _ensure_lerobot_writer(self, ep_data: dict):
         """Get-or-create the LeRobot writer. Must be called under ``_lerobot_lock``."""
-        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+        from rlinf.data.storage.lerobot import LeRobotDatasetWriter
 
         if self._lerobot_writer is None:
             self._lerobot_writer = LeRobotDatasetWriter()

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from omegaconf import DictConfig
 
-from rlinf.data.io_struct import SeqGroupInfo
+from rlinf.data.schema.reasoning_requests import SeqGroupInfo
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.placement import (
     ModelParallelComponentPlacement,

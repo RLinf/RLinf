@@ -35,7 +35,7 @@ if typing.TYPE_CHECKING:
         Triplet,
     )
 
-from rlinf.data.io_struct import DynamicRolloutResult
+from rlinf.data.schema.reasoning_results import DynamicRolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils.placement import ModelParallelComponentPlacement
 

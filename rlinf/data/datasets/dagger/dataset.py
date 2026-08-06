@@ -96,7 +96,7 @@ class RollingLeRobotDataset(Dataset):
             Without intervene filtering logical == physical, so the behavior
             is equivalent to a physical-frame window.  Analogous to
             ``TrajectoryReplayBuffer.sample_window_size`` in
-            :mod:`rlinf.data.replay_buffer` but counted in frames instead of
+            :mod:`rlinf.data.storage.replay.buffer` but counted in frames instead of
             trajectories. ``None`` or ``0`` disables windowing (full history).
         in_memory_mode: Must be ``True``.  Newly written shards are loaded into
             an in-memory Arrow store for training reads.

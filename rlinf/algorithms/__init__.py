@@ -11,4 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from . import advantages, loss_scales, losses, toolcall_parsers  # noqa: F401
+from rlinf.agents.tool_call import parsers as toolcall_parsers  # noqa: F401
+
+from . import advantages, loss_scales, losses  # noqa: F401

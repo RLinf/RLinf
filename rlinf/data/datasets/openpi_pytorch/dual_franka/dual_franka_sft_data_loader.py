@@ -40,7 +40,7 @@ from torch.utils.data.distributed import DistributedSampler
 from rlinf.data.datasets.openpi_pytorch.dual_franka.dual_franka_sft_dataset import (
     DualFrankaSftDataset,
 )
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
+from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
 from rlinf.models.embodiment.openpi_pytorch.transforms_pipeline import (
     build_openpi_transforms,
@@ -321,7 +321,7 @@ def build_dual_franka_sft_dataloader(
     if repo_id:
         from pathlib import Path
 
-        from rlinf.data.lerobot_paths import default_hf_lerobot_home
+        from rlinf.data.storage.lerobot import default_hf_lerobot_home
 
         candidate = default_hf_lerobot_home() / str(repo_id)
         nested = Path(data_path) / str(repo_id)

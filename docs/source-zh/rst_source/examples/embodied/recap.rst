@@ -797,7 +797,7 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
    rlinf/
    ├── models/embodiment/value_model/recap/     # 价值评论器、配置、checkpoint 工具
    ├── data/datasets/recap/                     # value_dataset.py、cfg_model.py 等
-   └── data/process/                            # 共享、模型无关（RECAP + STEAM）
+   └── algorithms/offline/process/              # 共享、模型无关（RECAP + STEAM）
        ├── advantage.py                          # 分位数阈值 + 布尔标签
        ├── distributed.py                        # 分片推理辅助
        └── mixture_config.py                     # meta/mixture_config.yaml tag I/O
