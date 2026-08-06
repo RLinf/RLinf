@@ -100,12 +100,13 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   # YAML 读取 DUALVIEW_SFT_DATA_ROOT；可按需覆盖 model path / output。
+   # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
 
 这一步会：
 
-- 通过共享的 ``run_vlm_sft.sh`` + YAML 做 LoRA SFT。
+- 通过共享的 ``run_vlm_sft.sh`` + YAML 默认超参做 LoRA SFT（micro 4 /
+  global 256、400 步、类别加权 success loss、warmup 20）。
 - 按 **balanced accuracy** 选 checkpoint（同时看 positive recall 和 negative
   accuracy），不要只看整体 accuracy。
 - 选出的目录稍后设为 ``VLM_TREND_SUCCESS_CHECKPOINT``。
@@ -165,12 +166,13 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   # 可选: export OUTPUT_ROOT=/path/to/vlm_trend_dense_potential_sft
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 这一步会：
 
-- 超参与步骤 3 同类，但走 potential 配置（YAML 读取
-  ``VLM_TREND_REWARD_DATA_ROOT``）。
+- 超参与步骤 3 同类（YAML 默认：micro 4 / global 256、400 步），走
+  potential 配置（读取 ``VLM_TREND_REWARD_DATA_ROOT``）。
 - 在 SFT 日志目录下选出 checkpoint，供步骤 6–7 使用。该目录保留完整的
   ``full_weights.pt``，并单独写出 ``actor/lora_adapter/`` 供 reward /
   特征提取加载。

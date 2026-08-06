@@ -32,17 +32,19 @@ runner:
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
-  max_epochs: 500
-  max_steps: 500
+  # Defaults match the dual-line Success recipe (former run_train_sparse_success_vlm.sh).
+  max_epochs: 2
+  max_steps: 400
   val_check_interval: 100
   save_interval: 100
   experiment_name: qwen3_vl_4b_dualview_terminal_success
-  output_dir: /path/to/output/logs
+  output_dir: ${oc.env:OUTPUT_ROOT,logs/vlm_trend_sparse_success_sft}
   resume_dir: null
   per_worker_log: true
 
 # Build this dataset with preprocess_vlm_trend_terminal_success_dataset.py and
 # evaluate all checkpoints before selecting the model for PPO.
+# Requires DUALVIEW_SFT_DATA_ROOT; set QWEN_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:
   type: vlm
   dataset_name: "vlm_trend_reward_sft"
@@ -67,15 +69,15 @@ data:
 actor:
   group_name: ActorGroup
   training_backend: fsdp
-  micro_batch_size: 1
-  eval_batch_size: 8
-  global_batch_size: 8
+  micro_batch_size: 4
+  eval_batch_size: 16
+  global_batch_size: 256
   seed: 42
 
   model:
     model_type: qwen3_vl
     precision: bf16
-    model_path: /path/to/Qwen3-VL-4B-Instruct
+    model_path: ${oc.env:QWEN_MODEL_PATH}
     attn_implementation: flash_attention_2
     is_lora: true
     lora_rank: 16
@@ -86,8 +88,9 @@ actor:
       - model.language_model
       - lm_head
     sample_reweight:
-      enabled: false
-      success_weight: 1.0
+      enabled: true
+      # Class weight from the Success collection positive/negative balance.
+      success_weight: 2.22060897
       non_success_weight: 1.0
 
   optim:
@@ -98,8 +101,8 @@ actor:
     weight_decay: 0.01
     clip_grad: 1.0
     lr_scheduler: cosine
-    total_training_steps: 1000
-    lr_warmup_steps: 50
+    total_training_steps: ${runner.max_steps}
+    lr_warmup_steps: 20
 
   fsdp_config:
     strategy: fsdp

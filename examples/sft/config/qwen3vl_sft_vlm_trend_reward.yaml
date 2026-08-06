@@ -18,12 +18,15 @@ runner:
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
-  max_epochs: 3000
-  max_steps: 3000
+  # Defaults match the dual-line Success dense LoRA recipe
+  # (former run_train_dense_potential_vlm.sh). Raise max_steps for longer
+  # single-line Trend SFT if needed.
+  max_epochs: 400
+  max_steps: 400
   val_check_interval: 100
   save_interval: 100
   experiment_name: qwen3_vl_4b_vlm_trend_reward_sft
-  output_dir: /path/to/output/logs
+  output_dir: ${oc.env:OUTPUT_ROOT,logs/vlm_trend_dense_potential_sft}
   resume_dir: null
   per_worker_log: true
 
@@ -31,6 +34,7 @@ runner:
 # preprocess_vlm_trend_state_value_potential_dataset.py and point
 # VLM_TREND_REWARD_DATA_ROOT to that output root.
 # For the single-line Trend reward, use preprocess_vlm_trend_reward_dataset.py.
+# Requires VLM_TREND_REWARD_DATA_ROOT; set QWEN_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:
   type: vlm
   dataset_name: "vlm_trend_reward_sft"
@@ -55,15 +59,15 @@ data:
 actor:
   group_name: ActorGroup
   training_backend: fsdp
-  micro_batch_size: 1
-  eval_batch_size: 8
-  global_batch_size: 8
+  micro_batch_size: 4
+  eval_batch_size: 16
+  global_batch_size: 256
   seed: 42
 
   model:
     model_type: qwen3_vl
     precision: bf16
-    model_path: /path/to/Qwen3-VL-4B-Instruct
+    model_path: ${oc.env:QWEN_MODEL_PATH}
     attn_implementation: flash_attention_2
     is_lora: true
     lora_rank: 16
@@ -96,7 +100,7 @@ actor:
     clip_grad: 1.0
     lr_scheduler: cosine
     total_training_steps: ${runner.max_steps}
-    lr_warmup_steps: 50
+    lr_warmup_steps: 20
 
   fsdp_config:
     strategy: fsdp

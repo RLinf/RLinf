@@ -104,12 +104,13 @@ Fine-tune Qwen3-VL-4B to answer ``0`` / ``1`` for terminal success
 
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   # YAML reads DUALVIEW_SFT_DATA_ROOT; override model path / output as needed.
+   # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_sparse_success_sft
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
 
 What this does:
 
-- LoRA SFT via the shared ``run_vlm_sft.sh`` + YAML config.
+- LoRA SFT via the shared ``run_vlm_sft.sh`` + YAML defaults (micro 4 /
+  global 256, 400 steps, class-weighted success loss, warmup 20).
 - Pick the checkpoint with the best **balanced accuracy** (also check positive
   recall and negative accuracy). Do not trust aggregate accuracy alone.
 - Use that directory later as ``VLM_TREND_SUCCESS_CHECKPOINT``.
@@ -170,12 +171,13 @@ Fine-tune Qwen3-VL on the potential / progress labels
 
    export VLM_TREND_REWARD_DATA_ROOT=/path/to/vlm_trend_potential_sft
    export QWEN_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   # Optional: export OUTPUT_ROOT=/path/to/vlm_trend_dense_potential_sft
    bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 What this does:
 
-- Same LoRA recipe as step 3, but on the potential config
-  (``VLM_TREND_REWARD_DATA_ROOT`` is read by the YAML).
+- Same LoRA recipe as step 3 (YAML defaults: micro 4 / global 256, 400 steps),
+  on the potential config (``VLM_TREND_REWARD_DATA_ROOT``).
 - Select a checkpoint directory under the SFT log path for steps 6–7.
   The directory keeps full ``full_weights.pt`` and a separate
   ``actor/lora_adapter/`` artifact for the reward / feature-extraction loaders.
