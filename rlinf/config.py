@@ -961,6 +961,17 @@ def validate_embodied_cfg(cfg):
             f"Current value: {add_value_head}"
         )
 
+    # MolmoAct2 caches an action queue per batch index inside the LeRobot policy.
+    # Pipeline stages hand the same indices to different environments on
+    # alternating calls, so one env would execute another env's queued actions.
+    if SupportedModel(cfg.rollout.model.model_type) == SupportedModel.MOLMOACT2:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "model_type 'molmoact2' requires rollout.pipeline_stage_num to be 1, "
+            f"got {cfg.rollout.pipeline_stage_num}: the policy keys its "
+            "per-environment action queues by batch index, which pipeline stages "
+            "reuse across environments."
+        )
+
     # process num-envs
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num

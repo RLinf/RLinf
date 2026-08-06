@@ -45,9 +45,10 @@ env:
     auto_reset: True
     ignore_terminations: True
     group_size: 1
-    # Smoke test only: 2 envs x 4 steps, not a benchmark run.
-    max_episode_steps: 4
-    max_steps_per_rollout_epoch: 4
+    # Smoke test only: 2 envs x 1 episode, not a benchmark run. Keep the episode
+    # length a multiple of the policy's 10-step action queue (see model preset).
+    max_episode_steps: 10
+    max_steps_per_rollout_epoch: 10
     use_fixed_reset_state_ids: True
     use_ordered_reset_state_ids: True
     reset_gripper_open: False

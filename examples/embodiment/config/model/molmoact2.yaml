@@ -15,6 +15,10 @@ max_prompt_length: 128
 action_dim: 7
 # MolmoAct2 pops one step from its internal per-env action queue per inference,
 # so RLinf executes exactly one action per rollout step.
+# NOTE: the queue holds n_action_steps (10 for the LIBERO checkpoint) actions and
+# is not cleared on reset, so keep env.eval.max_episode_steps a multiple of it and
+# ignore_terminations True; otherwise an episode starts on the previous one's
+# leftover actions.
 num_action_chunks: 1
 
 # LoRA disabled for the MolmoAct2 wrapper path.

@@ -74,9 +74,13 @@ class MolmoAct2ForRLActionPrediction(nn.Module, BasePolicy):
     def reset(self) -> None:
         """Clear the wrapped policy's per-env action queues and depth caches.
 
-        ``MolmoAct2Policy`` keeps one action queue per batch index and refills it
-        only once it is empty, so it has to be reset at episode boundaries. RLinf's
-        rollout worker has no policy-reset hook yet, so nothing calls this today.
+        ``MolmoAct2Policy`` refills a per-environment queue of ``n_action_steps``
+        actions and pops one per call, so an episode whose length is not a
+        multiple of ``n_action_steps`` leaves stale actions behind that the next
+        episode would execute. The shipped eval configs run every episode to
+        truncation at a multiple of it (240 / 320 / 520 against 10), so the queue
+        is empty at each boundary and nothing calls this. Configs that terminate
+        early or truncate off-cycle must call it themselves.
         """
         self.policy.reset()
 
