@@ -376,9 +376,16 @@ Stage 2: Supervised Fine-Tuning (SFT)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The collected ``.pkl`` episodes must be converted to QwenTrend SFT format using
-``preprocess_qwentrend_reward_dataset.py``. This script slices episodes into
-5-frame windows, extracts dual-view images, and auto-labels based on GAE or
-TCP distance changes:
+``preprocess_qwentrend_reward_dataset.py``. Activate the virtual environment and
+set ``PYTHONPATH`` before running:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
+This script slices episodes into 5-frame windows, extracts dual-view images,
+and auto-labels based on GAE or TCP distance changes:
 
 .. code-block:: bash
 

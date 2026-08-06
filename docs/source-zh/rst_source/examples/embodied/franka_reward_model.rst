@@ -357,7 +357,14 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 采集到的 ``.pkl`` episode 需要通过 ``preprocess_qwentrend_reward_dataset.py``
-转换为 QwenTrend SFT 格式。该脚本将 episode 按滑动窗口切分为 5 帧片段，
+转换为 QwenTrend SFT 格式。运行前需要激活虚拟环境并设置 ``PYTHONPATH``：
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+   export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
+
+该脚本将 episode 按滑动窗口切分为 5 帧片段，
 提取双视角图像，并根据 GAE 或 TCP 距离变化自动标注：
 
 .. code-block:: bash

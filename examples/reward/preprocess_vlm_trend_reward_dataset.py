@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Preprocess VLM Trend reward data into split train/eval pkl datasets.
+"""Preprocess Qwen trend reward data into split train/eval pkl datasets.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+    python examples/reward/preprocess_qwentrend_reward_dataset.py \
         --raw-data-path logs/xxx/collected_data \
-        --output-dir logs/xxx/processed_vlm_trend_reward_data
+        --output-dir logs/xxx/processed_qwentrend_reward_data
 
-The exported JSONL points to per-sample pkl files. VLMTrendRewardSFTDataset
+The exported JSONL points to per-sample pkl files. QwenTrendProgressSFTDataset
 loads the two 5-frame video arrays directly from those pkl files, avoiding the
 slow small-mp4 export path.
 """
@@ -130,10 +130,20 @@ def _extract_dual_view_frames(
 
 def _build_prompt(task: str, window_size: int) -> str:
     return (
-        f"You are currently performing the task: {task}. "
-        f"You are given two synchronized {window_size}-frame videos from different "
-        "camera views (main view and third-person view) of the same robot action "
-        "window. Judge whether the action trend is positive, negative, or unclear. "
+        f"You are controlling a Franka robot arm to perform: {task}. "
+        f"You will see two {window_size}-frame videos captured simultaneously: "
+        "the first video is a wrist camera close-up showing the gripper, "
+        "the green peg it holds, and the white insertion hole; "
+        "the second video is a global camera showing the entire workspace "
+        "including the blue background mat. "
+        "The robot MUST NOT touch the blue background mat at any time. "
+        "Judge whether the operation in this time window makes the task "
+        "better, worse, or unclear. "
+        "Positive (better): the peg is moving closer to the white hole, "
+        "approaching the hole center, or being inserted into the hole. "
+        "Negative (worse): the peg is moving away from the hole, misaligned, "
+        "or the robot is touching the blue mat. "
+        "Unclear: the movement direction or state cannot be determined. "
         "Answer with exactly one word: positive, negative, or unclear."
     )
 
@@ -471,12 +481,12 @@ def preprocess_and_save_reward_datasets(
     reverse_positive_as_negative: bool = True,
     fps: int = 2,
     task_description: Optional[str] = None,
+    target_ee_pose: Optional[list[float]] = None,
     random_seed: Optional[int] = None,
     load_workers: int = 256,
     write_workers: int = 512,
-    target_ee_pose: Optional[list[float]] = None,
 ) -> dict:
-    """Build train/eval VLM Trend reward datasets from raw data."""
+    """Build train/eval Qwen trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
         raw_data_path,
         window_size=window_size,
@@ -593,7 +603,7 @@ def preprocess_and_save_reward_datasets(
 
         label_counts = dict(Counter(row["answer"] for row in rows))
         logger.info(
-            f"Saved processed VLM Trend reward {split_name} split to "
+            f"Saved processed Qwen trend reward {split_name} split to "
             f"{manifest_path}: {len(rows)}"
         )
         return manifest_path, label_counts
@@ -618,7 +628,6 @@ def preprocess_and_save_reward_datasets(
         "fps": fps,
         "task_description": task_description,
         "random_seed": random_seed,
-        "target_ee_pose": target_ee_pose,
         "load_workers": load_workers,
         "write_workers": write_workers,
         "export_format": "pkl",
@@ -639,7 +648,7 @@ def preprocess_and_save_reward_datasets(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
+        description="Preprocess Qwen trend reward dataset from raw episode .pkl files."
     )
     parser.add_argument(
         "--raw-data-path",
@@ -650,7 +659,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="logs/processed_vlm_trend_reward_data",
+        default="logs/processed_qwentrend_reward_data",
         help="Output directory for processed train/eval pkl datasets.",
     )
     parser.add_argument(
@@ -787,7 +796,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     args = parser.parse_args()
-    # Parse comma-separated target-ee-pose into list of floats.
     # Accepts 3 values (position only) or 6 values (position + orientation).
     if args.target_ee_pose is not None:
         parts = [x.strip() for x in args.target_ee_pose.split(",")]
@@ -823,14 +831,14 @@ def main() -> None:
         reverse_positive_as_negative=args.reverse_positive_as_negative,
         fps=args.fps,
         task_description=args.task_description,
+        target_ee_pose=args.target_ee_pose,
         random_seed=args.seed,
         load_workers=args.load_workers,
         write_workers=args.write_workers,
-        target_ee_pose=args.target_ee_pose,
     )
 
     print("=" * 80)
-    print("Dual-view trend reward dataset preprocessing complete")
+    print("Qwen trend reward dataset preprocessing complete")
     print(
         f"Train split: {metadata['train_manifest']} "
         f"({metadata['num_train_samples']} samples)"
