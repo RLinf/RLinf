@@ -22,11 +22,13 @@ import torch
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
     OpenPiPytorchActionModel,
-    OpenPiPytorchRLTConfig,
 )
 from rlinf.models.embodiment.openpi_pytorch.pi0_model import model as pi0_model_module
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0, make_attn_mask
+from rlinf.models.embodiment.openpi_pytorch.utils.rlt_utils import (
+    OpenPiPytorchRLTConfig,
+)
 
 
 class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
@@ -208,9 +210,7 @@ class OpenPiPytorchSFTActionModel(OpenPiPytorchActionModel):
         batch_size = actions.shape[0]
         device = actions.device
 
-        observation = pi0_model_module.preprocess_observation(
-            observation, train=True
-        )
+        observation = pi0_model_module.preprocess_observation(observation, train=True)
         embed_dtype = self.model.embed_dtype
         observation = pi0_model_module._observation_to_dtype(observation, embed_dtype)
         actions = actions.to(dtype=embed_dtype)

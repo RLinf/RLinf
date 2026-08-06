@@ -23,11 +23,13 @@ from torch.utils._pytree import tree_map
 
 from rlinf.models.embodiment.openpi_pytorch.openpi_action_model import (
     OpenPiPytorchActionModel,
-    OpenPiPytorchRLTConfig,
 )
 from rlinf.models.embodiment.openpi_pytorch.pi0_model import model as pi0_model_module
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.model import Observation
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_pytorch.utils.rlt_utils import (
+    OpenPiPytorchRLTConfig,
+)
 
 
 def _to_numpy(x):
@@ -426,9 +428,7 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         dt = -1.0 / self.num_steps
         t = 1.0
         while t >= -dt / 2:
-            t_tensor = torch.full(
-                (batch_size,), t, device=device, dtype=torch.float32
-            )
+            t_tensor = torch.full((batch_size,), t, device=device, dtype=torch.float32)
             suffix_out = self.model.run_suffix(
                 observation, x_t, t_tensor, kv_cache, prefix_mask
             )

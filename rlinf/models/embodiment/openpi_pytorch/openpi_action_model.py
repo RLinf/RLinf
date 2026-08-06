@@ -14,28 +14,13 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import torch
 import torch.nn as nn
 
 from rlinf.models.embodiment.openpi_pytorch.pi0_model.pi0 import Pi0
-
-
-@dataclasses.dataclass(frozen=True)
-class OpenPiPytorchRLTConfig:
-    """RLT-token knobs shared by the SFT and eval wrappers."""
-
-    use_rlt: bool = False
-    rlt_alpha: float = 1.0
-    rlt_input_dim: int = 2048
-    rlt_embed_dim: int = 2048
-    rlt_prefix_seq_len: int = 768
-    rlt_num_layers: int = 2
-    rlt_num_heads: int = 8
-    rlt_mlp_ratio: float = 4.0
-    rlt_image_only: bool = True
-    rlt_use_mask: bool = False
+from rlinf.models.embodiment.openpi_pytorch.utils.rlt_utils import (
+    OpenPiPytorchRLTConfig,
+)
 
 
 class OpenPiPytorchActionModel(nn.Module):
