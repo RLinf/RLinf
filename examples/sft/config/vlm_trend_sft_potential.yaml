@@ -32,8 +32,7 @@ runner:
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
-  # Dual-line Success dense potential LoRA recipe
-  # (former run_train_dense_potential_vlm.sh). For the single-line Trend
+  # Dual-line Success dense potential LoRA recipe. For the single-line Trend
   # reward (docs §2.3), use vlm_trend_sft_reward.yaml instead.
   max_epochs: 400
   max_steps: 400

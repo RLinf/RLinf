@@ -32,7 +32,7 @@ runner:
     project_name: rlinf
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
-  # Defaults match the dual-line Success recipe (former run_train_sparse_success_vlm.sh).
+  # Dual-line Success sparse LoRA recipe (micro 4 / global 256, 400 steps).
   max_epochs: 2
   max_steps: 400
   val_check_interval: 100

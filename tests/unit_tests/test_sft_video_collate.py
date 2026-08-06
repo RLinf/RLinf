@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 
 import torch
 
-from rlinf.data.datasets import sft_collate_fn
-from rlinf.data.datasets.item import SftDatasetItem
+from rlinf.data.datasets.common.item import SftDatasetItem
+from rlinf.data.datasets.vlm import collate_fn
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 from rlinf.workers.sft.fsdp_vlm_sft_worker import FSDPVlmSftWorker
 
@@ -40,7 +40,7 @@ def test_sft_collate_supports_qwen_video_inputs():
         for index in range(2)
     ]
 
-    batch = sft_collate_fn(items)
+    batch = collate_fn(items)
 
     assert len(batch["multi_modal_inputs"]["pixel_values_videos"]) == 2
     assert batch["multi_modal_inputs"]["video_grid_thw"].shape == (2, 3)

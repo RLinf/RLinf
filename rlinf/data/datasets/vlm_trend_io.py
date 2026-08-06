@@ -101,10 +101,32 @@ def load_episode_pickle(path: str) -> dict[str, Any] | None:
         return None
 
 
-def inspect_episode(path: str, window_size: int) -> dict[str, Any] | None:
+def _as_bool(value: Any) -> bool:
+    """Convert scalar tensor/array metadata to bool."""
+    if value is None:
+        return False
+    if hasattr(value, "item"):
+        value = value.item()
+    return bool(value)
+
+
+DEFAULT_TASK_DESCRIPTION = (
+    "Pick up the red cube and place it on the green spot on the table."
+)
+
+
+def inspect_episode(
+    path: str,
+    window_size: int,
+    *,
+    default_task: str = DEFAULT_TASK_DESCRIPTION,
+) -> dict[str, Any] | None:
     """Read the metadata needed to sample one rollout episode.
 
-    Returns ``None`` when the episode is unreadable or too short.
+    Returns ``None`` when the episode is unreadable or too short. Includes
+    sampling fields used by terminal-success preprocess
+    (``end_step``, ``success_steps``, ``is_complete``, ``source_run``).
+    Empty task metadata falls back to ``default_task``.
     """
     episode = load_episode_pickle(path)
     if episode is None:
@@ -113,22 +135,44 @@ def inspect_episode(path: str, window_size: int) -> dict[str, Any] | None:
     actions = episode.get("actions", [])
     if len(observations) < window_size or len(actions) < window_size:
         return None
+    terminated = episode.get("terminated", [])
+    truncated = episode.get("truncated", [])
+    success = bool(episode.get("success", False))
+    infos = episode.get("infos", [])
+    end_step = min(len(observations) - 1, len(actions))
+    is_complete = (
+        success
+        or bool(terminated and terminated[-1])
+        or bool(truncated and truncated[-1])
+    )
+    success_steps = [
+        index
+        for index, info in enumerate(infos[: end_step + 1])
+        if isinstance(info, dict) and _as_bool(info.get("success"))
+    ]
+    if success and not success_steps:
+        success_steps = [end_step]
+    abs_path = os.path.abspath(path)
     return {
-        "path": os.path.abspath(path),
+        "path": abs_path,
         "observations": observations,
         "actions": actions,
-        "terminated": episode.get("terminated", []),
-        "truncated": episode.get("truncated", []),
-        "success": bool(episode.get("success", False)),
-        "infos": episode.get("infos", []),
-        "task": (
+        "terminated": terminated,
+        "truncated": truncated,
+        "success": success,
+        "infos": infos,
+        "task": str(
             episode.get("task")
             or episode.get("task_description")
             or episode.get("task_name")
-            or ""
+            or default_task
         ),
         "episode_id": episode.get("episode_id"),
         "env_idx": episode.get("env_idx"),
+        "end_step": end_step,
+        "success_steps": success_steps,
+        "is_complete": is_complete,
+        "source_run": os.path.basename(os.path.dirname(os.path.dirname(abs_path))),
     }
 
 

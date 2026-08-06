@@ -17,8 +17,8 @@ import pickle
 
 import numpy as np
 
-from examples.reward.preprocess_vlm_trend_terminal_success_dataset import build_rows
 from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
+from rlinf.data.datasets.vlm_trend_success import build_rows
 
 
 def _write_episode(path, *, observation_count, success=False, complete=True):

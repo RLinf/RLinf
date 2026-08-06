@@ -39,16 +39,16 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from examples.reward.preprocess_vlm_trend_state_value_dataset import (
-    load_value_model,
-    score_states,
-)
 from rlinf.data.datasets.vlm_trend_io import (
     extract_dual_view_frames,
     potential_prompt,
     progress_prompt,
     to_numpy_float32,
     to_uint8_rgb,
+)
+from rlinf.models.embodiment.reward.state_success_value import (
+    load_value_model,
+    score_states,
 )
 from rlinf.utils.logging import get_logger
 

@@ -30,11 +30,15 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from examples.reward.train_vlm_trend_state_success_value import StateSuccessValue
 from rlinf.data.datasets.vlm_trend_io import (
     extract_dual_view_frames,
     to_numpy_float32,
     to_uint8_rgb,
+)
+from rlinf.models.embodiment.reward.state_success_value import (
+    StateSuccessValue,
+    load_value_model,
+    score_states,
 )
 from rlinf.utils.logging import get_logger
 
@@ -57,67 +61,6 @@ def _build_messages(prompt: str, label: str) -> list[dict[str, Any]]:
         {"role": "user", "content": [{"type": "text", "text": prompt}]},
         {"role": "assistant", "content": [{"type": "text", "text": label}]},
     ]
-
-
-def _stack_history(states: list[np.ndarray], idx: int, history_size: int) -> np.ndarray:
-    first = states[0]
-    frames = []
-    for offset in range(history_size - 1, -1, -1):
-        hist_idx = idx - offset
-        frames.append(states[hist_idx] if hist_idx >= 0 else first)
-    return np.concatenate(frames, axis=0).astype(np.float32)
-
-
-def load_value_model(
-    checkpoint_path: str,
-    device: torch.device,
-) -> tuple[StateSuccessValue, dict[str, Any], np.ndarray, np.ndarray]:
-    """Load a trained ``StateSuccessValue`` teacher and its normalization stats.
-
-    Returns:
-        ``(model, config, mean, std)`` with the model in eval mode on ``device``.
-    """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    cfg = checkpoint["config"]
-    model = StateSuccessValue(
-        input_dim=int(cfg["state_dim"]) * int(cfg["history_size"]),
-        hidden_dim=int(cfg["hidden_dim"]),
-        num_layers=int(cfg["num_layers"]),
-        dropout=float(cfg["dropout"]),
-    ).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    model.eval()
-    mean = np.asarray(cfg["mean"], dtype=np.float32)
-    std = np.asarray(cfg["std"], dtype=np.float32)
-    return model, cfg, mean, std
-
-
-def score_states(
-    model: StateSuccessValue,
-    cfg: dict[str, Any],
-    mean: np.ndarray,
-    std: np.ndarray,
-    states: list[np.ndarray],
-    device: torch.device,
-    batch_size: int,
-) -> np.ndarray:
-    """Score each state with the teacher after history stacking and whitening.
-
-    Returns:
-        Per-timestep success probabilities of shape ``(T,)``.
-    """
-    history_size = int(cfg["history_size"])
-    inputs = np.stack(
-        [_stack_history(states, idx, history_size) for idx in range(len(states))],
-        axis=0,
-    )
-    inputs = (inputs - mean[None, :]) / std[None, :]
-    scores = []
-    with torch.no_grad():
-        for start in range(0, len(inputs), batch_size):
-            batch = torch.from_numpy(inputs[start : start + batch_size]).to(device)
-            scores.append(torch.sigmoid(model(batch)).detach().cpu().numpy())
-    return np.concatenate(scores, axis=0).astype(np.float32)
 
 
 def label_from_score(

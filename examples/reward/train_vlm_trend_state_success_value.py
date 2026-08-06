@@ -39,6 +39,11 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
+from rlinf.data.datasets.vlm_trend_io import to_numpy_float32
+from rlinf.models.embodiment.reward.state_success_value import (
+    StateSuccessValue,
+    stack_state_history,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -57,53 +62,6 @@ class ValueConfig:
     target_mode: str
     mean: list[float]
     std: list[float]
-
-
-class StateSuccessValue(nn.Module):
-    """Small MLP value model over flattened state history."""
-
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int = 256,
-        num_layers: int = 3,
-        dropout: float = 0.0,
-    ) -> None:
-        super().__init__()
-        layers: list[nn.Module] = []
-        dim = input_dim
-        for _ in range(num_layers):
-            layers.extend(
-                [
-                    nn.Linear(dim, hidden_dim),
-                    nn.LayerNorm(hidden_dim),
-                    nn.SiLU(),
-                ]
-            )
-            if dropout > 0:
-                layers.append(nn.Dropout(dropout))
-            dim = hidden_dim
-        layers.append(nn.Linear(dim, 1))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, states: torch.Tensor) -> torch.Tensor:
-        """Return per-sample logits for success-potential BCE training."""
-        return self.net(states).squeeze(-1)
-
-
-def _to_numpy(value: Any) -> np.ndarray:
-    if torch.is_tensor(value):
-        value = value.detach().cpu().numpy()
-    return np.asarray(value, dtype=np.float32)
-
-
-def _stack_history(states: list[np.ndarray], idx: int, history_size: int) -> np.ndarray:
-    first = states[0]
-    frames = []
-    for offset in range(history_size - 1, -1, -1):
-        hist_idx = idx - offset
-        frames.append(states[hist_idx] if hist_idx >= 0 else first)
-    return np.concatenate(frames, axis=0).astype(np.float32)
 
 
 def _build_targets(length: int, success: bool, gamma: float, mode: str) -> np.ndarray:
@@ -174,7 +132,7 @@ def load_state_dataset(
         for obs in observations:
             if "states" not in obs:
                 continue
-            states.append(_to_numpy(obs["states"]).reshape(-1))
+            states.append(to_numpy_float32(obs["states"]).reshape(-1))
         if not states:
             continue
         if state_dim is None:
@@ -185,7 +143,10 @@ def load_state_dataset(
         success = bool(episode.get("success", False))
         targets = _build_targets(len(states), success, gamma, target_mode)
         inputs = np.stack(
-            [_stack_history(states, idx, history_size) for idx in range(len(states))],
+            [
+                stack_state_history(states, idx, history_size)
+                for idx in range(len(states))
+            ],
             axis=0,
         )
         if pkl_path in val_files:
