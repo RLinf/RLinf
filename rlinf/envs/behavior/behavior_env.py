@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import gc
 import inspect
 import json
@@ -759,6 +760,10 @@ class BehaviorEnv(gym.Env):
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
         self._ordered_reset_epoch = 0
         self._ordered_reset_instance_ids = None
+        self.trunk_proprio_randomization = self._parse_trunk_proprio_randomization(cfg)
+        self._trunk_proprio_random_values = None
+        self._trunk_proprio_rng = torch.Generator()
+        self._trunk_proprio_rng.manual_seed(self.seed + 100003)
         if self.record_metrics:
             self._init_metrics()
         if not (self.enable_offload and not self.enable_init_offload):
@@ -806,6 +811,33 @@ class BehaviorEnv(gym.Env):
             chunk_actions,
         )
 
+    def env_reset_partial(self, reset_mask):
+        """Reset env slots indicated by ``reset_mask``, returning
+        ``(reset_indices, raw_obs, raw_infos)`` for only the reset slots."""
+        reset_mask = [bool(flag) for flag in reset_mask]
+        reset_indices = [
+            env_idx for env_idx, should_reset in enumerate(reset_mask) if should_reset
+        ]
+        if not reset_indices:
+            return [], [], []
+        instance_ids = self._ordered_reset_ids_for_indices(reset_indices)
+        payload = self._reset_payload_with_instance_ids(reset_mask, instance_ids)
+        self._ensure_pool()
+        s = self.pool.num_env_shard
+        payload_shards = [
+            payload[i * s : (i + 1) * s]
+            for i in range(self.pool.num_env_subprocess)
+        ]
+        all_raw_obs, all_infos = self.pool.env_reset_slice_partial(
+            self.pool_offset,
+            self.num_envs,
+            payload_shards,
+        )
+        # Extract only the reset slots.
+        raw_obs = [all_raw_obs[i] for i in reset_indices]
+        raw_infos = [all_infos[i] for i in reset_indices]
+        return reset_indices, raw_obs, raw_infos
+
     def _extract_obs_image(self, raw_obs):
         state = None
         for sensor_data in raw_obs.values():
@@ -831,12 +863,99 @@ class BehaviorEnv(gym.Env):
             "state": state,
         }
 
-    def _wrap_obs(self, obs_list):
+    @staticmethod
+    def _parse_trunk_proprio_randomization(cfg):
+        random_cfg = cfg.get("trunk_proprio_randomization", None)
+        if random_cfg is None or not random_cfg.get("enabled", False):
+            return None
+
+        indices = list(random_cfg.get("indices", [236, 237, 238, 239]))
+        low = list(random_cfg.get("low", [0.0, -0.45, 0.0, 0.0]))
+        high = list(random_cfg.get("high", [0.7, 0.35, 0.18, 0.0]))
+        fixed_values = list(random_cfg.get("fixed_values", [None, None, None, 0.0]))
+        if not (len(indices) == len(low) == len(high) == len(fixed_values)):
+            raise ValueError(
+                "env.trunk_proprio_randomization indices, low, high, and "
+                "fixed_values must have the same length."
+            )
+        return {
+            "indices": [int(index) for index in indices],
+            "low": [float(value) for value in low],
+            "high": [float(value) for value in high],
+            "fixed_values": [
+                None if value is None else float(value) for value in fixed_values
+            ],
+        }
+
+    def _resample_trunk_proprio_randomization(self, env_indices=None) -> None:
+        if self.trunk_proprio_randomization is None:
+            return
+
+        dim = len(self.trunk_proprio_randomization["indices"])
+        if self._trunk_proprio_random_values is None:
+            self._trunk_proprio_random_values = torch.zeros(
+                self.num_envs, dim, dtype=torch.float32
+            )
+
+        if env_indices is None:
+            env_indices = list(range(self.num_envs))
+        env_indices = [int(index) for index in env_indices]
+        if not env_indices:
+            return
+
+        low = torch.tensor(
+            self.trunk_proprio_randomization["low"], dtype=torch.float32
+        )
+        high = torch.tensor(
+            self.trunk_proprio_randomization["high"], dtype=torch.float32
+        )
+        sampled = low + torch.rand(
+            len(env_indices), dim, generator=self._trunk_proprio_rng
+        ) * (high - low)
+        for dim_idx, fixed_value in enumerate(
+            self.trunk_proprio_randomization["fixed_values"]
+        ):
+            if fixed_value is not None:
+                sampled[:, dim_idx] = float(fixed_value)
+        self._trunk_proprio_random_values[env_indices] = sampled
+
+    def _apply_trunk_proprio_randomization(self, states, env_indices=None):
+        if self.trunk_proprio_randomization is None:
+            return states
+
+        if self._trunk_proprio_random_values is None:
+            self._resample_trunk_proprio_randomization()
+
+        if env_indices is None:
+            env_indices = list(range(states.shape[0]))
+        env_indices = [int(index) for index in env_indices]
+        if not env_indices:
+            return states
+
+        states = states.clone()
+        indices = self.trunk_proprio_randomization["indices"]
+        if max(indices) >= states.shape[-1]:
+            if states.shape[-1] < 7:
+                return states
+            indices = [3, 4, 5, 6]
+
+        values = self._trunk_proprio_random_values[env_indices].to(
+            device=states.device,
+            dtype=states.dtype,
+        )
+        states[:, indices] = values
+        return states
+
+    def _wrap_obs(self, obs_list, infos=None, env_indices=None):
         extracted_obs_list = []
         for obs in obs_list:
             extracted_obs = self._extract_obs_image(obs)
             extracted_obs_list.append(extracted_obs)
 
+        states = torch.stack(
+            [obs["state"] for obs in extracted_obs_list], axis=0
+        )
+        states = self._apply_trunk_proprio_randomization(states, env_indices)
         obs = {
             "main_images": torch.stack(
                 [obs["main_images"] for obs in extracted_obs_list], axis=0
@@ -845,9 +964,7 @@ class BehaviorEnv(gym.Env):
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, H, W, C]
             "task_descriptions": [self.task_description for _ in range(self.num_envs)],
-            "states": torch.stack(
-                [obs["state"] for obs in extracted_obs_list], axis=0
-            ),  # [N_ENV, 32]
+            "states": states,
         }
         return obs
 
@@ -858,7 +975,8 @@ class BehaviorEnv(gym.Env):
         if self.enable_offload and self.pool is None:
             self._init_env()
         raw_obs, infos = self.env_reset()
-        obs = self._wrap_obs(raw_obs)
+        self._resample_trunk_proprio_randomization()
+        obs = self._wrap_obs(raw_obs, infos)
         rewards = torch.zeros(self.num_envs, dtype=bool)
         infos = self._record_metrics(rewards, infos)
         self._reset_metrics()
@@ -983,9 +1101,13 @@ class BehaviorEnv(gym.Env):
         self.success_once[mask] = False
         self.returns[mask] = 0
 
-    def _record_metrics(self, rewards, infos):
+    def _record_metrics(self, rewards, infos, dones=None, env_indices=None):
         info_lists = []
-        for env_idx, (reward, info) in enumerate(zip(rewards, infos)):
+        if env_indices is None:
+            env_indices = list(range(len(infos)))
+        for local_idx, (env_idx, reward, info) in enumerate(
+            zip(env_indices, rewards, infos)
+        ):
             done_dict = info.get("done", {})
             episode_info = {
                 "success": done_dict.get("success", False),
@@ -1015,14 +1137,95 @@ class BehaviorEnv(gym.Env):
         tc = info["done"]["termination_conditions"]
         return any(v["done"] for v in tc.values())
 
+    @staticmethod
+    def _clone_obs(obs):
+        cloned = {}
+        for key, value in obs.items():
+            if torch.is_tensor(value):
+                cloned[key] = value.clone()
+            elif isinstance(value, list):
+                cloned[key] = list(value)
+            else:
+                cloned[key] = copy.deepcopy(value)
+        return cloned
+
+    @staticmethod
+    def _merge_obs_rows(base_obs, update_obs, env_indices):
+        merged_obs = BehaviorEnv._clone_obs(base_obs)
+        for key, update_value in update_obs.items():
+            if key not in merged_obs:
+                merged_obs[key] = update_value
+                continue
+            base_value = merged_obs[key]
+            if torch.is_tensor(base_value):
+                index = torch.as_tensor(
+                    env_indices, device=base_value.device, dtype=torch.long
+                )
+                merged_obs[key][index] = update_value.to(base_value.device)
+            elif isinstance(base_value, list):
+                for local_idx, env_idx in enumerate(env_indices):
+                    base_value[env_idx] = update_value[local_idx]
+            else:
+                merged_obs[key] = update_value
+        return merged_obs
+
+    def _merge_info_rows(self, base_infos, update_infos, env_indices):
+        merged_infos = copy.deepcopy(base_infos)
+
+        def merge_value(base_value, update_value):
+            if isinstance(update_value, dict):
+                if not isinstance(base_value, dict):
+                    base_value = {}
+                for key, child_update in update_value.items():
+                    base_value[key] = merge_value(base_value.get(key), child_update)
+                return base_value
+
+            if torch.is_tensor(update_value):
+                if not torch.is_tensor(base_value):
+                    base_shape = (self.num_envs, *update_value.shape[1:])
+                    base_value = torch.zeros(
+                        base_shape, dtype=update_value.dtype, device=update_value.device
+                    )
+                index = torch.as_tensor(
+                    env_indices, device=base_value.device, dtype=torch.long
+                )
+                base_value[index] = update_value.to(base_value.device)
+                return base_value
+
+            return update_value
+
+        for key, value in update_infos.items():
+            merged_infos[key] = merge_value(merged_infos.get(key), value)
+        return merged_infos
+
     def _handle_auto_reset(self, dones, extracted_obs, infos):
-        final_obs = extracted_obs.copy()
-        env_idx = torch.arange(0, self.num_envs, device=self.device)[dones]
-        options = {"env_idx": env_idx}
-        final_info = infos.copy()
-        if self.use_fixed_reset_state_ids:
-            options.update(episode_id=self.reset_state_ids[env_idx])
-        extracted_obs, infos = self.reset()
+        reset_indices = dones.nonzero(as_tuple=False).flatten().tolist()
+        final_obs = self._clone_obs(extracted_obs)
+        final_info = copy.deepcopy(infos)
+
+        reset_indices, reset_raw_obs, reset_raw_infos = self.env_reset_partial(
+            dones.tolist()
+        )
+        if reset_indices:
+            self._resample_trunk_proprio_randomization(reset_indices)
+            reset_obs = self._wrap_obs(
+                reset_raw_obs,
+                reset_raw_infos,
+                env_indices=reset_indices,
+            )
+            extracted_obs = self._merge_obs_rows(
+                extracted_obs, reset_obs, reset_indices
+            )
+
+            self._reset_metrics(reset_indices)
+            reset_rewards = torch.zeros(
+                len(reset_indices), device=self.device, dtype=torch.float32
+            )
+            reset_infos = self._record_metrics(
+                reset_rewards, reset_raw_infos, env_indices=reset_indices
+            )
+            infos = self._merge_info_rows(infos, reset_infos, reset_indices)
+
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
@@ -1032,8 +1235,8 @@ class BehaviorEnv(gym.Env):
         return extracted_obs, infos
 
     def update_reset_state_ids(self):
-        # use for multi task training
-        pass
+        if self._ordered_reset_instance_ids is not None:
+            self._ordered_reset_epoch += 1
 
     def _init_ordered_reset_instance_ids(self) -> list[int] | None:
         if not (self.is_eval and self.use_fixed_reset_state_ids):
@@ -1082,24 +1285,6 @@ class BehaviorEnv(gym.Env):
                 item["instance_id"] = next(instance_iter)
             payload.append(item)
         return payload
-
-    def env_reset_partial(self, reset_mask):
-        """Reset only the env slots indicated by ``reset_mask``."""
-        self._ensure_pool()
-        instance_ids = self._ordered_reset_ids_for_indices(
-            [i for i, r in enumerate(reset_mask) if r]
-        )
-        payload = self._reset_payload_with_instance_ids(
-            reset_mask, instance_ids
-        )
-        shard_size = self.pool.num_env_shard
-        payload_shards = [
-            payload[i * shard_size : (i + 1) * shard_size]
-            for i in range(self.pool.num_env_subprocess)
-        ]
-        return self.pool.env_reset_slice_partial(
-            self.pool_offset, self.num_envs, payload_shards
-        )
 
     def dump_replay_tro_states(self, payload: dict) -> list[dict]:
         """Dispatch ``dump_replay_tro_states`` to every Ray actor in the pool."""
