@@ -9,9 +9,14 @@ ARG ROCM_VER=6.4
 ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.0.0-910b
 ARG UBUNTU_VER=22.04
-ARG NVIDIA_BASE_IMAGE=nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
-ARG AMD_BASE_IMAGE=rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
+# Registry prefix for the Docker Hub base images, with a trailing slash.
+# Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=docker.m.daocloud.io/ when it is unreachable.
+ARG REGISTRY_MIRROR=
+ARG NVIDIA_BASE_IMAGE=${REGISTRY_MIRROR}nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
+ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
+# Ascend lives on Huawei SWR, not Docker Hub.
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
+ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}library/ubuntu:20.04
 
 
 ##################################################################################################
@@ -54,7 +59,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
 # bypasses the platform switch and always uses a plain Ubuntu base.
-FROM ubuntu:20.04 AS base-image-embodied-franka
+FROM ${FRANKA_BASE_IMAGE} AS base-image-embodied-franka
 
 
 ##################################################################################################
@@ -327,6 +332,14 @@ FROM embodied-common-image AS embodied-franka-image
 # so always invoke install.sh with --platform nvidia to skip ROCm detection.
 RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
             LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
+        done
+
+# Franky environments. franky-control ships libfranka inside a prebuilt wheel,
+# so these need no ROS/catkin build and are kept in separate venvs from the
+# franka-$v ones above. Only the libfranka versions with published wheels are
+# built: https://github.com/Brunch-Life/franky/releases
+RUN for v in 0.15.0 0.19.0; do \
+            LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
         done
 
 # Set default env (recommended libfranka 0.15.0)
