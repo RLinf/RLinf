@@ -18,7 +18,7 @@ Choose ``<model>`` and ``<env>`` to match your target benchmark:
      - Recommended ``--model``
      - Recommended ``--env``
    * - LIBERO
-     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero``
+     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``molmoact2``
      - ``maniskill_libero`` or ``libero``
    * - RoboTwin
      - ``openvla-oft`` / ``openpi`` / ``lingbotvla``

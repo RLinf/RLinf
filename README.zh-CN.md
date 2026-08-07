@@ -29,6 +29,7 @@ RLinf 是一个灵活且可扩展的开源框架，专为具身智能和智能�
 </div>
 
 ## 最新动态
+- [2026/08] 🔥 RLinf 支持在 LIBERO 上评测 MolmoAct2。文档：[MolmoAct2](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html)。
 - [2026/08] 🎉 两篇论文被 **OSDI 2026** 接收：[RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) 与 [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing)。DynaRL 在异构 RL 组件之间动态重分配计算、内存与通信资源，提升端到端训练吞吐。文档：[DynaRL](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/dynarl.html)。
 - [2026/08] 🎉 两篇论文被 **RSS 2026** 接收：[RLinf-VLA](https://roboticsconference.org/program/papers/89/) 与 [RLinf-USER](https://roboticsconference.org/program/papers/37/)。RLinf-VLA 是面向 VLA 模型的统一高效强化学习训练框架，可对接多样架构、算法与仿真器。文档：[RLinf-VLA](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_vla.html)。RLinf-USER 是面向真机在线策略学习的统一可扩展系统，将机器人与 GPU 一并作为一等硬件资源管理。文档：[RLinf-USER](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/resources/publications/rlinf_user.html)。
 - [2026/08] 🎉 一篇论文被 **NSDI 2027** 接收：[FUSCO](https://arxiv.org/abs/2512.22036)。FUSCO 通过融合数据变换与通信加速 MoE All-to-All，实现高性能分布式数据 shuffle。文档：[FUSCO](https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/system/fusco.html)。
@@ -164,6 +165,7 @@ RLinf 支持 World Action Model（WAM）和 Vision-Language-Action Model（VLA�
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/lingbotvla.html">LingBot-VLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/abot_m0.html">ABot-M0</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/evo1.html">Evo-1</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/zh-cn/latest/rst_source/examples/embodied/molmoact2.html">MolmoAct2</a> ✅</li>
           </ul>
           <li><b>VLM 模型</b></li>
           <ul>
