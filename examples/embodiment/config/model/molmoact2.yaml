@@ -1,0 +1,46 @@
+# MolmoAct2 model config for RLinf.
+# The official MolmoAct2 checkpoints are served through LeRobot and are
+# inference-only, so this preset supports evaluation (only_eval) rollouts.
+
+model_type: "molmoact2"
+
+# Path to a MolmoAct2 checkpoint directory (or a HuggingFace repo id).
+model_path: "/path/to/model/MolmoAct2-LIBERO" # https://huggingface.co/allenai/MolmoAct2-LIBERO
+
+# MolmoAct2 loads its weights in fp32 upstream; other values are ignored.
+precision: "fp32"
+max_prompt_length: 128
+
+# Env action layout (LIBERO Franka: 6-DoF delta + 1 gripper).
+action_dim: 7
+# MolmoAct2 pops one step from its internal per-env action queue per inference,
+# so RLinf executes exactly one action per rollout step.
+# NOTE: the queue holds n_action_steps (10 for the LIBERO checkpoint) actions and
+# is not cleared on reset, so keep env.eval.max_episode_steps a multiple of it and
+# ignore_terminations True; otherwise an episode starts on the previous one's
+# leftover actions.
+num_action_chunks: 1
+
+# LoRA disabled for the MolmoAct2 wrapper path.
+is_lora: false
+lora_rank: 32
+
+# RL value head unused (evaluation only).
+add_value_head: false
+
+# loading settings
+load_to_device: true
+trust_remote_code: true
+
+# MolmoAct2-specific inference settings.
+molmoact2:
+  # Number of denoising steps of the continuous action expert.
+  num_steps: 10
+  # "continuous" (flow-matching head) or "discrete" (FAST action tokens).
+  inference_action_mode: "continuous"
+  # Only used when inference_action_mode is "discrete".
+  discrete_action_tokenizer: "allenai/MolmoAct2-FAST-Tokenizer" # https://huggingface.co/allenai/MolmoAct2-FAST-Tokenizer
+  enable_depth_reasoning: false
+  # Action normalization stats key inside the checkpoint. Must match the
+  # checkpoint; MolmoAct2 raises when it is empty.
+  norm_tag: "libero"

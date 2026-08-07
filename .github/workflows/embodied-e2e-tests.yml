@@ -1485,3 +1485,34 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-molmoact2-libero-eval-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MOLMOACT2_LEROBOT_PATH=/workspace/dataset/lerobot-molmoact2
+          bash requirements/install.sh embodied --model molmoact2 --env libero
+
+      - name: LIBERO MolmoAct2 evaluation test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
