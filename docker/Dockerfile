@@ -43,6 +43,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-behavior-openpi
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-metaworld
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-calvin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
@@ -313,6 +314,20 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
+# Embodied: RoboCasa365
+##################################################################################################
+FROM embodied-common-image AS embodied-robocasa365-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robocasa365
+
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
 # Embodied: IsaacLab
 ##################################################################################################
 FROM embodied-common-image AS embodied-isaaclab-image
@@ -347,6 +362,8 @@ RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
 RUN for v in 0.15.0 0.19.0; do \
             LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
         done
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franka-dexhand --env franka-dexhand
 
 # Set default env (recommended libfranka 0.15.0)
 RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
