@@ -21,8 +21,12 @@ python3 .claude/skills/create-pr/lint_pr.py lint --pr 1444
 ```
 
 The rules come from [CONTRIBUTING.md](../../../CONTRIBUTING.md) ("PR Title and
-Description") and [.github/PULL_REQUEST_TEMPLATE.md](../../../.github/PULL_REQUEST_TEMPLATE.md).
-Paths below are relative to the repo root.
+Description"), [.github/PULL_REQUEST_TEMPLATE.md](../../../.github/PULL_REQUEST_TEMPLATE.md),
+and — for the title — the required `pr-title-check` job, which runs
+[`openGemini/pr-title-checker`](https://github.com/openGemini/pr-title-checker)
+with `strict: true`. Every title rule that job enforces is an ERROR in the
+linter, so a clean `lint` means the check passes. Paths below are relative to
+the repo root.
 
 ## Why this exists
 
@@ -64,11 +68,21 @@ You need, concretely:
   `feat` 166 / `fix` 122 / `docs` 76 / `chore` 18 / `refactor` 14.
 - **scope**: the component the diff touches — `embodiment`, `libero`,
   `realworld`, `readme`, `docker`, `collective`, `openpi_pytorch`. Optional;
-  drop it rather than invent one. `feat(new)` (PR #1421) is the anti-pattern
+  drop it rather than invent one. `[a-z0-9_-]` only — a space, slash, dot or
+  capital fails CI. `feat(new)` (PR #1421) passes CI but is the anti-pattern
   the linter warns on: it names the PR, not the code.
-- **description**: imperative, lowercase, no trailing period, ≤ 72 chars total.
+- **description**: **≤ 50 characters**, and that is the part *after* `: `, not
+  the whole title. This is the rule PRs fail most often. It must start with a
+  lowercase `a-z` (so `support 5D parallelism`, never `5D parallelism
+  support`), stay imperative, carry no trailing period, and use plain ASCII —
+  `π₀` in a title fails the check.
   `add MolmoAct2 LIBERO evaluation support`, not `Added support for MolmoAct2`.
 - Never append `(#123)` — GitHub adds it at squash-merge.
+
+Fitting 50 characters is the whole discipline of the title: name the one change
+a reviewer needs to see in the PR list, and let the body carry the rest. If the
+PR does several things, title it after the largest and enumerate in
+`Description`.
 
 Check just the title, no body needed:
 
@@ -165,6 +179,10 @@ posting it** — it is a mechanical rewrite, not an editor.
   by GitHub's renderer; find it and close it by hand.
 - **Tables inside `<details>` still need flush-left rows.** The `<details>`
   wrapper does not exempt them.
+- **A good commit subject is not always a legal PR title.** `commit-check` and
+  `pr-title-check` are different jobs with different limits — commit subjects
+  get ~72 characters, PR descriptions get 50. A one-commit PR that reuses its
+  subject verbatim can fail.
 
 ## Troubleshooting
 

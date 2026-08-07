@@ -124,6 +124,14 @@ All PR titles should follow the same format as commit messages, i.e.:
 ```
 <type>(<scope>): <description>
 ```
+The `pr-title-check` CI job enforces this, and it is stricter than the commit-message check:
+- `<description>` must be **at most 50 characters** — that is the part after `: `, not the whole title.
+- It must start with a lowercase `a-z`, use the imperative mood, and not end with a period.
+- `<scope>` may contain only lowercase letters, digits, hyphens and underscores.
+- The whole title must be plain ASCII.
+
+So a commit subject that passes `commit-check` is not automatically a valid PR title.
+
 The PR description should fill in at least the `Description` and `Checklist` sections of the provided PR template, otherwise it will be marked as draft and not reviewed until completed.
 
 If your PR addresses an existing issue, please link to the issue in the `Motivation and Context` section of the PR description.

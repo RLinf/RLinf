@@ -42,8 +42,14 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Iterable
 
+# The title rules below mirror `openGemini/pr-title-checker`, the action run by
+# the required `pr-title-check` job in .github/workflows/pr-title-check.yml. It
+# runs with `strict: true` and `max_description_length: 50`, so everything it
+# rejects is an ERROR here — a WARN would let a title through that CI blocks.
+
 # Conventional Commits types listed in CONTRIBUTING.md, plus the extra ones
-# already used on main (`perf`) and the standard remainder.
+# already used on main (`perf`) and the standard remainder. Same set as the
+# action's ALLOWED_TYPES.
 ALLOWED_TYPES = (
     "feat",
     "fix",
@@ -93,7 +99,11 @@ TEMPLATE_SECTIONS = (
     ("Checklist", True),
 )
 
-TITLE_MAX = 72
+# The action counts only the part after `: `, not the whole title.
+TITLE_DESC_MAX = 50
+SCOPE_RE = re.compile(r"^[a-z0-9_-]+$")
+NON_ASCII_RE = re.compile(r"[^\x20-\x7e]")
+
 DESCRIPTION_MAX_WORDS = 250
 
 COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -106,6 +116,26 @@ UNCHECKED_RE = re.compile(r"^\s*[-*]\s*\[\s*\]")
 LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 ISSUE_SUFFIX_RE = re.compile(r"\(#\d+\)\s*$")
 
+# The exact set the pr-title-check action rejects (its nonImperativePatterns).
+CI_NON_IMPERATIVE = {
+    "added",
+    "adds",
+    "adding",
+    "updated",
+    "updates",
+    "updating",
+    "fixed",
+    "fixes",
+    "fixing",
+    "removed",
+    "removes",
+    "removing",
+    "deleted",
+    "deletes",
+    "deleting",
+}
+
+# Non-imperative starts CI misses but reviewers still flag.
 PAST_TENSE_STARTS = (
     "added",
     "fixed",
@@ -206,10 +236,24 @@ def fetch_pr(number: str) -> tuple[str, str]:
 
 
 def check_title(title: str) -> list[Finding]:
+    # Not stripped: CI validates the title verbatim, and a trailing space in
+    # the description is one of the things it rejects.
     out: list[Finding] = []
-    title = title.strip()
-    if not title:
+    if not title.strip():
         return [Finding("ERROR", "title", "title-empty", "PR title is empty.")]
+
+    bad = NON_ASCII_RE.findall(title)
+    if bad:
+        out.append(
+            Finding(
+                "ERROR",
+                "title",
+                "title-non-ascii",
+                f"Title contains non-ASCII characters: {''.join(sorted(set(bad)))!r}",
+                "Use plain ASCII (32-126) — no smart quotes, em dashes, "
+                "subscripts, or CJK.",
+            )
+        )
 
     m = TITLE_RE.match(title)
     if not m:
@@ -267,50 +311,95 @@ def check_title(title: str) -> list[Finding]:
                     "`readme` — or drop the scope entirely.",
                 )
             )
-        elif scope != scope.lower():
+        elif not SCOPE_RE.match(scope):
             out.append(
                 Finding(
-                    "WARN",
+                    "ERROR",
                     "title",
-                    "title-scope-case",
-                    f"Scope {scope!r} should be lowercase.",
+                    "title-scope-format",
+                    f"Scope {scope!r} is not lowercase [a-z0-9_-].",
+                    "Scopes take lowercase letters, digits, hyphens and "
+                    "underscores only — e.g. `embodiment`, `source-en`, "
+                    "`libero`. No spaces, slashes, dots, or capitals.",
                 )
             )
 
-    if len(title) > TITLE_MAX:
+    if len(desc) > TITLE_DESC_MAX:
         out.append(
             Finding(
-                "WARN",
+                "ERROR",
                 "title",
-                "title-long",
-                f"Title is {len(title)} chars (guideline is <= {TITLE_MAX}).",
-                "Move the detail into the Description section.",
+                "title-desc-long",
+                f"Description is {len(desc)} chars; CI caps it at "
+                f"{TITLE_DESC_MAX} (the part after `: `, not the whole title).",
+                "Say the single most important thing and move the rest into "
+                "the Description section.",
             )
         )
 
+    if desc != desc.rstrip():
+        out.append(
+            Finding(
+                "ERROR", "title", "title-trailing-space", "Drop the trailing space."
+            )
+        )
+    if re.search(r":\s{2,}", title):
+        out.append(
+            Finding(
+                "ERROR",
+                "title",
+                "title-colon-spacing",
+                "Use exactly one space after the colon.",
+            )
+        )
+    if "!" in desc:
+        out.append(
+            Finding(
+                "ERROR",
+                "title",
+                "title-bang-position",
+                "`!` may only appear right before the colon, as the breaking-"
+                "change marker — never inside the description.",
+            )
+        )
+
+    desc = desc.strip()
     if desc.endswith("."):
         out.append(
-            Finding("WARN", "title", "title-period", "Drop the trailing period.")
+            Finding("ERROR", "title", "title-period", "Drop the trailing period.")
         )
 
     first = desc.split()[0] if desc.split() else ""
-    if first[:1].isupper() and not first.isupper():
+    if not re.match(r"^[a-z]", desc):
         out.append(
             Finding(
-                "WARN",
+                "ERROR",
                 "title",
                 "title-capital",
-                f"Description starts with a capital ({first!r}); main uses lowercase.",
+                f"Description must start with a lowercase a-z, not {first!r}.",
+                "A leading digit or backtick fails too — reword so the first "
+                "character is a lowercase letter (`support 5D parallelism`, "
+                "not `5D parallelism support`).",
             )
         )
-    if first.lower() in PAST_TENSE_STARTS:
+    if first.lower() in CI_NON_IMPERATIVE:
+        out.append(
+            Finding(
+                "ERROR",
+                "title",
+                "title-mood",
+                f"Use the imperative mood, not {first!r} "
+                f"(e.g. {imperative_of(first)}).",
+            )
+        )
+    elif first.lower() in PAST_TENSE_STARTS:
         out.append(
             Finding(
                 "WARN",
                 "title",
                 "title-mood",
                 f"Use the imperative mood, not {first!r} "
-                f"(e.g. {PAST_TENSE_STARTS_IMPERATIVE.get(first.lower(), 'add')}).",
+                f"(e.g. {imperative_of(first)}).",
             )
         )
     if desc.lower().startswith(("this pr", "pr ", "a pr")):
@@ -342,6 +431,22 @@ PAST_TENSE_STARTS_IMPERATIVE = {
     "supported": "support",
     "improved": "improve",
 }
+
+
+def imperative_of(word: str) -> str:
+    """Best-effort imperative form of a past-tense/third-person verb."""
+    stem = word.lower()
+    if stem in PAST_TENSE_STARTS_IMPERATIVE:
+        return PAST_TENSE_STARTS_IMPERATIVE[stem]
+    for suffix in ("ing", "ed", "es", "s"):
+        if stem.endswith(suffix):
+            base = stem[: -len(suffix)]
+            return base + "e" if suffix in ("ing", "ed") and base in DROPS_E else base
+    return stem
+
+
+# Verbs whose imperative keeps the `e` that `-ed`/`-ing` swallowed.
+DROPS_E = {"updat", "remov", "delet", "creat", "mov", "renam", "merg"}
 
 
 # --------------------------------------------------------------------------- #
