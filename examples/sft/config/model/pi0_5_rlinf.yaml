@@ -1,7 +1,7 @@
 model_type: "openpi_rlinf"
 
-# Model-shape template for dual-franka tcp_rot6d. Filesystem paths (model_path,
-# openpi.assets_dir, and openpi.asset_id) live in the experiment config, not
+# Model-shape template only. Filesystem paths (model_path, openpi.assets_dir, and
+# openpi.asset_id) live in the experiment config (behavior_pi05_vla.yaml), not
 # here, so this template stays path-free and reusable.
 
 # Weight dtype for SFT: fp32. The fp32 weights are the FSDP optimizer master; FSDP
@@ -14,11 +14,10 @@ precision: fp32
 is_lora: False
 lora_rank: 32
 
-# Action and chunk settings (Dual-Franka tcp_rot6d): 20-dim env actions
-# ([L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]), 20-step chunk
+# Action and chunk settings (BEHAVIOR pi05): 23-dim env actions, 32-step chunk
 # (action_horizon). `num_action_chunks` is the Pi0 action_horizon.
-num_action_chunks: 20
-action_dim: 20
+num_action_chunks: 32
+action_dim: 23
 use_proprio: True
 
 # Flow-matching denoising steps (used by the eval sampler; carried here so the
@@ -39,15 +38,12 @@ openpi:
   # (rlinf.models.embodiment.openpi.dataconfig.get_openpi_config). Also the env
   # selector for the SFT dataloader registry. The SFT data loader and the eval/RL
   # model factory both build their transforms from it.
-  config_name: "pi05_dualfranka_tcp_rot6d"
-  # Three camera views: base, left wrist, and right wrist.
+  config_name: "pi05_behavior"
   num_images_in_input: 3
-  action_chunk: 20
-  action_env_dim: 20
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
   # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
   model_action_dim: 32
   paligemma_variant: "gemma_2b"
   action_expert_variant: "gemma_300m"
   max_token_len: 200
-  # Classic pi05_dualfranka_tcp_rot6d keeps state continuous, not in the prompt.
-  discrete_state_input: false
