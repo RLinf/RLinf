@@ -12,6 +12,7 @@ data:
   dataset_type: "sft"
   gamma: 1.0
   failure_reward: -300.0
+  hitl_aware_returns: false
   tag: null
   num_workers: 128
 
