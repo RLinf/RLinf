@@ -14,10 +14,60 @@
 
 """LeRobot dataset writer for saving rollout data."""
 
+import functools
 import gc
-from typing import Any
+import inspect
+from typing import Any, Callable
 
 from rlinf.utils.logging import get_logger
+
+
+@functools.lru_cache(maxsize=None)
+def _add_frame_takes_task(add_frame: Callable[..., Any]) -> bool:
+    """Whether ``LeRobotDataset.add_frame`` takes the task as its own argument.
+
+    lerobot < 0.2 exposes ``add_frame(frame)`` and reads the task from the
+    ``"task"`` key of *frame*; lerobot >= 0.3 exposes
+    ``add_frame(frame, task, timestamp=None)`` and rejects a ``"task"`` key
+    inside *frame* as an unknown feature.
+
+    Args:
+        add_frame: The unbound ``add_frame`` function of a dataset class.
+
+    Returns:
+        ``True`` for the lerobot >= 0.3 signature, ``False`` otherwise.
+    """
+    try:
+        sig = inspect.signature(add_frame)
+    except (TypeError, ValueError):  # C-implemented or otherwise opaque
+        return False
+    return "task" in sig.parameters
+
+
+def add_frame_to_dataset(dataset: Any, frame_data: dict[str, Any]) -> None:
+    """Add one frame to a ``LeRobotDataset``, bridging both lerobot APIs.
+
+    Args:
+        dataset: The ``LeRobotDataset`` to append to.
+        frame_data: The frame fields, including a ``"task"`` entry.
+
+    Raises:
+        ValueError: If *frame_data* carries no ``"task"`` entry, which both
+            lerobot generations require.
+    """
+    task = frame_data.get("task")
+    if task is None:
+        raise ValueError(
+            f"Frame is missing the required 'task' field; got keys {sorted(frame_data)}."
+        )
+    if _add_frame_takes_task(type(dataset).add_frame):
+        # lerobot >= 0.3 validates the frame against the feature schema, which
+        # has no ``task`` entry, so the task must be passed separately.
+        frame = dict(frame_data)
+        del frame["task"]
+        dataset.add_frame(frame, task=task)
+    else:
+        dataset.add_frame(frame_data)
 
 
 def _silence_hf_datasets_progress_bars() -> None:
@@ -90,7 +140,7 @@ class LeRobotDatasetWriter:
             wrist_image_keys: Mapping of wrist-camera image key names to their
                 ``(H, W, C)`` shapes.  A single view produces
                 ``{"wrist_image": (H, W, C)}``; multiple views produce
-                ``{"wrist_image/0": …, "wrist_image/1": …, …}``.
+                ``{"wrist_image-0": …, "wrist_image-1": …, …}``.
             extra_view_image_keys: Same as *wrist_image_keys* but for the
                 extra-view camera(s).
             has_intervene_flag: Whether to include per-frame human-intervention
@@ -194,7 +244,7 @@ class LeRobotDatasetWriter:
             self.logger.warning("Empty episode_data provided, skipping.")
             return
         for frame_data in episode_data:
-            self.dataset.add_frame(frame_data)
+            add_frame_to_dataset(self.dataset, frame_data)
 
         self.dataset.save_episode()
         self.logger.info(

@@ -19,10 +19,14 @@ from rlinf.data.storage.lerobot.paths import (
     resolve_lerobot_dataset_root,
     resolve_lerobot_repo_id,
 )
-from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
+from rlinf.data.storage.lerobot.writer import (
+    LeRobotDatasetWriter,
+    add_frame_to_dataset,
+)
 
 __all__ = [
     "LeRobotDatasetWriter",
+    "add_frame_to_dataset",
     "default_hf_lerobot_home",
     "resolve_lerobot_dataset_root",
     "resolve_lerobot_repo_id",

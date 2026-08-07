@@ -44,12 +44,19 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
 
 # Make the rlinf package importable regardless of the cwd the user launched from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
