@@ -83,7 +83,10 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
             if [ "$TARGETARCH" = "arm64" ]; then \
                 sed -i 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
             else \
-                sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
+                sed -i \
+                    -e 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                    -e 's@//security.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                    /etc/apt/sources.list.d/ubuntu.sources; \
             fi; \
         elif [ "$TARGETARCH" = "arm64" ]; then \
             sed -i \
@@ -91,7 +94,10 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
                 -e 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' \
                 /etc/apt/sources.list; \
         else \
-            sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; \
+            sed -i \
+                -e 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                -e 's@//security.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                /etc/apt/sources.list; \
         fi; \
     fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
