@@ -19,6 +19,7 @@ from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 
+from rlinf.envs.behavior.instance_loader import RLINF_REPLAY_METADATA_KEY
 from rlinf.envs.behavior.utils import setup_omni_cfg
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -238,6 +239,7 @@ def dump_tro_state(
     output_path: Path,
     overwrite: bool,
     capture_current_robot_pose: bool = False,
+    metadata: dict | None = None,
 ) -> None:
     """Write the current task-relevant state to ``output_path``.
 
@@ -245,12 +247,11 @@ def dump_tro_state(
         env: Active OmniGibson environment.
         output_path: Target ``*_template-tro_state.json`` file.
         overwrite: Whether existing files may be overwritten.
-        capture_current_robot_pose: When True, record the robot's *current*
-            base pose (so a subsequent ``load_activity_instance_tro_state``
-            restores where the robot is right now). When False (default),
-            preserve the presampled ``robot_poses`` metadata used to bootstrap
-            future resets. Offline sampling (``instance_generator.main``)
-            wants False; mid-rollout snapshots want True.
+        capture_current_robot_pose: When True, record the robot's current
+            scene-frame base pose so a later ``load_activity_instance_tro_state``
+            restores the replay endpoint. Offline sampling should keep the
+            default False to preserve presampled reset metadata.
+        metadata: Optional RLinf-only replay metadata to embed in the tro_state.
 
     Raises:
         FileExistsError: If ``output_path`` exists and ``overwrite`` is false.
@@ -268,48 +269,69 @@ def dump_tro_state(
     rebase_to_scene = getattr(env.scene, "idx", 0) != 0
     tro_state = {}
     for bddl_name, bddl_inst in env.task.object_scope.items():
-        if not bddl_inst.exists or getattr(bddl_inst, "synset", None) == "agent":
+        is_agent = bddl_name.startswith("agent.") or getattr(
+            bddl_inst, "synset", None
+        ) in ("agent", "agent.n.01")
+        if not bddl_inst.exists or (is_agent and not capture_current_robot_pose):
             continue
         state = bddl_inst.dump_state(serialized=False)
-        if (
-            rebase_to_scene
-            and isinstance(state, dict)
-            and isinstance(state.get("root_link"), dict)
-            and "pos" in state["root_link"]
-            and "ori" in state["root_link"]
-        ):
-            rebased_root_link = dict(state["root_link"])
-            rebased_pos, rebased_ori = env.scene.convert_world_pose_to_scene_relative(
-                rebased_root_link["pos"],
-                rebased_root_link["ori"],
-            )
-            rebased_root_link["pos"] = rebased_pos
-            rebased_root_link["ori"] = rebased_ori
-            state = dict(state)
-            state["root_link"] = rebased_root_link
+        if rebase_to_scene and isinstance(state, dict):
+            if (
+                isinstance(state.get("root_link"), dict)
+                and "pos" in state["root_link"]
+                and "ori" in state["root_link"]
+            ):
+                rebased_root_link = dict(state["root_link"])
+                rebased_pos, rebased_ori = (
+                    env.scene.convert_world_pose_to_scene_relative(
+                        rebased_root_link["pos"],
+                        rebased_root_link["ori"],
+                    )
+                )
+                rebased_root_link["pos"] = rebased_pos
+                rebased_root_link["ori"] = rebased_ori
+                state = dict(state)
+                state["root_link"] = rebased_root_link
         tro_state[bddl_name] = state
+    robot = None
+    robot_name = None
+    try:
+        robot = env.task.get_agent(env)
+        robot_name = getattr(robot, "model_name", getattr(robot, "model", None))
+    except Exception:
+        pass
+
     robot_poses = env.scene.get_task_metadata(key="robot_poses")
-    if capture_current_robot_pose:
-        # Mid-rollout dump: overwrite the presampled pose entry with the
-        # robot's actual current scene-frame base pose, so a subsequent load
-        # restores where the robot is right now (otherwise the loader would
-        # teleport it back to the reset-time presampled pose).
-        try:
-            robot = env.task.get_agent(env)
-        except Exception:
-            robot = None
-        if robot is not None:
-            robot_name = getattr(robot, "model_name", getattr(robot, "model", None))
-            if robot_name is not None:
-                cur_pos, cur_ori = robot.get_position_orientation(frame="scene")
-                if robot_poses is None:
-                    robot_poses = {}
-                robot_poses = dict(robot_poses)
-                robot_poses[robot_name] = [
-                    {"position": cur_pos, "orientation": cur_ori}
-                ]
+    if capture_current_robot_pose and robot is not None and robot_name is not None:
+        cur_pos, cur_ori = robot.get_position_orientation(frame="scene")
+        robot_poses = dict(robot_poses or {})
+        robot_poses[robot_name] = [
+            {"position": cur_pos, "orientation": cur_ori}
+        ]
     if robot_poses is not None:
         tro_state["robot_poses"] = robot_poses
+
+    if capture_current_robot_pose and robot is not None and robot_name is not None:
+        tro_state["robot_joints"] = {
+            robot_name: {
+                "joint_positions": robot.get_joint_positions(),
+            }
+        }
+        if getattr(robot, "grasping_mode", "physical") != "physical":
+            ag_state = {}
+            for arm in robot.arm_names:
+                if robot._ag_obj_in_hand[arm] is not None:
+                    params = robot._ag_obj_constraint_params[arm]
+                    ag_state[arm] = {
+                        "ag_obj_prim_path": params["ag_obj_prim_path"],
+                        "ag_link_prim_path": params["ag_link_prim_path"],
+                        "joint_type": params["joint_type"],
+                        "contact_pos": params.get("contact_pos"),
+                    }
+            if ag_state:
+                tro_state["ag_state"] = ag_state
+    if metadata is not None:
+        tro_state[RLINF_REPLAY_METADATA_KEY] = metadata
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
