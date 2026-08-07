@@ -130,6 +130,13 @@ If your PR addresses an existing issue, please link to the issue in the `Motivat
 
 If your PR has potential impact on training performance and stability (e.g., breaking the RL reward curve), please provide the testing results in the `How has this been tested?` section of the PR description.
 
+You can check a title and description against the rules above before opening the PR:
+```bash
+python3 .claude/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>
+```
+The same script checks a PR that is already open (`lint --pr <number>`), prints a ready-to-fill
+template (`template`), and repairs a body that was pasted with a leading indent (`fix --pr <number>`).
+
 ### Review Process
 
 * After you have submitted your PR, it will be assigned to at least two maintainers, and possibly other code owners depending on the scope of the changes.

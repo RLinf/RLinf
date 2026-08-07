@@ -8,7 +8,7 @@ Brief for AI coding agents working on RLinf. For full contribution flow, code st
 
 ## Code structure
 
-- **`.cursor/`** – Rules and skills: `rules/agents-md.mdc`, `skills/add-install-docker-ci-e2e`, `skills/add-example-doc-model-env`, `skills/review-pr`.
+- **`.cursor/`** – Rules and skills: `rules/agents-md.mdc`, `skills/add-install-docker-ci-e2e`, `skills/add-example-doc-model-env`, `skills/review-pr`, `skills/create-pr`.
 - **`rlinf/`** – Main package:
   - `agents/` – Agent logic (reasoning, tools).
   - `algorithms/` – Advantages, losses, registry, rewards (math, code, searchr1, vqa).
