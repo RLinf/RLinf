@@ -76,7 +76,6 @@ def _read_bddl_language_and_goal(bddl_path: str):
     return language, goal
 
 
-
 libero_type = get_libero_type()
 
 if libero_type in ["pro", "plus"]:
@@ -622,9 +621,7 @@ class LiberoEnv(gym.Env):
             for env_id in env_idx:
                 task = self.task_suite.get_task(self.task_ids[env_id])
                 folder = self._pert_init_folders[env_id] or task.problem_folder
-                pert_init_path = os.path.join(
-                    init_root, folder, task.init_states_file
-                )
+                pert_init_path = os.path.join(init_root, folder, task.init_states_file)
                 states = None
                 init_path = None
                 used_folder = folder
@@ -650,9 +647,7 @@ class LiberoEnv(gym.Env):
                     if self.is_eval:
                         logger.error(msg)
                         raise RuntimeError(msg)
-                    states = self.task_suite.get_task_init_states(
-                        self.task_ids[env_id]
-                    )
+                    states = self.task_suite.get_task_init_states(self.task_ids[env_id])
                     init_path = f"<suite:{task.problem_folder}/{task.init_states_file}>"
                     used_folder = task.problem_folder
                     logger.warning(
