@@ -399,4 +399,28 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         max_episode_steps,
     )
 
+    apply_slim_template_cfg(omni_cfg, cfg)
+
     return omni_cfg
+
+
+def apply_slim_template_cfg(omni_cfg: DictConfig, cfg: DictConfig) -> None:
+    slim_cfg = OmegaConf.select(cfg, "slim_template")
+    if slim_cfg is None or not bool(
+        OmegaConf.select(slim_cfg, "enabled", default=False)
+    ):
+        return
+
+    scene_file = OmegaConf.select(slim_cfg, "path")
+    if not scene_file:
+        raise ValueError(
+            "env.slim_template.path must be set when slim_template.enabled=True."
+        )
+
+    scene_file = os.path.abspath(
+        os.path.expandvars(os.path.expanduser(str(scene_file)))
+    )
+    if not os.path.isfile(scene_file):
+        raise FileNotFoundError(f"env.slim_template.path does not exist: {scene_file}")
+
+    OmegaConf.update(omni_cfg, "scene.scene_file", scene_file, merge=False)
