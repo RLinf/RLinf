@@ -24,7 +24,10 @@ import ray
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
+from rlinf.envs.behavior.instance_loader import (
+    RLINF_REPLAY_METADATA_KEY,
+    ActivityInstanceLoader,
+)
 from rlinf.envs.behavior.utils import (
     apply_env_wrapper,
     apply_runtime_renderer_settings,
