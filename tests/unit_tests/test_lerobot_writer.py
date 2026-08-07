@@ -36,6 +36,19 @@ class _LegacyDataset:
         self.saved_episodes += 1
 
 
+class _PostRevertDataset(_LegacyDataset):
+    """Mimics lerobot >= 0.4: back to ``add_frame(frame)``, but it pops the task.
+
+    0.4 reverted the 0.3.x signature, so a version-number check would dispatch
+    this one wrongly. It also mutates the caller's dict.
+    """
+
+    def add_frame(self, frame):
+        if "task" not in frame:
+            raise ValueError("Missing features: {'task'}")
+        self.frames.append({**frame, "task": frame.pop("task")})
+
+
 class _CurrentDataset:
     """Mimics lerobot >= 0.3: the task is a separate argument.
 
@@ -88,13 +101,36 @@ def test_current_dataset_gets_task_as_argument():
     assert dataset.saved_episodes == 1
 
 
-@pytest.mark.parametrize("dataset_cls", [_LegacyDataset, _CurrentDataset])
+ALL_SHAPES = [_LegacyDataset, _CurrentDataset, _PostRevertDataset]
+
+
+def test_post_revert_dataset_keeps_task_in_frame():
+    # lerobot >= 0.4 took the 0.3.x signature back out again.
+    dataset = _PostRevertDataset()
+    _make_writer(dataset).add_episode(_episode())
+
+    assert [f["task"] for f in dataset.frames] == ["pick up the cube"] * 2
+    assert dataset.saved_episodes == 1
+
+
+@pytest.mark.parametrize("dataset_cls", ALL_SHAPES)
+def test_caller_frames_are_not_mutated(dataset_cls):
+    # The DAgger worker shares these dicts with the in-memory training store,
+    # and lerobot >= 0.4 pops "task" out of whatever frame it is handed.
+    episode = _episode()
+    before = [dict(f) for f in episode]
+    _make_writer(dataset_cls()).add_episode(episode)
+
+    assert episode == before
+
+
+@pytest.mark.parametrize("dataset_cls", ALL_SHAPES)
 def test_frame_without_task_is_rejected(dataset_cls):
     with pytest.raises(ValueError, match="missing the required 'task' field"):
         add_frame_to_dataset(dataset_cls(), {"state": 0, "actions": 0})
 
 
-@pytest.mark.parametrize("dataset_cls", [_LegacyDataset, _CurrentDataset])
+@pytest.mark.parametrize("dataset_cls", ALL_SHAPES)
 def test_add_frame_to_dataset_is_usable_standalone(dataset_cls):
     # The toolkit collectors drive LeRobotDataset directly, without the writer.
     dataset = dataset_cls()

@@ -26,16 +26,18 @@ from rlinf.utils.logging import get_logger
 def _add_frame_takes_task(add_frame: Callable[..., Any]) -> bool:
     """Whether ``LeRobotDataset.add_frame`` takes the task as its own argument.
 
-    lerobot < 0.2 exposes ``add_frame(frame)`` and reads the task from the
-    ``"task"`` key of *frame*; lerobot >= 0.3 exposes
-    ``add_frame(frame, task, timestamp=None)`` and rejects a ``"task"`` key
-    inside *frame* as an unknown feature.
+    Only lerobot 0.3.x does: it exposes ``add_frame(frame, task,
+    timestamp=None)`` and rejects a ``"task"`` key inside *frame* as an unknown
+    feature. Both older (< 0.2) and newer (>= 0.4) releases expose
+    ``add_frame(frame)`` and read the task from ``frame["task"]`` — so probe
+    the signature rather than comparing version numbers, which would get 0.4+
+    backwards.
 
     Args:
         add_frame: The unbound ``add_frame`` function of a dataset class.
 
     Returns:
-        ``True`` for the lerobot >= 0.3 signature, ``False`` otherwise.
+        ``True`` for the lerobot 0.3.x signature, ``False`` otherwise.
     """
     try:
         sig = inspect.signature(add_frame)
@@ -45,29 +47,34 @@ def _add_frame_takes_task(add_frame: Callable[..., Any]) -> bool:
 
 
 def add_frame_to_dataset(dataset: Any, frame_data: dict[str, Any]) -> None:
-    """Add one frame to a ``LeRobotDataset``, bridging both lerobot APIs.
+    """Add one frame to a ``LeRobotDataset``, whatever lerobot version is installed.
+
+    *frame_data* is never mutated: callers reuse these dicts after the write —
+    the DAgger worker hands the same frames to the in-memory training store and
+    to a deferred archive buffer — and lerobot 0.4+ pops ``"task"`` out of the
+    frame it is given.
 
     Args:
         dataset: The ``LeRobotDataset`` to append to.
         frame_data: The frame fields, including a ``"task"`` entry.
 
     Raises:
-        ValueError: If *frame_data* carries no ``"task"`` entry, which both
-            lerobot generations require.
+        ValueError: If *frame_data* carries no ``"task"`` entry, which every
+            lerobot version requires.
     """
     task = frame_data.get("task")
     if task is None:
         raise ValueError(
             f"Frame is missing the required 'task' field; got keys {sorted(frame_data)}."
         )
+    frame = dict(frame_data)
     if _add_frame_takes_task(type(dataset).add_frame):
-        # lerobot >= 0.3 validates the frame against the feature schema, which
+        # lerobot 0.3.x validates the frame against the feature schema, which
         # has no ``task`` entry, so the task must be passed separately.
-        frame = dict(frame_data)
         del frame["task"]
         dataset.add_frame(frame, task=task)
     else:
-        dataset.add_frame(frame_data)
+        dataset.add_frame(frame)
 
 
 def _silence_hf_datasets_progress_bars() -> None:
