@@ -569,9 +569,6 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         - ``"<metric>"`` for aggregate (mean across datasets)
         """
         if not self.eval_data_loaders:
-            # Record the timer even for the empty case so that
-            # Handle.consume_duration() (pop_execution_time) does not fail
-            # when eval_data_paths is empty but val_check_interval is set.
             with self.worker_timer():
                 return {}
 
