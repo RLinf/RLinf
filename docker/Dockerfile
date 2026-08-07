@@ -333,6 +333,14 @@ RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
             LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
         done
 
+# Franky environments. franky-control ships libfranka inside a prebuilt wheel,
+# so these need no ROS/catkin build and are kept in separate venvs from the
+# franka-$v ones above. Only the libfranka versions with published wheels are
+# built: https://github.com/Brunch-Life/franky/releases
+RUN for v in 0.15.0 0.19.0; do \
+            LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
+        done
+
 # Set default env (recommended libfranka 0.15.0)
 RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
 
