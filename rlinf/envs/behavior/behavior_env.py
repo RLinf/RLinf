@@ -64,12 +64,14 @@ class BehaviorProcess:
         cfg: DictConfig,
         num_envs: int,
         pipeline_stage_num: int,
+        replay_seed_offset: int = 0,
     ):
         _preload_numba_llvmlite()
         from omnigibson.envs import VectorEnvironment
 
         self.logger = get_logger()
         self.pipeline_stage_num = pipeline_stage_num
+        self.replay_seed_offset = replay_seed_offset
         omni_cfg = setup_omni_cfg(cfg)
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
@@ -220,6 +222,124 @@ class BehaviorProcess:
 
         raw_obs, infos = result
         return list(raw_obs), list(infos)
+
+    @staticmethod
+    def _unwrap_child_env(child_env):
+        """Return the underlying OmniGibson env, unwrapping any thin wrappers."""
+        return child_env
+
+    @staticmethod
+    def _to_int_or_none(value):
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _task_reward(child_env):
+        try:
+            return child_env.task.task_reward
+        except Exception:
+            return None
+
+    @classmethod
+    def _stage_idx_from_info(cls, info: dict | None) -> int | None:
+        if info is None:
+            return None
+        task_reward = info.get("task_reward", {})
+        if isinstance(task_reward, dict):
+            return cls._to_int_or_none(task_reward.get("current_stage_idx"))
+        return cls._to_int_or_none(info.get("current_stage_idx"))
+
+    @classmethod
+    def _stage_idx_from_reward(cls, child_env) -> int | None:
+        task_reward = cls._task_reward(child_env)
+        if task_reward is None:
+            return None
+        return cls._to_int_or_none(
+            getattr(task_reward, "current_stage_idx", None)
+        )
+
+    def _apply_replay_tro_metadata(self, child_env, info: dict | None) -> dict:
+        """Inject RLinf replay metadata from tro_state into the env info dict."""
+        if info is None:
+            info = {}
+        base_env = self._unwrap_child_env(child_env)
+        replay_metadata = base_env.scene.get_task_metadata(
+            key=RLINF_REPLAY_METADATA_KEY
+        )
+        if not isinstance(replay_metadata, dict):
+            return info
+
+        replay_info = {}
+        for key in (
+            "replay_episode_index",
+            "replay_instance_id",
+            "replay_steps",
+            "replay_target_step",
+        ):
+            if key in replay_metadata:
+                replay_info[key] = replay_metadata[key]
+
+        stage_idx = replay_metadata.get("stage_index")
+        if stage_idx is not None:
+            replay_info["replay_stage_idx"] = int(stage_idx)
+
+        info["replay"] = replay_info
+
+        task_reward = self._task_reward(base_env)
+        task_info = info.setdefault("task_reward", {})
+        if isinstance(task_info, dict) and stage_idx is not None:
+            stage_idx = int(stage_idx)
+            task_info["current_stage_idx"] = stage_idx
+            if task_reward is not None and hasattr(task_reward, "set_current_stage_idx"):
+                try:
+                    task_reward.set_current_stage_idx(stage_idx)
+                except Exception:
+                    pass
+
+        return info
+
+    def _reset_env_indices(
+        self, reset_indices: list[int], instance_ids: list[int] | None = None
+    ):
+        """Reset specific env slots, optionally to specific instance IDs.
+
+        When ``instance_ids`` is provided, each env is reset to its assigned
+        instance (disable group-reset to avoid cross-env interference).
+        """
+        from types import SimpleNamespace
+
+        child_envs = getattr(self.env, "envs", [])
+        selected_env = SimpleNamespace(envs=[child_envs[i] for i in reset_indices])
+        reset_group_size = 1 if instance_ids is not None else getattr(
+            self, "group_size", None
+        )
+        self.instance_loader.prepare_reset(
+            selected_env, instance_ids=instance_ids, group_size=reset_group_size
+        )
+
+        raw_obs, infos = [], []
+        for env_idx in reset_indices:
+            obs, info = child_envs[env_idx].reset(get_obs=True)
+            info = self._apply_replay_tro_metadata(child_envs[env_idx], info)
+            raw_obs.append(obs)
+            infos.append(info)
+        return raw_obs, infos
+
+    def dump_replay_tro_states(self, payload: dict) -> list[dict]:
+        """Dump replay tro_states inside this BehaviorProcess.
+
+        Delegates to the shared implementation in
+        :mod:`rlinf.envs.behavior.replay_tro_state_dumper`.
+        """
+        from rlinf.envs.behavior.replay_tro_state_dumper import (
+            dump_replay_tro_states as dump_replay_tro_states_impl,
+        )
+
+        return dump_replay_tro_states_impl(self, payload)
 
     def close(self):
         if self.env is not None:
@@ -411,6 +531,26 @@ class BehaviorProcessPool:
                 all_infos[pos] = info
         return all_raw_obs, all_infos
 
+    def env_reset_slice_partial(
+        self, global_start: int, num_envs: int, payload_shards: list
+    ):
+        """Reset a contiguous slice with per-env payload (e.g. instance IDs)."""
+        if num_envs == 0:
+            return [], []
+        plan = self._slice_plan(global_start, num_envs)
+        refs = [
+            self.env_processes[sp].reset.remote(payload_shards[sp])
+            for sp, _positions, _local_rows in plan
+        ]
+        shard_results = ray.get(refs)
+        all_raw_obs: list = [None] * num_envs
+        all_infos: list = [None] * num_envs
+        for (raw_obs, infos), (_sp, positions, _local_rows) in zip(shard_results, plan):
+            for pos, obs, info in zip(positions, raw_obs, infos):
+                all_raw_obs[pos] = obs
+                all_infos[pos] = info
+        return all_raw_obs, all_infos
+
     def env_chunk_step_slice(
         self,
         global_start: int,
@@ -506,6 +646,7 @@ class BehaviorEnv(gym.Env):
     ):
         self.cfg = cfg
         self.reward_coef = cfg.get("reward_coef", 1)
+        self.is_eval = cfg.get("is_eval", False)
 
         self.num_envs = num_envs
         self.ignore_terminations = cfg.ignore_terminations
@@ -530,6 +671,8 @@ class BehaviorEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
         self.max_episode_steps = torch.tensor(cfg.max_episode_steps)
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
+        self._ordered_reset_epoch = 0
+        self._ordered_reset_instance_ids = None
         if self.record_metrics:
             self._init_metrics()
         if not (self.enable_offload and not self.enable_init_offload):
@@ -804,6 +947,84 @@ class BehaviorEnv(gym.Env):
     def update_reset_state_ids(self):
         # use for multi task training
         pass
+
+    def _init_ordered_reset_instance_ids(self) -> list[int] | None:
+        if not (self.is_eval and self.use_fixed_reset_state_ids):
+            return None
+
+        from rlinf.envs.behavior.instance_loader import parse_activity_instance_ids
+
+        instance_ids = parse_activity_instance_ids(
+            OmegaConf.select(self.cfg, "omni_config.task.activity_instance_id")
+        )
+        if not instance_ids:
+            return None
+        return [int(instance_id) for instance_id in instance_ids]
+
+    def _ordered_reset_ids_for_indices(
+        self, reset_indices: list[int]
+    ) -> list[int] | None:
+        if self._ordered_reset_instance_ids is None:
+            return None
+
+        global_env_count = self.num_envs * self.total_num_processes
+        base_index = (
+            self._ordered_reset_epoch * global_env_count
+            + self.seed_offset * self.num_envs
+        )
+        ordered_ids = self._ordered_reset_instance_ids
+        return [
+            ordered_ids[(base_index + int(env_idx)) % len(ordered_ids)]
+            for env_idx in reset_indices
+        ]
+
+    @staticmethod
+    def _reset_payload_with_instance_ids(
+        reset_mask: list[bool],
+        instance_ids: list[int] | None,
+        full_reset: bool = False,
+    ):
+        if instance_ids is None:
+            return reset_mask
+
+        instance_iter = iter(instance_ids)
+        payload = []
+        for should_reset in reset_mask:
+            item = {"reset": bool(should_reset), "full_reset": full_reset}
+            if should_reset:
+                item["instance_id"] = next(instance_iter)
+            payload.append(item)
+        return payload
+
+    def env_reset_partial(self, reset_mask):
+        """Reset only the env slots indicated by ``reset_mask``."""
+        self._ensure_pool()
+        instance_ids = self._ordered_reset_ids_for_indices(
+            [i for i, r in enumerate(reset_mask) if r]
+        )
+        payload = self._reset_payload_with_instance_ids(
+            reset_mask, instance_ids
+        )
+        shard_size = self.pool.num_env_shard
+        payload_shards = [
+            payload[i * shard_size : (i + 1) * shard_size]
+            for i in range(self.pool.num_env_subprocess)
+        ]
+        return self.pool.env_reset_slice_partial(
+            self.pool_offset, self.num_envs, payload_shards
+        )
+
+    def dump_replay_tro_states(self, payload: dict) -> list[dict]:
+        """Dispatch ``dump_replay_tro_states`` to every Ray actor in the pool."""
+        self._ensure_pool()
+        results = ray.get([
+            proc.dump_replay_tro_states.remote(payload)
+            for proc in self.pool.env_processes
+        ])
+        merged = []
+        for sub_results in results:
+            merged.extend(sub_results)
+        return merged
 
     def offload(self):
         self.close()
