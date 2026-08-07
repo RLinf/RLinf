@@ -99,7 +99,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_pytorch_sft
+          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_rlinf_sft
 
       - name: Clean up
         run: |
