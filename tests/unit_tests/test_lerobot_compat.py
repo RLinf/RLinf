@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the LeRobot writer across lerobot ``add_frame`` API versions."""
+"""Unit tests for the LeRobot compatibility shims across lerobot versions."""
 
 import pytest
+import torch
 
-from rlinf.data.storage.lerobot import add_frame_to_dataset
+from rlinf.data.storage.lerobot import add_frame_to_dataset, episode_boundaries
 from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 
 
@@ -145,3 +146,60 @@ def test_empty_episode_is_skipped():
 
     assert dataset.frames == []
     assert dataset.saved_episodes == 0
+
+
+# --------------------------------------------------------------------------
+# episode_boundaries: dataset format v2.1 vs v3.0
+# --------------------------------------------------------------------------
+
+
+class _V21Dataset:
+    """Dataset format v2.1: a dict of two tensors on the dataset itself."""
+
+    def __init__(self, starts, ends):
+        self.episode_data_index = {
+            "from": torch.tensor(starts),
+            "to": torch.tensor(ends),
+        }
+
+
+class _V30Meta:
+    def __init__(self, starts, ends):
+        self.episodes = {"dataset_from_index": starts, "dataset_to_index": ends}
+
+
+class _V30Dataset:
+    """Dataset format v3.0 (lerobot >= 0.4): columns on ``meta.episodes``."""
+
+    def __init__(self, starts, ends):
+        self.episode_data_index = None
+        self.meta = _V30Meta(starts, ends)
+
+
+@pytest.mark.parametrize("dataset_cls", [_V21Dataset, _V30Dataset])
+def test_episode_boundaries_agree_across_formats(dataset_cls):
+    starts, ends = episode_boundaries(dataset_cls([0, 3, 7], [3, 7, 9]))
+
+    assert starts == [0, 3, 7]
+    assert ends == [3, 7, 9]
+    assert all(isinstance(x, int) for x in starts + ends)
+
+
+def test_episode_boundaries_reports_an_unknown_layout():
+    class _Alien:
+        episode_data_index = None
+        meta = None
+
+    with pytest.raises(RuntimeError, match="Cannot determine episode boundaries"):
+        episode_boundaries(_Alien())
+
+
+def test_episode_boundaries_rejects_v30_meta_without_the_columns():
+    class _Partial:
+        episode_data_index = None
+        meta = _V30Meta([0], [1])
+
+    _Partial.meta.episodes = {"length": [1]}
+
+    with pytest.raises(RuntimeError, match="Cannot determine episode boundaries"):
+        episode_boundaries(_Partial())

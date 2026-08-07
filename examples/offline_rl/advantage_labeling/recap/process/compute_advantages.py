@@ -80,6 +80,7 @@ from rlinf.data.datasets.recap.utils import (
     load_return_stats_from_dataset,
     load_returns_sidecar,
 )
+from rlinf.data.storage.lerobot import episode_boundaries  # noqa: E402
 from rlinf.models.embodiment.value_model.recap.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
@@ -529,9 +530,8 @@ def compute_advantages_for_dataset(
     )
     extended_size = extended_end - shard_start
 
-    ep_ends = {}
-    for ep_idx in range(len(dataset.episode_data_index["to"])):
-        ep_ends[ep_idx] = int(dataset.episode_data_index["to"][ep_idx].item())
+    _, ep_end_list = episode_boundaries(dataset)
+    ep_ends = dict(enumerate(ep_end_list))
 
     if rank == 0:
         logger.info(
