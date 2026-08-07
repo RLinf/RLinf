@@ -588,6 +588,74 @@ class EnvWorker(Worker):
         )
         return env_output, env_info
 
+    def dump_behavior_replay_tro_states(self, options: dict[str, Any]) -> list[dict]:
+        """Dump replay tro_state files across all training env stages.
+
+        Args:
+            options: Dict with keys ``num_states``, ``source_instance_ids``,
+                ``replay``, ``output_dir``, and optional ``output_start_instance_id``
+                and ``overwrite``.
+
+        Returns:
+            List of per-dumped-state result dicts.
+        """
+        if not self.env_list:
+            raise RuntimeError(
+                "Training envs are not initialized. Run this worker with "
+                "runner.only_eval=False before dumping replay tro_state files."
+            )
+
+        num_states = int(options["num_states"])
+        source_instance_ids = [int(x) for x in options["source_instance_ids"]]
+        if num_states < 0:
+            raise ValueError(f"num_states must be non-negative, got {num_states}.")
+        if not source_instance_ids:
+            raise ValueError("source_instance_ids must contain at least one id.")
+
+        output_start_instance_id = int(options.get("output_start_instance_id", 0))
+        replay_cfg = dict(options["replay"])
+        output_dir = str(options["output_dir"])
+        overwrite = bool(options.get("overwrite", False))
+
+        stage_count = len(self.env_list)
+        local_env_count = self.train_num_envs_per_stage
+        slots_per_worker = stage_count * local_env_count
+        total_slots = self._world_size * slots_per_worker
+        worker_slot_base = self._rank * slots_per_worker
+        results = []
+
+        for stage_id, env in enumerate(self.env_list):
+            stage_slot_base = worker_slot_base + stage_id * local_env_count
+            jobs = []
+            for batch_start in range(0, num_states, total_slots):
+                for local_slot in range(local_env_count):
+                    state_idx = batch_start + stage_slot_base + local_slot
+                    if state_idx >= num_states:
+                        continue
+                    jobs.append(
+                        {
+                            "source_instance_id": source_instance_ids[
+                                state_idx % len(source_instance_ids)
+                            ],
+                            "candidate_source_instance_ids": source_instance_ids,
+                            "candidate_start_offset": state_idx,
+                            "output_instance_id": output_start_instance_id + state_idx,
+                        }
+                    )
+
+            if jobs:
+                payload = {
+                    "jobs": jobs,
+                    "replay": replay_cfg,
+                    "output_dir": output_dir,
+                    "overwrite": overwrite,
+                }
+                results.extend(
+                    get_env_attr(env, "dump_replay_tro_states")(payload)
+                )
+
+        return results
+
     def _build_chunk_final_obs(self, obs_list, infos_list):
         """Build per-env terminal observations for a whole chunk.
 
