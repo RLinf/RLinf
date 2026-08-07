@@ -21,6 +21,7 @@ import time
 from typing import ClassVar
 
 import gymnasium as gym
+import numpy as np
 import ray
 import torch
 from omegaconf import DictConfig, OmegaConf
@@ -137,6 +138,14 @@ class BehaviorProcess:
                 "advance every env with zeroed-out actions for inactive envs."
             )
 
+        self.action_mask = self._parse_action_mask(cfg)
+        (
+            self.first_chunk_action_override_enabled,
+            self.first_chunk_action_ids,
+            self.first_chunk_action_value,
+        ) = self._parse_first_chunk_action_override(cfg)
+        self._first_chunk_action_override_pending = np.zeros(num_envs, dtype=bool)
+
     def get_activity_name(self):
         return self.instance_loader.activity_name
 
@@ -200,6 +209,146 @@ class BehaviorProcess:
             list(infos),
         )
 
+    @staticmethod
+    def _parse_action_mask(cfg: DictConfig) -> list[bool] | None:
+        mask_cfg = OmegaConf.select(cfg, "action_mask", default=None)
+        if mask_cfg is None:
+            return None
+        if not bool(OmegaConf.select(cfg, "action_mask.enabled", default=True)):
+            return None
+
+        mask = OmegaConf.select(cfg, "action_mask.mask", default=None)
+        if mask is None:
+            action_dim = int(OmegaConf.select(cfg, "action_mask.action_dim", default=23))
+            mask = [True] * action_dim
+            if bool(OmegaConf.select(cfg, "action_mask.freeze_base", default=False)):
+                mask[:3] = [False] * min(3, action_dim)
+            if bool(OmegaConf.select(cfg, "action_mask.freeze_trunk", default=False)):
+                start, end = 3, min(7, action_dim)
+                mask[start:end] = [False] * (end - start)
+        else:
+            mask = OmegaConf.to_container(mask, resolve=True)
+
+        if not isinstance(mask, (list, tuple)) or not mask:
+            raise ValueError("env.action_mask.mask must be a non-empty bool list.")
+        return [bool(value) for value in mask]
+
+    @staticmethod
+    def _parse_first_chunk_action_override(
+        cfg: DictConfig,
+    ) -> tuple[bool, list[int], float]:
+        override_cfg = OmegaConf.select(cfg, "first_chunk_action_override", default=None)
+        if override_cfg is None:
+            return False, [], -1.0
+        enabled = bool(
+            OmegaConf.select(cfg, "first_chunk_action_override.enabled", default=False)
+        )
+        action_ids = OmegaConf.select(
+            cfg, "first_chunk_action_override.action_ids", default=[]
+        )
+        if action_ids is None:
+            action_ids = []
+        if not isinstance(action_ids, (list, tuple)):
+            action_ids = OmegaConf.to_container(action_ids, resolve=True)
+        if not isinstance(action_ids, (list, tuple)):
+            raise ValueError(
+                "env.first_chunk_action_override.action_ids must be a list."
+            )
+        action_value = float(
+            OmegaConf.select(cfg, "first_chunk_action_override.value", default=-1.0)
+        )
+        return enabled, [int(action_id) for action_id in action_ids], action_value
+
+    @staticmethod
+    def _action_like_values(action, values: list[float]):
+        if torch.is_tensor(action):
+            return torch.as_tensor(values, dtype=action.dtype, device=action.device)
+        dtype = getattr(action, "dtype", np.float32)
+        return np.asarray(values, dtype=dtype)
+
+    @staticmethod
+    def _robot_joint_positions_list(robot) -> list[float]:
+        joint_positions = robot.get_joint_positions()
+        if torch.is_tensor(joint_positions):
+            return joint_positions.detach().cpu().reshape(-1).tolist()
+        return np.asarray(joint_positions).reshape(-1).tolist()
+
+    def _r1pro_noop_action(self, robot, action):
+        action_dim = int(action.shape[-1])
+        values = [0.0] * action_dim
+        joint_positions = self._robot_joint_positions_list(robot)
+        if action_dim >= 23 and len(joint_positions) >= 28:
+            values[3:7] = joint_positions[6:10]
+            values[7:14] = [joint_positions[i] for i in (10, 12, 14, 16, 18, 20, 22)]
+            values[14:21] = [joint_positions[i] for i in (11, 13, 15, 17, 19, 21, 23)]
+            values[21] = joint_positions[24] + joint_positions[25]
+            values[22] = joint_positions[26] + joint_positions[27]
+        return self._action_like_values(action, values)
+
+    def _apply_action_mask(self, actions):
+        if self.action_mask is None:
+            return actions
+
+        action_dim = int(actions.shape[-1])
+        if action_dim != len(self.action_mask):
+            raise ValueError(
+                f"env.action_mask.mask length {len(self.action_mask)} does not "
+                f"match action_dim {action_dim}."
+            )
+
+        masked_actions = actions.clone() if torch.is_tensor(actions) else actions.copy()
+        child_envs = getattr(self.env, "envs", [])
+        for env_idx in range(int(actions.shape[0])):
+            robot = self._get_robot_from_child_env(child_envs[env_idx])
+            if robot is None:
+                continue
+            noop_action = self._r1pro_noop_action(robot, actions[env_idx])
+            for action_idx, use_policy_action in enumerate(self.action_mask):
+                if not use_policy_action:
+                    masked_actions[env_idx, action_idx] = noop_action[action_idx]
+        return masked_actions
+
+    def _apply_first_chunk_action_override(self, actions, env_mask: np.ndarray):
+        if (
+            not self.first_chunk_action_override_enabled
+            or not self.first_chunk_action_ids
+            or not env_mask.any()
+        ):
+            return actions
+
+        action_dim = int(actions.shape[-1])
+        invalid_action_ids = [
+            action_id
+            for action_id in self.first_chunk_action_ids
+            if action_id < 0 or action_id >= action_dim
+        ]
+        if invalid_action_ids:
+            raise ValueError(
+                "env.first_chunk_action_override.action_ids contains invalid "
+                f"indices {invalid_action_ids} for action_dim {action_dim}."
+            )
+
+        overridden_actions = (
+            actions.clone() if torch.is_tensor(actions) else actions.copy()
+        )
+        env_indices = np.flatnonzero(env_mask).tolist()
+        for action_id in self.first_chunk_action_ids:
+            overridden_actions[env_indices, action_id] = self.first_chunk_action_value
+        return overridden_actions
+
+    @staticmethod
+    def _get_robot_from_child_env(child_env):
+        base_env = BehaviorProcess._unwrap_child_env(child_env)
+        task = getattr(base_env, "task", None)
+        if task is not None and hasattr(task, "get_agent"):
+            robot = task.get_agent(base_env)
+            if robot is not None:
+                return robot
+        robots = getattr(base_env, "robots", None)
+        if robots:
+            return robots[0]
+        return None
+
     def chunk_step(self, actions, env_indices):
         """Step a full chunk for one shard.
 
@@ -211,12 +360,24 @@ class BehaviorProcess:
         """
         _, chunk_size, _ = actions.shape
 
+        # Apply first-chunk action override for pending env slots.
+        if self._first_chunk_action_override_pending.any():
+            full_mask = np.zeros(actions.shape[0], dtype=bool)
+            full_mask[env_indices] = True
+            pending_mask = full_mask & self._first_chunk_action_override_pending
+            if pending_mask.any():
+                actions[:, 0] = self._apply_first_chunk_action_override(
+                    actions[:, 0], pending_mask
+                )
+            self._first_chunk_action_override_pending[:] = False
+
         results: list[tuple] = []
         for t in range(chunk_size):
             is_last = t == chunk_size - 1
             need_obs = not self.skip_intermediate_obs_in_chunk or is_last
+            step_actions = self._apply_action_mask(actions[:, t])
             results.append(
-                self._step_shard(actions[:, t], env_indices, need_obs=need_obs)
+                self._step_shard(step_actions, env_indices, need_obs=need_obs)
             )
         return tuple(zip(*results))
 
@@ -787,8 +948,22 @@ class BehaviorEnv(gym.Env):
                 "omni_config.task.reward_config.reward_mode is stage_sparse."
             )
         self.use_rel_reward = cfg.use_rel_reward
+        prompt_override = self.cfg.get("prompt_override", None)
+        if prompt_override is not None:
+            prompt_override = str(prompt_override).strip() or None
+
+        use_subtask_prompt_cfg = self.cfg.get("use_subtask_prompt", False)
+        if isinstance(use_subtask_prompt_cfg, str):
+            legacy_prompt = use_subtask_prompt_cfg.strip()
+            self.use_subtask_prompt = False
+            if prompt_override is None and legacy_prompt:
+                prompt_override = legacy_prompt
+        else:
+            self.use_subtask_prompt = bool(use_subtask_prompt_cfg)
+        self.prompt_override = prompt_override
         self._ordered_reset_epoch = 0
         self._ordered_reset_instance_ids = None
+        self._stage_prompt_lists: list[list[str] | None] = [None] * self.num_envs
         self.trunk_proprio_randomization = self._parse_trunk_proprio_randomization(cfg)
         self._trunk_proprio_random_values = None
         self._trunk_proprio_rng = torch.Generator()
@@ -975,6 +1150,69 @@ class BehaviorEnv(gym.Env):
         states[:, indices] = values
         return states
 
+    def _update_stage_prompts_from_info(
+        self, env_idx: int, info: dict | None
+    ) -> str | None:
+        if not isinstance(info, dict):
+            return None
+
+        stage_info = info
+        reward_info = info.get("reward")
+        if isinstance(reward_info, dict):
+            task_specific_info = reward_info.get("task_specific")
+            if isinstance(task_specific_info, dict):
+                stage_info = task_specific_info
+
+        replay_info = info.get("replay_init")
+        if isinstance(replay_info, dict):
+            replay_prompts = replay_info.get("replay_stage_prompts")
+            if isinstance(replay_prompts, (list, tuple)):
+                self._stage_prompt_lists[env_idx] = [
+                    str(prompt).strip()
+                    for prompt in replay_prompts
+                    if str(prompt).strip()
+                ]
+
+        explicit_prompt = (
+            stage_info.get("current_stage_prompt")
+            or stage_info.get("stage_prompt")
+            or stage_info.get("subtask_prompt")
+        )
+        if explicit_prompt:
+            return str(explicit_prompt).strip()
+
+        stage_idx = stage_info.get("current_stage_idx")
+        if stage_idx is None:
+            return None
+        try:
+            stage_idx = int(stage_idx)
+        except (TypeError, ValueError):
+            return None
+
+        stage_prompts = self._stage_prompt_lists[env_idx]
+        if not stage_prompts or stage_idx < 0 or stage_idx >= len(stage_prompts):
+            return None
+        return stage_prompts[stage_idx]
+
+    def _compose_task_description(self, stage_prompt: str | None) -> str:
+        if self.prompt_override is not None:
+            return self.prompt_override
+        if stage_prompt:
+            return self.task_description + "\n" + stage_prompt
+        return self.task_description
+
+    def _task_descriptions_from_infos(self, infos=None) -> list[str]:
+        if self.prompt_override is not None:
+            return [self.prompt_override for _ in range(self.num_envs)]
+        if not self.use_subtask_prompt or infos is None:
+            return [self.task_description for _ in range(self.num_envs)]
+        return [
+            self._compose_task_description(
+                self._update_stage_prompts_from_info(env_idx, info)
+            )
+            for env_idx, info in enumerate(infos)
+        ]
+
     def _wrap_obs(self, obs_list, infos=None, env_indices=None):
         extracted_obs_list = []
         for obs in obs_list:
@@ -992,7 +1230,7 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, H, W, C]
-            "task_descriptions": [self.task_description for _ in range(self.num_envs)],
+            "task_descriptions": self._task_descriptions_from_infos(infos),
             "states": states,
         }
         return obs
