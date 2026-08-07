@@ -35,10 +35,19 @@ def _load_dual_franka_sft_dataloader() -> SftDataLoaderBuilder:
     return build_dual_franka_sft_dataloader
 
 
+def _load_official_openpi_sft_dataloader() -> SftDataLoaderBuilder:
+    from rlinf.data.datasets.openpi_rlinf.official_sft_data_loader import (
+        build_official_openpi_sft_dataloader,
+    )
+
+    return build_official_openpi_sft_dataloader
+
+
 # Environment name -> lazy SFT dataloader builder.
 _SFT_DATALOADER_BUILDERS = {
     "behavior": _load_behavior_sft_dataloader,
     "dualfranka": _load_dual_franka_sft_dataloader,
+    "robotwin": _load_official_openpi_sft_dataloader,
 }
 
 
@@ -66,4 +75,40 @@ def build_openpi_rlinf_sft_dataloader(
     return builder(cfg, world_size, rank, data_paths, eval_dataset)
 
 
-__all__ = ["build_openpi_rlinf_sft_dataloader"]
+def build_official_openpi_sft_dataloader(
+    cfg: Any,
+    world_size: int,
+    rank: int,
+    data_paths: Any,
+    eval_dataset: bool = False,
+) -> tuple[Any, Any]:
+    """Build the official OpenPI loader for the legacy OpenPI model type."""
+    return _load_official_openpi_sft_dataloader()(
+        cfg, world_size, rank, data_paths, eval_dataset
+    )
+
+
+def get_official_openpi_sft_num_batches(data_loader: Any) -> int:
+    """Return the batch count of an official OpenPI SFT loader."""
+    from rlinf.data.datasets.openpi_rlinf.official_sft_data_loader import (
+        get_official_openpi_sft_num_batches as _get_num_batches,
+    )
+
+    return _get_num_batches(data_loader)
+
+
+def is_official_openpi_sft_dataloader(data_loader: Any) -> bool:
+    """Return whether the loader was created by the official OpenPI path."""
+    from rlinf.data.datasets.openpi_rlinf.official_sft_data_loader import (
+        is_official_openpi_sft_dataloader as _is_official,
+    )
+
+    return _is_official(data_loader)
+
+
+__all__ = [
+    "build_official_openpi_sft_dataloader",
+    "build_openpi_rlinf_sft_dataloader",
+    "get_official_openpi_sft_num_batches",
+    "is_official_openpi_sft_dataloader",
+]

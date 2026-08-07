@@ -25,7 +25,6 @@ def build_openpi_transforms(
     *,
     norm_stats_dir: str | None = None,
     norm_stats_asset_id: str | None = None,
-    input_prefix: Sequence | None = None,
 ) -> tuple[Sequence, Sequence]:
     """Build ``(input_transforms, output_transforms)`` for ``config_name``.
 
@@ -72,9 +71,7 @@ def build_openpi_transforms(
     elif explicit_norm_stats_path is not None:
         norm_stats_path = pathlib.Path(explicit_norm_stats_path).expanduser()
         norm_stats_dir_path = (
-            norm_stats_path.parent
-            if norm_stats_path.name == "norm_stats.json"
-            else norm_stats_path
+            norm_stats_path.parent if norm_stats_path.is_file() else norm_stats_path
         )
         # ``load_norm_stats`` expects the parent of ``asset_id``; the config
         # override above has already set ``asset_id`` to this directory name.
@@ -90,7 +87,6 @@ def build_openpi_transforms(
         )
 
     input_transforms = [
-        *(input_prefix or ()),
         transforms.InjectDefaultPrompt(None),
         *data_config.data_transforms.inputs,
         transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),

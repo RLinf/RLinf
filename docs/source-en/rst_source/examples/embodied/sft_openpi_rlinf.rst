@@ -189,7 +189,6 @@ paths with your local paths:
    data:
      train_data_paths: /path/to/robotwin-data
      num_workers: 4
-     tolerance_s: 1.0e-4
 
    actor:
      model:

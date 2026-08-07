@@ -283,16 +283,15 @@ checkpoint，即由 OpenPI checkpoint 转换器
 将模型路径以 ``/path/to/...`` 占位符的形式直接写在配置中：
 
 - ``rollout.model.model_path``：OpenPI_RLinf 评估 checkpoint。
-- ``rollout.model.openpi.assets_dir``：存放 BEHAVIOR 归一化统计的目录。归一化统计在
-  ``{assets_dir}/{asset_id}/norm_stats.json`` 处解析。
-- ``rollout.model.openpi.paligemma_tokenizer``：PaliGemma SentencePiece tokenizer
-  模型。
+
+归一化统计从转换后 checkpoint 中打包的
+``physical-intelligence/behavior/norm_stats.json`` 读取。
 
 .. code:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
 
 .. note::
 

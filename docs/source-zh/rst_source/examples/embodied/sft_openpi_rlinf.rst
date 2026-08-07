@@ -170,7 +170,6 @@ RoboTwin Pi0 使用官方 OpenPI/LeRobot 的 map-style 数据加载器；训练�
    data:
      train_data_paths: /path/to/robotwin-data
      num_workers: 4
-     tolerance_s: 1.0e-4
 
    actor:
      model:

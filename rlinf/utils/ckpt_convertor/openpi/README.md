@@ -1,6 +1,6 @@
-# OpenPI 0.5 checkpoint convertors
+# OpenPI checkpoint convertors
 
-Consolidated convertors for the self-contained OpenPI 0.5 (`Pi0`) checkpoints
+Consolidated convertors for the self-contained OpenPI Pi0 and Pi0.5 checkpoints
 used by the `openpi_rlinf` model package. Five conversion modes share one core
 (`_core.py`) that owns the common plumbing: locating `model.safetensors` inside a
 checkpoint directory, safetensors load/save, `config.json` read/write, the
@@ -112,16 +112,16 @@ The two SFT configurations use the same mixed-precision policy for training:
 | `behavior_pi05_vla.yaml` | fp32 | bf16 | fp32 |
 | `robotwin_sft_openpi_rlinf.yaml` | fp32 | bf16 | fp32 |
 
-This training compute policy is separate from converter storage dtype. Both
-Behavior and RoboTwin `full_weights.pt` checkpoints should be converted with
-`--dtype fp32` when preserving their SFT values is required. Eval may still use
-bf16 compute through its runtime `precision` setting.
+This training compute policy is separate from converter storage dtype. The
+BEHAVIOR recipe retains its existing bf16 artifact, while the RoboTwin recipe
+uses fp32 to preserve its full-precision SFT weights. Eval may still use bf16
+compute through its runtime `precision` setting.
 
 ```bash
-# BEHAVIOR Pi0.5, preserving SFT weights in fp32.
+# BEHAVIOR Pi0.5, retaining the existing bf16 artifact.
 python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft_to_openpi_rlinf \
     --config-name       pi05_behavior \
-    --dtype              fp32 \
+    --dtype              bf16 \
     --ckpt              /path/to/logs/.../checkpoints/global_step_30000 \
     --input-norm-stats  /path/to/norm_stats.json \
     --output-model      /path/to/pi05_sft_openpi_rlinf \

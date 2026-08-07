@@ -387,16 +387,15 @@ convertor (``ckpt_convertor.openpi`` ``openpi_pytorch_to_openpi_rlinf`` /
 paths directly in the config as ``/path/to/...`` placeholders:
 
 - ``rollout.model.model_path``: the OpenPI_RLinf eval checkpoint.
-- ``rollout.model.openpi.assets_dir``: directory holding the BEHAVIOR norm-stats.
-  Norm stats resolve at ``{assets_dir}/{asset_id}/norm_stats.json``.
-- ``rollout.model.openpi.paligemma_tokenizer``: the PaliGemma SentencePiece
-  tokenizer model.
+
+Normalization statistics are loaded from the converted checkpoint's bundled
+``physical-intelligence/behavior/norm_stats.json`` asset.
 
 .. code:: bash
 
    export ISAAC_PATH=/path/to/isaac-sim
    export OMNIGIBSON_DATA_PATH=/path/to/BEHAVIOR-1K-datasets
-   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_pytorch_eval
+   bash evaluations/run_eval.sh behavior behavior_openpi_pi05_rlinf_eval
 
 .. note::
 

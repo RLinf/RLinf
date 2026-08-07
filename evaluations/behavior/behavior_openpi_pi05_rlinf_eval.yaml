@@ -20,7 +20,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "behavior_openpi05_pytorch_eval"
+    experiment_name: "behavior_openpi_pi05_rlinf_eval"
     logger_backends: ["tensorboard"]
 
   only_eval: True

@@ -49,8 +49,14 @@ _OPENPI_GEMMA_EXPERT = "paligemma_with_expert.gemma_expert.model."
 
 def new_to_old_state_dict(
     new_sd: dict[str, torch.Tensor],
+    *,
+    action_expert_uses_adarms: bool = True,
 ) -> dict[str, torch.Tensor]:
-    """Convert a new-format state dict to the old OpenPI layout."""
+    """Convert a new-format state dict to the OpenPI PyTorch layout.
+
+    Pi0.5 uses adaRMSNorm for the action expert, while Pi0 uses RMSNorm. The
+    caller derives the action-expert layout from the reference checkpoint.
+    """
     openpi_rlinf_state_dict = new_sd
     openpi_pytorch_state_dict: dict[str, torch.Tensor] = {}
 
@@ -151,7 +157,7 @@ def new_to_old_state_dict(
         openpi_pytorch_state_dict,
         _OPENPI_GEMMA_EXPERT,
         expert_index=1,
-        action_expert=True,
+        action_expert=action_expert_uses_adarms,
     )
 
     rlinf_key = "llm.final_norms.0.scale"
@@ -159,10 +165,17 @@ def new_to_old_state_dict(
         openpi_pytorch_state_dict[_OPENPI_PALIGEMMA_LLM + "norm.weight"] = (
             openpi_rlinf_state_dict[rlinf_key]
         )
-    for suffix in (".weight", ".bias"):
-        rlinf_key = f"llm.final_norms.1.ada_modulation{suffix}"
+    if action_expert_uses_adarms:
+        for suffix in (".weight", ".bias"):
+            rlinf_key = f"llm.final_norms.1.ada_modulation{suffix}"
+            if rlinf_key in openpi_rlinf_state_dict:
+                openpi_pytorch_state_dict[
+                    _OPENPI_GEMMA_EXPERT + "norm.dense" + suffix
+                ] = openpi_rlinf_state_dict[rlinf_key]
+    else:
+        rlinf_key = "llm.final_norms.1.scale"
         if rlinf_key in openpi_rlinf_state_dict:
-            openpi_pytorch_state_dict[_OPENPI_GEMMA_EXPERT + "norm.dense" + suffix] = (
+            openpi_pytorch_state_dict[_OPENPI_GEMMA_EXPERT + "norm.weight"] = (
                 openpi_rlinf_state_dict[rlinf_key]
             )
 
@@ -185,6 +198,20 @@ def new_to_old_state_dict(
         ):
             openpi_pytorch_state_dict[key] = tensor
     return openpi_pytorch_state_dict
+
+
+def _reference_uses_action_expert_adarms(
+    reference_state_dict: dict[str, torch.Tensor],
+) -> bool:
+    """Infer Pi0.5's action-expert norm layout from a reference checkpoint."""
+    return any(
+        key.startswith(_OPENPI_GEMMA_EXPERT)
+        and (
+            ".input_layernorm.dense." in key
+            or ".post_attention_layernorm.dense." in key
+        )
+        for key in reference_state_dict
+    )
 
 
 def _convert_llm_expert(
@@ -262,10 +289,15 @@ def convert_trained_ckpt(
         key.removeprefix("_orig_mod."): tensor
         for key, tensor in openpi_rlinf_state_dict.items()
     }
-    openpi_pytorch_state_dict = new_to_old_state_dict(openpi_rlinf_state_dict)
 
     reference_safetensors = os.path.join(reference_model, "model.safetensors")
     reference_state_dict = safetensors.torch.load_file(reference_safetensors)
+    openpi_pytorch_state_dict = new_to_old_state_dict(
+        openpi_rlinf_state_dict,
+        action_expert_uses_adarms=_reference_uses_action_expert_adarms(
+            reference_state_dict
+        ),
+    )
     reference_head = reference_state_dict[ACTION_EXPERT_LM_HEAD]
     if (
         ACTION_EXPERT_LM_HEAD not in openpi_pytorch_state_dict

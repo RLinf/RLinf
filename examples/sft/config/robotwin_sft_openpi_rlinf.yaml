@@ -53,11 +53,10 @@ actor:
       # The JAX-to-new conversion copies norm_stats.json here. Override these
       # two fields when the statistics are stored outside model_path.
       assets_dir: ${actor.model.model_path}
-      asset_id: "physical-intelligence/robotwin"
+      asset_id: "physical-intelligence/robotwin/adjust_bottle"
       num_images_in_input: 3
     # Explicitly select this task's statistics for the official OpenPI loader.
-    # For per-task SFT, set ``openpi.asset_id`` to e.g.
-    # ``physical-intelligence/robotwin/adjust_bottle``.
+    # Override ``openpi.asset_id`` for other RoboTwin tasks.
     openpi_data:
       norm_stats_path: ${actor.model.openpi.assets_dir}/${actor.model.openpi.asset_id}/norm_stats.json
 
