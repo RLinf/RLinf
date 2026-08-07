@@ -493,6 +493,7 @@ class MultiChannelProcessGroup:
             pg_name = dist._get_process_group_name(group)
             msg = f"Broadcast failed on ProcessGroup {pg_name} rank {self._cur_rank} with error: {error}. Args - tensor: {tensor}, src: {src}, group: {group}, async_op: {async_op}."
             self._logger.error(msg)
+            raise
 
     @staticmethod
     def _create_process_group(
