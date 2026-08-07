@@ -405,11 +405,12 @@ FROM embodied-common-image AS embodied-libero-image
 # (via clone_or_reuse_repo) instead of re-downloading it per venv.
 ENV LIBERO_PATH=/opt/envs/LIBERO
 
-# Install openvla, openvla-oft, dreamzero, gr00t, and evo1 envs
+# Install openvla, openvla-oft, dreamzero, gr00t, molmoact2, and evo1 envs
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero
 
 # Set default env

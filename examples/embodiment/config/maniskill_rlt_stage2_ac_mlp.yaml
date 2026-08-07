@@ -243,7 +243,7 @@ rollout:
     lora_rank: 32
 
   rlt_feature_model:
-    model_type: "openpi_pytorch"
+    model_type: "openpi_rlinf"
     model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
     precision: bf16
     num_action_chunks: 10
@@ -286,10 +286,10 @@ rollout:
 
   # Optional ManiSkill expert takeover model. Enable it with
   # env.train.rlt_policy_switch.expert_takeover.enable=True. This should point
-  # to a stronger openpi_pytorch SFT checkpoint trained with the same task
+  # to a stronger openpi_rlinf SFT checkpoint trained with the same task
   # transforms; it predicts expert actions directly and does not use RLT tokens.
   expert_model:
-    model_type: "openpi_pytorch"
+    model_type: "openpi_rlinf"
     model_path: "/path/to/rlt_maniskill_joint_pi05_sft_more_steps/checkpoints/global_step_<step>/actor"
     precision: bf16
     num_action_chunks: 10

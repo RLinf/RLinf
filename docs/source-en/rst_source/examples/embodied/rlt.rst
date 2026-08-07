@@ -119,10 +119,10 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
-RLT uses ``model_type: openpi_pytorch`` in the configs below. The install target
+RLT uses ``model_type: openpi_rlinf`` in the configs below. The install target
 is still ``openpi`` because the vendored PyTorch model shares the OpenPI runtime
 and the RLT Stage 1 dataloader keeps using the OpenPI data pipeline for
-ManiSkill and real-world compatibility. This ``openpi_pytorch`` path is RLinf's
+ManiSkill and real-world compatibility. This ``openpi_rlinf`` path is RLinf's
 vendored PyTorch Pi0.5 implementation aligned with the JAX OpenPI reference, not
 the older official OpenPI PyTorch path.
 
@@ -161,7 +161,7 @@ Important Stage 1 fields:
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi_pytorch"
+       model_type: "openpi_rlinf"
        precision: fp32
        is_lora: False
        model_path: "/path/to/model"
@@ -275,7 +275,7 @@ Important Stage 2 fields:
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi_pytorch"
+       model_type: "openpi_rlinf"
        precision: bf16
        is_lora: False
        num_action_chunks: 20

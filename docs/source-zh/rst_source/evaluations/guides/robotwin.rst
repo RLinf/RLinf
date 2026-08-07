@@ -76,6 +76,9 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
+   * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
+     - adjust_bottle
+     - OpenPI_RLinf π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA

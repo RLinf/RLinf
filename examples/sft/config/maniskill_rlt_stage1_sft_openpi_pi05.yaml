@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5_pytorch@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -43,7 +43,7 @@ actor:
   model:
     precision: fp32
     model_path: "/path/to/pi05_base"
-    model_type: "openpi_pytorch"
+    model_type: "openpi_rlinf"
     num_action_chunks: 10
     action_dim: 8
     add_value_head: False

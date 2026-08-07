@@ -572,7 +572,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_pytorch_eval
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_rlinf_eval
 
       - name: Clean up
         run: |
@@ -1480,6 +1480,37 @@ jobs:
           export POLARIS_DATA_PATH=/workspace/dataset/PolaRiS-Hub
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
           bash tests/e2e_tests/embodied/run.sh polaris_tapeintocontainer_ppo_openpi_pi05
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-molmoact2-libero-eval-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MOLMOACT2_LEROBOT_PATH=/workspace/dataset/lerobot-molmoact2
+          bash requirements/install.sh embodied --model molmoact2 --env libero
+
+      - name: LIBERO MolmoAct2 evaluation test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
 
       - name: Clean up
         run: |
