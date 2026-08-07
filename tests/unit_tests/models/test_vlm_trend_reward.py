@@ -21,6 +21,13 @@ from rlinf.models.embodiment.reward.vlm_reward_model import (
     VLMRewardModel,
 )
 
+from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
+    VLMTrendRewardInputBuilder,
+)
+from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
+    VLMTrendBinaryDigitRewardParser,
+)
+
 
 class _HiddenModel:
     def __init__(self, hidden: torch.Tensor) -> None:
@@ -170,3 +177,61 @@ def test_model_success_bonus_requires_consecutive_confirmations() -> None:
     torch.testing.assert_close(interrupted, torch.zeros(1))
     torch.testing.assert_close(restart, torch.zeros(1))
     torch.testing.assert_close(confirmed, torch.ones(1))
+
+
+def test_binary_digit_parser_uses_sparse_rewards():
+    parser = VLMTrendBinaryDigitRewardParser()
+
+    rewards = parser.parse_rewards(["1", "0", "answer: 1", "unclear", "10"])
+
+    torch.testing.assert_close(
+        rewards,
+        torch.tensor([1.0, 0.0, 1.0, 0.0, 0.0]),
+    )
+
+
+def test_terminal_success_builder_matches_sft_prompt(monkeypatch):
+    builder = VLMTrendRewardInputBuilder(
+        history_buffer_names=["history_window"],
+        default_task_description="fallback task",
+        include_task=True,
+        prompt_template=(
+            "Estimate task-conditioned success potential for this robot "
+            "manipulation state.{task_text} The two synchronized videos show "
+            "the same 5-frame history from two camera views."
+        ),
+        _processor=None,
+    )
+    videos = [[["main frames"], ["extra frames"]]]
+    monkeypatch.setattr(builder, "extract_videos", lambda *_: videos)
+    observations = {"task_descriptions": ["Pick up the cube."]}
+    history_input = {"history_window": {}}
+
+    prepared = builder.prepare_inputs(observations, history_input, [0])
+
+    assert prepared["videos_list"] == videos
+    assert prepared["prompt_texts_list"] == [
+        [
+            "Estimate task-conditioned success potential for this robot "
+            "manipulation state. Task: Pick up the cube.. The two synchronized "
+            "videos show the same 5-frame history from two camera views."
+        ]
+    ]
+
+
+def test_buffered_vlm_returns_zero_before_first_window(monkeypatch):
+    from rlinf.models.embodiment.reward.vlm_reward_model import BufferedVLMRewardModel
+
+    model = object.__new__(BufferedVLMRewardModel)
+    model.interval_reward = 0.0
+    monkeypatch.setattr(model, "apply_gt_success_bonus", lambda rewards, _: rewards)
+
+    rewards = model.compute_reward(
+        {
+            "dones": torch.zeros(3, dtype=torch.bool),
+            "history_input": {"history_window": {}},
+        }
+    )
+
+    torch.testing.assert_close(rewards, torch.zeros(3))
+

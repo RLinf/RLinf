@@ -20,9 +20,21 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 步骤 1；采完数据后两条支路可以并行。
 
 下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``。
-训练步骤使用 YAML + ``run_vlm_sft.sh``；仅采集、scalar head 训练与 PPO 保留独立
-launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
-``examples/embodiment/run_vlm_trend_success_reward.sh``。
+训练与 PPO 使用仓库统一入口加 YAML config-name
+（``run_vlm_sft.sh``、``run_embodiment.sh``）。数据集 / teacher / scalar-head
+步骤使用 ``examples/reward/`` 下统一 CLI
+（``preprocess_vlm_trend_dataset.py``、``run_vlm_trend.py``、
+``run_vlm_trend_scalar_head.py``）。
+
+本指南用到的 ``preprocess_vlm_trend_dataset.py`` mode：
+
+- ``terminal_success`` — 稀疏 0/1 窗口（步骤 2）
+- ``potential`` — 由 state-value teacher 生成稠密 potential **与** progress
+  窗口（步骤 4）；双线 Success 流程请用这个
+- ``trend_reward`` — 经典 GAE-delta trend reward 窗口（后文单独章节）
+
+``--mode progress`` 是兼容用的 **legacy** 路径（旧的 state-value delta
+progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mode potential``。
 
 步骤 1 — 采集 rollout
 ^^^^^^^^^^^^^^^^^^^^^
@@ -36,8 +48,39 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
    export OUTPUT_ROOT=/path/to/vlm_trend_uniform_collection
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
-   NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
+   export NUM_ENVS=1024
+   export SEED=0
+   PYTHON_BIN=${PYTHON_BIN:-python}
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     if ((step == 0)); then checkpoint=null
+     elif ((step <= 120)); then checkpoint=$(printf "${CHECKPOINT_TEMPLATE_EARLY}" "${step}")
+     else checkpoint=$(printf "${CHECKPOINT_TEMPLATE_LATE}" "${step}"); fi
+     run_dir="${OUTPUT_ROOT}/runs/step${step}_seed${SEED}_env${NUM_ENVS}"
+     data_dir="${OUTPUT_ROOT}/step${step}"
+     mkdir -p "${run_dir}" "${data_dir}"
+     CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" \
+       EMBODIED_PATH="${PWD}/examples/embodiment" \
+       "${PYTHON_BIN}" evaluations/eval_embodied_agent.py \
+       --config-path ../examples/embodiment/config \
+       --config-name maniskill_ppo_mlp_vlm_trend_reward_collect \
+       runner.only_eval=true \
+       runner.ckpt_path="${checkpoint}" \
+       runner.logger.log_path="${run_dir}" \
+       cluster.component_placement.env="${PLACEMENT}" \
+       cluster.component_placement.rollout="${PLACEMENT}" \
+       'rollout.model=${actor.model}' \
+       rollout.enable_torch_compile=false \
+       rollout.enable_cuda_graph=false \
+       env.eval.total_num_envs="${NUM_ENVS}" \
+       env.eval.seed="${SEED}" \
+       env.eval.wrap_obs_mode=simple \
+       env.eval.ignore_terminations=true \
+       env.eval.max_episode_steps=50 \
+       env.eval.max_steps_per_rollout_epoch=50 \
+       env.eval.data_collection.enabled=true \
+       env.eval.data_collection.save_dir="${data_dir}" \
+       env.eval.data_collection.only_success=false
+   done
 
 这一步会：
 
@@ -51,8 +94,8 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 
 .. code-block:: bash
 
-   STEPS="80 120 160" \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
+   # Re-run only failed steps by shrinking the ``for step in ...`` list, e.g.
+   # ``for step in 80 120 160; do ...; done``
 
 同名 episode 文件会被覆盖。
 
@@ -65,7 +108,8 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   python examples/reward/preprocess_vlm_trend_terminal_success_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode terminal_success \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
@@ -133,10 +177,12 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
        ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
      done
    done
-   python examples/reward/train_vlm_trend_state_success_value.py \
+   python examples/reward/run_vlm_trend.py \
+       --stage train_teacher \
        --raw-data-path "${FLAT_ROOT}" \
        --output-dir "${STATE_VALUE_ROOT}"
-   python examples/reward/preprocess_vlm_trend_state_value_potential_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode potential \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
@@ -190,8 +236,14 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
-   CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_train_scalar_head.sh
+   python examples/reward/run_vlm_trend_scalar_head.py \
+       --stage all \
+       --model-path "${VLM_MODEL_PATH}" \
+       --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
+       --data-root "${POTENTIAL_SFT_DATA_ROOT}" \
+       --feat-root "${FEAT_ROOT}" \
+       --output-dir "${SCALAR_OUTPUT_ROOT}" \
+       --cuda-devices 0,1,2,3
 
 这一步会：
 
@@ -213,19 +265,17 @@ launch脚本，分别在 ``examples/embodiment/vlm_trend_success/`` 与
    export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
    export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
    export PPO_OUTPUT_ROOT=/path/to/ppo-output
-   CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
-       INFER_BATCH_SIZE=32 \
-       bash examples/embodiment/run_vlm_trend_success_reward.sh
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_success
 
 这一步会：
 
 - 稠密项：potential LoRA + scalar head → 受限的 potential difference。
 - 稀疏项：success LoRA 生成 ``1`` 时发一次 ``+1``（``0`` / 非法输出为 0）。
   环境 reward 关闭；VLM 每 5 步推理一次；episode 固定 50 步，与预处理对齐。
-- 每 5 步评估、每 20 步保存；actor / rollout / env / reward 使用 GPU
-  ``0-3``。reward server placement 会自动跟随 ``PLACEMENT``。
-- 续训：``RESUME_DIR`` 指到已有 ``checkpoints/global_step_N``，并把
-  ``MAX_STEPS`` 设成目标总步数（例如从 60 续到 160）。
+- 每 5 步评估、每 20 步保存；默认把 actor / rollout / env / reward 放在 GPU
+  ``0-3``。可用 Hydra ``cluster.component_placement.*=...`` 覆盖。
+- 续训：传 ``runner.resume_dir=/path/to/checkpoints/global_step_N``，并提高
+  ``runner.max_steps`` 到目标总步数。
 
 
 完整流程包括四个阶段：
@@ -316,7 +366,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward 使用短时间双视角历史窗口，而不是单张图像。使用
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` 可以将采集到的
+``examples/reward/preprocess_vlm_trend_dataset.py --mode trend_reward`` 可以将采集到的
 episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，并给每个
 窗口标注 ``positive``、``negative`` 或 ``unclear``。
 
@@ -324,7 +374,8 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode trend_reward \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -426,7 +477,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
+使用 ``preprocess_vlm_trend_dataset.py --mode trend_reward`` 转换数据后，将
 ``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT。
 
 ``vlm_trend_sft_reward.yaml`` 是 **单线** Trend reward
@@ -715,7 +766,7 @@ SGLang 路径额外说明：
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
 2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_dataset.py --mode trend_reward`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
 4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 

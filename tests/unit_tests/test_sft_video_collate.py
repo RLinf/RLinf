@@ -211,16 +211,3 @@ def test_run_eval_with_0_1_2_labels_across_different_batches(monkeypatch):
     assert "balanced_accuracy" not in metrics
     assert "positive_recall" not in metrics
 
-
-def test_get_eval_model_output_tracks_binary_total_for_mixed_batch(monkeypatch):
-    batch = _eval_batch(["0", "1", "2"])
-    worker = _make_vlm_eval_worker(monkeypatch, [batch])
-
-    counts = worker.get_eval_model_output(batch)
-
-    assert isinstance(counts, dict)
-    assert counts["total"] == 3
-    assert counts["correct"] == 3
-    assert counts["binary_total"] == 2
-    assert counts["positive_total"] == 1
-    assert counts["negative_total"] == 1

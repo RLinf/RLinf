@@ -23,10 +23,22 @@ Run every command from the repo root. Sparse steps (2–3) and dense steps (4–
 both need step 1; you can run the two branches in parallel after collection.
 
 The examples below use 4 GPUs (placement ``0-3``) and ``NUM_ENVS=1024``.
-Training steps use YAML configs plus ``run_vlm_sft.sh``; only collection,
-scalar-head training, and PPO keep dedicated shell launchers under
-``examples/embodiment/vlm_trend_success/`` and
-``examples/embodiment/run_vlm_trend_success_reward.sh``.
+Training and PPO use shared launchers plus YAML config-names
+(``run_vlm_sft.sh``, ``run_embodiment.sh``). Dataset / teacher / scalar-head
+steps use the unified ``examples/reward/`` CLIs
+(``preprocess_vlm_trend_dataset.py``, ``run_vlm_trend.py``,
+``run_vlm_trend_scalar_head.py``).
+
+``preprocess_vlm_trend_dataset.py`` modes used by this guide:
+
+- ``terminal_success`` — sparse 0/1 windows (step 2)
+- ``potential`` — dense potential **and** progress windows from the state-value
+  teacher (step 4); prefer this for the dual-line Success pipeline
+- ``trend_reward`` — classic GAE-delta trend reward windows (later section)
+
+``--mode progress`` is a **legacy** state-value-delta progress path kept for
+compatibility only. It is not part of the recommended Success pipeline; new
+runs should use ``--mode potential`` instead.
 
 Step 1 — Collect rollouts
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -40,8 +52,39 @@ Roll out fixed 50-step episodes from checkpoints that cover your policy range.
    export OUTPUT_ROOT=/path/to/vlm_trend_uniform_collection
    export CUDA_DEVICES=0,1,2,3
    export PLACEMENT=0-3
-   NUM_ENVS=1024 SEED=0 \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
+   export NUM_ENVS=1024
+   export SEED=0
+   PYTHON_BIN=${PYTHON_BIN:-python}
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     if ((step == 0)); then checkpoint=null
+     elif ((step <= 120)); then checkpoint=$(printf "${CHECKPOINT_TEMPLATE_EARLY}" "${step}")
+     else checkpoint=$(printf "${CHECKPOINT_TEMPLATE_LATE}" "${step}"); fi
+     run_dir="${OUTPUT_ROOT}/runs/step${step}_seed${SEED}_env${NUM_ENVS}"
+     data_dir="${OUTPUT_ROOT}/step${step}"
+     mkdir -p "${run_dir}" "${data_dir}"
+     CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" \
+       EMBODIED_PATH="${PWD}/examples/embodiment" \
+       "${PYTHON_BIN}" evaluations/eval_embodied_agent.py \
+       --config-path ../examples/embodiment/config \
+       --config-name maniskill_ppo_mlp_vlm_trend_reward_collect \
+       runner.only_eval=true \
+       runner.ckpt_path="${checkpoint}" \
+       runner.logger.log_path="${run_dir}" \
+       cluster.component_placement.env="${PLACEMENT}" \
+       cluster.component_placement.rollout="${PLACEMENT}" \
+       'rollout.model=${actor.model}' \
+       rollout.enable_torch_compile=false \
+       rollout.enable_cuda_graph=false \
+       env.eval.total_num_envs="${NUM_ENVS}" \
+       env.eval.seed="${SEED}" \
+       env.eval.wrap_obs_mode=simple \
+       env.eval.ignore_terminations=true \
+       env.eval.max_episode_steps=50 \
+       env.eval.max_steps_per_rollout_epoch=50 \
+       env.eval.data_collection.enabled=true \
+       env.eval.data_collection.save_dir="${data_dir}" \
+       env.eval.data_collection.only_success=false
+   done
 
 What this does:
 
@@ -55,8 +98,8 @@ To redo a few failed steps only:
 
 .. code-block:: bash
 
-   STEPS="80 120 160" \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_collect_uniform_checkpoints.sh
+   # Re-run only failed steps by shrinking the ``for step in ...`` list, e.g.
+   # ``for step in 80 120 160; do ...; done``
 
 Matching episode filenames are overwritten.
 
@@ -69,7 +112,8 @@ Turn the collection into dual-view 5-frame windows labeled ``0`` / ``1``.
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   python examples/reward/preprocess_vlm_trend_terminal_success_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode terminal_success \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
@@ -138,10 +182,12 @@ the same collection.
        ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
      done
    done
-   python examples/reward/train_vlm_trend_state_success_value.py \
+   python examples/reward/run_vlm_trend.py \
+       --stage train_teacher \
        --raw-data-path "${FLAT_ROOT}" \
        --output-dir "${STATE_VALUE_ROOT}"
-   python examples/reward/preprocess_vlm_trend_state_value_potential_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode potential \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step40" \
@@ -195,8 +241,14 @@ Freeze the potential LoRA, extract features with
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
-   CUDA_DEVICES=0,1,2,3 FEATURE_WORLD_SIZE=4 \
-       bash examples/embodiment/vlm_trend_success/run_vlm_trend_train_scalar_head.sh
+   python examples/reward/run_vlm_trend_scalar_head.py \
+       --stage all \
+       --model-path "${VLM_MODEL_PATH}" \
+       --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
+       --data-root "${POTENTIAL_SFT_DATA_ROOT}" \
+       --feat-root "${FEAT_ROOT}" \
+       --output-dir "${SCALAR_OUTPUT_ROOT}" \
+       --cuda-devices 0,1,2,3
 
 What this does:
 
@@ -219,9 +271,7 @@ term, and ``vlm_trend_binary_digit_reward_parser`` for the sparse success term.
    export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/vlm_trend_sparse_success_sft/.../global_step_300
    export POLICY_CHECKPOINT=/path/to/policy/full_weights.pt
    export PPO_OUTPUT_ROOT=/path/to/ppo-output
-   CUDA_VISIBLE_DEVICES=0,1,2,3 PLACEMENT=0-3 NUM_ENVS=1024 MAX_STEPS=160 \
-       INFER_BATCH_SIZE=32 \
-       bash examples/embodiment/run_vlm_trend_success_reward.sh
+   bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_success
 
 What this does:
 
@@ -229,10 +279,11 @@ What this does:
 - Sparse term: success LoRA → one-shot ``+1`` when it emits ``1`` (``0`` / invalid
   → 0). Env reward is off; VLM runs every 5 steps; episodes stay 50 steps to
   match preprocessing.
-- Eval every 5 steps, save every 20. Actor / rollout / env / reward use GPUs
-  ``0-3``. Reward-server placement follows ``PLACEMENT`` automatically.
-- Resume: set ``RESUME_DIR`` to a saved ``checkpoints/global_step_N`` and set
-  ``MAX_STEPS`` to the target total (e.g. 160 when continuing from step 60).
+- Eval every 5 steps, save every 20. Defaults place actor / rollout / env /
+  reward on GPUs ``0-3``. Override with Hydra
+  ``cluster.component_placement.*=...`` as needed.
+- Resume: pass ``runner.resume_dir=/path/to/checkpoints/global_step_N`` and
+  raise ``runner.max_steps`` to the target total.
 
 
 The full workflow has four stages:
@@ -325,7 +376,7 @@ Where:
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward uses short dual-view history windows rather than single images. Use
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` to slice collected
+``examples/reward/preprocess_vlm_trend_dataset.py --mode trend_reward`` to slice collected
 episodes into 5-frame windows, extract ``main_images`` and ``extra_view_images``,
 and assign each window one of ``positive``, ``negative``, or ``unclear``.
 
@@ -333,7 +384,8 @@ Example:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_dataset.py \
+       --mode trend_reward \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -435,7 +487,7 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
+After converting collected episodes with ``preprocess_vlm_trend_dataset.py --mode trend_reward``,
 point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT.
 
 ``vlm_trend_sft_reward.yaml`` is the default config for the
@@ -727,7 +779,7 @@ The full workflow is:
 
 1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
 2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
-3. For VLM Trend rewards, use ``preprocess_vlm_trend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
+3. For VLM Trend rewards, use ``preprocess_vlm_trend_dataset.py --mode trend_reward`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
 4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 

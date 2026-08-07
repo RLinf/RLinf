@@ -40,7 +40,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from rlinf.data.datasets.vlm_trend_io import to_numpy_float32
-from rlinf.models.embodiment.reward.state_success_value import (
+from rlinf.utils.state_success_value import (
     StateSuccessValue,
     stack_state_history,
 )
@@ -362,7 +362,7 @@ def train(args: argparse.Namespace) -> None:
     logger.info("%s", json.dumps(final_metrics, indent=2))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for state-success value teacher training."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", required=True)
@@ -389,7 +389,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-grad", type=float, default=1.0)
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--device", default="cuda")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

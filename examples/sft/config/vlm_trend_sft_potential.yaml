@@ -43,7 +43,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build data with preprocess_vlm_trend_state_value_potential_dataset.py and
+# Build data with preprocess_vlm_trend_dataset.py --mode potential and
 # point VLM_TREND_REWARD_DATA_ROOT to that output root.
 # Requires VLM_TREND_REWARD_DATA_ROOT; set VLM_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:

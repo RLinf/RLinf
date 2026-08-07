@@ -246,7 +246,7 @@ def main(args: argparse.Namespace) -> None:
     logger.info("%s", json.dumps(payload["metadata"], indent=2))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--checkpoint", required=True)
@@ -261,7 +261,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--world-size", type=int, default=1)
     parser.add_argument("--max-samples", type=int, default=None)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

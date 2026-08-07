@@ -35,7 +35,7 @@ from rlinf.data.datasets.vlm_trend_io import (
     to_numpy_float32,
     to_uint8_rgb,
 )
-from rlinf.models.embodiment.reward.state_success_value import (
+from rlinf.utils.state_success_value import (
     StateSuccessValue,
     load_value_model,
     score_states,
@@ -392,7 +392,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
     return metadata
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for state-value progress dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", required=True)
@@ -441,7 +441,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unclear-abs-delta", type=float, default=0.005)
     parser.add_argument("--task-description", type=str, default=None)
     parser.add_argument("--device", default="cuda")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

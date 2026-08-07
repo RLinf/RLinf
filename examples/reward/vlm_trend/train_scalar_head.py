@@ -308,7 +308,7 @@ def train(args: argparse.Namespace) -> None:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for scalar potential-head training."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--train-pattern", required=True)
@@ -333,7 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-rank-min-gap", type=float, default=0.01)
     parser.add_argument("--progress-deadband", type=float, default=0.03)
     parser.add_argument("--seed", type=int, default=42)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

@@ -46,7 +46,7 @@ from rlinf.data.datasets.vlm_trend_io import (
     to_numpy_float32,
     to_uint8_rgb,
 )
-from rlinf.models.embodiment.reward.state_success_value import (
+from rlinf.utils.state_success_value import (
     load_value_model,
     score_states,
 )
@@ -531,7 +531,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
     return metadata
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for dense potential/progress dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -565,7 +565,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--progress-per-bucket-eval", type=int, default=180)
     parser.add_argument("--task-description", type=str, default=None)
     parser.add_argument("--device", default="cuda")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.progress_gap_steps is None:
         args.progress_gap_steps = [args.window_size]
     return args

@@ -42,7 +42,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build this dataset with preprocess_vlm_trend_terminal_success_dataset.py and
+# Build this dataset with preprocess_vlm_trend_dataset.py --mode terminal_success and
 # evaluate all checkpoints before selecting the model for PPO.
 # Requires DUALVIEW_SFT_DATA_ROOT; set VLM_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:

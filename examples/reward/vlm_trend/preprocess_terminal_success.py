@@ -42,7 +42,7 @@ def main(args: argparse.Namespace) -> None:
     logger.info("%s", json.dumps(stats, indent=2))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for terminal-success dataset preprocessing."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-data-path", action="append", required=True)
@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--online-interval", type=int, default=0)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":

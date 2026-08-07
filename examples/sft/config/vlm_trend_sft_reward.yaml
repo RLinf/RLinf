@@ -33,7 +33,7 @@ runner:
     experiment_name: ${runner.experiment_name}
     logger_backends: ["tensorboard"]
   # Single-line Trend reward SFT (docs §2.3): dataset from
-  # preprocess_vlm_trend_reward_dataset.py. The dual-line Success dense
+  # preprocess_vlm_trend_dataset.py --mode trend_reward. The dual-line Success dense
   # branch uses vlm_trend_sft_potential.yaml (400 steps) instead.
   max_epochs: 3000
   max_steps: 3000
@@ -44,7 +44,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build data with preprocess_vlm_trend_reward_dataset.py and point
+# Build data with preprocess_vlm_trend_dataset.py --mode trend_reward and point
 # VLM_TREND_REWARD_DATA_ROOT to that output root. For the dual-line Success
 # dense branch, use vlm_trend_sft_potential.yaml instead.
 # Requires VLM_TREND_REWARD_DATA_ROOT; set VLM_MODEL_PATH (and optionally OUTPUT_ROOT).

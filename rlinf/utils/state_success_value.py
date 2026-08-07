@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared state-success teacher model used by VLM Trend preprocess scripts."""
+"""Shared state-success teacher MLP used by VLM Trend recipe scripts."""
 
 from __future__ import annotations
 
