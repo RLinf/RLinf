@@ -145,6 +145,8 @@ class BehaviorProcess:
             self.first_chunk_action_value,
         ) = self._parse_first_chunk_action_override(cfg)
         self._first_chunk_action_override_pending = np.zeros(num_envs, dtype=bool)
+        self.trace_robot_joints = self._trace_robot_joints_enabled(cfg)
+        self._joint_trace_frame_idx = 0
 
     def get_activity_name(self):
         return self.instance_loader.activity_name
@@ -349,6 +351,139 @@ class BehaviorProcess:
             return robots[0]
         return None
 
+    @staticmethod
+    def _trace_robot_joints_enabled(cfg: DictConfig) -> bool:
+        cfg_value = bool(OmegaConf.select(cfg, "trace_robot_joints", default=False))
+        env_value = os.environ.get("RLINF_BEHAVIOR_TRACE_JOINTS", "")
+        return cfg_value or env_value.lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _tensor_to_float_list(value, digits: int = 6) -> list[float]:
+        if value is None:
+            return []
+        if torch.is_tensor(value):
+            value = value.detach().cpu().reshape(-1).tolist()
+        elif hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, (list, tuple)):
+            value = [value]
+        return [round(float(item), digits) for item in value]
+
+    @staticmethod
+    def _robot_joint_names(robot) -> list[str]:
+        joints = getattr(robot, "joints", None)
+        if isinstance(joints, dict):
+            return list(joints.keys())
+        return []
+
+    def _log_robot_joint_trace(
+        self,
+        child_env,
+        local_env_idx: int,
+        event: str,
+        chunk_step_idx: int | None = None,
+        action=None,
+    ) -> None:
+        if not self.trace_robot_joints:
+            return
+
+        robot = self._get_robot_from_child_env(child_env)
+        if robot is None:
+            return
+
+        get_joint_velocities = getattr(robot, "get_joint_velocities", None)
+        if callable(get_joint_velocities):
+            joint_velocities = get_joint_velocities()
+        else:
+            joint_velocities = None
+        robot_pos, robot_quat = robot.get_position_orientation(frame="world")
+        record = {
+            "event": event,
+            "replay_seed_offset": self.replay_seed_offset,
+            "local_env_idx": int(local_env_idx),
+            "frame_idx": int(self._joint_trace_frame_idx),
+            "chunk_step_idx": None if chunk_step_idx is None else int(chunk_step_idx),
+            "robot_name": getattr(robot, "name", None),
+            "joint_names": self._robot_joint_names(robot),
+            "joint_positions": self._tensor_to_float_list(
+                robot.get_joint_positions()
+            ),
+            "joint_velocities": self._tensor_to_float_list(joint_velocities),
+            "robot_position_world": self._tensor_to_float_list(robot_pos),
+            "robot_quat_world": self._tensor_to_float_list(robot_quat),
+        }
+        if action is not None:
+            record["action"] = self._tensor_to_float_list(action)
+        print(
+            f"RLINF_BEHAVIOR_JOINT_TRACE {json.dumps(record, sort_keys=True)}",
+            flush=True,
+        )
+
+    def _log_all_robot_joint_traces(
+        self,
+        event: str,
+        env_indices: list[int] | None = None,
+        chunk_step_idx: int | None = None,
+        actions=None,
+    ) -> None:
+        if not self.trace_robot_joints:
+            return
+
+        child_envs = getattr(self.env, "envs", [])
+        if env_indices is None:
+            env_indices = list(range(len(child_envs)))
+        for env_idx in env_indices:
+            action = None
+            if actions is not None:
+                action = actions[env_idx]
+            self._log_robot_joint_trace(
+                child_envs[env_idx],
+                local_env_idx=env_idx,
+                event=event,
+                chunk_step_idx=chunk_step_idx,
+                action=action,
+            )
+        self._joint_trace_frame_idx += 1
+
+    @classmethod
+    def _annotate_behavior_hold_metrics(cls, child_env, info: dict | None) -> dict:
+        info = {} if info is None else info
+        base_env = cls._unwrap_child_env(child_env)
+        reward_info = info.get("reward")
+        if not isinstance(reward_info, dict):
+            reward_info = {}
+            info["reward"] = reward_info
+        task_info = reward_info.get("task_specific")
+        if not isinstance(task_info, dict):
+            task_info = {}
+            reward_info["task_specific"] = task_info
+
+        task = getattr(base_env, "task", None)
+        activity_instance_id = cls._to_int_or_none(
+            getattr(task, "activity_instance_id", None)
+        )
+        if activity_instance_id is not None:
+            task_info["activity_instance_id"] = activity_instance_id
+
+        try:
+            from omnigibson.reward_functions.support_utils import (
+                get_stage_objects_by_name,
+                is_target_in_hand,
+            )
+
+            robot = cls._get_robot_from_child_env(base_env)
+            task_reward = cls._task_reward(base_env)
+            target_obj = getattr(task_reward, "_radio_obj", None)
+            if target_obj is None:
+                target_objects = get_stage_objects_by_name(base_env, ("radio_89",))
+                target_obj = target_objects[0] if target_objects else None
+            if robot is not None and target_obj is not None:
+                task_info["held_in_hand"] = bool(is_target_in_hand(robot, target_obj))
+        except Exception:
+            task_info["held_in_hand_available"] = False
+
+        return info
+
     def chunk_step(self, actions, env_indices):
         """Step a full chunk for one shard.
 
@@ -371,14 +506,29 @@ class BehaviorProcess:
                 )
             self._first_chunk_action_override_pending[:] = False
 
+        self._log_all_robot_joint_traces("pre_chunk", env_indices)
+
         results: list[tuple] = []
         for t in range(chunk_size):
             is_last = t == chunk_size - 1
             need_obs = not self.skip_intermediate_obs_in_chunk or is_last
             step_actions = self._apply_action_mask(actions[:, t])
+            self._log_all_robot_joint_traces(
+                "pre_step", env_indices, chunk_step_idx=t, actions=step_actions
+            )
             results.append(
                 self._step_shard(step_actions, env_indices, need_obs=need_obs)
             )
+            # Annotate hold/grasp metrics on the last step's infos.
+            if is_last:
+                _obs, _rewards, _terminates, _truncates, step_infos = results[-1]
+                child_envs = getattr(self.env, "envs", [])
+                for local_idx, env_idx in enumerate(env_indices):
+                    step_infos[local_idx] = self._annotate_behavior_hold_metrics(
+                        child_envs[env_idx], step_infos[local_idx]
+                    )
+
+        self._log_all_robot_joint_traces("post_chunk", env_indices)
         return tuple(zip(*results))
 
     @staticmethod
