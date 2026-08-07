@@ -758,6 +758,35 @@ class BehaviorEnv(gym.Env):
         self.auto_reset = cfg.auto_reset
         self.max_episode_steps = torch.tensor(cfg.max_episode_steps)
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
+        self.success_stage_idx = cfg.get("success_stage_idx", None)
+        if self.success_stage_idx is not None:
+            self.success_stage_idx = int(self.success_stage_idx)
+        reward_mode = OmegaConf.select(
+            cfg, "omni_config.task.reward_config.reward_mode", default=""
+        )
+        self.behavior_reward_mode = str(reward_mode).lower()
+        self.stage_sparse_reward = self.behavior_reward_mode == "stage_sparse"
+        self.stage_weighted_reward = self.behavior_reward_mode == "stage_weighted"
+        self.stage_cumulative_reward = self.behavior_reward_mode == "stage_cumulative"
+        weights = OmegaConf.select(
+            cfg, "omni_config.task.reward_config.stage_reward_weights", default=None
+        )
+        if weights is not None and not isinstance(weights, (list, tuple)):
+            weights = OmegaConf.to_container(weights, resolve=True)
+        self.stage_reward_weights = (
+            None if weights is None else [float(weight) for weight in weights]
+        )
+        if self.stage_weighted_reward and not self.stage_reward_weights:
+            raise ValueError(
+                "omni_config.task.reward_config.stage_reward_weights must be set "
+                "when reward_mode is stage_weighted."
+            )
+        if self.stage_sparse_reward and self.success_stage_idx is None:
+            raise ValueError(
+                "env.success_stage_idx must be set when "
+                "omni_config.task.reward_config.reward_mode is stage_sparse."
+            )
+        self.use_rel_reward = cfg.use_rel_reward
         self._ordered_reset_epoch = 0
         self._ordered_reset_instance_ids = None
         self.trunk_proprio_randomization = self._parse_trunk_proprio_randomization(cfg)
@@ -968,8 +997,133 @@ class BehaviorEnv(gym.Env):
         }
         return obs
 
-    def _calc_step_reward(self, reward):
-        return self.reward_coef * reward
+    def _completion_bonus_tensor(self, infos, reward):
+        bonuses = []
+        for info in infos or [{} for _ in range(self.num_envs)]:
+            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
+            task_reward = reward_info.get("task_specific", {})
+            bonuses.append(float(task_reward.get("completion_bonus", 0.0) or 0.0))
+        return self.reward_coef * torch.as_tensor(
+            bonuses, dtype=reward.dtype, device=reward.device
+        )
+
+    def _is_target_stage_success(self, task_reward: dict) -> bool:
+        if self.success_stage_idx is None:
+            return False
+        current_stage_idx = task_reward.get("current_stage_idx", None)
+        if current_stage_idx is None:
+            return False
+        try:
+            current_stage_idx = int(current_stage_idx)
+        except (TypeError, ValueError):
+            return False
+        completion_bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
+        return current_stage_idx == self.success_stage_idx and completion_bonus != 0.0
+
+    def _stage_sparse_reward_tensor(self, rewards, infos=None):
+        reward = torch.as_tensor(rewards)
+        bonuses = []
+        for info in infos or [{} for _ in range(int(reward.numel()))]:
+            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
+            task_reward = reward_info.get("task_specific", {})
+            if not isinstance(task_reward, dict):
+                task_reward = {}
+            bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
+            bonuses.append(bonus if self._is_target_stage_success(task_reward) else 0.0)
+        return self.reward_coef * torch.as_tensor(
+            bonuses, dtype=reward.dtype, device=reward.device
+        )
+
+    def _stage_weighted_reward_tensor(self, rewards, infos=None):
+        reward = torch.as_tensor(rewards)
+        bonuses = []
+        for info in infos or [{} for _ in range(int(reward.numel()))]:
+            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
+            task_reward = reward_info.get("task_specific", {})
+            if not isinstance(task_reward, dict):
+                task_reward = {}
+            stage_idx = int(task_reward.get("current_stage_idx", 0) or 0) - 1
+            bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
+            if 0 <= stage_idx < len(self.stage_reward_weights):
+                bonus *= self.stage_reward_weights[stage_idx]
+            else:
+                bonus = 0.0
+            bonuses.append(bonus)
+        return self.reward_coef * torch.as_tensor(
+            bonuses, dtype=reward.dtype, device=reward.device
+        )
+
+    def _stage_cumulative_reward_tensor(self, rewards, infos=None):
+        reward = torch.as_tensor(rewards)
+        counts = []
+        for info in infos or [{} for _ in range(int(reward.numel()))]:
+            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
+            task_reward = reward_info.get("task_specific", {})
+            if not isinstance(task_reward, dict):
+                task_reward = {}
+            counts.append(float(task_reward.get("completed_stage_count", 0.0) or 0.0))
+        return self.reward_coef * torch.as_tensor(
+            counts, dtype=reward.dtype, device=reward.device
+        )
+
+    def _calc_step_reward(self, rewards, infos=None):
+        reward = self.reward_coef * rewards
+        if self.stage_sparse_reward:
+            return self._stage_sparse_reward_tensor(rewards, infos)
+        if self.stage_weighted_reward:
+            return self._stage_weighted_reward_tensor(rewards, infos)
+        if self.stage_cumulative_reward:
+            return self._stage_cumulative_reward_tensor(rewards, infos)
+
+        if not self.use_rel_reward:
+            return reward
+
+        completion_bonus = self._completion_bonus_tensor(infos, reward)
+        dense_reward = reward - completion_bonus
+        reward_diff = dense_reward - self.prev_step_reward.to(dense_reward.device)
+        self.prev_step_reward = dense_reward.to(self.prev_step_reward.device)
+        return reward_diff + completion_bonus
+
+    def _extract_episode_success(self, info: dict | None) -> bool:
+        if not isinstance(info, dict):
+            return False
+        reward_info = info.get("reward", {})
+        if isinstance(reward_info, dict):
+            task_reward = reward_info.get("task_specific", {})
+        else:
+            task_reward = {}
+        if self.success_stage_idx is not None:
+            return self._is_target_stage_success(task_reward)
+        done_dict = info.get("done", {})
+        if isinstance(done_dict, dict):
+            return bool(done_dict.get("success", False))
+        return bool(info.get("success", False))
+
+    def _extract_episode_done(self, info: dict | None) -> bool:
+        if not isinstance(info, dict):
+            return False
+        if self.success_stage_idx is not None:
+            return self._extract_episode_success(info)
+        return self._extract_info_done(info)
+
+    def _info_done_tensor(self, infos, device=None) -> torch.Tensor:
+        done_flags = [self._extract_episode_done(info) for info in infos]
+        return torch.as_tensor(done_flags, dtype=torch.bool, device=device)
+
+    def _apply_info_dones(
+        self,
+        terminations: torch.Tensor,
+        truncations: torch.Tensor,
+        infos: list[dict],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        info_dones = self._info_done_tensor(infos, device=terminations.device)
+        if self.ignore_terminations:
+            terminations = torch.zeros_like(terminations, dtype=torch.bool)
+            truncations = torch.logical_or(truncations, info_dones)
+        else:
+            terminations = torch.logical_or(terminations, info_dones)
+        dones = torch.logical_or(terminations, truncations)
+        return terminations, truncations, dones
 
     def reset(self):
         if self.enable_offload and self.pool is None:
@@ -996,56 +1150,48 @@ class BehaviorEnv(gym.Env):
         obs_list = []
         infos_list = []
         scaled_rewards_list = []
-        merged_terminations_list = []
-        info_done_flags = []
-        for raw_obs, raw_rewards, raw_terminations, step_infos in zip(
+        processed_terminations_list = []
+        processed_truncations_list = []
+        for raw_obs, raw_rewards, raw_terminations, raw_truncations, step_infos in zip(
             raw_obs_list,
             raw_rewards_list,
             raw_terminations_list,
+            raw_truncations_list,
             raw_infos_list,
         ):
-            if raw_obs is None:
+            if raw_obs is None or (
+                isinstance(raw_obs, (list, tuple))
+                and all(obs is None for obs in raw_obs)
+            ):
                 obs_list.append(None)
             else:
-                obs_list.append(self._wrap_obs(raw_obs))
-            step_rewards = self._calc_step_reward(raw_rewards)
-            infos_list.append(self._record_metrics(step_rewards, step_infos))
-            if self.ignore_terminations:
-                raw_terminations = torch.zeros_like(raw_terminations)
-            merged_terminations_list.append(raw_terminations)
+                obs_list.append(self._wrap_obs(raw_obs, step_infos))
+
+            step_rewards = self._calc_step_reward(raw_rewards, step_infos)
+            raw_terminations = raw_terminations.bool()
+            raw_truncations = raw_truncations.bool()
+            raw_terminations, raw_truncations, step_dones = self._apply_info_dones(
+                raw_terminations, raw_truncations, step_infos
+            )
+            infos_list.append(
+                self._record_metrics(step_rewards, step_infos, dones=step_dones)
+            )
             scaled_rewards_list.append(step_rewards)
-            # `raw_infos_list[i]` is a list of per-env info dicts for chunk step i.
-            step_done = [
-                self._extract_info_done(info) if isinstance(info, dict) else False
-                for info in step_infos
-            ]
-            info_done_flags.append(torch.tensor(step_done, dtype=torch.bool))
+            processed_terminations_list.append(raw_terminations)
+            processed_truncations_list.append(raw_truncations)
 
         chunk_rewards = torch.stack(
             scaled_rewards_list, dim=1
         )  # [num_envs, chunk_steps]
         raw_terminations = torch.stack(
-            merged_terminations_list, dim=1
+            processed_terminations_list, dim=1
         )  # [num_envs, chunk_steps]
         raw_truncations = torch.stack(
-            raw_truncations_list, dim=1
+            processed_truncations_list, dim=1
         )  # [num_envs, chunk_steps]
 
         past_terminations = raw_terminations.any(dim=1)
         past_truncations = raw_truncations.any(dim=1)
-
-        # Some OmniGibson builds may report episode completion primarily via
-        # `info["done"]` while leaving `terminations`/`truncations` booleans
-        # as all-False for the whole chunk. RLinf's evaluation metrics gate on
-        # `terminations|truncations`, so we fall back to info-done here.
-        past_info_dones = torch.stack(info_done_flags, dim=1).any(dim=1)
-
-        # If the config asks to ignore terminations, map info-done into
-        # truncations; otherwise map it into terminations.
-        if self.ignore_terminations:
-            past_truncations = torch.logical_or(past_truncations, past_info_dones)
-        else:
-            past_terminations = torch.logical_or(past_terminations, past_info_dones)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
         if past_dones.any() and self.auto_reset:
@@ -1089,6 +1235,9 @@ class BehaviorEnv(gym.Env):
         self.returns = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32
         )
+        self.prev_step_reward = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float32
+        )
 
     def _reset_metrics(self, env_idx=None):
         if not self.record_metrics:
@@ -1098,38 +1247,96 @@ class BehaviorEnv(gym.Env):
             mask[env_idx] = True
         else:
             mask = torch.ones(self.num_envs, dtype=bool, device=self.device)
+        self.prev_step_reward[mask] = 0.0
         self.success_once[mask] = False
         self.returns[mask] = 0
 
     def _record_metrics(self, rewards, infos, dones=None, env_indices=None):
         info_lists = []
+        replay_info_lists = []
         if env_indices is None:
             env_indices = list(range(len(infos)))
         for local_idx, (env_idx, reward, info) in enumerate(
             zip(env_indices, rewards, infos)
         ):
-            done_dict = info.get("done", {})
+            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
+            if isinstance(reward_info, dict):
+                task_reward = reward_info.get("task_specific", {})
+            else:
+                task_reward = {}
+            completion_bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
+            step_success = self._extract_episode_success(info)
+            end_success = (
+                step_success
+                if self.success_stage_idx is not None
+                else info.get("success", step_success)
+            )
+            episode_length = info.get("episode_length", 0)
+            current_stage_idx = task_reward.get("current_stage_idx", -1)
+            total_stage_count = task_reward.get("total_stage_count", 0)
+            current_stage_success = completion_bonus != 0.0
+            activity_instance_id = task_reward.get("activity_instance_id", -1)
+            held_in_hand = task_reward.get("held_in_hand", False)
+            episode_done = (
+                bool(dones[local_idx].item())
+                if isinstance(dones, torch.Tensor)
+                else self._extract_episode_done(info)
+            )
             episode_info = {
-                "success": done_dict.get("success", False),
-                "episode_length": info.get("episode_length", 0),
+                "episode_length": episode_length,
+                "completion_bonus": completion_bonus,
+                "current_stage_idx": int(
+                    current_stage_idx if current_stage_idx is not None else -1
+                ),
+                "total_stage_count": int(
+                    total_stage_count if total_stage_count is not None else 0
+                ),
+                "current_stage_success": current_stage_success,
+                "success_stage_idx": (
+                    -1 if self.success_stage_idx is None else self.success_stage_idx
+                ),
+                "target_stage_success": step_success,
+                "done": episode_done,
+                "activity_instance_id": int(
+                    activity_instance_id
+                    if activity_instance_id is not None
+                    else -1
+                ),
+                "held_in_hand_at_end": bool(held_in_hand),
             }
+            for metric_key in (
+                "held_in_hand_available",
+                "all_stages_completed",
+                "completed_stage_count",
+            ):
+                metric_value = task_reward.get(metric_key)
+                if isinstance(metric_value, (bool, int, float)):
+                    episode_info[metric_key] = metric_value
             self.returns[env_idx] += reward
-            self.success_once[env_idx] = self.success_once[env_idx] | done_dict.get(
-                "success", False
-            )
+            self.success_once[env_idx] = self.success_once[env_idx] | step_success
             episode_info["success_once"] = self.success_once[env_idx].clone()
-
+            episode_info["success_at_end"] = end_success
             episode_info["return"] = self.returns[env_idx].clone()
-            episode_info["episode_len"] = self.elapsed_steps.clone()
-            episode_info["reward"] = (
-                episode_info["return"] / episode_info["episode_len"]
-            )
-            if self.ignore_terminations:
-                episode_info["success_at_end"] = done_dict.get("success", False)
+            episode_info["episode_len"] = episode_length
+            episode_info["reward"] = episode_info["return"] / torch.clamp(
+                to_tensor(episode_length), min=1
+            ).to(self.device)
 
             info_lists.append(episode_info)
+            if "replay_init" in info:
+                replay_info_lists.append(
+                    {
+                        key: value
+                        for key, value in info["replay_init"].items()
+                        if isinstance(value, (bool, int, float))
+                    }
+                )
 
         infos = {"episode": to_tensor(list_of_dict_to_dict_of_list(info_lists))}
+        if replay_info_lists:
+            infos["replay_init"] = to_tensor(
+                list_of_dict_to_dict_of_list(replay_info_lists)
+            )
         return infos
 
     @staticmethod
