@@ -447,7 +447,7 @@ class EnvWorker(Worker):
         latency off the event loop so co-scheduled coroutines keep running.
         """
         env = self.env_list[stage_id]
-        if not hasattr(env, "wait_delay"):
+        if get_env_attr(env, "wait_delay") is None:
             return
         await env.wait_delay()
 
@@ -1160,7 +1160,7 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
-                    if hasattr(self.env_list[stage_id], "insert_delay_metrics"):
+                    if get_env_attr(self.env_list[stage_id], "insert_delay_metrics") is not None:
                         env_metrics["time/interact_delay"].append(
                             self.env_list[stage_id].insert_delay_metrics()
                         )
