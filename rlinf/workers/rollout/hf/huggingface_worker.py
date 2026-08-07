@@ -488,6 +488,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.DREAMZERO,
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
+            SupportedModel.MOLMOACT2,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
