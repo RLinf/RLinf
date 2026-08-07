@@ -508,43 +508,73 @@ class BehaviorProcess:
         )
 
     def _apply_replay_tro_metadata(self, child_env, info: dict | None) -> dict:
-        """Inject RLinf replay metadata from tro_state into the env info dict."""
-        if info is None:
-            info = {}
+        """Inject RLinf replay metadata from tro_state into the env info dict.
+
+        Reads ``RLINF_REPLAY_METADATA_KEY`` from the scene, populates
+        ``info["replay_init"]`` with replay fields, sets stage information
+        in ``info["reward"]["task_specific"]``, and calls
+        ``task_reward.set_active_stage_index`` so downstream reward
+        computations start from the intended stage.
+        """
         base_env = self._unwrap_child_env(child_env)
-        replay_metadata = base_env.scene.get_task_metadata(
-            key=RLINF_REPLAY_METADATA_KEY
-        )
-        if not isinstance(replay_metadata, dict):
-            return info
+        scene = getattr(base_env, "scene", None)
+        if scene is None or not hasattr(scene, "get_task_metadata"):
+            return {} if info is None else info
 
-        replay_info = {}
-        for key in (
-            "replay_episode_index",
-            "replay_instance_id",
-            "replay_steps",
-            "replay_target_step",
-        ):
-            if key in replay_metadata:
-                replay_info[key] = replay_metadata[key]
+        metadata = scene.get_task_metadata(key=RLINF_REPLAY_METADATA_KEY)
+        if not isinstance(metadata, dict):
+            return {} if info is None else info
 
-        stage_idx = replay_metadata.get("stage_index")
-        if stage_idx is not None:
-            replay_info["replay_stage_idx"] = int(stage_idx)
-
-        info["replay"] = replay_info
+        info = {} if info is None else info
+        stage_idx = self._to_int_or_none(metadata.get("stage_index"))
+        stage_prompts = metadata.get("stage_prompts")
+        if not isinstance(stage_prompts, (list, tuple)):
+            stage_prompts = []
+        stage_prompts = [
+            str(prompt).strip() for prompt in stage_prompts if str(prompt).strip()
+        ]
 
         task_reward = self._task_reward(base_env)
-        task_info = info.setdefault("task_reward", {})
-        if isinstance(task_info, dict) and stage_idx is not None:
-            stage_idx = int(stage_idx)
-            task_info["current_stage_idx"] = stage_idx
-            if task_reward is not None and hasattr(task_reward, "set_current_stage_idx"):
-                try:
-                    task_reward.set_current_stage_idx(stage_idx)
-                except Exception:
-                    pass
+        total_stages = self._to_int_or_none(getattr(task_reward, "_total_stages", None))
+        if stage_idx is not None and hasattr(task_reward, "set_active_stage_index"):
+            if total_stages is None or 0 <= stage_idx < total_stages:
+                task_reward.set_active_stage_index(stage_idx)
 
+        replay_info = info.get("replay_init")
+        if not isinstance(replay_info, dict):
+            replay_info = {}
+            info["replay_init"] = replay_info
+        replay_info.update(metadata)
+        replay_info["replay_stage_prompts"] = stage_prompts
+        if stage_idx is not None:
+            replay_info["replay_stage_idx"] = stage_idx
+
+        reward_info = info.get("reward")
+        if not isinstance(reward_info, dict):
+            reward_info = {}
+            info["reward"] = reward_info
+        task_info = reward_info.get("task_specific")
+        if not isinstance(task_info, dict):
+            task_info = {}
+            reward_info["task_specific"] = task_info
+
+        if stage_idx is not None:
+            task_info["current_stage_idx"] = stage_idx
+            task_info.setdefault("completed_stage_count", stage_idx)
+        if total_stages is not None:
+            task_info["total_stage_count"] = total_stages
+        if stage_idx is not None and 0 <= stage_idx < len(stage_prompts):
+            task_info["current_stage_prompt"] = stage_prompts[stage_idx]
+        stage_defs = getattr(task_reward, "_stage_defs", None)
+        if (
+            isinstance(stage_defs, list)
+            and stage_idx is not None
+            and 0 <= stage_idx < len(stage_defs)
+        ):
+            stage_name = stage_defs[stage_idx].get("name")
+            if stage_name is not None:
+                task_info["current_stage_name"] = stage_name
+        task_info.setdefault("completion_bonus", 0.0)
         return info
 
     def _reset_env_indices(
