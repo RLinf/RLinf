@@ -64,6 +64,18 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
        </p>
      </div>
 
+     <!-- TODO: swap for a 3:2 pic/molmoact2.png in RLinf/misc once available. -->
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/molmoact2.html" style="display: block;"><img src="https://raw.githubusercontent.com/allenai/molmoact2/main/assets/MolmoAct2.svg"
+            style="width: 100%; height: 200px; object-fit: contain; background: #ffffff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/molmoact2.html" style="text-decoration: underline; color: blue;">
+           <b>MolmoAct2 Evaluation</b>
+         </a><br>
+         Evaluate the official MolmoAct2-LIBERO checkpoint on LIBERO
+       </p>
+     </div>
+
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/lingbotvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/lingbotvla.png"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
@@ -108,6 +120,7 @@ If you are starting from "I want to train or RL-fine-tune model *X*", this is th
    GR00T <embodied/gr00t>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>
+   MolmoAct2 <embodied/molmoact2>
    Lingbot-VLA <embodied/lingbotvla>
    Evo-1 <embodied/evo1>
    ABot-M0 <embodied/abot_m0>
