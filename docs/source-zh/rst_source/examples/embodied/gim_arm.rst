@@ -103,7 +103,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
    # 中国大陆用户可使用下面的镜像以获得更好的下载速度：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 

@@ -71,7 +71,7 @@ Installation
 .. code:: bash
 
    # For faster downloads in mainland China you can use:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 

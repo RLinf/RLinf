@@ -150,7 +150,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
@@ -240,7 +240,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
