@@ -59,7 +59,9 @@ def _run_all(argv: list[str]) -> None:
         help="Comma-separated GPU ids for sharded extract.",
     )
     parser.add_argument("--feature-batch-size", type=int, default=4)
-    parser.add_argument("--device", default="cuda:0", help="Device for scalar-head train")
+    parser.add_argument(
+        "--device", default="cuda:0", help="Device for scalar-head train"
+    )
     parser.add_argument("--epochs", type=int, default=50)
     args, train_extra = parser.parse_known_args(argv)
 
@@ -108,7 +110,9 @@ def _run_all(argv: list[str]) -> None:
                 procs.append(subprocess.Popen(cmd, env=env))
             for proc in procs:
                 if proc.wait() != 0:
-                    raise SystemExit(f"feature extract failed with code {proc.returncode}")
+                    raise SystemExit(
+                        f"feature extract failed with code {proc.returncode}"
+                    )
 
     train_cmd = [
         python_bin,

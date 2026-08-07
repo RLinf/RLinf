@@ -35,12 +35,12 @@ from rlinf.data.datasets.vlm_trend_io import (
     to_numpy_float32,
     to_uint8_rgb,
 )
+from rlinf.utils.logging import get_logger
 from rlinf.utils.state_success_value import (
     StateSuccessValue,
     load_value_model,
     score_states,
 )
-from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 

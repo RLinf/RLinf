@@ -39,9 +39,7 @@ _MODE_FILES = {
 
 def _load_mode(mode: str) -> ModuleType:
     path = Path(__file__).resolve().parent / _MODE_FILES[mode]
-    spec = importlib.util.spec_from_file_location(
-        f"vlm_trend_preprocess_{mode}", path
-    )
+    spec = importlib.util.spec_from_file_location(f"vlm_trend_preprocess_{mode}", path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load preprocess mode module: {path}")
     module = importlib.util.module_from_spec(spec)

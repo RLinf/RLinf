@@ -210,4 +210,3 @@ def test_run_eval_with_0_1_2_labels_across_different_batches(monkeypatch):
     assert metrics["eval_accuracy"] == 1.0
     assert "balanced_accuracy" not in metrics
     assert "positive_recall" not in metrics
-

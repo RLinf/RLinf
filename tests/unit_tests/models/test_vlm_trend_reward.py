@@ -20,7 +20,6 @@ from rlinf.models.embodiment.reward.vlm_reward_model import (
     BufferedVLMRewardModel,
     VLMRewardModel,
 )
-
 from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
     VLMTrendRewardInputBuilder,
 )
@@ -234,4 +233,3 @@ def test_buffered_vlm_returns_zero_before_first_window(monkeypatch):
     )
 
     torch.testing.assert_close(rewards, torch.zeros(3))
-

@@ -40,11 +40,11 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from rlinf.data.datasets.vlm_trend_io import to_numpy_float32
+from rlinf.utils.logging import get_logger
 from rlinf.utils.state_success_value import (
     StateSuccessValue,
     stack_state_history,
 )
-from rlinf.utils.logging import get_logger
 
 logger = get_logger()
 
