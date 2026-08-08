@@ -111,8 +111,10 @@ class Ros2DualFrankaBackend:
                 if not gripper.is_ready():
                     raise RuntimeError(f"{side} gripper did not become ready")
             self._start_gripper_threads()
-            self._start_controller("left", config.left_robot_ip)
-            self._start_controller("right", config.right_robot_ip)
+            for side in ("left", "right"):
+                self._start_controller(side, getattr(config, f"{side}_robot_ip"))
+                while not self.is_robot_up(side):
+                    time.sleep(0.05)
         except Exception:
             self.close()
             raise
@@ -155,7 +157,7 @@ class Ros2DualFrankaBackend:
             self._subscriptions.append(
                 self._node.create_subscription(
                     JointState,
-                    f"/{side}/joint_states",
+                    f"/{side}/franka/joint_states",
                     lambda msg, arm=side: self._on_state(arm, msg),
                     state_qos,
                 )
@@ -180,14 +182,10 @@ class Ros2DualFrankaBackend:
 
     def _start_controller(self, side: str, robot_ip: str) -> None:
         service = f"/{side}/controller_manager/list_controllers"
-        deadline = time.monotonic() + self.config.ros_discovery_timeout
-        while True:
-            services = {name for name, _ in self._node.get_service_names_and_types()}
-            if service in services:
-                raise RuntimeError(f"controller_manager already active at {service}")
-            if time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
+        if self._controller_health_clients[side].wait_for_service(
+            timeout_sec=self.config.ros_discovery_timeout
+        ):
+            raise RuntimeError(f"controller_manager already active at {service}")
 
         repo_root = Path(__file__).resolve().parents[4]
         overlay = repo_root / "ros2_ws" / "install" / "rlinf_franka_controller"
@@ -284,6 +282,7 @@ class Ros2DualFrankaBackend:
                     if state == "active":
                         self._controller_seen_active[side] = True
                         self._controller_last_active[side] = now
+                        self._controller_health_errors[side] = None
                     elif self._controller_seen_active[side]:
                         raise RuntimeError(f"controller state is {state!r}")
                 except Exception as exc:
@@ -300,8 +299,9 @@ class Ros2DualFrankaBackend:
                 ].call_async(self._list_controllers_type.Request())
                 self._controller_health_requested[side] = now
 
-            if self._controller_seen_active[side] and (
-                now - self._controller_last_active[side]
+            future = self._controller_health_futures[side]
+            if future is not None and (
+                now - self._controller_health_requested[side]
                 > self.config.controller_health_timeout
             ):
                 self._controller_health_errors[side] = TimeoutError(
