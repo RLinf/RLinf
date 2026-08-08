@@ -17,13 +17,12 @@
     ros__parameters:
       arm_id: fr3
       k_alpha: 0.99
-      # Joint 7 needs enough stiffness to hold the reset target within 0.03 rad
-      # under the installed wrist-camera payload.
-      k_gains: [240.0, 240.0, 240.0, 240.0, 100.0, 60.0, 30.0]
-      d_gains: [20.0, 20.0, 20.0, 10.0, 10.0, 10.0, 5.0]
-      reset_speed_factor: 0.02
+      target_filter_cutoff: 30.0
+      k_gains: [240.0, 240.0, 240.0, 240.0, 100.0, 60.0, 60.0]
+      d_gains: [8.0, 8.0, 8.0, 4.0, 3.0, 3.0, 1.5]
+      reset_speed_factor: 0.1
       command_timeout: 0.5
-      max_tracking_error: 0.10
+      max_command_error: 0.04
       command_topic: rlinf/joint_targets
       reset_topic: rlinf/reset_joint_target
 

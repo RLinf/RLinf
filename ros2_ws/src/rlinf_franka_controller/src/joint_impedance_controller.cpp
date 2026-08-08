@@ -15,6 +15,7 @@
 #include <rlinf_franka_controller/joint_impedance_controller.hpp>
 
 #include <Eigen/Eigen>
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <exception>
@@ -51,7 +52,7 @@ JointImpedanceController::state_interface_configuration() const {
 
 controller_interface::return_type
 JointImpedanceController::update(const rclcpp::Time &time,
-                                 const rclcpp::Duration & /*period*/) {
+                                 const rclcpp::Duration &period) {
   updateJointStates_();
   Vector7d q_goal;
   Vector7d tau_d_calculated;
@@ -74,6 +75,7 @@ JointImpedanceController::update(const rclcpp::Time &time,
       control_state_ = ControlState::HOLDING;
       command_epoch_ = time;
       motion_target_positions_ = q_goal;
+      filtered_target_positions_ = q_goal;
       RCLCPP_INFO(get_node()->get_logger(),
                   "Controlled joint motion complete; holding target.");
     }
@@ -93,20 +95,19 @@ JointImpedanceController::update(const rclcpp::Time &time,
     if (new_target) {
       control_state_ = ControlState::TRACKING;
     }
+    Vector7d raw_target;
     for (int i = 0; i < num_joints; ++i) {
-      q_goal(i) = joint_target.positions[i];
+      raw_target(i) = joint_target.positions[i];
     }
-    const double tracking_error = (q_goal - q_).cwiseAbs().maxCoeff();
-    if (tracking_error > max_tracking_error_) {
-      for (int i = 0; i < num_joints; ++i) {
-        command_interfaces_[i].set_value(0.0);
-      }
-      RCLCPP_FATAL(
-          get_node()->get_logger(),
-          "RLinf joint tracking error %.6f rad exceeds limit %.3f rad.",
-          tracking_error, max_tracking_error_);
-      rclcpp::shutdown();
-      return controller_interface::return_type::ERROR;
+    constexpr double kTwoPi = 6.283185307179586;
+    const double filter_alpha =
+        1.0 - std::exp(-kTwoPi * target_filter_cutoff_ * period.seconds());
+    filtered_target_positions_ +=
+        filter_alpha * (raw_target - filtered_target_positions_);
+    const Vector7d tracking_error = filtered_target_positions_ - q_;
+    for (int i = 0; i < num_joints; ++i) {
+      q_goal(i) = q_(i) + std::clamp(tracking_error(i), -max_command_error_,
+                                     max_command_error_);
     }
   } else {
     q_goal = motion_target_positions_;
@@ -182,9 +183,10 @@ CallbackReturn JointImpedanceController::on_init() {
     auto_declare<std::vector<double>>("k_gains", {});
     auto_declare<std::vector<double>>("d_gains", {});
     auto_declare<double>("k_alpha", 0.99);
+    auto_declare<double>("target_filter_cutoff", 30.0);
     auto_declare<double>("reset_speed_factor", 0.012);
     auto_declare<double>("command_timeout", 0.5);
-    auto_declare<double>("max_tracking_error", 0.10);
+    auto_declare<double>("max_command_error", 0.05);
     auto_declare<std::string>("command_topic", "rlinf/joint_targets");
     auto_declare<std::string>("reset_topic", "rlinf/reset_joint_target");
   } catch (const std::exception &e) {
@@ -209,11 +211,13 @@ CallbackReturn JointImpedanceController::on_configure(
   auto k_gains = get_node()->get_parameter("k_gains").as_double_array();
   auto d_gains = get_node()->get_parameter("d_gains").as_double_array();
   auto k_alpha = get_node()->get_parameter("k_alpha").as_double();
+  target_filter_cutoff_ =
+      get_node()->get_parameter("target_filter_cutoff").as_double();
   reset_speed_factor_ =
       get_node()->get_parameter("reset_speed_factor").as_double();
   command_timeout_ = get_node()->get_parameter("command_timeout").as_double();
-  max_tracking_error_ =
-      get_node()->get_parameter("max_tracking_error").as_double();
+  max_command_error_ =
+      get_node()->get_parameter("max_command_error").as_double();
 
   if (!validateGains_(k_gains, "k_gains") ||
       !validateGains_(d_gains, "d_gains")) {
@@ -234,9 +238,11 @@ CallbackReturn JointImpedanceController::on_configure(
                  "reset_speed_factor must be in the range (0, 1]");
     return CallbackReturn::FAILURE;
   }
-  if (command_timeout_ <= 0.0 || max_tracking_error_ <= 0.0) {
+  if (target_filter_cutoff_ <= 0.0 || command_timeout_ <= 0.0 ||
+      max_command_error_ <= 0.0) {
     RCLCPP_FATAL(get_node()->get_logger(),
-                 "command_timeout and max_tracking_error must be positive");
+                 "target_filter_cutoff, command_timeout, and max_command_error "
+                 "must be positive");
     return CallbackReturn::FAILURE;
   }
 
@@ -276,6 +282,7 @@ CallbackReturn JointImpedanceController::on_activate(
   reset_target_buffer_.initRT(reset_target);
   updateJointStates_();
   motion_target_positions_ = q_;
+  filtered_target_positions_ = q_;
 
   return CallbackReturn::SUCCESS;
 }

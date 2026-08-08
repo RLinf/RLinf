@@ -65,10 +65,12 @@ private:
   Vector7d k_gains_;
   Vector7d d_gains_;
   Vector7d motion_target_positions_;
+  Vector7d filtered_target_positions_;
   double k_alpha_;
+  double target_filter_cutoff_;
   double reset_speed_factor_;
   double command_timeout_;
-  double max_tracking_error_;
+  double max_command_error_;
   ControlState control_state_{ControlState::HOLDING};
   std::atomic<bool> reset_requested_{false};
   bool move_to_start_position_finished_{false};
