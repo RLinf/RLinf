@@ -58,12 +58,13 @@ env:
     right_gello_port: /dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA3GJE4-if00-port0
     left_gello_joint_signs: [1, -1, 1, -1, 1, 1, 1]
     right_gello_joint_signs: [1, -1, 1, 1, 1, -1, 1]
-    left_gello_joint_offsets: [0.0, 3.142, 3.142, 1.571, 4.712, 1.571, 6.283]
-    right_gello_joint_offsets: [1.571, 3.142, 3.142, 3.142, 1.571, 4.712, 0.0]
+    left_gello_joint_offsets: [0.0, 3.142, 3.142, 1.571, 4.712, 1.571, 4.712]
+    right_gello_joint_offsets: [1.571, 3.142, 3.142, 3.142, 1.571, 4.712, -1.571]
     gello_gripper_id: 8
     left_gello_gripper_range_rad: [2.77856, 3.50931]
     right_gello_gripper_range_rad: [2.77856, 3.50931]
     override_cfg:
+      controlled_motion_tolerance: 0.05
       task_description: ${oc.env:RLINF_TASK_DESCRIPTION}
       enable_camera_player: true
       target_ee_pose:
