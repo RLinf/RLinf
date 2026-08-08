@@ -44,7 +44,7 @@ fi
 if [ -f /opt/ros/noetic/setup.bash ]; then
   source /opt/ros/noetic/setup.bash
 else
-  echo "[setup_franka_collect.sh] WARNING: ROS setup.bash not found: /opt/ros/noetic/setup.bash" >&2
+  echo "[setup_franka_node.sh] WARNING: ROS setup.bash not found: /opt/ros/noetic/setup.bash" >&2
 fi
 CATKIN_SETUP="${RLINF_VENV}/franka_catkin_ws/devel/setup.bash"
 if [ -f "${CATKIN_SETUP}" ]; then

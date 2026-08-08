@@ -293,7 +293,7 @@ C. 安装计算环境（RLinf-compute）
   env:
     eval:
       override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
 
 4. 运行数据采集脚本：
 

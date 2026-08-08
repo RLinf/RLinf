@@ -1,7 +1,6 @@
 #!/bin/bash
 # cleanup.sh - Clean up leftover processes from RLinf real-world eval/training.
-# This includes: Ray clusters, Franka ROS controllers, ruslaunch/roscore/rosmaster, FrankaController.
-
+# This includes: Ray clusters, Franka ROS controllers, roslaunch/roscore/rosmaster, FrankaController.
 set -u
 
 echo "==== 1. Stop the Ray cluster (head + control, single-machine) ===="

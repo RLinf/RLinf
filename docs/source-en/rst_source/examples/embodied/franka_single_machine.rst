@@ -304,7 +304,7 @@ Modify the `target_ee_pose` field in the configuration file to the target pose y
   env:
     eval:
       override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
 
 4. Run the data collection script:
 
