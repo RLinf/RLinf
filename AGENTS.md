@@ -1,3 +1,5 @@
+ssh slurm 负责完整环境、数据集、权重、全量数据处理和 Slurm 训练；本地仅负责开发、推理及小样本验证。以本地仓库为唯一代码源：先在本地检查、最小修改并测试，再通过 git/rsync/scp 同步远程同名仓库。远程禁止访问境外网络、开放端口或使用代理；依赖优先使用国内镜像、下载源或远程缓存，无法获取时从本地上传。严格最小改动：仅修改任务必需内容；不得改动无关文件、重构、格式化、改名或顺手优化；扩大范围须先征得同意。每次改动均从 main 新建分支，禁止直接修改 main；未经我明确同意不得合并。
+
 # AGENTS.md
 
 Brief for AI coding agents working on RLinf. For full contribution flow, code style, and PR process see [CONTRIBUTING.md](CONTRIBUTING.md).
