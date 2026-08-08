@@ -108,6 +108,7 @@ class DataCollector(Worker):
                 export_format=dc_cfg.get("export_format", "pickle"),
                 robot_type=dc_cfg.get("robot_type", "panda"),
                 fps=dc_cfg.get("fps", 10),
+                use_videos=bool(dc_cfg.get("use_videos", False)),
                 only_success=dc_cfg.get("only_success", False),
                 finalize_interval=dc_cfg.get("finalize_interval", 100),
                 resume=bool(dc_cfg.get("resume", False)),

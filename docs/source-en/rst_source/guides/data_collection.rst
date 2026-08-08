@@ -29,8 +29,8 @@ evaluation, saving each completed episode to disk asynchronously.
 Two output formats are supported:
 
 - **pickle** — saves the complete raw buffer; suited for custom offline processing.
-- **lerobot** — saves structured Parquet files with metadata; directly compatible
-  with the LeRobot training pipeline.
+- **lerobot** — saves structured Parquet files and metadata, with optional MP4
+  camera streams; directly compatible with the LeRobot training pipeline.
 
 Key Features
 ~~~~~~~~~~~~
@@ -44,7 +44,8 @@ Key Features
   block the RL training loop.
 - The LeRobot writer is lazily initialized on the first episode write, with image
   shape, state dimension, and action dimension inferred automatically.
-- LeRobot export can store ``image`` and ``extra_view_image``. When
+- Set ``use_videos=True`` to store ``image`` and ``extra_view_image`` as MP4
+  video streams. When
   ``extra_view_images`` is a stacked ``[N, H, W, C]`` tensor, the columns are
   fanned out by index (``extra_view_image-0``, ``extra_view_image-1``, …).
 - Set ``only_success=True`` to filter out failed episodes and save disk space.
@@ -92,6 +93,10 @@ Constructor Arguments
      - ``int``
      - ``10``
      - Dataset frame rate written to LeRobot metadata (lerobot format only)
+   * - ``use_videos``
+     - ``bool``
+     - ``False``
+     - Encode LeRobot camera features as MP4 videos
    * - ``only_success``
      - ``bool``
      - ``False``

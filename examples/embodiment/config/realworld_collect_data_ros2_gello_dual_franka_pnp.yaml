@@ -81,3 +81,4 @@ env:
       only_success: true
       robot_type: dual_FR3
       fps: 30
+      use_videos: true

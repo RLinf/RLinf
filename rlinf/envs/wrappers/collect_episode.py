@@ -94,6 +94,8 @@ class CollectEpisode(gym.Wrapper):
             Defaults to ``"pickle"``.
         robot_type: Robot type for LeRobot metadata. Defaults to ``"panda"``.
         fps: FPS for LeRobot metadata. Defaults to 10.
+        use_videos: Whether to encode LeRobot camera features as MP4 videos.
+            Defaults to False.
         only_success: Whether to save only successful episodes. Defaults to False.
         finalize_interval: Call ``writer.finalize()`` every this many completed
             episodes to flush ``info.json`` and ``stats.json`` as a checkpoint.
@@ -115,6 +117,7 @@ class CollectEpisode(gym.Wrapper):
         export_format: str = "pickle",
         robot_type: str = "panda",
         fps: int = 10,
+        use_videos: bool = False,
         only_success: bool = False,
         finalize_interval: int = 100,
         resume: bool = False,
@@ -137,6 +140,7 @@ class CollectEpisode(gym.Wrapper):
         self.export_format = export_format
         self.robot_type = robot_type
         self.fps = fps
+        self.use_videos = use_videos
         self.only_success = only_success
         self.finalize_interval = finalize_interval
 
@@ -594,6 +598,7 @@ class CollectEpisode(gym.Wrapper):
                 extra_view_image_keys=extra_view_image_keys,
                 has_intervene_flag="intervene_flag" in first,
                 has_segment_id="segment_id" in first,
+                use_videos=self.use_videos,
             )
             self._next_shard_id = shard_id + 1
         return self._lerobot_writer

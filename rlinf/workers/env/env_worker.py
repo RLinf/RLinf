@@ -415,6 +415,7 @@ class EnvWorker(Worker):
                     ),
                     robot_type=getattr(env_cfg.data_collection, "robot_type", "panda"),
                     fps=getattr(env_cfg.data_collection, "fps", 10),
+                    use_videos=getattr(env_cfg.data_collection, "use_videos", False),
                     only_success=getattr(
                         env_cfg.data_collection, "only_success", False
                     ),
