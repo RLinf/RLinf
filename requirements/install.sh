@@ -1015,10 +1015,10 @@ install_uv() {
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
-        export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+        export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        export GITHUB_PREFIX="https://ghfast.top/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
         trap 'unset_mirror' EXIT INT TERM HUP
     fi
@@ -1250,7 +1250,7 @@ clone_or_reuse_repo() {
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
     #   already exists (no pull), otherwise clone GIT_URL into it. This lets a single
     #   path be shared across multiple venvs/models — clone once, reuse everywhere
-    #   (e.g. set LIBERO_PATH so every model in an env image reuses one LIBERO clone).
+    #   (e.g. set GR00T_PATH so every GR00T venv reuses one Isaac-GR00T clone).
     # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
     # If env var is not set and the directory already exists as a git repo, check if it is intact and re-clone it if not.
     # The resolved directory path is printed to stdout.
@@ -2375,7 +2375,7 @@ install_franka_franky_env() {
     local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
     local PYTAG
     PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
-    local FRANKY_WHEEL="${FRANKY_WHEEL:-https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
+    local FRANKY_WHEEL="${FRANKY_WHEEL:-${GITHUB_PREFIX}https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
     echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
@@ -2458,7 +2458,9 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    uv pip install embodichain --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
+    # build_env into embodichain.lab.gym.utils.registration.
+    uv pip install "embodichain>=0.2.4" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
