@@ -10,13 +10,13 @@ ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.0.0-910b
 ARG UBUNTU_VER=22.04
 # Registry prefix for the Docker Hub base images, with a trailing slash.
-# Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=docker.m.daocloud.io/ when it is unreachable.
+# Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
 ARG REGISTRY_MIRROR=
 ARG NVIDIA_BASE_IMAGE=${REGISTRY_MIRROR}nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
 ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
 # Ascend lives on Huawei SWR, not Docker Hub.
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
-ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}library/ubuntu:20.04
+ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
 
 
 ##################################################################################################
