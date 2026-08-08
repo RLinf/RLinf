@@ -92,6 +92,10 @@ class Ros2DualFrankaJointEnv(DualFrankaJointEnv):
             "frames": self._get_camera_frames(),
         }
 
+    def _calc_step_reward(self, is_gripper_effective: list[bool]) -> float:
+        """Return the placeholder reward used by manual data collection."""
+        return 0.0
+
     def _setup_hardware(self) -> None:
         self._resolve_hw_overrides()
         required = {
