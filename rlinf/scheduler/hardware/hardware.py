@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional, TypeVar
 
 import yaml
+from omegaconf import OmegaConf
 
 HardwareType = TypeVar("HardwareType")
 
@@ -85,17 +86,21 @@ class NodeHardwareConfig:
             )
 
         # Ensure all configs are unique
-        config_strs = [
-            yaml.dump(dict(config), sort_keys=True) for config in self.configs
+        plain_configs = [
+            OmegaConf.to_container(config, resolve=True)
+            if OmegaConf.is_config(config)
+            else dict(config)
+            for config in self.configs
         ]
+        config_strs = [yaml.safe_dump(config, sort_keys=True) for config in plain_configs]
         assert len(config_strs) == len(set(config_strs)), (
             "Duplicate hardware configs found in node hardware config: \n"
             + "\n".join(
-                [yaml.dump(dict(config), sort_keys=False) for config in self.configs]
+                [yaml.safe_dump(config, sort_keys=False) for config in plain_configs]
             )
         )
 
-        self.configs = [hardware_config_class(**config) for config in self.configs]
+        self.configs = [hardware_config_class(**config) for config in plain_configs]
 
 
 @dataclass
