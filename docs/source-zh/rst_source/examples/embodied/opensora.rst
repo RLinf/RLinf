@@ -94,7 +94,7 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-opensora``：
+**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-opensora``：
 
 .. code:: bash
 
@@ -103,8 +103,8 @@ VLA 策略。OpenSora 根据当前观测与动作序列生成未来视频帧，�
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-opensora
-      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-opensora
+      rlinf/rlinf:agentic-rlinf0.4-opensora
+      # 国内镜像加速：docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-opensora
 
    # 进入容器后，切换到 OpenVLA-OFT 虚拟环境：
    source switch_env openvla-oft

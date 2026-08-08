@@ -14,7 +14,7 @@
 
 import sys
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import torch
 from omegaconf import OmegaConf
@@ -108,7 +108,10 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         self.worker._prefetched_train_bootstrap = None
 
         # Mock env_list
-        mock_env = MagicMock()
+        mock_env = MagicMock(
+            wait_delay=AsyncMock(),
+            insert_delay_metrics=MagicMock(return_value=torch.empty(0)),
+        )
         self.worker.env_list = [mock_env]
 
         # Initialize last_obs_list for auto_reset=True

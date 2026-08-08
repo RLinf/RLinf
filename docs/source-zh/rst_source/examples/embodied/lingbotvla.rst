@@ -90,8 +90,6 @@ Lingbot-VLA模型强化学习
 安装
 ----------------------------------------
 
-为了实现高版本 Torch (2.8.0) 与 RLinf (Python 3.10) 的完美兼容，我们已将复杂的依赖隔离逻辑封装至安装脚本中。请按以下步骤构建混合环境。
-
 1. 克隆 RLinf 仓库
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -117,7 +115,7 @@ Lingbot-VLA模型强化学习
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-robotwin
+      rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -127,7 +125,7 @@ Lingbot-VLA模型强化学习
 
 **选项 2：自定义环境**
 
-在本地环境中一键安装 Lingbot-VLA 原生环境与 RoboTwin 基础依赖（脚本将自动拉取 Lingbot-VLA 源码至 `.venv/lingbot-vla` 目录，并处理所有高危依赖冲突）：
+在本地环境中一键安装 Lingbot-VLA 原生环境与 RoboTwin 基础依赖：
 
 .. code-block:: bash
 

@@ -24,7 +24,7 @@ BEHAVIOR 依赖 Isaac Sim 4.5，对 GPU 与驱动有额外要求，详见训练�
 - 建议配备支持 Ray Tracing 的 GPU（如 RTX 30/40 系列）；A100、H100 等无 RT 能力的卡渲染质量较差，画面可能出现马赛克或模糊。
 - Hopper 及以上架构 GPU 需使用 570 及以上版本 NVIDIA 驱动。
 
-也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.3-behavior`` 运行评测，详见 :doc:`../../examples/embodied/behavior`。
+也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-behavior`` 运行评测，详见 :doc:`../../examples/embodied/behavior`。
 
 **环境变量**
 

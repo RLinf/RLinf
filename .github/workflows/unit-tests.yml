@@ -50,6 +50,7 @@ jobs:
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
+          uv pip install gymnasium imageio
           uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
