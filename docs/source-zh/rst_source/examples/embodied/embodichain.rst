@@ -86,10 +86,10 @@ PPO 训练 MLP actor-critic。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-embodichain
+      rlinf/rlinf:agentic-rlinf0.4-embodichain
 
    # 国内用户可使用：
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-embodichain
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-embodichain
 
 在镜像中切换到 EmbodiChain 虚拟环境：
 

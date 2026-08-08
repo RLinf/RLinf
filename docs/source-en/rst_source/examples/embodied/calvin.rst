@@ -101,10 +101,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-calvin
+      rlinf/rlinf:agentic-rlinf0.4-calvin
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-calvin
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-calvin
 
 Switch to the OpenPI virtual environment inside the image:
 
