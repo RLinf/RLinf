@@ -52,7 +52,7 @@ PPO 训练 MLP actor-critic。
    * - 任务
      - 描述
    * - CartPole
-     - 使用 ``configs/agents/rl/basic/cart_pole/gym_config.json`` 中的状态观测平衡 pole。
+     - 使用 ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json`` 中的状态观测平衡 pole。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

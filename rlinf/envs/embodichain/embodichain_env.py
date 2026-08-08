@@ -265,24 +265,43 @@ class EmbodiChainEnv(gym.Env):
     def _build_env(self):
         from copy import deepcopy
 
-        from embodichain.lab.gym.envs.tasks.rl import build_env
         from embodichain.lab.gym.utils.gym_utils import (
-            DEFAULT_MANAGER_MODULES,
             config_to_cfg,
+            get_manager_modules,
+        )
+
+        # EmbodiChain >=0.2.4 moved build_env into the core registry and
+        # relocated official task envs into the bundled embodichain_tasks
+        # package discovered via entry points.
+        from embodichain.lab.gym.utils.registration import (
+            build_env,
+            discover_task_packages,
+            execute_init_hooks,
         )
         from embodichain.lab.sim import SimulationManagerCfg
-        from embodichain.utils.utility import load_json
+        from embodichain.utils.utility import load_config
 
         gym_config_path_cfg = _cfg_get(self.cfg, "gym_config_path")
         if not gym_config_path_cfg:
             raise ValueError(
                 "EmbodiChain requires `gym_config_path` in the env config."
             )
-        gym_config_path = _resolve_gym_config_path(str(gym_config_path_cfg))
 
-        gym_config = load_json(str(gym_config_path))
+        discover_task_packages()
+        execute_init_hooks()
+
+        gym_config_path_str = str(gym_config_path_cfg)
+        # load_config resolves repository-style embodichain_tasks/configs/...
+        # paths from the installed wheel; fall back to local/EMBODICHAIN_PATH
+        # resolution for absolute or legacy relative configs.
+        if gym_config_path_str.startswith("embodichain_tasks/"):
+            gym_config = load_config(gym_config_path_str)
+        else:
+            gym_config_path = _resolve_gym_config_path(gym_config_path_str)
+            gym_config = load_config(str(gym_config_path))
+
         env_cfg = config_to_cfg(
-            deepcopy(gym_config), manager_modules=DEFAULT_MANAGER_MODULES
+            deepcopy(gym_config), manager_modules=get_manager_modules()
         )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps

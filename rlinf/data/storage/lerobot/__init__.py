@@ -14,6 +14,10 @@
 
 """LeRobot storage-layer entrypoints."""
 
+from rlinf.data.storage.lerobot.compat import (
+    add_frame_to_dataset,
+    episode_boundaries,
+)
 from rlinf.data.storage.lerobot.paths import (
     default_hf_lerobot_home,
     resolve_lerobot_dataset_root,
@@ -23,6 +27,8 @@ from rlinf.data.storage.lerobot.writer import LeRobotDatasetWriter
 
 __all__ = [
     "LeRobotDatasetWriter",
+    "add_frame_to_dataset",
+    "episode_boundaries",
     "default_hf_lerobot_home",
     "resolve_lerobot_dataset_root",
     "resolve_lerobot_repo_id",
