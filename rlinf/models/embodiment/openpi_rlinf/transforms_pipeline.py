@@ -82,9 +82,7 @@ def build_openpi_transforms(
         elif explicit_norm_stats_path is not None:
             norm_stats_path = pathlib.Path(explicit_norm_stats_path).expanduser()
             norm_stats_dir_path = (
-                norm_stats_path.parent
-                if norm_stats_path.is_file()
-                else norm_stats_path
+                norm_stats_path.parent if norm_stats_path.is_file() else norm_stats_path
             )
             stats_dir = str(norm_stats_dir_path.parent)
         else:

@@ -150,8 +150,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     source = full_weights_path if full_weights_path is not None else safetensors_path
     logger.info(
-        "openpi_rlinf[%s]: loaded %s (%.2fB params) from %s "
-        "precision=%s num_steps=%s",
+        "openpi_rlinf[%s]: loaded %s (%.2fB params) from %s precision=%s num_steps=%s",
         task,
         pi0_config,
         n_params / 1e9,
