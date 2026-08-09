@@ -50,13 +50,13 @@ single-arm Franka setup.
 
       Deploy a π₀ SFT policy on Franka.
 
-   .. grid-item-card:: Single-Machine
+   .. grid-item-card:: Real-World RL
       :link: franka_single_machine
       :link-type: doc
 
       Run real-world RL on a single GPU host (no real-time kernel required).
 
-   .. grid-item-card:: Real-World RL
+   .. grid-item-card:: Real-World RL (Archived)
       :link: franka
       :link-type: doc
 
@@ -78,6 +78,6 @@ single-arm Franka setup.
    Collect-VR <franka_vr>
    HG-DAgger <hg-dagger>
    Collect-SFT-Deploy <franka_pi0_sft_deploy>
-   Single-Machine <franka_single_machine>
-   Real-World RL <franka>
+   Real-World RL <franka_single_machine>
+   Real-World RL (Archived) <franka>
    Reward Model <franka_reward_model>
