@@ -13,8 +13,6 @@ Step 1：安装环境
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``，无需再单独配置 ``LIBERO_PATH``。
-
 Step 2：准备模型
 ----------------
 

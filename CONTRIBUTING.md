@@ -124,11 +124,26 @@ All PR titles should follow the same format as commit messages, i.e.:
 ```
 <type>(<scope>): <description>
 ```
+The `pr-title-check` CI job enforces this, and it is stricter than the commit-message check:
+- `<description>` must be **at most 50 characters** — that is the part after `: `, not the whole title.
+- It must start with a lowercase `a-z`, use the imperative mood, and not end with a period.
+- `<scope>` may contain only lowercase letters, digits, hyphens and underscores.
+- The whole title must be plain ASCII.
+
+So a commit subject that passes `commit-check` is not automatically a valid PR title.
+
 The PR description should fill in at least the `Description` and `Checklist` sections of the provided PR template, otherwise it will be marked as draft and not reviewed until completed.
 
 If your PR addresses an existing issue, please link to the issue in the `Motivation and Context` section of the PR description.
 
 If your PR has potential impact on training performance and stability (e.g., breaking the RL reward curve), please provide the testing results in the `How has this been tested?` section of the PR description.
+
+You can check a title and description against the rules above before opening the PR:
+```bash
+python3 .claude/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>
+```
+The same script checks a PR that is already open (`lint --pr <number>`), prints a ready-to-fill
+template (`template`), and repairs a body that was pasted with a leading indent (`fix --pr <number>`).
 
 ### Review Process
 

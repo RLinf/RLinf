@@ -127,7 +127,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
 
 .. code:: bash
 
@@ -136,8 +136,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
    # Inside the container, switch to the model's virtual environment:
    source switch_env openvla-oft
@@ -193,6 +193,7 @@ Launch a config with ``run_embodiment.sh``:
    :class: note
 
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
+   - Hiding inference latency during evaluation → :doc:`RTC <../../guides/rtc>`
    - All config keys → :doc:`Configuration <../../guides/index>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
    - Resuming from a checkpoint → :doc:`Resume <../../guides/resume>`
@@ -340,14 +341,14 @@ Install the RLinf-maintained forks for the suite you want.
 
 .. code:: bash
 
-   # LIBERO-Pro: tag agentic-rlinf0.3-liberopro
-   # LIBERO-Plus: tag agentic-rlinf0.3-liberoplus
+   # LIBERO-Pro: tag agentic-rlinf0.4-liberopro
+   # LIBERO-Plus: tag agentic-rlinf0.4-liberoplus
    docker run -it --rm --gpus all \
       --shm-size 20g \
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-liberopro   # or ...-liberoplus
+      rlinf/rlinf:agentic-rlinf0.4-liberopro   # or ...-liberoplus
 
 **Option 2: Custom environment** — pick the install bundle for the suite:
 

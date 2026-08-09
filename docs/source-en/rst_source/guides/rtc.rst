@@ -1,7 +1,7 @@
-RTC Evaluation
-==============
+Real-Time Control (RTC)
+=======================
 
-Real-Time Control (RTC) is a technique that hides inference latency during deployment. It overlaps the execution of one action chunk with the inference of the next: the policy outputs a sequence of actions (chunk), the environment begins executing them frame by frame; during execution, RTC pre-emptively requests inference for the next chunk, so inference latency is absorbed by action execution time.
+RTC hides inference latency during deployment. It overlaps the execution of one action chunk with the inference of the next: the policy outputs a sequence of actions (chunk), the environment begins executing them frame by frame; during execution, RTC pre-emptively requests inference for the next chunk, so inference latency is absorbed by action execution time.
 
 RTC supports both simulation (LIBERO) and real-world (Franka) evaluation, currently integrated with the OpenPI π₀.₅ policy.
 
@@ -123,7 +123,7 @@ RTC reduces ``wait_inference_time`` from several seconds to ~2ms (near zero), al
 Real-World Experiment
 ---------------------
 
-For real-world deployment, see :doc:`Franka Real-World RL <franka>`. This section covers only the differences for RTC evaluation.
+For real-world deployment, see :doc:`Franka Real-World RL </rst_source/examples/embodied/franka>`. This section covers only the differences for RTC evaluation.
 
 Control node installation
 
