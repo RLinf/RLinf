@@ -119,10 +119,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-robotwin
+      rlinf/rlinf:agentic-rlinf0.4-robotwin
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-robotwin
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-robotwin
 
 Switch to the matching virtual environment inside the image:
 
