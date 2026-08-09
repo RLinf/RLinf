@@ -267,7 +267,7 @@ def activation_to_func(
     return activation_func
 
 
-def validate_rollout_cfg(cfg, algorithm_cfg):
+def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
@@ -296,6 +296,15 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
         assert cfg.model.model_path is not None, (
             "rollout.model.model_path must be specified for rollout."
+        )
+
+        cfg.model.trust_remote_code = cfg.model.get(
+            "trust_remote_code",
+            OmegaConf.select(
+                actor_cfg if actor_cfg is not None else OmegaConf.create({}),
+                "tokenizer.trust_remote_code",
+                default=False,
+            ),
         )
 
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
@@ -1360,7 +1369,9 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 
@@ -1369,7 +1380,9 @@ def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 
@@ -1425,7 +1438,9 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 
