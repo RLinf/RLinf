@@ -34,6 +34,7 @@ from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
+from rlinf.utils.obs_compression import decompress_obs
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -909,6 +910,9 @@ class MultiStepRolloutWorker(Worker):
     def _merge_obs_batches(self, obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
         if not obs_batches:
             return {}
+        # Reconstruct any image tensors compressed by the env workers. This is a
+        # no-op when `env.obs_compression` is disabled (no compression markers).
+        obs_batches = [decompress_obs(obs_batch) for obs_batch in obs_batches]
         obs_dicts = [
             obs_batch["obs"] if "obs" in obs_batch else obs_batch
             for obs_batch in obs_batches

@@ -33,6 +33,7 @@ import torch
 from omegaconf import DictConfig
 
 from rlinf.scheduler import Worker
+from rlinf.utils.obs_compression import decompress_obs
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -141,6 +142,9 @@ class SGLangEmbodiedWorker(Worker):
     def _merge_obs_batches(obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
         if not obs_batches:
             return {}
+        # Reconstruct any image tensors compressed by the env workers. This is a
+        # no-op when `env.obs_compression` is disabled (no compression markers).
+        obs_batches = [decompress_obs(b) for b in obs_batches]
         obs_dicts = [b["obs"] if "obs" in b else b for b in obs_batches]
         merged: dict[str, Any] = {}
         for key in obs_dicts[0].keys():
