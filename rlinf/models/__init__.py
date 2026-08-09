@@ -56,13 +56,18 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_molmoact2(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.molmoact2 import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_openpi(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.openpi import get_model
 
         return get_model(cfg, torch_dtype)
 
-    def _build_openpi_pytorch(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.openpi_pytorch import get_model
+    def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_rlinf import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -164,14 +169,20 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
+        SupportedModel.MOLMOACT2.value,
+        _build_molmoact2,
+        category="embodied",
+        force=True,
+    )
+    register_model(
         SupportedModel.OPENPI.value,
         _build_openpi,
         category="embodied",
         force=True,
     )
     register_model(
-        SupportedModel.OPENPI_PYTORCH.value,
-        _build_openpi_pytorch,
+        SupportedModel.OPENPI_RLINF.value,
+        _build_openpi_rlinf,
         category="embodied",
         force=True,
     )

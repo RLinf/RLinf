@@ -4,7 +4,7 @@
 本节展示了 **RLinf 目前支持的示例集合**，
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
 
-具身智能是 RLinf 的核心方向。具身示例被拆分为以下八个入口，便于按你的实际起点快速定位：
+具身智能是 RLinf 的核心方向。具身示例被拆分为以下七个入口，便于按你的实际起点快速定位：
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -51,12 +51,6 @@
 
       以训练算法为主线 —— DAgger、RECAP、DSRL、IQL 离线 RL、仿真-真机协同训练、MLP / SAC-Flow。
 
-   .. grid-item-card:: 部署加速
-      :link: deployment_index
-      :link-type: doc
-
-      以部署加速为主线 —— 将策略推理与动作执行流水线化。
-
 具身之外：
 
 .. grid:: 1 2 2 2
@@ -85,6 +79,5 @@
    奖励模型 <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
-   部署加速 <deployment_index>
    智能体 <agentic/index>
    系统 <system/index>

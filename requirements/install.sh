@@ -85,7 +85,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "evo1")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1015,10 +1015,10 @@ install_uv() {
 setup_mirror() {
     if [ "$USE_MIRRORS" -eq 1 ]; then
         export USE_MIRRORS
-        export UV_PYTHON_INSTALL_MIRROR=https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download
+        export GITHUB_PREFIX="${GITHUB_PREFIX:-https://gh-proxy.com/}"
+        export UV_PYTHON_INSTALL_MIRROR=${GITHUB_PREFIX}https://github.com/astral-sh/python-build-standalone/releases/download
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
-        export GITHUB_PREFIX="https://ghfast.top/"
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
         trap 'unset_mirror' EXIT INT TERM HUP
     fi
@@ -1250,7 +1250,7 @@ clone_or_reuse_repo() {
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
     #   already exists (no pull), otherwise clone GIT_URL into it. This lets a single
     #   path be shared across multiple venvs/models — clone once, reuse everywhere
-    #   (e.g. set LIBERO_PATH so every model in an env image reuses one LIBERO clone).
+    #   (e.g. set GR00T_PATH so every GR00T venv reuses one Isaac-GR00T clone).
     # - Otherwise, clone GIT_URL (with optional GIT_CLONE_ARGS) into DEFAULT_DIR if it doesn't exist.
     # If env var is not set and the directory already exists as a git repo, check if it is intact and re-clone it if not.
     # The resolved directory path is printed to stdout.
@@ -1636,6 +1636,30 @@ EOF
     # runtime, so re-assert its bound; otherwise a later resolve drifts tokenizers
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
+    uv pip uninstall pynvml || true
+}
+
+install_molmoact2_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for MolmoAct2 model." >&2
+            exit 1
+            ;;
+    esac
+
+    # RLinf's LeRobot fork carries the MolmoAct2 inference branch on top of
+    # huggingface/lerobot, with the Python 3.11 backports and the NumPy 1.x /
+    # transformers pins the LIBERO stack needs (branch RLinf/molmoact2-hf-inference).
+    local molmoact2_lerobot_path
+    molmoact2_lerobot_path=$(clone_or_reuse_repo MOLMOACT2_LEROBOT_PATH "$VENV_DIR/lerobot" https://github.com/RLinf/lerobot.git -b "${MOLMOACT2_LEROBOT_REF:-RLinf/molmoact2-hf-inference}" --depth 1)
+
+    uv pip install "$molmoact2_lerobot_path"
+
     uv pip uninstall pynvml || true
 }
 
@@ -2351,7 +2375,7 @@ install_franka_franky_env() {
     local LIBFRANKA_VERSION="${LIBFRANKA_VERSION:-0.19.0}"
     local PYTAG
     PYTAG=$(python -c "import sys; print(f'cp{sys.version_info.major}{sys.version_info.minor}')")
-    local FRANKY_WHEEL="${FRANKY_WHEEL:-https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
+    local FRANKY_WHEEL="${FRANKY_WHEEL:-${GITHUB_PREFIX}https://github.com/Brunch-Life/franky/releases/download/wheels-libfranka-${LIBFRANKA_VERSION}/franky_control-1.1.3-${PYTAG}-${PYTAG}-manylinux_2_28_x86_64.whl}"
     echo "Installing franky-control (libfranka $LIBFRANKA_VERSION): $FRANKY_WHEEL"
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
@@ -2434,7 +2458,9 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    uv pip install embodichain --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
+    # >=0.2.4 relocates official task envs to embodichain_tasks and moves
+    # build_env into embodichain.lab.gym.utils.registration.
+    uv pip install "embodichain>=0.2.4" --extra-index-url http://pyp.open3dv.site:2345/simple/ --trusted-host pyp.open3dv.site
 }
 
 install_dosw1_env() {
@@ -2750,6 +2776,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                molmoact2)
+                    install_molmoact2_model
                     ;;
                 starvla)
                     install_starvla_model

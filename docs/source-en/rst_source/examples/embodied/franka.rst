@@ -151,7 +151,7 @@ __________________________
 .. code:: bash
 
    # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -171,9 +171,9 @@ To access the robot, camera, and space mouse devices from within the docker cont
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-franka
+      rlinf/rlinf:agentic-rlinf0.4-franka
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
 
 Currently, the docker image contains libfranka version ``0.10.0``, ``0.13.3``, ``0.14.1``, ``0.15.0``, and ``0.18.0`` with franka_ros version ``0.10.0``.
 
@@ -236,7 +236,7 @@ A. Clone RLinf Repository
 .. code:: bash
 
    # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -254,9 +254,9 @@ Use Docker image for the experiment.
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 **Option 2: Custom Environment**
 
@@ -580,6 +580,9 @@ An example configuration for two Franka robots is shown in ``examples/embodiment
 
 Naturally, the settings can be extended to more robots by following the same pattern.
 For more details regarding the configuration syntax of this kind of heterogeneous hardware setup, please refer to :doc:`../../guides/hetero`.
+
+To hide policy inference latency on the real robot by overlapping it with action-chunk
+execution, see :doc:`RTC <../../guides/rtc>`.
 
 Visualization and Results
 -------------------------

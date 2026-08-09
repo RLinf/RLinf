@@ -17,6 +17,7 @@
 import gc
 from typing import Any
 
+from rlinf.data.storage.lerobot.compat import add_frame_to_dataset
 from rlinf.utils.logging import get_logger
 
 
@@ -90,7 +91,7 @@ class LeRobotDatasetWriter:
             wrist_image_keys: Mapping of wrist-camera image key names to their
                 ``(H, W, C)`` shapes.  A single view produces
                 ``{"wrist_image": (H, W, C)}``; multiple views produce
-                ``{"wrist_image/0": …, "wrist_image/1": …, …}``.
+                ``{"wrist_image-0": …, "wrist_image-1": …, …}``.
             extra_view_image_keys: Same as *wrist_image_keys* but for the
                 extra-view camera(s).
             has_intervene_flag: Whether to include per-frame human-intervention
@@ -194,7 +195,7 @@ class LeRobotDatasetWriter:
             self.logger.warning("Empty episode_data provided, skipping.")
             return
         for frame_data in episode_data:
-            self.dataset.add_frame(frame_data)
+            add_frame_to_dataset(self.dataset, frame_data)
 
         self.dataset.save_episode()
         self.logger.info(
