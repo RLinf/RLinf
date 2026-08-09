@@ -44,32 +44,43 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-from lerobot.common.datasets.lerobot_dataset import (
-    LeRobotDataset,
-    LeRobotDatasetMetadata,
-)
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
+
+try:  # lerobot >= 0.2 layout
+    from lerobot.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
+except ModuleNotFoundError:  # lerobot < 0.2
+    from lerobot.common.datasets.lerobot_dataset import (
+        LeRobotDataset,
+        LeRobotDatasetMetadata,
+    )
 
 # Make the rlinf package importable regardless of the cwd the user launched from.
 sys.path.insert(0, str(Path(__file__).resolve().parents[5]))
 
-from rlinf.data.datasets.recap.utils import (
-    decode_image_struct_batch,
-    load_return_stats_from_dataset,
-    load_returns_sidecar,
+from rlinf.algorithms.offline.process.advantage import (
+    apply_boolean_label,
+    quantile_threshold,
 )
-from rlinf.data.process.advantage import apply_boolean_label, quantile_threshold
-from rlinf.data.process.distributed import (
+from rlinf.algorithms.offline.process.distributed import (
     cleanup_distributed,
     gather_dataframes_to_rank0,
     get_shard_indices,
     setup_distributed,
 )
-from rlinf.data.process.mixture_config import (
+from rlinf.algorithms.offline.process.mixture_config import (
     read_mixture_config,
     write_mixture_config,
 )
+from rlinf.data.datasets.recap.utils import (
+    decode_image_struct_batch,
+    load_return_stats_from_dataset,
+    load_returns_sidecar,
+)
+from rlinf.data.storage.lerobot import episode_boundaries  # noqa: E402
 from rlinf.models.embodiment.value_model.recap.modeling_critic import ValueCriticModel
 
 logger = logging.getLogger(__name__)
@@ -519,9 +530,8 @@ def compute_advantages_for_dataset(
     )
     extended_size = extended_end - shard_start
 
-    ep_ends = {}
-    for ep_idx in range(len(dataset.episode_data_index["to"])):
-        ep_ends[ep_idx] = int(dataset.episode_data_index["to"][ep_idx].item())
+    _, ep_end_list = episode_boundaries(dataset)
+    ep_ends = dict(enumerate(ep_end_list))
 
     if rank == 0:
         logger.info(
@@ -1074,7 +1084,7 @@ def compute_advantages(cfg: DictConfig) -> None:
 
         positive_quantile = cfg.advantage.get("positive_quantile", 0.3)
         combined_advantages = np.concatenate(all_advantages)
-        # Shared with STEAM: same top-fraction quantile rule (rlinf.data.process.advantage).
+        # Shared with STEAM: same top-fraction quantile rule (rlinf.algorithms.offline.process.advantage).
         unified_threshold = quantile_threshold(combined_advantages, positive_quantile)
 
         if rank == 0:

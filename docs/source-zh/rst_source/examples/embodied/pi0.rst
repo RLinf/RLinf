@@ -102,7 +102,7 @@
 
 .. include:: _setup_common.rst
 
-**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.3-maniskill_libero``：
+**选项 1：Docker 镜像** —— 镜像标签 ``agentic-rlinf0.4-maniskill_libero``：
 
 .. code:: bash
 
@@ -111,9 +111,9 @@
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 请通过镜像内置的 `switch_env` 工具切换到对应的虚拟环境：
 
@@ -369,6 +369,7 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 针对SFT或RL训练后的模型，我们提供两种评测方式：
 
 - 使用 RLinf 统一的评测脚本，参考 :doc:`评测 <../../evaluations/index>` 进行评测，这种方式支持并行环境评测，速度快，但是只支持输出整个任务的成功率。
+- π\ :sub:`0.5`\  还接入了 RTC：将动作块的执行与下一块的推理重叠，从而隐藏评测与部署时的推理延迟，参考 :doc:`RTC <../../guides/rtc>`。
 
 .. note::
 

@@ -73,12 +73,12 @@ def _suppress_video_logging() -> None:
 
 _suppress_video_logging()
 
-from rlinf.data.datasets.recap.utils import (  # noqa: E402
-    load_return_stats_from_dataset,
-)
-from rlinf.data.process.mixture_config import (  # noqa: E402
+from rlinf.algorithms.offline.process.mixture_config import (  # noqa: E402
     read_mixture_config,
     write_mixture_config,
+)
+from rlinf.data.datasets.recap.utils import (  # noqa: E402
+    load_return_stats_from_dataset,
 )
 
 

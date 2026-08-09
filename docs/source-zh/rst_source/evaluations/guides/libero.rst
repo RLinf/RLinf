@@ -13,9 +13,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
-
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``，安装时替换 ``--model`` 参数即可。
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -38,24 +36,43 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_dreamzero_eval.yaml``
      - Spatial
      - DreamZero
+   * - ``libero_spatial_dreamzero_eval_sglang.yaml``
+     - Spatial
+     - DreamZero（SGLang backend）
+   * - ``libero_spatial_molmoact2_eval.yaml``
+     - Spatial
+     - MolmoAct2
    * - ``libero_object_openpi_pi05_eval.yaml``
      - Object
      - π₀.₅
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_molmoact2_eval.yaml``
+     - Object
+     - MolmoAct2
    * - ``libero_goal_openpi_eval.yaml``
      - Goal
      - π₀
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_molmoact2_eval.yaml``
+     - Goal
+     - MolmoAct2
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+   * - ``libero_10_molmoact2_eval.yaml``
+     - Long (libero_10)
+     - MolmoAct2
+
+DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。
+
+如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
 完整评测流程
 ------------
@@ -223,3 +240,9 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
 
 - **渲染问题：** 若 headless 环境报错，尝试 ``export MUJOCO_GL=osmesa`` 与 ``export PYOPENGL_PLATFORM=osmesa`` （``run_eval.sh`` 默认已设置）。
 - **评测覆盖范围：** 见上文 :ref:`libero-eval-config`；核心是 ``total_num_envs``、``auto_reset`` 与 ``max_steps_per_rollout_epoch`` 三者的配合。
+
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   dreamzero_sglang

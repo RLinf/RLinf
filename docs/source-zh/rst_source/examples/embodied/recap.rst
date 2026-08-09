@@ -101,7 +101,7 @@ RECAP 工作原理
 .. code:: bash
 
    # 为提高国内下载速度，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -117,9 +117,9 @@ RECAP 工作原理
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 为提高国内下载速度，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 进入容器后，切换到 OpenPI 虚拟环境：
 
@@ -797,7 +797,7 @@ RECAP 支持迭代优化：使用 Step 4 训练的策略模型采集新数据，
    rlinf/
    ├── models/embodiment/value_model/recap/     # 价值评论器、配置、checkpoint 工具
    ├── data/datasets/recap/                     # value_dataset.py、cfg_model.py 等
-   └── data/process/                            # 共享、模型无关（RECAP + STEAM）
+   └── algorithms/offline/process/              # 共享、模型无关（RECAP + STEAM）
        ├── advantage.py                          # 分位数阈值 + 布尔标签
        ├── distributed.py                        # 分片推理辅助
        └── mixture_config.py                     # meta/mixture_config.yaml tag I/O

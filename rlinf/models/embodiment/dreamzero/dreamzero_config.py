@@ -234,8 +234,8 @@ class DreamZeroConfig(VLAConfig):
     relative_action_per_horizon: bool = field(
         default=False, metadata={"help": "Relative action per horizon."}
     )
-    relative_action_keys: list = field(
-        default_factory=list, metadata={"help": "Relative action keys."}
+    relative_action_keys: list | None = field(
+        default=None, metadata={"help": "Relative action keys."}
     )
 
     data_transforms: ComposedModalityTransform = field(

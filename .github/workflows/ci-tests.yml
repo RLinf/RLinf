@@ -69,6 +69,7 @@ jobs:
               - 'rlinf/algorithms/**'
               - 'rlinf/scheduler/**'
               - 'rlinf/utils/**'
+              - 'rlinf/models/tokenization/**'
               - 'rlinf/workers/actor/__init__.py'
               - 'rlinf/workers/actor/fsdp_actor_worker.py'
               - 'rlinf/workers/reward/*.py'
@@ -146,7 +147,7 @@ jobs:
               - *shared
               - 'rlinf/workers/sft/**'
               - 'rlinf/runners/sft_runner.py'
-              - 'rlinf/data/process/**'
+              - 'rlinf/algorithms/offline/process/**'
               - 'examples/offline_rl/config/**'
               - 'examples/offline_rl/policy_optimization/cfg_rl/train_cfg.py'
               - 'examples/offline_rl/policy_optimization/cfg_rl/run_cfg_rl.sh'

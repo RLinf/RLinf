@@ -1,4 +1,4 @@
-model_type: "openpi_pytorch"
+model_type: "openpi_rlinf"
 
 # Model-shape template for dual-franka tcp_rot6d. Filesystem paths (model_path,
 # openpi.assets_dir, and openpi.asset_id) live in the experiment config, not
@@ -28,11 +28,11 @@ num_steps: 5
 # No value head in the SFT model.
 add_value_head: False
 
-# openpi_pytorch model-shape parameters (clean/minimal: no full_pi05, dsrl,
+# openpi_rlinf model-shape parameters (clean/minimal: no full_pi05, dsrl,
 # value-head, RL). get_model builds Pi0Config from num_action_chunks
 # (action_horizon) + the openpi.* shape fields below; no config.json is read.
 openpi:
-  # Concrete openpi_pytorch variant: eval / sft / rl. This template feeds SFT
+  # Concrete openpi_rlinf variant: eval / sft / rl. This template feeds SFT
   # experiments, so it defaults to `sft`.
   task: sft
   # openpi TrainConfig key selecting the shared transform pipeline

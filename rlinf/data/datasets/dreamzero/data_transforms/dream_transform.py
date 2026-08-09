@@ -23,6 +23,9 @@ from einops import rearrange
 from groot.vla.model.dreamzero.transform.dreamzero_cotrain import (
     DreamTransform as DreamTransformBase,
 )
+from groot.vla.model.dreamzero.transform.dreamzero_cotrain import (
+    HuggingfaceTokenizer,
+)
 
 
 def resolve_registry_tag(embodiment_tag: Any) -> str:
@@ -61,6 +64,24 @@ def concat_multiview_video(embodiment_tag: Any, images: Any) -> np.ndarray:
 
 class DreamTransform(DreamTransformBase):
     """DreamTransform that delegates multi-view layout to ``data_transforms`` registry."""
+
+    def __init__(self, **kwargs):
+        # Skip groot ``DreamTransform.__init__``'s *eager* HuggingfaceTokenizer
+        # construction (call the grandparent init) and build it lazily instead
+        # (see the ``tokenizer`` property). The sglang eval path tokenizes on the
+        # server, so the client never touches this tokenizer and never loads it;
+        # the training/collate path still gets it on first use.
+        super(DreamTransformBase, self).__init__(**kwargs)
+
+    @property
+    def tokenizer(self):
+        if self._tokenizer is None:
+            self._tokenizer = HuggingfaceTokenizer(
+                name=self.tokenizer_path,
+                seq_len=self.max_length,
+                clean="whitespace",
+            )
+        return self._tokenizer
 
     def apply_single(self, data: dict) -> dict:
         """Apply transform for one sample.

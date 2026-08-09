@@ -85,8 +85,9 @@ SupportedModel.QWEN3_VL = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_MOE = SupportedModel.register("qwen3_moe", force=True)
 SupportedModel.OPENVLA = SupportedModel.register("openvla", force=True)
 SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
+SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
-SupportedModel.OPENPI_PYTORCH = SupportedModel.register("openpi_pytorch", force=True)
+SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -120,7 +121,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA,
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
-        SupportedModel.OPENPI_PYTORCH,
+        SupportedModel.OPENPI_RLINF,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -960,6 +961,17 @@ def validate_embodied_cfg(cfg):
             f"Current value: {add_value_head}"
         )
 
+    # MolmoAct2 caches an action queue per batch index inside the LeRobot policy.
+    # Pipeline stages hand the same indices to different environments on
+    # alternating calls, so one env would execute another env's queued actions.
+    if model_type == SupportedModel.MOLMOACT2:
+        assert cfg.rollout.pipeline_stage_num == 1, (
+            "model_type 'molmoact2' requires rollout.pipeline_stage_num to be 1, "
+            f"got {cfg.rollout.pipeline_stage_num}: the policy keys its "
+            "per-environment action queues by batch index, which pipeline stages "
+            "reuse across environments."
+        )
+
     # process num-envs
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
@@ -977,9 +989,9 @@ def validate_embodied_cfg(cfg):
         )
         reward_model_cfg = cfg.reward.get("model", {})
         if reward_worker_type == "api":
-            assert reward_model_cfg.get("model_type") == "history_vlm", (
+            assert reward_model_cfg.get("model_type") == "buffered_vlm", (
                 "reward.worker_type='api' currently requires "
-                "reward.model.model_type='history_vlm'."
+                "reward.model.model_type='buffered_vlm'."
             )
             api_cfg = cfg.reward.get("api", {})
             api_base = str(api_cfg.get("api_base") or "").strip()

@@ -201,3 +201,4 @@ If you are starting from "I want to train on benchmark *X*", this is the right e
    PolaRiS <embodied/polaris>
    GSEnv <embodied/gsenv>
    Genesis <embodied/genesis>
+   Real-World Simulator <embodied/real_simulator>

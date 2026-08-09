@@ -141,7 +141,7 @@ class FSDPCfgWorker(FSDPSftWorker):
         import openpi.training.data_loader as openpi_data_loader
         import openpi.transforms as transforms
 
-        from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
+        from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
         from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
         data_cfg = self.cfg.get("data", {})
@@ -284,7 +284,13 @@ class FSDPCfgWorker(FSDPSftWorker):
 
         LeRobotDataset has a bug where episode_data_index doesn't match the
         original episode indices when filtering by episodes. This fixes that.
+
+        Dataset format v3.0 (lerobot >= 0.4) dropped ``episode_data_index``
+        along with the bug, so there is nothing to patch there.
         """
+        if getattr(dataset, "episode_data_index", None) is None:
+            return
+
         ep_idx_mapping = {ep: i for i, ep in enumerate(sorted(episodes))}
         max_ep_idx = max(episodes) + 1
 

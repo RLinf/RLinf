@@ -56,8 +56,9 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatasetMetad
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 from tqdm import tqdm
 
+from rlinf.algorithms.offline.process.mixture_config import read_mixture_config
 from rlinf.data.datasets.recap.utils import decode_image_struct_batch
-from rlinf.data.process.mixture_config import read_mixture_config
+from rlinf.data.storage.lerobot import episode_boundaries
 
 
 def to_numpy(x):
@@ -124,15 +125,12 @@ def detect_image_keys(sample: dict) -> list[str]:
 
 def get_episode_indices(dataset: LeRobotDataset, episode_index: int) -> list[int]:
     """Get all sample indices for a given episode."""
-    if (
-        hasattr(dataset, "episode_data_index")
-        and dataset.episode_data_index is not None
-    ):
-        ep_data = dataset.episode_data_index
-        if episode_index < len(ep_data["from"]):
-            start = int(ep_data["from"][episode_index].item())
-            end = int(ep_data["to"][episode_index].item())
-            return list(range(start, end))
+    try:
+        starts, ends = episode_boundaries(dataset)
+    except RuntimeError:
+        starts, ends = [], []
+    if episode_index < len(starts):
+        return list(range(starts[episode_index], ends[episode_index]))
 
     # Fallback: scan
     indices = []

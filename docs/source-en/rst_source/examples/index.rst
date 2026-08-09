@@ -6,7 +6,7 @@ showcasing how the framework can be applied across different scenarios and
 demonstrating its efficiency in practice.
 This example gallery is continuously expanding, covering new scenarios and tasks to highlight RLinf's flexibility and efficiency.
 
-Embodied intelligence is RLinf's primary focus. The embodied gallery is split into five
+Embodied intelligence is RLinf's primary focus. The embodied gallery is split into seven
 entry points — pick the one that matches your starting question:
 
 .. grid:: 1 2 3 3
@@ -24,11 +24,23 @@ entry points — pick the one that matches your starting question:
 
       Run on physical robot hardware — the Franka family plus GimArm, XSquare Turtle2, and DOS-W1.
 
-   .. grid-item-card:: Models
+   .. grid-item-card:: Embodied Models
       :link: vla_wam_index
       :link-type: doc
 
-      RL-fine-tune a specific model family — π₀, GR00T, Lingbot-VLA, OpenSora, Wan, and more.
+      RL-fine-tune embodied model families — π₀, GR00T, StarVLA, Lingbot-VLA, and more.
+
+   .. grid-item-card:: World Models
+      :link: world_model_index
+      :link-type: doc
+
+      Train and fine-tune world models — OpenSora, Wan, and more.
+
+   .. grid-item-card:: Reward Models
+      :link: embodied/reward_model_index
+      :link-type: doc
+
+      Build reward models for simulation and real-world reinforcement learning workflows.
 
    .. grid-item-card:: SFT
       :link: sft_index
@@ -36,7 +48,7 @@ entry points — pick the one that matches your starting question:
 
       Supervised fine-tuning recipes that produce strong RL cold-start checkpoints.
 
-   .. grid-item-card:: Algorithms
+   .. grid-item-card:: RL
       :link: methods_index
       :link-type: doc
 
@@ -65,8 +77,10 @@ Beyond embodiment:
 
    Simulators <simulators_index>
    Robots <real_world_index>
-   Models <vla_wam_index>
+   Embodied Models <vla_wam_index>
+   World Models <world_model_index>
+   Reward Models <embodied/reward_model_index>
    SFT <sft_index>
-   Algorithms <methods_index>
+   RL <methods_index>
    Agents <agentic/index>
    Systems <system/index>

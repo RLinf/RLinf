@@ -19,7 +19,6 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
-from rlinf.data.lerobot_paths import resolve_lerobot_repo_id
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
@@ -30,43 +29,24 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
-        if (
-            SupportedModel(self.cfg.actor.model.model_type)
-            == SupportedModel.OPENPI_PYTORCH
-        ):
-            from rlinf.data.datasets.openpi_pytorch import (
-                build_openpi_pytorch_sft_dataloader,
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if model_type == SupportedModel.OPENPI_RLINF:
+            from rlinf.data.datasets.openpi_rlinf import (
+                build_openpi_rlinf_sft_dataloader,
             )
 
-            return build_openpi_pytorch_sft_dataloader(
+            return build_openpi_rlinf_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
-            repo_id = resolve_lerobot_repo_id(data_paths)
-            if repo_id is None:
-                raise ValueError(
-                    "OpenPI SFT requires data.train_data_paths to be set to a local "
-                    "dataset path or LeRobot repo id."
-                )
-
-            import openpi.training.data_loader as openpi_data_loader
-
-            from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
-
-            config = get_openpi_config(
-                self.cfg.actor.model.openpi.config_name,
-                model_path=self.cfg.actor.model.model_path,
-                batch_size=self.cfg.actor.micro_batch_size * self._world_size,
-                repo_id=repo_id,
-                data_kwargs=getattr(self.cfg.actor.model, "openpi_data", None),
+        elif model_type == SupportedModel.OPENPI:
+            from rlinf.data.datasets.openpi_rlinf import (
+                build_official_openpi_sft_dataloader,
             )
-            data_loader = openpi_data_loader.create_data_loader(
-                config, framework="pytorch", shuffle=True
+
+            return build_official_openpi_sft_dataloader(
+                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
-            return data_loader, data_loader.data_config()
-        elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.LINGBOTVLA
-        ]:
+        elif model_type == SupportedModel.LINGBOTVLA:
             from rlinf.models.embodiment.lingbotvla.sft_builder import (
                 build_lingbot_sft_dataloader,
             )
@@ -74,9 +54,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_lingbot_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths
             )
-        elif SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.DREAMZERO
-        ]:
+        elif model_type == SupportedModel.DREAMZERO:
             from rlinf.data.datasets.dreamzero import (
                 build_dreamzero_sft_dataloader,
             )
@@ -84,7 +62,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             return build_dreamzero_sft_dataloader(
                 self.cfg, self._world_size, self._rank, data_paths, eval_dataset
             )
-        elif SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.EVO1]:
+        elif model_type == SupportedModel.EVO1:
             from rlinf.models.embodiment.evo1.sft_builder import (
                 build_evo1_sft_dataloader,
             )
@@ -166,28 +144,24 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI_PYTORCH:
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        if model_type == SupportedModel.OPENPI:
-            num_batches = len(self._openpi_pytorch_dataloader(self.data_loader))
-            return max(1, num_batches // self.gradient_accumulation)
-        return super().get_max_steps_per_epoch()
+        if model_type in (SupportedModel.OPENPI_RLINF, SupportedModel.OPENPI):
+            if model_type == SupportedModel.OPENPI_RLINF:
+                from rlinf.data.datasets.openpi_rlinf import (
+                    get_official_openpi_sft_num_batches,
+                    is_official_openpi_sft_dataloader,
+                )
 
-    @staticmethod
-    def _openpi_pytorch_dataloader(openpi_dataloader: Any):
-        """Unwrap OpenPI `DataLoaderImpl` to the inner PyTorch DataLoader.
+                num_batches = (
+                    get_official_openpi_sft_num_batches(self.data_loader)
+                    if is_official_openpi_sft_dataloader(self.data_loader)
+                    else len(self.data_loader)
+                )
+            else:
+                from rlinf.data.datasets.openpi_rlinf import (
+                    get_official_openpi_sft_num_batches,
+                )
 
-        OpenPI torch path:
-          DataLoaderImpl._data_loader -> TorchDataLoader
-          TorchDataLoader._data_loader / .torch_loader -> torch.utils.data.DataLoader
-
-        """
-        torch_data_loader = getattr(openpi_dataloader, "_data_loader", None)
-        pytorch_dl = getattr(torch_data_loader, "_data_loader", None) or getattr(
-            torch_data_loader, "torch_loader", None
-        )
-        if pytorch_dl is None:
-            raise TypeError(
-                "OpenPI dataloader does not expose an inner torch DataLoader; cannot infer steps per epoch from len()."
-            )
-        return pytorch_dl
+                num_batches = get_official_openpi_sft_num_batches(self.data_loader)
+        else:
+            return super().get_max_steps_per_epoch()
+        return max(1, num_batches // self.gradient_accumulation)

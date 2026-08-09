@@ -1,10 +1,12 @@
-使用双 Franka
+使用 OpenPI PyTorch 完成双 Franka 策略微调与部署
 ================================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
    :width: 80%
+   :alt: RLinf PyTorch 双 Franka 部署
 
-   双 Franka GELLO 采集与 π₀.₅ 部署流程所基于的 Franka 机械臂硬件。
+   使用 RLinf PyTorch 完成双 Franka 策略微调与部署。
 
 运行受支持的双 Franka 流程：用 GELLO 采集关节空间示教，将数据转换为 tcp_rot6d，微调 OpenPI π₀.₅，并把 checkpoint 部署回机器人节点。
 
@@ -394,6 +396,8 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
    cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
 
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_dualfranka_tcp_rot6d \
@@ -406,13 +410,13 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
 Checkpoint 保存到
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
-其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_pytorch.rst``。
+其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_rlinf.rst``。
 
 使用代码为：
 
 .. code-block:: bash
 
-   RLinf/rlinf/utils/ckpt_convertor/openpi/sft2new.py
+   RLinf/rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
 
 在训练前需要将 SFT 得到的 Checkpoint 进行转化，得到部署所需要的
 checkpoint，转化方法如下：

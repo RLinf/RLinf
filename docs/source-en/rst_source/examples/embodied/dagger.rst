@@ -128,7 +128,7 @@ bridge online DAgger with offline SFT or real-robot datasets.
 1. **Mixed rollout and expert relabeling** — same ``beta`` scheduling and
    expert relabeling as classic DAgger.
 2. **Episode collection** — when ``algorithm.dagger.online_lerobot.enabled`` is
-   ``True``, EnvWorker uses :class:`~rlinf.data.embodied_io_struct.EmbodiedLerobotRolloutResult`
+   ``True``, EnvWorker uses :class:`~rlinf.data.schema.embodied_trajectory_builder.EmbodiedLerobotTrajectoryBuilder`
    to accumulate per-env frames and export completed episodes.
 3. **Actor ingestion** — completed episodes flow to the actor through
    ``recv_lerobot_rollout_trajectories`` and append to the rolling dataset.
@@ -160,9 +160,9 @@ The DAgger examples below use the embodied image or the equivalent local environ
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in
 ``switch_env`` utility in the image:
