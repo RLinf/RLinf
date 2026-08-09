@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert an RLinf SFT checkpoint to OpenPI PyTorch deploy weights.
+"""Convert an RLinf SFT checkpoint to real-world OpenPI PyTorch weights.
 
 This mode converts a consolidated RLinf SFT ``full_weights.pt`` checkpoint into
 the OpenPI PyTorch deploy ``full_weights.pt`` layout. It first strips the SFT
 wrapper prefixes to recover the OpenPI_RLinf Pi0 checkpoint, converts it to the
-``paligemma_with_expert.*`` layout with an OpenPI PyTorch reference model, then
-packs the resulting state dict as one deploy ``full_weights.pt``.
+``paligemma_with_expert.*`` layout with a matching Pi0 or Pi0.5 OpenPI PyTorch
+reference model, then packs the resulting state dict as one deploy
+``full_weights.pt``. The reference model supplies the complete key, shape, and
+dtype contract, so no deploy checkpoint or JSON schema is required.
 
 ``--ckpt`` can be a ``global_step_*`` directory, an ``actor`` directory, a
 ``model_state_dict`` directory, or a direct ``full_weights.pt`` file. ``--output``
@@ -52,6 +54,19 @@ WEIGHTS_CANDIDATES = (
     "actor/model_state_dict/full_weights.pt",
     "model_state_dict/full_weights.pt",
     "full_weights.pt",
+)
+
+_FP32_PREFIXES = (
+    "action_in_proj.",
+    "action_out_proj.",
+    "action_time_mlp_in.",
+    "action_time_mlp_out.",
+    "state_proj.",
+    "time_mlp_in.",
+    "time_mlp_out.",
+)
+_VISION_EMBEDDINGS_PREFIX = (
+    "paligemma_with_expert.paligemma.model.vision_tower.vision_model.embeddings."
 )
 
 
@@ -164,59 +179,70 @@ def extract_embed_tokens(
     )
 
 
-def load_dtype_profile(
-    dtype_reference: str | pathlib.Path,
-) -> dict[str, Any]:
-    """Return the per-key dtype map from a reference deploy checkpoint."""
-    ref = load_reference_state_dict(dtype_reference)
-    return {key: tensor.dtype for key, tensor in ref.items()}
+def detect_model_variant(state_dict: dict[str, Any]) -> str:
+    """Return the Pi0 variant encoded by projection and time-MLP keys."""
+    is_pi0 = all(
+        key in state_dict for key in ("state_proj.weight", "action_time_mlp_in.weight")
+    )
+    is_pi05 = all(
+        key in state_dict for key in ("time_mlp_in.weight", "time_mlp_out.weight")
+    )
+    if is_pi0 == is_pi05:
+        raise ValueError(
+            "Could not identify exactly one OpenPI variant from converted keys: "
+            f"pi0={is_pi0}, pi05={is_pi05}."
+        )
+    return "pi0" if is_pi0 else "pi05"
 
 
-def load_shape_reference(
-    dtype_reference: str | pathlib.Path,
-) -> dict[str, Any]:
-    """Load the state dict used to validate deploy keys and shapes."""
-    return load_reference_state_dict(dtype_reference)
+def deploy_dtype(key: str) -> Any:
+    """Return the legacy real-world dtype for an OpenPI PyTorch parameter."""
+    import torch
+
+    if key.startswith(_FP32_PREFIXES):
+        return torch.float32
+    if key.startswith(_VISION_EMBEDDINGS_PREFIX) and (
+        "patch_embedding." in key or "position_embedding." in key
+    ):
+        return torch.float32
+    if ".input_layernorm." in key or ".post_attention_layernorm." in key:
+        return torch.float32
+    if ".model.norm." in key or ".language_model.norm." in key:
+        return torch.float32
+    return torch.bfloat16
 
 
 def build_deploy_state_dict(
     old_sd: dict[str, Any],
     embed_tokens: Any,
-    dtype_profile: dict[str, Any],
+    reference_sd: dict[str, Any],
 ) -> dict[str, Any]:
-    """Assemble a deploy state dict using the built-in dtype profile."""
-    if EMBED_TOKENS_KEY not in dtype_profile:
+    """Assemble deploy weights from the model contract and dtype rules."""
+    reference_keys = set(reference_sd)
+    converted_keys = set(old_sd)
+    missing = reference_keys - converted_keys
+    extra = converted_keys - reference_keys
+    if missing or extra:
         raise KeyError(
-            f"dtype reference is missing {EMBED_TOKENS_KEY!r}; cannot pack deploy "
-            "weights."
-        )
-
-    expected_keys = set(dtype_profile)
-    missing_from_old = expected_keys - set(old_sd) - {EMBED_TOKENS_KEY}
-    if missing_from_old:
-        raise KeyError(
-            f"old-format state dict is missing {len(missing_from_old)} deploy keys; "
-            f"first few: {sorted(missing_from_old)[:5]}"
+            "Converted keys do not match the OpenPI PyTorch reference: "
+            f"missing={sorted(missing)[:5]}, extra={sorted(extra)[:5]}."
         )
 
     merged = dict(old_sd)
     merged[EMBED_TOKENS_KEY] = embed_tokens.detach().cpu()
 
-    deploy = {}
-    for key, dtype in dtype_profile.items():
-        if key not in merged:
-            raise KeyError(f"Missing tensor for deploy key {key!r}")
-        deploy[key] = merged[key].to(dtype=dtype).contiguous()
-    return deploy
+    return {
+        key: tensor.to(dtype=deploy_dtype(key)).contiguous()
+        for key, tensor in merged.items()
+    }
 
 
 def validate_deploy_state_dict(
     deploy_sd: dict[str, Any],
-    dtype_profile: dict[str, Any],
-    shape_reference: dict[str, Any],
+    reference_sd: dict[str, Any],
 ) -> None:
-    """Validate key set, shapes, and dtypes against the supplied reference."""
-    expected_keys = set(dtype_profile)
+    """Validate the real-world key, shape, and dtype contract."""
+    expected_keys = set(reference_sd) | {EMBED_TOKENS_KEY}
     got_keys = set(deploy_sd)
     missing = expected_keys - got_keys
     extra = got_keys - expected_keys
@@ -226,7 +252,7 @@ def validate_deploy_state_dict(
         )
 
     dtype_bad = [
-        key for key in expected_keys if deploy_sd[key].dtype != dtype_profile[key]
+        key for key in expected_keys if deploy_sd[key].dtype != deploy_dtype(key)
     ]
     if dtype_bad:
         raise RuntimeError(
@@ -234,9 +260,9 @@ def validate_deploy_state_dict(
         )
 
     shape_bad = [
-        (key, tuple(deploy_sd[key].shape), tuple(shape_reference[key].shape))
-        for key in expected_keys
-        if tuple(deploy_sd[key].shape) != tuple(shape_reference[key].shape)
+        (key, tuple(deploy_sd[key].shape), tuple(reference_sd[key].shape))
+        for key in set(reference_sd)
+        if tuple(deploy_sd[key].shape) != tuple(reference_sd[key].shape)
     ]
     if shape_bad:
         raise RuntimeError(f"Deploy shape mismatch vs reference: {shape_bad[:5]}")
@@ -257,7 +283,6 @@ def convert_sft_to_deploy_pt(
     input_ckpt: str | pathlib.Path,
     output: str | pathlib.Path,
     reference_model: str | pathlib.Path,
-    dtype_reference: str | pathlib.Path,
 ) -> pathlib.Path:
     """Convert an SFT checkpoint into one legacy deploy ``full_weights.pt``."""
     import torch
@@ -271,7 +296,7 @@ def convert_sft_to_deploy_pt(
     output_pt.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(
-        prefix="sft2deploy_", dir=str(output_pt.parent)
+        prefix="pt_to_realworld_pt_", dir=str(output_pt.parent)
     ) as work_dir:
         work_dir = pathlib.Path(work_dir)
         new_dir = work_dir / "new"
@@ -290,11 +315,12 @@ def convert_sft_to_deploy_pt(
 
         logger.info("Step 3/3: old -> deploy pt")
         old_sd = load_safetensors(old_dir / "model.safetensors")
-        dtype_profile = load_dtype_profile(dtype_reference)
-        shape_reference = load_shape_reference(dtype_reference)
+        reference_sd = load_reference_state_dict(reference_model)
+        model_variant = detect_model_variant(old_sd)
+        logger.info("Detected OpenPI model variant: %s", model_variant)
         embed_tokens = extract_embed_tokens(input_ckpt, new_safetensors)
-        deploy_sd = build_deploy_state_dict(old_sd, embed_tokens, dtype_profile)
-        validate_deploy_state_dict(deploy_sd, dtype_profile, shape_reference)
+        deploy_sd = build_deploy_state_dict(old_sd, embed_tokens, reference_sd)
+        validate_deploy_state_dict(deploy_sd, reference_sd)
 
         torch.save(deploy_sd, output_pt)
         logger.info(
@@ -306,7 +332,7 @@ def convert_sft_to_deploy_pt(
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Register the ``sft2deploy`` mode arguments on ``parser``."""
+    """Register real-world OpenPI PyTorch conversion arguments."""
     parser.add_argument(
         "--ckpt",
         required=True,
@@ -324,25 +350,16 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--reference-model",
         required=True,
         help=(
-            "reference OpenPI PyTorch model dir used to source the action-expert "
-            "lm_head and validate keys/shapes"
-        ),
-    )
-    parser.add_argument(
-        "--dtype-reference",
-        required=True,
-        help=(
-            "reference deploy full_weights.pt (or its checkpoint directory) used "
-            "for the final key set, shapes, and per-key dtype profile"
+            "matching Pi0 or Pi0.5 OpenPI PyTorch model used to source missing "
+            "weights and define the deploy key, shape, and dtype contract"
         ),
     )
 
 
 def run(args: argparse.Namespace) -> None:
-    """Execute the ``sft2deploy`` mode from parsed ``args``."""
+    """Execute the real-world OpenPI PyTorch conversion."""
     convert_sft_to_deploy_pt(
         args.ckpt,
         args.output,
         args.reference_model,
-        args.dtype_reference,
     )

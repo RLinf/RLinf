@@ -9,7 +9,7 @@ OpenPI_RLinf 监督微调
 同一套 JAX 精度对齐实现如何用于 **Pi0 + RoboTwin**。
 
 关于 PyTorch OpenPI Pi0.5 在双 Franka 真机上的 SFT 与 eval-only 部署，请参见
-:doc:`双 Franka OpenPI PyTorch 指南 <dual_franka_openpi_pytorch>`。
+:doc:`双 Franka OpenPI_RLinf 指南 <dual_franka_openpi_rlinf>`。
 
 内容包括
 --------

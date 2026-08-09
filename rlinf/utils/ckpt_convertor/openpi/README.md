@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,pt_to_realworld_pt} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
@@ -177,25 +177,26 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openp
 
 ---
 
-## `sft2deploy`
+## `pt_to_realworld_pt`
 
-RLinf SFT-trained checkpoint -> OpenPI PyTorch deploy `full_weights.pt` only.
-This mode does not copy norm-stats or other assets.
+RLinf SFT-trained Pi0 or Pi0.5 checkpoint -> real-world OpenPI PyTorch
+`full_weights.pt`. This mode does not copy norm-stats or other assets.
 
 - **Input**: `--ckpt` accepts a saved SFT checkpoint directory or its
   `full_weights.pt`.
 - **Output**: `--output` accepts a direct `.pt` path or a deploy directory. For a
   directory, the converter writes `actor/model_state_dict/full_weights.pt`.
 - **Reference model**: `--reference-model` is the OpenPI PyTorch model used to
-  supply the action-expert `lm_head`, which OpenPI_RLinf cannot reconstruct.
-- **Dtype reference**: `--dtype-reference` is an existing deploy
-  `full_weights.pt` or its checkpoint directory. Its key set, shapes, and
-  per-key dtypes define the output checkpoint.
+  identify the Pi0/Pi0.5 expert layout, supply the action-expert `lm_head`, and
+  validate the converted keys and shapes.
+- **Deploy dtypes**: the converter restores the real-world mixed-precision
+  layout from model structure. It does not require a JSON schema or an existing
+  deploy checkpoint as a dtype reference.
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2deploy \
+python -m rlinf.utils.ckpt_convertor.openpi.convert \
+    --mode pt_to_realworld_pt \
     --ckpt            /path/to/checkpoints/global_step_20000 \
     --output          /path/to/checkpoints/global_step_20000_openpi_deploy \
-    --reference-model /path/to/pi05_base_pytorch \
-    --dtype-reference /path/to/existing_deploy/actor/model_state_dict/full_weights.pt
+    --reference-model /path/to/pi0_or_pi05_base_pytorch
 ```
