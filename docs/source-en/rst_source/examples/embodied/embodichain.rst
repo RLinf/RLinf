@@ -52,7 +52,7 @@ Tasks
    * - Task
      - Description
    * - CartPole
-     - Balance the pole with state observations from ``configs/agents/rl/basic/cart_pole/gym_config.json``.
+     - Balance the pole with state observations from ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json``.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -86,10 +86,10 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-embodichain
+      rlinf/rlinf:agentic-rlinf0.4-embodichain
 
    # For mainland China users:
-   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-embodichain
+   # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-embodichain
 
 Switch to the EmbodiChain virtual environment inside the image:
 

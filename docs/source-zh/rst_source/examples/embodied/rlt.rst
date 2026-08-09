@@ -76,7 +76,7 @@ RLT 将表示学习和在线 RL 控制拆开。
 .. code:: bash
 
    # 为提高国内下载速度，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 

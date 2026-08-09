@@ -35,7 +35,7 @@ EOF
 setup_mirror() {
 	if [ "$USE_MIRRORS" -eq 1 ]; then
 		export HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
-		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://ghfast.top/}
+		export GITHUB_PREFIX=${GITHUB_PREFIX:-https://gh-proxy.com/}
 	fi
 }
 

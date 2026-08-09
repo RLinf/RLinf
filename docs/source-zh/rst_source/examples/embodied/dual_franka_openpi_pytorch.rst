@@ -410,13 +410,13 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
 Checkpoint 保存到
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
-其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_pytorch.rst``。
+其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_rlinf.rst``。
 
 使用代码为：
 
 .. code-block:: bash
 
-   RLinf/rlinf/utils/ckpt_convertor/openpi/sft2new.py
+   RLinf/rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
 
 在训练前需要将 SFT 得到的 Checkpoint 进行转化，得到部署所需要的
 checkpoint，转化方法如下：
