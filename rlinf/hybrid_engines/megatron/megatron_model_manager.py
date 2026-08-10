@@ -303,7 +303,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3", "kimi_k2"):
+        if _model_type in ("deepseek_v3",):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",

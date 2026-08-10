@@ -622,7 +622,7 @@ class Qwen3MoEConvertor(Qwen3BaseConvertor):
 
 
 class DeepseekV3Convertor(BaseConvertor):
-    """mg2hf convertor for DeepSeek-V3 / Kimi K2 text backbone.
+    """mg2hf convertor for DeepSeek-V3 text backbone.
 
     Architecture: Multi-Latent Attention (MLA) + MoE with a shared expert and
     routed experts (TE grouped-gemm layout, converted to local_experts by
@@ -655,7 +655,7 @@ class DeepseekV3Convertor(BaseConvertor):
             ),
             # MLA attention (all SPLIT_NONE; TP handled by tp_reshard_fn)
             # Moonlight (q_lora_rank=None): standard q_proj, no low-rank decomposition.
-            # Kimi (q_lora_rank=1536) does NOT have linear_q_proj.
+            # DeepSeek-V3 (q_lora_rank=1536) does NOT have linear_q_proj.
             ConvertorRule(
                 re.compile(
                     rf"decoder\.layers\.{LID}\.self_attention\.linear_q_proj\.weight$"

@@ -27,7 +27,7 @@ def get_tp_reshard_fn(model_type: str):
         return tp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_reshard_fn_qwen3_moe
-    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
         return tp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -39,7 +39,7 @@ def get_tpe_reshard_fn(model_type: str):
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
-    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
         return tpe_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -49,7 +49,7 @@ def get_tpe_reshard_fn(model_type: str):
 
 def get_ep_reshard_fn(model_type: str):
     model_type = SupportedModel(model_type)
-    if model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
+    if model_type in (SupportedModel.DEEPSEEK_V3,):
         return ep_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -65,7 +65,7 @@ def get_pp_reshard_fn(model_type: str):
         return pp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return pp_reshard_fn_qwen3_moe
-    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
         return pp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -471,5 +471,5 @@ def pp_reshard_fn_qwen3_moe(model_state_dict, pp_group, dtype):
 
 
 def pp_reshard_fn_deepseek_v3(model_state_dict, pp_group, dtype):
-    """Reshard pipeline parallel weights for DeepSeek-V3 / Kimi K2 models."""
+    """Reshard pipeline parallel weights for DeepSeek-V3 models."""
     return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
