@@ -18,7 +18,11 @@ import math
 import pytest
 import torch
 
-from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.utils.metric_utils import (
+    compute_evaluate_metrics,
+    compute_group_success_metrics,
+    compute_rollout_metrics,
+)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -66,3 +70,63 @@ def test_compute_evaluate_metrics_reports_prefixed_interact_delay_stats():
     assert float(metrics["env/median_delay"]) == pytest.approx(0.18)
     assert float(metrics["env/max_delay"]) == pytest.approx(0.24)
     assert float(metrics["env/min_delay"]) == pytest.approx(0.12)
+
+
+def test_compute_group_success_metrics_covers_binary_group_outcomes():
+    rewards = torch.tensor(
+        [[0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 0]],
+        dtype=torch.float32,
+    ).unsqueeze(-1)
+
+    metrics = compute_group_success_metrics(
+        rewards,
+        group_size=4,
+        rewards_lower_bound=0.1,
+        rewards_upper_bound=0.9,
+    )
+
+    for success_count in range(5):
+        expected = 0.0 if success_count == 4 else 0.25
+        assert metrics[f"group_success_{success_count}_of_4_fraction"] == pytest.approx(
+            expected
+        )
+    assert metrics["group_mixed_fraction"] == pytest.approx(0.75)
+    assert metrics["group_filter_keep_fraction"] == pytest.approx(0.75)
+
+
+def test_compute_rollout_metrics_reports_pi0_fast_validity_before_reward_filter(
+    monkeypatch,
+):
+    from rlinf.scheduler.worker.worker import Worker
+
+    platform = type(
+        "FakeTorchPlatform",
+        (),
+        {"current_device": staticmethod(lambda: torch.device("cpu"))},
+    )()
+    monkeypatch.setattr(Worker, "torch_platform", platform)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *args, **kwargs: None)
+
+    data_buffer = {
+        "dones": torch.tensor(
+            [
+                [[False], [False]],
+                [[True], [False]],
+                [[True], [True]],
+            ]
+        ),
+        "loss_mask": torch.zeros(2, 2, 1, dtype=torch.bool),
+        "forward_inputs": {
+            "pi0_fast_prefix_valid": torch.tensor([[[1.0], [0.0]], [[0.0], [1.0]]]),
+            "pi0_fast_end_marker_present": torch.tensor(
+                [[[1.0], [1.0]], [[0.0], [1.0]]]
+            ),
+            "pi0_fast_decode_valid": torch.tensor([[[1.0], [0.0]], [[0.0], [0.0]]]),
+        },
+    }
+
+    metrics = compute_rollout_metrics(data_buffer)
+
+    assert metrics["prefix_valid_rate"] == pytest.approx(2 / 3)
+    assert metrics["end_marker_rate"] == pytest.approx(1.0)
+    assert metrics["decode_valid_rate"] == pytest.approx(1 / 3)
