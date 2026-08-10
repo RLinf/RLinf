@@ -1,0 +1,153 @@
+RL on PI0-FAST with LeRobot
+============================
+
+This example integrates LeRobot's ``PI0FastPolicy`` with RLinf for deterministic
+LIBERO-Long evaluation and token-level GRPO fine-tuning. The integration keeps
+PI0-FAST's native autoregressive action sequence and replays the sampled tokens
+with teacher forcing during the actor update.
+
+Overview
+--------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 38
+
+   * - Item
+     - Configuration
+   * - Environment
+     - LIBERO-10 (Long)
+   * - Base policy
+     - ``lerobot/pi0fast-libero``
+   * - Algorithm
+     - GRPO with token-level PPO clipping
+   * - Trainable parameters
+     - All-linear LoRA, rank 16
+   * - Validated runtime
+     - Python 3.12.12, PyTorch 2.11.0 + CUDA 12.8, Transformers 5.5.4
+
+Install
+-------
+
+PI0-FAST uses an isolated virtual environment because its validated LeRobot and
+PyTorch versions differ from the default embodied runtime. The installer pins
+the complete runtime and creates ``.venv-pi0-fast`` by default:
+
+.. code:: bash
+
+   UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
+      --model pi0_fast --env libero
+   source .venv-pi0-fast/bin/activate
+
+Add ``--use-mirror`` when the GitHub and PyPI mirrors are required. Flash
+Attention is skipped by default; set ``PI0_FAST_INSTALL_FLASH_ATTN=1`` to opt in.
+Before the first run, accept the PaliGemma access terms on Hugging Face and run
+``hf auth login``; the pinned text tokenizer is hosted in that gated repository.
+
+Pinned artifacts
+~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 38 34
+
+   * - Artifact
+     - Repository
+     - Revision
+   * - LeRobot source
+     - ``huggingface/lerobot``
+     - ``8a74e0ac6d01706d67fddfed682a09d694d9c8c0``
+   * - Policy checkpoint
+     - ``lerobot/pi0fast-libero``
+     - ``840f4b503f4c09110421c33c810a85b6684fd658``
+   * - Text tokenizer
+     - ``google/paligemma-3b-pt-224``
+     - ``35e4f46485b4d07967e7e9935bc3786aad50687c``
+   * - Action tokenizer
+     - ``jadechoghari/tokenizer-lib-mean``
+     - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
+
+Baseline evaluation
+-------------------
+
+The evaluation config uses greedy decoding, seed 0, ordered fixed LIBERO reset
+states, and 500 episodes:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_eval_pi0_fast
+
+The pinned runtime and artifacts produced the following development result:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 25
+
+   * - Episodes
+     - ``success_once``
+     - ``success_at_end``
+   * - 500
+     - 85.8%
+     - 75.8%
+
+GRPO fine-tuning
+----------------
+
+Launch the two-node, 16-GPU reference configuration with:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_grpo_pi0_fast
+
+The reference configuration samples 1,024 trajectories per update (256
+parallel environments, four rollout epochs), uses group size 8, actor micro
+batch size 16, and evaluates 256 fixed episodes every 10 steps. Sampling uses
+temperature 0.3; evaluation is greedy. The actor uses all-linear LoRA and the
+optional FP32-master AdamW path under FSDP ``NO_SHARD``.
+
+One seed-1234 development run reported the following ``success_once`` values.
+These measurements demonstrate the integration but are not a multi-seed
+convergence guarantee:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20
+
+   * - Step
+     - ``success_once``
+   * - 290
+     - 95.70%
+   * - 300
+     - 99.22%
+   * - 310
+     - 95.70%
+   * - 320
+     - 97.27%
+   * - 330
+     - 94.92%
+   * - Mean
+     - 96.56%
+
+Policy semantics
+----------------
+
+PI0-FAST generates the complete native action string; RLinf does not inject an
+``Action:`` prefix. The policy mask includes generated prefix, action body, and
+the first complete ``|`` end marker, while excluding padding and tokens after
+that marker. Every token from one trajectory shares its trajectory-level GRPO
+advantage, and the loss first averages over valid tokens and then over
+sequences.
+
+Malformed sequences are not resampled. They execute a safe zero action, receive
+the normal environment failure feedback, and remain in the policy objective.
+This keeps sampling on-policy while making decode failures visible in
+``prefix_valid_rate``, ``end_marker_rate``, and ``decode_valid_rate``.
+
+Monitoring
+----------
+
+In addition to ``env/success_once`` and ``eval/success_once``, monitor the three
+sequence-validity rates, group-success histogram and keep fraction, token
+entropy, gradient norm, ``approx_kl``, and log-ratio finite/min/max statistics.
+The first actor update should have finite replay log-probabilities and a ratio
+close to one before the optimizer changes the policy.
