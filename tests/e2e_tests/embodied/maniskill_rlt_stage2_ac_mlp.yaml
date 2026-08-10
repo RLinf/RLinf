@@ -143,12 +143,13 @@ rollout:
     lora_rank: 32
 
   rlt_feature_model:
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     # Stage1 SFT output from ci_maniskill_rlt_stage1_sft_openpi_pi05.
     model_path: "/workspace/dataset/RLinf-Maniskill-RLT-Stage1/"
-    precision: null
+    precision: bf16
     num_action_chunks: 10
-    action_dim: 8
+    action_dim: ${actor.model.action_dim}
+    num_steps: 5
     add_value_head: False
     is_lora: False
     lora_rank: 32
@@ -157,12 +158,18 @@ rollout:
       default_prompt: "insert the peg in the hole"
       norm_stats_path: "/workspace/dataset/data/sft-ci-data/rlt/rlt-maniskill-PegInsertionSide-v1-400-succ-partial/norm_stats.json"
     openpi:
+      task: eval
       config_name: "pi05_rlt_maniskill_joint"
       num_images_in_input: 2
       action_chunk: 10
       action_horizon: 10
       action_env_dim: 8
       num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
       train_expert_only: False
       add_value_head: False
       detach_critic_input: True
@@ -170,7 +177,6 @@ rollout:
       rlt_alpha: 1.0
       rlt_input_dim: 2048
       rlt_embed_dim: 2048
-      rlt_num_rl_tokens: 1
       rlt_prefix_seq_len: 1024
       rlt_num_layers: 2
       rlt_num_heads: 8
