@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+from contextlib import contextmanager
 from functools import partial
 from typing import Optional
 
@@ -80,11 +81,9 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
-    cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
     reshape_entropy,
-    retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
@@ -275,8 +274,10 @@ class FSDPActor(FSDPModelManager, Worker):
         if (
             self.kl_beta > 0 or self.reinpp_kl_beta > 0
         ) and self.combine_reference_model:
-            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model)
-            self.offload_model_buffer = {}
+            self.ref_policy_state_dict = self.get_model_state_dict(
+                cpu_offload=True,
+                full_state_dict=False,
+            )
 
         if self.enable_offload and not self.is_pipeline:
             self.offload_param_and_grad()
@@ -371,6 +372,8 @@ class FSDPActor(FSDPModelManager, Worker):
                 if rollout_dtype is not None:
                     v = v.to(rollout_dtype)
                 if not self.is_pipeline:
+                    if Worker.torch_device_type == "npu":
+                        v = v.detach().to("cpu")
                     v = reduce_tensor(v)
                 buffer[k] = v
             if bucket_idx == 0:
@@ -519,6 +522,34 @@ class FSDPActor(FSDPModelManager, Worker):
             if self.is_optimizer_offloaded:
                 self.load_optimizer(self.device)
 
+    @contextmanager
+    def _swap_to_ref_policy(self):
+        """Temporarily replace actor weights with reference-policy weights."""
+        assert self.ref_policy_state_dict is not None, (
+            "Reference policy state dict is None but reference swap is requested"
+        )
+
+        current_policy_state_dict = self.get_model_state_dict(
+            cpu_offload=True,
+            full_state_dict=False,
+        )
+        self._strategy.load_model_with_state_dict(
+            self.model,
+            self.ref_policy_state_dict,
+            cpu_offload=False,
+            full_state_dict=False,
+        )
+
+        try:
+            yield
+        finally:
+            self._strategy.load_model_with_state_dict(
+                self.model,
+                current_policy_state_dict,
+                cpu_offload=False,
+                full_state_dict=False,
+            )
+
     def compute_logprobs(self, logits, target):
         return compute_logprobs_from_logits(
             logits,
@@ -640,11 +671,7 @@ class FSDPActor(FSDPModelManager, Worker):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with cpu_weight_swap(
-                self.model,
-                self.ref_policy_state_dict,
-                self.offload_model_buffer,
-            ):
+            with self._swap_to_ref_policy():
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()
