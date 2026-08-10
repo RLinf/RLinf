@@ -106,21 +106,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                 self.data_iter = iter(self.data_loader)
 
     def _set_training_mode(self) -> None:
-        """Apply the official FastWAM train/eval mode split."""
-        if not self._is_fastwam:
-            self.model.train()
-            return
-
-        # Official Wan22Trainer calls model.eval(), then enables training only
-        # for model.dit (the MoT) and the optional proprio encoder.
-        self.model.eval()
-        dit = getattr(self.model, "dit", None)
-        if dit is None:
-            raise AttributeError("FastWAM model must expose the 'dit'/MoT module.")
-        dit.train()
-        proprio_encoder = getattr(self.model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            proprio_encoder.train()
+        """Set the model to training mode."""
+        self.model.train()
 
     def setup_model_and_optimizer(self) -> None:
         """Build the optimizer schedule from the runner's actual SFT horizon.
@@ -132,6 +119,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         scheduler aligned with the official 5% warmup and cosine horizon while
         retaining explicit runner overrides for smoke tests.
         """
+        if not self._is_fastwam:
+            return super().setup_model_and_optimizer()
+
         max_epochs = int(self.cfg.runner.get("max_epochs", -1))
         max_steps = int(self.cfg.runner.get("max_steps", -1))
         steps_per_epoch = max(int(self.get_max_steps_per_epoch()), 1)
@@ -203,7 +193,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
                     math.ceil(global_micro_steps / self.gradient_accumulation),
                     1,
                 )
-            return max(1, math.ceil(len(self.data_loader) / self.gradient_accumulation))
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
         return 0
 
     def run_eval(self):

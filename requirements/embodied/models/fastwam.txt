@@ -5,7 +5,6 @@ accelerate==1.12.0
 av==16.0.1
 boto3==1.35.99
 datasets==3.6.0
-deepspeed==0.18.5
 einops==0.8.1
 gitpython==3.1.45
 huggingface-hub==0.29.2

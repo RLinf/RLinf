@@ -53,6 +53,7 @@ env:
     total_num_envs: 2
     auto_reset: true
     ignore_terminations: true
+    num_steps_wait: 30
     max_episode_steps: 10
     # One FastWAM re-planning step is enough to cover batched inference.
     max_steps_per_rollout_epoch: 10
