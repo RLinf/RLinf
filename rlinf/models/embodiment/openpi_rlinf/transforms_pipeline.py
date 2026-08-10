@@ -34,16 +34,11 @@ def build_openpi_transforms(
     * input:  ``[InjectDefaultPrompt(None), *data.inputs, Normalize, *model.inputs]``
     * output: ``[*model.outputs, Unnormalize, *data.outputs]``
 
-    Norm stats resolve from ``{norm_stats_dir}/{asset_id}/norm_stats.json`` when
-    ``norm_stats_dir`` is given. An explicit
-    ``data_kwargs["norm_stats_path"]`` also takes precedence, which lets an
-    eval/RL config select task-specific statistics stored in the checkpoint.
-    Otherwise they resolve from the checkpoint dir via ``data_config.asset_id``
-    (``{model_path}/{asset_id}/norm_stats.json`` — the same canonical stats the
-    original openpi path resolves). The BEHAVIOR SFT loader passes the
-    experiment's ``assets_dir`` + ``asset_id`` so it reads the exact same
-    ``norm_stats.json`` the old SFT path did (the SFT *base* checkpoint bundles
-    no stats).
+    Norm stats resolve in this priority order: ``data_config.norm_stats``,
+    ``data_kwargs["norm_stats_path"]``, ``norm_stats_dir``, then the downloaded
+    checkpoint directory. The BEHAVIOR SFT loader passes the experiment's
+    ``assets_dir`` + ``asset_id`` so it reads the exact same ``norm_stats.json``
+    the old SFT path did (the SFT *base* checkpoint bundles no stats).
     """
     import openpi.shared.download as download
     import openpi.transforms as transforms

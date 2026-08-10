@@ -148,7 +148,7 @@ rollout:
     model_path: "/workspace/dataset/RLinf-Maniskill-RLT-Stage1/"
     precision: bf16
     num_action_chunks: 10
-    action_dim: 8
+    action_dim: ${actor.model.action_dim}
     num_steps: 5
     add_value_head: False
     is_lora: False
