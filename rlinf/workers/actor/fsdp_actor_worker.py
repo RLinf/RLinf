@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import time
-from contextlib import contextmanager
 from functools import partial
 from typing import Optional
 
@@ -81,9 +80,11 @@ from rlinf.utils.utils import (
     clear_memory,
     compute_entropy_from_logits,
     compute_logprobs_from_logits,
+    cpu_weight_swap,
     get_loss_agg_func,
     masked_mean,
     reshape_entropy,
+    retrieve_model_state_dict_in_cpu,
 )
 from rlinf.workers.rollout.utils import RankMapper
 
@@ -274,9 +275,9 @@ class FSDPActor(FSDPModelManager, Worker):
         if (
             self.kl_beta > 0 or self.reinpp_kl_beta > 0
         ) and self.combine_reference_model:
-            self.ref_policy_state_dict = self.get_model_state_dict(
-                cpu_offload=True,
-                full_state_dict=False,
+            self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+                self,
+                is_fsdp=True,
             )
 
         if self.enable_offload and not self.is_pipeline:
@@ -520,34 +521,6 @@ class FSDPActor(FSDPModelManager, Worker):
             if self.is_optimizer_offloaded:
                 self.load_optimizer(self.device)
 
-    @contextmanager
-    def _swap_to_ref_policy(self):
-        """Temporarily replace actor weights with reference-policy weights."""
-        assert self.ref_policy_state_dict is not None, (
-            "Reference policy state dict is None but reference swap is requested"
-        )
-
-        current_policy_state_dict = self.get_model_state_dict(
-            cpu_offload=True,
-            full_state_dict=False,
-        )
-        self._strategy.load_model_with_state_dict(
-            self.model,
-            self.ref_policy_state_dict,
-            cpu_offload=False,
-            full_state_dict=False,
-        )
-
-        try:
-            yield
-        finally:
-            self._strategy.load_model_with_state_dict(
-                self.model,
-                current_policy_state_dict,
-                cpu_offload=False,
-                full_state_dict=False,
-            )
-
     def compute_logprobs(self, logits, target):
         return compute_logprobs_from_logits(
             logits,
@@ -669,7 +642,7 @@ class FSDPActor(FSDPModelManager, Worker):
             assert self.ref_policy_state_dict is not None, (
                 "Reference policy state dict is None but compute_ref_logprobs is True"
             )
-            with self._swap_to_ref_policy():
+            with cpu_weight_swap(self, self.ref_policy_state_dict, is_fsdp=True):
                 ref_logprobs = torch.cat(
                     [self.forward_batch(batch) for batch in micro_batches]
                 ).cpu()
@@ -774,6 +747,104 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
 
+    def forward_backward_batch(
+        self,
+        idx: int,
+        m_batch: dict[str, torch.Tensor],
+        micro_batch_cnt: int,
+    ) -> dict[str, torch.Tensor]:
+        """Run forward, loss computation, and backward for one micro-batch."""
+        backward_ctx = self.before_micro_batch(
+            self.model,
+            is_last_micro_batch=(idx + 1) == micro_batch_cnt,
+        )
+        for k, v in m_batch.items():
+            m_batch[k] = (
+                v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
+            )
+
+        # batch for forward
+        logprobs, entropy = self.forward_batch(m_batch, True)
+
+        # batch for backward
+        # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
+        old_logprobs = m_batch.get("recomputed_logprobs")
+        if old_logprobs is None:
+            old_logprobs = m_batch["rollout_logprobs"]
+        advantages = m_batch["advantages"]
+        ref_logprobs = None
+        if "ref_logprobs" in m_batch:
+            ref_logprobs = m_batch["ref_logprobs"]
+
+        loss_mask = m_batch["response_mask"][:, -self.response_len :]
+
+        clip_ratio = self.cfg.algorithm.ratio_clip_eps
+        clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
+        clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
+        clip_ratio_low = clip_ratio_low if clip_ratio_low is not None else clip_ratio
+        clip_ratio_high = clip_ratio_high if clip_ratio_high is not None else clip_ratio
+        clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
+
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            if (
+                "rollout_logprobs" not in m_batch
+                or "recomputed_logprobs" not in m_batch
+            ):
+                raise ValueError(
+                    "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
+                )
+            rollout_logprobs = m_batch["rollout_logprobs"]
+            recomputed_logprobs = m_batch["recomputed_logprobs"]
+            advantages = advantages * torch.clamp(
+                (recomputed_logprobs - rollout_logprobs).exp(),
+                max=self.cfg.algorithm.importance_sampling_clip,
+            )
+
+        loss, mbs_metrics_data = policy_loss(
+            task_type=self.task_type,
+            loss_type=self.cfg.algorithm.loss_type,
+            loss_agg_func=self.loss_agg_func,
+            logprobs=logprobs,
+            old_logprobs=old_logprobs,
+            advantages=advantages,
+            clip_ratio_c=clip_ratio_c,
+            clip_ratio_low=clip_ratio_low,
+            clip_ratio_high=clip_ratio_high,
+            loss_mask=loss_mask,
+            clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
+            clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
+            fast_path_zero_loss_mask=True,
+        )
+
+        entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        if self.calculate_entropy:
+            entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
+            if self.calculate_entropy_loss:
+                loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
+
+        kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
+        if self.kl_beta > 0 and ref_logprobs is not None:
+            kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+            kl_loss = self.loss_agg_func(kld, loss_mask)
+            loss = loss + kl_loss * self.kl_beta
+
+        # add to log
+        # scale loss for gradient accumulation and backprop
+        final_loss_metric = loss.detach()
+        loss = loss / self.gradient_accumulation
+        with backward_ctx:
+            self.grad_scaler.scale(loss).backward()
+
+        mbs_metrics_data.update(
+            {
+                "actor/final_loss": final_loss_metric,
+                "actor/entropy_loss": entropy_loss.detach(),
+                "actor/kl_loss": kl_loss.detach(),
+            }
+        )
+
+        return mbs_metrics_data
+
     @Worker.timer("training_step")
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
@@ -803,101 +874,11 @@ class FSDPActor(FSDPModelManager, Worker):
         self.optimizer.zero_grad()
         mbs_metrics_list = {}
         for idx, m_batch in enumerate(micro_batches_iter):
-            backward_ctx = self.before_micro_batch(
-                self.model,
-                is_last_micro_batch=(idx + 1) == micro_batch_cnt,
+            mbs_metrics_data = self.forward_backward_batch(
+                idx,
+                m_batch,
+                micro_batch_cnt,
             )
-            for k, v in m_batch.items():
-                m_batch[k] = (
-                    v.to(Worker.torch_device_type) if isinstance(v, torch.Tensor) else v
-                )
-
-            # batch for forward
-            logprobs, entropy = self.forward_batch(m_batch, True)
-
-            # batch for backward
-            # Prefer recomputed_logprobs (from actor inference), fallback to rollout_logprobs
-            old_logprobs = m_batch.get("recomputed_logprobs")
-            if old_logprobs is None:
-                old_logprobs = m_batch["rollout_logprobs"]
-            advantages = m_batch["advantages"]
-            ref_logprobs = None
-            if "ref_logprobs" in m_batch:
-                ref_logprobs = m_batch["ref_logprobs"]
-
-            loss_mask = m_batch["response_mask"][:, -self.response_len :]
-
-            clip_ratio = self.cfg.algorithm.ratio_clip_eps
-            clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
-            clip_ratio_high = self.cfg.algorithm.get("clip_ratio_high", None)
-            clip_ratio_low = (
-                clip_ratio_low if clip_ratio_low is not None else clip_ratio
-            )
-            clip_ratio_high = (
-                clip_ratio_high if clip_ratio_high is not None else clip_ratio
-            )
-            clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
-
-            if self.cfg.algorithm.get("importance_sampling_fix", False):
-                if (
-                    "rollout_logprobs" not in m_batch
-                    or "recomputed_logprobs" not in m_batch
-                ):
-                    raise ValueError(
-                        "importance_sampling_fix requires both rollout_logprobs and recomputed_logprobs"
-                    )
-                rollout_logprobs = m_batch["rollout_logprobs"]
-                recomputed_logprobs = m_batch["recomputed_logprobs"]
-                advantages = advantages * torch.clamp(
-                    (recomputed_logprobs - rollout_logprobs).exp(),
-                    max=self.cfg.algorithm.importance_sampling_clip,
-                )
-
-            loss, mbs_metrics_data = policy_loss(
-                task_type=self.task_type,
-                loss_type=self.cfg.algorithm.loss_type,
-                loss_agg_func=self.loss_agg_func,
-                logprobs=logprobs,
-                old_logprobs=old_logprobs,
-                advantages=advantages,
-                clip_ratio_c=clip_ratio_c,
-                clip_ratio_low=clip_ratio_low,
-                clip_ratio_high=clip_ratio_high,
-                loss_mask=loss_mask,
-                clip_log_ratio_min=self.cfg.algorithm.get("clip_log_ratio_min", None),
-                clip_log_ratio_max=self.cfg.algorithm.get("clip_log_ratio_max", None),
-                fast_path_zero_loss_mask=True,
-            )
-
-            entropy_loss = torch.tensor(
-                0.0, device=Worker.torch_platform.current_device()
-            )
-            if self.calculate_entropy:
-                entropy_loss = self.loss_agg_func(entropy, mask=loss_mask)
-                if self.calculate_entropy_loss:
-                    loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
-
-            kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
-            if self.kl_beta > 0 and ref_logprobs is not None:
-                kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
-                kl_loss = self.loss_agg_func(kld, loss_mask)
-                loss = loss + kl_loss * self.kl_beta
-
-            # add to log
-            # scale loss for gradient accumulation and backprop
-            final_loss_metric = loss.detach()
-            loss = loss / self.gradient_accumulation
-            with backward_ctx:
-                self.grad_scaler.scale(loss).backward()
-
-            mbs_metrics_data.update(
-                {
-                    "actor/final_loss": final_loss_metric,
-                    "actor/entropy_loss": entropy_loss.detach(),
-                    "actor/kl_loss": kl_loss.detach(),
-                }
-            )
-
             append_to_dict(mbs_metrics_list, mbs_metrics_data)
 
         grad_norm, lr_list = self.optimizer_step()
@@ -906,6 +887,7 @@ class FSDPActor(FSDPModelManager, Worker):
             self.lr_scheduler.step()
 
         # display the degree of mismatch between training and rollout
+        loss_mask = m_batch["response_mask"][:, -self.response_len :]
         rollout_train_kl = compute_rollout_train_kl(m_batch, loss_mask)
 
         # aggregate metrics across micro-batches
