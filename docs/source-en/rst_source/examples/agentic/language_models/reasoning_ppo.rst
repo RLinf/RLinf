@@ -40,14 +40,14 @@ We also use the boba dataset. For details, see :doc:`reasoning`.
 How PPO Works
 -------------
 
-Use standard PPO (Proximal Policy Optimization) with GAE advantages and a critic. For the algorithm reference, see :doc:`PPO <../../reference/algorithms/ppo>`.
+Use standard PPO (Proximal Policy Optimization) with GAE advantages and a critic. For the algorithm reference, see :doc:`PPO <../../../reference/algorithms/ppo>`.
 
 Run It
 ------
 
 **1. Config file**
 
-For common path, cluster, and runner fields, see :doc:`Training configuration <../../reference/configuration>`. Recommended config example:
+For common path, cluster, and runner fields, see :doc:`Training configuration <../../../reference/configuration>`. Recommended config example:
 
 - ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``
 
@@ -59,7 +59,7 @@ The launch command for PPO training is basically the same as for GRPO training. 
 Visualization and Results
 -------------------------
 
-We fine-tune the Qwen2.5-1.5B-Instruct model with PPO. The orange line is RLinf and the blue line is VeRL; both use the same algorithm configuration. For common metric meanings, see :doc:`Training metrics <../../reference/metrics>`.
+We fine-tune the Qwen2.5-1.5B-Instruct model with PPO. The orange line is RLinf and the blue line is VeRL; both use the same algorithm configuration. For common metric meanings, see :doc:`Training metrics <../../../reference/metrics>`.
 
 Since the base capability of the Qwen2.5-1.5B-Instruct model is relatively weak, the overall reward values are low. However, as training progresses, the reward values increase significantly.
 

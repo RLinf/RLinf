@@ -39,14 +39,14 @@
 PPO 工作方式
 ----------------------------------------
 
-使用带 GAE advantage 和 critic 的标准 PPO（Proximal Policy Optimization）。算法细节见 :doc:`PPO <../../reference/algorithms/ppo>`。
+使用带 GAE advantage 和 critic 的标准 PPO（Proximal Policy Optimization）。算法细节见 :doc:`PPO <../../../reference/algorithms/ppo>`。
 
 运行
 ----------------------------------------
 
 **1. 配置文件**
 
-通用路径、集群和 runner 字段见 :doc:`训练配置 <../../reference/configuration>`。推荐配置示例：
+通用路径、集群和 runner 字段见 :doc:`训练配置 <../../../reference/configuration>`。推荐配置示例：
 
 - ``examples/reasoning/config/math/qwen2.5-1.5b-ppo-megatron.yaml``
 
@@ -58,7 +58,7 @@ PPO 训练与 GRPO 训练的启动命令基本相同，也是使用 ``run_main_g
 可视化与结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-我们基于 Qwen2.5-1.5B-Instruct 模型使用 PPO 训练。橙色为 RLinf，蓝色为 VeRL；两者使用相同算法配置。通用指标含义见 :doc:`训练指标 <../../reference/metrics>`。
+我们基于 Qwen2.5-1.5B-Instruct 模型使用 PPO 训练。橙色为 RLinf，蓝色为 VeRL；两者使用相同算法配置。通用指标含义见 :doc:`训练指标 <../../../reference/metrics>`。
 
 由于 Qwen2.5-1.5B-Instruct 模型基础能力较弱，所以整体 reward 数值较低，但是随着训练的进行，reward 数值明显上升。
 

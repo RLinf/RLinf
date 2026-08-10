@@ -41,10 +41,10 @@ Moonlight-16B GRPO 训练
 
 Moonlight-16B-A3B-Instruct 是 DeepSeek-V3 架构的混合专家模型：
 
-- **多头潜在注意力（MLA）**：低秩压缩 KV（``q_lora_rank`` / ``kv_lora_rank``），降低 KV cache 占用。
-- **MoE**：64 个路由专家（top-6 路由）+ 1 个共享专家；``first_k_dense_replace=1``（第 0 层稠密，第 1–46 层 MoE）。
-- **MTP**：多 token 预测头（``num_nextn_predict_layers=1``）；RL 中不训练。
-- 使用 **precision-aware optimizer**（Float8 master 权重）训练，提升显存效率。
+- **多头潜在注意力（MLA）** ：低秩压缩 KV（``q_lora_rank`` / ``kv_lora_rank``），降低 KV cache 占用。
+- **MoE** ：64 个路由专家（top-6 路由）+ 1 个共享专家；``first_k_dense_replace=1`` （第 0 层稠密，第 1-46 层 MoE）。
+- **MTP** ：多 token 预测头（``num_nextn_predict_layers=1``）；RL 中不训练。
+- 使用 **precision-aware optimizer** （Float8 master 权重）训练，提升显存效率。
 
 actor 通过 Megatron-Bridge（``rlinf-megatron-bridge``）把 HuggingFace 权重转换为
 Megatron-Core 分片 checkpoint；rollout 使用 SGLang（DeepSeek-V2 后端，``model_type: deepseek_v3``），
@@ -120,7 +120,7 @@ precision-aware optimizer，``reward_type: math``）。
 
    tensorboard --logdir ./logs --port 6006
 
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。
+指标含义见 :doc:`训练指标 <../../../reference/metrics>`。
 
 .. raw:: html
 
