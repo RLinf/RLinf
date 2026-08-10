@@ -36,8 +36,7 @@ def clear_memory(sync=True):
     if sync:
         Worker.torch_platform.synchronize()
     gc.collect()
-    if Worker.torch_device_type != "npu":
-        Worker.torch_platform.ipc_collect()
+    Worker.torch_platform.ipc_collect()
     Worker.torch_platform.empty_cache()
 
 
@@ -209,8 +208,11 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
-                item = item.detach().to(device="cpu", non_blocking=True, copy=True)
-                item = item.pin_memory()
+                item = (
+                    item.detach()
+                    .to(device="cpu", non_blocking=True, copy=True)
+                    .pin_memory()
+                )
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
@@ -632,8 +634,11 @@ def warmup_optimizer_state(optimizer: Optimizer) -> None:
     for p in all_params:
         p.grad = saved_grads[p]
 
-    # The empty step above advances each Adam parameter's step counter to 1.
-    # Reset it so optimizer warm-up does not change the first real update.
+    # The empty step above advances each Adam param's step counter to 1, which biases
+    # the first real update through bias correction and diverges from a freshly-built
+    # optimizer. Reset the step counter to 0 so this state initialization is a true
+    # no-op for training dynamics, while preserving the already-zeroed exp_avg/exp_avg_sq
+    # entries so load_state_dict still finds initialized state.
     for p in all_params:
         st = optimizer.state.get(p, {})
         step = st.get("step", None)

@@ -372,8 +372,6 @@ class FSDPActor(FSDPModelManager, Worker):
                 if rollout_dtype is not None:
                     v = v.to(rollout_dtype)
                 if not self.is_pipeline:
-                    if Worker.torch_device_type == "npu":
-                        v = v.detach().to("cpu")
                     v = reduce_tensor(v)
                 buffer[k] = v
             if bucket_idx == 0:
