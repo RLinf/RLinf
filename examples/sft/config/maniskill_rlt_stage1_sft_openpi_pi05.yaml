@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -41,14 +41,15 @@ actor:
   seed: 0
 
   model:
-    precision: null
+    precision: fp32
     model_path: "/path/to/pi05_base"
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     num_action_chunks: 10
     action_dim: 8
     add_value_head: False
     num_steps: 5
     openpi:
+      task: sft
       config_name: "pi05_rlt_maniskill_joint"
       num_images_in_input: 2
       train_expert_only: False
@@ -57,6 +58,11 @@ actor:
       action_chunk: ${actor.model.num_action_chunks}
       action_env_dim: ${actor.model.action_dim}
       num_steps: ${actor.model.num_steps}
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
       use_rlt: True
       rlt_alpha: 1.0
       rlt_input_dim: 2048
@@ -95,9 +101,9 @@ actor:
     use_orig_params: False
     gradient_checkpointing: False
     mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
 
 reward:
   use_reward_model: False

@@ -81,6 +81,8 @@ class RLTSelfAttentionLayer(nn.Module):
         *,
         attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        norm_weight = self.self_norm.weight
+        x = x.to(device=norm_weight.device, dtype=norm_weight.dtype)
         key_padding_mask = self._key_padding_mask(mask)
         if key_padding_mask is not None:
             key_padding_mask = key_padding_mask.to(device=x.device)

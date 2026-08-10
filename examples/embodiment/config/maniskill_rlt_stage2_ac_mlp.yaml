@@ -243,11 +243,12 @@ rollout:
     lora_rank: 32
 
   rlt_feature_model:
-    model_type: "openpi"
+    model_type: "openpi_rlinf"
     model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
-    precision: null
+    precision: bf16
     num_action_chunks: 10
-    action_dim: 8
+    action_dim: ${actor.model.action_dim}
+    num_steps: 5
     add_value_head: False
     is_lora: False
     lora_rank: 32
@@ -255,12 +256,18 @@ rollout:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
     openpi:
+      task: eval
       config_name: "pi05_rlt_maniskill_joint"
       num_images_in_input: 2
       action_chunk: 10
       action_horizon: 10
       action_env_dim: 8
       num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
       train_expert_only: False
       add_value_head: False
       detach_critic_input: True
@@ -277,11 +284,33 @@ rollout:
       rlt_use_mask: True
 
   # Optional ManiSkill expert takeover model. Enable it with
-  # env.train.rlt_policy_switch.expert_takeover.enable=True.
+  # env.train.rlt_policy_switch.expert_takeover.enable=True. This should point
+  # to a stronger openpi_rlinf SFT checkpoint trained with the same task
+  # transforms; it predicts expert actions directly and does not use RLT tokens.
   expert_model:
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft/checkpoints/global_step_<step>/actor"
-    precision: null
+    model_type: "openpi_rlinf"
+    model_path: "/path/to/rlt_maniskill_joint_pi05_sft_more_steps/checkpoints/global_step_<step>/actor"
+    precision: bf16
+    num_action_chunks: 10
+    action_dim: 8
+    num_steps: 5
+    add_value_head: False
     openpi:
+      task: eval
+      config_name: "pi05_rlt_maniskill_joint"
+      num_images_in_input: 2
+      action_chunk: 10
+      action_horizon: 10
+      action_env_dim: 8
+      num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
+      train_expert_only: False
+      add_value_head: False
+      detach_critic_input: True
       use_rlt: False
 
   enable_torch_compile: False

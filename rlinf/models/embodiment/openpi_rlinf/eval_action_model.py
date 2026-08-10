@@ -24,8 +24,12 @@ from torch.utils._pytree import tree_map
 from rlinf.models.embodiment.openpi_rlinf.openpi_action_model import (
     OpenPiPytorchActionModel,
 )
+from rlinf.models.embodiment.openpi_rlinf.pi0_model import model as pi0_model_module
 from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
 from rlinf.models.embodiment.openpi_rlinf.pi0_model.pi0 import Pi0
+from rlinf.models.embodiment.openpi_rlinf.utils.rlt_utils import (
+    OpenPiPytorchRLTConfig,
+)
 
 
 def _to_numpy(x):
@@ -56,11 +60,13 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         action_chunk: int | None = None,
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
+        rlt_cfg: OpenPiPytorchRLTConfig | None = None,
     ):
         super().__init__(
             pi0_model,
             num_steps=num_steps,
             action_env_dim=action_env_dim,
+            rlt_cfg=rlt_cfg,
         )
         # ``action_chunk`` slices the env-action subspace from the model output
         # in :meth:`output_transform`.
@@ -347,3 +353,86 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
             },
         }
         return actions, result
+
+    @torch.no_grad()
+    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
+        self._require_rlt()
+        repacked = self._repack_env_obs(env_obs)
+        processed = self.input_transform(repacked, transpose=False)
+        observation = self._observation_dict_to_device(processed)
+
+        prepared_observation = pi0_model_module.preprocess_observation(
+            observation, train=False
+        )
+        prefix_output, prefix_mask, kv_cache = self.model.build_prefix_cache(
+            prepared_observation
+        )
+        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
+            prefix_output, prefix_mask, prepared_observation.tokenized_prompt
+        )
+        z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
+            dtype=torch.float32
+        )
+
+        model_actions = self._sample_actions_from_prefix_cache(
+            prepared_observation,
+            prefix_mask,
+            kv_cache,
+        )
+        ref_chunk = self.output_transform(
+            {"actions": model_actions, "state": observation.state}
+        )["actions"]
+
+        raw_proprio = self._select_configured_state(env_obs["states"])
+        if "maniskill" in self.config_name.lower():
+            state_dim = (
+                raw_proprio.shape[-1]
+                if hasattr(raw_proprio, "shape")
+                else np.asarray(raw_proprio).shape[-1]
+            )
+            proprio = observation.state[..., :state_dim]
+        else:
+            proprio = raw_proprio
+        if not torch.is_tensor(proprio):
+            proprio = torch.as_tensor(proprio)
+
+        return {
+            "z_rl": z_rl,
+            "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
+            "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
+        }
+
+    def _sample_actions_from_prefix_cache(
+        self,
+        observation: Observation,
+        prefix_mask: torch.Tensor,
+        kv_cache: tuple,
+        *,
+        noise: torch.Tensor | None = None,
+        rng: torch.Generator | None = None,
+    ) -> torch.Tensor:
+        """Run Pi0's eval Euler sampler using an already-built prefix cache."""
+        batch_size = observation.state.shape[0]
+        device = observation.state.device
+        if noise is None:
+            noise = torch.randn(
+                batch_size,
+                self.model.action_horizon,
+                self.model.action_dim,
+                device=device,
+                generator=rng,
+            )
+
+        x_t = noise
+        dt = -1.0 / self.num_steps
+        t = 1.0
+        while t >= -dt / 2:
+            t_tensor = torch.full((batch_size,), t, device=device, dtype=torch.float32)
+            suffix_out = self.model.run_suffix(
+                observation, x_t, t_tensor, kv_cache, prefix_mask
+            )
+            v_t = self.model.velocity_from_suffix(suffix_out)
+            x_t = x_t + dt * v_t
+            t += dt
+        return x_t
