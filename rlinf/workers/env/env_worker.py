@@ -1139,6 +1139,8 @@ class EnvWorker(Worker):
                             self.trajectory_builders,
                             policy_output,
                             cache_current=True,
+                            intervene_actions=env_output.intervene_actions,
+                            intervene_flags=env_output.intervene_flags,
                         )
 
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
@@ -1262,6 +1264,8 @@ class EnvWorker(Worker):
                         self.trajectory_builders,
                         policy_output,
                         cache_current=False,
+                        intervene_actions=env_output.intervene_actions,
+                        intervene_flags=env_output.intervene_flags,
                     )
 
             if self.use_training_pipeline and actor_channel is not None:

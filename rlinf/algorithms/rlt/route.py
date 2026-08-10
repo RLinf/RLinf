@@ -206,6 +206,7 @@ class SimulatorRLTRoute(RLTRoute):
             dtype=torch.bool,
             device=actions.device,
         )
+        forward_inputs = result["forward_inputs"]
         if expert_takeover.any():
             if ctx.expert_model is None:
                 raise RuntimeError(
@@ -226,8 +227,15 @@ class SimulatorRLTRoute(RLTRoute):
                 routed_actions,
             ).contiguous()
             intervene_flags[expert_takeover] = True
+            ref_chunk = forward_inputs["ref_chunk"]
+            ref_actions = ref_chunk.reshape(batch_size, -1, action_dim).clone()
+            ref_actions[:, :chunk_len] = torch.where(
+                expert_takeover[:, None, None],
+                expert_actions,
+                ref_actions[:, :chunk_len],
+            )
+            forward_inputs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
 
-        forward_inputs = result["forward_inputs"]
         forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
         forward_inputs["record_transition"] = critical_phase[:, None]
         forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
