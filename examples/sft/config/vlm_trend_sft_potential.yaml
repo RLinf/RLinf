@@ -43,7 +43,7 @@ runner:
   resume_dir: null
   per_worker_log: true
 
-# Build data with preprocess_vlm_trend_dataset.py --mode potential and
+# Build data with preprocess_vlm_trend_success_dataset.py --mode potential and
 # point VLM_TREND_REWARD_DATA_ROOT to that output root.
 # Requires VLM_TREND_REWARD_DATA_ROOT; set VLM_MODEL_PATH (and optionally OUTPUT_ROOT).
 data:
@@ -81,6 +81,21 @@ actor:
     model_path: ${oc.env:VLM_MODEL_PATH}
     attn_implementation: flash_attention_2
     is_lora: true
+    export_lora_adapter: true
+    # Opt-in Qwen3-VL targets: skip bare "proj" (matches Conv3d patch_embed.proj).
+    lora_target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+      - qkv
+      - fc1
+      - fc2
+      - out_proj
+      - lm_head
     lora_rank: 16
     format_ce_coef: 2.0
     trainable_modules:

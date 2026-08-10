@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Build online-matched VLM Trend potential and progress SFT data.
+"""Flat Success preprocess entry: terminal-success and dense potential/progress.
 
-Absolute samples contain one five-frame dual-view window and predict a discrete
-success potential. Relative samples contain two adjacent five-frame clips and
-predict whether the state-value teacher moves up, down, or stays effectively
-unchanged. Successful and failed episodes are sampled independently so neither
-outcome can dominate a bucket.
+Modes:
+  terminal_success  Sparse 0/1 windows via vlm_trend_success.build_rows
+  potential         Dense potential + progress windows from a state-value teacher
+
+Example:
+  python examples/reward/preprocess_vlm_trend_success_dataset.py --mode terminal_success ...
+  python examples/reward/preprocess_vlm_trend_success_dataset.py --mode potential ...
+
+Classic GAE-delta trend reward stays in preprocess_vlm_trend_reward_dataset.py.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ import json
 import os
 import pickle
 import random
+import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from glob import glob
@@ -46,6 +50,7 @@ from rlinf.data.datasets.vlm_trend_io import (
     to_numpy_float32,
     to_uint8_rgb,
 )
+from rlinf.data.datasets.vlm_trend_success import build_rows
 from rlinf.utils.logging import get_logger
 from rlinf.utils.state_success_value import (
     load_value_model,
@@ -53,6 +58,48 @@ from rlinf.utils.state_success_value import (
 )
 
 logger = get_logger()
+
+
+# ---------------------------------------------------------------------------
+# Mode: terminal_success
+# ---------------------------------------------------------------------------
+
+
+def run_terminal_success(args: argparse.Namespace) -> None:
+    """Write terminal-success manifests and dataset statistics."""
+    rows_by_split, stats = build_rows(args)
+    output_dir = Path(args.output_dir)
+    for split, rows in rows_by_split.items():
+        split_dir = output_dir / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        with (split_dir / "segments.jsonl").open("w", encoding="utf-8") as stream:
+            for row in rows:
+                stream.write(json.dumps(row) + "\n")
+    (output_dir / "dataset_info.json").write_text(
+        json.dumps(stats, indent=2), encoding="utf-8"
+    )
+    logger.info("%s", json.dumps(stats, indent=2))
+
+
+def _add_terminal_success_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--raw-data-path", action="append", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--window-size", type=int, default=5)
+    parser.add_argument("--val-split", type=float, default=0.1)
+    parser.add_argument("--max-positive", type=int, default=5000)
+    parser.add_argument("--negative-positive-ratio", type=float, default=4.0)
+    parser.add_argument("--hard-negatives-per-episode", type=int, default=3)
+    parser.add_argument("--success-exclusion-steps", type=int, default=10)
+    parser.add_argument("--near-terminal-positives-per-episode", type=int, default=1)
+    parser.add_argument("--success-positive-lead-steps", type=int, default=4)
+    parser.add_argument("--online-interval", type=int, default=0)
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=42)
+
+
+# ---------------------------------------------------------------------------
+# Mode: potential (dense potential + progress)
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -265,6 +312,11 @@ def _validate_preprocess_args(args: argparse.Namespace) -> None:
         raise ValueError("temporal_smoothing_window must be a positive odd integer")
     if any(gap < 1 for gap in args.progress_gap_steps):
         raise ValueError("progress_gap_steps must contain only positive values")
+    if not 0.0 <= args.val_split <= 1.0:
+        raise ValueError(
+            f"val_split must be in [0, 1], got {args.val_split}; "
+            "use 0 for train-only or a fraction for the eval hold-out."
+        )
     args.progress_gap_steps = sorted(set(args.progress_gap_steps))
 
 
@@ -287,9 +339,13 @@ def _collect_pkl_files_and_splits(
     for root_files in files_by_root.values():
         root_files = [path for path in root_files if path in pkl_files]
         rng.shuffle(root_files)
-        eval_count = min(
-            len(root_files), max(1, int(round(len(root_files) * args.val_split)))
-        )
+        if args.val_split <= 0:
+            eval_count = 0
+        else:
+            eval_count = min(
+                len(root_files),
+                max(1, int(round(len(root_files) * args.val_split))),
+            )
         split_by_path.update(
             {
                 path: ("eval" if index < eval_count else "train")
@@ -300,6 +356,12 @@ def _collect_pkl_files_and_splits(
         pkl_files = [
             path for path in pkl_files if split_by_path[path] == args.only_split
         ]
+        if not pkl_files:
+            raise ValueError(
+                f"--only-split {args.only_split!r} selected no episodes after "
+                f"applying --val-split {args.val_split}; for example "
+                "--only-split eval requires val_split > 0."
+            )
     return pkl_files, split_by_path
 
 
@@ -316,7 +378,7 @@ def _add_episode_candidates(
 ) -> None:
     """Fill reservoir buckets from one scored episode."""
 
-    def add_candidate(key: tuple[Any, ...], candidate: Candidate) -> None:
+    def _add_candidate(key: tuple[Any, ...], candidate: Candidate) -> None:
         if key not in reservoirs:
             reservoirs[key] = Reservoir(
                 _bucket_capacity(args, candidate.split, candidate.sample_type), rng
@@ -329,7 +391,7 @@ def _add_episode_candidates(
         start_idx = end_idx - args.window_size + 1
         value = float(values[end_idx])
         bin_id = potential_bin(value, args.num_bins)
-        add_candidate(
+        _add_candidate(
             (split, "potential", bin_id, outcome),
             Candidate(
                 pkl_path,
@@ -350,7 +412,7 @@ def _add_episode_candidates(
                 continue
             delta = value - float(values[earlier_end])
             label = progress_label(delta, args.progress_deadband)
-            add_candidate(
+            _add_candidate(
                 (split, "progress", gap_steps, label, outcome),
                 Candidate(
                     pkl_path,
@@ -479,7 +541,7 @@ def _split_metadata(rows: list[dict[str, Any]], manifest: Path) -> dict[str, Any
     }
 
 
-def preprocess(args: argparse.Namespace) -> dict[str, Any]:
+def run_potential(args: argparse.Namespace) -> dict[str, Any]:
     """Build potential/progress SFT manifests from a state-value teacher."""
     _validate_preprocess_args(args)
     rng = random.Random(args.seed)
@@ -531,9 +593,7 @@ def preprocess(args: argparse.Namespace) -> dict[str, Any]:
     return metadata
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse CLI arguments for dense potential/progress dataset preprocessing."""
-    parser = argparse.ArgumentParser()
+def _add_potential_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--raw-data-path",
         required=True,
@@ -565,11 +625,58 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--progress-per-bucket-eval", type=int, default=180)
     parser.add_argument("--task-description", type=str, default=None)
     parser.add_argument("--device", default="cuda")
-    args = parser.parse_args(argv)
+
+
+def _run_potential(args: argparse.Namespace) -> dict[str, Any]:
+    """Apply potential-mode defaults then run the dense label pipeline."""
     if args.progress_gap_steps is None:
         args.progress_gap_steps = [args.window_size]
-    return args
+    return run_potential(args)
+
+
+_MODE_ADDERS = {
+    "terminal_success": _add_terminal_success_args,
+    "potential": _add_potential_args,
+}
+_MODE_RUNNERS = {
+    "terminal_success": run_terminal_success,
+    "potential": _run_potential,
+}
+
+
+def main(argv: list[str] | None = None) -> None:
+    pre = argparse.ArgumentParser(
+        description="VLM Trend Success dataset preprocessing.",
+        add_help=False,
+    )
+    pre.add_argument(
+        "--mode",
+        choices=tuple(_MODE_ADDERS),
+        help="Which Success label pipeline to run.",
+    )
+    pre.add_argument("-h", "--help", action="store_true")
+    args, remaining = pre.parse_known_args(argv)
+    if args.mode is None:
+        if args.help:
+            pre.print_help()
+            print(
+                "\nMode-specific flags follow --mode. Example:\n"
+                "  python examples/reward/preprocess_vlm_trend_success_dataset.py "
+                "--mode terminal_success --help"
+            )
+            sys.exit(0)
+        pre.error("--mode is required")
+
+    if args.help:
+        remaining = ["--help"]
+
+    parser = argparse.ArgumentParser(
+        description=f"VLM Trend Success preprocess (--mode {args.mode})"
+    )
+    _MODE_ADDERS[args.mode](parser)
+    mode_args = parser.parse_args(remaining)
+    _MODE_RUNNERS[args.mode](mode_args)
 
 
 if __name__ == "__main__":
-    preprocess(parse_args())
+    main()

@@ -15,7 +15,7 @@
 """Preprocess VLM Trend reward data into split train/eval pkl datasets.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_dataset.py --mode trend_reward \
+    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
         --raw-data-path logs/xxx/collected_data \
         --output-dir logs/xxx/processed_vlm_trend_reward_data
 
@@ -548,7 +548,7 @@ def preprocess_and_save_reward_datasets(
     return metadata
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
     )
@@ -684,12 +684,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=42,
         help="Random seed for deterministic split and sampling.",
     )
-    return parser.parse_args(argv)
+    return parser.parse_args()
 
 
-def main(args: argparse.Namespace | None = None) -> None:
-    if args is None:
-        args = parse_args()
+def main() -> None:
+    args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
     metadata = preprocess_and_save_reward_datasets(

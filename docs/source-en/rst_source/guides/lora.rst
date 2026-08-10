@@ -22,11 +22,12 @@ LoRA can be configured in the actor model section of your YAML configuration:
 - ``is_lora``: Enable LoRA fine-tuning (True/False)
 - ``lora_rank``: Rank of LoRA matrices (typically 8-64), LoRA trains two matrices A and B for each layer, with shapes [input-dim, lora-rank] and [lora-rank, output-dim] respectively
 - ``lora_path``: Path to pre-trained LoRA weights (null for new training)
+- ``lora_target_modules``: Optional override for Peft ``target_modules``. Accepts a YAML list or a comma-separated string. When unset, RLinf uses the default list below.
 
 Target Modules
 ---------------
 
-RLinf automatically applies LoRA to the following modules:
+By default, RLinf applies LoRA to the following modules:
 
 .. code:: python
 
@@ -38,6 +39,7 @@ RLinf automatically applies LoRA to the following modules:
       "q",         # Query projections
       "kv",        # Key-Value projections
       "fc3",       # Additional projection layers
+      "out_proj",  # Output projection
       "q_proj",    # Query projection
       "k_proj",    # Key projection
       "v_proj",    # Value projection
@@ -47,6 +49,32 @@ RLinf automatically applies LoRA to the following modules:
       "down_proj", # Down projection
       "lm_head",   # Language model head
   ]
+
+.. note::
+
+   Bare ``"proj"`` also matches Conv3d ``patch_embed.proj`` on Qwen3-VL, which
+   Peft cannot wrap. Qwen3-VL recipes (for example the VLM Trend SFT YAMLs)
+   should set ``lora_target_modules`` explicitly and omit ``"proj"``:
+
+   .. code:: yaml
+
+     actor:
+       model:
+         is_lora: true
+         lora_rank: 16
+         lora_target_modules:
+           - q_proj
+           - k_proj
+           - v_proj
+           - o_proj
+           - gate_proj
+           - up_proj
+           - down_proj
+           - qkv
+           - fc1
+           - fc2
+           - out_proj
+           - lm_head
 
 New LoRA Training
 ~~~~~~~~~~~~~~~~~

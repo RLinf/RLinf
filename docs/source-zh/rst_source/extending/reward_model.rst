@@ -21,20 +21,14 @@ reward（``inference_mode=generate`` + ``vlm_trend_reward_parser``）不同。
 
 下面的示例默认使用 4 张 GPU（placement ``0-3``）和 ``NUM_ENVS=1024``。
 训练与 PPO 使用仓库统一入口加 YAML config-name
-（``run_vlm_sft.sh``、``run_embodiment.sh``）。数据集 / teacher / scalar-head
-步骤使用 ``examples/reward/`` 下统一 CLI
-（``preprocess_vlm_trend_dataset.py``、``run_vlm_trend.py``、
-``run_vlm_trend_scalar_head.py``）。
+（``run_vlm_sft.sh``、``run_embodiment.sh``）。Success 的数据 / teacher /
+特征 / scalar-head 步骤使用两个扁平 ``examples/reward/`` 脚本：
 
-本指南用到的 ``preprocess_vlm_trend_dataset.py`` mode：
+- ``preprocess_vlm_trend_success_dataset.py --mode {terminal_success,potential}``
+- ``train_vlm_trend_success_model.py --stage {teacher,extract,scalar_head}``
 
-- ``terminal_success`` — 稀疏 0/1 窗口（步骤 2）
-- ``potential`` — 由 state-value teacher 生成稠密 potential **与** progress
-  窗口（步骤 4）；双线 Success 流程请用这个
-- ``trend_reward`` — 经典 GAE-delta trend reward 窗口（后文单独章节）
-
-``--mode progress`` 是兼容用的 **legacy** 路径（旧的 state-value delta
-progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mode potential``。
+经典 GAE-delta trend reward 仍用原来的扁平脚本
+``preprocess_vlm_trend_reward_dataset.py``（后文单独章节）。
 
 步骤 1 — 采集 rollout
 ^^^^^^^^^^^^^^^^^^^^^
@@ -108,7 +102,7 @@ progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mod
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   python examples/reward/preprocess_vlm_trend_dataset.py \
+   python examples/reward/preprocess_vlm_trend_success_dataset.py \
        --mode terminal_success \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
@@ -156,8 +150,10 @@ progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mod
 - 选出的目录稍后设为 ``VLM_TREND_SUCCESS_CHECKPOINT``。
   SFT 会保留 ``actor/model_state_dict/full_weights.pt`` 作为完整模型权重，
   并通过 ``PeftModel.save_pretrained`` 把 Peft adapter 写到
-  ``actor/lora_adapter/``。共享加载逻辑在 ``rlinf/utils/lora_adapter.py``，
-  会读取该 adapter 产物（并兼容旧版 ``full_weights.pt`` fallback）。
+  ``actor/lora_adapter/``（需开启 ``actor.model.export_lora_adapter``；
+  VLM Trend Success / potential 的 SFT YAML 已打开）。共享加载逻辑在
+  ``rlinf/utils/lora_adapter.py``，会读取该 adapter 产物（并兼容旧版
+  ``full_weights.pt`` fallback）。
 
 步骤 4 — 构建稠密 potential SFT 数据
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -177,11 +173,11 @@ progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mod
        ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
      done
    done
-   python examples/reward/run_vlm_trend.py \
-       --stage train_teacher \
+   python examples/reward/train_vlm_trend_success_model.py \
+       --stage teacher \
        --raw-data-path "${FLAT_ROOT}" \
        --output-dir "${STATE_VALUE_ROOT}"
-   python examples/reward/preprocess_vlm_trend_dataset.py \
+   python examples/reward/preprocess_vlm_trend_success_dataset.py \
        --mode potential \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
@@ -236,18 +232,38 @@ progress 标注），不属于推荐的 Success 流程；新实验请用 ``--mod
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
-   python examples/reward/run_vlm_trend_scalar_head.py \
-       --stage all \
-       --model-path "${VLM_MODEL_PATH}" \
-       --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
-       --data-root "${POTENTIAL_SFT_DATA_ROOT}" \
-       --feat-root "${FEAT_ROOT}" \
-       --output-dir "${SCALAR_OUTPUT_ROOT}" \
-       --cuda-devices 0,1,2,3
+   mkdir -p "${FEAT_ROOT}" "${SCALAR_OUTPUT_ROOT}"
+   # 每张 GPU 一个 extract；对 train/eval × potential/progress 重复。
+   for split in train eval; do
+     for sample_type in potential progress; do
+       for rank in 0 1 2 3; do
+         CUDA_VISIBLE_DEVICES="${rank}" python examples/reward/train_vlm_trend_success_model.py \
+             --stage extract \
+             --model-path "${VLM_MODEL_PATH}" \
+             --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
+             --manifest "${POTENTIAL_SFT_DATA_ROOT}/${split}/segments.jsonl" \
+             --output "${FEAT_ROOT}/${split}_${sample_type}_rank${rank}.pt" \
+             --sample-type "${sample_type}" \
+             --device cuda:0 \
+             --rank "${rank}" \
+             --world-size 4 &
+       done
+       wait
+     done
+   done
+   python examples/reward/train_vlm_trend_success_model.py \
+       --stage scalar_head \
+       --train-pattern "${FEAT_ROOT}/train_potential_rank*.pt" \
+       --eval-pattern "${FEAT_ROOT}/eval_potential_rank*.pt" \
+       --progress-pattern "${FEAT_ROOT}/eval_progress_rank*.pt" \
+       --train-progress-pattern "${FEAT_ROOT}/train_progress_rank*.pt" \
+       --output-dir "${SCALAR_OUTPUT_ROOT}"
+
 
 这一步会：
 
-- 多卡分片抽特征，训练得到 ``${SCALAR_OUTPUT_ROOT}/best.pt``。
+- 跨 GPU 分片抽取特征（``--stage extract`` + ``--rank`` / ``--world-size``），
+  再用 ``--stage scalar_head`` 训练 ``${SCALAR_OUTPUT_ROOT}/best.pt``。
 
 步骤 7 — 跑 PPO
 ^^^^^^^^^^^^^^^
@@ -366,7 +382,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward 使用短时间双视角历史窗口，而不是单张图像。使用
-``examples/reward/preprocess_vlm_trend_dataset.py --mode trend_reward`` 可以将采集到的
+``examples/reward/preprocess_vlm_trend_reward_dataset.py`` 可以将采集到的
 episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，并给每个
 窗口标注 ``positive``、``negative`` 或 ``unclear``。
 
@@ -374,8 +390,7 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_dataset.py \
-       --mode trend_reward \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -477,7 +492,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-使用 ``preprocess_vlm_trend_dataset.py --mode trend_reward`` 转换数据后，将
+使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
 ``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT。
 
 ``vlm_trend_sft_reward.yaml`` 是 **单线** Trend reward
@@ -516,22 +531,43 @@ override，例如：
        model_path: /path/to/Qwen3-VL-4B-Instruct
        attn_implementation: flash_attention_2
        is_lora: true
+       # Opt-in: skip bare "proj" so Conv3d patch_embed.proj is not wrapped.
+       lora_target_modules:
+         - q_proj
+         - k_proj
+         - v_proj
+         - o_proj
+         - gate_proj
+         - up_proj
+         - down_proj
+         - qkv
+         - fc1
+         - fc2
+         - out_proj
+         - lm_head
        lora_rank: 16
 
 训练得到的 LoRA checkpoint 后续可通过 ``reward.model.lora_path`` 传给在线 reward 配置。
 
 .. note::
 
-   SFT 会保留框架的 ``actor/model_state_dict/full_weights.pt``，并通过
-   ``PeftModel.save_pretrained`` 在 ``actor/lora_adapter/`` 下单独导出 Peft
-   adapter（``adapter_config.json`` + ``adapter_model.safetensors``）。在线 reward
-   模型通过共享的 ``rlinf.utils.lora_adapter`` API 把 ``lora_path`` 解析到该
-   adapter 产物（并保留对旧版 ``full_weights.pt`` 的回退）。
+   SFT 会保留框架的 ``actor/model_state_dict/full_weights.pt``，并在
+   ``actor.model.export_lora_adapter`` 为 true 时通过 ``PeftModel.save_pretrained``
+   在 ``actor/lora_adapter/`` 下单独导出 Peft adapter（默认 false；仅 VLM Trend
+   Success / potential 的 SFT YAML 打开）。经典 Trend reward SFT 只保留框架的
+   ``full_weights.pt``，通过共享 legacy fallback 加载。在线 reward 模型通过
+   共享的 ``rlinf.utils.lora_adapter`` API 把 ``lora_path`` 解析到该 adapter
+   产物（并保留对旧版 ``full_weights.pt`` 的回退）。
 
    与 ``rlinf.models.apply_lora`` 的分工：
 
    * ``apply_lora`` — 在根据 ``cfg.actor.model`` 构造训练 actor 时挂载或创建
-     LoRA（``is_lora``、``lora_path`` 等）。
+     LoRA（``is_lora``、``lora_path``、可选 ``lora_target_modules``）。框架默认
+     ``target_modules`` 与 main 一致（含裸 ``"proj"``）；VLM Trend 的 Qwen3-VL
+     SFT YAML 通过显式 ``lora_target_modules`` 避开 Conv3d ``patch_embed.proj``。
+     加载已有 adapter 时优先走与 reward 推理相同的 ``resolve_lora_adapter_dir`` /
+     legacy fallback，再回退到 ``PeftModel.from_pretrained`` 以支持 Hugging Face
+     Hub ID。
    * ``rlinf.utils.lora_adapter`` — 解析 SFT checkpoint 目录布局
      （``global_step_*/actor/lora_adapter``），在保留 ``full_weights.pt`` 的同时
      导出 adapter，并将这些产物（或 legacy ``full_weights.pt``）加载到冻结的
@@ -766,7 +802,7 @@ SGLang 路径额外说明：
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
 2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_dataset.py --mode trend_reward`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
 4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 

@@ -294,67 +294,92 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
+# Historical default shared by OpenVLA / OpenPI / etc. Includes bare ``"proj"``.
+# Qwen3-VL recipes that must skip Conv3d ``patch_embed.proj`` set an explicit
+# ``actor.model.lora_target_modules`` override in their SFT YAML instead.
+_DEFAULT_LORA_TARGET_MODULES: list[str] = [
+    "proj",
+    "qkv",
+    "fc1",
+    "fc2",  # vision
+    "q",
+    "kv",
+    "fc3",
+    "out_proj",  # project
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    "lm_head",  # llm
+]
+
+
+def resolve_lora_target_modules(cfg: DictConfig) -> list[str]:
+    """Resolve LoRA ``target_modules`` from ``cfg`` or the framework default.
+
+    ``cfg.lora_target_modules`` may be a list or a comma-separated string
+    (legacy DreamZero-style). When unset, returns the historical default that
+    includes bare ``"proj"``. Recipes that must avoid wrapping Conv3d
+    ``patch_embed.proj`` (Qwen3-VL) should set an explicit override in YAML.
+
+    Args:
+        cfg: Actor model config that may contain ``lora_target_modules``.
+
+    Returns:
+        Non-empty list of Peft target module name substrings.
+
+    Raises:
+        ValueError: If ``lora_target_modules`` is set but resolves to no names.
+    """
+    override = cfg.get("lora_target_modules", None)
+    if override is None:
+        return list(_DEFAULT_LORA_TARGET_MODULES)
+    if isinstance(override, str):
+        modules = [part.strip() for part in override.split(",") if part.strip()]
+    else:
+        modules = [str(part).strip() for part in override if str(part).strip()]
+    if not modules:
+        raise ValueError(
+            "actor.model.lora_target_modules resolved to an empty list; "
+            "provide a non-empty comma-separated string or a list of module names."
+        )
+    return modules
+
+
 def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
     """Attach Peft LoRA adapters when ``cfg.is_lora`` is enabled.
 
     Args:
         model: The base model to wrap (or load adapters onto).
         cfg: Model config with ``is_lora``, optional ``lora_path``,
-            ``lora_rank``, and ``model_type``.
+            ``lora_rank``, ``lora_target_modules``, and ``model_type``.
 
     Returns:
         The model with LoRA adapters attached (or ``model`` unchanged when
-        ``is_lora`` is false). For Qwen3-VL family models, target modules avoid
-        the bare ``proj`` name so Conv3d ``patch_embed.proj`` is not wrapped.
+        ``is_lora`` is false). Default ``target_modules`` match main (including
+        bare ``"proj"``); override via ``cfg.lora_target_modules`` when needed
+        (e.g. Qwen3-VL Success SFT YAMLs). Loading an existing adapter prefers
+        the shared ``resolve_lora_adapter_dir`` / legacy ``full_weights.pt``
+        path from ``rlinf.utils.lora_adapter``, then falls back to
+        ``PeftModel.from_pretrained`` so Hugging Face Hub repo IDs still work.
     """
     if not cfg.get("is_lora", False):
         return model
 
     from peft import LoraConfig, PeftModel, get_peft_model
 
+    from rlinf.utils.lora_adapter import load_adapter_onto_model
+
     model_type = str(cfg.model_type)
     if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
-        # Avoid bare "proj": on Qwen3-VL it also matches Conv3d patch_embed.proj,
-        # which Peft cannot wrap. Prefer explicit Linear module names.
-        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen2_5_vl"):
-            target_modules = [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-                "qkv",
-                "fc1",
-                "fc2",
-                "out_proj",
-                "lm_head",
-            ]
-        else:
-            target_modules = [
-                "proj",
-                "qkv",
-                "fc1",
-                "fc2",  # vision
-                "q",
-                "kv",
-                "fc3",
-                "out_proj",  # project
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-                "lm_head",  # llm
-            ]
         lora_config = LoraConfig(
             r=cfg.lora_rank,
             lora_alpha=cfg.lora_rank,
             lora_dropout=0.0,
-            target_modules=target_modules,
+            target_modules=resolve_lora_target_modules(cfg),
             init_lora_weights="gaussian",
         )
         if SupportedModel(model_type) in (
@@ -369,7 +394,14 @@ def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
         else:
             model = get_peft_model(model, lora_config)
     else:
-        model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
+        try:
+            model = load_adapter_onto_model(
+                model, cfg.lora_path, adapter_name="default", is_trainable=True
+            )
+        except FileNotFoundError:
+            # Shared loader only resolves local checkpoint layouts. Hub repo
+            # IDs (and other Peft-remote sources) keep the historical contract.
+            model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
 
     if hasattr(model, "value_head"):
         for param in model.value_head.parameters():

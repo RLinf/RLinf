@@ -43,9 +43,9 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         if self._rank == 0:
             self._save_data_state(save_path)
-        # Preserve framework full_weights.pt (merged full state). Export Peft
-        # adapters separately so VLMRewardModel can load them explicitly.
-        if bool(self.cfg.actor.model.get("is_lora", False)):
+        # Opt-in Peft adapter export beside preserved full_weights.pt.
+        # Default off so ordinary LoRA SFT jobs are not charged extra I/O/barriers.
+        if bool(self.cfg.actor.model.get("export_lora_adapter", False)):
             export_lora_adapter(
                 self.model,
                 save_path,

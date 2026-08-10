@@ -21,10 +21,13 @@ import os
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
+from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model
 from torch import nn
 
+from rlinf.models import apply_lora, resolve_lora_target_modules
 from rlinf.utils.lora_adapter import (
     _broadcast_rank0_outcome,
     export_lora_adapter,
@@ -252,3 +255,118 @@ def test_distributed_export_skip_is_consistent() -> None:
         for process in processes:
             process.join(timeout=30)
             assert process.exitcode == 0, process.exitcode
+
+
+def test_resolve_lora_target_modules_default_keeps_proj() -> None:
+    modules = resolve_lora_target_modules(OmegaConf.create({}))
+    assert "proj" in modules
+    assert "q_proj" in modules
+
+
+def test_resolve_lora_target_modules_accepts_list_and_csv() -> None:
+    list_cfg = OmegaConf.create({"lora_target_modules": ["q_proj", "k_proj", "v_proj"]})
+    assert resolve_lora_target_modules(list_cfg) == ["q_proj", "k_proj", "v_proj"]
+
+    csv_cfg = OmegaConf.create({"lora_target_modules": "q,k,v,o,ffn.0,ffn.2"})
+    assert resolve_lora_target_modules(csv_cfg) == [
+        "q",
+        "k",
+        "v",
+        "o",
+        "ffn.0",
+        "ffn.2",
+    ]
+
+
+def test_resolve_lora_target_modules_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="empty list"):
+        resolve_lora_target_modules(OmegaConf.create({"lora_target_modules": ""}))
+
+
+def test_apply_lora_uses_shared_adapter_loader(monkeypatch, tmp_path: Path) -> None:
+    called: dict[str, object] = {}
+
+    def fake_load(
+        model: nn.Module,
+        lora_path: str,
+        adapter_name: str = "default",
+        is_trainable: bool = False,
+    ) -> nn.Module:
+        called["path"] = lora_path
+        called["adapter_name"] = adapter_name
+        called["is_trainable"] = is_trainable
+        return model
+
+    monkeypatch.setattr("rlinf.utils.lora_adapter.load_adapter_onto_model", fake_load)
+    cfg = OmegaConf.create(
+        {
+            "is_lora": True,
+            "model_type": "mlp_policy",
+            "lora_rank": 2,
+            "lora_path": str(tmp_path / "ckpt"),
+        }
+    )
+    model = apply_lora(TinyModel(), cfg)
+    assert isinstance(model, TinyModel)
+    assert called == {
+        "path": str(tmp_path / "ckpt"),
+        "adapter_name": "default",
+        "is_trainable": True,
+    }
+
+
+def test_apply_lora_falls_back_to_peft_for_hub_ids(monkeypatch) -> None:
+    """When the shared local resolver misses, keep Peft Hub-ID loading."""
+
+    def fake_load(
+        model: nn.Module,
+        lora_path: str,
+        adapter_name: str = "default",
+        is_trainable: bool = False,
+    ) -> nn.Module:
+        raise FileNotFoundError(f"no local adapter under {lora_path!r}")
+
+    called: dict[str, object] = {}
+
+    def fake_from_pretrained(
+        model: nn.Module,
+        model_id: str,
+        is_trainable: bool = False,
+        **kwargs: object,
+    ) -> nn.Module:
+        called["model_id"] = model_id
+        called["is_trainable"] = is_trainable
+        return model
+
+    monkeypatch.setattr("rlinf.utils.lora_adapter.load_adapter_onto_model", fake_load)
+    monkeypatch.setattr("peft.PeftModel.from_pretrained", fake_from_pretrained)
+    cfg = OmegaConf.create(
+        {
+            "is_lora": True,
+            "model_type": "mlp_policy",
+            "lora_rank": 2,
+            "lora_path": "org/demo-lora-adapter",
+        }
+    )
+    model = apply_lora(TinyModel(), cfg)
+    assert isinstance(model, TinyModel)
+    assert called == {
+        "model_id": "org/demo-lora-adapter",
+        "is_trainable": True,
+    }
+
+
+def test_apply_lora_honours_explicit_target_modules() -> None:
+    cfg = OmegaConf.create(
+        {
+            "is_lora": True,
+            "model_type": "mlp_policy",
+            "lora_rank": 2,
+            "lora_path": None,
+            "lora_target_modules": ["q_proj"],
+        }
+    )
+    model = apply_lora(TinyModel(), cfg)
+    peft_config = next(iter(model.peft_config.values()))
+    assert set(peft_config.target_modules) == {"q_proj"}
+    assert "proj" not in peft_config.target_modules

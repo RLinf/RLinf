@@ -24,21 +24,14 @@ both need step 1; you can run the two branches in parallel after collection.
 
 The examples below use 4 GPUs (placement ``0-3``) and ``NUM_ENVS=1024``.
 Training and PPO use shared launchers plus YAML config-names
-(``run_vlm_sft.sh``, ``run_embodiment.sh``). Dataset / teacher / scalar-head
-steps use the unified ``examples/reward/`` CLIs
-(``preprocess_vlm_trend_dataset.py``, ``run_vlm_trend.py``,
-``run_vlm_trend_scalar_head.py``).
+(``run_vlm_sft.sh``, ``run_embodiment.sh``). Success dataset / teacher /
+feature / scalar-head steps use two flat ``examples/reward/`` scripts:
 
-``preprocess_vlm_trend_dataset.py`` modes used by this guide:
+- ``preprocess_vlm_trend_success_dataset.py --mode {terminal_success,potential}``
+- ``train_vlm_trend_success_model.py --stage {teacher,extract,scalar_head}``
 
-- ``terminal_success`` — sparse 0/1 windows (step 2)
-- ``potential`` — dense potential **and** progress windows from the state-value
-  teacher (step 4); prefer this for the dual-line Success pipeline
-- ``trend_reward`` — classic GAE-delta trend reward windows (later section)
-
-``--mode progress`` is a **legacy** state-value-delta progress path kept for
-compatibility only. It is not part of the recommended Success pipeline; new
-runs should use ``--mode potential`` instead.
+Classic GAE-delta trend reward stays in the original flat
+``preprocess_vlm_trend_reward_dataset.py`` (later section).
 
 Step 1 — Collect rollouts
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -112,7 +105,7 @@ Turn the collection into dual-view 5-frame windows labeled ``0`` / ``1``.
 
    export UNIFORM_DATA_ROOT=/path/to/vlm_trend_uniform_collection
    export DUALVIEW_SFT_DATA_ROOT=/path/to/vlm_trend_success_sft
-   python examples/reward/preprocess_vlm_trend_dataset.py \
+   python examples/reward/preprocess_vlm_trend_success_dataset.py \
        --mode terminal_success \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
@@ -160,9 +153,10 @@ What this does:
 - Use that directory later as ``VLM_TREND_SUCCESS_CHECKPOINT``.
   SFT keeps ``actor/model_state_dict/full_weights.pt`` as the full model state
   and writes the Peft adapter under ``actor/lora_adapter/`` via
-  ``PeftModel.save_pretrained``. The shared loader in
-  ``rlinf/utils/lora_adapter.py`` consumes that adapter artifact (with a
-  legacy ``full_weights.pt`` fallback).
+  ``PeftModel.save_pretrained`` when ``actor.model.export_lora_adapter`` is
+  true (enabled in the VLM Trend Success / potential SFT YAMLs). The
+  shared loader in ``rlinf/utils/lora_adapter.py`` consumes that adapter
+  artifact (with a legacy ``full_weights.pt`` fallback).
 
 Step 4 — Build dense potential SFT data
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -182,11 +176,11 @@ the same collection.
        ln -s "$(realpath "$f")" "${FLAT_ROOT}/step${step}_$(basename "$f")"
      done
    done
-   python examples/reward/run_vlm_trend.py \
-       --stage train_teacher \
+   python examples/reward/train_vlm_trend_success_model.py \
+       --stage teacher \
        --raw-data-path "${FLAT_ROOT}" \
        --output-dir "${STATE_VALUE_ROOT}"
-   python examples/reward/preprocess_vlm_trend_dataset.py \
+   python examples/reward/preprocess_vlm_trend_success_dataset.py \
        --mode potential \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step0" \
        --raw-data-path "${UNIFORM_DATA_ROOT}/step20" \
@@ -241,19 +235,38 @@ Freeze the potential LoRA, extract features with
    export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential_lora_ckpt
    export FEAT_ROOT=/path/to/vlm_trend_potential_features
    export SCALAR_OUTPUT_ROOT=/path/to/vlm_trend_scalar_head
-   python examples/reward/run_vlm_trend_scalar_head.py \
-       --stage all \
-       --model-path "${VLM_MODEL_PATH}" \
-       --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
-       --data-root "${POTENTIAL_SFT_DATA_ROOT}" \
-       --feat-root "${FEAT_ROOT}" \
-       --output-dir "${SCALAR_OUTPUT_ROOT}" \
-       --cuda-devices 0,1,2,3
+   mkdir -p "${FEAT_ROOT}" "${SCALAR_OUTPUT_ROOT}"
+   # One extract job per GPU; repeat for train/eval × potential/progress.
+   for split in train eval; do
+     for sample_type in potential progress; do
+       for rank in 0 1 2 3; do
+         CUDA_VISIBLE_DEVICES="${rank}" python examples/reward/train_vlm_trend_success_model.py \
+             --stage extract \
+             --model-path "${VLM_MODEL_PATH}" \
+             --checkpoint "${VLM_TREND_POTENTIAL_CHECKPOINT}" \
+             --manifest "${POTENTIAL_SFT_DATA_ROOT}/${split}/segments.jsonl" \
+             --output "${FEAT_ROOT}/${split}_${sample_type}_rank${rank}.pt" \
+             --sample-type "${sample_type}" \
+             --device cuda:0 \
+             --rank "${rank}" \
+             --world-size 4 &
+       done
+       wait
+     done
+   done
+   python examples/reward/train_vlm_trend_success_model.py \
+       --stage scalar_head \
+       --train-pattern "${FEAT_ROOT}/train_potential_rank*.pt" \
+       --eval-pattern "${FEAT_ROOT}/eval_potential_rank*.pt" \
+       --progress-pattern "${FEAT_ROOT}/eval_progress_rank*.pt" \
+       --train-progress-pattern "${FEAT_ROOT}/train_progress_rank*.pt" \
+       --output-dir "${SCALAR_OUTPUT_ROOT}"
 
 What this does:
 
-- Shards feature extraction across GPUs, then trains
-  ``${SCALAR_OUTPUT_ROOT}/best.pt``.
+- Shards feature extraction across GPUs (``--stage extract`` with
+  ``--rank`` / ``--world-size``), then trains ``${SCALAR_OUTPUT_ROOT}/best.pt``
+  with ``--stage scalar_head``.
 
 Step 7 — Run PPO
 ^^^^^^^^^^^^^^^^
@@ -376,7 +389,7 @@ Where:
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward uses short dual-view history windows rather than single images. Use
-``examples/reward/preprocess_vlm_trend_dataset.py --mode trend_reward`` to slice collected
+``examples/reward/preprocess_vlm_trend_reward_dataset.py`` to slice collected
 episodes into 5-frame windows, extract ``main_images`` and ``extra_view_images``,
 and assign each window one of ``positive``, ``negative``, or ``unclear``.
 
@@ -384,8 +397,7 @@ Example:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_dataset.py \
-       --mode trend_reward \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -487,7 +499,7 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-After converting collected episodes with ``preprocess_vlm_trend_dataset.py --mode trend_reward``,
+After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
 point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT.
 
 ``vlm_trend_sft_reward.yaml`` is the default config for the
@@ -527,6 +539,20 @@ The corresponding config reads the JSONL manifests and per-sample pickle files:
        model_path: /path/to/Qwen3-VL-4B-Instruct
        attn_implementation: flash_attention_2
        is_lora: true
+       # Opt-in: skip bare "proj" so Conv3d patch_embed.proj is not wrapped.
+       lora_target_modules:
+         - q_proj
+         - k_proj
+         - v_proj
+         - o_proj
+         - gate_proj
+         - up_proj
+         - down_proj
+         - qkv
+         - fc1
+         - fc2
+         - out_proj
+         - lm_head
        lora_rank: 16
 
 The trained LoRA checkpoint can then be passed to the online reward config through
@@ -536,15 +562,24 @@ The trained LoRA checkpoint can then be passed to the online reward config throu
 
    SFT preserves the framework ``actor/model_state_dict/full_weights.pt`` and
    exports the Peft adapter separately under ``actor/lora_adapter/`` via
-   ``PeftModel.save_pretrained`` (``adapter_config.json`` +
-   ``adapter_model.safetensors``). The online reward model resolves
-   ``lora_path`` to that adapter artifact (with a legacy ``full_weights.pt``
-   fallback) through the shared ``rlinf.utils.lora_adapter`` API.
+   ``PeftModel.save_pretrained`` when ``actor.model.export_lora_adapter`` is
+   true (default false; enabled only in the VLM Trend Success / potential
+   SFT YAMLs). Classic Trend reward SFT keeps the framework
+   ``full_weights.pt`` and loads via the shared legacy fallback. The online
+   reward model resolves ``lora_path`` to that adapter artifact (with a
+   legacy ``full_weights.pt`` fallback) through the shared
+   ``rlinf.utils.lora_adapter`` API.
 
    Division of labor with ``rlinf.models.apply_lora``:
 
    * ``apply_lora`` — attach or create LoRA while constructing a training actor
-     from ``cfg.actor.model`` (``is_lora``, ``lora_path``, etc.).
+     from ``cfg.actor.model`` (``is_lora``, ``lora_path``, optional
+     ``lora_target_modules``). The framework default ``target_modules`` is
+     unchanged from main (includes bare ``"proj"``); VLM Trend Qwen3-VL SFT
+     YAMLs set ``lora_target_modules`` explicitly to avoid wrapping Conv3d
+     ``patch_embed.proj``. Loading an existing adapter prefers the same
+     ``resolve_lora_adapter_dir`` / legacy fallback as reward inference, then
+     falls back to ``PeftModel.from_pretrained`` for Hugging Face Hub IDs.
    * ``rlinf.utils.lora_adapter`` — resolve SFT checkpoint directory layouts
      (``global_step_*/actor/lora_adapter``), export adapters beside preserved
      ``full_weights.pt``, and load those artifacts (or legacy ``full_weights.pt``)
@@ -779,7 +814,7 @@ The full workflow is:
 
 1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
 2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
-3. For VLM Trend rewards, use ``preprocess_vlm_trend_dataset.py --mode trend_reward`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
+3. For VLM Trend rewards, use ``preprocess_vlm_trend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
 4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 
