@@ -1,0 +1,28 @@
+model_type: "openpi_rlinf"
+
+# Pi0 JAX-aligned PyTorch model-shape template for RoboTwin ALOHA SFT.
+# Filesystem paths are supplied by robotwin_sft_openpi.yaml.
+precision: fp32
+pi05: False
+
+is_lora: False
+lora_rank: 32
+
+# RoboTwin ALOHA uses 14-dimensional actions; the Pi0 backbone pads them to 32.
+num_action_chunks: 50
+action_dim: 14
+use_proprio: True
+num_steps: 5
+add_value_head: False
+
+openpi:
+  task: sft
+  config_name: "pi0_aloha_robotwin"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 48
+  discrete_state_input: False

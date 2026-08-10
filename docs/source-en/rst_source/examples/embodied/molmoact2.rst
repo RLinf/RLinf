@@ -96,7 +96,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.3-libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.4-libero``:
 
 .. code-block:: bash
 
@@ -105,8 +105,8 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-libero
-      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-libero
+      rlinf/rlinf:agentic-rlinf0.4-libero
+      # Mainland China mirror: docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-libero
 
    # Inside the container, switch to the MolmoAct2 virtual environment:
    source switch_env molmoact2

@@ -14,21 +14,22 @@
 
 """Unified OpenPI 0.5 checkpoint convertor.
 
-Dispatches to one of five modes over a shared core:
+Dispatches to five modes over a shared core:
 
-    jax2new     JAX Pi0/Pi05 checkpoint -> new self-contained PyTorch layout
-    old2new     old paligemma_with_expert.* -> new bare Pi0 layout
-    sft2new     RLinf SFT full_weights.pt -> new bare Pi0 layout (bf16)
-    new2old     new bare Pi0 layout -> old paligemma_with_expert.* layout
-    sft2deploy  openpi_pytorch SFT -> legacy openpi deploy full_weights.pt
+    jax_to_openpi_rlinf              JAX Pi0/Pi05 checkpoint -> OpenPI_RLinf layout
+    openpi_pytorch_to_openpi_rlinf   OpenPI PyTorch layout -> OpenPI_RLinf layout
+    sft_to_openpi_rlinf              RLinf SFT full_weights.pt -> OpenPI_RLinf
+                                   layout selected by ``--config-name`` and ``--dtype``
+    openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
+    sft2deploy                     RLinf SFT -> OpenPI PyTorch deploy full_weights.pt
 
 Usage::
 
-    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax2new \\
+    python -m rlinf.utils.ckpt_convertor.openpi.convert --mode jax_to_openpi_rlinf \\
         --input-model       /path/to/jax_checkpoint \\
         --input-norm-stats  /path/to/norm_stats.json \\
-        --output-model      /path/to/out_new \\
-        --output-norm-stats /path/to/out_new/physical-intelligence/behavior/norm_stats.json
+        --output-model      /path/to/out_openpi_rlinf \\
+        --output-norm-stats /path/to/out_openpi_rlinf/physical-intelligence/behavior/norm_stats.json
 
 Run ``--mode <mode> --help`` for the per-mode arguments.
 """
@@ -38,18 +39,21 @@ from __future__ import annotations
 import argparse
 
 from rlinf.utils.ckpt_convertor.openpi import (
-    jax2new,
-    new2old,
-    old2new,
+    jax_to_openpi_rlinf,
+    openpi_pytorch_to_openpi_rlinf,
+    openpi_rlinf_to_openpi_pytorch,
+    pt_to_safetensors,
     sft2deploy,
-    sft2new,
 )
 
+# Public mode names describe the layouts explicitly. Internally, the conversion
+# kernels retain the original terminology: old = OpenPI PyTorch, new =
+# OpenPI_RLinf.
 _MODES = {
-    "jax2new": jax2new,
-    "old2new": old2new,
-    "sft2new": sft2new,
-    "new2old": new2old,
+    "jax_to_openpi_rlinf": jax_to_openpi_rlinf,
+    "openpi_pytorch_to_openpi_rlinf": openpi_pytorch_to_openpi_rlinf,
+    "sft_to_openpi_rlinf": pt_to_safetensors,
+    "openpi_rlinf_to_openpi_pytorch": openpi_rlinf_to_openpi_pytorch,
     "sft2deploy": sft2deploy,
 }
 

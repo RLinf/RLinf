@@ -232,9 +232,6 @@ if [ "$RANK" -eq 0 ]; then
         
         # Set specific paths based on environment
         case "$ENV_NAME" in
-            maniskill_libero)
-                export LIBERO_PATH=${LIBERO_PATH:-/mnt/public/dataset/LIBERO}
-                ;;
             behavior)
                 export BEHAVIOR_PATH=${BEHAVIOR_PATH:-/mnt/public/dataset/BEHAVIOR-1K}
                 export ISAAC_SIM_WHEEL_PATH=${ISAAC_SIM_WHEEL_PATH:-/mnt/public/dataset/isaac_sim_wheels}

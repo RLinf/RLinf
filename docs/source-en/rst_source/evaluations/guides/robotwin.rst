@@ -46,7 +46,7 @@ Set these before every evaluation run:
 
 **Docker (optional)**
 
-You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.3-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
+You can also run evaluation with the official Docker image ``rlinf/rlinf:agentic-rlinf0.4-robotwin``, which includes RoboTwin dependencies and compatibility patches. Inside the container, switch environments by model type:
 
 - OpenVLA-OFT: ``source switch_env openvla-oft``
 - OpenPI (π\ :sub:`0`\ / π\ :sub:`0.5`\ ): ``source switch_env openpi``
@@ -75,6 +75,9 @@ Available under ``evaluations/robotwin/``:
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
+   * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
+     - adjust_bottle
+     - OpenPI_RLinf π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA

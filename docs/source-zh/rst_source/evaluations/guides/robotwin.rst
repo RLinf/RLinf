@@ -47,7 +47,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
 
 **Docker（可选）**
 
-也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.3-robotwin`` 运行评测，镜像已包含 RoboTwin 依赖与兼容性补丁。进入容器后按模型类型切换环境：
+也可使用官方 Docker 镜像 ``rlinf/rlinf:agentic-rlinf0.4-robotwin`` 运行评测，镜像已包含 RoboTwin 依赖与兼容性补丁。进入容器后按模型类型切换环境：
 
 - OpenVLA-OFT：``source switch_env openvla-oft``
 - OpenPI（π\ :sub:`0`\ / π\ :sub:`0.5`\ ）：``source switch_env openpi``
@@ -76,6 +76,9 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
    * - ``robotwin_adjust_bottle_openpi_pi05_eval.yaml``
      - adjust_bottle
      - π₀.₅
+   * - ``robotwin_adjust_bottle_openpi_rlinf_eval.yaml``
+     - adjust_bottle
+     - OpenPI_RLinf π₀
    * - ``robotwin_place_shoe_lingbotvla_eval.yaml``
      - place_shoe
      - LingBotVLA

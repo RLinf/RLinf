@@ -37,7 +37,7 @@ from rlinf.data.schema.embodied_types import (
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
-from rlinf.envs.wrappers import RecordVideo
+from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
@@ -393,6 +393,11 @@ class EnvWorker(Worker):
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
+            if (
+                self.cfg.env.get("delay_sampler", None)
+                and env_cfg is not self.cfg.env.eval
+            ):
+                env = InsertDelay(env, self.cfg.env.delay_sampler)
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
             if env_cfg.get("data_collection", None) and getattr(
@@ -434,6 +439,17 @@ class EnvWorker(Worker):
             if self.enable_eval:
                 if self.eval_enable_offload:
                     get_env_attr(self.eval_env_list[i], "offload")()
+
+    async def _maybe_wait_env_delay(self, stage_id: int) -> None:
+        """Wait out the delay ``InsertDelay`` sampled for this stage, if it is on.
+
+        The wrapper only samples the delay; waiting here keeps the emulated sensor
+        latency off the event loop so co-scheduled coroutines keep running.
+        """
+        env = self.env_list[stage_id]
+        if get_env_attr(env, "wait_delay") is None:
+            return
+        await env.wait_delay()
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
@@ -1036,6 +1052,9 @@ class EnvWorker(Worker):
             else:
                 env_outputs = self._bootstrap_and_send_train(rollout_channel)
 
+            for stage_id in range(self.stage_num):
+                await self._maybe_wait_env_delay(stage_id)
+
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
                     if cooperative_yield:
@@ -1117,11 +1136,16 @@ class EnvWorker(Worker):
                             self.trajectory_builders,
                             policy_output,
                             cache_current=True,
+                            intervene_actions=env_output.intervene_actions,
+                            intervene_flags=env_output.intervene_flags,
                         )
 
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
                         policy_output.actions, stage_id
                     )
+                    # Emulated observation latency: wait before the obs goes out,
+                    # without blocking the other coroutines in this worker.
+                    await self._maybe_wait_env_delay(stage_id)
                     stage_builder = self.trajectory_builders[stage_id]
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
                         stage_builder.append_chunk_episode_data(
@@ -1138,6 +1162,13 @@ class EnvWorker(Worker):
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         decoupled_mode=self.env_decoupled_mode,
                     )
+                    if (
+                        get_env_attr(self.env_list[stage_id], "insert_delay_metrics")
+                        is not None
+                    ):
+                        env_metrics["time/interact_delay"].append(
+                            self.env_list[stage_id].insert_delay_metrics()
+                        )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs
@@ -1230,6 +1261,8 @@ class EnvWorker(Worker):
                         self.trajectory_builders,
                         policy_output,
                         cache_current=False,
+                        intervene_actions=env_output.intervene_actions,
+                        intervene_flags=env_output.intervene_flags,
                     )
 
             if self.use_training_pipeline and actor_channel is not None:

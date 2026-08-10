@@ -65,7 +65,7 @@ Copy an existing `build-embodied-*` job and replace the target name. See [refere
 - **Workflow job**  
   Add a job (e.g. `embodied-<model>-<env>-test`):
   - Checkout.
-  - Create embodied environment: set `UV_*`, any required path env vars (e.g. `LIBERO_PATH`, `GR00T_PATH`), then `bash requirements/install.sh embodied --model <model> --env <env>`.
+  - Create embodied environment: set `UV_*`, any required path env vars (e.g. `GR00T_PATH`, `BEHAVIOR_PATH`), then `bash requirements/install.sh embodied --model <model> --env <env>`.
   - Run test: `source .venv/bin/activate`, set `REPO_PATH`, then `bash tests/e2e_tests/embodied/run.sh <config_name>` (or `run_async.sh` if the test is async). Use a reasonable `timeout-minutes`.
   - Clean up: `rm -rf .venv`, `uv cache prune`, and any test-specific cleanup.
 

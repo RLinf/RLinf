@@ -39,18 +39,18 @@ RLinf 提供两种安装方式：**选项 1（UV）** 在本地构建与机器�
 选项 2：Docker
 --------------
 
-每个镜像都打包了开箱即用的栈（例如 ``agentic-rlinf0.3-maniskill_libero``）。拉取
+每个镜像都打包了开箱即用的栈（例如 ``agentic-rlinf0.4-maniskill_libero``）。拉取
 并运行镜像，然后在容器内选择模型环境：
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+   docker pull rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero /bin/bash
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero /bin/bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
