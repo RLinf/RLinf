@@ -568,11 +568,10 @@ class FSDPValueSftWorker(FSDPModelManager, Worker):
         - ``"<dataset_name>/<metric>"`` for per-dataset metrics
         - ``"<metric>"`` for aggregate (mean across datasets)
         """
-        if not self.eval_data_loaders:
-            with self.worker_timer():
+        with self.worker_timer():
+            if not self.eval_data_loaders:
                 return {}
 
-        with self.worker_timer():
             if self.cfg.actor.get("enable_offload", False):
                 with self.device_lock:
                     self.load_param_and_grad(self.device)
