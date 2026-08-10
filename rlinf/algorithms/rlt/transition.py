@@ -14,6 +14,8 @@
 
 from typing import Any
 
+import torch
+
 from rlinf.envs import SupportedEnvType
 from rlinf.utils.nested_dict_process import copy_dict_tensor
 
@@ -64,8 +66,26 @@ def update_rlt_transitions(
     policy_output: Any,
     *,
     cache_current: bool,
+    intervene_actions: torch.Tensor | None = None,
+    intervene_flags: torch.Tensor | None = None,
 ) -> None:
     if pending_obs[stage_id] is not None:
+        if intervene_actions is not None and intervene_flags is not None:
+            current_obs = pending_obs[stage_id]
+            ref_chunk = current_obs["ref_chunk"]
+            batch_size = ref_chunk.shape[0]
+            flags = intervene_flags.reshape(batch_size, -1, 1).to(
+                device=ref_chunk.device, dtype=torch.bool
+            )
+            human_actions = intervene_actions.reshape(batch_size, flags.shape[1], -1)
+            action_dim = human_actions.shape[-1]
+            ref_actions = ref_chunk.reshape(batch_size, -1, action_dim).clone()
+            ref_actions[:, : flags.shape[1]] = torch.where(
+                flags,
+                human_actions.to(device=ref_chunk.device, dtype=ref_chunk.dtype),
+                ref_actions[:, : flags.shape[1]],
+            )
+            current_obs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
         next_obs = extract_rlt_obs_from_forward_inputs(
             policy_output.forward_inputs,
             transition=True,
