@@ -3,7 +3,7 @@
 # Regression test for: Timer 'run_eval' has not been recorded.
 # Trigger condition: val_check_interval > 0 AND eval_data_paths is empty.
 # Expected behavior after fix: training completes; time/evaluate ~= 0 is logged.
-# Without the fix this config crashes at step 10 with
+# Without the fix this config crashes at step 1 with
 #   ValueError: Timer 'run_eval' has not been recorded.
 
 defaults:
@@ -32,8 +32,9 @@ runner:
     logger_backends: ["tensorboard"]
 
   max_epochs: -1
-  # max_steps must be >= val_check_interval so a periodic eval is triggered.
-  max_steps: 20
+  # check_progress() also validates on the last step, so a single step is
+  # enough to reach run_eval with an empty eval_data_loaders.
+  max_steps: 1
   val_check_interval: 10
   save_interval: -1
 
