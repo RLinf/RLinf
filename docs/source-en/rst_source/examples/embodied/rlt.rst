@@ -74,6 +74,9 @@ Provided Configuration Files
    * - ManiSkill Stage 2
      - ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``
      - Run simulated RLT actor-critic training with automatic ``rlt_policy_switch`` and transition replay.
+   * - ManiSkill Stage 2 (TD3)
+     - ``examples/embodiment/config/maniskill_rlt_stage2_td3_mlp.yaml``
+     - Run the simulated TD3-MLP variant with the same frozen Stage 1 feature model and replay route.
 
 Installation
 ------------
@@ -624,6 +627,17 @@ Launch training:
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
+
+To run the TD3-MLP variant, apply the same Stage 1 checkpoint settings to
+``maniskill_rlt_stage2_td3_mlp.yaml`` and launch:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_td3_mlp
+
+This variant is currently configured only for ManiSkill simulation. It keeps
+the frozen Stage 1 features and transition replay path, while replacing the
+Stage 2 policy and update objective with a direct TD3 actor and twin-Q critic.
 
 This config starts actor, rollout, and ManiSkill env workers. The rollout side
 freezes ``rollout.rlt_feature_model`` and only synchronizes the Stage 2 MLP
