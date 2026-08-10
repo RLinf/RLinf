@@ -11,7 +11,7 @@ hydra:
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
 
-# Dual-Franka tcp_rot6d SFT on the openpi_pytorch Pi0.5 path. The custom
+# Dual-Franka tcp_rot6d SFT on the openpi_rlinf Pi0.5 path. The custom
 # LeRobot loader handles sampling and collation; model-facing transforms come
 # from the canonical RLinf pi05_dualfranka_tcp_rot6d data config.
 #
@@ -34,7 +34,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "dual_franka_tcp_rot6d_openpi_pytorch_sft"
+    experiment_name: "dual_franka_tcp_rot6d_openpi_rlinf_sft"
     logger_backends: ["tensorboard"]
 
   max_epochs: 100

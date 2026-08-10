@@ -76,7 +76,7 @@ RLT 将表示学习和在线 RL 控制拆开。
 .. code:: bash
 
    # 为提高国内下载速度，可以使用：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -111,6 +111,12 @@ RLT 将表示学习和在线 RL 控制拆开。
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
+下面的 RLT 配置使用 ``model_type: openpi_rlinf``。安装命令仍使用
+``--model openpi``，因为 vendored PyTorch 模型复用 OpenPI 运行环境，并且 RLT
+Stage 1 dataloader 为了保持 ManiSkill 和真机行为一致，仍使用 OpenPI 数据管线。
+这里的 ``openpi_rlinf`` 是 RLinf vendored、已对齐 JAX OpenPI 参考实现精度的
+PyTorch Pi0.5 路径，不是旧的官方 OpenPI PyTorch 路径。
+
 RLT 如何工作
 ------------
 
@@ -142,13 +148,27 @@ Stage 1 中比较关键的字段：
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi"
+       model_type: "openpi_rlinf"
+       precision: fp32
        is_lora: False
        model_path: "/path/to/model"
        num_action_chunks: 20
+       action_dim: 7
+       num_steps: 4
+       add_value_head: False
        openpi:
+         task: sft
          config_name: "pi05_franka_state"
          num_images_in_input: 1
+         action_horizon: ${actor.model.num_action_chunks}
+         action_chunk: ${actor.model.num_action_chunks}
+         action_env_dim: ${actor.model.action_dim}
+         num_steps: ${actor.model.num_steps}
+         model_action_dim: 32
+         paligemma_variant: "gemma_2b"
+         action_expert_variant: "gemma_300m"
+         max_token_len: 200
+         discrete_state_input: True
          use_rlt: True
          rlt_alpha: 1.0
          rlt_prefix_seq_len: 1024
@@ -234,15 +254,30 @@ Stage 2 中比较关键的字段：
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi"
-       model_path: "/path/to/stage1/checkpoint"
+       model_type: "openpi_rlinf"
+       precision: bf16
+       is_lora: False
+       num_action_chunks: 20
+       action_dim: 7
+       num_steps: 4
+       add_value_head: False
+       model_path: "/path/to/stage1/checkpoint/actor"
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
          norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
        openpi:
+         task: eval
          config_name: "pi05_franka_state"
          num_images_in_input: 1
          action_chunk: ${actor.model.ref_num_action_chunks}
+         action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
+         action_env_dim: ${rollout.rlt_feature_model.action_dim}
+         num_steps: ${rollout.rlt_feature_model.num_steps}
+         model_action_dim: 32
+         paligemma_variant: "gemma_2b"
+         action_expert_variant: "gemma_300m"
+         max_token_len: 200
+         discrete_state_input: True
          state_indices: []      # 保留完整 raw state；例如 19D state
          use_rlt: True
          rlt_prefix_seq_len: 1024
@@ -345,9 +380,9 @@ Stage 1：训练 RLT 特征模型
 
 .. code:: text
 
-   logs/<run-name>/checkpoints/global_step_<step>
+   logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Stage 2 中需要将这个目录填到 ``rollout.rlt_feature_model.model_path``。
+Stage 2 中需要将这个 ``actor`` 目录填到 ``rollout.rlt_feature_model.model_path``。
 不要把 Stage 1 checkpoint 填到 ``rollout.model.model_path`` 或
 ``actor.model.model_path``；这两个位置不负责加载 Stage 1 特征模型。
 
@@ -362,7 +397,7 @@ Stage 2：运行 RLT Actor-Critic
      model:
        model_path: null
      rlt_feature_model:
-       model_path: /path/to/stage1/checkpoint
+       model_path: /path/to/stage1/checkpoint/actor
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
        openpi:
@@ -725,5 +760,5 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
 - ManiSkill joint 示例使用 ``env.*.rlt_policy_switch``，不要再使用真机的 keyboard wrapper。
 - ManiSkill 的 ``proprio`` 来自 OpenPI processed ``observation.state``。如果新建仿真 dataconfig，需要同时检查数据集 ``state``、OpenPI transform 和 Stage 2 ``proprio_dim``。
 - Stage 1、Stage 2 和 checkpoint assets 中的 ``norm_stats.json`` 必须来自同一套数据语义和同一个 ``repo_id``。推荐通过 ``openpi_data.norm_stats_path`` 显式指定，避免 Stage 1 checkpoint 未写入 norm stats 时加载失败。
-- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 FSDP 检查点下的 ``actor`` 目录，例如 ``.../checkpoints/global_step_<step>/actor``。
+- ``rollout.rlt_feature_model.model_path`` 应指向 Stage 1 FSDP 检查点下的 ``actor`` 目录，例如 ``.../checkpoints/global_step_<step>/actor``。不要把 RLT Stage 1 checkpoint 转成裸 ``model.safetensors`` 再给 Stage 2 使用，因为 RLT token module 保存在完整 wrapper checkpoint 中。
 - 添加仿真示例时，可以新建仿真环境配置，保留 ``loss_type: rlt_ac`` 和 ``rollout.rlt_feature_model``，再把真机阶段切换逻辑替换成适合仿真的逻辑。

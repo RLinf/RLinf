@@ -50,7 +50,7 @@ WideSeek-R1 是一个面向广域信息检索任务的主智能体与子智能�
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.3-torch2.6.0-sglang0.4.6.post5-vllm0.8.5-megatron0.13.0-te2.1
+   docker pull rlinf/rlinf:agentic-rlinf0.4-torch2.11.0-sglang0.5.12.post1-vllm0.23.0-megatron0.17.0-te2.17
 
 如果你更倾向于本地环境，请安装 agentic 依赖栈：
 

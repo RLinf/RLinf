@@ -48,7 +48,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: SFT ManiSkill OpenPI test
@@ -99,7 +98,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_pytorch_sft
+          bash tests/e2e_tests/sft/run_vla_sft.sh behavior_openpi_rlinf_sft
 
       - name: Clean up
         run: |
@@ -179,7 +178,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ResNet Reward Model Training test

@@ -9,7 +9,7 @@ First, clone the RLinf repository:
 .. code:: bash
 
    # Mainland China users can use a mirror for faster cloning:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 

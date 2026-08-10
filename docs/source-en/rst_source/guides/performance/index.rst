@@ -1,8 +1,8 @@
 Performance
 ===========
 
-Use these guides when throughput, memory, placement, or large-model training
-efficiency becomes the bottleneck.
+Use these guides when latency, throughput, memory, placement, or large-model
+training efficiency becomes the bottleneck.
 
 .. list-table::
    :header-rows: 1
@@ -10,6 +10,12 @@ efficiency becomes the bottleneck.
 
    * - Guide
      - What you get
+   * - :doc:`RTC <../rtc>`
+     - Hide policy inference latency by overlapping it with action-chunk execution, in simulation and on real robots.
+   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
+     - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
+   * - :doc:`LoRA <../lora>`
+     - Train with LoRA adapters.
    * - :doc:`Auto Placement <../auto_placement>`
      - Auto-select the best placement for a workload.
    * - :doc:`Dynamic Scheduling <../dynamic_scheduling>`
@@ -18,17 +24,14 @@ efficiency becomes the bottleneck.
      - System-level profiling of Ray worker processes.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
-   * - :doc:`LoRA <../lora>`
-     - Train with LoRA adapters.
-   * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
-     - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
 
 .. toctree::
    :hidden:
 
+   RTC <../rtc>
+   Env Decoupled Mode <../env_decoupled_mode>
+   LoRA <../lora>
    Auto Placement <../auto_placement>
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
    5D Parallelism <../5D>
-   LoRA <../lora>
-   Env Decoupled Mode <../env_decoupled_mode>

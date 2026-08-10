@@ -178,7 +178,7 @@ rollout:
   # This is the actual Stage1 model path. Rollout uses it to convert raw env
   # observations into the Stage2 obs dict: z_rl, proprio, ref_chunk.
   rlt_feature_model:
-    model_type: "openpi_pytorch"
+    model_type: "openpi_rlinf"
     precision: bf16
     is_lora: False
     num_action_chunks: 20

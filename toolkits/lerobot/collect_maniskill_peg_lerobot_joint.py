@@ -79,6 +79,7 @@ def _bootstrap_repo_paths() -> Path:
 
 RLINF_ROOT = _bootstrap_repo_paths()
 
+from rlinf.data.storage.lerobot import add_frame_to_dataset  # noqa: E402
 from rlinf.envs.maniskill.peg_insertion_side_variants import (  # noqa: E402
     PANDA_WIDE_WRISTCAM_UID as SHARED_PANDA_WIDE_WRISTCAM_UID,
 )
@@ -380,7 +381,10 @@ def _write_episode_video(
 
 def _resolve_output_path(repo_id: str) -> Path:
     try:
-        from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.lerobot_dataset import HF_LEROBOT_HOME
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
     except ImportError as exc:
         raise _missing_dep_error("lerobot", "lerobot") from exc
 
@@ -400,7 +404,10 @@ def _create_dataset(
     image_writer_processes: int,
 ):
     try:
-        from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
     except ImportError as exc:
         raise _missing_dep_error("lerobot", "lerobot") from exc
 
@@ -776,7 +783,7 @@ def main() -> None:
                 )
 
             for frame in frames:
-                dataset.add_frame(frame)
+                add_frame_to_dataset(dataset, frame)
             dataset.save_episode()
             if args.save_videos:
                 _write_episode_video(
