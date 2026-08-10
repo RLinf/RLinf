@@ -18,6 +18,13 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
+USER_SPECIFIED_VENV=0
+USER_SPECIFIED_TORCH=0
+PI0_FAST_VENV_DIR="${PI0_FAST_VENV_DIR:-.venv-pi0-fast}"
+PI0_FAST_PYTHON_VERSION="${PI0_FAST_PYTHON_VERSION:-3.12.12}"
+PI0_FAST_TORCH_VERSION="${PI0_FAST_TORCH_VERSION:-2.11.0}"
+PI0_FAST_TRANSFORMERS_VERSION="${PI0_FAST_TRANSFORMERS_VERSION:-5.5.4}"
+PI0_FAST_INSTALL_FLASH_ATTN="${PI0_FAST_INSTALL_FLASH_ATTN:-0}"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -97,7 +104,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -113,11 +120,14 @@ Targets:
 
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
+                           pi0_fast defaults to Python 3.12.12, torch 2.11.0,
+                           and an isolated .venv-pi0-fast runtime.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
 
 Common options:
     -h, --help             Show this help message and exit.
-    --venv <dir>           Virtual environment directory name (default: .venv).
+    --venv <dir>           Virtual environment directory name (default: .venv;
+                           pi0_fast: .venv-pi0-fast).
     --torch <version>      Override torch version (e.g., 2.7.0). torchvision/torchaudio are derived
                            automatically (torchvision=0.<minor+15>.<patch>, torchaudio=<torch>).
                            torchcodec is left untouched. Patches pyproject.toml in place for the
@@ -176,6 +186,7 @@ parse_args() {
                     exit 1
                 fi
                 VENV_DIR="${2:-}"
+                USER_SPECIFIED_VENV=1
                 shift 2
                 ;;
             --python)
@@ -193,6 +204,7 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
+                USER_SPECIFIED_TORCH=1
                 shift 2
                 ;;
             --sglang)
@@ -300,6 +312,32 @@ parse_args() {
     if [ -z "$TARGET" ]; then
         TARGET="embodied"
     fi
+}
+
+configure_pi0_fast_runtime() {
+    if [ "$TARGET" != "embodied" ] || [ "$MODEL" != "pi0_fast" ]; then
+        return 0
+    fi
+
+    if [ "$USER_SPECIFIED_VENV" -eq 0 ]; then
+        VENV_DIR="$PI0_FAST_VENV_DIR"
+    else
+        echo "[install.sh] WARNING: pi0_fast is validated in an isolated venv; using --venv=${VENV_DIR}." >&2
+    fi
+
+    if [ "$USER_SET_PYTHON" -eq 0 ]; then
+        PYTHON_VERSION="$PI0_FAST_PYTHON_VERSION"
+    elif [[ "$PYTHON_VERSION" != 3.12.* ]]; then
+        echo "[install.sh] WARNING: pi0_fast is validated with Python ${PI0_FAST_PYTHON_VERSION}; using --python=${PYTHON_VERSION}." >&2
+    fi
+
+    if [ "$USER_SPECIFIED_TORCH" -eq 0 ]; then
+        TORCH_VERSION="$PI0_FAST_TORCH_VERSION"
+    elif [ "$TORCH_VERSION" != "$PI0_FAST_TORCH_VERSION" ]; then
+        echo "[install.sh] WARNING: pi0_fast is validated with torch ${PI0_FAST_TORCH_VERSION}; using --torch=${TORCH_VERSION}." >&2
+    fi
+
+    echo "[install.sh] pi0_fast runtime: venv=${VENV_DIR}, python=${PYTHON_VERSION}, torch=${TORCH_VERSION}, transformers=${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}"
 }
 
 validate_python_version() {
@@ -976,6 +1014,34 @@ restore_pyproject() {
     fi
 }
 
+cleanup_install() {
+    restore_pyproject
+    unset_mirror
+}
+
+apply_pi0_fast_dependency_overrides() {
+    if [ "$TARGET" != "embodied" ] || [ "$MODEL" != "pi0_fast" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$PYPROJECT_FILE" ]; then
+        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
+        exit 1
+    fi
+
+    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
+        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-pi0-fast-bak.$$"
+        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
+    fi
+    trap 'cleanup_install' EXIT INT TERM HUP
+
+    local transformers_version="${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}"
+    sed -i \
+        -e "s/\"transformers<=[^\"]*\"/\"transformers==${transformers_version}\"/" \
+        "$PYPROJECT_FILE"
+    echo "[install.sh] Patched embodied transformers for pi0_fast: transformers==${transformers_version}"
+}
+
 AGENTIC_DEFAULT_ENGINE="sglang"
 
 agentic_latest_version() {
@@ -1128,7 +1194,7 @@ apply_torch_override() {
 
     PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-torch-bak.$$"
     cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
-    trap 'restore_pyproject' EXIT INT TERM HUP
+    trap 'cleanup_install' EXIT INT TERM HUP
 
     if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$_torchcodec_spec" ]; then
         sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${_torchcodec_spec}\"/" "$PYPROJECT_FILE"
@@ -1265,7 +1331,7 @@ setup_mirror() {
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
-        trap 'unset_mirror' EXIT INT TERM HUP
+        trap 'cleanup_install' EXIT INT TERM HUP
     fi
 }
 
@@ -1904,6 +1970,55 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+}
+
+install_pi0_fast_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            uv pip install "cmake<4"
+            uv pip install -r "$SCRIPT_DIR/embodied/models/pi0_fast.txt"
+            uv pip install \
+                "transformers==${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}" \
+                "tokenizers>=0.22,<0.23" \
+                "huggingface-hub>=1.0,<2.0"
+            python - <<'EOF'
+import importlib
+import sys
+
+import torch
+import transformers
+
+module = importlib.import_module("lerobot.policies.pi0_fast")
+missing = [
+    name for name in ("PI0FastPolicy", "PI0FastConfig") if not hasattr(module, name)
+]
+if missing:
+    raise RuntimeError(f"LeRobot pi0_fast API missing: {missing}")
+if sys.version_info < (3, 12):
+    raise RuntimeError(
+        f"pi0_fast requires Python >=3.12, got {sys.version.split()[0]}"
+    )
+print(
+    "[install.sh] pi0_fast smoke: "
+    f"python={sys.version.split()[0]}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}"
+)
+EOF
+            if [ "$PI0_FAST_INSTALL_FLASH_ATTN" = "1" ]; then
+                install_flash_attn
+            else
+                echo "[install.sh] Skipping flash-attn for pi0_fast; set PI0_FAST_INSTALL_FLASH_ATTN=1 to opt in."
+            fi
+            uv pip uninstall pynvml || true
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for pi0_fast model." >&2
+            exit 1
+            ;;
+    esac
 }
 
 install_molmoact2_model() {
@@ -3017,12 +3132,14 @@ install_docs() {
 
 main() {
     parse_args "$@"
+    configure_pi0_fast_runtime
     validate_python_version
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
     setup_mirror
     apply_torch_override
+    apply_pi0_fast_dependency_overrides
 
     case "$TARGET" in
         embodied)
@@ -3053,6 +3170,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                pi0_fast)
+                    install_pi0_fast_model
                     ;;
                 molmoact2)
                     install_molmoact2_model

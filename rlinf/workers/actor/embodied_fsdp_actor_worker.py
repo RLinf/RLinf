@@ -35,6 +35,7 @@ from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
     append_to_dict,
     compute_critic_explained_variance_from_stats,
+    compute_group_success_metrics,
     compute_loss_mask,
     compute_rollout_metrics,
     compute_split_num,
@@ -53,6 +54,7 @@ from rlinf.utils.placement import (
 )
 from rlinf.utils.utils import (
     clear_memory,
+    get_loss_agg_func,
     masked_mean,
     reshape_entropy,
 )
@@ -72,6 +74,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
+        self._is_pi0_fast = (
+            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.PI0_FAST
+        )
+        self._pi0_fast_loss_agg_func = (
+            get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
+            if self._is_pi0_fast
+            else None
+        )
+        self._group_success_metrics: dict[str, float] = {}
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
         self.version = 0
@@ -232,6 +243,16 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             rollout_batch["loss_mask"] = loss_mask
             rollout_batch["loss_mask_sum"] = loss_mask_sum
 
+        self._group_success_metrics = {}
+        if self.cfg.algorithm.get("log_group_success_metrics", False):
+            self._group_success_metrics = compute_group_success_metrics(
+                rollout_batch["rewards"],
+                group_size=self.cfg.algorithm.group_size,
+                loss_mask=rollout_batch.get("loss_mask", None),
+                rewards_lower_bound=self.cfg.algorithm.get("rewards_lower_bound", None),
+                rewards_upper_bound=self.cfg.algorithm.get("rewards_upper_bound", None),
+            )
+
         # filter data by rewards
         if self.cfg.algorithm.get("filter_rewards", False):
             rewards = rollout_batch[
@@ -318,6 +339,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.rollout_batch.update({"loss_mask_sum": kwargs["loss_mask_sum"]})
 
         rollout_metrics = compute_rollout_metrics(self.rollout_batch)
+        rollout_metrics.update(self._group_success_metrics)
         return rollout_metrics
 
     @Worker.timer("actor/compute_opd_teacher_logprobs")
@@ -609,6 +631,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.OPENVLA,
             SupportedModel.OPENVLA_OFT,
+            SupportedModel.PI0_FAST,
         ]:
             kwargs["temperature"] = self.cfg.rollout.sampling_params.temperature_train
             kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
@@ -621,11 +644,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             kwargs["prev_logprobs"] = prev_logprobs
 
         compute_values = self.cfg.algorithm.adv_type == "gae"
+        compute_entropy = (
+            self.cfg.algorithm.entropy_bonus > 0
+            or self.cfg.algorithm.get("log_entropy_metrics", False)
+        )
         with self.amp_context:
             output_dict = self.model(
                 forward_inputs=forward_inputs,
                 compute_logprobs=True,
-                compute_entropy=self.cfg.algorithm.entropy_bonus > 0,
+                compute_entropy=compute_entropy,
                 compute_values=compute_values,
                 use_cache=False,
                 **kwargs,
@@ -660,10 +687,19 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
         }
+        if self._is_pi0_fast:
+            loss_kwargs.update(
+                {
+                    "logprob_mask": output_dict.get("logprob_mask", None),
+                    "loss_agg_func": self._pi0_fast_loss_agg_func,
+                    "log_logprob_diagnostics": True,
+                }
+            )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
+            SupportedModel.PI0_FAST,
         ]:
             loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
@@ -677,17 +713,44 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
         loss, metrics_data = policy_loss(**loss_kwargs)
         entropy_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
-        if self.cfg.algorithm.entropy_bonus > 0 and not loss_kwargs["critic_warmup"]:
-            entropy = output_dict["entropy"]
+        if compute_entropy and not loss_kwargs["critic_warmup"]:
+            entropy = output_dict.get("entropy", None)
+            if entropy is not None and self.cfg.algorithm.entropy_bonus <= 0:
+                entropy = entropy.detach()
             entropy = reshape_entropy(
                 entropy,
                 entropy_type=self.cfg.algorithm.entropy_type,
                 action_dim=self.cfg.actor.model.get("action_dim", 7),
                 batch_size=output_dict["logprobs"].shape[0],
             )
-            entropy_loss = masked_mean(entropy, mask=loss_mask)
-            loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
+            if entropy is not None:
+                entropy_mask = loss_mask
+                logprob_mask = output_dict.get("logprob_mask", None)
+                if logprob_mask is not None:
+                    entropy_mask = logprob_mask.to(dtype=torch.bool)
+                    if loss_mask is not None:
+                        env_mask = loss_mask.to(
+                            device=entropy_mask.device, dtype=torch.bool
+                        )
+                        while env_mask.ndim > 1 and env_mask.shape[-1] == 1:
+                            env_mask = env_mask.squeeze(-1)
+                        while env_mask.ndim < entropy_mask.ndim:
+                            env_mask = env_mask.unsqueeze(-1)
+                        entropy_mask = entropy_mask & env_mask
+                if self._is_pi0_fast:
+                    entropy_loss = self._pi0_fast_loss_agg_func(
+                        entropy, mask=entropy_mask
+                    )
+                else:
+                    entropy_loss = masked_mean(entropy, mask=loss_mask)
+                if self.cfg.algorithm.entropy_bonus > 0:
+                    loss -= self.cfg.algorithm.entropy_bonus * entropy_loss
         metrics_data["actor/entropy_loss"] = entropy_loss.detach().item()
+        if compute_entropy:
+            metrics_data["actor/entropy"] = entropy_loss.detach().item()
+            metrics_data["actor/entropy_bonus_term"] = (
+                self.cfg.algorithm.entropy_bonus * entropy_loss.detach().item()
+            )
 
         if self.enable_sft_co_train:
             loss = self._train_sft_epoch(metrics_data, loss)

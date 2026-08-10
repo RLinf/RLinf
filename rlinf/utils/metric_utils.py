@@ -229,6 +229,57 @@ def compute_split_num(num, split_num):
     return math.lcm(num, split_num) // split_num
 
 
+def compute_group_success_metrics(
+    rewards: torch.Tensor,
+    *,
+    group_size: int,
+    loss_mask: torch.Tensor | None = None,
+    success_threshold: float = 0.5,
+    rewards_lower_bound: float | None = None,
+    rewards_upper_bound: float | None = None,
+) -> dict[str, float]:
+    """Summarize per-group binary outcomes before GRPO reward filtering."""
+    if rewards.ndim < 2:
+        raise ValueError(
+            f"rewards must have at least two dimensions, got {rewards.shape}"
+        )
+    batch_size = rewards.shape[1]
+    if batch_size % group_size != 0:
+        raise ValueError(
+            f"reward batch size {batch_size} is not divisible by group_size {group_size}"
+        )
+
+    masked_rewards = rewards
+    if loss_mask is not None:
+        mask = torch.broadcast_to(
+            loss_mask.to(device=rewards.device, dtype=torch.bool), rewards.shape
+        )
+        masked_rewards = torch.where(mask, rewards, torch.zeros_like(rewards))
+
+    trajectory_rewards = masked_rewards.transpose(0, 1).reshape(batch_size, -1).sum(-1)
+    grouped_rewards = trajectory_rewards.reshape(-1, group_size)
+    successes_per_group = (grouped_rewards >= success_threshold).sum(dim=-1)
+    histogram = torch.bincount(successes_per_group, minlength=group_size + 1).float()
+    histogram /= max(successes_per_group.numel(), 1)
+
+    metrics = {
+        f"group_success_{success_count}_of_{group_size}_fraction": histogram[
+            success_count
+        ].item()
+        for success_count in range(group_size + 1)
+    }
+    metrics["group_mixed_fraction"] = (
+        1.0 - histogram[0] - histogram[group_size]
+    ).item()
+    if rewards_lower_bound is not None and rewards_upper_bound is not None:
+        mean_reward_per_group = grouped_rewards.mean(dim=-1)
+        keep_mask = (mean_reward_per_group >= rewards_lower_bound) & (
+            mean_reward_per_group <= rewards_upper_bound
+        )
+        metrics["group_filter_keep_fraction"] = keep_mask.float().mean().item()
+    return metrics
+
+
 def compute_critic_explained_variance_stats(
     returns: torch.Tensor,
     values: torch.Tensor,
@@ -502,6 +553,41 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
             "returns_min": min_ret,
         }
         rollout_metrics.update(returns_metrics)
+
+    forward_inputs = data_buffer.get("forward_inputs", {})
+    validity_metric_keys = {
+        "pi0_fast_prefix_valid": "prefix_valid_rate",
+        "pi0_fast_end_marker_present": "end_marker_rate",
+        "pi0_fast_decode_valid": "decode_valid_rate",
+    }
+    if isinstance(forward_inputs, dict) and any(
+        key in forward_inputs for key in validity_metric_keys
+    ):
+        decision_mask = None
+        dones = data_buffer.get("dones")
+        if dones is not None:
+            unfiltered_loss_mask, _ = compute_loss_mask(dones)
+            decision_mask = unfiltered_loss_mask.any(dim=-1)
+        elif loss_mask is not None:
+            decision_mask = loss_mask.to(dtype=torch.bool)
+            while decision_mask.ndim > 2:
+                decision_mask = decision_mask.any(dim=-1)
+
+        for input_key, metric_key in validity_metric_keys.items():
+            if input_key not in forward_inputs:
+                continue
+            values = forward_inputs[input_key].to(dtype=torch.float32)
+            while values.ndim > 2 and values.shape[-1] == 1:
+                values = values.squeeze(-1)
+            if decision_mask is not None:
+                mask = decision_mask.to(device=values.device)
+                if mask.shape != values.shape:
+                    mask = torch.broadcast_to(mask, values.shape)
+                values = values[mask]
+            else:
+                values = values.reshape(-1)
+            mean_value, _, _ = reduce_metrics(values)
+            rollout_metrics[metric_key] = mean_value
 
     return rollout_metrics
 

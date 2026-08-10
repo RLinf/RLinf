@@ -63,7 +63,8 @@ def compute_decoupled_ppo_actor_loss(
         and loss_mask is not None
     ):
         loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
-        loss_agg_func = masked_mean_ratio
+        if loss_agg_func is masked_mean:
+            loss_agg_func = masked_mean_ratio
 
     if proximal_logprobs is None:
         if versions is None or current_version is None:
@@ -182,6 +183,7 @@ def compute_ppo_actor_loss(
     clip_log_ratio_min: Optional[float] = None,
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
+    log_logprob_diagnostics: bool = False,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -224,7 +226,8 @@ def compute_ppo_actor_loss(
         and loss_mask is not None
     ):
         loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
-        loss_agg_func = masked_mean_ratio
+        if loss_agg_func is masked_mean:
+            loss_agg_func = masked_mean_ratio
 
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs).bool()
@@ -241,7 +244,8 @@ def compute_ppo_actor_loss(
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
-    log_ratio = logprobs - old_logprobs
+    raw_log_ratio = logprobs - old_logprobs
+    log_ratio = torch.where(loss_mask, raw_log_ratio, 0.0)
     if clip_log_ratio_min is not None:
         log_ratio = torch.clamp(log_ratio, min=clip_log_ratio_min)
     if clip_log_ratio_max is not None:
@@ -309,6 +313,60 @@ def compute_ppo_actor_loss(
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
+    if log_logprob_diagnostics:
+        raw_log_ratio_for_metrics = raw_log_ratio.detach()
+        logprobs_for_metrics = logprobs.detach()
+        old_logprobs_for_metrics = old_logprobs.detach()
+        finite_logprob_mask = (
+            torch.isfinite(raw_log_ratio_for_metrics)
+            & torch.isfinite(logprobs_for_metrics)
+            & torch.isfinite(old_logprobs_for_metrics)
+        )
+        logprob_stat_mask = loss_mask_for_metrics & finite_logprob_mask
+
+        def _masked_stat(values: torch.Tensor, reducer: str):
+            selected = values[logprob_stat_mask]
+            if selected.numel() == 0:
+                return torch.zeros((), device=values.device, dtype=values.dtype)
+            if reducer == "mean":
+                return selected.mean()
+            if reducer == "std":
+                return selected.std(unbiased=False)
+            if reducer == "min":
+                return selected.min()
+            if reducer == "max":
+                return selected.max()
+            raise ValueError(f"Unsupported reducer: {reducer}")
+
+        finite_count = (loss_mask_for_metrics & finite_logprob_mask).sum()
+        valid_count = loss_mask_for_metrics.sum()
+        finite_fraction = finite_count.float() / valid_count.clamp_min(1)
+        metrics_data.update(
+            {
+                "actor/logprob_delta_mean": _masked_stat(
+                    raw_log_ratio_for_metrics, "mean"
+                ).detach(),
+                "actor/logprob_delta_std": _masked_stat(
+                    raw_log_ratio_for_metrics, "std"
+                ).detach(),
+                "actor/logprob_delta_min": _masked_stat(
+                    raw_log_ratio_for_metrics, "min"
+                ).detach(),
+                "actor/logprob_delta_max": _masked_stat(
+                    raw_log_ratio_for_metrics, "max"
+                ).detach(),
+                "actor/logprob_delta_abs": _masked_stat(
+                    raw_log_ratio_for_metrics.abs(), "mean"
+                ).detach(),
+                "actor/logprob_finite_fraction": finite_fraction.detach(),
+                "actor/logprob_new_mean": _masked_stat(
+                    logprobs_for_metrics, "mean"
+                ).detach(),
+                "actor/logprob_old_mean": _masked_stat(
+                    old_logprobs_for_metrics, "mean"
+                ).detach(),
+            }
+        )
     return policy_loss, metrics_data
 
 

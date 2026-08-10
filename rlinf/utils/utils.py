@@ -341,12 +341,21 @@ def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     return loss
 
 
-def seq_mean_token_mean(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
-    seq_losses = torch.sum(values * mask, dim=-1) / torch.sum(
-        mask, dim=-1
-    )  # token-mean
-    loss = torch.mean(seq_losses)  # seq-mean
-    return loss
+def seq_mean_token_mean(
+    values: torch.Tensor,
+    mask: torch.Tensor,
+    loss_mask_ratio: torch.Tensor | None = None,
+    dim: int = -1,
+):
+    del loss_mask_ratio
+    mask = mask.to(device=values.device, dtype=torch.bool)
+    token_counts = mask.sum(dim=dim)
+    valid_sequences = token_counts > 0
+    masked_values = torch.where(mask, values, torch.zeros_like(values))
+    seq_losses = masked_values.sum(dim=dim) / token_counts.clamp_min(1)
+    if valid_sequences.any():
+        return seq_losses[valid_sequences].mean()
+    return torch.where(mask, values, torch.zeros_like(values)).sum()
 
 
 def masked_mean_ratio(
