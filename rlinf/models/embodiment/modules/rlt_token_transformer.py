@@ -103,7 +103,7 @@ class RLTSelfAttentionLayer(nn.Module):
 
 
 class RLTTokenEncoder(nn.Module):
-    """Compress VLA prefix embeddings into a small set of RL tokens."""
+    """Compress VLA prefix embeddings into a single RL token."""
 
     def __init__(
         self,
