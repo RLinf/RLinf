@@ -140,9 +140,15 @@ class MultiStepRolloutWorker(Worker):
 
     def init_worker(self):
         rollout_model_config = copy.deepcopy(self.model_cfg)
-        with open_dict(rollout_model_config):
-            rollout_model_config.precision = self.cfg.rollout.model.precision
-            rollout_model_config.model_path = self.cfg.rollout.model.model_path
+        if SupportedModel(self.model_cfg.model_type) == SupportedModel.PI0_FAST:
+            rollout_model_config = OmegaConf.merge(
+                rollout_model_config,
+                self.cfg.rollout.model,
+            )
+        else:
+            with open_dict(rollout_model_config):
+                rollout_model_config.precision = self.cfg.rollout.model.precision
+                rollout_model_config.model_path = self.cfg.rollout.model.model_path
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
@@ -480,6 +486,7 @@ class MultiStepRolloutWorker(Worker):
         if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.OPENPI,
             SupportedModel.OPENPI_RLINF,
+            SupportedModel.PI0_FAST,
             SupportedModel.EVO1,
             SupportedModel.MLP_POLICY,
             SupportedModel.GR00T,

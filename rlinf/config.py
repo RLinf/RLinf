@@ -90,6 +90,7 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PI0_FAST = SupportedModel.register("pi0_fast", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -137,6 +138,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.OPENPI_RLINF,
+        SupportedModel.PI0_FAST,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -1028,6 +1030,25 @@ def validate_embodied_cfg(cfg):
         assert algorithm_cfg.get("adv_type", None) != "opd", (
             "algorithm.recompute_logprobs is not supported with adv_type=opd."
         )
+    if model_type == SupportedModel.PI0_FAST:
+        assert model_cfg.get("num_action_chunks", 0) > 0, (
+            "pi0_fast requires model.num_action_chunks > 0."
+        )
+        assert model_cfg.get("action_dim", 0) > 0, (
+            "pi0_fast requires model.action_dim > 0."
+        )
+        pi0_fast_cfg = model_cfg.get("pi0_fast", {})
+        required_artifacts = {
+            "revision": "model",
+            "text_tokenizer_name": "text tokenizer",
+            "text_tokenizer_revision": "text tokenizer",
+            "action_tokenizer_name": "action tokenizer",
+            "action_tokenizer_revision": "action tokenizer",
+        }
+        for field, artifact in required_artifacts.items():
+            assert pi0_fast_cfg.get(field), (
+                f"pi0_fast requires a pinned {artifact} `{field}`."
+            )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
