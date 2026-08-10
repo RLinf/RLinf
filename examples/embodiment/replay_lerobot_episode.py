@@ -258,7 +258,7 @@ def main(cfg) -> None:
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             "ROS 2 is not sourced. Run `source /opt/ros/humble/setup.bash` and "
-            "`source /home/shang/RLinf/ros2_ws/install/setup.bash` first."
+            "`source /data/RLinf/ros2_ws/install/setup.bash` first."
         ) from exc
     if input(f"Type REPLAY {episode_index} to start hardware replay: ").strip() != (
         f"REPLAY {episode_index}"
