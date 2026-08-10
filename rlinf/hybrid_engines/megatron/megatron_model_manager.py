@@ -1001,27 +1001,17 @@ class MegatronModelManager:
         for _opt in _iter_opts(self.optimizer):
             self.offload_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
-                # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
-                if "exp_avg" in v and v["exp_avg"].is_cuda:
-                    buffer = v["exp_avg"]
-                    cpu_data = self._get_pinned_buffer(buffer)
-                    cpu_data.copy_(buffer.data, non_blocking=True)
-                    buffer.storage().resize_(0)
-                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
-                    buffer = v["exp_avg_sq"]
-                    cpu_data = self._get_pinned_buffer(buffer)
-                    cpu_data.copy_(buffer.data, non_blocking=True)
-                    buffer.storage().resize_(0)
-                # offload master_param too
-                if (
-                    "master_param" in v
-                    and torch.is_tensor(v["master_param"])
-                    and v["master_param"].is_cuda
-                ):
-                    buffer = v["master_param"]
-                    cpu_data = self._get_pinned_buffer(buffer)
-                    cpu_data.copy_(buffer.data, non_blocking=True)
-                    buffer.storage().resize_(0)
+                # Offloading through resetting the storage size can ensure that
+                # the tensor can be offloaded correctly even when it has tensor
+                # views. Mirrors the onload path: same three keys.
+                for _k in ("exp_avg", "exp_avg_sq", "master_param"):
+                    if _k not in v:
+                        continue
+                    _t = v[_k]
+                    if torch.is_tensor(_t) and _t.is_cuda:
+                        cpu_data = self._get_pinned_buffer(_t)
+                        cpu_data.copy_(_t.data, non_blocking=True)
+                        _t.storage().resize_(0)
         clear_memory()
 
         self.is_optimizer_offloaded = True

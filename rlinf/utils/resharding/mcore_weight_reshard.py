@@ -287,6 +287,10 @@ class MegatronCoreWeightReshard:
                     self.config.rollout_ep_size > 1
                     and self.config.ep_reshard_fn is not None
                 ):
+                    assert tpe_size == 1, (
+                        "EP reshard (rollout_ep_size > 1) expects no "
+                        f"tensor-parallel-expert (tpe_size == 1), got tpe_size={tpe_size}"
+                    )
                     ep_gathered_params = self.config.ep_reshard_fn(
                         ep_gathered_params,
                         self.config.rollout_ep_size,

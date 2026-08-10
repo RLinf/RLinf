@@ -27,7 +27,7 @@ def get_tp_reshard_fn(model_type: str):
         return tp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_reshard_fn_qwen3_moe
-    elif model_type == SupportedModel.DEEPSEEK_V3:
+    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
         return tp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -39,7 +39,7 @@ def get_tpe_reshard_fn(model_type: str):
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
-    elif model_type == SupportedModel.DEEPSEEK_V3:
+    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
         return tpe_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -49,7 +49,7 @@ def get_tpe_reshard_fn(model_type: str):
 
 def get_ep_reshard_fn(model_type: str):
     model_type = SupportedModel(model_type)
-    if model_type == SupportedModel.DEEPSEEK_V3:
+    if model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
         return ep_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
@@ -65,7 +65,7 @@ def get_pp_reshard_fn(model_type: str):
         return pp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return pp_reshard_fn_qwen3_moe
-    elif model_type == SupportedModel.DEEPSEEK_V3:
+    elif model_type in (SupportedModel.DEEPSEEK_V3, SupportedModel.KIMI_K2):
         return pp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
