@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import os
+import queue
 import tempfile
+import threading
+from collections.abc import Callable
 from typing import Any, Union
 
 from rlinf.utils.logging import get_logger
@@ -84,6 +87,56 @@ def local_mkdir_safe(path):
         os.makedirs(path, exist_ok=True)
 
     return path
+
+
+class AsyncMetricTableLogger:
+    """Run metric-table rendering on a background thread.
+
+    Rendering a table also uploads it to the metric backends, so runners submit
+    it instead of blocking their training loop on it. ``shutdown`` drains the
+    entries queued so far, which keeps the final step's table from being lost.
+    """
+
+    _STOP = object()
+
+    def __init__(self, log: Any, shutdown_timeout_s: float = 60.0) -> None:
+        self._log = log
+        self._shutdown_timeout_s = shutdown_timeout_s
+        self._queue: queue.Queue = queue.Queue()
+        self._stop_requested = False
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def submit(self, func: Callable[..., None], *args: Any) -> None:
+        """Queue ``func(*args)`` for the background thread."""
+        self._queue.put((func, args))
+
+    def shutdown(self) -> None:
+        """Drain the queued entries, then stop the background thread."""
+        if not self._stop_requested:
+            self._stop_requested = True
+            # The queue is FIFO, so the sentinel is dequeued last.
+            self._queue.put(self._STOP)
+
+        self._thread.join(timeout=self._shutdown_timeout_s)
+        if self._thread.is_alive():
+            self._log.warning(
+                "Metric-table logging did not stop within %.1f seconds.",
+                self._shutdown_timeout_s,
+            )
+
+    def _worker(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is self._STOP:
+                    return
+                func, args = item
+                func(*args)
+            except Exception as exc:  # noqa: BLE001 - keep the thread alive
+                self._log.error("Metric-table logging failed: %s", exc)
+            finally:
+                self._queue.task_done()
 
 
 class EarlyStopController:
