@@ -62,7 +62,7 @@ Agentic RL
 
 - Native Multi‑Agent Training Support introduces extensible multi‑agent reinforcement learning algorithms and unified data interfaces, significantly reducing the entry barrier for multi‑agent tasks. Enables rapid reproduction of complex `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_ such as :doc:`WideSeek-R1 <../examples/agentic/wideseek_r1/index>`.
 
-- PPO Support for Reasoning Tasks: `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_. Extends PPO algorithm support to reasoning tasks, further broadening RLinf’s applicability in complex reasoning and decision‑making scenarios with :doc:`Reasoning PPO <../examples/agentic/reasoning_ppo>`.
+- PPO Support for Reasoning Tasks: `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_. Extends PPO algorithm support to reasoning tasks, further broadening RLinf’s applicability in complex reasoning and decision‑making scenarios with :doc:`Reasoning PPO <../examples/agentic/language_models/reasoning_ppo>`.
 
 - The Megatron-LM backend now supports the FUSCO communication library: `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_. Delivers significant performance and scalability improvements for All-to-All communication during MoE model training and inference with :doc:`FUSCO <../examples/system/fusco>`.
 

@@ -62,7 +62,7 @@ Agentic 与 Reasoning RL
 
 - 原生多智能体训练支持：引入可扩展多智能体算法与统一数据接口，显著降低任务门槛，可快速复现复杂方案（如 :doc:`WideSeek-R1 <../examples/agentic/wideseek_r1/index>`），详见 `PR 824 <https://github.com/RLinf/RLinf/pull/824>`_
 
-- 推理任务 PPO 支持：将 PPO 能力扩展到推理场景（见 :doc:`Reasoning PPO <../examples/agentic/reasoning_ppo>`），详见 `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_
+- 推理任务 PPO 支持：将 PPO 能力扩展到推理场景（见 :doc:`Reasoning PPO <../examples/agentic/language_models/reasoning_ppo>`），详见 `PR 771 <https://github.com/RLinf/RLinf/pull/771>`_
 
 - Megatron-LM 后端支持 FUSCO 通信库，提升 MoE 训练/推理阶段 All-to-All 通信性能（见 :doc:`FUSCO <../examples/system/fusco>`），详见 `PR 783 <https://github.com/RLinf/RLinf/pull/783>`_
 
