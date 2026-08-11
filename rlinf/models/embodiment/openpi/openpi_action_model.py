@@ -104,7 +104,6 @@ class OpenPi0Config(Pi0Config):
     rlt_alpha: float = 1.0
     rlt_input_dim: int = 2048
     rlt_embed_dim: int = 2048
-    rlt_num_rl_tokens: int = 1
     rlt_prefix_seq_len: int = 768
     rlt_num_layers: int = 2
     rlt_num_heads: int = 8
@@ -218,7 +217,6 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             self.rlt_module = RLTTokenTransformer(
                 input_dim=self.config.rlt_input_dim,
                 embed_dim=self.config.rlt_embed_dim,
-                num_rl_tokens=self.config.rlt_num_rl_tokens,
                 prefix_seq_len=self.config.rlt_prefix_seq_len,
                 num_layers=self.config.rlt_num_layers,
                 num_heads=self.config.rlt_num_heads,

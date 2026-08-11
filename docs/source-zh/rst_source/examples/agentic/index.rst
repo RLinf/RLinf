@@ -71,10 +71,10 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
      </div>
 
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <a href="reasoning.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
+      <a href="language_models/reasoning.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-       <a href="reasoning.html" style="text-decoration: underline; color: blue;">
+       <a href="language_models/reasoning.html" style="text-decoration: underline; color: blue;">
          <b>使用 GRPO 训练 Math 推理任务</b>
         </a><br>
         使用强化学习提升数学推理能力，在 AIME24/AIME25/GPQA-diamond 上达到 SOTA
@@ -82,10 +82,10 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
     </div>
 
     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-      <a href="reasoning_ppo.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ppo_vs_grpo.png"
+      <a href="language_models/reasoning_ppo.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/ppo_vs_grpo.png"
            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-       <a href="reasoning_ppo.html" style="text-decoration: underline; color: blue;">
+       <a href="language_models/reasoning_ppo.html" style="text-decoration: underline; color: blue;">
          <b>使用 PPO 训练 Math 推理任务</b>
         </a><br>
         使用 PPO 算法进行数学推理强化学习训练，示例配置基于 Qwen2.5-1.5B
@@ -101,6 +101,17 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
         基于 GRPO 的视觉语言模型强化学习训练，用于几何问题求解（Geo3K）
       </p>
     </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <a href="language_models/moonlight.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/moonlight/moonlight_grpo_reward.jpeg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="language_models/moonlight.html" style="text-decoration: underline; color: blue;">
+         <b>Moonlight-16B GRPO</b>
+        </a><br>
+        使用 GRPO 训练 Moonlight-16B-A3B-Instruct（DeepSeek-V3 MLA + MoE）
+      </p>
+    </div>
    </div>
 
 .. toctree::
@@ -112,6 +123,5 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    Coding Online RL <coding_online_rl>
    Search-R1 <searchr1>
    rStar2 <rstar2>
-   Math GRPO <reasoning>
-   Math PPO <reasoning_ppo>
+   Language Models <language_models/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>
