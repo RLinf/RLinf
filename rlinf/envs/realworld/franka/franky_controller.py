@@ -16,7 +16,10 @@
 
 Expects a PREEMPT_RT kernel and ``rtprio>=80`` / unlimited memlock for the
 calling user; otherwise ``_apply_rt_hardening`` falls back to best-effort
-and logs a warning.
+and logs a warning. Without a realtime kernel, connection uses
+``RealtimeConfig.Ignore`` (override with ``FRANKA_REALTIME_IGNORE=0/1``).
+Used by both single-arm :class:`~rlinf.envs.realworld.franka.franka_env.FrankaEnv`
+and dual-arm :class:`~rlinf.envs.realworld.franka.dual_franka_env.DualFrankaEnv`.
 """
 
 import ctypes
@@ -32,6 +35,12 @@ from rlinf.envs.realworld.common.gripper import create_gripper
 from rlinf.scheduler import Cluster, NodePlacementStrategy, Worker
 from rlinf.utils.logging import get_logger
 
+from .end_effectors import (
+    EndEffector,
+    EndEffectorType,
+    create_end_effector,
+    normalize_end_effector_type,
+)
 from .franka_robot_state import FrankaRobotState
 
 # Franka Panda joint position / velocity limits.
@@ -81,11 +90,17 @@ class FrankyController(Worker):
         env_idx: int = 0,
         node_rank: int = 0,
         worker_rank: int = 0,
-        gripper_type: str = "robotiq",
+        end_effector_type: str = "franka_gripper",
+        end_effector_config: Optional[dict] = None,
+        gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
     ):
         return FrankyController.create_group(
-            robot_ip, gripper_type, gripper_connection
+            robot_ip,
+            end_effector_type,
+            end_effector_config or {},
+            gripper_type,
+            gripper_connection,
         ).launch(
             cluster=Cluster(),
             placement_strategy=NodePlacementStrategy(node_ranks=[node_rank]),
@@ -95,11 +110,31 @@ class FrankyController(Worker):
     def __init__(
         self,
         robot_ip: str,
-        gripper_type: str = "robotiq",
+        end_effector_type: str = "franka_gripper",
+        end_effector_config: Optional[dict] = None,
+        gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
     ):
         super().__init__()
         self._logger = get_logger()
+
+        if not robot_ip:
+            robot_ip = self._resolve_robot_ip_from_node()
+        if not robot_ip:
+            raise ValueError(
+                "Franka 'robot_ip' is not set and could not be resolved from "
+                f"node rank {self._cluster_node_rank}'s hardware infos. Provide "
+                "it in the env config, the Franka hardware config, or set the "
+                "'ROBOT_IP' environment variable on the controller's node."
+            )
+        self._robot_ip = robot_ip
+
+        # Dual-arm callers historically pass gripper_type without
+        # end_effector_type; normalization maps gripper_type over the default.
+        self._end_effector_type = normalize_end_effector_type(
+            end_effector_type,
+            gripper_type,
+        )
 
         # Must precede the franky import so mlockall catches its allocations.
         self._apply_rt_hardening()
@@ -107,15 +142,18 @@ class FrankyController(Worker):
         import franky
 
         self._franky = franky
-        self._robot = franky.Robot(robot_ip)
+        realtime_config = self._resolve_realtime_config(franky)
+        self._robot = franky.Robot(robot_ip, realtime_config=realtime_config)
         self._robot.recover_from_errors()
         self._robot.relative_dynamics_factor = _DYNAMICS_FACTOR
         self._robot.set_collision_behavior(_TORQUE_THRESHOLD, _FORCE_THRESHOLD)
 
-        self._gripper = self._build_gripper(
-            gripper_type=gripper_type,
-            gripper_connection=gripper_connection,
-            robot_ip=robot_ip,
+        self._gripper = None
+        self._end_effector: EndEffector | None = None
+        self._init_end_effector(
+            end_effector_config or {},
+            gripper_connection,
+            robot_ip,
         )
 
         # Joint and Cartesian trackers are mutually exclusive; each
@@ -128,27 +166,88 @@ class FrankyController(Worker):
         self._prev_cart_target_xyz: Optional[np.ndarray] = None
         self._prev_cart_target_quat: Optional[np.ndarray] = None
 
-        self._logger.info(f"FrankyController connected to robot at {robot_ip}")
+        self._logger.info(
+            "FrankyController connected to robot at %s (end_effector=%s)",
+            robot_ip,
+            self._end_effector_type.value,
+        )
 
-    def _build_gripper(
+    def _resolve_realtime_config(self, franky_mod):
+        """Pick Enforce vs Ignore for libfranka realtime checks.
+
+        ``FRANKA_REALTIME_IGNORE=1`` forces Ignore; ``=0`` forces Enforce.
+        If unset, Ignore when ``/sys/kernel/realtime`` is missing or not ``1``.
+        """
+        env = os.environ.get("FRANKA_REALTIME_IGNORE")
+        if env is not None:
+            ignore = env.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            try:
+                with open("/sys/kernel/realtime", encoding="ascii") as f:
+                    ignore = f.read().strip() != "1"
+            except OSError:
+                ignore = True
+
+        if ignore:
+            self._logger.warning(
+                "Connecting with franky.RealtimeConfig.Ignore "
+                "(non-RT kernel or FRANKA_REALTIME_IGNORE); "
+                "1 kHz control may be unstable until PREEMPT_RT is installed"
+            )
+            return franky_mod.RealtimeConfig.Ignore
+        return franky_mod.RealtimeConfig.Enforce
+
+    def _resolve_robot_ip_from_node(self) -> Optional[str]:
+        """Return the first ``robot_ip`` in this node's hardware infos, if any."""
+        try:
+            node_info = Cluster().get_node_info(self._cluster_node_rank)
+        except Exception as exc:  # pragma: no cover - defensive
+            self._logger.warning(
+                "Could not access node info to resolve robot_ip: %s", exc
+            )
+            return None
+        for resource in node_info.hardware_resources:
+            for info in resource.infos:
+                config = getattr(info, "config", None)
+                if config is None:
+                    continue
+                robot_ip = getattr(config, "robot_ip", None)
+                if robot_ip:
+                    return robot_ip
+                # Dual-arm hw configs expose left/right IPs.
+                for attr in ("left_robot_ip", "right_robot_ip"):
+                    robot_ip = getattr(config, attr, None)
+                    if robot_ip:
+                        return robot_ip
+        return None
+
+    def _init_end_effector(
         self,
-        gripper_type: str,
+        end_effector_config: dict,
         gripper_connection: Optional[str],
         robot_ip: str,
-    ):
-        """Pick the right gripper for the franky/libfranka stack."""
-        gt = (gripper_type or "robotiq").lower()
-        if gt == "franka":
-            raise NotImplementedError(
-                "FrankyController: the libfranka backend for the original "
-                "Franka Hand is not yet supported. Use gripper_type='robotiq' "
-                "for now."
+    ) -> None:
+        if self._end_effector_type.is_gripper:
+            self._gripper = create_gripper(
+                gripper_type=self._end_effector_type.gripper_backend,
+                port=gripper_connection,
+                robot_ip=robot_ip,
+                **end_effector_config,
             )
-        if gt == "robotiq":
-            return create_gripper(gripper_type="robotiq", port=gripper_connection)
-        raise ValueError(
-            f"FrankyController: unsupported gripper_type={gripper_type!r}. "
-            f"Supported: 'robotiq'."
+            self._logger.info(
+                "Gripper initialised: end_effector=%s",
+                self._end_effector_type.value,
+            )
+            return
+
+        self._end_effector = create_end_effector(
+            self._end_effector_type,
+            **end_effector_config,
+        )
+        self._end_effector.initialize()
+        self._logger.info(
+            "End-effector initialised: %s",
+            self._end_effector_type.value,
         )
 
     def _apply_rt_hardening(self) -> None:
@@ -188,7 +287,9 @@ class FrankyController(Worker):
     def is_robot_up(self) -> bool:
         try:
             _ = self._robot.state
-            return self._gripper.is_ready()
+            if self._end_effector_type.is_gripper:
+                return self._gripper.is_ready()
+            return True
         except Exception:
             return False
 
@@ -218,12 +319,30 @@ class FrankyController(Worker):
         s.tcp_torque = K_F_ext[3:]
         s.arm_jacobian = jacobian
         s.tcp_vel = jacobian @ joint_vel
-        s.gripper_position = self._gripper.position
-        s.gripper_open = self._gripper.is_open
+        if self._end_effector_type.is_gripper:
+            s.gripper_position = self._gripper.position
+            s.gripper_open = self._gripper.is_open
+            s.hand_position = None
+        else:
+            assert self._end_effector is not None
+            s.hand_position = self._end_effector.get_state()
         return s
 
     def clear_errors(self) -> None:
         self._robot.recover_from_errors()
+
+    def reconfigure_compliance_params(self, params: dict) -> None:
+        """No-op compatibility shim for FrankaEnv.reset.
+
+        Cartesian gains are fixed at tracker start via ``RLINF_CART_*`` env
+        vars. Runtime remapping is not implemented yet.
+        """
+        self._logger.warning(
+            "FrankyController.reconfigure_compliance_params is a no-op "
+            "(params=%s). Use RLINF_CART_K_T / RLINF_CART_K_R / "
+            "RLINF_CART_K_NS instead.",
+            params,
+        )
 
     def _ensure_tracking_motion(self) -> None:
         if self._tracker is not None:
@@ -369,6 +488,10 @@ class FrankyController(Worker):
 
         self._cart_tracker.set_target(self._franky.Affine(T))
 
+    def move_arm(self, position: np.ndarray) -> None:
+        """Compatibility alias for :meth:`move_tcp_pose` (FrankaEnv API)."""
+        self.move_tcp_pose(position)
+
     def reset_joint(self, reset_pos: list[float]) -> None:
         assert len(reset_pos) == 7
         self._stop_tracking_motion()
@@ -380,17 +503,86 @@ class FrankyController(Worker):
         )
         self._robot.move(motion)
 
+    def command_end_effector(self, action: np.ndarray) -> bool:
+        """Send an action to the active end-effector."""
+        if self._end_effector_type.is_gripper:
+            value = float(np.asarray(action).reshape(-1)[0])
+            # Read open state without a full get_state round-trip.
+            gripper_open = bool(self._gripper.is_open)
+            if value <= -0.5 and gripper_open:
+                self.close_gripper()
+                return True
+            if value >= 0.5 and not gripper_open:
+                self.open_gripper()
+                return True
+            return False
+
+        assert self._end_effector is not None
+        return self._end_effector.command(action)
+
+    def reset_end_effector(self, target_state: np.ndarray | None = None) -> None:
+        """Reset the end-effector to a target or default state."""
+        if self._end_effector_type.is_gripper:
+            if target_state is not None:
+                self.command_end_effector(np.asarray(target_state))
+            return
+
+        assert self._end_effector is not None
+        self._end_effector.reset(target_state)
+
     def open_gripper(self) -> None:
-        self._gripper.open(speed=1.0)
+        if self._end_effector_type.is_gripper:
+            self._gripper.open(speed=1.0)
+        self._logger.debug("Open gripper")
 
     def close_gripper(self) -> None:
-        self._gripper.close(speed=1.0)
+        if self._end_effector_type.is_gripper:
+            self._gripper.close(speed=1.0)
+        self._logger.debug("Close gripper")
+
+    def move_gripper(self, position: int, speed: float = 0.3) -> None:
+        assert 0 <= position <= 255, (
+            f"Invalid gripper position {position}, must be between 0 and 255"
+        )
+        if self._end_effector_type.is_gripper:
+            self._gripper.move(position, speed)
+        self._logger.debug(f"Move gripper to position: {position}")
+
+    def get_hand_type(self) -> str:
+        return self._end_effector_type.value
+
+    def get_hand_state(self) -> np.ndarray | None:
+        if self._end_effector_type.is_gripper:
+            return None
+        assert self._end_effector is not None
+        return self._end_effector.get_state()
+
+    def get_hand_detailed_state(self) -> dict:
+        if self._end_effector_type.is_gripper:
+            return {
+                "gripper_position": self._gripper.position,
+                "gripper_open": self._gripper.is_open,
+            }
+        assert self._end_effector is not None
+        return self._end_effector.get_detailed_state()
+
+    def get_hand_finger_names(self) -> list[str]:
+        if self._end_effector_type.is_gripper:
+            return ["gripper"]
+        assert self._end_effector is not None
+        return self._end_effector.finger_names
 
     def cleanup(self) -> None:
         self._stop_tracking_motion()
         self._stop_cart_tracking_motion()
         self._safe_join()
-        try:
-            self._gripper.cleanup()
-        except Exception:
-            pass
+        if self._end_effector_type.is_gripper:
+            try:
+                self._gripper.cleanup()
+            except Exception:
+                pass
+        elif self._end_effector is not None:
+            try:
+                self._end_effector.shutdown()
+            except Exception:
+                pass

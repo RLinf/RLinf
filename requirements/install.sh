@@ -2380,7 +2380,7 @@ install_franka_franky_env() {
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
-    install_lerobot
+    #install_lerobot
 }
 
 install_franka_dexhand_deps() {

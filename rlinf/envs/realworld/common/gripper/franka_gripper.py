@@ -15,7 +15,9 @@
 """Franka parallel-jaw gripper controlled via ROS topics.
 
 This module encapsulates the ROS channel setup and message publishing that
-were previously embedded in :class:`FrankaController`.
+were previously embedded in the legacy :class:`FrankaController`.
+New code should use :class:`FrankyFrankaGripper` (libfranka via franky)
+instead; this ROS backend remains for the deprecated controller path.
 """
 
 import numpy as np
