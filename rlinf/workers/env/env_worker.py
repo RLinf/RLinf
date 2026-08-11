@@ -48,7 +48,7 @@ from rlinf.utils.nested_dict_process import (
     split_dict_to_chunk,
     update_nested_cfg,
 )
-from rlinf.utils.obs_compression import compress_obs
+from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.utils import (
     flatten_embodied_batch,
@@ -84,9 +84,17 @@ class EnvWorker(Worker):
         ) in {"rlt_ac", "rlt_td3"}
         # Optional lossless compression of image observations before they are
         # sent to the rollout workers. Disabled unless `env.obs_compression`
-        # is present and `enable: true`.
+        # is present and `enable: true`. Compression runs inside a custom
+        # `split_fn` (see `_split_and_compress_obs`) so it happens *after* the
+        # channel splits the batch across ranks, keeping the scheduler's
+        # batch-size inference and splitting operating on plain tensors.
         self.obs_compression_cfg = OmegaConf.select(
             self.cfg, "env.obs_compression", default=None
+        )
+        self._obs_split_fn = (
+            self._split_and_compress_obs
+            if is_compression_enabled(self.obs_compression_cfg)
+            else None
         )
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
@@ -967,7 +975,26 @@ class EnvWorker(Worker):
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
-        return compress_obs(data, self.obs_compression_cfg)
+        return data
+
+    def _split_and_compress_obs(
+        self, data: dict[str, Any], split_sizes: list[int]
+    ) -> list[dict[str, Any]]:
+        """Split a rollout-input payload by batch, then compress each shard.
+
+        Used as the ``split_fn`` for observation ``send_to`` calls when
+        ``env.obs_compression`` is enabled. Splitting first keeps the
+        scheduler's ``infer_batch_size`` / ``split_batch`` operating on plain
+        tensors; compression is applied per shard so the rollout worker can
+        reconstruct it after receiving. When compression is disabled this
+        function is not installed and the default ``split_batch`` is used.
+        """
+        from rlinf.scheduler.worker.routing import split_batch
+
+        return [
+            compress_obs(shard, self.obs_compression_cfg)
+            for shard in split_batch(data, split_sizes)
+        ]
 
     def _send_train_bootstrap(
         self,
@@ -985,6 +1012,7 @@ class EnvWorker(Worker):
                 group_name=self.cfg.rollout.group_name,
                 channel=rollout_channel,
                 data=self._build_rollout_input_data(env_batch),
+                split_fn=self._obs_split_fn,
                 mode="train",
                 tag="rollout_results",
                 route_key=stage_id if not self.env_decoupled_mode else None,
@@ -1211,6 +1239,7 @@ class EnvWorker(Worker):
                             group_name=self.cfg.rollout.group_name,
                             channel=rollout_channel,
                             data=self._build_rollout_input_data(env_batch),
+                            split_fn=self._obs_split_fn,
                             mode="train",
                             tag="rollout_results",
                             route_key=stage_id if not self.env_decoupled_mode else None,
@@ -1403,6 +1432,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
                         data=self._build_rollout_input_data(env_batch),
+                        split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
@@ -1452,6 +1482,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
                         data=self._build_rollout_input_data(env_batch),
+                        split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,

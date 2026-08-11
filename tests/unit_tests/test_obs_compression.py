@@ -147,3 +147,31 @@ def test_unknown_codec_raises():
     payload = _make_payload()
     with pytest.raises(ValueError, match="Unknown observation compression codec"):
         compress_obs(payload, _cfg(codec="bogus"))
+
+
+@requires_codec
+@pytest.mark.parametrize("codec", _CODECS)
+def test_routing_split_then_compress_roundtrip(codec):
+    """Compression must be compatible with the Env->Rollout channel routing.
+
+    The env worker installs compression as a ``split_fn`` so it runs *after*
+    the scheduler splits the batch: ``infer_batch_size`` and ``split_batch``
+    see plain tensors, and each shard is compressed independently. This test
+    reproduces that flow with the real routing helpers and asserts the payload
+    survives split -> compress -> decompress -> merge unchanged.
+    """
+    routing = pytest.importorskip("rlinf.scheduler.worker.routing")
+
+    payload = _make_payload(num_envs=6)
+    # The scheduler infers the batch size from the *uncompressed* payload.
+    assert routing.infer_batch_size(payload) == 6
+
+    # split_fn = split_batch first, then compress each shard (env send path).
+    split_sizes = [2, 1, 3]
+    shards = routing.split_batch(payload, split_sizes)
+    compressed_shards = [compress_obs(shard, _cfg(codec=codec)) for shard in shards]
+
+    # Rollout side: decompress each shard, then merge (merge_obs path).
+    restored_shards = [decompress_obs(shard) for shard in compressed_shards]
+    merged = routing.merge_batches(restored_shards)
+    _assert_payload_equal(payload, merged)
