@@ -42,12 +42,6 @@ entry points — pick the one that matches your starting question:
 
       Build reward models for simulation and real-world reinforcement learning workflows.
 
-   .. grid-item-card:: Language Models
-      :link: language_models/index
-      :link-type: doc
-
-      RL training for large language models — math reasoning (GRPO/PPO) with Qwen and DeepSeek-V3 (Moonlight-16B).
-
    .. grid-item-card:: SFT
       :link: sft_index
       :link-type: doc
@@ -62,14 +56,20 @@ entry points — pick the one that matches your starting question:
 
 Beyond embodiment:
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 3 3
    :gutter: 3
+
+   .. grid-item-card:: Language Models
+      :link: language_models/index
+      :link-type: doc
+
+      RL training for large language models — math reasoning (GRPO/PPO) with Qwen and DeepSeek-V3 (Moonlight-16B).
 
    .. grid-item-card:: Agents
       :link: agentic/index
       :link-type: doc
 
-      Math reasoning and agentic AI workflows, in both single-agent and multi-agent settings.
+      Agentic AI workflows, in both single-agent and multi-agent settings.
 
    .. grid-item-card:: Systems
       :link: system/index
@@ -86,8 +86,8 @@ Beyond embodiment:
    Embodied Models <vla_wam_index>
    World Models <world_model_index>
    Reward Models <embodied/reward_model_index>
-   Language Models <language_models/index>
    SFT <sft_index>
    RL <methods_index>
+   Language Models <language_models/index>
    Agents <agentic/index>
    Systems <system/index>

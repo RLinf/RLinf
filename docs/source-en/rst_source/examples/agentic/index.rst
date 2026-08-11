@@ -2,7 +2,8 @@ Agentic Scenarios
 =================
 
 RLinf's worker abstraction, flexible communication modules, and support for various accelerators make it naturally suited for building agent workflows and training agents.
-The following examples include math reasoning RL and agentic AI workflows, such as agent workflow construction, online RL training, environment integration, and **reasoning-centric agent training**.
+The following examples cover agentic AI workflows, such as agent workflow construction, online RL training, environment integration, and **reasoning-centric agent training**.
+For math-reasoning RL on language models, see :doc:`../language_models/index`.
 
 .. raw:: html
 
