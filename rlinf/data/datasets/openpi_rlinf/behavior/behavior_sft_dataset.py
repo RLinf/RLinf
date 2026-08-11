@@ -29,10 +29,13 @@ import torch.distributed as dist
 from datasets import load_dataset
 from huggingface_hub import snapshot_download
 
-try:  # lerobot >= 0.2 layout
-    from lerobot.constants import HF_LEROBOT_HOME
-except ModuleNotFoundError:  # lerobot < 0.2
-    from lerobot.common.constants import HF_LEROBOT_HOME
+try:  # lerobot >= 0.4
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+except ModuleNotFoundError:
+    try:  # lerobot 0.2 - 0.3
+        from lerobot.constants import HF_LEROBOT_HOME
+    except ModuleNotFoundError:  # lerobot < 0.2
+        from lerobot.common.constants import HF_LEROBOT_HOME
 try:  # lerobot >= 0.2 layout
     from lerobot.datasets.lerobot_dataset import (
         CODEBASE_VERSION,
@@ -45,8 +48,16 @@ except ModuleNotFoundError:  # lerobot < 0.2
         LeRobotDataset,
         LeRobotDatasetMetadata,
     )
-try:  # lerobot >= 0.2 layout
-    from lerobot.datasets.utils import (
+
+# This module reads the v2.1 metadata layout directly — ``meta/tasks.jsonl``,
+# ``meta/episodes.jsonl``, ``meta/episodes_stats.jsonl`` — because BEHAVIOR
+# ships per-episode annotations LeRobot has no schema for. Dataset format v3.0
+# (lerobot >= 0.4) replaced those files with parquet and deleted the helpers
+# that read them, so there is nothing to fall back to; say so plainly instead
+# of surfacing an ImportError on a name nobody recognises. The BEHAVIOR install
+# pins lerobot to the v2.1 commit (see requirements/install.sh).
+try:
+    from lerobot.datasets.utils import (  # lerobot 0.2 - 0.3
         EPISODES_PATH,
         EPISODES_STATS_PATH,
         STATS_PATH,
@@ -83,6 +94,17 @@ except ModuleNotFoundError:  # lerobot < 0.2
         load_json,
         load_jsonlines,
     )
+except ImportError as exc:  # lerobot >= 0.4: dataset format v3.0
+    import lerobot as _lerobot
+
+    raise ImportError(
+        "BehaviorSftDataset needs the v2.1 LeRobot dataset format, but lerobot "
+        f"{getattr(_lerobot, '__version__', '?')} is installed and uses v3.0. "
+        "Install the pinned revision with "
+        "`bash requirements/install.sh embodied --model openpi --env behavior`, "
+        "or convert the dataset with lerobot's "
+        "`datasets/v30/convert_dataset_v21_to_v30.py` and port this module."
+    ) from exc
 try:  # lerobot >= 0.2 layout
     from lerobot.datasets.video_utils import get_safe_default_codec
 except ModuleNotFoundError:  # lerobot < 0.2

@@ -113,6 +113,7 @@ SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
+SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
@@ -265,7 +266,7 @@ def activation_to_func(
     return activation_func
 
 
-def validate_rollout_cfg(cfg, algorithm_cfg):
+def validate_rollout_cfg(cfg, algorithm_cfg, actor_cfg=None):
     SupportedModel(cfg.model.model_type)  # To validate model_type is supported
 
     def validate_sglang_cfg(cfg):
@@ -294,6 +295,15 @@ def validate_rollout_cfg(cfg, algorithm_cfg):
         cfg.gpu_memory_utilization = cfg.get("gpu_memory_utilization", 0.65)
         assert cfg.model.model_path is not None, (
             "rollout.model.model_path must be specified for rollout."
+        )
+
+        cfg.model.trust_remote_code = cfg.model.get(
+            "trust_remote_code",
+            OmegaConf.select(
+                actor_cfg if actor_cfg is not None else OmegaConf.create({}),
+                "tokenizer.trust_remote_code",
+                default=False,
+            ),
         )
 
         cfg.disable_log_stats = cfg.get("disable_log_stats", False)
@@ -413,6 +423,35 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
             hf_config, "moe_intermediate_size", None
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
+
+        # DeepSeek-V3 text backbone: MLA + MoE with shared expert.
+        if model_type in ("deepseek_v3",):
+            cfg.model.num_moe_experts = getattr(
+                hf_config, "n_routed_experts", cfg.model.num_moe_experts
+            )
+            cfg.model.num_experts = cfg.model.num_moe_experts
+            cfg.model.multi_latent_attention = True
+            for _mla_field in (
+                "q_lora_rank",
+                "kv_lora_rank",
+                "qk_nope_head_dim",
+                "qk_rope_head_dim",
+                "v_head_dim",
+            ):
+                _mla_v = getattr(hf_config, _mla_field, None)
+                if _mla_v is not None:
+                    cfg.model[_mla_field] = _mla_v
+            _moe_inter = getattr(hf_config, "moe_intermediate_size", 0) or 0
+            _n_shared = getattr(hf_config, "n_shared_experts", 1) or 1
+            cfg.model.moe_shared_expert_intermediate_size = (
+                _moe_inter * _n_shared or None
+            )
+            cfg.model.first_k_dense_replace = getattr(
+                hf_config, "first_k_dense_replace", 0
+            )
+            cfg.model.moe_router_topk_scaling_factor = getattr(
+                hf_config, "routed_scaling_factor", None
+            )
 
     return cfg
 
@@ -964,7 +1003,7 @@ def validate_embodied_cfg(cfg):
     # MolmoAct2 caches an action queue per batch index inside the LeRobot policy.
     # Pipeline stages hand the same indices to different environments on
     # alternating calls, so one env would execute another env's queued actions.
-    if SupportedModel(cfg.rollout.model.model_type) == SupportedModel.MOLMOACT2:
+    if model_type == SupportedModel.MOLMOACT2:
         assert cfg.rollout.pipeline_stage_num == 1, (
             "model_type 'molmoact2' requires rollout.pipeline_stage_num to be 1, "
             f"got {cfg.rollout.pipeline_stage_num}: the policy keys its "
@@ -1329,7 +1368,9 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 
@@ -1338,7 +1379,9 @@ def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
             f"runner.seq_length ({cfg.runner.seq_length}) must be greater than data.max_prompt_length ({cfg.data.max_prompt_length})"
         )
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 
@@ -1394,7 +1437,9 @@ def validate_coding_online_rl_cfg(cfg: DictConfig) -> DictConfig:
             or cfg.algorithm.get("importance_sampling_fix", False)
         )
 
-        cfg.rollout = validate_rollout_cfg(cfg.rollout, cfg.algorithm)
+        cfg.rollout = validate_rollout_cfg(
+            cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
     return cfg
 
 

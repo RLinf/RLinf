@@ -1,7 +1,7 @@
-RTC 评测
-========
+实时控制（RTC）
+================
 
-实时控制（Real-Time Control，RTC）是一种在部署期间隐藏推理延迟的技术。它将一个 action chunk 的执行与下一个 action chunk 的推理重叠：策略输出一个动作序列（chunk），环境开始逐帧执行；在执行过程中，RTC 提前请求下一 chunk 的推理结果，使推理延迟被动作执行时间覆盖。
+RTC 在部署期间隐藏推理延迟。它将一个 action chunk 的执行与下一个 action chunk 的推理重叠：策略输出一个动作序列（chunk），环境开始逐帧执行；在执行过程中，RTC 提前请求下一 chunk 的推理结果，使推理延迟被动作执行时间覆盖。
 
 RTC 同时支持仿真（LIBERO）和真机（Franka）评测，当前与 OpenPI π₀.₅ 策略集成。
 
@@ -123,7 +123,7 @@ RTC 将 ``wait_inference_time`` 从数秒降至约 2ms（接近零），几乎�
 真机实验
 --------
 
-真机部署请参考 :doc:`Franka 真机强化学习 <franka>`。此处仅说明 RTC 评测的差异。
+真机部署请参考 :doc:`Franka 真机强化学习 </rst_source/examples/embodied/franka>`。此处仅说明 RTC 评测的差异。
 
 控制节点安装
 

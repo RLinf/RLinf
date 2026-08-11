@@ -606,7 +606,9 @@ class CollectEpisode(gym.Wrapper):
         """Return ``{key: (H, W, C)}`` for all frame keys matching *prefix*.
 
         Matches both the bare ``prefix`` (e.g. ``wrist_image``) and indexed
-        variants (``wrist_image/0``, ``wrist_image/1``, …).
+        variants (``wrist_image-0``, ``wrist_image-1``, …). The separator is a
+        hyphen, not ``/``: lerobot >= 0.3 rejects feature names containing
+        ``/`` in ``LeRobotDatasetMetadata.create``.
         """
         return {
             k: tuple(frame[k].shape)

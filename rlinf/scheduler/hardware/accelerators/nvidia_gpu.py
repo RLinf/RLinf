@@ -90,7 +90,10 @@ def _query_egl_index_by_cuda_ordinal() -> dict[int, int]:
             query fails.
         OSError: If ``libEGL.so.1`` cannot be loaded.
     """
-    libegl = ctypes.CDLL("libEGL.so.1")
+    try:
+        libegl = ctypes.CDLL("libEGL.so.1")
+    except OSError as exc:
+        raise OSError(f"libEGL.so.1 is not loadable: {exc}") from exc
     libegl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
     libegl.eglGetProcAddress.restype = ctypes.c_void_p
 

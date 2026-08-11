@@ -97,6 +97,12 @@ class MegatronActor(MegatronWorker):
             self.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
             self.offload_model_buffer = {}
 
+        self.rollout_weights_reshard = None
+        _rollout_ep_size = (
+            self.cfg.rollout.tensor_parallel_size
+            if self.cfg.rollout.get("sglang", {}).get("enable_ep_moe", False)
+            else 1
+        )
         rollout_reshard_config = ReshardConfig(
             model_type=self.cfg.rollout.model.model_type,
             model_config=self.transformer_config,
@@ -105,6 +111,7 @@ class MegatronActor(MegatronWorker):
             mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
             mg_tpe_size=self.role_cfg.model.expert_tensor_parallel_size,
             moe_grouped_gemm=self.role_cfg.model.get("moe_grouped_gemm", None),
+            rollout_ep_size=_rollout_ep_size,
         )
         self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
         self._setup_rollout_weight_dst_ranks()

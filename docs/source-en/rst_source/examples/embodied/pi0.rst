@@ -103,7 +103,7 @@ Installation
 
 .. include:: _setup_common.rst
 
-**Option 1: Docker image** — image tag ``agentic-rlinf0.3-maniskill_libero``:
+**Option 1: Docker image** — image tag ``agentic-rlinf0.4-maniskill_libero``:
 
 .. code:: bash
 
@@ -112,9 +112,9 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the corresponding virtual environment via the built-in `switch_env` utility in the image:
 
@@ -382,6 +382,7 @@ If you still encounter OOM issues under the minimum parameter configuration, we 
 For models after SFT or RL training, we provide two evaluation methods:
 
 - Use RLinf's unified evaluation script; see :doc:`evaluation <../../evaluations/index>` for evaluation. This method supports parallel environment evaluation, which is fast, but only supports outputting the success rate of the entire task.
+- To hide inference latency during evaluation or deployment, π\ :sub:`0.5`\  is also integrated with RTC, which overlaps action-chunk execution with the next chunk's inference; see :doc:`RTC <../../guides/rtc>`.
 
 .. note::
 
