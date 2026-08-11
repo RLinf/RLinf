@@ -13,28 +13,85 @@
 # limitations under the License.
 
 import os
+from collections.abc import Iterable
 
 from omegaconf import DictConfig, OmegaConf
 
 
-class _TensorboardLogger:
+class _Backend:
+    """A metric backend whose teardown runs at most once."""
+
+    def __init__(self):
+        self._finished = False
+
+    def finish(self) -> None:
+        if not self._finished:
+            self._close()
+            self._finished = True
+
+    def _close(self) -> None:
+        raise NotImplementedError
+
+
+class _TensorboardLogger(_Backend):
     def __init__(self, log_path):
         from torch.utils.tensorboard import SummaryWriter
 
+        super().__init__()
         self.writer = SummaryWriter(log_path)
 
     def log(self, data: dict[str, float], step: int) -> None:
         for key, value in data.items():
             self.writer.add_scalar(key, value, step)
 
-    def finish(self):
+    def _close(self) -> None:
         self.writer.close()
+
+
+class _RunLogger(_Backend):
+    """A backend bound to the run object its ``init`` returned.
+
+    Logging through the run instead of the module keeps concurrently active
+    runs of the same backend from writing into whichever one was created last.
+    """
+
+    def __init__(self, run):
+        super().__init__()
+        self.run = run
+
+    def log(self, data: dict, step: int) -> None:
+        self.run.log(data, step=step)
+
+    def _close(self) -> None:
+        self.run.finish()
+
+
+class _WandbLogger(_RunLogger):
+    def __init__(self, module, run):
+        super().__init__(run)
+        self.module = module
+
+    def log_table(self, df_data, name: str, step: int) -> None:
+        self.run.log({name: self.module.Table(dataframe=df_data)}, step=step)
+
+
+def _finish_backends(backends: Iterable[_Backend]) -> None:
+    """Close every backend, re-raising the first failure once all are closed."""
+    first_error = None
+    for backend in backends:
+        try:
+            backend.finish()
+        except Exception as exc:  # noqa: BLE001 - close the remaining backends
+            first_error = first_error or exc
+    if first_error is not None:
+        raise first_error
 
 
 class MetricLogger:
     supported_logger = ["wandb", "swanlab", "tensorboard"]
 
     def __init__(self, cfg: DictConfig):
+        self._all_loggers = []
         self.cfg = cfg
         logger_cfg = cfg.runner.logger
 
@@ -61,9 +118,13 @@ class MetricLogger:
             assert all(
                 backend in self.supported_logger for backend in self.logger_backends
             ), f"Unsupported logger backend: {self.logger_backends}"
+        if self.per_worker_log and "swanlab" in self.logger_backends:
+            raise ValueError(
+                "SwanLab supports only one active run per process; "
+                "disable runner.per_worker_log or drop the swanlab backend."
+            )
 
         self.config = OmegaConf.to_container(cfg, resolve=True)
-        self._all_loggers = []
         self._worker_loggers: dict[tuple[str, int], dict] = {}
         self.logger = self._create_logger_bundle(
             log_path=self.log_path,
@@ -75,51 +136,65 @@ class MetricLogger:
         self, log_path: str, experiment_name: str, log_path_suffix: str = ""
     ) -> dict:
         logger = {}
-        if "wandb" in self.logger_backends:
-            import wandb
+        try:
+            if "wandb" in self.logger_backends:
+                import wandb
 
-            wandb_log_path = os.path.join(log_path, "wandb", log_path_suffix)
-            os.makedirs(wandb_log_path, exist_ok=True)
+                wandb_log_path = os.path.join(log_path, "wandb", log_path_suffix)
+                os.makedirs(wandb_log_path, exist_ok=True)
 
-            settings = None
-            if self.wandb_proxy:
-                settings = wandb.Settings(https_proxy=self.wandb_proxy)
-            wandb.init(
-                entity=self.wandb_entity,
-                project=self.project_name,
-                name=experiment_name,
-                config=self.config,
-                settings=settings,
-                dir=wandb_log_path,
-                reinit=True,
-            )
-            logger["wandb"] = wandb
+                settings = None
+                if self.wandb_proxy:
+                    settings = wandb.Settings(https_proxy=self.wandb_proxy)
+                run = wandb.init(
+                    entity=self.wandb_entity,
+                    project=self.project_name,
+                    name=experiment_name,
+                    config=self.config,
+                    settings=settings,
+                    dir=wandb_log_path,
+                    # "create_new" keeps per-worker runs alive side by side; it
+                    # needs wandb >= 0.19.10.
+                    reinit="create_new" if self.per_worker_log else True,
+                )
+                if run is None:
+                    raise RuntimeError("wandb.init() returned no run to log to")
+                logger["wandb"] = _WandbLogger(wandb, run)
 
-        if "swanlab" in self.logger_backends:
-            import swanlab
+            if "swanlab" in self.logger_backends:
+                import swanlab
 
-            swanlab_log_path = os.path.join(log_path, "swanlab", log_path_suffix)
-            os.makedirs(swanlab_log_path, exist_ok=True)
+                swanlab_log_path = os.path.join(log_path, "swanlab", log_path_suffix)
+                os.makedirs(swanlab_log_path, exist_ok=True)
 
-            swanlab.init(
-                project=self.project_name,
-                experiment_name=experiment_name,
-                config=self.config,
-                logdir=swanlab_log_path,
-                mode=self.swanlab_mode,
-            )
-            logger["swanlab"] = swanlab
+                run = swanlab.init(
+                    project=self.project_name,
+                    experiment_name=experiment_name,
+                    config=self.config,
+                    logdir=swanlab_log_path,
+                    mode=self.swanlab_mode,
+                )
+                if run is None:
+                    raise RuntimeError("swanlab.init() returned no run to log to")
+                logger["swanlab"] = _RunLogger(run)
 
-        if "tensorboard" in self.logger_backends:
-            tensorboard_log_path = os.path.join(
-                log_path, "tensorboard", log_path_suffix
-            )
-            os.makedirs(tensorboard_log_path, exist_ok=True)
+            if "tensorboard" in self.logger_backends:
+                tensorboard_log_path = os.path.join(
+                    log_path, "tensorboard", log_path_suffix
+                )
+                os.makedirs(tensorboard_log_path, exist_ok=True)
 
-            config_yaml_path = os.path.join(tensorboard_log_path, "config.yaml")
-            OmegaConf.save(self.cfg, config_yaml_path, resolve=True)
+                config_yaml_path = os.path.join(tensorboard_log_path, "config.yaml")
+                OmegaConf.save(self.cfg, config_yaml_path, resolve=True)
 
-            logger["tensorboard"] = _TensorboardLogger(tensorboard_log_path)
+                logger["tensorboard"] = _TensorboardLogger(tensorboard_log_path)
+        except BaseException:
+            try:
+                _finish_backends(logger.values())
+            except Exception:  # noqa: BLE001 - keep the construction failure
+                pass
+            raise
+
         self._all_loggers.append(logger)
         return logger
 
@@ -163,15 +238,18 @@ class MetricLogger:
 
     def log_table(self, df_data, name, step):
         if "wandb" in self.logger_backends:
-            table = self.logger["wandb"].Table(dataframe=df_data)
-            self.logger["wandb"].log({name: table}, step=step)
+            self.logger["wandb"].log_table(df_data=df_data, name=name, step=step)
         else:
             raise ValueError(f"Unsupported log table for {self.logger_backends}")
 
     def __del__(self):
-        self.finish()
+        try:
+            self.finish()
+        except Exception:  # noqa: BLE001 - a destructor must not raise
+            pass
 
     def finish(self):
-        for logger in self._all_loggers:
-            for logger_instance in logger.values():
-                logger_instance.finish()
+        """Close every backend. Safe to call more than once."""
+        _finish_backends(
+            backend for logger in self._all_loggers for backend in logger.values()
+        )
