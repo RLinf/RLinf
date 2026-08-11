@@ -53,20 +53,14 @@
 
 具身之外：
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 2
    :gutter: 3
-
-   .. grid-item-card:: 语言模型
-      :link: language_models/index
-      :link-type: doc
-
-      大语言模型的强化学习训练——基于 Qwen 与 DeepSeek-V3（Moonlight-16B）架构的数学推理（GRPO/PPO）。
 
    .. grid-item-card:: 智能体
       :link: agentic/index
       :link-type: doc
 
-      智能体 AI 工作流，涵盖单智能体与多智能体设置。
+      数学推理与智能体 AI 工作流，涵盖单智能体与多智能体设置。
 
    .. grid-item-card:: 系统
       :link: system/index
@@ -85,6 +79,5 @@
    奖励模型 <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
-   语言模型 <language_models/index>
    智能体 <agentic/index>
    系统 <system/index>

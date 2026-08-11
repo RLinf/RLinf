@@ -1,9 +1,9 @@
-Language Models
-================
+Math Reasoning
+==============
 
-RLinf supports reinforcement-learning training for large language models — including math
-reasoning (GRPO/PPO) with Qwen-based and DeepSeek-V3 (Moonlight-16B) architectures — using
-the Megatron-Bridge actor with SGLang rollout.
+RL training for math reasoning on large language models — GRPO and PPO on
+Qwen-based and DeepSeek-V3 (Moonlight-16B) architectures — using the
+Megatron-Bridge actor with SGLang rollout.
 
 .. raw:: html
 
@@ -40,24 +40,12 @@ the Megatron-Bridge actor with SGLang rollout.
          GRPO training for Moonlight-16B-A3B-Instruct (DeepSeek-V3 MLA + MoE)
        </p>
      </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-        <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
-          <b>Qwen3-VL GRPO for VQA</b>
-         </a><br>
-         GRPO training for vision-language reasoning on geometric problem solving (Geo3K)
-       </p>
-     </div>
    </div>
 
 .. toctree::
    :hidden:
    :maxdepth: 1
 
-   Qwen2.5 Math GRPO <reasoning>
-   Qwen2.5 Math PPO <reasoning_ppo>
-   Moonlight 16B Math GRPO <moonlight>
-   Qwen3 VL GRPO <qwen3_vl_geo3k>
+   Qwen2.5 GRPO <reasoning>
+   Qwen2.5 PPO <reasoning_ppo>
+   Moonlight-16B GRPO <moonlight>

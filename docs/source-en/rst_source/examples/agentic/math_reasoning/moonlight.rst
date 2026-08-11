@@ -123,7 +123,7 @@ Monitor training with:
 
    tensorboard --logdir ./logs --port 6006
 
-For common metric meanings, see :doc:`Training metrics <../../reference/metrics>`.
+For common metric meanings, see :doc:`Training metrics <../../../reference/metrics>`.
 
 .. raw:: html
 

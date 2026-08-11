@@ -120,7 +120,7 @@ precision-aware optimizer，``reward_type: math``）。
 
    tensorboard --logdir ./logs --port 6006
 
-指标含义见 :doc:`训练指标 <../../reference/metrics>`。
+指标含义见 :doc:`训练指标 <../../../reference/metrics>`。
 
 .. raw:: html
 

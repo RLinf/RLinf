@@ -1,8 +1,7 @@
 智能体场景
 ========================================
 
-RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例涵盖智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
-语言模型的数学推理强化学习见 :doc:`../language_models/index`。
+RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的支持使RLinf天然支持智能体工作流的构建，以及智能体的训练。以下示例包含数学推理强化学习与智能体 AI 工作流，例如智能体工作流构建、在线强化学习训练、环境接入，以及 **以推理为中心的智能体强化学习** 等场景。
 
 .. raw:: html
 
@@ -70,6 +69,29 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
          部署、推理、训练一体，高灵活性、高性能
        </p>
      </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <a href="math_reasoning/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="math_reasoning/index.html" style="text-decoration: underline; color: blue;">
+         <b>数学推理</b>
+        </a><br>
+        使用 GRPO 与 PPO 训练 Qwen2.5 与 Moonlight-16B 的数学推理能力
+      </p>
+    </div>
+
+    <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+      <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
+           style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+      <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+       <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
+         <b>使用 GRPO 训练 Qwen3-VL 视觉语言推理</b>
+        </a><br>
+        基于 GRPO 的视觉语言模型强化学习训练，用于几何问题求解（Geo3K）
+      </p>
+    </div>
+
    </div>
 
 .. toctree::
@@ -81,3 +103,5 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    Coding Online RL <coding_online_rl>
    Search-R1 <searchr1>
    rStar2 <rstar2>
+   数学推理 <math_reasoning/index>
+   Qwen3 VL GRPO <qwen3_vl_geo3k>

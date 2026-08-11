@@ -56,20 +56,14 @@ entry points — pick the one that matches your starting question:
 
 Beyond embodiment:
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 2
    :gutter: 3
-
-   .. grid-item-card:: Language Models
-      :link: language_models/index
-      :link-type: doc
-
-      RL training for large language models — math reasoning (GRPO/PPO) with Qwen and DeepSeek-V3 (Moonlight-16B).
 
    .. grid-item-card:: Agents
       :link: agentic/index
       :link-type: doc
 
-      Agentic AI workflows, in both single-agent and multi-agent settings.
+      Math reasoning and agentic AI workflows, in both single-agent and multi-agent settings.
 
    .. grid-item-card:: Systems
       :link: system/index
@@ -88,6 +82,5 @@ Beyond embodiment:
    Reward Models <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
-   Language Models <language_models/index>
    Agents <agentic/index>
    Systems <system/index>

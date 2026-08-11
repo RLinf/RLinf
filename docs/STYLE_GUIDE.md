@@ -31,7 +31,7 @@ question, not by the team that owns the feature.
 | Axis | Owns |
 |---|---|
 | **Get Started** | Install, quickstarts, requirements, cheat sheet. |
-| **Examples** | The recipe galleries (simulators, robots, models, SFT, algorithms, language models, agents, systems). |
+| **Examples** | The recipe galleries (simulators, robots, models, SFT, algorithms, agents, systems). |
 | **Evaluation** | Eval onboarding, benchmark eval guides, eval CLI / config / results reference. |
 | **Guides** | Operational how-tos: configure, launch & scale, data & checkpoints, performance, hardware backends, agent workflows. |
 | **Concepts** | The mental model: execution flow, workers, channels, cluster, placement, execution modes, replay buffer. |
@@ -49,11 +49,8 @@ operational/reference pages directly from their owning sections.
 simulators / benchmarks → `simulators_index`; physical hardware →
 `real_world_index`; model families and policy classes (including lightweight
 policies such as ``MLP``) → `vla_wam_index` (Models); training recipes /
-algorithms → `methods_index`; SFT-only workflows → `sft_index`; language-model
-RL (math reasoning GRPO/PPO) → `language_models/index`. Do not duplicate
-the same page in multiple gallery indexes. `language_models`, `agentic`, and
-`system` sit outside the embodied gallery — keep them in the "Beyond
-embodiment" card grid, not in the embodied one.
+algorithms → `methods_index`; SFT-only workflows → `sft_index`. Do not duplicate
+the same page in multiple gallery indexes.
 
 **Evaluation ownership.** Evaluation is a first-class top-level section, not an
 Examples subsection. `rst_source/evaluations/get_started/` owns eval onboarding,

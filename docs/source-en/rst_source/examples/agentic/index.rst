@@ -2,8 +2,7 @@ Agentic Scenarios
 =================
 
 RLinf's worker abstraction, flexible communication modules, and support for various accelerators make it naturally suited for building agent workflows and training agents.
-The following examples cover agentic AI workflows, such as agent workflow construction, online RL training, environment integration, and **reasoning-centric agent training**.
-For math-reasoning RL on language models, see :doc:`../language_models/index`.
+The following examples include math reasoning RL and agentic AI workflows, such as agent workflow construction, online RL training, environment integration, and **reasoning-centric agent training**.
 
 .. raw:: html
 
@@ -71,6 +70,29 @@ For math-reasoning RL on language models, see :doc:`../language_models/index`.
          Unified deployment, inference, and training with high flexibility and performance
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="math_reasoning/index.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/math_numbers_small.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="math_reasoning/index.html" style="text-decoration: underline; color: blue;">
+          <b>Math Reasoning</b>
+         </a><br>
+         GRPO and PPO training for math reasoning with Qwen2.5 and Moonlight-16B
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
+          <b>Qwen3-VL GRPO for VQA</b>
+         </a><br>
+         GRPO training for vision-language reasoning on geometric problem solving (Geo3K)
+       </p>
+     </div>
+
    </div>
 
 .. toctree::
@@ -82,3 +104,5 @@ For math-reasoning RL on language models, see :doc:`../language_models/index`.
    Coding Online RL <coding_online_rl>
    Search-R1 <searchr1>
    rStar2 <rstar2>
+   Math Reasoning <math_reasoning/index>
+   Qwen3 VL GRPO <qwen3_vl_geo3k>
