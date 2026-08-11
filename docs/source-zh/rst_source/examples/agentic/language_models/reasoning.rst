@@ -163,7 +163,7 @@ GRPO 工作方式
 
    tensorboard --logdir ./logs --port 6006
 
-通用指标含义见 :doc:`训练指标 <../../reference/metrics>`。下面展示训练曲线。
+通用指标含义见 :doc:`训练指标 <../../../reference/metrics>`。下面展示训练曲线。
 
 .. raw:: html
 
