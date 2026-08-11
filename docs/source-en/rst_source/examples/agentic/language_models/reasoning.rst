@@ -118,7 +118,7 @@ Run It
 
 **1. Key Parameters Configuration**
 
-Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../reference/configuration>`.
+Before launching, check the configuration file. For common cluster, runner, rollout, and data fields, see :doc:`Training configuration <../../../reference/configuration>`.
 
 **2. Configuration File**
 
@@ -161,7 +161,7 @@ After launch, monitor training with:
 
    tensorboard --logdir ./logs --port 6006
 
-For common metric meanings, see :doc:`Training metrics <../../reference/metrics>`. The following plots show training curves.
+For common metric meanings, see :doc:`Training metrics <../../../reference/metrics>`. The following plots show training curves.
 
 .. raw:: html
 

@@ -747,3 +747,34 @@ jobs:
           find /workspace/results -maxdepth 3 -type d \( -name checkpoints -o -name converted_ckpts \) \
                -prune -exec rm -rf {} + 2>/dev/null || true
           uv cache prune
+
+  moonlight-mbridge-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh agentic
+
+      - name: Train Moonlight-16B with SGLang Megatron-Bridge Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export PYTHONPATH=/workspace/dataset/Megatron-Bridge-0.4.2/src:$PYTHONPATH
+          export PYTHONPATH=/workspace/dataset/Megatron-LM-core0.17:$PYTHONPATH
+          export CUDA_DEVICE_MAX_CONNECTIONS=1
+          bash tests/e2e_tests/reasoning/run.sh moonlight-16b-grpo-mbridge-sgl
+          rm -rf /workspace/results/moonlight-16b-megatron-mbridge/
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
