@@ -38,6 +38,17 @@ RLinf 支持大语言模型的强化学习训练——包括基于 Qwen 与 Deep
          使用 GRPO 训练 Moonlight-16B-A3B-Instruct（DeepSeek-V3 MLA + MoE）
        </p>
      </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="qwen3_vl_geo3k.html" style="display: block;"><img src="https://github.com/RLinf/misc/raw/main/pic/geo_problem.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+        <a href="qwen3_vl_geo3k.html" style="text-decoration: underline; color: blue;">
+          <b>使用 GRPO 训练 Qwen3-VL 视觉语言推理</b>
+         </a><br>
+         基于 GRPO 的视觉语言模型强化学习训练，用于几何问题求解（Geo3K）
+       </p>
+     </div>
    </div>
 
 .. toctree::
@@ -47,3 +58,4 @@ RLinf 支持大语言模型的强化学习训练——包括基于 Qwen 与 Deep
    Qwen2.5 Math GRPO <reasoning>
    Qwen2.5 Math PPO <reasoning_ppo>
    Moonlight 16B Math GRPO <moonlight>
+   Qwen3 VL GRPO <qwen3_vl_geo3k>
