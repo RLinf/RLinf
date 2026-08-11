@@ -39,6 +39,12 @@
 
       构建用于仿真与真实机器人强化学习流程的奖励模型。
 
+   .. grid-item-card:: 语言模型
+      :link: language_models/index
+      :link-type: doc
+
+      大语言模型的强化学习训练——基于 Qwen 与 DeepSeek-V3（Moonlight-16B）架构的数学推理（GRPO/PPO）。
+
    .. grid-item-card:: SFT
       :link: sft_index
       :link-type: doc
@@ -77,6 +83,7 @@
    具身模型 <vla_wam_index>
    世界模型 <world_model_index>
    奖励模型 <embodied/reward_model_index>
+   语言模型 <language_models/index>
    SFT <sft_index>
    RL <methods_index>
    智能体 <agentic/index>
