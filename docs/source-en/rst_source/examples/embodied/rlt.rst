@@ -119,6 +119,13 @@ Please switch to the OpenPI virtual environment via the built-in ``switch_env`` 
    bash requirements/install.sh embodied --model openpi --env maniskill_libero
    source .venv/bin/activate
 
+RLT uses ``model_type: openpi_rlinf`` in the configs below. The install target
+is still ``openpi`` because the vendored PyTorch model shares the OpenPI runtime
+and the RLT Stage 1 dataloader keeps using the OpenPI data pipeline for
+ManiSkill and real-world compatibility. This ``openpi_rlinf`` path is RLinf's
+vendored PyTorch Pi0.5 implementation aligned with the JAX OpenPI reference, not
+the older official OpenPI PyTorch path.
+
 How RLT Works
 -------------
 
@@ -154,13 +161,27 @@ Important Stage 1 fields:
      model:
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
-       model_type: "openpi"
+       model_type: "openpi_rlinf"
+       precision: fp32
        is_lora: False
        model_path: "/path/to/model"
        num_action_chunks: 20
+       action_dim: 7
+       num_steps: 4
+       add_value_head: False
        openpi:
+         task: sft
          config_name: "pi05_franka_state"
          num_images_in_input: 1
+         action_horizon: ${actor.model.num_action_chunks}
+         action_chunk: ${actor.model.num_action_chunks}
+         action_env_dim: ${actor.model.action_dim}
+         num_steps: ${actor.model.num_steps}
+         model_action_dim: 32
+         paligemma_variant: "gemma_2b"
+         action_expert_variant: "gemma_300m"
+         max_token_len: 200
+         discrete_state_input: True
          use_rlt: True
          rlt_alpha: 1.0
          rlt_prefix_seq_len: 1024
@@ -254,15 +275,30 @@ Important Stage 2 fields:
        num_action_chunks: ${actor.model.num_action_chunks}
        ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
      rlt_feature_model:
-       model_type: "openpi"
-       model_path: "/path/to/stage1/checkpoint"
+       model_type: "openpi_rlinf"
+       precision: bf16
+       is_lora: False
+       num_action_chunks: 20
+       action_dim: 7
+       num_steps: 4
+       add_value_head: False
+       model_path: "/path/to/stage1/checkpoint/actor"
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
          norm_stats_path: /path/to/lerobot_dataset/norm_stats.json
        openpi:
+         task: eval
          config_name: "pi05_franka_state"
          num_images_in_input: 1
          action_chunk: ${actor.model.ref_num_action_chunks}
+         action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
+         action_env_dim: ${rollout.rlt_feature_model.action_dim}
+         num_steps: ${rollout.rlt_feature_model.num_steps}
+         model_action_dim: 32
+         paligemma_variant: "gemma_2b"
+         action_expert_variant: "gemma_300m"
+         max_token_len: 200
+         discrete_state_input: True
          state_indices: []      # keep the full raw state, e.g. 19D
          use_rlt: True
          rlt_prefix_seq_len: 1024
@@ -369,9 +405,9 @@ The saved checkpoint directory should look like:
 
 .. code:: text
 
-   logs/<run-name>/checkpoints/global_step_<step>
+   logs/<run-name>/checkpoints/global_step_<step>/actor
 
-Use this directory as ``rollout.rlt_feature_model.model_path`` in Stage 2.
+Use this ``actor`` directory as ``rollout.rlt_feature_model.model_path`` in Stage 2.
 Do not put the Stage 1 checkpoint under ``rollout.model.model_path`` or
 ``actor.model.model_path``; those fields do not load the Stage 1 feature model.
 
@@ -386,7 +422,7 @@ Edit the Stage 2 config:
      model:
        model_path: null
      rlt_feature_model:
-       model_path: /path/to/stage1/checkpoint
+       model_path: /path/to/stage1/checkpoint/actor
        openpi_data:
          repo_id: "realworld_peg_insertion_rlt_stage1"
        openpi:
@@ -783,7 +819,7 @@ Practical Notes
   When you add a new simulator dataconfig, check the dataset ``state``, OpenPI
   transform, and Stage 2 ``proprio_dim`` together.
 - Stage 1, Stage 2, and checkpoint assets must load ``norm_stats.json`` from the same data semantics and ``repo_id``. Prefer setting ``openpi_data.norm_stats_path`` explicitly so Stage 1 runs still work when the checkpoint does not embed norm stats.
-- ``rollout.rlt_feature_model.model_path`` should point to the Stage 1 FSDP ``actor`` directory, for example ``.../checkpoints/global_step_<step>/actor``.
+- ``rollout.rlt_feature_model.model_path`` should point to the Stage 1 FSDP ``actor`` directory, for example ``.../checkpoints/global_step_<step>/actor``. Do not convert the RLT Stage 1 checkpoint to a bare ``model.safetensors`` for Stage 2, because the RLT token module is stored in the full wrapper checkpoint.
 - To add a simulator example, create a simulator environment config, keep
   ``loss_type: rlt_ac`` and ``rollout.rlt_feature_model``, and replace the
   real-robot phase-switching logic with simulator-appropriate behavior.

@@ -178,19 +178,31 @@ rollout:
   # This is the actual Stage1 model path. Rollout uses it to convert raw env
   # observations into the Stage2 obs dict: z_rl, proprio, ref_chunk.
   rlt_feature_model:
-    model_type: "openpi"
-    precision: null
+    model_type: "openpi_rlinf"
+    precision: bf16
     is_lora: False
+    num_action_chunks: 20
+    action_dim: 7
+    num_steps: 4
+    add_value_head: False
     # Checkpoint produced by examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml.
     model_path: "/path/to/stage1/checkpoint"
     openpi_data:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.
       repo_id: "realworld_peg_insertion_rlt_stage1"
     openpi:
+      task: eval
       config_name: "pi05_franka_state"
       num_images_in_input: 1
       action_chunk: ${actor.model.ref_num_action_chunks}
+      action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
+      action_env_dim: ${rollout.rlt_feature_model.action_dim}
       num_steps: 4
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
       # Keep the collected 19D raw state as Stage2 proprio.
       state_indices: []
       noise_method: "flow_noise"

@@ -17,6 +17,13 @@ from __future__ import annotations
 from typing import Any
 
 from rlinf.config import torch_dtype_from_precision
+from rlinf.models.embodiment.openpi_rlinf.utils.rlt_utils import (
+    FULL_WEIGHTS_CANDIDATES,
+    load_base_safetensors,
+    load_full_wrapper_weights,
+    resolve_full_weights,
+    resolve_model_safetensors,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -25,14 +32,14 @@ logger = get_logger()
 def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
     """Build an OpenPI PyTorch Pi0/Pi0.5 model from ``actor.model`` config.
 
-    ``cfg.model_path`` points at a new-format checkpoint containing
-    ``model.safetensors``. Model shape comes from YAML; no checkpoint
+    ``cfg.model_path`` may point at either a new-format base checkpoint
+    containing ``model.safetensors`` or an RLinf FSDP SFT checkpoint containing
+    ``full_weights.pt``. Model shape comes from YAML; no checkpoint
     ``config.json`` is read. ``cfg.openpi.task`` selects the SFT, eval, or RL
     wrapper around the shared Pi0 core.
     """
     import pathlib
 
-    import safetensors.torch
     from omegaconf import OmegaConf
 
     from rlinf.models.embodiment.openpi_rlinf.pi0_model import gemma as pi0_gemma
@@ -53,10 +60,15 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         else torch_dtype_from_precision(cfg.precision)
     )
 
-    model_path = pathlib.Path(cfg.model_path)
-    weights_path = model_path / "model.safetensors"
-    if not weights_path.exists():
-        raise FileNotFoundError(f"openpi_rlinf checkpoint not found: {weights_path}")
+    model_path = pathlib.Path(cfg.model_path).expanduser()
+    safetensors_path = resolve_model_safetensors(model_path)
+    full_weights_path = resolve_full_weights(model_path)
+    if safetensors_path is None and full_weights_path is None:
+        raise FileNotFoundError(
+            "openpi_rlinf checkpoint not found. Expected either "
+            f"{model_path}/model.safetensors or one of "
+            f"{[str(model_path / rel) for rel in FULL_WEIGHTS_CANDIDATES]}."
+        )
 
     pi0_kwargs = {
         "pi05": pi05,
@@ -78,8 +90,8 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
 
     pi0_config = Pi0Config(**pi0_kwargs)
     model = pi0_config.create()
-    state_dict = safetensors.torch.load_file(str(weights_path), device="cpu")
-    model.load_state_dict(state_dict, strict=True)
+    if safetensors_path is not None and full_weights_path is None:
+        load_base_safetensors(model, safetensors_path)
     n_params = sum(param.numel() for param in model.parameters())
     if target_dtype is not None:
         model = model.to(target_dtype)
@@ -96,19 +108,8 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         )
     task = str(task).lower()
 
-    logger.info(
-        "openpi_rlinf[%s]: loaded %s (%.2fB params) strict from %s "
-        "precision=%s num_steps=%s",
-        task,
-        pi0_config,
-        n_params / 1e9,
-        weights_path,
-        cfg.precision,
-        num_steps,
-    )
-
     if task == "eval":
-        return _build_eval_model(
+        wrapper = _build_eval_model(
             cfg,
             model_cfg,
             model,
@@ -116,17 +117,16 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             action_chunk=action_chunk,
             action_env_dim=action_env_dim,
         )
-
-    if task == "sft":
-        return _build_sft_model(
+    elif task == "sft":
+        wrapper = _build_sft_model(
+            model_cfg,
             model,
             num_steps=num_steps,
             action_env_dim=action_env_dim,
         )
-
-    if task == "rl":
+    elif task == "rl":
         paligemma_width = pi0_gemma.get_config(pi0_config.paligemma_variant).width
-        return _build_rl_model(
+        wrapper = _build_rl_model(
             cfg,
             model_cfg,
             model,
@@ -135,8 +135,27 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             action_env_dim=action_env_dim,
             paligemma_width=paligemma_width,
         )
+    else:
+        raise ValueError(
+            f"actor.model.openpi.task={task!r} is not supported; "
+            "use 'eval', 'sft', or 'rl'."
+        )
 
-    raise ValueError(
-        f"actor.model.openpi.task={task!r} is not supported; "
-        "use 'eval', 'sft', or 'rl'."
+    if full_weights_path is not None:
+        load_full_wrapper_weights(
+            wrapper,
+            full_weights_path,
+            expect_rlt=bool(OmegaConf.select(model_cfg, "use_rlt", default=False)),
+        )
+
+    source = full_weights_path if full_weights_path is not None else safetensors_path
+    logger.info(
+        "openpi_rlinf[%s]: loaded %s (%.2fB params) from %s precision=%s num_steps=%s",
+        task,
+        pi0_config,
+        n_params / 1e9,
+        source,
+        cfg.precision,
+        num_steps,
     )
+    return wrapper

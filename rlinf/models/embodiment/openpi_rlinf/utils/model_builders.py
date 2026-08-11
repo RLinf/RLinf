@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import logging
 
+from rlinf.models.embodiment.openpi_rlinf.utils.rlt_utils import build_rlt_config
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,12 +89,14 @@ def _build_eval_model(
         action_chunk=action_chunk,
         config_name=config_name,
         state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
+        rlt_cfg=build_rlt_config(model_cfg),
     )
     eval_model.setup_wrappers(input_transforms, output_transforms)
     return eval_model
 
 
 def _build_sft_model(
+    model_cfg,
     model,
     *,
     num_steps,
@@ -113,6 +117,7 @@ def _build_sft_model(
         model,
         num_steps=num_steps,
         action_env_dim=action_env_dim,
+        rlt_cfg=build_rlt_config(model_cfg),
     )
 
 
