@@ -40,6 +40,7 @@ from rlinf.envs.maniskill.peg_insertion_side_variants import (
     snapshot_peg_insertion_event_state,
     wrap_rlt_openpi_joint_obs,
 )
+from rlinf.envs.maniskill.utils import allow_pci_render_backend
 
 __all__ = ["ManiskillRLTEnv"]
 
@@ -137,6 +138,7 @@ class ManiskillRLTEnv(ManiskillEnv):
             env_args,
             wrap_obs_mode=getattr(cfg, "wrap_obs_mode", "default"),
         )
+        allow_pci_render_backend()
         self.env: BaseEnv = gym.make(**env_args)
         self.prev_step_reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
             self.device
@@ -835,6 +837,8 @@ class ManiskillRLTEnv(ManiskillEnv):
     def step(
         self, actions: Union[Array, dict] = None, auto_reset=True
     ) -> tuple[Array, Array, Array, Array, dict]:
+        if isinstance(actions, torch.Tensor):
+            actions = actions.to(self.device)
         raw_obs, _reward, terminations, truncations, infos = self.env.step(actions)
         infos = maybe_augment_peg_insertion_info(
             env=self.env.unwrapped,
