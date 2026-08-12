@@ -244,7 +244,7 @@ rollout:
 
   rlt_feature_model:
     model_type: "openpi_rlinf"
-    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -255,7 +255,7 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
-      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
+      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
@@ -324,7 +324,7 @@ rollout:
   # remains stuck inside the critical phase.
   expert_model:
     model_type: "openpi_rlinf"
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft_more_steps/checkpoints/global_step_<step>/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8

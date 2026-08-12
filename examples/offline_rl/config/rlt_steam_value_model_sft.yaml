@@ -33,7 +33,7 @@ runner:
 
 data:
   train_data_paths:
-    - dataset_path: "/path/to/maniskill_peginsertionside_joint"
+    - dataset_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint"
       type: sft
       weight: 1.0
   eval_data_paths: []
@@ -61,7 +61,7 @@ data:
   # feature model so critic training and gate inference see the same features.
   rlt_feature_model:
     model_type: "openpi_rlinf"
-    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
     precision: bf16
     is_lora: false
     num_action_chunks: 10
@@ -71,7 +71,7 @@ data:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
-      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
+      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
