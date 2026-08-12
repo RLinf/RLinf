@@ -180,7 +180,9 @@ class EnvWorker(Worker):
             self.cfg,
             stage_num=self.stage_num,
             enable_train=self.enable_train,
-            train_num_envs_per_stage=self.train_num_envs_per_stage,
+            train_num_envs_per_stage=(
+                self.train_num_envs_per_stage if self.enable_train else 0
+            ),
         )
 
         if self.env_decoupled_mode:
