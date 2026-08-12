@@ -47,6 +47,10 @@ def predict_rlt_actions(
     rlt_switch_flags: torch.Tensor | None = None,
     intervene_requested: torch.Tensor | None = None,
     expert_model: Any | None = None,
+    critical_phase_gate: Any | None = None,
+    stage_id: int = 0,
+    reset_mask: torch.Tensor | None = None,
+    update_gate: bool = True,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     with torch.no_grad():
         rlt_obs = feature_model.extract_rlt_obs(env_obs)
@@ -58,6 +62,23 @@ def predict_rlt_actions(
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
 
+        route_switch_flags = rlt_switch_flags
+        route_intervene_requested = intervene_requested
+        gate_info: dict[str, torch.Tensor] = {}
+        if critical_phase_gate is not None and update_gate:
+            (
+                route_switch_flags,
+                route_intervene_requested,
+                gate_info,
+            ) = critical_phase_gate.update(
+                rlt_obs,
+                mode=mode,
+                stage_id=stage_id,
+                reset_mask=reset_mask,
+                update_state=update_gate,
+                actor_routing_enabled=rlt_route.actor_routing_enabled(version),
+            )
+
         route_output = rlt_route.route(
             RLTRouteContext(
                 env_obs=env_obs,
@@ -65,14 +86,15 @@ def predict_rlt_actions(
                 student_actions=actions,
                 result=result,
                 mode=mode,
-                rlt_switch_flags=rlt_switch_flags,
-                intervene_requested=intervene_requested,
+                rlt_switch_flags=route_switch_flags,
+                intervene_requested=route_intervene_requested,
                 expert_model=expert_model,
                 version=version,
             )
         )
         actions = route_output.actions
         result = route_output.result
+        result["forward_inputs"].update(gate_info)
 
         _append_rlt_transition_obs(
             feature_model=feature_model,

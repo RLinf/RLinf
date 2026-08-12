@@ -59,8 +59,16 @@ def main(cfg) -> None:
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = HybridComponentPlacement(cfg, cluster)
 
+    worker_cls = FSDPSteamSftWorker
+    if str(cfg.actor.model.get("backbone_type", "")) == "rlt_stage1":
+        from rlinf.workers.sft.fsdp_rlt_steam_sft_worker import (
+            FSDPRLTSteamSftWorker,
+        )
+
+        worker_cls = FSDPRLTSteamSftWorker
+
     actor_placement = component_placement.get_strategy("actor")
-    actor_group = FSDPSteamSftWorker.create_group(cfg).launch(
+    actor_group = worker_cls.create_group(cfg).launch(
         cluster, name=cfg.actor.group_name, placement_strategy=actor_placement
     )
 

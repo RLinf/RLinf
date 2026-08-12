@@ -108,6 +108,11 @@ def _base_ref_actions(
 
 
 class RLTRoute(ABC):
+    def actor_routing_enabled(self, version: int) -> bool:
+        """Return whether a learned actor switch can take effect now."""
+        del version
+        return True
+
     @abstractmethod
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         """Route student actions among actor, reference, and optional expert."""
@@ -153,6 +158,9 @@ class SimulatorRLTRoute(RLTRoute):
 
     def _ready_for_online(self, version: int) -> bool:
         return not self.use_schedule or int(version) >= self.warmup_updates
+
+    def actor_routing_enabled(self, version: int) -> bool:
+        return self._ready_for_online(version)
 
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         actions = ctx.student_actions

@@ -110,6 +110,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
+      routing_source: rollout
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -120,11 +121,9 @@ env:
         near_hole_yz_margin: 1.5
         fallback_hole_radius: 0.03
       expert_takeover:
-        enable: True
-        # Simulated real-world takeover: only request expert after the RLT actor
-        # is already in critical phase and has made no measurable insertion
-        # progress for several action chunks. Rollout still masks this during
-        # warmup, and eval disables expert completely.
+        # Geometry is oracle-only when routing_source=rollout. The initial
+        # learned gate switches from the base policy to the Stage 2 RL actor.
+        enable: False
         trigger_mode: stalled_progress
         gate:
           require_grasp: True
@@ -169,6 +168,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
+      routing_source: rollout
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -255,6 +255,7 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
+      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
@@ -283,10 +284,44 @@ rollout:
       rlt_image_only: False
       rlt_use_mask: True
 
-  # Optional ManiSkill expert takeover model. Enable it with
-  # env.train.rlt_policy_switch.expert_takeover.enable=True. This should point
-  # to a stronger openpi_rlinf SFT checkpoint trained with the same task
-  # transforms; it predicts expert actions directly and does not use RLT tokens.
+  # STEAM-style automatic critical-phase routing. The critic compares frozen
+  # Stage 1 RLT features at 10-step chunk boundaries; geometry remains metrics
+  # only and never changes the selected policy.
+  rlt_critical_phase_gate:
+    enable: True
+    mode: active
+    chunk_size: 10
+    lookback_chunks: 4
+    patience_chunks: 2
+    enter_threshold: 0.0
+    latch_until_done: True
+    expert_takeover:
+      enable: True
+      # Start with a fresh actor-only lookback, then require sustained low
+      # progress before the existing simulation expert takes over.
+      warmup_chunks: 4
+      patience_chunks: 3
+      enter_threshold: 0.0
+      latch_until_done: True
+    model:
+      model_type: "steam_value_model"
+      model_path: "/path/to/rlt_steam_value_model/checkpoints/global_step_<step>/actor"
+      precision: fp32
+      is_lora: False
+      backbone_type: "rlt_stage1"
+      z_dim: 2048
+      proprio_dim: 9
+      fusion_hidden_dim: 512
+      dropout: 0.1
+      label_smoothing: 0.05
+      num_bins: 8
+      stride_k: 4
+      ensemble_size: 3
+      ensemble_head_seed_base: 0
+      use_gradient_checkpointing: False
+
+  # Simulation expert used after the STEAM gate detects that the Stage 2 actor
+  # remains stuck inside the critical phase.
   expert_model:
     model_type: "openpi_rlinf"
     model_path: "/path/to/rlt_maniskill_joint_pi05_sft_more_steps/checkpoints/global_step_<step>/actor"

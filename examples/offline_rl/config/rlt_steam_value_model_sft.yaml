@@ -1,0 +1,140 @@
+# Usage: bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh rlt_steam_value_model_sft
+
+defaults:
+  - model/rlt_steam_value_model@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "rlt_steam_value_model_sft"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: -1
+  max_steps: 16000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths:
+    - dataset_path: "/path/to/maniskill_peginsertionside_joint"
+      type: sft
+      weight: 1.0
+  eval_data_paths: []
+
+  dataset_type: sft
+  only_success: true
+  balance_weights: true
+  seed: 42
+
+  # Pair boundaries and temporal gaps are both measured in 10-step chunks.
+  chunk_size: 10
+  k: 4
+  main_image_key: image
+  wrist_image_key: wrist_image
+  state_key: state
+  default_prompt: "insert the peg in the hole"
+
+  train_num_workers: 8
+  eval_num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: false
+  pin_memory: false
+
+  # Frozen Stage 1 RLT encoder. Keep this identical to the Stage 2 rollout
+  # feature model so critic training and gate inference see the same features.
+  rlt_feature_model:
+    model_type: "openpi_rlinf"
+    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
+    precision: bf16
+    is_lora: false
+    num_action_chunks: 10
+    action_dim: 8
+    num_steps: 5
+    add_value_head: false
+    openpi_data:
+      repo_id: "maniskill_peginsertionside_joint"
+      default_prompt: "insert the peg in the hole"
+      norm_stats_path: "/path/to/maniskill_peginsertionside_joint/norm_stats.json"
+    openpi:
+      task: eval
+      config_name: "pi05_rlt_maniskill_joint"
+      num_images_in_input: 2
+      action_chunk: 10
+      action_horizon: 10
+      action_env_dim: 8
+      num_steps: 5
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: true
+      train_expert_only: false
+      add_value_head: false
+      detach_critic_input: true
+      use_rlt: true
+      rlt_alpha: 1.0
+      rlt_input_dim: 2048
+      rlt_embed_dim: 2048
+      rlt_prefix_seq_len: 1024
+      rlt_num_layers: 2
+      rlt_num_heads: 8
+      rlt_mlp_ratio: 4.0
+      rlt_encoder_type: "append_self_attention"
+      rlt_image_only: false
+      rlt_use_mask: true
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  global_batch_size: 512
+  seed: 0
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 5.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 10.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 500
+    total_training_steps: 16000
+    min_lr: 1.0e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

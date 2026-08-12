@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
+from rlinf.algorithms.rlt.critical_phase_gate import RLT_GATE_INFO_KEYS
 from rlinf.algorithms.rlt.transition import update_rlt_transitions
 from rlinf.data.schema.embodied_trajectory_builder import (
     EmbodiedLerobotTrajectoryBuilder,
@@ -956,11 +957,44 @@ class EnvWorker(Worker):
         data = {
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
+            "dones": env_batch.get("dones", None),
         }
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
         return data
+
+    def _consume_rlt_gate_info(self, policy_output: Any, env: Any) -> None:
+        """Move learned-gate diagnostics to env metrics, not trajectory replay."""
+        forward_inputs = getattr(policy_output, "forward_inputs", None)
+        if not isinstance(forward_inputs, dict):
+            return
+
+        present_keys = [key for key in RLT_GATE_INFO_KEYS if key in forward_inputs]
+        if not present_keys:
+            return
+        if len(present_keys) != len(RLT_GATE_INFO_KEYS):
+            missing_keys = sorted(set(RLT_GATE_INFO_KEYS) - set(present_keys))
+            raise ValueError(
+                "Incomplete RLT critical-phase gate diagnostics; missing "
+                f"{missing_keys}."
+            )
+
+        gate_info = {key: forward_inputs.pop(key) for key in RLT_GATE_INFO_KEYS}
+        set_gate_info = get_env_attr(env, "set_rlt_gate_info")
+        if not callable(set_gate_info):
+            raise ValueError(
+                "RLT gate diagnostics require the environment to implement "
+                "set_rlt_gate_info()."
+            )
+        set_gate_info(
+            critical_phase=gate_info["rlt_gate_critical_phase"],
+            entry_step=gate_info["rlt_gate_entry_step"],
+            expert_requested=gate_info["rlt_gate_expert_requested"],
+            expert_entry_step=gate_info["rlt_gate_expert_entry_step"],
+            score=gate_info["rlt_gate_score_min"],
+            prediction_variance=gate_info["rlt_gate_prediction_variance"],
+        )
 
     def _send_train_bootstrap(
         self,
@@ -1131,6 +1165,10 @@ class EnvWorker(Worker):
                         self.smooth_intervene.remember_policy_output(
                             stage_id, policy_output
                         )
+                    self._consume_rlt_gate_info(
+                        policy_output,
+                        self.env_list[stage_id],
+                    )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, policy_output.bootstrap_values, reward_model_output
                     )
@@ -1414,6 +1452,10 @@ class EnvWorker(Worker):
                         if self.env_decoupled_mode
                         else None,
                         decoupled_mode=self.env_decoupled_mode,
+                    )
+                    self._consume_rlt_gate_info(
+                        policy_output,
+                        self.eval_env_list[stage_id],
                     )
                     raw_chunk_actions = (
                         policy_output.actions
