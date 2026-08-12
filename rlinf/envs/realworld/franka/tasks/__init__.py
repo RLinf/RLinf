@@ -42,6 +42,9 @@ from rlinf.envs.realworld.franka.tasks.peg_insertion_env import (
     PegInsertionEnv as PegInsertionEnv,
 )
 
+from rlinf.envs.realworld.franka.tasks.block_peg_insertion import (
+    BlockPegInsertionEnv as BlockPegInsertionEnv,
+)
 
 def create_franka_env(
     override_cfg: dict[str, Any],
@@ -106,6 +109,20 @@ def create_peg_insertion_env(
     )
     return apply_single_arm_wrappers(env, env_cfg)
 
+def create_block_peg_insertion_env(
+    override_cfg: dict[str, Any],
+    worker_info: Any,
+    hardware_info: Any,
+    env_idx: int,
+    env_cfg: Mapping[str, Any],
+) -> gym.Env:
+    env = BlockPegInsertionEnv(
+        override_cfg=override_cfg,
+        worker_info=worker_info,
+        hardware_info=hardware_info,
+        env_idx=env_idx,
+    )
+    return apply_single_arm_wrappers(env, env_cfg)
 
 def create_franka_bin_relocation_env(
     override_cfg: dict[str, Any],
@@ -174,6 +191,12 @@ register(
     id="PegInsertionEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_peg_insertion_env",
 )
+
+register(
+    id="BlockPegInsertionEnv-v1",
+    entry_point="rlinf.envs.realworld.franka.tasks:create_block_peg_insertion_env",
+)
+
 
 register(
     id="FrankaBinRelocationEnv-v1",

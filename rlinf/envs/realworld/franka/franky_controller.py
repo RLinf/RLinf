@@ -58,20 +58,32 @@ _JOINT_STIFFNESS = [103.75, 265.734, 227.273, 221.445, 13.5, 12.818, 5.134]
 _JOINT_DAMPING = [16.7, 40.263, 25.0, 12.862, 1.5, 2.0, 1.331]
 
 
-_CART_TRANS_STIFFNESS = float(os.environ.get("RLINF_CART_K_T", 500.0))  # N/m
-_CART_ROT_STIFFNESS = float(os.environ.get("RLINF_CART_K_R", 40.0))  # Nm/rad
+# Franky Cartesian impedance tuned vs stage2 ROS (serl) controller:
+#   ROS uses K_t≈2000 + error clips ≈3 mm / 0.02 rad (no slew on pose pub).
+#   Franky cannot take K_t=2000 on non-RT (shake); keep moderate K and
+#   recover stage2 "feel" via tight error clips + slew ≈ env action_scale.
+_CART_TRANS_STIFFNESS = float(os.environ.get("RLINF_CART_K_T", 1000.0))  # N/m
+_CART_ROT_STIFFNESS = float(os.environ.get("RLINF_CART_K_R", 50.0))  # Nm/rad
 _CART_NULLSPACE_STIFFNESS = float(os.environ.get("RLINF_CART_K_NS", 5.0))  # Nm/rad
+# Cap when mapping ROS compliance (task often asks 2000/150).
+_CART_K_T_CAP = float(os.environ.get("RLINF_CART_K_T_CAP", 1200.0))
+_CART_K_R_CAP = float(os.environ.get("RLINF_CART_K_R_CAP", 80.0))
 _CART_MAX_DELTA_TAU = float(
     os.environ.get("RLINF_CART_MAX_DTAU", 0.3)
 )  # Nm / 1 kHz cycle
-_CART_TRANS_ERROR_CLIP_M = float(os.environ.get("RLINF_CART_ERR_CLIP_M", 0.05))  # m
-_CART_ROT_ERROR_CLIP_RAD = float(os.environ.get("RLINF_CART_ERR_CLIP_RAD", 0.3))  # rad
+# Default clips ≈ stage2 peg compliance (slightly opened vs 3 mm for non-RT).
+_CART_TRANS_ERROR_CLIP_M = float(os.environ.get("RLINF_CART_ERR_CLIP_M", 0.008))  # m
+_CART_ROT_ERROR_CLIP_RAD = float(os.environ.get("RLINF_CART_ERR_CLIP_RAD", 0.04))  # rad
 _CART_GAINS_TC = float(os.environ.get("RLINF_CART_GAINS_TC", 0.1))  # s
+# Floors so ultra-tight ROS clips (3 mm) do not chatter under Ignore-RT.
+_CART_TRANS_CLIP_FLOOR_M = float(os.environ.get("RLINF_CART_CLIP_FLOOR_M", 0.005))
+_CART_ROT_CLIP_FLOOR_RAD = float(os.environ.get("RLINF_CART_CLIP_FLOOR_RAD", 0.02))
 
-# Per-call slew limit so a single-frame dataset jump becomes a ramp.
-_CART_MAX_STEP_M = float(os.environ.get("RLINF_CART_MAX_STEP_M", 0.10))  # m / call
+# Match BlockPegInsertion action_scale [0.03 m, 0.1 rad] — not PR #1439's 0.10/0.30
+# (those made per-call target jumps feel like oversized pose corrections).
+_CART_MAX_STEP_M = float(os.environ.get("RLINF_CART_MAX_STEP_M", 0.03))  # m / call
 _CART_MAX_STEP_RAD = float(
-    os.environ.get("RLINF_CART_MAX_STEP_RAD", 0.30)
+    os.environ.get("RLINF_CART_MAX_STEP_RAD", 0.10)
 )  # rad / call
 
 _DYNAMICS_FACTOR = 0.2
@@ -165,6 +177,12 @@ class FrankyController(Worker):
         self._cart_tracker = None
         self._prev_cart_target_xyz: Optional[np.ndarray] = None
         self._prev_cart_target_quat: Optional[np.ndarray] = None
+        # Runtime gains/clips (defaults; updated by reconfigure_compliance_params).
+        self._cart_k_t = _CART_TRANS_STIFFNESS
+        self._cart_k_r = _CART_ROT_STIFFNESS
+        self._cart_k_ns = _CART_NULLSPACE_STIFFNESS
+        self._cart_trans_clip = np.full(3, _CART_TRANS_ERROR_CLIP_M, dtype=np.float64)
+        self._cart_rot_clip = np.full(3, _CART_ROT_ERROR_CLIP_RAD, dtype=np.float64)
 
         self._logger.info(
             "FrankyController connected to robot at %s (end_effector=%s)",
@@ -332,16 +350,106 @@ class FrankyController(Worker):
         self._robot.recover_from_errors()
 
     def reconfigure_compliance_params(self, params: dict) -> None:
-        """No-op compatibility shim for FrankaEnv.reset.
+        """Map stage2 ROS compliance onto franky with safe caps.
 
-        Cartesian gains are fixed at tracker start via ``RLINF_CART_*`` env
-        vars. Runtime remapping is not implemented yet.
+        Stage2 ``franka_controller`` applies task ``compliance_param`` fully
+        (K_t≈2000 + ~3 mm clips). On franky we:
+          - **take error clips** (what limited ROS pose correction), floored
+            for non-RT stability;
+          - **cap stiffness** so high ROS gains do not shake under
+            ``RealtimeConfig.Ignore``.
         """
-        self._logger.warning(
-            "FrankyController.reconfigure_compliance_params is a no-op "
-            "(params=%s). Use RLINF_CART_K_T / RLINF_CART_K_R / "
-            "RLINF_CART_K_NS instead.",
-            params,
+        if not params:
+            return
+
+        def _f(key: str, default: float) -> float:
+            val = params.get(key, default)
+            return float(default if val is None else val)
+
+        k_t = min(_f("translational_stiffness", self._cart_k_t), _CART_K_T_CAP)
+        k_r = min(_f("rotational_stiffness", self._cart_k_r), _CART_K_R_CAP)
+        k_ns = _f("nullspace_stiffness", self._cart_k_ns)
+
+        trans_clip = np.maximum(
+            np.array(
+                [
+                    max(
+                        _f("translational_clip_x", self._cart_trans_clip[0]),
+                        _f("translational_clip_neg_x", self._cart_trans_clip[0]),
+                    ),
+                    max(
+                        _f("translational_clip_y", self._cart_trans_clip[1]),
+                        _f("translational_clip_neg_y", self._cart_trans_clip[1]),
+                    ),
+                    max(
+                        _f("translational_clip_z", self._cart_trans_clip[2]),
+                        _f("translational_clip_neg_z", self._cart_trans_clip[2]),
+                    ),
+                ],
+                dtype=np.float64,
+            ),
+            _CART_TRANS_CLIP_FLOOR_M,
+        )
+        rot_clip = np.maximum(
+            np.array(
+                [
+                    max(
+                        _f("rotational_clip_x", self._cart_rot_clip[0]),
+                        _f("rotational_clip_neg_x", self._cart_rot_clip[0]),
+                    ),
+                    max(
+                        _f("rotational_clip_y", self._cart_rot_clip[1]),
+                        _f("rotational_clip_neg_y", self._cart_rot_clip[1]),
+                    ),
+                    max(
+                        _f("rotational_clip_z", self._cart_rot_clip[2]),
+                        _f("rotational_clip_neg_z", self._cart_rot_clip[2]),
+                    ),
+                ],
+                dtype=np.float64,
+            ),
+            _CART_ROT_CLIP_FLOOR_RAD,
+        )
+
+        clips_changed = not (
+            np.allclose(trans_clip, self._cart_trans_clip)
+            and np.allclose(rot_clip, self._cart_rot_clip)
+        )
+        self._cart_k_t = k_t
+        self._cart_k_r = k_r
+        self._cart_k_ns = k_ns
+        self._cart_trans_clip = trans_clip
+        self._cart_rot_clip = rot_clip
+
+        if self._cart_tracker is not None and clips_changed:
+            self._stop_cart_tracking_motion()
+            self._logger.info(
+                "Cartesian clips updated from compliance_param "
+                "(trans=%s, rot=%s); tracker will rebuild on next move",
+                np.array2string(trans_clip, precision=4),
+                np.array2string(rot_clip, precision=4),
+            )
+            return
+
+        if self._cart_tracker is not None:
+            self._cart_tracker.set_gains(
+                translational_stiffness=k_t,
+                rotational_stiffness=k_r,
+                nullspace_stiffness=k_ns,
+            )
+
+        self._logger.info(
+            "Franky compliance: K_t=%.0f (cap %.0f), K_r=%.1f (cap %.1f), "
+            "K_ns=%.1f, trans_clip=%s, rot_clip=%s, step=%.2fm/%.2frad",
+            k_t,
+            _CART_K_T_CAP,
+            k_r,
+            _CART_K_R_CAP,
+            k_ns,
+            np.array2string(trans_clip, precision=4),
+            np.array2string(rot_clip, precision=4),
+            _CART_MAX_STEP_M,
+            _CART_MAX_STEP_RAD,
         )
 
     def _ensure_tracking_motion(self) -> None:
@@ -400,24 +508,24 @@ class FrankyController(Worker):
         self._safe_join()
         self._robot.recover_from_errors()
         nullspace_target = np.asarray(self._robot.state.q, dtype=np.float64).copy()
-        trans_clip = np.full(3, _CART_TRANS_ERROR_CLIP_M, dtype=np.float64)
-        rot_clip = np.full(3, _CART_ROT_ERROR_CLIP_RAD, dtype=np.float64)
         self._cart_tracker = self._franky.CartesianImpedanceTracker(
             self._robot,
-            translational_stiffness=_CART_TRANS_STIFFNESS,
-            rotational_stiffness=_CART_ROT_STIFFNESS,
+            translational_stiffness=self._cart_k_t,
+            rotational_stiffness=self._cart_k_r,
             nullspace_target=nullspace_target,
-            nullspace_stiffness=_CART_NULLSPACE_STIFFNESS,
-            translational_error_clip=trans_clip,
-            rotational_error_clip=rot_clip,
+            nullspace_stiffness=self._cart_k_ns,
+            translational_error_clip=np.asarray(self._cart_trans_clip, dtype=np.float64),
+            rotational_error_clip=np.asarray(self._cart_rot_clip, dtype=np.float64),
             max_delta_tau=_CART_MAX_DELTA_TAU,
             gains_time_constant=_CART_GAINS_TC,
         )
         self._logger.info(
-            f"Cartesian impedance tracker started "
-            f"(K_t={_CART_TRANS_STIFFNESS:.0f} N/m, "
-            f"K_r={_CART_ROT_STIFFNESS:.1f} Nm/rad, "
-            f"K_ns={_CART_NULLSPACE_STIFFNESS:.1f} Nm/rad)"
+            "Cartesian impedance tracker started "
+            f"(K_t={self._cart_k_t:.0f} N/m, "
+            f"K_r={self._cart_k_r:.1f} Nm/rad, "
+            f"K_ns={self._cart_k_ns:.1f} Nm/rad, "
+            f"trans_clip={np.array2string(self._cart_trans_clip, precision=4)}, "
+            f"rot_clip={np.array2string(self._cart_rot_clip, precision=4)})"
         )
 
     def _stop_cart_tracking_motion(self) -> None:
