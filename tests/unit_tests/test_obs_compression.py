@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ from rlinf.utils.obs_compression import (
     _CODEC_KEY,
     compress_obs,
     decompress_obs,
+    infer_obs_batch_size,
+    is_compressed_image,
     is_compression_enabled,
 )
 
@@ -175,3 +177,38 @@ def test_routing_split_then_compress_roundtrip(codec):
     restored_shards = [decompress_obs(shard) for shard in compressed_shards]
     merged = routing.merge_batches(restored_shards)
     _assert_payload_equal(payload, merged)
+
+
+def test_infer_obs_batch_size_uncompressed():
+    payload = _make_payload(num_envs=5)
+    assert infer_obs_batch_size(payload) == 5
+    # Also accepts a bare obs dict (no "obs" wrapper).
+    assert infer_obs_batch_size(payload["obs"]) == 5
+
+
+@requires_codec
+def test_infer_obs_batch_size_with_compressed_images():
+    # The rollout worker infers batch size on the receive path, before
+    # decompression, so a compressed image must still report its batch size.
+    payload = _make_payload(num_envs=5)
+    compressed = compress_obs(payload, _cfg())
+    assert is_compressed_image(compressed["obs"]["main_images"])
+    assert infer_obs_batch_size(compressed) == 5
+
+
+@requires_codec
+def test_infer_obs_batch_size_images_only():
+    # Regression: a batch whose only batched field is a (compressed) image,
+    # with no states/task_descriptions, must not break batch-size inference.
+    payload = {
+        "obs": {
+            "main_images": torch.randint(0, 256, (3, 8, 8, 3), dtype=torch.uint8),
+        }
+    }
+    compressed = compress_obs(payload, _cfg())
+    assert infer_obs_batch_size(compressed) == 3
+
+
+def test_infer_obs_batch_size_raises_when_unbatched():
+    with pytest.raises(ValueError, match="Cannot infer batch size"):
+        infer_obs_batch_size({"obs": {}})

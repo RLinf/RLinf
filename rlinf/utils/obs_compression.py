@@ -1,4 +1,4 @@
-# Copyright 2025 The RLinf Authors.
+# Copyright 2026 The RLinf Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -219,3 +219,38 @@ def decompress_obs(data: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(data, dict):
         return data
     return _map_decode(data)
+
+
+def is_compressed_image(value: Any) -> bool:
+    """Return whether ``value`` is a compressed image marker from ``compress_obs``."""
+    return isinstance(value, dict) and _CODEC_KEY in value
+
+
+def infer_obs_batch_size(obs_batch: dict[str, Any]) -> int:
+    """Infer the batch size of an Env->Rollout observation payload.
+
+    The rollout workers infer the batch size on the receive path, *before*
+    decompression. A compressed image is neither a tensor nor a list, so its
+    batch size is read from the marker's stored ``shape``. This makes inference
+    work whether or not ``env.obs_compression`` is enabled, including payloads
+    whose only batched field is an image (no ``states`` / ``task_descriptions``).
+
+    Args:
+        obs_batch: A received payload, either the observation dict itself or a
+            wrapper dict containing it under an ``obs`` key.
+
+    Returns:
+        The batch size (size of the leading dimension).
+
+    Raises:
+        ValueError: If no batched field can be found.
+    """
+    obs = obs_batch["obs"] if "obs" in obs_batch else obs_batch
+    for value in obs.values():
+        if isinstance(value, torch.Tensor):
+            return value.shape[0]
+        if isinstance(value, list):
+            return len(value)
+        if is_compressed_image(value):
+            return value["shape"][0]
+    raise ValueError("Cannot infer batch size from env obs.")
