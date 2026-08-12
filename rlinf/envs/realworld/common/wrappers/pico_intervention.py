@@ -386,19 +386,19 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
         self.right = False
         # After mid-chunk release, keep the last intervened absolute TCP command
         # until the next action chunk begins (cleared via on_action_chunk_begin).
-        self._post_intervene_hold = {side: False for side in self.experts}
-        self._last_arm_action = {side: None for side in self.experts}
+        self._post_intervene_hold = dict.fromkeys(self.experts, False)
+        self._last_arm_action = dict.fromkeys(self.experts)
 
     def on_action_chunk_begin(self) -> None:
         """Clear mid-chunk hold latches so the next chunk can resume policy actions."""
-        self._post_intervene_hold = {side: False for side in self.experts}
+        self._post_intervene_hold = dict.fromkeys(self.experts, False)
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self.left = False
         self.right = False
         self.on_action_chunk_begin()
-        self._last_arm_action = {side: None for side in self.experts}
+        self._last_arm_action = dict.fromkeys(self.experts)
         return obs, info
 
     @staticmethod

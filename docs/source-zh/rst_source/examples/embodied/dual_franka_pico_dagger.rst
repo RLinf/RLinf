@@ -281,6 +281,7 @@ PICO 手柄才会分别绑定到左 / 右机械臂。
    env:
      train:
        smooth_intervene: True
+       use_spacemouse: False
        use_pico: True
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
@@ -447,6 +448,8 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
 
    env:
      train:
+       smooth_intervene: True
+       use_spacemouse: False
        use_pico: True
        keyboard_reward_wrapper: eval_control
        pico:
@@ -454,11 +457,12 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
          hand: "dual"
          hold_current_when_inactive: False
      eval:
+       use_spacemouse: False
        use_pico: False
 
 ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
 
-``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。当前该模式要求每个 env worker pipeline stage 只运行一个环境。
+``smooth_intervene: True`` 用于消除 PICO 接管时 action chunk 边界的停顿。如果一个 chunk 的最后一帧仍由人工接管，env worker 会跳过下一次策略推理，改用形状兼容的 dummy chunk 继续执行；接管侧仍使用 PICO 动作，暂时未接管的帧保持机械臂当前 TCP 位姿。最后一帧不再接管或 episode 结束后恢复模型推理。该模式仅支持 PICO（``use_pico: True``，``use_spacemouse: False``），且当前要求每个 env worker pipeline stage 只运行一个环境。
 
 ``only_success: True`` 表示失败 rollout 会被丢弃，只保存成功 episode；
 ``only_save_expert: True`` 仍会归档完整的成功 episode，但训练只采样 action chunk

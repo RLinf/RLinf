@@ -15,7 +15,8 @@
 """Realworld smooth-intervene helpers for EnvWorker orchestration.
 
 Bypasses policy inference across action-chunk boundaries while human teleop
-continues. Env only supplies hold actions; this module owns PolicyOutput dummy
+continues. Requires PICO (``env.train.use_pico=True``); SpaceMouse is not
+supported. Env only supplies hold actions; this module owns PolicyOutput dummy
 construction and per-stage continue/skip state.
 """
 
@@ -168,6 +169,16 @@ class SmoothInterveneController:
             if train_num_envs_per_stage != 1:
                 raise ValueError(
                     "smooth_intervene requires exactly one env per EnvWorker stage"
+                )
+            if not bool(OmegaConf.select(cfg, "env.train.use_pico", default=False)):
+                raise ValueError(
+                    "smooth_intervene requires env.train.use_pico=True "
+                    "(PICO-only; SpaceMouse is not supported)"
+                )
+            if bool(OmegaConf.select(cfg, "env.train.use_spacemouse", default=False)):
+                raise ValueError(
+                    "smooth_intervene does not support SpaceMouse; "
+                    "set env.train.use_spacemouse=False and use_pico=True"
                 )
         return cls(stage_num=stage_num, enabled=enabled)
 
