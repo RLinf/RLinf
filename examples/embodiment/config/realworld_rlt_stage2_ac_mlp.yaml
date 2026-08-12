@@ -1,6 +1,6 @@
 defaults:
-  - env/realworld_peg_insertion@env.train
-  - env/realworld_peg_insertion@env.eval
+  - env/realworld_block_peg_insertion@env.train
+  - env/realworld_block_peg_insertion@env.eval
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
