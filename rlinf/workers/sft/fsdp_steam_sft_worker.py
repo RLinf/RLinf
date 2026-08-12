@@ -235,6 +235,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
         from rlinf.data.datasets.steam import (
             BinaryPairDataCollator,
             PairDataset,
+            RLTChunkPairDataset,
         )
         from rlinf.data.datasets.steam.mixture import PairMixtureDataset
         from rlinf.models.embodiment.value_model.recap.checkpoint_utils import (
@@ -253,10 +254,16 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
         tokenizer_path = getattr(model_cfg, "tokenizer_path", None) or getattr(
             model_cfg, "language_repo_id", None
         )
-        if tokenizer_path is None or not has_tokenizer_files(Path(tokenizer_path)):
+        tokenizer_is_local = (
+            tokenizer_path is not None and Path(tokenizer_path).exists()
+        )
+        if tokenizer_path is None or (
+            tokenizer_is_local and not has_tokenizer_files(Path(tokenizer_path))
+        ):
             raise ValueError(
                 "No tokenizer found. Set actor.model.tokenizer_path or "
-                f"actor.model.language_repo_id. Tried: {tokenizer_path!r}"
+                "actor.model.language_repo_id to a tokenizer directory or "
+                f"Hugging Face repo id. Tried: {tokenizer_path!r}"
             )
         # Processor camera keys must match the dataset's `camera_keys` so that
         # the per-frame image dict emitted by the dataset lines up with the
@@ -287,11 +294,20 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
             image_size[1],
             getattr(model_cfg, "vision_repo_id"),
         )
-        processor = SteamProcessor(
-            image_processor=image_processor,
-            tokenizer_name_or_path=tokenizer_path,
-            max_token_len=int(getattr(model_cfg, "max_token_len", 200)),
-        )
+        processor_kwargs: dict[str, Any] = {
+            "image_processor": image_processor,
+            "max_token_len": int(getattr(model_cfg, "max_token_len", 200)),
+        }
+        if tokenizer_is_local:
+            processor_kwargs["tokenizer_name_or_path"] = tokenizer_path
+        else:
+            from transformers import AutoTokenizer
+
+            processor_kwargs["tokenizer"] = AutoTokenizer.from_pretrained(
+                tokenizer_path,
+                add_bos_token=True,
+            )
+        processor = SteamProcessor(**processor_kwargs)
         self.processor = processor
         max_token_len = int(getattr(model_cfg, "max_token_len", 200))
         # num_bins drives both the dataset (label semantics) and the
@@ -346,7 +362,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 return os.path.join(data_root, path)
             return path
 
-        def _build_pair_dataset(entry: dict) -> PairDataset:
+        def _build_pair_dataset(entry: dict) -> PairDataset | RLTChunkPairDataset:
             ds_path = _resolve(entry["dataset_path"])
             if "type" in entry:
                 dataset_type = str(entry["type"]).lower()
@@ -383,25 +399,26 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                     data_cfg.get("length_scale_percentile", 90.0),
                 )
             )
+            dataset_kwargs = {
+                "dataset_path": ds_path,
+                "camera_keys": camera_keys_tuple,
+                "k": k,
+                "dataset_type": dataset_type,
+                "only_success": only_success,
+                "num_bins": num_bins,
+                "length_scale_enabled": length_scale_enabled,
+                "length_scale_percentile": length_scale_percentile,
+            }
+            chunk_size = data_cfg.get("chunk_size", None)
+            if chunk_size is not None:
+                return RLTChunkPairDataset(
+                    **dataset_kwargs,
+                    chunk_size=int(chunk_size),
+                    default_prompt=str(data_cfg.get("default_prompt", "")),
+                )
             return PairDataset(
-                dataset_path=ds_path,
-                camera_keys=tuple(
-                    data_cfg.get(
-                        "camera_keys",
-                        (
-                            "base_0_rgb",
-                            "left_wrist_0_rgb",
-                            "right_wrist_0_rgb",
-                        ),
-                    )
-                ),
-                k=k,
-                dataset_type=dataset_type,
-                only_success=only_success,
+                **dataset_kwargs,
                 min_episode_length=data_cfg.get("min_episode_length", None),
-                num_bins=num_bins,
-                length_scale_enabled=length_scale_enabled,
-                length_scale_percentile=length_scale_percentile,
             )
 
         balance_dataset_weights = bool(
@@ -421,8 +438,10 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
             raise ValueError(
                 "data.train_data_paths must contain at least one entry with 'dataset_path'."
             )
-        datasets_with_weights: list[tuple[PairDataset, float]] = []
-        named_train_datasets: list[tuple[str, PairDataset]] = []
+        datasets_with_weights: list[
+            tuple[PairDataset | RLTChunkPairDataset, float]
+        ] = []
+        named_train_datasets: list[tuple[str, PairDataset | RLTChunkPairDataset]] = []
         for entry in train_entries:
             resolved_path = _resolve(entry["dataset_path"])
             dataset = _build_pair_dataset(entry)

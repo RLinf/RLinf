@@ -175,14 +175,8 @@ class MultiStepRolloutWorker(Worker):
                     "runner.enable_decoupled_mode in the initial implementation."
                 )
             gate_model_cfg = gate_cfg.get("model", None)
-            if (
-                gate_model_cfg is None
-                or str(gate_model_cfg.get("backbone_type", "")) != "rlt_stage1"
-            ):
-                raise ValueError(
-                    "rollout.rlt_critical_phase_gate.model must use "
-                    "backbone_type='rlt_stage1'."
-                )
+            if gate_model_cfg is None:
+                raise ValueError("rollout.rlt_critical_phase_gate.model is required.")
             gate_model_path = gate_model_cfg.get("model_path", None)
             if not gate_model_path or not os.path.exists(os.fspath(gate_model_path)):
                 raise FileNotFoundError(
@@ -198,10 +192,13 @@ class MultiStepRolloutWorker(Worker):
             from rlinf.algorithms.rlt.critical_phase_gate import (
                 SteamCriticalPhaseGate,
             )
+            from rlinf.models.embodiment.value_model.steam import SteamCriticModel
 
-            gate_model = get_model(copy.deepcopy(gate_model_cfg))
-            if gate_model is None:
-                raise ValueError("Failed to build the RLT critical phase gate model.")
+            gate_model = SteamCriticModel.from_checkpoint(
+                gate_model_path,
+                device=f"{self.torch_device_type}:{self.device}",
+                precision=gate_model_cfg.get("precision", None),
+            )
             self.rlt_critical_phase_gate = SteamCriticalPhaseGate(
                 gate_model,
                 gate_cfg,

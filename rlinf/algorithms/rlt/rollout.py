@@ -71,7 +71,7 @@ def predict_rlt_actions(
                 route_intervene_requested,
                 gate_info,
             ) = critical_phase_gate.update(
-                rlt_obs,
+                env_obs,
                 mode=mode,
                 stage_id=stage_id,
                 reset_mask=reset_mask,

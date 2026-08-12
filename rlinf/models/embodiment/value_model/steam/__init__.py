@@ -37,11 +37,6 @@ from .ensemble_modeling_critic import (
     reinitialize_member_value_heads,
 )
 from .modeling_critic import CriticOutput, SteamCriticModel
-from .rlt_modeling_critic import (
-    RLTSteamConfig,
-    RLTSteamCriticModel,
-    build_rlt_steam_config,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -245,17 +240,12 @@ def build_steam_config(
 
 def save_steam_checkpoint_assets(
     save_path: str,
-    cfg: DictConfig | SteamConfig | RLTSteamConfig,
+    cfg: DictConfig | SteamConfig,
     processor: Any | None = None,
 ) -> None:
     """Persist config/tokenizer/image-processor assets next to checkpoint weights."""
     os.makedirs(save_path, exist_ok=True)
-    if isinstance(cfg, (SteamConfig, RLTSteamConfig)):
-        model_config = cfg
-    elif str(cfg.get("backbone_type", "")) == "rlt_stage1":
-        model_config = build_rlt_steam_config(cfg)
-    else:
-        model_config = build_steam_config(cfg)
+    model_config = cfg if isinstance(cfg, SteamConfig) else build_steam_config(cfg)
     model_config.to_json_file(os.path.join(save_path, "config.json"), use_diff=False)
 
     if processor is not None and hasattr(processor, "save_pretrained"):
@@ -302,7 +292,7 @@ def _load_checkpoint_into_model(
 def get_model(
     cfg: DictConfig,
     torch_dtype=None,
-) -> Union[RLTSteamCriticModel, SteamCriticModel, EnsembleSteamCriticModel]:
+) -> Union[SteamCriticModel, EnsembleSteamCriticModel]:
     """Build a binary value critic or its ensemble wrapper.
 
     Signature matches :func:`rlinf.models.embodiment.value_model.recap.get_model`
@@ -327,24 +317,16 @@ def get_model(
     """
     del torch_dtype
 
-    use_rlt_backbone = str(cfg.get("backbone_type", "")) == "rlt_stage1"
-    if use_rlt_backbone:
-        config = build_rlt_steam_config(cfg)
-        critic_cls = RLTSteamCriticModel
-    else:
-        checkpoint_config = load_steam_checkpoint_config(
-            getattr(cfg, "model_path", None)
-        )
-        config = build_steam_config(cfg, checkpoint_config=checkpoint_config)
-        critic_cls = SteamCriticModel
+    checkpoint_config = load_steam_checkpoint_config(getattr(cfg, "model_path", None))
+    config = build_steam_config(cfg, checkpoint_config=checkpoint_config)
     model_path = _resolve_model_path(getattr(cfg, "model_path", None))
     state_dict = {}
     if model_path and os.path.exists(model_path):
         state_dict = _load_state_dict(model_path)
 
     if config.ensemble_size == 1:
-        model = critic_cls(config)
-        logger.info("Created %s", critic_cls.__name__)
+        model = SteamCriticModel(config)
+        logger.info("Created SteamCriticModel")
 
         if state_dict:
             model_state_dict = _strip_model_prefix(state_dict, model)
@@ -355,7 +337,7 @@ def get_model(
             )
         return model
 
-    base_member = critic_cls(config)
+    base_member = SteamCriticModel(config)
     members = clone_ensemble_members(base_member, config.ensemble_size)
     model = EnsembleSteamCriticModel(config, members)
     logger.info(
@@ -407,13 +389,10 @@ def get_model(
 __all__ = [
     "SteamConfig",
     "SteamCriticModel",
-    "RLTSteamConfig",
-    "RLTSteamCriticModel",
     "CriticOutput",
     "EnsembleSteamCriticModel",
     "EnsembleCriticOutput",
     "build_steam_config",
-    "build_rlt_steam_config",
     "get_model",
     "load_steam_checkpoint_config",
     "save_steam_checkpoint_assets",

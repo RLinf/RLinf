@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Stateful STEAM-style critical-phase gate for RLT rollouts."""
+"""Stateful STEAM critical-phase gate for RLT rollouts."""
 
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import numpy as np
 import torch
+
+from rlinf.data.datasets.steam import BinaryPairDataCollator
+from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
 
 RLT_GATE_INFO_KEYS = (
     "rlt_gate_score_min",
@@ -31,8 +35,7 @@ RLT_GATE_INFO_KEYS = (
 
 @dataclass
 class _GateState:
-    z_history: torch.Tensor
-    proprio_history: torch.Tensor
+    image_history: dict[str, np.ndarray]
     valid_count: torch.Tensor
     low_progress_count: torch.Tensor
     latched: torch.Tensor
@@ -46,7 +49,7 @@ class _GateState:
 
 
 class SteamCriticalPhaseGate:
-    """Detect sustained low progress from chunk-aligned RLT feature pairs."""
+    """Detect sustained low progress from raw, chunk-aligned frame pairs."""
 
     def __init__(self, model: Any, cfg: Any) -> None:
         self.model = model
@@ -58,6 +61,11 @@ class SteamCriticalPhaseGate:
         self.patience_chunks = int(cfg.get("patience_chunks", 2))
         self.enter_threshold = float(cfg.get("enter_threshold", 0.0))
         self.latch_until_done = bool(cfg.get("latch_until_done", True))
+        self.camera_mapping = {
+            str(cfg.get("main_image_key", "image")): "main_images",
+            str(cfg.get("wrist_image_key", "wrist_image")): "wrist_images",
+        }
+
         expert_cfg = cfg.get("expert_takeover", {}) or {}
         self.expert_takeover_enabled = bool(expert_cfg.get("enable", False))
         self.expert_enter_threshold = float(
@@ -79,7 +87,32 @@ class SteamCriticalPhaseGate:
             )
         if self.expert_patience_chunks < 1:
             raise ValueError("expert_takeover.patience_chunks must be positive")
+
+        processor = getattr(model, "processor", None)
+        if processor is None:
+            raise ValueError(
+                "STEAM critical-phase gate requires a checkpoint-loaded processor"
+            )
+        model_config = getattr(model, "config", None)
+        self._collator = BinaryPairDataCollator(
+            processor=processor,
+            max_length=int(getattr(model_config, "max_token_len", 200)),
+            train=False,
+            num_bins=int(getattr(model_config, "num_bins", 2)),
+        )
+        processor_keys = set(processor.image_processor.image_keys)
+        missing_keys = processor_keys - set(self.camera_mapping)
+        if missing_keys:
+            raise ValueError(
+                "STEAM checkpoint expects camera keys that are not mapped from "
+                f"ManiSkill RLT observations: {sorted(missing_keys)}"
+            )
         self._states: dict[tuple[str, int], _GateState] = {}
+
+    @property
+    def device(self) -> torch.device:
+        """Return the device holding the STEAM model parameters."""
+        return next(self.model.parameters()).device
 
     def eval(self) -> None:
         self.model.eval()
@@ -109,48 +142,78 @@ class SteamCriticalPhaseGate:
             ):
                 del self._states[key]
 
-    def _new_state(
-        self,
-        z_rl: torch.Tensor,
-        proprio: torch.Tensor,
-    ) -> _GateState:
-        batch_size = z_rl.shape[0]
+    @staticmethod
+    def _batch_images(value: Any) -> np.ndarray:
+        """Convert a batched ManiSkill image observation to uint8 BHWC."""
+        if torch.is_tensor(value):
+            value = value.detach().cpu()
+            batch_size = int(value.shape[0])
+            return np.stack([_to_uint8_hwc(value[idx]) for idx in range(batch_size)])
+        array = np.asarray(value)
+        if array.ndim != 4:
+            raise ValueError(f"expected a batched rank-4 image, got {array.shape}")
+        return np.stack([_to_uint8_hwc(array[idx]) for idx in range(array.shape[0])])
+
+    def _extract_images(self, env_obs: dict[str, Any]) -> dict[str, np.ndarray]:
+        images: dict[str, np.ndarray] = {}
+        expected_keys = set(self._collator.processor.image_processor.image_keys)
+        for steam_key, env_key in self.camera_mapping.items():
+            if steam_key not in expected_keys:
+                continue
+            value = env_obs.get(env_key)
+            if value is None:
+                raise KeyError(
+                    f"STEAM gate requires env observation {env_key!r} for "
+                    f"checkpoint camera {steam_key!r}"
+                )
+            images[steam_key] = self._batch_images(value)
+        return images
+
+    @staticmethod
+    def _extract_prompts(env_obs: dict[str, Any], batch_size: int) -> list[str]:
+        prompts = env_obs.get("task_descriptions")
+        if isinstance(prompts, str):
+            return [prompts] * batch_size
+        if prompts is None:
+            raise KeyError("STEAM gate requires env observation 'task_descriptions'")
+        if torch.is_tensor(prompts):
+            prompts = prompts.detach().cpu().tolist()
+        result = [str(prompt) for prompt in prompts]
+        if len(result) != batch_size:
+            raise ValueError(
+                "task_descriptions batch size does not match images: "
+                f"{len(result)} != {batch_size}"
+            )
+        return result
+
+    def _new_state(self, images: dict[str, np.ndarray]) -> _GateState:
+        first_images = next(iter(images.values()))
+        batch_size = first_images.shape[0]
         history_len = self.lookback_chunks + 1
+        image_history = {
+            key: np.zeros(
+                (batch_size, history_len, *value.shape[1:]),
+                dtype=np.uint8,
+            )
+            for key, value in images.items()
+        }
+        device = self.device
         return _GateState(
-            z_history=torch.zeros(
-                batch_size,
-                history_len,
-                z_rl.shape[-1],
-                device=z_rl.device,
-                dtype=z_rl.dtype,
-            ),
-            proprio_history=torch.zeros(
-                batch_size,
-                history_len,
-                proprio.shape[-1],
-                device=proprio.device,
-                dtype=proprio.dtype,
-            ),
-            valid_count=torch.zeros(batch_size, device=z_rl.device, dtype=torch.long),
-            low_progress_count=torch.zeros(
-                batch_size, device=z_rl.device, dtype=torch.long
-            ),
-            latched=torch.zeros(batch_size, device=z_rl.device, dtype=torch.bool),
-            entry_step=torch.zeros(batch_size, device=z_rl.device, dtype=torch.long),
-            actor_active=torch.zeros(batch_size, device=z_rl.device, dtype=torch.bool),
+            image_history=image_history,
+            valid_count=torch.zeros(batch_size, device=device, dtype=torch.long),
+            low_progress_count=torch.zeros(batch_size, device=device, dtype=torch.long),
+            latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
+            actor_active=torch.zeros(batch_size, device=device, dtype=torch.bool),
             critical_chunk_count=torch.zeros(
-                batch_size, device=z_rl.device, dtype=torch.long
+                batch_size, device=device, dtype=torch.long
             ),
             expert_low_progress_count=torch.zeros(
-                batch_size, device=z_rl.device, dtype=torch.long
+                batch_size, device=device, dtype=torch.long
             ),
-            expert_latched=torch.zeros(
-                batch_size, device=z_rl.device, dtype=torch.bool
-            ),
-            expert_entry_step=torch.zeros(
-                batch_size, device=z_rl.device, dtype=torch.long
-            ),
-            chunk_index=torch.zeros(batch_size, device=z_rl.device, dtype=torch.long),
+            expert_latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            expert_entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
+            chunk_index=torch.zeros(batch_size, device=device, dtype=torch.long),
         )
 
     @staticmethod
@@ -165,10 +228,83 @@ class SteamCriticalPhaseGate:
         mask = torch.as_tensor(reset_mask, device=device, dtype=torch.bool)
         return mask.reshape(batch_size, -1).any(dim=1)
 
+    @staticmethod
+    def _to_device(value: Any, device: torch.device) -> Any:
+        if torch.is_tensor(value):
+            return value.to(device=device, non_blocking=True)
+        if isinstance(value, dict):
+            return {
+                key: SteamCriticalPhaseGate._to_device(child, device)
+                for key, child in value.items()
+            }
+        return value
+
+    def _predict_pair(
+        self,
+        state: _GateState,
+        prompts: list[str],
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        samples = []
+        batch_size = state.valid_count.shape[0]
+        for batch_idx in range(batch_size):
+            image_t = {
+                key: history[batch_idx, 0]
+                for key, history in state.image_history.items()
+            }
+            image_tk = {
+                key: history[batch_idx, -1]
+                for key, history in state.image_history.items()
+            }
+            masks = dict.fromkeys(image_t, True)
+            samples.append(
+                {
+                    "image_t": image_t,
+                    "image_tk": image_tk,
+                    "image_mask_t": masks,
+                    "image_mask_tk": masks,
+                    "prompt": prompts[batch_idx],
+                    "label": 0,
+                    "episode": batch_idx,
+                    "frame_idx_t": 0,
+                    "frame_idx_tk": self.lookback_chunks * self.chunk_size,
+                }
+            )
+        observation = self._collator(samples)["observation"]
+        observation = self._to_device(observation, self.device)
+        output = self.model.predict(observation)
+        score = output.predicted_values.to(dtype=torch.float32)
+        variance = getattr(output, "prediction_variance", None)
+        if variance is None:
+            variance = torch.zeros_like(score)
+        return score, variance.to(dtype=torch.float32)
+
+    def _current_flags(
+        self,
+        state: _GateState,
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+        flags = state.latched
+        expert_flags = state.expert_latched
+        if self.mode == "shadow":
+            flags = torch.zeros_like(flags)
+            expert_flags = torch.zeros_like(expert_flags)
+        zeros = torch.zeros_like(state.entry_step, dtype=torch.float32)
+        return (
+            flags[:, None],
+            expert_flags[:, None],
+            {
+                "rlt_gate_score_min": zeros[:, None],
+                "rlt_gate_prediction_variance": zeros[:, None],
+                "rlt_gate_critical_phase": state.latched[:, None],
+                "rlt_gate_entry_step": state.entry_step[:, None],
+                "rlt_gate_expert_requested": state.expert_latched[:, None],
+                "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
+            },
+        )
+
     @torch.no_grad()
     def update(
         self,
-        rlt_obs: dict[str, torch.Tensor],
+        env_obs: dict[str, Any],
         *,
         mode: Literal["train", "eval"],
         stage_id: int,
@@ -176,50 +312,26 @@ class SteamCriticalPhaseGate:
         update_state: bool = True,
         actor_routing_enabled: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-        z_rl = rlt_obs["z_rl"].detach()
-        proprio = rlt_obs["proprio"].detach()
+        images = self._extract_images(env_obs)
+        batch_size = next(iter(images.values())).shape[0]
+        prompts = self._extract_prompts(env_obs, batch_size)
         key = (mode, int(stage_id))
         state = self._states.get(key)
-        if state is None or state.z_history.shape[0] != z_rl.shape[0]:
-            state = self._new_state(z_rl, proprio)
+        if state is None or state.valid_count.shape[0] != batch_size:
+            state = self._new_state(images)
             self._states[key] = state
-
         if not update_state:
-            flags = (
-                state.latched
-                if self.mode == "active"
-                else torch.zeros_like(state.latched)
-            )
-            expert_flags = (
-                state.expert_latched
-                if self.mode == "active"
-                else torch.zeros_like(state.expert_latched)
-            )
-            return (
-                flags[:, None],
-                expert_flags[:, None],
-                {
-                    "rlt_gate_score_min": torch.zeros_like(
-                        state.entry_step, dtype=torch.float32
-                    )[:, None],
-                    "rlt_gate_prediction_variance": torch.zeros_like(
-                        state.entry_step, dtype=torch.float32
-                    )[:, None],
-                    "rlt_gate_critical_phase": state.latched[:, None],
-                    "rlt_gate_entry_step": state.entry_step[:, None],
-                    "rlt_gate_expert_requested": state.expert_latched[:, None],
-                    "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
-                },
-            )
+            return self._current_flags(state)
 
         reset = self._normalize_reset_mask(
             reset_mask,
-            batch_size=z_rl.shape[0],
-            device=z_rl.device,
+            batch_size=batch_size,
+            device=self.device,
         )
         if reset.any():
-            state.z_history[reset] = 0
-            state.proprio_history[reset] = 0
+            reset_cpu = reset.detach().cpu().numpy()
+            for history in state.image_history.values():
+                history[reset_cpu] = 0
             state.valid_count[reset] = 0
             state.low_progress_count[reset] = 0
             state.latched[reset] = False
@@ -231,31 +343,26 @@ class SteamCriticalPhaseGate:
             state.expert_entry_step[reset] = 0
             state.chunk_index[reset] = 0
 
-        state.z_history = torch.roll(state.z_history, shifts=-1, dims=1)
-        state.proprio_history = torch.roll(state.proprio_history, shifts=-1, dims=1)
-        state.z_history[:, -1] = z_rl
-        state.proprio_history[:, -1] = proprio
+        for image_key, current_images in images.items():
+            state.image_history[image_key] = np.roll(
+                state.image_history[image_key],
+                shift=-1,
+                axis=1,
+            )
+            state.image_history[image_key][:, -1] = current_images
         state.valid_count = torch.clamp(
-            state.valid_count + 1, max=self.lookback_chunks + 1
+            state.valid_count + 1,
+            max=self.lookback_chunks + 1,
         )
-        ready = state.valid_count >= (self.lookback_chunks + 1)
+        ready = state.valid_count >= self.lookback_chunks + 1
 
-        output = self.model.predict(
-            {
-                "z_rl_t": state.z_history[:, 0],
-                "proprio_t": state.proprio_history[:, 0],
-                "z_rl_tk": state.z_history[:, -1],
-                "proprio_tk": state.proprio_history[:, -1],
-            }
-        )
-        score = output.predicted_values.to(dtype=torch.float32)
-        variance = getattr(output, "prediction_variance", None)
-        if variance is None:
-            variance = torch.zeros_like(score)
+        if ready.any():
+            score, variance = self._predict_pair(state, prompts)
+            score = torch.where(ready, score, torch.zeros_like(score))
+            variance = torch.where(ready, variance, torch.zeros_like(variance))
         else:
-            variance = variance.to(dtype=torch.float32)
-        score = torch.where(ready, score, torch.zeros_like(score))
-        variance = torch.where(ready, variance, torch.zeros_like(variance))
+            score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
+            variance = torch.zeros_like(score)
 
         low_progress = ready & (score <= self.enter_threshold)
         state.low_progress_count = torch.where(

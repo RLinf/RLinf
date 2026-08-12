@@ -20,13 +20,12 @@ from .pair_dataset import (
     PairDataset,
     TrajectorySource,
 )
-from .rlt_chunk_pair_dataset import RLTChunkPairCollator, RLTChunkPairDataset
+from .rlt_chunk_pair_dataset import RLTChunkPairDataset
 
 __all__ = [
     "BinaryPairDataCollator",
     "PairMixtureDataset",
     "PairDataset",
-    "RLTChunkPairCollator",
     "RLTChunkPairDataset",
     "TrajectorySource",
 ]

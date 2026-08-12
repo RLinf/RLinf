@@ -1,7 +1,7 @@
 # Usage: bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh rlt_steam_value_model_sft
 
 defaults:
-  - model/rlt_steam_value_model@actor.model
+  - model/steam_value_model@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
   - _self_
@@ -25,7 +25,6 @@ runner:
     project_name: rlinf
     experiment_name: "rlt_steam_value_model_sft"
     logger_backends: ["tensorboard"]
-
   max_epochs: -1
   max_steps: 16000
   val_check_interval: -1
@@ -43,62 +42,21 @@ data:
   balance_weights: true
   seed: 42
 
-  # Pair boundaries and temporal gaps are both measured in 10-step chunks.
+  # Read the existing ManiSkill RLT dataset directly. Pair distances and
+  # trajectory-length normalization are measured in 10-step action chunks.
+  camera_keys: [image, wrist_image]
   chunk_size: 10
   k: 4
-  main_image_key: image
-  wrist_image_key: wrist_image
-  state_key: state
   default_prompt: "insert the peg in the hole"
+  length_scale_enabled: true
+  length_scale_percentile: 100.0
 
   train_num_workers: 8
   eval_num_workers: 4
   prefetch_factor: 4
   persistent_workers: false
   pin_memory: false
-
-  # Frozen Stage 1 RLT encoder. Keep this identical to the Stage 2 rollout
-  # feature model so critic training and gate inference see the same features.
-  rlt_feature_model:
-    model_type: "openpi_rlinf"
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
-    precision: bf16
-    is_lora: false
-    num_action_chunks: 10
-    action_dim: 8
-    num_steps: 5
-    add_value_head: false
-    openpi_data:
-      repo_id: "maniskill_peginsertionside_joint"
-      default_prompt: "insert the peg in the hole"
-      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"
-    openpi:
-      task: eval
-      config_name: "pi05_rlt_maniskill_joint"
-      num_images_in_input: 2
-      action_chunk: 10
-      action_horizon: 10
-      action_env_dim: 8
-      num_steps: 5
-      model_action_dim: 32
-      paligemma_variant: "gemma_2b"
-      action_expert_variant: "gemma_300m"
-      max_token_len: 200
-      discrete_state_input: true
-      train_expert_only: false
-      add_value_head: false
-      detach_critic_input: true
-      use_rlt: true
-      rlt_alpha: 1.0
-      rlt_input_dim: 2048
-      rlt_embed_dim: 2048
-      rlt_prefix_seq_len: 1024
-      rlt_num_layers: 2
-      rlt_num_heads: 8
-      rlt_mlp_ratio: 4.0
-      rlt_encoder_type: "append_self_attention"
-      rlt_image_only: false
-      rlt_use_mask: true
+  do_augment: false
 
 algorithm:
   adv_type: gae
@@ -106,9 +64,26 @@ algorithm:
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
-  micro_batch_size: 32
-  global_batch_size: 512
+  micro_batch_size: 4
+  global_batch_size: 64
   seed: 0
+
+  model:
+    precision: fp32
+    vision_repo_id: "google/siglip-so400m-patch14-384"
+    language_repo_id: "google/gemma-3-270m"
+    tokenizer_path: "google/gemma-3-270m"
+    fusion_hidden_dim: 512
+    dropout: 0.1
+    label_smoothing: 0.05
+    num_frames_per_pair: 2
+    num_bins: 8
+    ensemble_size: 3
+    ensemble_head_seed_base: 0
+    freeze_vision_encoder: false
+    freeze_language_model: false
+    use_gradient_checkpointing: false
+    max_token_len: 200
 
   optim:
     lr: 5.0e-5

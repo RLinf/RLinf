@@ -284,8 +284,8 @@ rollout:
       rlt_image_only: False
       rlt_use_mask: True
 
-  # STEAM-style automatic critical-phase routing. The critic compares frozen
-  # Stage 1 RLT features at 10-step chunk boundaries; geometry remains metrics
+  # STEAM-style automatic critical-phase routing. The critic compares raw
+  # ManiSkill image pairs at 10-step chunk boundaries; geometry remains metrics
   # only and never changes the selected policy.
   rlt_critical_phase_gate:
     enable: True
@@ -295,6 +295,8 @@ rollout:
     patience_chunks: 2
     enter_threshold: 0.0
     latch_until_done: True
+    main_image_key: image
+    wrist_image_key: wrist_image
     expert_takeover:
       enable: True
       # Start with a fresh actor-only lookback, then require sustained low
@@ -305,20 +307,8 @@ rollout:
       latch_until_done: True
     model:
       model_type: "steam_value_model"
-      model_path: "/path/to/rlt_steam_value_model/checkpoints/global_step_<step>/actor"
-      precision: fp32
-      is_lora: False
-      backbone_type: "rlt_stage1"
-      z_dim: 2048
-      proprio_dim: 9
-      fusion_hidden_dim: 512
-      dropout: 0.1
-      label_smoothing: 0.05
-      num_bins: 8
-      stride_k: 4
-      ensemble_size: 3
-      ensemble_head_seed_base: 0
-      use_gradient_checkpointing: False
+      model_path: "/path/to/steam_value_model/checkpoints/global_step_<step>/actor"
+      precision: bf16
 
   # Simulation expert used after the STEAM gate detects that the Stage 2 actor
   # remains stuck inside the critical phase.
