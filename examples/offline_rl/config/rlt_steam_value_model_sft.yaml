@@ -70,9 +70,9 @@ actor:
 
   model:
     precision: fp32
-    vision_repo_id: "google/siglip-so400m-patch14-384"
-    language_repo_id: "google/gemma-3-270m"
-    tokenizer_path: "google/gemma-3-270m"
+    vision_repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/siglip-so400m-patch14-384"
+    language_repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/gemma-3-270m"
+    tokenizer_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/gemma-3-270m"
     fusion_hidden_dim: 512
     dropout: 0.1
     label_smoothing: 0.05
