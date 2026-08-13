@@ -40,7 +40,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 router_server_args:
