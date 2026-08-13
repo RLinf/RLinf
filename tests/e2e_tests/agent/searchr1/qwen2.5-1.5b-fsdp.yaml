@@ -33,7 +33,7 @@ runner:
   enable_dynamic_batch_size: True
   max_tokens_per_mbs: 11008
 
-  resume_dir: auto
+  resume_dir: null
   experiment_name: searchr1-qwen2.5-1.5b-fsdp
   output_dir: ../results
 

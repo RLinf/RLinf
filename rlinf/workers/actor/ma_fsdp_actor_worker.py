@@ -79,6 +79,10 @@ class MAFSDPActor(FSDPActor):
         assert self.placement.is_collocated, (
             "Only collocated placement is supported for multi-agent actor"
         )
+        if self.cfg.algorithm.get("importance_sampling_fix", False):
+            raise ValueError(
+                "importance_sampling_fix is not supported for dynamic rollout batch"
+            )
         loss_scales = self.cfg.algorithm.get("loss_scales", [])
         self.loss_scale_fns = get_loss_scales(loss_scales)
         self.pack_traj = self.cfg.actor.get("pack_traj", True)
@@ -382,11 +386,6 @@ class MAFSDPActor(FSDPActor):
         clip_ratio_high = clip_ratio_high if clip_ratio_high is not None else clip_ratio
         clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", 3.0)
 
-        if self.cfg.algorithm.get("importance_sampling_fix", False):
-            raise AssertionError(
-                "importance_sampling_fix is not supported for dynamic rollout batch"
-            )
-
         loss, mbs_metrics_data = policy_loss(
             task_type=self.task_type,
             loss_type=self.cfg.algorithm.loss_type,
@@ -433,6 +432,7 @@ class MAFSDPActor(FSDPActor):
 
         return mbs_metrics_data
 
+    @Worker.timer("training_step")
     def training_step(
         self, batch: dict[str, torch.Tensor] | BatchResizingIterator
     ) -> tuple[dict[str, torch.Tensor], float, list[float]]:
