@@ -306,6 +306,7 @@ class CollectiveGroup:
         async_op: bool = False,
         options: Optional[CollectiveGroupOptions] = None,
         piggyback_payload: Optional[Any] = None,
+        borrowed_ipc: bool = False,
     ) -> Optional[AsyncFuncWork]:
         """Implement the Worker's send method.
 
@@ -313,11 +314,23 @@ class CollectiveGroup:
 
         This function calls _atomic_send in a way so that it can be chained with previous send operations in the same channel.
         Otherwise, async send operations in the same channel may become out-of-order and mismatch with recv.
+
+        ``borrowed_ipc`` returns same-device CUDA views at the receiver. The
+        caller must retain the source tensors until an application-level
+        acknowledgement confirms that the receiver has finished with the views.
         """
+        object_type, tensor_data = self._get_object_info(object)
+        if borrowed_ipc and object_type not in (
+            CollectiveGroup.TENSOR,
+            CollectiveGroup.TENSOR_LIST,
+        ):
+            raise TypeError("borrowed IPC only supports a tensor or tensor list")
+        if borrowed_ipc and (tensor_data.cpu_tensors or not tensor_data.accel_tensors):
+            raise ValueError("borrowed IPC only supports CUDA tensor payloads")
+
         # Only iter the channel here and pass the channel id along the way.
         # Because the _atomic_send and all the send in the way may be called asynchronously while the channel_id in the class may be different.
         send_comm_id = next(self._send_comm_id_iter)
-        object_type, tensor_data = self._get_object_info(object)
 
         # Create AsyncFuncWork for the send operation
         send_work = AsyncFuncWork(
@@ -328,6 +341,7 @@ class CollectiveGroup:
             tensor_data=tensor_data,
             options=options,
             piggyback_payload=piggyback_payload,
+            borrowed_ipc=borrowed_ipc,
             pass_self=True,
         )
 
@@ -360,6 +374,7 @@ class CollectiveGroup:
         tensor_data: TensorData,
         options: Optional[CollectiveGroupOptions] = None,
         piggyback_payload: Optional[Any] = None,
+        borrowed_ipc: bool = False,
     ) -> Optional[AsyncFuncWork]:
         """Send an object to a specific address in the collective group in an out-of-place manner.
 
@@ -382,6 +397,7 @@ class CollectiveGroup:
                 piggyback_payload=piggyback_payload,
                 tensor_data=tensor_data,
                 work=work,
+                borrowed_ipc=borrowed_ipc,
             )
         elif object_type == CollectiveGroup.TENSOR_LIST:
             return self._send_tensor_list(
@@ -390,6 +406,7 @@ class CollectiveGroup:
                 piggyback_payload=piggyback_payload,
                 tensor_data=tensor_data,
                 work=work,
+                borrowed_ipc=borrowed_ipc,
             )
         elif object_type == CollectiveGroup.TENSOR_DICT:
             return self._send_tensor_dict(
@@ -418,6 +435,7 @@ class CollectiveGroup:
         self,
         async_op: bool = False,
         options: Optional[CollectiveGroupOptions] = None,
+        borrowed_ipc: bool = False,
     ) -> (
         AsyncFuncWork
         | torch.Tensor
@@ -441,6 +459,7 @@ class CollectiveGroup:
             comm_id=recv_comm_id,
             current_device=current_device,
             options=options,
+            borrowed_ipc=borrowed_ipc,
             pass_self=True,
         )
 
@@ -467,6 +486,7 @@ class CollectiveGroup:
         comm_id: int,
         current_device: Optional[int],
         options: Optional[CollectiveGroupOptions] = None,
+        borrowed_ipc: bool = False,
     ) -> (
         AsyncFuncWork
         | torch.Tensor
@@ -489,13 +509,17 @@ class CollectiveGroup:
             f"Receiving object type {object_type} from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
         if object_type == CollectiveGroup.TENSOR:
-            tensor, pb_data = self._recv_tensor_list(comm_id, work=work)
+            tensor, pb_data = self._recv_tensor_list(
+                comm_id, work=work, borrowed_ipc=borrowed_ipc
+            )
             assert len(tensor) == 1, (
                 f"Expected to receive one tensor but got {len(tensor)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
             )
             data = tensor[0]
         elif object_type == CollectiveGroup.TENSOR_LIST:
-            data, pb_data = self._recv_tensor_list(comm_id, work=work)
+            data, pb_data = self._recv_tensor_list(
+                comm_id, work=work, borrowed_ipc=borrowed_ipc
+            )
         elif object_type == CollectiveGroup.TENSOR_DICT:
             data, pb_data = self._recv_tensor_dict(comm_id, work=work)
         elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
@@ -1482,10 +1506,10 @@ class CollectiveGroup:
         Returns:
             Tuple of (definitely_same, uncertain, definitely_diff):
             - definitely_same: same node, both have exactly one accelerator, identical
-              device → use P2P IPC directly.
+              device -> use P2P IPC directly.
             - uncertain: same node, accelerator sets overlap but at least one side has
-              multiple accelerators → exchange current-device at runtime to decide.
-            - definitely_diff: different node or no accelerator overlap → accelerator collective.
+              multiple accelerators -> exchange current-device at runtime to decide.
+            - definitely_diff: different node or no accelerator overlap -> accelerator collective.
         """
         src = self._group_info.workers[src_rank]
         src_devices = set(src.available_accelerators)
@@ -1938,8 +1962,11 @@ class CollectiveGroup:
         tensors: list[torch.Tensor],
         comm_id: int,
         async_op: bool = False,
+        borrowed: bool = False,
     ) -> Optional[AsyncWork]:
-        """Handle same device send/recv in _send_tensor_list."""
+        """Handle same-device send/recv, optionally retaining producer storage."""
+        if borrowed:
+            Worker.torch_platform.current_stream().synchronize()
         tensor_handles = [reduce_tensor(tensor) for tensor in tensors]
         self._logger.debug(
             f"Sending {len(tensor_handles)} tensors via IPC from worker {self._cur_worker_address.get_name()}"
@@ -1966,12 +1993,15 @@ class CollectiveGroup:
             device=CollectiveGroup.CPU,
             comm_id=comm_id,
         )
-        Worker.torch_platform.ipc_collect()
+        if not borrowed:
+            Worker.torch_platform.ipc_collect()
 
         if async_op:
             return work
 
-    def _recv_tensor_list_via_ipc(self, comm_id: int) -> list[torch.Tensor]:
+    def _recv_tensor_list_via_ipc(
+        self, comm_id: int, *, borrowed: bool = False
+    ) -> list[torch.Tensor]:
         self._logger.debug(
             f"Receiving tensors via IPC in worker {self._cur_worker_address.get_name()}"
         )
@@ -1995,13 +2025,17 @@ class CollectiveGroup:
             rebuild_func(*rebuild_args)
             for (rebuild_func, rebuild_args) in tensor_handles
         ]
-        tensors = [
-            tensor.clone().detach().to(Worker.torch_platform.current_device())
-            for tensor in remote_tensors
-        ]
+        if borrowed:
+            tensors = [tensor.detach() for tensor in remote_tensors]
+        else:
+            tensors = [
+                tensor.clone().detach().to(Worker.torch_platform.current_device())
+                for tensor in remote_tensors
+            ]
 
         Worker.torch_platform.current_stream().synchronize()
-        remote_tensors.clear()
+        if not borrowed:
+            remote_tensors.clear()
         zero_tensor = torch.tensor(0, dtype=torch.long, device="cpu")
         self._recv(zero_tensor, CollectiveGroup.CPU, comm_id)
         Worker.torch_platform.ipc_collect()
@@ -2139,6 +2173,7 @@ class CollectiveGroup:
         async_op: bool = False,
         piggyback_payload: Optional[Any] = None,
         work: Optional[AsyncFuncWork] = None,
+        borrowed_ipc: bool = False,
     ) -> Optional[AsyncWork]:
         """Send a list of tensors to the specified destination address in the collective group.
 
@@ -2150,6 +2185,8 @@ class CollectiveGroup:
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work via :meth:`_track_payload_time`.
+            borrowed_ipc (bool): Send same-device CUDA aliases without cloning.
+                The application must retain tensors until receiver acknowledgement.
 
         Returns:
             Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
@@ -2158,6 +2195,8 @@ class CollectiveGroup:
         cpu_tensor_mask = tensor_data.cpu_tensor_mask
         cpu_tensors = tensor_data.cpu_tensors
         accel_tensors = tensor_data.accel_tensors
+        if borrowed_ipc and (cpu_tensors or not accel_tensors):
+            raise RuntimeError("borrowed IPC only supports CUDA tensor payloads")
 
         dst_rank_in_group = self._peer_rank
         last_work: Optional[dist.Work] = None
@@ -2171,6 +2210,7 @@ class CollectiveGroup:
             "meta": tensor_shape_dtype,
             "pb": piggyback_payload,
             "cpu_tensor_mask": cpu_tensor_mask,
+            "borrowed_ipc": borrowed_ipc,
         }
         self._logger.debug(
             f"Sending tensor metadata {metadata} to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
@@ -2205,13 +2245,20 @@ class CollectiveGroup:
             if accel_tensors:
                 # Handle CUDA tensor sending with IPC if the peer worker is on the same device
                 check_cuda_device_result = self._check_same_device_with_peer()
+                if borrowed_ipc and check_cuda_device_result != 1:
+                    raise RuntimeError(
+                        "borrowed IPC requires sender and receiver on the same CUDA device"
+                    )
                 if check_cuda_device_result == 0:
                     last_work = self._send_tensor_list_to_uncertain_peer(
                         accel_tensors, comm_id, async_op
                     )
                 elif check_cuda_device_result == 1:
                     last_work = self._send_tensor_list_via_ipc(
-                        accel_tensors, comm_id, async_op
+                        accel_tensors,
+                        comm_id,
+                        async_op,
+                        borrowed=borrowed_ipc,
                     )
                 else:
                     for tensor in accel_tensors:
@@ -2229,6 +2276,7 @@ class CollectiveGroup:
         self,
         comm_id: int,
         work: Optional[AsyncFuncWork] = None,
+        borrowed_ipc: bool = False,
     ) -> tuple[list[torch.Tensor], Any]:
         """Receive a list of tensors from the specified source address in the collective group.
 
@@ -2236,6 +2284,7 @@ class CollectiveGroup:
             comm_id (int): The ID for the recv operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work.
+            borrowed_ipc (bool): Accept same-device producer-owned CUDA aliases.
 
         Returns:
             tuple[List[torch.Tensor], Any]: A tuple of the received list of tensors and the piggyback payload.
@@ -2260,10 +2309,15 @@ class CollectiveGroup:
         tensor_shapes = metadata["meta"]
         pb_data = metadata["pb"]
         cpu_tensor_mask = metadata["cpu_tensor_mask"]
+        sender_borrowed_ipc = bool(metadata.get("borrowed_ipc", False))
+        mode_mismatch = sender_borrowed_ipc != borrowed_ipc
+        invalid_borrowed_payload = sender_borrowed_ipc and any(cpu_tensor_mask)
         has_accel_tensor = any(not m for m in cpu_tensor_mask)
 
         tensors = [
-            torch.empty(
+            None
+            if sender_borrowed_ipc and not is_cpu
+            else torch.empty(
                 shape,
                 dtype=dtype,
                 device=(
@@ -2298,6 +2352,10 @@ class CollectiveGroup:
                 self._recv(tensor, CollectiveGroup.CPU, comm_id)
             if has_accel_tensor:
                 check_cuda_device_result = self._check_same_device_with_peer()
+                if sender_borrowed_ipc and check_cuda_device_result != 1:
+                    raise RuntimeError(
+                        "borrowed IPC requires sender and receiver on the same CUDA device"
+                    )
                 if check_cuda_device_result == 0:
                     accel_shapes = [shape_dtype for _, _, shape_dtype in accel_entries]
                     received_accel_tensors = self._recv_tensor_list_to_uncertain_peer(
@@ -2308,7 +2366,9 @@ class CollectiveGroup:
                     ):
                         tensors[idx] = tensor
                 elif check_cuda_device_result == 1:
-                    received_accel_tensors = self._recv_tensor_list_via_ipc(comm_id)
+                    received_accel_tensors = self._recv_tensor_list_via_ipc(
+                        comm_id, borrowed=sender_borrowed_ipc
+                    )
                     for (idx, _, _), tensor in zip(
                         accel_entries, received_accel_tensors
                     ):
@@ -2316,6 +2376,16 @@ class CollectiveGroup:
                 else:
                     for _, tensor, _ in accel_entries:
                         self._recv(tensor, CollectiveGroup.ACCEL, comm_id)
+
+        if mode_mismatch or invalid_borrowed_payload:
+            if sender_borrowed_ipc:
+                tensors.clear()
+                Worker.torch_platform.ipc_collect()
+            if mode_mismatch:
+                raise RuntimeError(
+                    "borrowed IPC mode must be enabled explicitly on both sender and receiver"
+                )
+            raise RuntimeError("borrowed IPC only supports CUDA tensor payloads")
         return tensors, pb_data
 
     def _send_tensor_dict(

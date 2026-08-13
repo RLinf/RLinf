@@ -15,7 +15,7 @@
 import json
 import random
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Mapping, Optional, Union
 
 import numpy as np
 import torch
@@ -42,6 +42,10 @@ from rlinf.models.embodiment.gr00t.utils import (
 )
 from rlinf.models.embodiment.modules.explore_noise_net import ExploreNoiseNet
 from rlinf.models.embodiment.modules.value_head import ValueHead
+from rlinf.utils.backbone_cache import (
+    ROLLOUT_BACKBONE_FEATURE_KEY,
+    ROLLOUT_BACKBONE_MASK_KEY,
+)
 
 
 class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
@@ -505,6 +509,26 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         else:
             raise NotImplementedError
 
+    def _prepare_action_head_input(
+        self, forward_inputs: Mapping[str, torch.Tensor]
+    ) -> BatchFeature:
+        action_inputs = self.action_head.prepare_input(
+            {
+                "state": forward_inputs["state"],
+                "state_mask": forward_inputs["state_mask"],
+                "embodiment_id": forward_inputs["embodiment_id"],
+            }
+        )
+        for name, value in action_inputs.items():
+            if torch.is_floating_point(value):
+                action_inputs[name] = value.to(
+                    self.device,
+                    dtype=self.action_head.dtype,
+                )
+            else:
+                action_inputs[name] = value.to(self.device)
+        return action_inputs
+
     def default_forward(
         self,
         forward_inputs: dict[str, torch.Tensor],
@@ -512,23 +536,28 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         compute_entropy: bool = False,
         compute_values: bool = True,
         use_cache: bool = False,
+        precomputed_backbone: Optional[Mapping[str, torch.Tensor]] = None,
         **kwargs,
     ) -> dict[str, Any]:
-        normalized_input = {
-            "state": forward_inputs["state"],
-            "state_mask": forward_inputs["state_mask"],
-            "eagle_input_ids": forward_inputs["eagle_input_ids"],
-            "eagle_attention_mask": forward_inputs["eagle_attention_mask"],
-            "eagle_pixel_values": forward_inputs["eagle_pixel_values"].reshape(
-                -1, *forward_inputs["eagle_pixel_values"].shape[2:]
-            ),
-            "eagle_image_sizes": forward_inputs["eagle_image_sizes"].reshape(
-                -1, *forward_inputs["eagle_image_sizes"].shape[2:]
-            ),
-            "embodiment_id": forward_inputs["embodiment_id"],
-        }
-        backbone_inputs, action_inputs = self.prepare_input(normalized_input)
-        backbone_outputs = self.backbone(backbone_inputs)
+        if precomputed_backbone is None:
+            normalized_input = {
+                "state": forward_inputs["state"],
+                "state_mask": forward_inputs["state_mask"],
+                "eagle_input_ids": forward_inputs["eagle_input_ids"],
+                "eagle_attention_mask": forward_inputs["eagle_attention_mask"],
+                "eagle_pixel_values": forward_inputs["eagle_pixel_values"].reshape(
+                    -1, *forward_inputs["eagle_pixel_values"].shape[2:]
+                ),
+                "eagle_image_sizes": forward_inputs["eagle_image_sizes"].reshape(
+                    -1, *forward_inputs["eagle_image_sizes"].shape[2:]
+                ),
+                "embodiment_id": forward_inputs["embodiment_id"],
+            }
+            backbone_inputs, action_inputs = self.prepare_input(normalized_input)
+            backbone_outputs = self.backbone(backbone_inputs)
+        else:
+            action_inputs = self._prepare_action_head_input(forward_inputs)
+            backbone_outputs = BatchFeature(data=dict(precomputed_backbone))
 
         chains = forward_inputs["chains"]
         denoise_inds = forward_inputs["denoise_inds"]
@@ -662,6 +691,18 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         backbone_inputs, action_inputs = self.prepare_input(normalized_input)
         # Because the behavior of backbones remains the same for training and inference, we can use `forward` for backbones.
         backbone_outputs = self.backbone(backbone_inputs)
+        rollout_backbone_output = None
+        if getattr(self, "capture_rollout_backbone_output", False):
+            # The action head mutates backbone_outputs, so retain the raw frozen
+            # tensors before entering it. Disabled runs do not extend their lifetime.
+            rollout_backbone_output = {
+                ROLLOUT_BACKBONE_FEATURE_KEY: backbone_outputs[
+                    "backbone_features"
+                ].detach(),
+                ROLLOUT_BACKBONE_MASK_KEY: backbone_outputs[
+                    "backbone_attention_mask"
+                ].detach(),
+            }
         action_head_outputs, rlinf_outputs = self.action_head.get_rl_action(
             backbone_outputs, action_inputs, mode=mode
         )
@@ -685,6 +726,9 @@ class GR00T_N1_5_ForRLActionPrediction(GR00T_N1_5, BasePolicy):
         ].reshape(
             bsize, self.image_nums, *normalized_input["eagle_image_sizes"].shape[1:]
         )
+
+        if rollout_backbone_output is not None:
+            forward_inputs.update(rollout_backbone_output)
 
         result = {
             "prev_logprobs": rlinf_outputs["prev_logprobs"],

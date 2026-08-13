@@ -23,6 +23,11 @@ from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+        if self._pinned_feature_ipc_enabled:
+            raise ValueError(
+                "pinned rollout backbone transport only supports the synchronous "
+                "embodied runner"
+            )
         self._generate_task: asyncio.Task = None
         self.staleness_threshold = cfg.algorithm.get("staleness_threshold", None)
         # set the decoupled rollout worker sync weight time
@@ -181,7 +186,7 @@ class AsyncMultiStepRolloutWorker(MultiStepRolloutWorker):
                 rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                 intervene_requested=env_output.get("intervene_flags", None),
             )
-            policy_output = self._build_policy_output(
+            policy_output = await self._build_policy_output_with_transport(
                 actions,
                 result,
                 final_obs=env_output.get("final_obs", None),

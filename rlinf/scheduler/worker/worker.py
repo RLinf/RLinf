@@ -565,6 +565,7 @@ class Worker(metaclass=WorkerMeta):
         async_op: bool = False,
         options: Optional["CollectiveGroupOptions"] = None,
         piggyback_payload: Optional[Any] = None,
+        borrowed_ipc: bool = False,
     ):
         """Send an object to a specific worker address in the collective group.
 
@@ -592,6 +593,9 @@ class Worker(metaclass=WorkerMeta):
             async_op (bool): Whether to perform the operation asynchronously.
             options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the recv side.
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
+            borrowed_ipc (bool): Return same-device CUDA aliases instead of
+                receiver-owned clones. The sender must retain the source tensors
+                until an application-level acknowledgement is received.
 
         Returns:
             Optional[AsyncWork]: An AsyncWork object if async_op is True, otherwise None.
@@ -604,6 +608,7 @@ class Worker(metaclass=WorkerMeta):
             async_op=async_op,
             options=options,
             piggyback_payload=piggyback_payload,
+            borrowed_ipc=borrowed_ipc,
         )
 
     def recv(
@@ -612,6 +617,7 @@ class Worker(metaclass=WorkerMeta):
         src_rank: int | list[int],
         async_op: bool = False,
         options: Optional["CollectiveGroupOptions"] = None,
+        borrowed_ipc: bool = False,
     ):
         """Out-of-place receive of an object from a specific worker address in the collective group.
 
@@ -629,13 +635,20 @@ class Worker(metaclass=WorkerMeta):
             src_group_name (str): The name of the source worker group.
             src_rank (int | List[int]): The rank or list of ranks in the source worker group to receive the object from. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
+            borrowed_ipc (bool): Accept producer-owned same-device CUDA aliases.
+                This must match the sender and requires explicit lifetime
+                acknowledgement by the caller.
 
         Returns:
             AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object. If the send side sends a piggyback payload, the received object will be a tuple of the received object and the piggyback payload.
         """
         src_addr = WorkerAddress(src_group_name, ranks=src_rank)
         group = self._get_collective_group(src_addr)
-        return group.recv(async_op=async_op, options=options)
+        return group.recv(
+            async_op=async_op,
+            options=options,
+            borrowed_ipc=borrowed_ipc,
+        )
 
     def send_tensor(
         self,

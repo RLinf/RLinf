@@ -91,3 +91,12 @@ This deletes the `build` directory and its contents.
 Sphinx uses reStructuredText (RST), a simple yet powerful markup language for documentation.
 
 [RST grammar](https://zh-sphinx-doc.readthedocs.io/en/latest/rest.html)
+
+---
+
+## Engineering Reports
+
+These Markdown reports document implementation design and validation work that is
+not part of the Sphinx navigation:
+
+- [GR00T Rollout Backbone Feature Reuse](gr00t-rollout-backbone-feature-reuse.md)
