@@ -91,6 +91,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_rlt_td3_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_gr00t(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.gr00t import get_model
 
@@ -207,6 +212,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.RLT_MLP_POLICY.value,
         _build_rlt_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_TD3_MLP_POLICY.value,
+        _build_rlt_td3_mlp_policy,
         category="embodied",
         force=True,
     )

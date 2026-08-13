@@ -122,6 +122,8 @@ GRPO 工作方式
 - 集群设置：``cluster.num_nodes`` （节点数）。
 - 路径：``runner.output_dir`` （保存训练日志与检查点的路径）、``rollout.model.model_path`` （基础模型本地路径）、``data.train_data_paths`` （训练数据路径）等。
 
+通用的 cluster、runner、rollout 与 data 字段见 :doc:`训练配置 <../../../reference/configuration>`。
+
 **2. 配置文件**
 
 推荐配置示例：

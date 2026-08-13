@@ -15,12 +15,14 @@
 # Override Ray's NvidiaGPUAcceleratorManager
 # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py
 
+import ctypes
 import logging
 import os
 import shlex
 import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, ClassVar, Optional
 
 from omegaconf import ListConfig
@@ -39,6 +41,129 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _nv_profiling_active: bool = False
+
+# ---------------------------------------------------------------------------
+# EGL rendering device
+#
+# CUDA device ids and EGL device indices are different namespaces. A CUDA id
+# covers only the GPUs allocated to this container, renumbered from zero in PCI
+# order; EGL enumeration is not namespaced by the container at all and lists
+# every device the driver can see, in driver order. On one Kubernetes node
+# holding eight GPUs, a container given four of them saw CUDA devices 0-3 as EGL
+# indices 2, 3, 0 and 1, among nine enumerated EGL devices.
+# ---------------------------------------------------------------------------
+
+#: EGL device index, read when a renderer creates its display.
+#: ``MUJOCO_EGL_DEVICE_ID`` covers MuJoCo and robosuite, ``EGL_DEVICE_ID`` covers
+#: other EGL renderers such as pyrender. Both index the same
+#: ``eglQueryDevicesEXT`` enumeration, so both take the same value.
+EGL_DEVICE_ID_ENV_VARS = ("MUJOCO_EGL_DEVICE_ID", "EGL_DEVICE_ID")
+
+_EGL_CUDA_DEVICE_NV = 0x323A
+_MAX_EGL_DEVICES = 64
+
+# robosuite 1.4.1 rewrites MUJOCO_GL to "egl" for anything that is not exactly
+# one of these, so an unset, empty or unrelated value still means EGL there. The
+# comparison is as literal as robosuite's: "OSMesa" reaches EGL rendering even
+# though the mujoco package would read the same value as CPU rendering.
+_CPU_RENDERING_BACKENDS = frozenset({"osmesa", "glx"})
+
+
+def _query_egl_index_by_cuda_ordinal() -> dict[int, int]:
+    """Map each CUDA-visible device to its EGL enumeration index.
+
+    ``eglQueryDevicesEXT`` lists every device on the node and is not filtered by
+    ``CUDA_VISIBLE_DEVICES``, whereas ``EGL_CUDA_DEVICE_NV`` is readable only for
+    CUDA-visible devices and reports the CUDA *local* ordinal, i.e. the device's
+    position in ``CUDA_VISIBLE_DEVICES``.
+
+    The query goes through ``ctypes`` rather than PyOpenGL because PyOpenGL
+    resolves extension entry points by calling ``eglQueryString`` on a display,
+    and obtaining the right display is what the device index is needed for.
+
+    Returns:
+        Dict[int, int]: CUDA local ordinal to EGL enumeration index, for every
+        device this process can see.
+
+    Raises:
+        RuntimeError: If the EGL device extensions are unavailable or the device
+            query fails.
+        OSError: If ``libEGL.so.1`` cannot be loaded.
+    """
+    try:
+        libegl = ctypes.CDLL("libEGL.so.1")
+    except OSError as exc:
+        raise OSError(f"libEGL.so.1 is not loadable: {exc}") from exc
+    libegl.eglGetProcAddress.argtypes = [ctypes.c_char_p]
+    libegl.eglGetProcAddress.restype = ctypes.c_void_p
+
+    device_t = ctypes.c_void_p
+    boolean_t = ctypes.c_uint
+    int_t = ctypes.c_int
+    attrib_t = ctypes.c_ssize_t
+
+    query_devices_ptr = libegl.eglGetProcAddress(b"eglQueryDevicesEXT")
+    query_attrib_ptr = libegl.eglGetProcAddress(b"eglQueryDeviceAttribEXT")
+    if not query_devices_ptr or not query_attrib_ptr:
+        raise RuntimeError(
+            "EGL_EXT_device_enumeration and EGL_EXT_device_query are required"
+        )
+    query_devices = ctypes.CFUNCTYPE(
+        boolean_t, int_t, ctypes.POINTER(device_t), ctypes.POINTER(int_t)
+    )(query_devices_ptr)
+    query_attrib = ctypes.CFUNCTYPE(
+        boolean_t, device_t, int_t, ctypes.POINTER(attrib_t)
+    )(query_attrib_ptr)
+
+    devices = (device_t * _MAX_EGL_DEVICES)()
+    device_count = int_t()
+    if not query_devices(_MAX_EGL_DEVICES, devices, ctypes.byref(device_count)):
+        raise RuntimeError("eglQueryDevicesEXT failed")
+
+    egl_index_by_cuda_ordinal = {}
+    for egl_index in range(device_count.value):
+        cuda_ordinal = attrib_t(-1)
+        queried = query_attrib(
+            devices[egl_index], _EGL_CUDA_DEVICE_NV, ctypes.byref(cuda_ordinal)
+        )
+        if queried and cuda_ordinal.value >= 0:
+            egl_index_by_cuda_ordinal[cuda_ordinal.value] = egl_index
+    return egl_index_by_cuda_ordinal
+
+
+@cache
+def _egl_index_by_cuda_device() -> dict[int, int]:
+    """Map each CUDA device id this process can see to its EGL index.
+
+    ``EGL_CUDA_DEVICE_NV`` reports the ordinal a device has *within*
+    ``CUDA_VISIBLE_DEVICES``, so the ordinals are translated back to the device
+    ids the caller speaks in. Cached: the enumeration cannot change under a
+    running process.
+
+    Returns:
+        Dict[int, int]: CUDA device id to EGL enumeration index. Empty when the
+        driver cannot be queried, e.g. on a node without EGL.
+    """
+    try:
+        egl_index_by_cuda_ordinal = _query_egl_index_by_cuda_ordinal()
+    except (OSError, RuntimeError) as exc:
+        logger.debug("Cannot map CUDA devices to EGL devices (%s).", exc)
+        return {}
+
+    # An unrestricted process sees every device, so its ordinals are the ids.
+    device_ids = NvidiaGPUManager.get_visible_devices()
+    if not device_ids:
+        return egl_index_by_cuda_ordinal
+    return {
+        device_ids[ordinal]: egl_index
+        for ordinal, egl_index in egl_index_by_cuda_ordinal.items()
+        if ordinal < len(device_ids)
+    }
+
+
+def _renders_with_egl() -> bool:
+    """Report whether a renderer could go through EGL in this run."""
+    return os.environ.get("MUJOCO_GL") not in _CPU_RENDERING_BACKENDS
 
 
 def _torch_needs_avoid_record_streams() -> bool:
@@ -273,9 +398,23 @@ class NvidiaGPUManager(AcceleratorManager):
         env_vars["RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES"] = "1"
         # https://github.com/ray-project/ray/blob/161849364a784442cc659fb9780f1a6adee85fce/python/ray/_private/accelerators/nvidia_gpu.py#L95-L96
 
-        # Simulator env vars
-        if len(visible_accelerators) > 0:
-            env_vars["MUJOCO_EGL_DEVICE_ID"] = str(visible_accelerators[0])
+        # Simulator env vars: renderers address GPUs by EGL index, not by CUDA
+        # device id, so the worker's first GPU is translated rather than passed
+        # through. Falling back to the CUDA device id keeps the previous
+        # behaviour on nodes where the driver cannot be queried.
+        if len(visible_accelerators) > 0 and _renders_with_egl():
+            cuda_device_id = visible_accelerators[0]
+            egl_device_id = NvidiaGPUManager.get_egl_device_id(cuda_device_id)
+            if egl_device_id is None:
+                logger.debug(
+                    "No EGL device found for CUDA device %s. Falling back to the "
+                    "CUDA device id, which renders on the wrong GPU when the two "
+                    "namespaces disagree.",
+                    cuda_device_id,
+                )
+                egl_device_id = cuda_device_id
+            for env_var in EGL_DEVICE_ID_ENV_VARS:
+                env_vars[env_var] = str(egl_device_id)
 
         # NCCL env vars
         env_vars["NCCL_CUMEM_ENABLE"] = "0"
@@ -290,6 +429,31 @@ class NvidiaGPUManager(AcceleratorManager):
             env_vars["NCCL_CUMEM_ENABLE"] = os.environ["NCCL_CUMEM_ENABLE"]
 
         return env_vars
+
+    @staticmethod
+    def get_egl_device_id(cuda_device_id: int | str) -> Optional[int]:
+        """Map a CUDA device id to the EGL device index that renders on it.
+
+        The two namespaces do not agree: a CUDA device id addresses the GPUs this
+        process can see, while an EGL index addresses every device the driver
+        enumerates. This resolves the mapping by reading ``EGL_CUDA_DEVICE_NV``
+        off each EGL device.
+
+        Args:
+            cuda_device_id (int | str): CUDA device id, as it appears in
+                ``CUDA_VISIBLE_DEVICES``.
+
+        Returns:
+            Optional[int]: The matching EGL device index, or ``None`` when the
+            driver cannot be queried or does not know this device -- which is the
+            case for GPUs that are not visible to this process.
+        """
+        try:
+            cuda_device_id = int(cuda_device_id)
+        except ValueError:
+            # A GPU addressed by UUID rather than by index.
+            return None
+        return _egl_index_by_cuda_device().get(cuda_device_id)
 
     @staticmethod
     def get_visible_devices():
