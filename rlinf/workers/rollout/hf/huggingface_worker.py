@@ -931,6 +931,11 @@ class MultiStepRolloutWorker(Worker):
                             route_key=stage_id,
                             async_op=True,
                             batch_size=self.eval_batch_size,
+                            split_fn=(
+                                self._split_policy_output
+                                if isinstance(eval_output, PolicyOutput)
+                                else None
+                            ),
                         )
 
             if self.enable_offload:

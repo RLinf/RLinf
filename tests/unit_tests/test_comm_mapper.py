@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+from types import SimpleNamespace
+
 import torch
 
+from rlinf.algorithms.rlt.critical_phase_gate import RLT_GATE_INFO_KEYS
 from rlinf.data.schema.embodied_types import EnvOutput, PolicyOutput
 from rlinf.scheduler import (
     build_recv_plan,
@@ -213,6 +217,59 @@ def test_policy_output_split_merge_invariant():
         merged.forward_inputs["states"], policy_output.forward_inputs["states"]
     )
     assert torch.equal(merged.versions, policy_output.versions)
+
+
+def test_evaluate_splits_gate_policy_output():
+    class _ImmediateWork:
+        async def async_wait(self):
+            return {
+                "obs": _make_obs(0, 6),
+                "final_obs": None,
+                "rlt_switch_flags": None,
+                "intervene_flags": None,
+                "dones": torch.zeros((6, 1), dtype=torch.bool),
+            }
+
+    worker = object.__new__(MultiStepRolloutWorker)
+    worker.enable_offload = False
+    worker.env_decoupled_mode = False
+    worker.eval_rollout_epoch = 1
+    worker.n_eval_chunk_steps = 1
+    worker.num_pipeline_stages = 1
+    worker.eval_batch_size = 6
+    worker._rank = 0
+    worker.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
+    worker.rlt_critical_phase_gate = SimpleNamespace(reset=lambda **_: None)
+    worker.recv_from = lambda **_: _ImmediateWork()
+
+    actions = torch.arange(12, dtype=torch.float32).view(6, 2)
+    gate_info = {
+        key: torch.arange(6, dtype=torch.float32).view(6, 1)
+        for key in RLT_GATE_INFO_KEYS
+    }
+    worker._predict_rollout_actions = lambda *_, **__: (
+        actions,
+        {
+            "forward_inputs": gate_info,
+            "intervene_flags": torch.zeros((6, 1), dtype=torch.bool),
+        },
+    )
+    sends = []
+    worker.send_to = lambda **kwargs: sends.append(kwargs)
+
+    asyncio.run(
+        MultiStepRolloutWorker.evaluate.__wrapped__(
+            worker,
+            input_channel=None,
+            output_channel=None,
+        )
+    )
+
+    assert len(sends) == 1
+    assert isinstance(sends[0]["data"], PolicyOutput)
+    shards = sends[0]["split_fn"](sends[0]["data"], [4, 2])
+    assert [shard.actions.shape[0] for shard in shards] == [4, 2]
+    assert all(set(shard.forward_inputs) == set(RLT_GATE_INFO_KEYS) for shard in shards)
 
 
 def test_merge_env_outputs_with_partial_optional_fields():
