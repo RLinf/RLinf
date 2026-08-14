@@ -71,6 +71,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh recap_value_model_sft_libero
 
+      - name: RECAP value model SFT test without eval data
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/offline_rl/run_recap_value_model_sft.sh recap_value_model_sft_libero_no_eval
+
       - name: RECAP CFG OpenPI 0.5 test
         timeout-minutes: 20
         run: |

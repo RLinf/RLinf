@@ -13,9 +13,12 @@
      - 在 AMD ROCm 加速器上运行。
    * - :doc:`Ascend CANN <../ascend_cann>`
      - 在 Ascend CANN 加速器上运行。
+   * - :doc:`摩尔线程 MUSA <../moore_threads_musa>`
+     - 在摩尔线程 MUSA 加速器上运行。
 
 .. toctree::
    :hidden:
 
    AMD ROCm <../amd_rocm>
    Ascend CANN <../ascend_cann>
+   摩尔线程 MUSA <../moore_threads_musa>
