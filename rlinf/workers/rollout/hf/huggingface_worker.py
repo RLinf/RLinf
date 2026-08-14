@@ -15,7 +15,6 @@
 import asyncio
 import copy
 import gc
-import os
 import time
 from typing import Any, Callable, Literal, Optional
 
@@ -29,7 +28,7 @@ from rlinf.algorithms.rlt import (
     build_rlt_route,
     predict_rlt_actions,
 )
-from rlinf.algorithms.rlt.critical_phase_gate import RLT_GATE_INFO_KEYS
+from rlinf.algorithms.rlt.critical_phase_gate import build_rlt_critical_phase_gate
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import PolicyOutput
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
@@ -169,42 +168,12 @@ class MultiStepRolloutWorker(Worker):
                     "rollout.rlt_critical_phase_gate requires "
                     "rollout.rlt_feature_model."
                 )
-            if self.env_decoupled_mode:
-                raise ValueError(
-                    "The stateful RLT critical phase gate does not support "
-                    "runner.enable_decoupled_mode in the initial implementation."
-                )
-            gate_model_cfg = gate_cfg.get("model", None)
-            if gate_model_cfg is None:
-                raise ValueError("rollout.rlt_critical_phase_gate.model is required.")
-            gate_model_path = gate_model_cfg.get("model_path", None)
-            if not gate_model_path or not os.path.exists(os.fspath(gate_model_path)):
-                raise FileNotFoundError(
-                    "RLT critical phase gate requires a trained local critic "
-                    f"checkpoint, got {gate_model_path!r}."
-                )
-            gate_chunk_size = int(gate_cfg.get("chunk_size", 10))
-            if gate_chunk_size != int(self.model_cfg.num_action_chunks):
-                raise ValueError(
-                    "RLT critical phase gate chunk_size must match rollout action "
-                    f"chunks: {gate_chunk_size} != {self.model_cfg.num_action_chunks}."
-                )
-            from rlinf.algorithms.rlt.critical_phase_gate import (
-                SteamCriticalPhaseGate,
-            )
-            from rlinf.models.embodiment.value_model.steam import SteamCriticModel
-
-            gate_model = SteamCriticModel.from_checkpoint(
-                gate_model_path,
-                device=f"{self.torch_device_type}:{self.device}",
-                precision=gate_model_cfg.get("precision", None),
-            )
-            self.rlt_critical_phase_gate = SteamCriticalPhaseGate(
-                gate_model,
+            self.rlt_critical_phase_gate = build_rlt_critical_phase_gate(
                 gate_cfg,
+                device=f"{self.torch_device_type}:{self.device}",
+                num_action_chunks=self.model_cfg.num_action_chunks,
+                env_decoupled_mode=self.env_decoupled_mode,
             )
-            self.rlt_critical_phase_gate.eval()
-            self.rlt_critical_phase_gate.requires_grad_(False)
 
         if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
@@ -657,6 +626,7 @@ class MultiStepRolloutWorker(Worker):
             bootstrap_values=self.get_bootstrap_values(final_obs),
             intervene_flags=intervene_flags,
             forward_inputs=result["forward_inputs"],
+            rollout_infos=result.get("rollout_infos", {}),
             versions=torch.full_like(
                 result["prev_logprobs"],
                 float(self.version),
@@ -815,6 +785,7 @@ class MultiStepRolloutWorker(Worker):
                         if self.rlt_feature_model is not None
                         else {}
                     ),
+                    rollout_infos=result.get("rollout_infos", {}),
                 )
             self.send_to(
                 group_name=self.cfg.env.group_name,
@@ -914,14 +885,10 @@ class MultiStepRolloutWorker(Worker):
                             actions = actions.detach().cpu().contiguous()
                         eval_output = actions
                         if self.rlt_critical_phase_gate is not None:
-                            gate_info = {
-                                key: result["forward_inputs"][key]
-                                for key in RLT_GATE_INFO_KEYS
-                            }
                             eval_output = PolicyOutput(
                                 actions=actions,
                                 intervene_flags=result.get("intervene_flags"),
-                                forward_inputs=gate_info,
+                                rollout_infos=result.get("rollout_infos", {}),
                             )
                         self.send_to(
                             group_name=self.cfg.env.group_name,
@@ -1078,6 +1045,18 @@ class MultiStepRolloutWorker(Worker):
                 for idx in range(len(sizes))
             ]
         )
+        split_rollout_infos = (
+            [{} for _ in sizes]
+            if not policy_output.rollout_infos
+            else [
+                {
+                    key: torch.split(value, sizes, dim=0)[idx]
+                    for key, value in policy_output.rollout_infos.items()
+                    if value is not None
+                }
+                for idx in range(len(sizes))
+            ]
+        )
 
         return [
             PolicyOutput(
@@ -1087,6 +1066,7 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=split_bootstrap_values[idx],
                 intervene_flags=split_intervene_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
+                rollout_infos=split_rollout_infos[idx],
                 versions=split_versions[idx],
             )
             for idx in range(len(sizes))

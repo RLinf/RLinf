@@ -64,20 +64,17 @@ def predict_rlt_actions(
 
         route_switch_flags = rlt_switch_flags
         route_intervene_requested = intervene_requested
-        gate_info: dict[str, torch.Tensor] = {}
         if critical_phase_gate is not None and update_gate:
-            (
-                route_switch_flags,
-                route_intervene_requested,
-                gate_info,
-            ) = critical_phase_gate.update(
+            gate_decision = critical_phase_gate.step(
                 env_obs,
                 mode=mode,
                 stage_id=stage_id,
                 reset_mask=reset_mask,
-                update_state=update_gate,
                 actor_routing_enabled=rlt_route.actor_routing_enabled(version),
             )
+            route_switch_flags = gate_decision.actor_switch
+            route_intervene_requested = gate_decision.expert_requested
+            result["rollout_infos"] = gate_decision.diagnostics
 
         route_output = rlt_route.route(
             RLTRouteContext(
@@ -94,7 +91,6 @@ def predict_rlt_actions(
         )
         actions = route_output.actions
         result = route_output.result
-        result["forward_inputs"].update(gate_info)
 
         _append_rlt_transition_obs(
             feature_model=feature_model,

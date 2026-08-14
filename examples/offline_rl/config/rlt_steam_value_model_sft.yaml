@@ -45,7 +45,9 @@ data:
   # Read the existing ManiSkill RLT dataset directly. Pair distances and
   # trajectory-length normalization are measured in 10-step action chunks.
   camera_keys: [image, wrist_image]
-  chunk_size: 10
+  temporal_stride: 10
+  anchor_stride: 10
+  boundary_mode: drop
   k: 4
   default_prompt: "insert the peg in the hole"
   length_scale_enabled: true

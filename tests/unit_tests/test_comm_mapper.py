@@ -201,6 +201,9 @@ def test_policy_output_split_merge_invariant():
             "action": torch.arange(12, dtype=torch.float32).view(6, 2),
             "states": torch.arange(18, dtype=torch.float32).view(6, 3),
         },
+        rollout_infos={
+            "score": torch.arange(6, dtype=torch.float32).view(6, 1),
+        },
         versions=torch.arange(6, dtype=torch.float32).view(6, 1),
     )
 
@@ -218,6 +221,9 @@ def test_policy_output_split_merge_invariant():
     )
     assert torch.equal(
         merged.forward_inputs["states"], policy_output.forward_inputs["states"]
+    )
+    assert torch.equal(
+        merged.rollout_infos["score"], policy_output.rollout_infos["score"]
     )
     assert torch.equal(merged.versions, policy_output.versions)
 
@@ -253,7 +259,8 @@ def test_evaluate_splits_gate_policy_output():
     worker._predict_rollout_actions = lambda *_, **__: (
         actions,
         {
-            "forward_inputs": gate_info,
+            "forward_inputs": {},
+            "rollout_infos": gate_info,
             "intervene_flags": torch.zeros((6, 1), dtype=torch.bool),
         },
     )
@@ -272,15 +279,19 @@ def test_evaluate_splits_gate_policy_output():
     assert isinstance(sends[0]["data"], PolicyOutput)
     shards = sends[0]["split_fn"](sends[0]["data"], [4, 2])
     assert [shard.actions.shape[0] for shard in shards] == [4, 2]
-    assert all(set(shard.forward_inputs) == set(RLT_GATE_INFO_KEYS) for shard in shards)
+    assert all(set(shard.rollout_infos) == set(RLT_GATE_INFO_KEYS) for shard in shards)
 
 
 def test_env_evaluate_accepts_gate_policy_output():
     class _EvalEnv:
         is_start = False
+        rollout_infos = None
 
         def reset(self):
             return _make_obs(0, 6), {}
+
+        def set_rollout_infos(self, rollout_infos):
+            self.rollout_infos = rollout_infos
 
     worker = object.__new__(EnvWorker)
     worker.eval_rollout_epoch = 1
@@ -304,6 +315,10 @@ def test_env_evaluate_accepts_gate_policy_output():
     policy_output = PolicyOutput(
         actions=torch.arange(12, dtype=torch.float32).view(6, 2),
         forward_inputs={},
+        rollout_infos={
+            key: torch.arange(6, dtype=torch.float32).view(6, 1)
+            for key in RLT_GATE_INFO_KEYS
+        },
     )
 
     def _recv_from(**kwargs):
@@ -325,6 +340,7 @@ def test_env_evaluate_accepts_gate_policy_output():
     )
 
     assert result == {}
+    assert set(worker.eval_env_list[0].rollout_infos) == set(RLT_GATE_INFO_KEYS)
 
 
 def test_merge_env_outputs_with_partial_optional_fields():

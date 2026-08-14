@@ -22,7 +22,6 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
-from rlinf.algorithms.rlt.critical_phase_gate import RLT_GATE_INFO_KEYS
 from rlinf.algorithms.rlt.transition import update_rlt_transitions
 from rlinf.data.schema.embodied_trajectory_builder import (
     EmbodiedLerobotTrajectoryBuilder,
@@ -707,15 +706,28 @@ class EnvWorker(Worker):
                 value = getattr(data, field_name, None)
                 if isinstance(value, torch.Tensor):
                     return int(value.shape[0])
-            forward_inputs = getattr(data, "forward_inputs", None)
-            if forward_inputs:
-                first_tensor = next(iter(forward_inputs.values()))
-                if isinstance(first_tensor, torch.Tensor):
-                    return int(first_tensor.shape[0])
+            for field_name in ("forward_inputs", "rollout_infos"):
+                tensor_dict = getattr(data, field_name, None)
+                if tensor_dict:
+                    first_tensor = next(iter(tensor_dict.values()))
+                    if isinstance(first_tensor, torch.Tensor):
+                        return int(first_tensor.shape[0])
             raise ValueError("Cannot infer batch size from rollout result.")
         from rlinf.scheduler import infer_batch_size
 
         return infer_batch_size(data)
+
+    @staticmethod
+    def _merge_rollout_outputs(outputs: list[Any]) -> Any:
+        """Merge either structured policy outputs or legacy action arrays."""
+        if all(isinstance(output, PolicyOutput) for output in outputs):
+            return PolicyOutput.merge(outputs)
+        if all(isinstance(output, torch.Tensor) for output in outputs):
+            return torch.cat(outputs, dim=0)
+        if all(isinstance(output, np.ndarray) for output in outputs):
+            return np.concatenate(outputs, axis=0)
+        output_types = sorted({type(output).__name__ for output in outputs})
+        raise ValueError(f"Cannot merge mixed rollout output types: {output_types}.")
 
     @Worker.timer("compute_bootstrap_rewards")
     def compute_bootstrap_rewards(
@@ -964,37 +976,18 @@ class EnvWorker(Worker):
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
         return data
 
-    def _consume_rlt_gate_info(self, policy_output: Any, env: Any) -> None:
-        """Move learned-gate diagnostics to env metrics, not trajectory replay."""
-        forward_inputs = getattr(policy_output, "forward_inputs", None)
-        if not isinstance(forward_inputs, dict):
+    def _consume_rollout_infos(self, policy_output: Any, env: Any) -> None:
+        """Forward rollout diagnostics to environments that consume them."""
+        rollout_infos = getattr(policy_output, "rollout_infos", None)
+        if not isinstance(rollout_infos, dict) or not rollout_infos:
             return
-
-        present_keys = [key for key in RLT_GATE_INFO_KEYS if key in forward_inputs]
-        if not present_keys:
-            return
-        if len(present_keys) != len(RLT_GATE_INFO_KEYS):
-            missing_keys = sorted(set(RLT_GATE_INFO_KEYS) - set(present_keys))
+        set_rollout_infos = get_env_attr(env, "set_rollout_infos")
+        if not callable(set_rollout_infos):
             raise ValueError(
-                "Incomplete RLT critical-phase gate diagnostics; missing "
-                f"{missing_keys}."
+                "Rollout diagnostics require the environment to implement "
+                "set_rollout_infos()."
             )
-
-        gate_info = {key: forward_inputs.pop(key) for key in RLT_GATE_INFO_KEYS}
-        set_gate_info = get_env_attr(env, "set_rlt_gate_info")
-        if not callable(set_gate_info):
-            raise ValueError(
-                "RLT gate diagnostics require the environment to implement "
-                "set_rlt_gate_info()."
-            )
-        set_gate_info(
-            critical_phase=gate_info["rlt_gate_critical_phase"],
-            entry_step=gate_info["rlt_gate_entry_step"],
-            expert_requested=gate_info["rlt_gate_expert_requested"],
-            expert_entry_step=gate_info["rlt_gate_expert_entry_step"],
-            score=gate_info["rlt_gate_score_min"],
-            prediction_variance=gate_info["rlt_gate_prediction_variance"],
-        )
+        set_rollout_infos(rollout_infos)
 
     def _send_train_bootstrap(
         self,
@@ -1165,7 +1158,7 @@ class EnvWorker(Worker):
                         self.smooth_intervene.remember_policy_output(
                             stage_id, policy_output
                         )
-                    self._consume_rlt_gate_info(
+                    self._consume_rollout_infos(
                         policy_output,
                         self.env_list[stage_id],
                     )
@@ -1448,10 +1441,11 @@ class EnvWorker(Worker):
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
+                        merge_fn=self._merge_rollout_outputs,
                         infer_batch_size_fn=self._infer_rollout_batch_size,
                         decoupled_mode=self.env_decoupled_mode,
                     )
-                    self._consume_rlt_gate_info(
+                    self._consume_rollout_infos(
                         policy_output,
                         self.eval_env_list[stage_id],
                     )

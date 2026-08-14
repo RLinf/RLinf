@@ -99,6 +99,34 @@ class ManiskillRLTEnv(ManiskillEnv):
     _RLT_ALWAYS_ON_TRIGGER = "always_on"
     _RLT_INTERVENTION_GATE_TRIGGER = "intervention_gate"
     _RLT_STALLED_PROGRESS_TRIGGER = "stalled_progress"
+    _RLT_GATE_METRIC_MAP = {
+        "learned_critical_entered": "rlt_gate_entered",
+        "learned_critical_entry_step": "rlt_gate_entry_step",
+        "learned_expert_entered": "rlt_gate_expert_entered",
+        "learned_expert_entry_step": "rlt_gate_expert_entry_step",
+    }
+    _RLT_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
+    _RLT_GATE_BOOL_INFO_KEYS = frozenset(
+        {
+            "rlt_gate_entered",
+            "rlt_gate_expert_entered",
+        }
+    )
+    _RLT_ATTACHED_INFO_KEYS = (
+        "entered_actor_phase_once",
+        "actor_switch_step",
+        "actor_switch_step_nonzero",
+        *_RLT_GATE_METRIC_MAP,
+    )
+    _RLT_EPISODE_METRIC_KEYS = (
+        "entered_actor_phase_once",
+        "actor_switch_step",
+        "actor_switch_step_nonzero",
+        "learned_critical_entered",
+        "learned_critical_entry_step",
+        "learned_expert_entered",
+        "learned_expert_entry_step",
+    )
 
     def __init__(
         self,
@@ -129,6 +157,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         self._is_peg_insertion_side = is_peg_insertion_side_env_id(self.task_id)
         self._rlt_switch_cfg = getattr(cfg, "rlt_policy_switch", None)
         self._rlt_switch_state: dict[str, torch.Tensor] | None = None
+        self._rlt_rollout_infos: dict[str, torch.Tensor] | None = None
         self._rlt_hole_radius_values: torch.Tensor | None = None
 
         with open_dict(cfg):
@@ -200,6 +229,7 @@ class ManiskillRLTEnv(ManiskillEnv):
             self.env.unwrapped, "box_hole_radii", None
         )
         self._rlt_switch_state = self._init_rlt_switch_state(self.num_envs)
+        self._rlt_rollout_infos = self._empty_rlt_rollout_infos(self.num_envs)
 
     def _init_rlt_switch_state(self, batch_size: int) -> dict[str, torch.Tensor]:
         task_mode = str(self._rlt_switch_cfg.get("task_mode", self._RLT_FULL_TASK))
@@ -223,64 +253,63 @@ class ManiskillRLTEnv(ManiskillEnv):
             "best_progress_yz": torch.zeros(batch_size, dtype=torch.float32),
             "best_progress_score": torch.zeros(batch_size, dtype=torch.float32),
             "stalled_progress_chunks": torch.zeros(batch_size, dtype=torch.float32),
-            "learned_critical_phase": torch.zeros(batch_size, dtype=torch.bool),
-            "learned_critical_entered": torch.zeros(batch_size, dtype=torch.bool),
-            "learned_critical_entry_step": torch.zeros(batch_size, dtype=torch.float32),
-            "learned_expert_requested": torch.zeros(batch_size, dtype=torch.bool),
-            "learned_expert_entered": torch.zeros(batch_size, dtype=torch.bool),
-            "learned_expert_entry_step": torch.zeros(batch_size, dtype=torch.float32),
-            "learned_progress_score": torch.zeros(batch_size, dtype=torch.float32),
-            "learned_prediction_variance": torch.zeros(batch_size, dtype=torch.float32),
         }
 
-    def set_rlt_gate_info(
-        self,
-        *,
-        critical_phase: torch.Tensor,
-        entry_step: torch.Tensor,
-        expert_requested: torch.Tensor,
-        expert_entry_step: torch.Tensor,
-        score: torch.Tensor,
-        prediction_variance: torch.Tensor,
-    ) -> None:
-        """Store rollout-owned gate diagnostics for episode metrics only."""
+    def _empty_rlt_rollout_infos(self, batch_size: int) -> dict[str, torch.Tensor]:
+        return {
+            key: torch.zeros(
+                batch_size,
+                dtype=(
+                    torch.bool
+                    if key in self._RLT_GATE_BOOL_INFO_KEYS
+                    else torch.float32
+                ),
+            )
+            for key in self._RLT_GATE_INFO_KEYS
+        }
+
+    def set_rollout_infos(self, rollout_infos: dict[str, torch.Tensor]) -> None:
+        """Store rollout-owned gate diagnostics for the next action chunk."""
         if self._rlt_switch_state is None:
             return
-        state = self._rlt_switch_state_to(self.device)
-        critical_phase = torch.as_tensor(
-            critical_phase, device=self.device, dtype=torch.bool
-        ).reshape(self.num_envs, -1)[:, -1]
-        entry_step = torch.as_tensor(
-            entry_step, device=self.device, dtype=torch.float32
-        ).reshape(self.num_envs, -1)[:, -1]
-        expert_requested = torch.as_tensor(
-            expert_requested, device=self.device, dtype=torch.bool
-        ).reshape(self.num_envs, -1)[:, -1]
-        expert_entry_step = torch.as_tensor(
-            expert_entry_step, device=self.device, dtype=torch.float32
-        ).reshape(self.num_envs, -1)[:, -1]
-        score = torch.as_tensor(score, device=self.device, dtype=torch.float32).reshape(
-            self.num_envs, -1
-        )[:, -1]
-        prediction_variance = torch.as_tensor(
-            prediction_variance, device=self.device, dtype=torch.float32
-        ).reshape(self.num_envs, -1)[:, -1]
-        state["learned_critical_phase"] = critical_phase
-        state["learned_critical_entered"] |= critical_phase
-        state["learned_critical_entry_step"] = torch.where(
-            critical_phase | (entry_step > 0),
-            entry_step,
-            state["learned_critical_entry_step"],
-        )
-        state["learned_expert_requested"] = expert_requested
-        state["learned_expert_entered"] |= expert_requested
-        state["learned_expert_entry_step"] = torch.where(
-            expert_requested | (expert_entry_step > 0),
-            expert_entry_step,
-            state["learned_expert_entry_step"],
-        )
-        state["learned_progress_score"] = score
-        state["learned_prediction_variance"] = prediction_variance
+        present_keys = set(self._RLT_GATE_INFO_KEYS) & set(rollout_infos)
+        if not present_keys:
+            return
+        missing_keys = sorted(set(self._RLT_GATE_INFO_KEYS) - present_keys)
+        if missing_keys:
+            raise ValueError(
+                "Incomplete RLT critical-phase gate diagnostics; missing "
+                f"{missing_keys}."
+            )
+        normalized = {}
+        for key in self._RLT_GATE_INFO_KEYS:
+            dtype = (
+                torch.bool
+                if key in self._RLT_GATE_BOOL_INFO_KEYS
+                else torch.float32
+            )
+            value = torch.as_tensor(
+                rollout_infos[key], device=self.device, dtype=dtype
+            )
+            if value.numel() % self.num_envs != 0:
+                raise ValueError(
+                    f"Rollout info {key!r} has {value.numel()} values for "
+                    f"{self.num_envs} environments."
+                )
+            normalized[key] = value.reshape(self.num_envs, -1)[:, -1]
+        self._rlt_rollout_infos = normalized
+
+    def _reset_rlt_rollout_infos(self, env_idx=None) -> None:
+        if self._rlt_rollout_infos is None:
+            return
+        if env_idx is None:
+            self._rlt_rollout_infos = self._empty_rlt_rollout_infos(self.num_envs)
+            return
+        for value in self._rlt_rollout_infos.values():
+            index = env_idx
+            if isinstance(index, torch.Tensor):
+                index = index.to(device=value.device)
+            value[index] = 0
 
     def _reset_rlt_switch(self, env_idx=None) -> None:
         if self._rlt_switch_state is None:
@@ -288,6 +317,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         new_state = self._init_rlt_switch_state(self.num_envs)
         if env_idx is None:
             self._rlt_switch_state = new_state
+            self._reset_rlt_rollout_infos()
             return
         for key, value in new_state.items():
             state_value = self._rlt_switch_state[key]
@@ -296,6 +326,7 @@ class ManiskillRLTEnv(ManiskillEnv):
                 index = index.to(device=state_value.device)
             value = value.to(device=state_value.device)
             self._rlt_switch_state[key][index] = value[index]
+        self._reset_rlt_rollout_infos(env_idx)
 
     def _update_rlt_switch(
         self,
@@ -362,6 +393,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         chunk_dones: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         state = self._rlt_switch_state_to(device)
+        rollout_infos = self._rlt_rollout_infos_to(device)
         intervene_flag = self._rlt_expert_takeover_mask(infos=infos, device=device)
         rlt_switch_flags = state["rlt_switch_flags"]
         if chunk_dones is not None:
@@ -371,7 +403,7 @@ class ManiskillRLTEnv(ManiskillEnv):
                 dtype=torch.bool,
             ).reshape(self.num_envs, -1)
             rlt_switch_flags = rlt_switch_flags & (~chunk_done_mask.any(dim=1))
-        return {
+        switch_info = {
             "rlt_switch_flags": rlt_switch_flags[:, None],
             "intervene_flag": intervene_flag[:, None],
             "entered_actor_phase_once": state["entered_actor_phase_once"][:, None],
@@ -381,27 +413,14 @@ class ManiskillRLTEnv(ManiskillEnv):
                 state["actor_switch_step"],
                 torch.zeros_like(state["actor_switch_step"]),
             )[:, None],
-            "oracle_critical_phase": rlt_switch_flags[:, None],
-            "oracle_critical_entered": state["entered_actor_phase_once"][:, None],
-            "oracle_critical_entry_step": state["actor_switch_step"][:, None],
-            "learned_critical_phase": state["learned_critical_phase"][:, None],
-            "learned_critical_entered": state["learned_critical_entered"][:, None],
-            "learned_critical_entry_step": state["learned_critical_entry_step"][
-                :, None
-            ],
-            "learned_expert_requested": state["learned_expert_requested"][:, None],
-            "learned_expert_entered": state["learned_expert_entered"][:, None],
-            "learned_expert_entry_step": state["learned_expert_entry_step"][:, None],
-            "learned_progress_score": state["learned_progress_score"][:, None],
-            "learned_prediction_variance": state["learned_prediction_variance"][
-                :, None
-            ],
-            "learned_oracle_entry_delta": torch.where(
-                state["learned_critical_entered"] & state["entered_actor_phase_once"],
-                state["learned_critical_entry_step"] - state["actor_switch_step"],
-                torch.zeros_like(state["actor_switch_step"]),
-            )[:, None],
         }
+        switch_info.update(
+            {
+                metric_key: rollout_infos[rollout_key][:, None]
+                for metric_key, rollout_key in self._RLT_GATE_METRIC_MAP.items()
+            }
+        )
+        return switch_info
 
     def _rlt_expert_takeover_mask(
         self,
@@ -795,6 +814,13 @@ class ManiskillRLTEnv(ManiskillEnv):
             self._rlt_switch_state[key] = value.to(device)
         return self._rlt_switch_state
 
+    def _rlt_rollout_infos_to(
+        self, device: torch.device
+    ) -> dict[str, torch.Tensor]:
+        for key, value in self._rlt_rollout_infos.items():
+            self._rlt_rollout_infos[key] = value.to(device)
+        return self._rlt_rollout_infos
+
     def _init_persistent_done_state(self):
         self._persistent_done_mask = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.bool
@@ -864,20 +890,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         infos = super()._record_metrics(step_reward, infos)
         if not self.record_metrics or "episode" not in infos:
             return infos
-        for key in (
-            "entered_actor_phase_once",
-            "actor_switch_step",
-            "actor_switch_step_nonzero",
-            "oracle_critical_entered",
-            "oracle_critical_entry_step",
-            "learned_critical_entered",
-            "learned_critical_entry_step",
-            "learned_expert_entered",
-            "learned_expert_entry_step",
-            "learned_progress_score",
-            "learned_prediction_variance",
-            "learned_oracle_entry_delta",
-        ):
+        for key in self._RLT_EPISODE_METRIC_KEYS:
             if key in infos:
                 value = infos[key]
                 if isinstance(value, torch.Tensor):
@@ -896,23 +909,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         if self._rlt_route_from_environment():
             for key in ("rlt_switch_flags", "intervene_flag"):
                 infos[key] = switch_info[key]
-        for key in (
-            "entered_actor_phase_once",
-            "actor_switch_step",
-            "actor_switch_step_nonzero",
-            "oracle_critical_phase",
-            "oracle_critical_entered",
-            "oracle_critical_entry_step",
-            "learned_critical_phase",
-            "learned_critical_entered",
-            "learned_critical_entry_step",
-            "learned_expert_requested",
-            "learned_expert_entered",
-            "learned_expert_entry_step",
-            "learned_progress_score",
-            "learned_prediction_variance",
-            "learned_oracle_entry_delta",
-        ):
+        for key in self._RLT_ATTACHED_INFO_KEYS:
             if key in switch_info:
                 infos[key] = switch_info[key]
 
@@ -1128,23 +1125,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         if self._rlt_route_from_environment():
             for key in ("rlt_switch_flags", "intervene_flag"):
                 infos_last[key] = switch_info[key]
-        for key in (
-            "entered_actor_phase_once",
-            "actor_switch_step",
-            "actor_switch_step_nonzero",
-            "oracle_critical_phase",
-            "oracle_critical_entered",
-            "oracle_critical_entry_step",
-            "learned_critical_phase",
-            "learned_critical_entered",
-            "learned_critical_entry_step",
-            "learned_expert_requested",
-            "learned_expert_entered",
-            "learned_expert_entry_step",
-            "learned_progress_score",
-            "learned_prediction_variance",
-            "learned_oracle_entry_delta",
-        ):
+        for key in self._RLT_ATTACHED_INFO_KEYS:
             if key in switch_info:
                 infos_last[key] = switch_info[key]
         infos_list[-1] = infos_last
@@ -1196,20 +1177,7 @@ class ManiskillRLTEnv(ManiskillEnv):
     def _sync_rlt_switch_episode_info(self, infos):
         if not isinstance(infos, dict) or "episode" not in infos:
             return
-        for key in (
-            "entered_actor_phase_once",
-            "actor_switch_step",
-            "actor_switch_step_nonzero",
-            "oracle_critical_entered",
-            "oracle_critical_entry_step",
-            "learned_critical_entered",
-            "learned_critical_entry_step",
-            "learned_expert_entered",
-            "learned_expert_entry_step",
-            "learned_progress_score",
-            "learned_prediction_variance",
-            "learned_oracle_entry_delta",
-        ):
+        for key in self._RLT_EPISODE_METRIC_KEYS:
             if key in infos:
                 infos["episode"][key] = (
                     infos[key].reshape(self.num_envs, -1)[:, -1].clone()

@@ -44,11 +44,11 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Literal, Optional, Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, get_worker_info
 
 from .binning import (
     _scaled_signed_stride_to_bin,
@@ -485,16 +485,38 @@ class _BasePairDataset(Dataset):
         """Number of distinct ``(episode, t)`` anchors before label duplication."""
         return self._num_pair_positions
 
-    def _init_anchor_index(self) -> None:
+    def _init_anchor_index(
+        self,
+        *,
+        anchor_stride: int = 1,
+        minimum_future_stride: int = 1,
+        pair_stride: Optional[int] = None,
+    ) -> None:
         """Build the cumulative anchor index over eligible episodes.
 
-        Each eligible episode contributes ``T_ep - 1`` temporal anchors
-        ``t ∈ [0, T_ep - 1)``; the cumulative sum lets ``__getitem__`` map a
-        flat index to ``(eligible-slot, t)`` in ``O(log |eligible|)`` via
-        :func:`numpy.searchsorted`.
+        The cumulative sum lets ``__getitem__`` map a flat index to
+        ``(eligible-slot, t)`` in ``O(log |eligible|)`` via
+        :func:`numpy.searchsorted`. Stride arguments default to the legacy
+        frame-wise, boundary-clamped behavior.
         """
+        self._anchor_stride = int(anchor_stride)
+        self._pair_stride = self.k if pair_stride is None else int(pair_stride)
+        if self._anchor_stride < 1 or minimum_future_stride < 1:
+            raise ValueError("anchor and future strides must be positive")
         pair_positions_per_episode = np.array(
-            [self._source.episode_length(ep) - 1 for ep in self._eligible],
+            [
+                max(
+                    0,
+                    (
+                        self._source.episode_length(ep)
+                        - int(minimum_future_stride)
+                        + self._anchor_stride
+                        - 1
+                    )
+                    // self._anchor_stride,
+                )
+                for ep in self._eligible
+            ],
             dtype=np.int64,
         )
         self._pair_position_ends = np.cumsum(pair_positions_per_episode)
@@ -503,9 +525,8 @@ class _BasePairDataset(Dataset):
     def _resolve_pair_position(self, pair_position: int) -> tuple[int, int, int]:
         """Map a pair-position index to ``(episode, t, t_plus_k)``.
 
-        ``t_plus_k`` uses the boundary clamp: when ``t + k`` overruns the
-        episode the second slot collapses to the last frame ``T - 1`` (stride
-        degrades to ``T - 1 - t < k``).
+        ``t_plus_k`` uses the configured pair stride and a boundary clamp. If
+        the target overruns the episode, it collapses to the last frame.
         """
         if pair_position < 0 or pair_position >= self._num_pair_positions:
             raise IndexError(pair_position)
@@ -516,8 +537,11 @@ class _BasePairDataset(Dataset):
             int(self._pair_position_ends[episode_slot - 1]) if episode_slot > 0 else 0
         )
         episode = int(self._eligible[episode_slot])
-        t = int(pair_position - prev_episode_end)
-        t_plus_k = min(t + self.k, self._source.episode_length(episode) - 1)
+        t = int(pair_position - prev_episode_end) * self._anchor_stride
+        t_plus_k = min(
+            t + self._pair_stride,
+            self._source.episode_length(episode) - 1,
+        )
         return episode, t, t_plus_k
 
     def _load_views(
@@ -625,6 +649,14 @@ class PairDataset(_BasePairDataset):
             ``length_scale_enabled``, it is computed per-dataset from
             ``length_scale_percentile``; callers wanting one global ``L_max``
             across a mixture inject it via :meth:`set_length_scale_reference`.
+        temporal_stride: Number of raw trajectory frames represented by one
+            pair-stride unit. Defaults to one frame.
+        anchor_stride: Raw-frame distance between consecutive pair anchors.
+            Defaults to one frame.
+        boundary_mode: ``"clamp"`` preserves the legacy binary behavior near
+            episode boundaries. ``"drop"`` keeps only complete fixed-stride
+            binary pairs.
+        prompt: Optional fallback instruction when the trajectory has no prompt.
     """
 
     def __init__(
@@ -644,6 +676,10 @@ class PairDataset(_BasePairDataset):
         length_scale_enabled: bool = False,
         length_scale_percentile: float = 90.0,
         length_scale_reference: Optional[float] = None,
+        temporal_stride: int = 1,
+        anchor_stride: int = 1,
+        boundary_mode: Literal["clamp", "drop"] = "clamp",
+        prompt: Optional[str] = None,
     ) -> None:
         self.camera_keys: tuple[str, ...] = tuple(camera_keys)
         if not self.camera_keys:
@@ -651,6 +687,17 @@ class PairDataset(_BasePairDataset):
         self.k = int(k)
         if self.k < 1:
             raise ValueError(f"k must be >= 1, got {self.k}")
+        self.temporal_stride = int(temporal_stride)
+        self.anchor_stride = int(anchor_stride)
+        if self.temporal_stride < 1 or self.anchor_stride < 1:
+            raise ValueError("temporal_stride and anchor_stride must both be >= 1")
+        self.boundary_mode = str(boundary_mode)
+        if self.boundary_mode not in ("clamp", "drop"):
+            raise ValueError(
+                "boundary_mode must be 'clamp' or 'drop', got "
+                f"{self.boundary_mode!r}"
+            )
+        self.prompt = prompt
         # Mode switch. num_bins == 2 → legacy binary mode: fixed-stride k.
         # num_bins > 2 → multi-bin: sample i uniformly from [1, min(K, T-1-t)]
         # per-anchor at __getitem__ time. Both emit a long bin-index label
@@ -721,10 +768,16 @@ class PairDataset(_BasePairDataset):
             min_episode_length = 2
         self._min_episode_length = int(min_episode_length)
         total_eps = self._source.num_episodes()
+        minimum_temporal_span = 1
+        if self.num_bins > 2:
+            minimum_temporal_span = self.temporal_stride
+        elif self.boundary_mode == "drop":
+            minimum_temporal_span = self.k * self.temporal_stride
         self._eligible = [
             ep
             for ep in range(total_eps)
             if self._source.episode_length(ep) >= self._min_episode_length
+            and self._source.episode_length(ep) > minimum_temporal_span
             and (not self.only_success or self._source.episode_is_success(ep))
         ]
         if not self._eligible:
@@ -734,11 +787,11 @@ class PairDataset(_BasePairDataset):
                 f"(dataset has {total_eps} episodes)."
             )
 
-        # Enumerate temporal anchors t ∈ [0, T_ep - 1) per eligible episode.
-        # For t in [0, T_ep - k) the pair is the regular (t, t+k); near the end
-        # the second slot is clamped to T_ep - 1 (boundary pair, stride < k).
-        # Each anchor is later duplicated into a positive and a negative sample.
-        self._init_anchor_index()
+        self._init_anchor_index(
+            anchor_stride=self.anchor_stride,
+            minimum_future_stride=minimum_temporal_span,
+            pair_stride=self.k * self.temporal_stride,
+        )
 
         # Resolve the per-dataset length-scale reference (L_max) as the
         # configured percentile of eligible-episode lengths, unless an explicit
@@ -748,7 +801,8 @@ class PairDataset(_BasePairDataset):
 
         logger.info(
             "PairDataset: dataset_path=%s, episodes=%d eligible=%d, k=%d, "
-            "num_bins=%d (%s mode), total_positions=%d, "
+            "num_bins=%d (%s mode), temporal_stride=%d, anchor_stride=%d, "
+            "boundary_mode=%s, total_positions=%d, "
             "dataset_type=%s, only_success=%s, camera_keys=%s",
             self.source_name,
             total_eps,
@@ -756,6 +810,9 @@ class PairDataset(_BasePairDataset):
             self.k,
             self.num_bins,
             "binary" if self.num_bins == 2 else "multi-bin",
+            self.temporal_stride,
+            self.anchor_stride,
+            self.boundary_mode,
             self._num_pair_positions,
             self.dataset_type,
             self.only_success,
@@ -763,7 +820,7 @@ class PairDataset(_BasePairDataset):
         )
 
     def set_epoch(self, epoch: int) -> None:
-        del epoch  # no RNG state, retained for DataLoader wrapper compat
+        del epoch  # DistributedSampler owns epoch-level index shuffling.
 
     @property
     def length_scale_reference(self) -> Optional[float]:
@@ -772,7 +829,10 @@ class PairDataset(_BasePairDataset):
 
     def eligible_episode_lengths(self) -> list[int]:
         """Return the length of every eligible (trained-on) episode."""
-        return [int(self._source.episode_length(ep)) for ep in self._eligible]
+        return [
+            (int(self._source.episode_length(ep)) - 1) // self.temporal_stride + 1
+            for ep in self._eligible
+        ]
 
     def _compute_length_scale_reference(self) -> float:
         """Percentile of eligible-episode lengths, floored at 1."""
@@ -838,7 +898,9 @@ class PairDataset(_BasePairDataset):
 
     def _rng_for_worker(self) -> np.random.Generator:
         if self._rng is None:
-            self._rng = np.random.default_rng()
+            worker_info = get_worker_info()
+            seed = worker_info.seed if worker_info is not None else torch.initial_seed()
+            self._rng = np.random.default_rng(seed)
         return self._rng
 
     def _build_sample(
@@ -883,10 +945,9 @@ class PairDataset(_BasePairDataset):
         episode, t, t_plus_k_binary = self._resolve_pair_position(pair_position)
 
         if self.num_bins == 2:
-            # Binary path: fixed stride k with the existing boundary
-            # clamp (t+k may degrade to T-1 near episode end). Labels are
-            # long bin indices matching the multi-bin layout — 1 for
-            # progress (positive stride), 0 for regress (negative stride).
+            # Binary path: fixed stride k with the configured boundary
+            # behavior. Labels are long bin indices matching the multi-bin
+            # layout: 1 for progress and 0 for regress.
             if is_positive:
                 frame_idx_t, frame_idx_tk = t, t_plus_k_binary
                 label: Any = 1
@@ -899,11 +960,13 @@ class PairDataset(_BasePairDataset):
             # valid stride over enough epochs. No boundary clamp — the
             # emitted bin always matches the true stride.
             episode_length = self._source.episode_length(episode)
-            max_valid_stride = min(self.k, episode_length - 1 - t)
+            max_valid_stride = min(
+                self.k,
+                (episode_length - 1 - t) // self.temporal_stride,
+            )
             if max_valid_stride < 1:
-                # Should not happen: _pair_position_ends enumerates only
-                # t ≤ T-2, so episode_length - 1 - t ≥ 1. Fail-loud per
-                # 78bc04dd rather than silently handle.
+                # The anchor index excludes positions without a complete
+                # temporal unit, so this indicates an indexing bug.
                 raise RuntimeError(
                     f"PairDataset: no valid stride for episode={episode} "
                     f"t={t} episode_length={episode_length} (bug in anchor "
@@ -911,10 +974,10 @@ class PairDataset(_BasePairDataset):
                 )
             i = int(self._rng_for_worker().integers(low=1, high=max_valid_stride + 1))
             if is_positive:
-                frame_idx_t, frame_idx_tk = t, t + i
+                frame_idx_t, frame_idx_tk = t, t + i * self.temporal_stride
                 signed_stride = i
             else:
-                frame_idx_t, frame_idx_tk = t + i, t
+                frame_idx_t, frame_idx_tk = t + i * self.temporal_stride, t
                 signed_stride = -i
             if self.length_scale_enabled and self._length_scale_reference is not None:
                 # Length-normalize the stride so a fixed frame jump maps to a
@@ -924,7 +987,13 @@ class PairDataset(_BasePairDataset):
                 # (bin width 2K/num_bins, same resolution as the unscaled path),
                 # with |scaled| > K saturating into the extreme bin. An episode
                 # of length L_max reproduces the unscaled layout (scale == 1).
-                scale = max(1.0, self._length_scale_reference / float(episode_length))
+                episode_length_units = (
+                    episode_length - 1
+                ) // self.temporal_stride + 1
+                scale = max(
+                    1.0,
+                    self._length_scale_reference / float(episode_length_units),
+                )
                 label = _scaled_signed_stride_to_bin(
                     signed_stride * scale, self.k, self.num_bins
                 )
@@ -1072,7 +1141,10 @@ ValueDataCollator`. Runs the :class:`SteamProcessor` **twice**
                 raise RuntimeError(f"Unexpected batch shape for cam={cam}: {t.shape}")
         return images_out, masks_out
 
-    def __call__(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+    def collate_observations(
+        self, examples: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Collate raw image pairs and prompts into a model observation."""
         if not examples:
             raise ValueError("BinaryPairDataCollator received an empty batch")
 
@@ -1143,12 +1215,15 @@ ValueDataCollator`. Runs the :class:`SteamProcessor` **twice**
             return_tensors="pt",
         )
 
-        observation = {
+        return {
             "images": images_observation,
             "image_masks": masks_observation,
             "tokenized_prompt": processed_txt["input_ids"],
             "tokenized_prompt_mask": processed_txt["attention_mask"].bool(),
         }
+
+    def __call__(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+        observation = self.collate_observations(examples)
         episode = torch.tensor(
             [int(ex["episode"]) for ex in examples], dtype=torch.long
         )

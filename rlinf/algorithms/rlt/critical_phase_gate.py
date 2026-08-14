@@ -14,6 +14,7 @@
 
 """Stateful STEAM critical-phase gate for RLT rollouts."""
 
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -24,13 +25,20 @@ from rlinf.data.datasets.steam import BinaryPairDataCollator
 from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
 
 RLT_GATE_INFO_KEYS = (
-    "rlt_gate_score_min",
-    "rlt_gate_prediction_variance",
-    "rlt_gate_critical_phase",
+    "rlt_gate_entered",
     "rlt_gate_entry_step",
-    "rlt_gate_expert_requested",
+    "rlt_gate_expert_entered",
     "rlt_gate_expert_entry_step",
 )
+
+
+@dataclass
+class GateDecision:
+    """Routing decision and diagnostics emitted by one gate step."""
+
+    actor_switch: torch.Tensor
+    expert_requested: torch.Tensor
+    diagnostics: dict[str, torch.Tensor]
 
 
 @dataclass
@@ -39,11 +47,13 @@ class _GateState:
     valid_count: torch.Tensor
     low_progress_count: torch.Tensor
     latched: torch.Tensor
+    entered: torch.Tensor
     entry_step: torch.Tensor
     actor_active: torch.Tensor
     critical_chunk_count: torch.Tensor
     expert_low_progress_count: torch.Tensor
     expert_latched: torch.Tensor
+    expert_entered: torch.Tensor
     expert_entry_step: torch.Tensor
     chunk_index: torch.Tensor
 
@@ -203,6 +213,7 @@ class SteamCriticalPhaseGate:
             valid_count=torch.zeros(batch_size, device=device, dtype=torch.long),
             low_progress_count=torch.zeros(batch_size, device=device, dtype=torch.long),
             latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
             entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
             actor_active=torch.zeros(batch_size, device=device, dtype=torch.bool),
             critical_chunk_count=torch.zeros(
@@ -212,6 +223,7 @@ class SteamCriticalPhaseGate:
                 batch_size, device=device, dtype=torch.long
             ),
             expert_latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            expert_entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
             expert_entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
             chunk_index=torch.zeros(batch_size, device=device, dtype=torch.long),
         )
@@ -243,7 +255,7 @@ class SteamCriticalPhaseGate:
         self,
         state: _GateState,
         prompts: list[str],
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         samples = []
         batch_size = state.valid_count.shape[0]
         for batch_idx in range(batch_size):
@@ -263,55 +275,23 @@ class SteamCriticalPhaseGate:
                     "image_mask_t": masks,
                     "image_mask_tk": masks,
                     "prompt": prompts[batch_idx],
-                    "label": 0,
-                    "episode": batch_idx,
-                    "frame_idx_t": 0,
-                    "frame_idx_tk": self.lookback_chunks * self.chunk_size,
                 }
             )
-        observation = self._collator(samples)["observation"]
+        observation = self._collator.collate_observations(samples)
         observation = self._to_device(observation, self.device)
         output = self.model.predict(observation)
-        score = output.predicted_values.to(dtype=torch.float32)
-        variance = getattr(output, "prediction_variance", None)
-        if variance is None:
-            variance = torch.zeros_like(score)
-        return score, variance.to(dtype=torch.float32)
-
-    def _current_flags(
-        self,
-        state: _GateState,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
-        flags = state.latched
-        expert_flags = state.expert_latched
-        if self.mode == "shadow":
-            flags = torch.zeros_like(flags)
-            expert_flags = torch.zeros_like(expert_flags)
-        zeros = torch.zeros_like(state.entry_step, dtype=torch.float32)
-        return (
-            flags[:, None],
-            expert_flags[:, None],
-            {
-                "rlt_gate_score_min": zeros[:, None],
-                "rlt_gate_prediction_variance": zeros[:, None],
-                "rlt_gate_critical_phase": state.latched[:, None],
-                "rlt_gate_entry_step": state.entry_step[:, None],
-                "rlt_gate_expert_requested": state.expert_latched[:, None],
-                "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
-            },
-        )
+        return output.predicted_values.to(dtype=torch.float32)
 
     @torch.no_grad()
-    def update(
+    def step(
         self,
         env_obs: dict[str, Any],
         *,
         mode: Literal["train", "eval"],
         stage_id: int,
         reset_mask: torch.Tensor | None = None,
-        update_state: bool = True,
         actor_routing_enabled: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> GateDecision:
         images = self._extract_images(env_obs)
         batch_size = next(iter(images.values())).shape[0]
         prompts = self._extract_prompts(env_obs, batch_size)
@@ -320,8 +300,6 @@ class SteamCriticalPhaseGate:
         if state is None or state.valid_count.shape[0] != batch_size:
             state = self._new_state(images)
             self._states[key] = state
-        if not update_state:
-            return self._current_flags(state)
 
         reset = self._normalize_reset_mask(
             reset_mask,
@@ -335,11 +313,13 @@ class SteamCriticalPhaseGate:
             state.valid_count[reset] = 0
             state.low_progress_count[reset] = 0
             state.latched[reset] = False
+            state.entered[reset] = False
             state.entry_step[reset] = 0
             state.actor_active[reset] = False
             state.critical_chunk_count[reset] = 0
             state.expert_low_progress_count[reset] = 0
             state.expert_latched[reset] = False
+            state.expert_entered[reset] = False
             state.expert_entry_step[reset] = 0
             state.chunk_index[reset] = 0
 
@@ -357,12 +337,10 @@ class SteamCriticalPhaseGate:
         ready = state.valid_count >= self.lookback_chunks + 1
 
         if ready.any():
-            score, variance = self._predict_pair(state, prompts)
+            score = self._predict_pair(state, prompts)
             score = torch.where(ready, score, torch.zeros_like(score))
-            variance = torch.where(ready, variance, torch.zeros_like(variance))
         else:
             score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
-            variance = torch.zeros_like(score)
 
         low_progress = ready & (score <= self.enter_threshold)
         state.low_progress_count = torch.where(
@@ -373,15 +351,17 @@ class SteamCriticalPhaseGate:
         enter_now = (~state.latched) & (
             state.low_progress_count >= self.patience_chunks
         )
+        first_enter_now = enter_now & (~state.entered)
         state.entry_step = torch.where(
-            enter_now,
+            first_enter_now,
             state.chunk_index * self.chunk_size,
             state.entry_step,
         )
+        state.entered = state.entered | enter_now
         if self.latch_until_done:
             state.latched = state.latched | enter_now
         else:
-            state.latched = low_progress
+            state.latched = (state.latched | enter_now) & low_progress
 
         actor_active = state.latched & bool(actor_routing_enabled)
         actor_started_now = actor_active & (~state.actor_active)
@@ -409,15 +389,19 @@ class SteamCriticalPhaseGate:
         expert_enter_now = (~state.expert_latched) & (
             state.expert_low_progress_count >= self.expert_patience_chunks
         )
+        first_expert_enter_now = expert_enter_now & (~state.expert_entered)
         state.expert_entry_step = torch.where(
-            expert_enter_now,
+            first_expert_enter_now,
             state.chunk_index * self.chunk_size,
             state.expert_entry_step,
         )
+        state.expert_entered = state.expert_entered | expert_enter_now
         if self.expert_latch_until_done:
             state.expert_latched = state.expert_latched | expert_enter_now
         else:
-            state.expert_latched = expert_low_progress
+            state.expert_latched = (
+                state.expert_latched | expert_enter_now
+            ) & expert_low_progress
         state.chunk_index = state.chunk_index + 1
 
         route_flags = state.latched
@@ -425,18 +409,65 @@ class SteamCriticalPhaseGate:
         if self.mode == "shadow":
             route_flags = torch.zeros_like(route_flags)
             route_expert_flags = torch.zeros_like(route_expert_flags)
-        return (
-            route_flags[:, None],
-            route_expert_flags[:, None],
-            {
-                "rlt_gate_score_min": score[:, None],
-                "rlt_gate_prediction_variance": variance[:, None],
-                "rlt_gate_critical_phase": state.latched[:, None],
+        return GateDecision(
+            actor_switch=route_flags[:, None],
+            expert_requested=route_expert_flags[:, None],
+            diagnostics={
+                "rlt_gate_entered": state.entered[:, None],
                 "rlt_gate_entry_step": state.entry_step[:, None],
-                "rlt_gate_expert_requested": state.expert_latched[:, None],
+                "rlt_gate_expert_entered": state.expert_entered[:, None],
                 "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
             },
         )
 
 
-__all__ = ["RLT_GATE_INFO_KEYS", "SteamCriticalPhaseGate"]
+def build_rlt_critical_phase_gate(
+    cfg: Any,
+    *,
+    device: str,
+    num_action_chunks: int,
+    env_decoupled_mode: bool,
+) -> SteamCriticalPhaseGate | None:
+    """Build a checkpoint-backed gate when it is enabled in rollout config."""
+    if cfg is None or not bool(cfg.get("enable", False)):
+        return None
+    if env_decoupled_mode:
+        raise ValueError(
+            "The stateful RLT critical phase gate does not support "
+            "runner.enable_decoupled_mode."
+        )
+    model_cfg = cfg.get("model", None)
+    if model_cfg is None:
+        raise ValueError("rollout.rlt_critical_phase_gate.model is required.")
+    model_path = model_cfg.get("model_path", None)
+    if not model_path or not os.path.exists(os.fspath(model_path)):
+        raise FileNotFoundError(
+            "RLT critical phase gate requires a trained local critic "
+            f"checkpoint, got {model_path!r}."
+        )
+    chunk_size = int(cfg.get("chunk_size", 10))
+    if chunk_size != int(num_action_chunks):
+        raise ValueError(
+            "RLT critical phase gate chunk_size must match rollout action "
+            f"chunks: {chunk_size} != {num_action_chunks}."
+        )
+
+    from rlinf.models.embodiment.value_model.steam import SteamCriticModel
+
+    model = SteamCriticModel.from_checkpoint(
+        model_path,
+        device=device,
+        precision=model_cfg.get("precision", None),
+    )
+    gate = SteamCriticalPhaseGate(model, cfg)
+    gate.eval()
+    gate.requires_grad_(False)
+    return gate
+
+
+__all__ = [
+    "GateDecision",
+    "RLT_GATE_INFO_KEYS",
+    "SteamCriticalPhaseGate",
+    "build_rlt_critical_phase_gate",
+]
