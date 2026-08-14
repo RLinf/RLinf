@@ -34,7 +34,85 @@ owns its pages directly; the legacy `tutorials/`, `apis/`, `blog/`, and
 
 ---
 
+## The build gate
+
+Both languages are separate Read the Docs projects, configured by
+`docs/source-en/.readthedocs.yaml` and `docs/source-zh/.readthedocs.yaml`, and
+both set `fail_on_warning: true`. A single Sphinx warning turns
+`docs/readthedocs.org:rlinf` or `docs/readthedocs.org:rlinf-cn` red. They build
+independently, so "the English build is green" says nothing about the Chinese
+one — always reproduce both with `build_docs.py`.
+
+To read a failed Read the Docs check without leaving the terminal:
+
+```bash
+gh api repos/RLinf/RLinf/commits/<sha>/status \
+  --jq '.statuses[] | "\(.context) \(.state) \(.target_url)"'
+```
+
+---
+
+## Inline markup next to CJK punctuation
+
+docutils only recognises inline markup when the *start*-string is preceded by
+whitespace, an opener or a delimiter, and the *end*-string is followed by
+whitespace, a closer or a delimiter. Full-width punctuation splits across those
+classes:
+
+| Character | docutils class | Before markup | After markup |
+|-----------|----------------|---------------|--------------|
+| `（` `《` `“` | opener | ok | **rejected** |
+| `）` `》` `”` | closer | **rejected** | ok |
+| `，` `、` `：` `；` `。` `！` `？` `—` | delimiter | ok | ok |
+| any CJK ideograph | none | **rejected** | **rejected** |
+
+Two distinct failures follow, and only the first is visible in CI:
+
+1. **Build break.** No later end-string candidate satisfies the rule, so Sphinx
+   emits `WARNING: Inline literal start-string without end-string. [docutils]`
+   and the CN build fails.
+
+   ```rst
+   导出为 ``MUJOCO_EGL_DEVICE_ID``（MuJoCo）和 ``EGL_DEVICE_ID``（其他）。
+   ```
+
+2. **Silent mis-render.** A *later* ` `` ` in the same paragraph does satisfy
+   the rule, so docutils closes the literal there and swallows the prose in
+   between into the code span. No warning, wrong page.
+
+   ```rst
+   镜像提供两者：``reason``（SGLang，默认激活）与 ``reason-vllm``。
+   ..                 ^ renders as one literal: "reason``（SGLang，默认激活）与 ``reason-vllm"
+   ```
+
+   The same happens to `**粗体**` written directly against a Chinese character:
+   docutils sees no markup and prints the asterisks.
+
+The fix in every case is an escaped space — a backslash followed by a space —
+between the markup and the adjacent character. It suppresses the space in the
+output, so Chinese typography is unaffected:
+
+```rst
+导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo）和 ``EGL_DEVICE_ID``\ （其他）。
+CUDA 设备 0 通常\ **并不是** EGL 设备 0。
+```
+
+`check_rst_markup.py` reports both classes: `ERROR` for the build break,
+`WARNING` for the silent mis-render. Only the first blocks a PR, but a doc PR
+touching a Chinese page should leave no new warnings either.
+
+Note that inline markup does **not** nest — `` **stuck in ``reach``** `` is a
+strong containing literal backtick characters, not a nested literal, and is
+perfectly legal.
+
+---
+
 ## Checklist summary
+
+### Build
+- [ ] `python3 .codex/skills/docs-check/build_docs.py` is clean for **both** `en` and `zh`
+- [ ] `python3 .codex/skills/docs-check/check_rst_markup.py` reports no new findings
+- [ ] Changed ZH pages have no ` `` ` or `**` touching `（`, `《` or a CJK character
 
 ### Doc vs Code
 - [ ] Every config name in docs exists under `examples/embodiment/config/` or `env/`

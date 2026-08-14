@@ -58,18 +58,22 @@ retry_cmd() {
 
 download_maniskill_assets() {
 	local root_dir=$1
+	local ms_import_err
 
 	# ManiSkill assets
 	export MS_ASSET_DIR="${root_dir}/.maniskill"
 	if [ -d "$MS_ASSET_DIR" ]; then
 		echo "[download_assets] ManiSkill assets already exist at $MS_ASSET_DIR, skipping download."
+	elif ! ms_import_err=$(python -c "import mani_skill" 2>&1); then
+		# The download goes through mani_skill, and so through torch, which needs
+		# driver libraries the container runtime only injects at run time. Skip
+		# rather than fail so image builds still succeed. MS_ASSET_DIR is left
+		# uncreated so a later run does not mistake it for a finished download.
+		echo "[download_assets] mani_skill is not importable; skipping the ManiSkill assets." >&2
+		echo "[download_assets] Re-run 'download_assets --assets maniskill' once it is." >&2
+		echo "$ms_import_err" >&2
 	else
 		mkdir -p "$MS_ASSET_DIR"
-        # Ensure mani_skill is installed
-        if ! python -c "import mani_skill" &> /dev/null; then
-            echo "mani_skill is not installed. Please install it first." >&2
-            exit 1
-        fi
 		if [ "$USE_MIRRORS" -eq 1 ]; then
 			# mani_skill.utils.download_asset hardcodes huggingface.co / github.com
 			# URLs in DATA_SOURCES and fetches them with urllib, which ignores

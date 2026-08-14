@@ -30,12 +30,13 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
-- [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/language_models/moonlight.html).
+- [2026/08] 🔥 RLinf officially supports three more accelerators: Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). Docs: [Moore Threads MUSA](https://rlinf.readthedocs.io/en/latest/rst_source/guides/moore_threads_musa.html), [Ascend CANN](https://rlinf.readthedocs.io/en/latest/rst_source/guides/ascend_cann.html), [AMD ROCm](https://rlinf.readthedocs.io/en/latest/rst_source/guides/amd_rocm.html).
+- [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
 - [2026/08] 🔥 RLinf supports MolmoAct2 evaluation on LIBERO. Doc: [MolmoAct2](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/molmoact2.html).
 - [2026/08] 🎉 Two papers accepted to **OSDI 2026**: [RLinf](https://www.usenix.org/conference/osdi26/presentation/yu-chao) and [DynaRL](https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing). DynaRL dynamically reallocates compute, memory, and communication across heterogeneous RL components to improve end-to-end training throughput. Doc: [DynaRL](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/dynarl.html).
 - [2026/08] 🎉 Two papers accepted to **RSS 2026**: [RLinf-VLA](https://roboticsconference.org/program/papers/89/) and [RLinf-USER](https://roboticsconference.org/program/papers/37/). RLinf-VLA is a unified and efficient framework for scalable RL training of VLA models across diverse architectures, algorithms, and simulators. Doc: [RLinf-VLA](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_vla.html). RLinf-USER is a unified and extensible system for real-world online policy learning that treats robots as first-class resources alongside GPUs. Doc: [RLinf-USER](https://rlinf.readthedocs.io/en/latest/rst_source/resources/publications/rlinf_user.html).
 - [2026/08] 🎉 One paper accepted to **NSDI 2027**: [FUSCO](https://arxiv.org/abs/2512.22036). FUSCO accelerates MoE All-to-All communication by fusing data transformation and communication for high-performance distributed data shuffling. Doc: [FUSCO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/system/fusco.html).
-- [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rtc.html).
+- [2026/07] 🔥 RLinf supports RTC in both simulation (LIBERO) and real-world (Franka). Doc: [RTC](https://rlinf.readthedocs.io/en/latest/rst_source/guides/rtc.html).
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [OpenPI_RLinf](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_rlinf.html).
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
@@ -315,7 +316,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
             </a> ✅
           </li>
           <li>
-            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/reasoning.html">
+            <a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/reasoning.html">
               Math Reasoning RL
             </a> ✅
           </li>

@@ -8,6 +8,8 @@ MODEL=""
 ENV_NAME=""
 VENV_DIR=".venv"
 PYTHON_VERSION="3.11.14"
+# Set by --python; MUSA only defaults PYTHON_VERSION when it is unset.
+USER_SET_PYTHON=0
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
 TORCH_VERSION=""
 SGLANG_VERSION=""
@@ -64,6 +66,16 @@ PLATFORM_RELAX_TORCHCODEC=0
 # (e.g. `"evdev<1.9"` on Ascend where newer evdev fails to build against
 # older kernel headers). Set per-platform by configure_<platform>.
 PLATFORM_EXTRA_OVERRIDES=()
+# Extra flags appended to every `uv sync`. Set by configure_<platform>.
+PLATFORM_UV_SYNC_ARGS=()
+# Whether the venv exposes the interpreter's system site-packages.
+PLATFORM_SYSTEM_SITE_PACKAGES=0
+# Name of a function run after the venv is created and activated, before the
+# first `uv sync`. Set by configure_<platform>; empty means no hook.
+PLATFORM_VENV_HOOK=""
+# ERE matching lines to drop from embodied/envs/common.txt, for platforms where
+# some of those wheels are unusable. Set by configure_<platform>.
+PLATFORM_COMMON_REQ_EXCLUDE_RE=""
 # Default torch-backend per platform; user can override by exporting
 # UV_TORCH_BACKEND before invoking this script.
 DEFAULT_BACKEND_NVIDIA="auto"
@@ -74,7 +86,7 @@ DEFAULT_BACKEND_NVIDIA="auto"
 # Add new platforms by extending SUPPORTED_PLATFORMS, defining
 # configure_<platform> + install_<platform>_extras, and routing in their
 # respective dispatchers below.
-SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend")
+SUPPORTED_PLATFORMS=("nvidia" "amd" "ascend" "musa")
 TEST_BUILD=${TEST_BUILD:-0}
 # Absolute path to this script (resolves symlinks)
 SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
@@ -123,10 +135,13 @@ Common options:
     --transformers <version> Override transformers version (e.g., 4.57.1). Patches
                            the == pinned version in agentic extras; restored on exit.
     --platform <name>      Hardware platform: nvidia (default, fully tested), amd (experimental,
-                           ROCm), or ascend (experimental, NPU). Sets UV_TORCH_BACKEND
+                           ROCm), ascend (experimental, NPU), or musa (experimental, Moore
+                           Threads). Sets UV_TORCH_BACKEND where applicable
                            (auto / rocm<version> / cpu); export UV_TORCH_BACKEND yourself to
                            bypass (e.g. UV_TORCH_BACKEND=cu124). Ascend uses CPU torch from PyPI
-                           and adds torch-npu in install_ascend_extras.
+                           and adds torch-npu in install_ascend_extras. MUSA installs no torch at
+                           all: run it inside the Moore Threads training-suite image and it
+                           reuses that image's torch/torch-musa via a --system-site-packages venv.
     --rocm <version>       ROCm version for --platform amd. When unset, auto-detected from the
                            system (/opt/rocm/.info/version, hipconfig, rocminfo). Composes
                            UV_TORCH_BACKEND=rocm<version>. Ignored on other platforms.
@@ -135,7 +150,8 @@ Common options:
     --use-mirror           Use mirrors for faster downloads.
     --no-root              Avoid system dependency installation for non-root users. Only use this if you are certain system dependencies are already installed.
     --no-flash-attn        Skip flash-attn install. Useful when the host lacks a CUDA build
-                           toolchain or when the platform has no flash-attn support (Ascend).
+                           toolchain or when the platform has no flash-attn support
+                           (Ascend/MUSA).
     --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
                            CUDA toolchain mismatch prevents download apex of the right version.
     --install-rlinf        Install RLinf itself into the python.
@@ -168,6 +184,7 @@ parse_args() {
                     exit 1
                 fi
                 PYTHON_VERSION="${2:-}"
+                USER_SET_PYTHON=1
                 shift 2
                 ;;
             --torch)
@@ -461,6 +478,10 @@ configure_nvidia() {
     PLATFORM_RELAX_TORCHCODEC=0
     PLATFORM_TORCHCODEC_SPEC=""
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
+    PLATFORM_VENV_HOOK=""
+    PLATFORM_COMMON_REQ_EXCLUDE_RE=""
     PLATFORM_CUDA_TAG=""
     local _uvtb_user_set=1
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
@@ -568,6 +589,10 @@ configure_amd() {
     PLATFORM_RELAX_TORCHCODEC=1
     PLATFORM_TORCHCODEC_SPEC=""
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
+    PLATFORM_VENV_HOOK=""
+    PLATFORM_COMMON_REQ_EXCLUDE_RE=""
     if [ -z "${UV_TORCH_BACKEND:-}" ]; then
         export UV_TORCH_BACKEND="rocm${ROCM_VERSION}"
     fi
@@ -590,6 +615,10 @@ configure_ascend() {
     # The derived pin (==0.2 for torch 2.6) is x86_64-only; Ascend is aarch64.
     PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.5"
     PLATFORM_EXTRA_OVERRIDES=()
+    PLATFORM_UV_SYNC_ARGS=()
+    PLATFORM_SYSTEM_SITE_PACKAGES=0
+    PLATFORM_VENV_HOOK=""
+    PLATFORM_COMMON_REQ_EXCLUDE_RE=""
     # torch-npu tracks torch 1:1 and needs a matching CANN (2.11.0 wants CANN
     # 8.5.0), so Ascend stays on torch 2.6. Bump with the hosts' CANN.
     if [ -z "$TORCH_VERSION" ]; then
@@ -610,6 +639,136 @@ configure_ascend() {
         export CFLAGS="${CFLAGS:+$CFLAGS }-include /usr/include/linux/input-event-codes.h"
     fi
 }
+
+configure_musa() {
+    # torch-musa is not on PyPI: it ships preinstalled in the vendor
+    # training-suite image. So MUSA installs no torch of its own and instead
+    # reuses the image's interpreter and site-packages.
+    if [ "$USER_SET_PYTHON" -eq 0 ]; then
+        PYTHON_VERSION=$(python - <<'EOF'
+import sys
+
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+EOF
+)
+        echo "[install.sh] musa: reusing the image interpreter, python ${PYTHON_VERSION}"
+        validate_python_version
+    fi
+    # uv would otherwise pick a managed interpreter, which has no torch-musa.
+    export UV_PYTHON_PREFERENCE="${UV_PYTHON_PREFERENCE:-only-system}"
+    # Pin torch to the image's version so the seeded metadata satisfies it.
+    if [ -z "$TORCH_VERSION" ]; then
+        # Not `import torch`: that needs a device, which a build has not got.
+        local _torch_probe
+        _torch_probe=$(python - <<'EOF' 2>&1 || true
+import importlib.metadata as metadata
+
+print(metadata.version("torch").split("+")[0])
+EOF
+)
+        if [[ "$_torch_probe" =~ ^[0-9]+\.[0-9]+ ]]; then
+            TORCH_VERSION="$_torch_probe"
+            echo "[install.sh] musa: pinning torch ${TORCH_VERSION} to match the image."
+        else
+            echo "[install.sh] musa: no torch found for the image interpreter ($(command -v python)); is this a Moore Threads training-suite container?" >&2
+            echo "[install.sh] ${_torch_probe}" >&2
+            exit 1
+        fi
+    fi
+    PLATFORM_TORCH_STR=""
+    # torch is resolved but never installed; the CPU index keeps the
+    # multi-GB nvidia-* CUDA wheels out of the resolution.
+    if [ "$USE_MIRRORS" -eq 1 ]; then
+        PLATFORM_TORCH_INDEX="https://mirrors.tencent.com/pytorch-wheels/whl/cpu"
+    else
+        PLATFORM_TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+    fi
+    PLATFORM_TORCH_PACKAGES=("torch" "torchvision" "torchaudio")
+    if [ -z "${UV_TORCH_BACKEND:-}" ]; then
+        export UV_TORCH_BACKEND="cpu"
+    fi
+    # RAY_EXPERIMENTAL_NOSET_MUSA_VISIBLE_DEVICES comes from MUSAGPUManager, the
+    # MUSA libraries are already on the image's LD_LIBRARY_PATH, and the
+    # renderer is selected per run by the e2e/example scripts.
+    PLATFORM_VENV_EXPORTS=()
+    # The image ships MUSA builds of flash-attn and apex, so there is nothing to
+    # install; the CUDA sources would not build here anyway.
+    PLATFORM_FLASH_ATTN_INSTALL=0
+    PLATFORM_FLASH_ATTN_PREBUILT=0
+    PLATFORM_RELAX_TORCHCODEC=1
+    PLATFORM_TORCHCODEC_SPEC=""
+    # The image's torch-musa is built against numpy 1.x.
+    PLATFORM_EXTRA_OVERRIDES=("numpy<2")
+    # Either MUSA builds that only exist in the image, or CUDA-only kernels:
+    # resolve them, never write them into the venv.
+    PLATFORM_UV_SYNC_ARGS=("--inexact")
+    local pkg
+    for pkg in torch torchvision torchaudio torchcodec triton flash-attn \
+        deepspeed vllm sglang xgrammar liger-kernel transformer-engine \
+        torch-memory-saver ray; do
+        PLATFORM_UV_SYNC_ARGS+=("--no-install-package" "$pkg")
+    done
+    PLATFORM_SYSTEM_SITE_PACKAGES=1
+    PLATFORM_VENV_HOOK=seed_musa_torch_metadata
+    # The nvidia-* wheels pull a CUDA torch in behind them.
+    PLATFORM_COMMON_REQ_EXCLUDE_RE='^[[:space:]]*nvidia-'
+}
+
+# uv does not see packages inherited through --system-site-packages, so any
+# `uv pip install` needing torch or flash-attn would pull one in and shadow the
+# image's MUSA build. Copy their *metadata* (never the files) so uv treats them
+# as installed. RECORD is left empty so an uninstall cannot delete the originals.
+seed_musa_torch_metadata() {
+    VENV_DIR="$VENV_DIR" python - <<'EOF'
+import importlib.metadata as metadata
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+venv_python = pathlib.Path(os.environ["VENV_DIR"]) / "bin" / "python"
+venv_site = pathlib.Path(
+    subprocess.run(
+        [str(venv_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+)
+
+KEEP = ("METADATA", "WHEEL", "INSTALLER", "top_level.txt", "entry_points.txt")
+
+for name in ("torch", "torch_musa", "torchvision", "torchaudio", "flash_attn"):
+    try:
+        dist = metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        continue
+    # locate_file("") is the site-packages dir holding the distribution; the
+    # dist-info spelling varies (torch-musa vs torch_musa), so glob for it.
+    root = pathlib.Path(dist.locate_file(""))
+    matches = [
+        d
+        for variant in {name, name.replace("_", "-"), name.replace("-", "_")}
+        for d in root.glob(f"{variant}-{dist.version}.dist-info")
+        if d.is_dir()
+    ]
+    if not matches:
+        continue
+    src = matches[0]
+    if src.parent == venv_site:
+        continue  # already the venv's own copy
+    dst = venv_site / src.name
+    shutil.rmtree(dst, ignore_errors=True)
+    dst.mkdir(parents=True)
+    for meta in KEEP:
+        if (src / meta).is_file():
+            shutil.copy2(src / meta, dst / meta)
+    (dst / "RECORD").write_text("")
+    print(f"[install.sh] musa: reusing the image's {name}=={dist.version}", file=sys.stderr)
+EOF
+}
+
 
 # Envs that need a different torch than the project default (Isaac Sim /
 # OmniGibson need 2.5.1) declare it here, so configure_platform and
@@ -643,8 +802,9 @@ configure_platform() {
         nvidia)  configure_nvidia ;;
         amd)     configure_amd ;;
         ascend)  configure_ascend ;;
+        musa)    configure_musa ;;
     esac
-    echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND}"
+    echo "[install.sh] platform=${PLATFORM}, UV_TORCH_BACKEND=${UV_TORCH_BACKEND:-<unset>}"
 }
 
 #=======================PLATFORM EXTRAS=======================
@@ -713,11 +873,79 @@ EOF
     fi
 }
 
+install_musa_extras() {
+    # Nothing to install; just fail here rather than mid-training.
+    python - <<'EOF'
+import importlib.metadata as metadata
+import sys
+
+# Checkable without a device, unlike `import torch`.
+missing = []
+for name in ("torch", "torch_musa"):
+    try:
+        metadata.distribution(name)
+    except metadata.PackageNotFoundError:
+        missing.append(name)
+if missing:
+    print(
+        "[install.sh] --platform musa requires "
+        f"{' and '.join(missing)} to be installed for the image's interpreter. "
+        "Run this inside a Moore Threads training-suite container.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+# Only possible where a device is visible, i.e. not in a docker build.
+try:
+    import torch
+    import torch_musa  # noqa: F401
+
+    available = torch.musa.is_available()
+except Exception as exc:
+    print(
+        f"[install.sh] musa: torch {metadata.version('torch')} present; "
+        f"skipping the device check ({type(exc).__name__}). This is expected "
+        "during a docker build.",
+        file=sys.stderr,
+    )
+else:
+    if available:
+        print(
+            f"[install.sh] musa: torch {torch.__version__}, "
+            f"{torch.musa.device_count()} device(s)"
+        )
+    else:
+        print(
+            "[install.sh] WARNING: torch_musa is installed but reports no "
+            "available MUSA device. At runtime that means the container was "
+            "started without `--runtime=mthreads`.",
+            file=sys.stderr,
+        )
+EOF
+
+    # These are renamed between torch releases (nvidia-cuda-runtime-cu12 ->
+    # nvidia-cuda-runtime -> ...), so sweep by prefix. nvidia-ml-py is a
+    # pure-python NVML binding others import defensively, so keep it.
+    local cuda_pkgs
+    cuda_pkgs=$(uv pip list --format json 2>/dev/null \
+        | grep -oE '"name":"[^"]+"' \
+        | sed -e 's/^"name":"//' -e 's/"$//' \
+        | grep -E '^(nvidia|cuda)[-_]' \
+        | grep -vx 'nvidia-ml-py' \
+        | tr '\n' ' ' || true)
+    if [ -n "$cuda_pkgs" ]; then
+        echo "[install.sh] musa: removing CUDA-only wheels: ${cuda_pkgs}"
+        # shellcheck disable=SC2086
+        uv pip uninstall $cuda_pkgs || true
+    fi
+}
+
 install_platform_extras() {
     case "$PLATFORM" in
         nvidia)  install_nvidia_extras ;;
         amd)     install_amd_extras ;;
         ascend)  install_ascend_extras ;;
+        musa)    install_musa_extras ;;
     esac
 }
 
@@ -1037,6 +1265,10 @@ unset_mirror() {
 create_and_sync_venv() {
     local required_python_mm
     required_python_mm="$(echo "$PYTHON_VERSION" | awk -F. '{print $1"."$2}')"
+    local venv_args=()
+    if [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 1 ]; then
+        venv_args+=("--system-site-packages")
+    fi
 
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
         echo "Found existing venv at $VENV_DIR; validating Python version compatibility..."
@@ -1057,7 +1289,17 @@ EOF
 
             # Create new venv
             install_uv
-            uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+            uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
+            # shellcheck disable=SC1090
+            source "$VENV_DIR/bin/activate"
+        elif [ "$PLATFORM_SYSTEM_SITE_PACKAGES" -eq 1 ] \
+            && ! grep -qi '^include-system-site-packages = true$' "$VENV_DIR/pyvenv.cfg"; then
+            echo "Venv at $VENV_DIR does not expose system site-packages, which platform=${PLATFORM} needs; recreating..." >&2
+            deactivate || true
+            rm -rf "$VENV_DIR"
+
+            install_uv
+            uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
             # shellcheck disable=SC1090
             source "$VENV_DIR/bin/activate"
         else
@@ -1067,11 +1309,14 @@ EOF
     else
         # Create new venv
         install_uv
-        uv venv "$VENV_DIR" --python "$PYTHON_VERSION"
+        uv venv "$VENV_DIR" --python "$PYTHON_VERSION" "${venv_args[@]}"
         # shellcheck disable=SC1090
         source "$VENV_DIR/bin/activate"
     fi
-    uv sync --active $NO_INSTALL_RLINF_CMD
+    if [ -n "$PLATFORM_VENV_HOOK" ]; then
+        "$PLATFORM_VENV_HOOK"
+    fi
+    uv sync --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 install_flash_attn() {
@@ -1328,7 +1573,7 @@ install_qwen3_vl_sglang_deps() {
         exit 1
     fi
 
-    uv sync --extra agentic --inexact --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_engine_requirements "$(agentic_requirements_file sglang "$SGLANG_VERSION")"
     uv pip install "transformers==${TRANSFORMERS_VERSION}"
     python - "$TORCH_VERSION" "$SGLANG_VERSION" "$TRANSFORMERS_VERSION" <<'EOF'
@@ -1358,8 +1603,13 @@ EOF
 }
 
 install_common_embodied_deps() {
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
-    uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    if [ -n "$PLATFORM_COMMON_REQ_EXCLUDE_RE" ]; then
+        grep -Ev "$PLATFORM_COMMON_REQ_EXCLUDE_RE" "$SCRIPT_DIR/embodied/envs/common.txt" \
+            | uv pip install -r -
+    else
+        uv pip install -r $SCRIPT_DIR/embodied/envs/common.txt
+    fi
     if [ "$NO_ROOT" -eq 0 ]; then
         bash $SCRIPT_DIR/sys_deps.sh "$PLATFORM"
     fi
@@ -1595,7 +1845,7 @@ install_openpi_model() {
         franka-franky)
             create_and_sync_venv
             install_common_embodied_deps
-            uv sync --extra franka --inexact --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra franka --inexact --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
@@ -1968,7 +2218,7 @@ install_lerobot() {
 }
 
 install_franka_realworld_env() {
-    uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_lerobot
     if [ "$SKIP_ROS" -ne 1 ]; then
         if [ "$NO_ROOT" -eq 0 ]; then
@@ -1999,14 +2249,14 @@ install_env_only() {
             install_franka_dexhand_deps
             ;;
         franka-franky)
-            uv sync --extra franka --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra franka --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             if [ "$NO_ROOT" -eq 0 ]; then
                 bash $SCRIPT_DIR/embodied/franky_install.sh
             fi
             install_franka_franky_env
             ;;
         xsquare_turtle2)
-            uv sync --extra xsquare_turtle2 --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra xsquare_turtle2 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             install_xsquare_turtle2_env
             ;;
         habitat)
@@ -2022,7 +2272,7 @@ install_env_only() {
             install_embodichain_env
             ;;
         gim_arm)
-            uv sync --extra gim_arm --active $NO_INSTALL_RLINF_CMD
+            uv sync --extra gim_arm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
             ;;
         dosw1)
             install_dosw1_env
@@ -2044,7 +2294,7 @@ install_env_only() {
 #=======================ENV INSTALLERS=======================
 
 install_dummy_env() {
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 }
 
 # LIBERO and its forks cache absolute paths in ~/.libero, ~/.liberopro and
@@ -2099,15 +2349,15 @@ install_libero_env() {
 
 install_maniskill_libero_env() {
     install_libero_env
-    uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
+    # The largest git fetch in the install; truncates on slow links.
+    retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
 
-    # Maniskill assets
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
 }
 
 install_d4rl_env() {
     # Install base embodied dependencies first (gym/gymnasium/transformers stack).
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
 
     uv pip install "cython<3.0"
     uv pip install "gym==0.23.1"
@@ -2466,7 +2716,7 @@ install_embodichain_env() {
 install_dosw1_env() {
     # Reuse the standard embodied extra so dosw1 picks up the same
     # transformers/imageio/gymnasium dependency set as other embodied envs.
-    uv sync --extra embodied --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     # The default patch_syncer uses nvcomp_lz4. Keep DOSW1 lightweight by
     # installing only this shared compression runtime instead of the full
     # common simulator dependency set.
@@ -2680,7 +2930,7 @@ install_agentic() {
     local engine_req
     engine_req=$(agentic_requirements_file "$engine" "$engine_ver")
 
-    uv sync --extra agentic --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_engine_requirements "$engine_req"
     echo "[install.sh] Installed engine: $(basename "$engine_req")"
     uv pip check || echo "[install.sh] WARNING: dependency conflicts reported above"
@@ -2730,10 +2980,10 @@ install_agentic() {
 #=======================DOCUMENTATION INSTALLER=======================
 
 install_docs() {
-    uv sync --extra agentic --active $NO_INSTALL_RLINF_CMD
+    uv sync --extra agentic --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     install_engine_requirements "$(agentic_requirements_file vllm "$(agentic_latest_version vllm)")"
     install_engine_requirements "$(agentic_requirements_file sglang "$(agentic_latest_version sglang)")"
-    uv sync --extra embodied --active --inexact $NO_INSTALL_RLINF_CMD
+    uv sync --extra embodied --active --inexact "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
     uv pip install -r $SCRIPT_DIR/docs/requirements.txt
     uv pip uninstall pynvml || true
 }
