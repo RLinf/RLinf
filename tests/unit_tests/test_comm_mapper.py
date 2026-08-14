@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
 import torch
@@ -258,7 +259,7 @@ def test_evaluate_splits_gate_policy_output():
     worker.send_to = lambda **kwargs: sends.append(kwargs)
 
     asyncio.run(
-        MultiStepRolloutWorker.evaluate.__wrapped__(
+        inspect.unwrap(MultiStepRolloutWorker.evaluate)(
             worker,
             input_channel=None,
             output_channel=None,
