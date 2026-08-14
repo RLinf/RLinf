@@ -27,6 +27,16 @@ from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
 RLT_GATE_INFO_KEYS = (
     "rlt_gate_entered",
     "rlt_gate_entry_step",
+    "rlt_gate_score_ready",
+    "rlt_gate_score_min",
+    "rlt_gate_score_mean",
+    "rlt_gate_prediction_variance",
+    "rlt_gate_actor_active",
+    "rlt_gate_chunk_index",
+    "rlt_gate_critical_chunk_count",
+    "rlt_gate_expert_candidate",
+    "rlt_gate_expert_active",
+    "rlt_gate_expert_requested",
     "rlt_gate_expert_entered",
     "rlt_gate_expert_entry_step",
 )
@@ -58,6 +68,13 @@ class _GateState:
     chunk_index: torch.Tensor
 
 
+@dataclass
+class _GatePrediction:
+    score_min: torch.Tensor
+    score_mean: torch.Tensor
+    prediction_variance: torch.Tensor
+
+
 class SteamCriticalPhaseGate:
     """Detect sustained low progress from raw, chunk-aligned frame pairs."""
 
@@ -78,6 +95,12 @@ class SteamCriticalPhaseGate:
 
         expert_cfg = cfg.get("expert_takeover", {}) or {}
         self.expert_takeover_enabled = bool(expert_cfg.get("enable", False))
+        self.expert_mode = str(expert_cfg.get("mode", "active"))
+        if self.expert_mode not in ("active", "shadow"):
+            raise ValueError(
+                "critical phase gate expert_takeover.mode must be "
+                "'active' or 'shadow'"
+            )
         self.expert_enter_threshold = float(
             expert_cfg.get("enter_threshold", self.enter_threshold)
         )
@@ -135,6 +158,37 @@ class SteamCriticalPhaseGate:
         self.model.to(device)
         self._states.clear()
         return self
+
+    def empty_diagnostics(self, batch_size: int) -> dict[str, torch.Tensor]:
+        """Return a non-decision row for rollout bootstrap bookkeeping."""
+        bool_keys = {
+            "rlt_gate_entered",
+            "rlt_gate_score_ready",
+            "rlt_gate_actor_active",
+            "rlt_gate_expert_candidate",
+            "rlt_gate_expert_active",
+            "rlt_gate_expert_requested",
+            "rlt_gate_expert_entered",
+        }
+        long_keys = {
+            "rlt_gate_entry_step",
+            "rlt_gate_chunk_index",
+            "rlt_gate_critical_chunk_count",
+            "rlt_gate_expert_entry_step",
+        }
+        diagnostics = {}
+        for key in RLT_GATE_INFO_KEYS:
+            dtype = torch.float32
+            if key in bool_keys:
+                dtype = torch.bool
+            elif key in long_keys:
+                dtype = torch.long
+            diagnostics[key] = torch.zeros(
+                (int(batch_size), 1),
+                dtype=dtype,
+                device=self.device,
+            )
+        return diagnostics
 
     def reset(
         self,
@@ -255,7 +309,7 @@ class SteamCriticalPhaseGate:
         self,
         state: _GateState,
         prompts: list[str],
-    ) -> torch.Tensor:
+    ) -> _GatePrediction:
         samples = []
         batch_size = state.valid_count.shape[0]
         for batch_idx in range(batch_size):
@@ -280,7 +334,22 @@ class SteamCriticalPhaseGate:
         observation = self._collator.collate_observations(samples)
         observation = self._to_device(observation, self.device)
         output = self.model.predict(observation)
-        return output.predicted_values.to(dtype=torch.float32)
+        score_min = output.predicted_values.to(dtype=torch.float32)
+        score_mean = getattr(output, "prediction_mean", None)
+        if score_mean is None:
+            score_mean = score_min
+        else:
+            score_mean = score_mean.to(dtype=torch.float32)
+        prediction_variance = getattr(output, "prediction_variance", None)
+        if prediction_variance is None:
+            prediction_variance = torch.zeros_like(score_min)
+        else:
+            prediction_variance = prediction_variance.to(dtype=torch.float32)
+        return _GatePrediction(
+            score_min=score_min,
+            score_mean=score_mean,
+            prediction_variance=prediction_variance,
+        )
 
     @torch.no_grad()
     def step(
@@ -337,10 +406,26 @@ class SteamCriticalPhaseGate:
         ready = state.valid_count >= self.lookback_chunks + 1
 
         if ready.any():
-            score = self._predict_pair(state, prompts)
-            score = torch.where(ready, score, torch.zeros_like(score))
+            prediction = self._predict_pair(state, prompts)
+            score = torch.where(
+                ready,
+                prediction.score_min,
+                torch.zeros_like(prediction.score_min),
+            )
+            score_mean = torch.where(
+                ready,
+                prediction.score_mean,
+                torch.zeros_like(prediction.score_mean),
+            )
+            prediction_variance = torch.where(
+                ready,
+                prediction.prediction_variance,
+                torch.zeros_like(prediction.prediction_variance),
+            )
         else:
             score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
+            score_mean = torch.zeros_like(score)
+            prediction_variance = torch.zeros_like(score)
 
         low_progress = ready & (score <= self.enter_threshold)
         state.low_progress_count = torch.where(
@@ -363,7 +448,11 @@ class SteamCriticalPhaseGate:
         else:
             state.latched = (state.latched | enter_now) & low_progress
 
-        actor_active = state.latched & bool(actor_routing_enabled)
+        actor_active = (
+            state.latched
+            & bool(actor_routing_enabled)
+            & (self.mode == "active")
+        )
         actor_started_now = actor_active & (~state.actor_active)
         state.actor_active = actor_active
         state.critical_chunk_count = torch.where(
@@ -402,22 +491,35 @@ class SteamCriticalPhaseGate:
             state.expert_latched = (
                 state.expert_latched | expert_enter_now
             ) & expert_low_progress
-        state.chunk_index = state.chunk_index + 1
-
         route_flags = state.latched
         route_expert_flags = state.expert_latched
         if self.mode == "shadow":
             route_flags = torch.zeros_like(route_flags)
             route_expert_flags = torch.zeros_like(route_expert_flags)
+        elif self.expert_mode == "shadow":
+            route_expert_flags = torch.zeros_like(route_expert_flags)
+
+        diagnostics = {
+            "rlt_gate_entered": state.entered[:, None],
+            "rlt_gate_entry_step": state.entry_step[:, None],
+            "rlt_gate_score_ready": ready[:, None],
+            "rlt_gate_score_min": score[:, None],
+            "rlt_gate_score_mean": score_mean[:, None],
+            "rlt_gate_prediction_variance": prediction_variance[:, None],
+            "rlt_gate_actor_active": actor_active[:, None],
+            "rlt_gate_chunk_index": state.chunk_index[:, None],
+            "rlt_gate_critical_chunk_count": state.critical_chunk_count[:, None],
+            "rlt_gate_expert_candidate": expert_low_progress[:, None],
+            "rlt_gate_expert_active": state.expert_latched[:, None],
+            "rlt_gate_expert_requested": route_expert_flags[:, None],
+            "rlt_gate_expert_entered": state.expert_entered[:, None],
+            "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
+        }
+        state.chunk_index = state.chunk_index + 1
         return GateDecision(
             actor_switch=route_flags[:, None],
             expert_requested=route_expert_flags[:, None],
-            diagnostics={
-                "rlt_gate_entered": state.entered[:, None],
-                "rlt_gate_entry_step": state.entry_step[:, None],
-                "rlt_gate_expert_entered": state.expert_entered[:, None],
-                "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
-            },
+            diagnostics=diagnostics,
         )
 
 

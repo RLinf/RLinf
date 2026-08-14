@@ -75,6 +75,16 @@ def predict_rlt_actions(
             route_switch_flags = gate_decision.actor_switch
             route_intervene_requested = gate_decision.expert_requested
             result["rollout_infos"] = gate_decision.diagnostics
+            result["forward_inputs"].update(
+                {
+                    key: value.detach()
+                    for key, value in gate_decision.diagnostics.items()
+                }
+            )
+        elif critical_phase_gate is not None:
+            result["forward_inputs"].update(
+                critical_phase_gate.empty_diagnostics(actions.shape[0])
+            )
 
         route_output = rlt_route.route(
             RLTRouteContext(

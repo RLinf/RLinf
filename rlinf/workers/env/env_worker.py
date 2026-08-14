@@ -57,6 +57,13 @@ from rlinf.utils.utils import (
 from rlinf.workers.env.history_manager import HistoryManager
 from rlinf.workers.env.smooth_intervene import SmoothInterveneController
 
+_RLT_ORACLE_TRACE_DTYPES = {
+    "rlt_oracle_expert_candidate": torch.bool,
+    "rlt_oracle_expert_active": torch.bool,
+    "oracle_expert_entered": torch.bool,
+    "oracle_expert_entry_step": torch.float32,
+}
+
 
 class EnvWorker(Worker):
     def __init__(self, cfg: DictConfig):
@@ -989,6 +996,35 @@ class EnvWorker(Worker):
             )
         set_rollout_infos(rollout_infos)
 
+    @staticmethod
+    def _append_rlt_oracle_trace_infos(
+        policy_output: PolicyOutput,
+        env_output: EnvOutput,
+    ) -> None:
+        """Align environment oracle values with gate diagnostics for tracing."""
+        forward_inputs = policy_output.forward_inputs
+        score = forward_inputs.get("rlt_gate_score_min")
+        if not isinstance(score, torch.Tensor):
+            return
+
+        batch_size = int(score.shape[0])
+        env_infos = env_output.env_infos
+        if not isinstance(env_infos, dict):
+            env_infos = {}
+        for key, dtype in _RLT_ORACLE_TRACE_DTYPES.items():
+            value = env_infos.get(key)
+            if value is None:
+                normalized = torch.zeros((batch_size, 1), dtype=dtype)
+            else:
+                normalized = torch.as_tensor(value, dtype=dtype)
+                if normalized.numel() % batch_size != 0:
+                    raise ValueError(
+                        f"RLT oracle trace info {key!r} has "
+                        f"{normalized.numel()} values for batch size {batch_size}."
+                    )
+                normalized = normalized.reshape(batch_size, -1)[:, -1:]
+            forward_inputs[key] = normalized.cpu().contiguous()
+
     def _send_train_bootstrap(
         self,
         rollout_channel: Channel,
@@ -1162,6 +1198,7 @@ class EnvWorker(Worker):
                         policy_output,
                         self.env_list[stage_id],
                     )
+                    self._append_rlt_oracle_trace_infos(policy_output, env_output)
                     rewards = self.compute_bootstrap_rewards(
                         env_output, policy_output.bootstrap_values, reward_model_output
                     )
@@ -1308,6 +1345,7 @@ class EnvWorker(Worker):
                     self.smooth_intervene.remember_policy_output(
                         stage_id, policy_output
                     )
+                self._append_rlt_oracle_trace_infos(policy_output, env_output)
                 rewards = self.compute_bootstrap_rewards(
                     env_output, policy_output.bootstrap_values, reward_model_output
                 )

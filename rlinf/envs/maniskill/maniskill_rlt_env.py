@@ -105,18 +105,33 @@ class ManiskillRLTEnv(ManiskillEnv):
         "learned_expert_entered": "rlt_gate_expert_entered",
         "learned_expert_entry_step": "rlt_gate_expert_entry_step",
     }
-    _RLT_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
+    _RLT_GATE_INFO_KEYS = (
+        *_RLT_GATE_METRIC_MAP.values(),
+        "rlt_gate_actor_active",
+    )
+    _RLT_REQUIRED_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
     _RLT_GATE_BOOL_INFO_KEYS = frozenset(
         {
             "rlt_gate_entered",
+            "rlt_gate_actor_active",
             "rlt_gate_expert_entered",
         }
+    )
+    _RLT_ORACLE_METRIC_MAP = {
+        "oracle_expert_entered": "rlt_oracle_expert_entered",
+        "oracle_expert_entry_step": "rlt_oracle_expert_entry_step",
+    }
+    _RLT_ORACLE_TRACE_INFO_KEYS = (
+        "rlt_oracle_expert_candidate",
+        "rlt_oracle_expert_active",
     )
     _RLT_ATTACHED_INFO_KEYS = (
         "entered_actor_phase_once",
         "actor_switch_step",
         "actor_switch_step_nonzero",
         *_RLT_GATE_METRIC_MAP,
+        *_RLT_ORACLE_METRIC_MAP,
+        *_RLT_ORACLE_TRACE_INFO_KEYS,
     )
     _RLT_EPISODE_METRIC_KEYS = (
         "entered_actor_phase_once",
@@ -126,6 +141,8 @@ class ManiskillRLTEnv(ManiskillEnv):
         "learned_critical_entry_step",
         "learned_expert_entered",
         "learned_expert_entry_step",
+        "oracle_expert_entered",
+        "oracle_expert_entry_step",
     )
 
     def __init__(
@@ -253,6 +270,33 @@ class ManiskillRLTEnv(ManiskillEnv):
             "best_progress_yz": torch.zeros(batch_size, dtype=torch.float32),
             "best_progress_score": torch.zeros(batch_size, dtype=torch.float32),
             "stalled_progress_chunks": torch.zeros(batch_size, dtype=torch.float32),
+            "expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
+            "oracle_expert_takeover_active": torch.zeros(
+                batch_size, dtype=torch.bool
+            ),
+            "oracle_expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
+            "oracle_expert_entered": torch.zeros(batch_size, dtype=torch.bool),
+            "oracle_expert_entry_step": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
+            "oracle_expert_progress_guard": torch.zeros(
+                batch_size, dtype=torch.bool
+            ),
+            "oracle_progress_initialized": torch.zeros(
+                batch_size, dtype=torch.bool
+            ),
+            "oracle_best_progress_x": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
+            "oracle_best_progress_yz": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
+            "oracle_best_progress_score": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
+            "oracle_stalled_progress_chunks": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
         }
 
     def _empty_rlt_rollout_infos(self, batch_size: int) -> dict[str, torch.Tensor]:
@@ -275,14 +319,18 @@ class ManiskillRLTEnv(ManiskillEnv):
         present_keys = set(self._RLT_GATE_INFO_KEYS) & set(rollout_infos)
         if not present_keys:
             return
-        missing_keys = sorted(set(self._RLT_GATE_INFO_KEYS) - present_keys)
+        missing_keys = sorted(
+            set(self._RLT_REQUIRED_GATE_INFO_KEYS) - set(rollout_infos)
+        )
         if missing_keys:
             raise ValueError(
                 "Incomplete RLT critical-phase gate diagnostics; missing "
                 f"{missing_keys}."
             )
-        normalized = {}
+        normalized = self._empty_rlt_rollout_infos(self.num_envs)
         for key in self._RLT_GATE_INFO_KEYS:
+            if key not in rollout_infos:
+                continue
             dtype = (
                 torch.bool
                 if key in self._RLT_GATE_BOOL_INFO_KEYS
@@ -420,6 +468,20 @@ class ManiskillRLTEnv(ManiskillEnv):
                 for metric_key, rollout_key in self._RLT_GATE_METRIC_MAP.items()
             }
         )
+        switch_info.update(
+            {
+                "rlt_oracle_expert_candidate": state[
+                    "oracle_expert_candidate"
+                ][:, None],
+                "rlt_oracle_expert_active": state[
+                    "oracle_expert_takeover_active"
+                ][:, None],
+                "oracle_expert_entered": state["oracle_expert_entered"][:, None],
+                "oracle_expert_entry_step": state[
+                    "oracle_expert_entry_step"
+                ][:, None],
+            }
+        )
         return switch_info
 
     def _rlt_expert_takeover_mask(
@@ -465,26 +527,83 @@ class ManiskillRLTEnv(ManiskillEnv):
     ) -> None:
         expert_cfg = self._rlt_switch_cfg.get("expert_takeover", {})
         state = self._rlt_switch_state_to(device)
-        if not bool(expert_cfg.get("enable", False)):
-            state["expert_takeover_active"].zero_()
-            state["expert_progress_guard"].zero_()
-            state["progress_initialized"].zero_()
-            state["stalled_progress_chunks"].zero_()
-            return
-
         trigger_mode = str(expert_cfg.get("trigger_mode", "critical_phase"))
-        if trigger_mode == self._RLT_STALLED_PROGRESS_TRIGGER:
+        if bool(expert_cfg.get("enable", False)) and (
+            trigger_mode == self._RLT_STALLED_PROGRESS_TRIGGER
+        ):
             self._update_rlt_stalled_progress_expert_takeover(
                 infos=infos,
                 expert_cfg=expert_cfg,
                 device=device,
             )
+        else:
+            self._clear_rlt_stalled_progress_state(state, prefix="")
+
+        self._update_rlt_expert_oracle_state(
+            infos=infos,
+            expert_cfg=expert_cfg,
+            device=device,
+        )
+
+    @staticmethod
+    def _clear_rlt_stalled_progress_state(
+        state: dict[str, torch.Tensor],
+        *,
+        prefix: str,
+        reset_history: bool = False,
+    ) -> None:
+        for suffix in (
+            "expert_takeover_active",
+            "expert_candidate",
+            "expert_progress_guard",
+            "progress_initialized",
+            "stalled_progress_chunks",
+        ):
+            state[f"{prefix}{suffix}"].zero_()
+        if reset_history:
+            state[f"{prefix}expert_entered"].zero_()
+            state[f"{prefix}expert_entry_step"].zero_()
+
+    def _update_rlt_expert_oracle_state(
+        self,
+        *,
+        infos: dict[str, Any],
+        expert_cfg: DictConfig | dict,
+        device: torch.device,
+    ) -> None:
+        state = self._rlt_switch_state_to(device)
+        oracle_cfg = expert_cfg.get("oracle_metrics", {}) or {}
+        if not bool(oracle_cfg.get("enable", False)):
+            self._clear_rlt_stalled_progress_state(
+                state,
+                prefix="oracle_",
+                reset_history=True,
+            )
             return
 
-        state["expert_takeover_active"].zero_()
-        state["expert_progress_guard"].zero_()
-        state["progress_initialized"].zero_()
-        state["stalled_progress_chunks"].zero_()
+        trigger_mode = str(
+            oracle_cfg.get("trigger_mode", self._RLT_STALLED_PROGRESS_TRIGGER)
+        )
+        if trigger_mode != self._RLT_STALLED_PROGRESS_TRIGGER:
+            raise ValueError(
+                "rlt_policy_switch.expert_takeover.oracle_metrics.trigger_mode "
+                "only supports 'stalled_progress', got "
+                f"{trigger_mode!r}."
+            )
+
+        if self._rlt_route_from_environment():
+            in_critical_phase = state["rlt_switch_flags"]
+        else:
+            rollout_infos = self._rlt_rollout_infos_to(device)
+            in_critical_phase = rollout_infos["rlt_gate_actor_active"]
+        self._update_rlt_stalled_progress_state(
+            infos=infos,
+            gate_cfg=oracle_cfg.get("gate", {}) or {},
+            device=device,
+            in_critical_phase=in_critical_phase,
+            prefix="oracle_",
+            track_entry=True,
+        )
 
     def _update_rlt_stalled_progress_expert_takeover(
         self,
@@ -494,17 +613,43 @@ class ManiskillRLTEnv(ManiskillEnv):
         device: torch.device,
     ) -> None:
         state = self._rlt_switch_state_to(device)
-        gate_cfg = expert_cfg.get("gate", {})
+        self._update_rlt_stalled_progress_state(
+            infos=infos,
+            gate_cfg=expert_cfg.get("gate", {}) or {},
+            device=device,
+            in_critical_phase=state["rlt_switch_flags"],
+            prefix="",
+            track_entry=False,
+        )
 
-        in_critical_phase = state["rlt_switch_flags"]
+    def _update_rlt_stalled_progress_state(
+        self,
+        *,
+        infos: dict[str, Any],
+        gate_cfg: DictConfig | dict,
+        device: torch.device,
+        in_critical_phase: torch.Tensor,
+        prefix: str,
+        track_entry: bool,
+    ) -> None:
+        state = self._rlt_switch_state_to(device)
+        active_key = f"{prefix}expert_takeover_active"
+        candidate_key = f"{prefix}expert_candidate"
+        guard_key = f"{prefix}expert_progress_guard"
+        initialized_key = f"{prefix}progress_initialized"
+        best_x_key = f"{prefix}best_progress_x"
+        best_yz_key = f"{prefix}best_progress_yz"
+        best_score_key = f"{prefix}best_progress_score"
+        stalled_key = f"{prefix}stalled_progress_chunks"
+
         success = self._rlt_info_bool(infos, "success_current", device)
-        active_before = state["expert_takeover_active"] & in_critical_phase & (~success)
+        active_before = state[active_key] & in_critical_phase & (~success)
         progress_guard = self._rlt_stalled_progress_guard(
             infos=infos,
             gate_cfg=gate_cfg,
             device=device,
         )
-        state["expert_progress_guard"] = progress_guard
+        state[guard_key] = progress_guard
 
         eligible = in_critical_phase & progress_guard & (~success)
         if bool(gate_cfg.get("require_grasp", False)):
@@ -521,25 +666,25 @@ class ManiskillRLTEnv(ManiskillEnv):
         yz_weight = float(gate_cfg.get("progress_yz_weight", 1.0))
         progress_score = hole_x - yz_weight * yz_dist
 
-        initialized = state["progress_initialized"] & eligible & (~active_before)
+        initialized = state[initialized_key] & eligible & (~active_before)
         should_initialize = eligible & (~active_before) & (~initialized)
         monitor_progress = eligible & (~active_before) & initialized
 
         min_x_progress = float(gate_cfg.get("min_x_progress", 0.003))
         min_yz_progress = float(gate_cfg.get("min_yz_progress", 0.0015))
         min_score_progress = float(gate_cfg.get("min_score_progress", 0.002))
-        x_improved = hole_x > (state["best_progress_x"] + min_x_progress)
-        yz_improved = yz_dist < (state["best_progress_yz"] - min_yz_progress)
+        x_improved = hole_x > (state[best_x_key] + min_x_progress)
+        yz_improved = yz_dist < (state[best_yz_key] - min_yz_progress)
         score_improved = progress_score > (
-            state["best_progress_score"] + min_score_progress
+            state[best_score_key] + min_score_progress
         )
         improved = monitor_progress & (x_improved | yz_improved | score_improved)
 
         no_progress = monitor_progress & (~improved)
         stalled_chunks = torch.where(
             no_progress,
-            state["stalled_progress_chunks"] + 1.0,
-            state["stalled_progress_chunks"],
+            state[stalled_key] + 1.0,
+            state[stalled_key],
         )
         stalled_chunks = torch.where(
             improved | should_initialize | (~eligible),
@@ -556,45 +701,56 @@ class ManiskillRLTEnv(ManiskillEnv):
         )
 
         update_best = should_initialize | improved
-        state["best_progress_x"] = torch.where(
+        state[best_x_key] = torch.where(
             should_initialize,
             hole_x,
             torch.where(
                 update_best,
-                torch.maximum(state["best_progress_x"], hole_x),
-                state["best_progress_x"],
+                torch.maximum(state[best_x_key], hole_x),
+                state[best_x_key],
             ),
         )
-        state["best_progress_yz"] = torch.where(
+        state[best_yz_key] = torch.where(
             should_initialize,
             yz_dist,
             torch.where(
                 update_best,
-                torch.minimum(state["best_progress_yz"], yz_dist),
-                state["best_progress_yz"],
+                torch.minimum(state[best_yz_key], yz_dist),
+                state[best_yz_key],
             ),
         )
-        state["best_progress_score"] = torch.where(
+        state[best_score_key] = torch.where(
             should_initialize,
             progress_score,
             torch.where(
                 update_best,
-                torch.maximum(state["best_progress_score"], progress_score),
-                state["best_progress_score"],
+                torch.maximum(state[best_score_key], progress_score),
+                state[best_score_key],
             ),
         )
 
-        state["expert_takeover_active"] = active_before | trigger_now
-        state["progress_initialized"] = torch.where(
+        state[candidate_key] = trigger_now
+        state[active_key] = active_before | trigger_now
+        state[initialized_key] = torch.where(
             eligible & (~active_before),
-            state["progress_initialized"] | should_initialize,
-            torch.zeros_like(state["progress_initialized"]),
+            state[initialized_key] | should_initialize,
+            torch.zeros_like(state[initialized_key]),
         )
-        state["stalled_progress_chunks"] = torch.where(
+        state[stalled_key] = torch.where(
             active_before,
-            state["stalled_progress_chunks"],
+            state[stalled_key],
             stalled_chunks,
         )
+        if track_entry:
+            entered_key = f"{prefix}expert_entered"
+            entry_step_key = f"{prefix}expert_entry_step"
+            first_enter_now = trigger_now & (~state[entered_key])
+            state[entry_step_key] = torch.where(
+                first_enter_now,
+                self._rlt_elapsed_steps(infos, device),
+                state[entry_step_key],
+            )
+            state[entered_key] = state[entered_key] | trigger_now
 
     def _rlt_stalled_progress_guard(
         self,

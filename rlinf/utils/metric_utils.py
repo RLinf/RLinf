@@ -124,6 +124,30 @@ def collect_trajectory_replay_metrics(
             "intervention_sum",
             "intervention_count",
         ),
+        (
+            "replay/expert_candidate_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "rlt_gate_expert_candidate"
+            ),
+            "expert_candidate_sum",
+            "expert_candidate_count",
+        ),
+        (
+            "replay/expert_gate_active_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "rlt_gate_expert_active"
+            ),
+            "expert_gate_active_sum",
+            "expert_gate_active_count",
+        ),
+        (
+            "replay/oracle_expert_active_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "rlt_oracle_expert_active"
+            ),
+            "oracle_expert_active_sum",
+            "oracle_expert_active_count",
+        ),
     )
     for metric_key, tensor_getter, sum_key, count_key in rate_specs:
         rate = mean_bool_tensor_rate_from_trajectories(
