@@ -289,6 +289,7 @@ def test_env_evaluate_accepts_gate_policy_output():
     worker.eval_num_envs_per_stage = 6
     worker.eval_batch_size = 6
     worker.env_decoupled_mode = False
+    worker.enable_rlt = False
     worker.eval_env_list = [_EvalEnv()]
     worker.eval_prev_done = [None]
     worker.eval_enable_offload = False
