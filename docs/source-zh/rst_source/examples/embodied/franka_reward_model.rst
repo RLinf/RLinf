@@ -295,7 +295,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
       Franka · 双 RealSense 相机
 
-| **你将完成:** 采集双视角 episode 数据 → 预处理为 QwenTrend SFT 数据集 → 微调 Qwen3-VL-4B → 启动 RLPD 真机训练。
+| **你将完成:** 采集双视角 episode 数据 → 预处理为 VLM trend SFT 数据集 → 微调 Qwen3-VL-4B → 启动 RLPD 真机训练。
 | **前置条件:** :doc:`franka` 到数据采集步骤 · :doc:`../../extending/reward_model`.
 
 工作流程
@@ -304,7 +304,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 完整流程包含三个阶段：
 
 1. **数据采集** — 在真机上采集包含双视角（腕部 + 全局）图像序列的 episode 数据。
-2. **监督微调（SFT）** — 将采集数据预处理为 QwenTrend 格式，对 Qwen3-VL-4B 进行 LoRA 微调。
+2. **监督微调（SFT）** — 将采集数据预处理为 VLM trend 格式，对 Qwen3-VL-4B 进行 LoRA 微调。
 3. **真机强化学习** — 在 RLPD 训练中接入微调后的 VLM reward model，通过 ``history_buffer`` 模式在线推理并引导策略学习。
 
 
@@ -349,15 +349,22 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 双视角输入让 VLM 能同时关注局部操作细节和全局空间关系，提高趋势判断的准确性。
 
+在更新 ``examples/embodiment/config/realworld_collect_data.yaml`` （相机序列号、
+``target_ee_pose`` 和 ``data_collection.save_dir``）后，使用标准真机采集入口：
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data
+
 
 阶段二：监督微调（SFT）
 ----------------------------------------
 
-2.1 预处理为 QwenTrend 数据集
+2.1 预处理为 VLM Trend 数据集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-采集到的 ``.pkl`` episode 需要通过 ``preprocess_qwentrend_reward_dataset.py``
-转换为 QwenTrend SFT 格式。运行前需要激活虚拟环境并设置 ``PYTHONPATH``：
+采集到的 ``.pkl`` episode 需要通过 ``preprocess_vlm_trend_reward_dataset.py``
+转换为 VLM trend SFT 格式。运行前需要激活虚拟环境并设置 ``PYTHONPATH``：
 
 .. code-block:: bash
 
@@ -369,9 +376,9 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /path/to/collected_data \
-       --output-dir /path/to/processed_qwentrend_data \
+       --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --task-description "Pick up the peg and insert it into the hole."
 
@@ -379,9 +386,9 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /path/to/collected_data \
-       --output-dir /path/to/processed_qwentrend_data \
+       --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ"
 
@@ -390,9 +397,9 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /data/reward_qwen_data/demo_data/collected_data \
-       --output-dir /data/reward_qwen_data/processed_qwentrend_data \
+       --output-dir /data/reward_qwen_data/processed_vlm_trend_reward_data \
        --window-size 5 \
        --seed 42 \
        --target-ee-pose "0.490,0.0,0.076,3.131,0.019,-0.063"
@@ -409,7 +416,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: text
 
-   processed_qwentrend_data/
+   processed_vlm_trend_reward_data/
    ├── dataset_info.json
    ├── train/
    │   ├── segments.jsonl
@@ -421,16 +428,16 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 2.2 微调 Qwen3-VL-4B
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-修改 SFT 配置文件 ``examples/sft/config/qwen3vl_sft_qwentrend.yaml`` 中的路径：
+修改 SFT 配置文件 ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml`` 中的路径：
 
 .. code-block:: yaml
 
    data:
      type: vlm
-     dataset_name: "qwentrend_progress_sft"
-     train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
-     val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
-     video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+     dataset_name: "vlm_trend_reward_sft"
+     train_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/train/segments.jsonl"
+     val_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/eval/segments.jsonl"
+     video_root: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}"
 
    actor:
      model:
@@ -448,8 +455,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
 .. code-block:: bash
 
-   export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_data
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
+   export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 训练完成后，LoRA checkpoint 路径（如 ``checkpoints/global_step_3000`` ）将通过
 ``reward.model.lora_path`` 在 RL 训练中引用。
@@ -461,7 +468,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 3.1 配置文件
 ~~~~~~~~~~~~~~
 
-使用 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_sglang_reward.yaml``
+使用 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_vlm_reward.yaml``
 作为 RL 训练配置。该配置基于 RLPD CNN 异步训练模板，核心 reward 配置如下：
 
 .. code-block:: yaml
@@ -479,19 +486,16 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
      model:
        model_path: "/data/reward_qwen_data/Qwen3-VL-4B-Instruct"
-       model_type: "history_vlm"
+       model_type: "buffered_vlm"
        lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
        gt_success_bonus: 20.0
        precision: "bf16"
 
-       input_builder_name: qwentrend_input_builder
+       input_builder_name: vlm_trend_reward_input_builder
        input_builder_params:
          default_task_description: "Pick up the peg and insert it into the hole."
-         video_keys:
-           - main_images
-           - extra_view_images
 
-       reward_parser_name: qwentrend_reward_parser
+       reward_parser_name: vlm_trend_reward_parser
        reward_parser_params:
          positive_reward: 1.0
          negative_reward: -0.2
@@ -541,8 +545,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
    * - ``gt_success_bonus: 20.0``
      - 环境报告成功（ ``infos["success"] = True`` ）时追加 +20.0。
        这个巨大奖励让 Agent 明确将"到达目标"与高奖励关联。
-   * - ``video_keys``
-     - ``[main_images, extra_view_images]`` — VLM 同时接收两个相机视角的帧。
+   * - ``history_buffers.history_window.history_keys``
+     - ``[main_images, extra_view_images]`` — 历史窗口缓存双视角帧，供 VLM 推理使用。
    * - ``history_buffers.history_window``
      - 缓存最近 5 帧的 ``main_images`` 和 ``extra_view_images``，最少 5 帧后触发推理。
    * - ``worker_type: model``
@@ -605,27 +609,13 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 3.5 Franka env 写入 success 信息
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-与仿真场景不同，真机 Franka 环境的 ``step()`` 原本返回空 ``infos`` 字典，
-导致 ``gt_success_bonus`` 无法生效。需要在 ``franka_env.py`` 中添加 success 写入：
-
-.. code-block:: python
-
-   # rlinf/envs/realworld/franka/franka_env.py
-
-   truncated = self._num_steps >= self.config.max_num_steps
-   reward *= self.config.reward_scale
-
-   infos: dict = {}
-   if terminated:
-       infos["success"] = True
-
-   return observation, reward, terminated, truncated, infos
+RLinf 在 ``franka_env.py`` 中于 episode 成功终止时写入
+``infos["success"]=True``，使真机场景下的 ``gt_success_bonus`` 无需额外 env 修改即可生效。
 
 .. note::
 
-   该修改不影响 Franka env 的其他行为，仅增加了一个 ``infos`` 字段。
-   对于不使用 ``gt_success_bonus`` 的配置（如纯 ResNet reward 场景），
-   也是安全的——``apply_gt_success_bonus`` 在找不到 success 标志时会直接跳过。
+   不使用 ``gt_success_bonus`` 的配置（例如纯 ResNet reward）不受影响；
+   ``apply_gt_success_bonus`` 在未检测到 success 标志时会直接跳过。
 
 3.6 启动训练
 ~~~~~~~~~~~~~~
@@ -635,7 +625,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 .. code-block:: bash
 
    bash examples/embodiment/run_realworld_async.sh \
-       realworld_peginsertion_rlpd_cnn_async_sglang_reward
+       realworld_peginsertion_rlpd_cnn_async_vlm_reward
 
 训练启动后，日志中可以看到 VLM 推理输出、reward 分布和成功信号。
 
@@ -650,7 +640,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
      - 真机（Franka）
    * - **Reward 来源**
      - VLM 趋势 + gt_success_bonus (simulator 自动提供)
-     - VLM 趋势 + gt_success_bonus (需手动在 env 中写入)
+     - VLM 趋势 + gt_success_bonus（env 在终止时写入 ``infos["success"]``）
    * - **并行环境数**
      - 32（大量样本，高探索效率）
      - 1（单机器人，样本有限）
