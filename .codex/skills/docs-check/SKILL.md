@@ -15,6 +15,17 @@ Use this skill when documentation changes may introduce mismatches with:
 
 Always read `reference.md` first, then run the workflow below.
 
+Two harnesses in this folder do the mechanical part; run them before reasoning
+about content:
+
+```bash
+# Does the page still build? Both Read the Docs projects use fail_on_warning.
+python3 .codex/skills/docs-check/build_docs.py            # en + zh
+
+# Does CJK punctuation break inline markup, loudly or silently?
+python3 .codex/skills/docs-check/check_rst_markup.py      # needs docutils
+```
+
 ## Inputs
 
 Collect these inputs before reviewing:
@@ -33,25 +44,36 @@ If scope is unclear, default to checking:
 ## Workflow
 
 1. Read `reference.md` and extract the relevant checklist items.
-2. Verify doc-to-code correctness:
+2. Run the build harness for **both** languages and fix every warning:
+   - `python3 .codex/skills/docs-check/build_docs.py` (add `--lang zh` to
+     iterate faster on a Chinese-only failure).
+   - The two Read the Docs projects build independently with
+     `fail_on_warning: true`, so an English-clean page can still turn
+     `docs/readthedocs.org:rlinf-cn` red. Never conclude "docs are fine"
+     from one language.
+   - Then `python3 .codex/skills/docs-check/check_rst_markup.py` for the
+     inline-markup defects that render wrong *without* warning.
+3. Verify doc-to-code correctness:
    - Commands exist and are runnable in principle.
    - Script/module paths in docs exist.
    - Config keys and values match real code/config names.
    - Model/env names match `SupportedModel` and `SupportedEnvType` string values.
-3. Verify doc-to-doc consistency within one language:
+4. Verify doc-to-doc consistency within one language:
    - Terminology is consistent across start/tutorials/examples/API pages.
    - New page is linked in the correct index/toctree.
    - No conflicting instructions between related pages.
    - Internal doc links use stable `:doc:`/relative links, not hardcoded ReadTheDocs URLs.
-4. Verify EN-ZH parity:
+5. Verify EN-ZH parity:
    - Same topic coverage and section structure.
    - Same commands, config keys, and model/env identifiers.
    - Translations preserve technical meaning (do not rename code symbols).
    - Corresponding EN/ZH pages use equivalent stable internal links.
-5. Report findings with severity and concrete fixes.
+6. Report findings with severity and concrete fixes.
 
 ## Severity Rules
 
+- `Critical`: A Sphinx warning in either language — Read the Docs fails the
+  build, so the page does not ship at all.
 - `Critical`: Wrong command/path/key/value that can break user workflow.
 - `Major`: Inconsistent docs that likely mislead users.
 - `Minor`: Wording/terminology drift without immediate breakage.
@@ -102,6 +124,13 @@ Use this regex scan to detect unstable hardcoded RLinf docs links:
 
 - `readthedocs\.io/(en|zh-cn)/latest/rst_source/`
 
+Chinese pages: `` `` `` or `**` sitting directly against `（`, `《` or a CJK
+character is the single most common way to break `rlinf-cn`. Grep for
+```` ``（ ```` and ```` **（ ```` as a first pass, then run
+`check_rst_markup.py` for the full rule.
+
 ## Additional Resource
 
 - Detailed checklist and paths: [reference.md](reference.md)
+- Local Read the Docs gate for both languages: [build_docs.py](build_docs.py)
+- Inline-markup checker: [check_rst_markup.py](check_rst_markup.py)
