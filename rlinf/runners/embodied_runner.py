@@ -24,6 +24,9 @@ from omegaconf.dictconfig import DictConfig
 
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.scheduler.channel.trajectory_channel.trajectory_channel import (
+    TrajectoryChannel,
+)
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
@@ -93,7 +96,7 @@ class EmbodiedRunner:
         # Data channels
         self.env_channel = Channel.create("Env")
         self.rollout_channel = Channel.create("Rollout")
-        self.actor_channel = Channel.create("Actor")
+        self.actor_channel = TrajectoryChannel.create(name="Actor", cfg=self.cfg)
         if self.reward is not None:
             self.reward_channel = Channel.create("Reward")
         else:
@@ -118,24 +121,23 @@ class EmbodiedRunner:
         )
 
         # Async logging setup
-        self.stop_logging = False
         self.log_queue = queue.Queue()
         self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
         self.log_thread.start()
 
     def _log_worker(self):
         """Background thread for processing log messages."""
-        while not self.stop_logging:
+        while True:
+            task = self.log_queue.get()
             try:
-                # Wait for log message with timeout
-                log_func, args = self.log_queue.get(timeout=0.1)
+                if task is None:
+                    return
+                log_func, args = task
                 log_func(*args)
+            except Exception:
+                self.logger.exception("Logging callback failed.")
+            finally:
                 self.log_queue.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"Logging error: {e}")
-                continue
 
     def print_metrics_table_async(
         self,
@@ -171,6 +173,7 @@ class EmbodiedRunner:
         rollout_handle.wait()
         env_handle.wait()
         self.actor.init_worker().wait()
+        self.actor_channel.start_receivers(self.env, self.rollout)
 
         resume_dir = self.cfg.runner.get("resume_dir", None)
         if resume_dir is None:
@@ -451,9 +454,8 @@ class EmbodiedRunner:
     def _finish_run(self) -> None:
         self.metric_logger.finish()
 
-        # Stop logging thread
-        self.stop_logging = True
-        self.log_queue.join()  # Wait for all queued logs to be processed
+        self.log_queue.put(None)
+        self.log_queue.join()
         self.log_thread.join(timeout=1.0)
 
     def _should_profile_step(self, step_idx: int) -> bool:
@@ -485,6 +487,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
+            self.env.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step
@@ -503,11 +506,12 @@ class EmbodiedRunner:
                         input_channel=self.env_channel,
                         rollout_channel=self.rollout_channel,
                         reward_channel=self.reward_channel,
-                        actor_channel=self.actor_channel,
+                        trajectory_channel=self.actor_channel,
                     )
                     rollout_handle: Handle = self.rollout.generate(
                         input_channel=self.rollout_channel,
                         output_channel=self.env_channel,
+                        trajectory_channel=self.actor_channel,
                     )
                     reward_handle = None
                     if self.reward is not None:
@@ -534,7 +538,8 @@ class EmbodiedRunner:
                     env_bootstrap_handle: Handle | None = None
                     if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                         env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                            rollout_channel=self.rollout_channel
+                            rollout_channel=self.rollout_channel,
+                            trajectory_channel=self.actor_channel,
                         )
 
                     actor_training_metrics = actor_training_handle.wait()
@@ -569,6 +574,7 @@ class EmbodiedRunner:
             # set global step
             self.actor.set_global_step(self.global_step).wait()
             self.rollout.set_global_step(self.global_step).wait()
+            self.env.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step
@@ -586,11 +592,12 @@ class EmbodiedRunner:
                     input_channel=self.env_channel,
                     rollout_channel=self.rollout_channel,
                     reward_channel=self.reward_channel,
-                    actor_channel=self.actor_channel,
+                    trajectory_channel=self.actor_channel,
                 )
                 rollout_handle: Handle = self.rollout.generate(
                     input_channel=self.rollout_channel,
                     output_channel=self.env_channel,
+                    trajectory_channel=self.actor_channel,
                 )
                 reward_handle = None
                 if self.reward is not None:
@@ -610,7 +617,8 @@ class EmbodiedRunner:
                 env_bootstrap_handle: Handle | None = None
                 if self.overlap_env_bootstrap and _step + 1 < self.max_steps:
                     env_bootstrap_handle = self.env.prefetch_train_bootstrap(
-                        rollout_channel=self.rollout_channel
+                        rollout_channel=self.rollout_channel,
+                        trajectory_channel=self.actor_channel,
                     )
 
                 actor_results = actor_training_handle.wait()

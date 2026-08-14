@@ -62,12 +62,14 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         ``algorithm.dagger.online_lerobot.finalize_interval`` and are not part of training
         readiness.
         """
+        asyncio.run(self._recv_lerobot_episodes(input_channel))
+
+    async def _recv_lerobot_episodes(self, input_channel) -> None:
+        """Receive online LeRobot episode shards until the worker stops."""
         while not self.should_stop:
-            received_any = self._recv_lerobot_episodes_from_channel(input_channel)
+            await self._recv_lerobot_episodes_from_channel(input_channel)
             if self.dataset.is_ready():
                 self._ensure_lerobot_loader()
-            if not received_any:
-                time.sleep(0.1)
 
     def _recv_rollout_thread_main(self, input_channel):
         send_num = self._component_placement.get_world_size("env") * self.stage_num
@@ -75,7 +77,11 @@ class AsyncEmbodiedDAGGERFSDPPolicy(EmbodiedDAGGERFSDPPolicy):
         split_num = compute_split_num(send_num, recv_num)
         while not self.should_stop:
             for _ in range(split_num):
-                trajectory = input_channel.get()
+                try:
+                    trajectory = input_channel.try_subscribe()
+                except asyncio.QueueEmpty:
+                    time.sleep(0.01)
+                    break
                 self._recv_queue.put(trajectory)
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):

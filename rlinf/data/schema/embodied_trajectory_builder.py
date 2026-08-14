@@ -23,7 +23,7 @@ import torch
 
 from rlinf.data.schema.embodied_types import (
     ChunkStepResult,
-    PolicyOutput,
+    EmbodiedRolloutResult,
     Trajectory,
     get_model_weights_id,
 )
@@ -91,6 +91,26 @@ class EmbodiedTrajectoryBuilder:
             self.versions.append(result.versions)
         if result.forward_inputs:
             self.forward_inputs.append(result.forward_inputs)
+
+    def append_final_value(self, value: torch.Tensor | None) -> None:
+        """Append the bootstrap value for the state after a rollout epoch."""
+        if value is not None:
+            self.prev_values.append(value.cpu().contiguous())
+
+    def append_initial_state(
+        self,
+        *,
+        dones: torch.Tensor | None,
+        truncations: torch.Tensor | None,
+        terminations: torch.Tensor | None,
+    ) -> None:
+        """Append the state boundary immediately before a rollout epoch."""
+        if dones is not None:
+            self.dones.append(dones.cpu().contiguous())
+        if truncations is not None:
+            self.truncations.append(truncations.cpu().contiguous())
+        if terminations is not None:
+            self.terminations.append(terminations.cpu().contiguous())
 
     def mark_last_step_with_intervene_flags(self, intervene_flags: torch.Tensor):
         if not self.intervene_flags:
@@ -369,7 +389,7 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
 
     1. Auto-reset envs: ``final_observation`` is attributed to the finished
        episode; post-reset observations are carried via ``_pending_obs``.
-    2. DAgger intervention: ``PolicyOutput.intervene_flags`` and expert actions
+    2. DAgger intervention: ``EmbodiedRolloutResult.intervene_flags`` and expert actions
        override recorded actions and set ``intervene_flag``.
     3. Real-world hooks: ``record_reset``, ``pre_record``, and
        ``segment_advance`` info flags are honored.
@@ -747,7 +767,7 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
     def append_chunk_episode_data(
         self,
         *,
-        policy_output: PolicyOutput,
+        policy_output: EmbodiedRolloutResult | None,
         chunk_actions,
         obs_list,
         terminations,
@@ -765,12 +785,18 @@ class EmbodiedLerobotTrajectoryBuilder(EmbodiedTrajectoryBuilder):
             num_chunks=num_chunks,
             action_dim=action_dim,
         )
-        intervene_flags = policy_output.intervene_flags
+        intervene_flags = (
+            policy_output.intervene_flags if policy_output is not None else None
+        )
         if intervene_flags is not None:
             intervene_flags = self._to_numpy(intervene_flags).reshape(
                 num_envs, num_chunks
             )
-        expert_actions = policy_output.forward_inputs.get("action", None)
+        expert_actions = (
+            policy_output.forward_inputs.get("action", None)
+            if policy_output is not None
+            else None
+        )
         if expert_actions is not None:
             expert_actions = self._reshape_chunk_actions(
                 expert_actions,

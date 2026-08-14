@@ -15,6 +15,7 @@
 
 import atexit
 import contextlib
+import copy
 import dataclasses
 import importlib
 import logging
@@ -38,6 +39,13 @@ TensorFieldValue = (
 DataclassTensorFieldsMetadata = list[
     tuple[str, str, Optional[int] | Optional[list[str]]]
 ]
+
+
+@dataclasses.dataclass(frozen=True)
+class TensorPlaceholder:
+    """Position of a tensor removed from a nested transport skeleton."""
+
+    index: int
 
 
 @contextlib.contextmanager
@@ -635,3 +643,65 @@ def unflatten_dataclass_tensor_fields(
             f"Metadata consumed {idx} tensors but flat list has {len(flat_tensors)}"
         )
     return result
+
+
+def pack_dataclass_tensors(obj: Any) -> tuple[Any, list[torch.Tensor]]:
+    """Replace tensors nested in a dataclass with lightweight placeholders.
+
+    Dataclasses are copied without invoking their constructors, so transport-only
+    placeholders never reach ``__post_init__`` methods. Tensor aliases are
+    preserved by emitting each tensor object only once.
+    """
+    if not is_dataclass(obj):
+        raise TypeError(f"Expected a dataclass, got {type(obj)}")
+
+    tensors: list[torch.Tensor] = []
+    tensor_indices: dict[int, int] = {}
+
+    def pack(value: Any) -> Any:
+        if isinstance(value, torch.Tensor):
+            tensor_id = id(value)
+            index = tensor_indices.get(tensor_id)
+            if index is None:
+                index = len(tensors)
+                tensor_indices[tensor_id] = index
+                tensors.append(value)
+            return TensorPlaceholder(index)
+        if is_dataclass(value):
+            packed = copy.copy(value)
+            for field in fields(value):
+                object.__setattr__(packed, field.name, pack(getattr(value, field.name)))
+            return packed
+        if isinstance(value, dict):
+            return {key: pack(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [pack(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(pack(item) for item in value)
+        return value
+
+    return pack(obj), tensors
+
+
+def unpack_dataclass_tensors(skeleton: Any, tensors: list[torch.Tensor]) -> Any:
+    """Restore tensors previously removed by :func:`pack_dataclass_tensors`."""
+
+    def unpack(value: Any) -> Any:
+        if isinstance(value, TensorPlaceholder):
+            return tensors[value.index]
+        if is_dataclass(value):
+            restored = copy.copy(value)
+            for field in fields(value):
+                object.__setattr__(
+                    restored, field.name, unpack(getattr(value, field.name))
+                )
+            return restored
+        if isinstance(value, dict):
+            return {key: unpack(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [unpack(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(unpack(item) for item in value)
+        return value
+
+    return unpack(skeleton)

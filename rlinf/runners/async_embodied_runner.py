@@ -141,12 +141,11 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
         )
+        rollout_handle: Handle = self.rollout.evaluate(
+            input_channel=self.rollout_channel,
+            output_channel=self.env_channel,
+        )
         env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
-        if not env_decoupled_mode:
-            rollout_handle: Handle = self.rollout.evaluate(
-                input_channel=self.rollout_channel,
-                output_channel=self.env_channel,
-            )
         env_results = env_handle.wait()
         if not env_decoupled_mode:
             rollout_handle.wait()
@@ -157,18 +156,20 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
     def run(self):
         start_step = self.global_step
         start_time = time.time()
+        self.env.set_global_step(self.global_step).wait()
         self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
 
         env_handle: Handle = self.env.interact(
             input_channel=self.env_channel,
             rollout_channel=self.rollout_channel,
             reward_channel=self.reward_channel,
-            actor_channel=self.actor_channel,
             metric_channel=self.env_metric_channel,
+            trajectory_channel=self.actor_channel,
         )
         rollout_handle: Handle = self.rollout.generate(
             input_channel=self.rollout_channel,
             output_channel=self.env_channel,
+            trajectory_channel=self.actor_channel,
             metric_channel=self.rollout_metric_channel,
         )
         if self.reward is not None:
@@ -236,10 +237,6 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
-            if self.actor_channel is not None:
-                training_metrics["train/replay_channel_qsize"] = (
-                    self.actor_channel.qsize()
-                )
             actor_training_time_metrics, actor_time_metrics_per_rank = (
                 actor_training_handle.consume_durations(return_per_rank=True)
             )

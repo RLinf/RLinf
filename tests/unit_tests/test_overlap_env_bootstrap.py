@@ -33,7 +33,9 @@ if "rlinf.envs.wrappers" not in sys.modules:
 
 from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
 from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
-from rlinf.workers.env.smooth_intervene import SmoothInterveneController  # noqa: E402
+from rlinf.workers.env.smooth_intervene import (  # noqa: E402
+    SmoothInterveneController,
+)
 
 
 class TestOverlapEnvBootstrap(unittest.TestCase):
@@ -107,9 +109,8 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         )
         self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
-        self.worker.smooth_intervene = SmoothInterveneController(
-            stage_num=self.worker.stage_num, enabled=False
-        )
+        self.worker._trajectory_step = 0
+        self.worker.smooth_intervene = SmoothInterveneController(1, 2, 4, 7)
 
         # Mock env_list
         mock_env = MagicMock(
@@ -133,6 +134,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         """Test that prefetched bootstrap is correctly consumed in interact()."""
         rollout_channel = MagicMock()
         input_channel = MagicMock()
+        trajectory_channel = MagicMock()
 
         # Mock recv_from to return a dummy PolicyOutput
         mock_policy_output = MagicMock()
@@ -171,7 +173,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         ]
         self.worker._bootstrap_and_send_train = MagicMock(return_value=dummy_bootstrap)
 
-        self.worker.prefetch_train_bootstrap(rollout_channel)
+        self.worker.prefetch_train_bootstrap(rollout_channel, trajectory_channel)
         self.assertEqual(self.worker._prefetched_train_bootstrap, dummy_bootstrap)
 
         # 2. Interact (should consume the prefetch)
@@ -187,7 +189,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
             self.worker.send_rollout_trajectories.return_value.set_result(None)
 
             loop.run_until_complete(
-                self.worker.interact(input_channel, rollout_channel, None, None)
+                self.worker.interact(
+                    input_channel, rollout_channel, None, trajectory_channel
+                )
             )
         finally:
             asyncio.set_event_loop(None)
@@ -202,14 +206,15 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
     def test_duplicate_prefetch_protection(self):
         """Test that multiple prefetch calls raise RuntimeError."""
         rollout_channel = MagicMock()
+        trajectory_channel = MagicMock()
         self.worker._bootstrap_and_send_train = MagicMock()
 
         # First prefetch
-        self.worker.prefetch_train_bootstrap(rollout_channel)
+        self.worker.prefetch_train_bootstrap(rollout_channel, trajectory_channel)
 
         # Second prefetch should raise RuntimeError
         with self.assertRaises(RuntimeError) as cm:
-            self.worker.prefetch_train_bootstrap(rollout_channel)
+            self.worker.prefetch_train_bootstrap(rollout_channel, trajectory_channel)
 
         self.assertIn("A prefetched train bootstrap already exists", str(cm.exception))
 
@@ -244,6 +249,7 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
 
         rollout_channel = MagicMock()
         input_channel = MagicMock()
+        trajectory_channel = MagicMock()
 
         mock_policy_output = MagicMock()
         mock_policy_output.actions = torch.zeros(2, 28)
@@ -284,7 +290,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(
-                self.worker.interact(input_channel, rollout_channel, None, None)
+                self.worker.interact(
+                    input_channel, rollout_channel, None, trajectory_channel
+                )
             )
         finally:
             asyncio.set_event_loop(None)

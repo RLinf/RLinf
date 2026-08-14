@@ -100,6 +100,8 @@ env:
   train:
     rollout_epoch: 1
     total_num_envs: 1
+    # Continue human control across chunks without model inference. This mode
+    # requires online LeRobot DAgger and routes hold actions through rollout.
     smooth_intervene: True
     ignore_terminations: False
     auto_reset: True

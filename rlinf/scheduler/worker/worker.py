@@ -606,6 +606,14 @@ class Worker(metaclass=WorkerMeta):
             piggyback_payload=piggyback_payload,
         )
 
+    def initialize_p2p(self, peer_group_name: str, peer_rank: int) -> None:
+        """Initialize the collective group used for P2P with one peer.
+
+        Both peers should call this method concurrently when initialization must
+        complete before the first send or receive is submitted.
+        """
+        self._get_collective_group(WorkerAddress(peer_group_name, ranks=peer_rank))
+
     def recv(
         self,
         src_group_name: str,

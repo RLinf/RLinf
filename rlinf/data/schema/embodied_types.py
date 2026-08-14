@@ -18,9 +18,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+import numpy as np
 import torch
 
-from rlinf.utils.nested_dict_process import cat_list_of_dict_tensor, put_tensor_device
+from rlinf.utils.nested_dict_process import put_tensor_device
 
 
 def get_model_weights_id(versions: torch.Tensor) -> str:
@@ -116,118 +117,6 @@ class EnvOutput:
             "task_descriptions": task_descriptions,
         }
 
-    @staticmethod
-    def merge_env_outputs(env_outputs: list[dict]) -> dict[str, Any]:
-        """Merge multiple env output dicts into one batch-aligned env output.
-
-        Merge strategy:
-
-        - Tensor fields: concatenate on batch dimension.
-        - List fields: flatten in source order.
-        - ``None`` fields: keep ``None``.
-        - ``final_obs`` supports partial ``None`` across shards. For shards
-            without ``final_obs``, use the corresponding ``obs`` as fallback to
-            keep batch alignment.
-
-        Args:
-            env_outputs: Per-source env output dicts that share the same schema.
-
-        Returns:
-            A merged env output dict produced via ``EnvOutput(...).to_dict()``.
-        """
-
-        def _get_batch_size(env_output: dict[str, Any]) -> int:
-            dones = env_output.get("dones")
-            if isinstance(dones, torch.Tensor):
-                return dones.shape[0]
-            obs = env_output["obs"]
-            for key in ("states", "main_images", "task_descriptions"):
-                value = obs.get(key)
-                if isinstance(value, torch.Tensor):
-                    return value.shape[0]
-                if isinstance(value, list):
-                    return len(value)
-            raise ValueError("Cannot infer batch size from env output.")
-
-        def _merge_obs_dicts(obs_dicts: list[dict[str, Any]]) -> dict[str, Any]:
-            merged_obs = {}
-            for key in obs_dicts[0].keys():
-                obs_elements = [obs_dict[key] for obs_dict in obs_dicts]
-                first_non_none = next(
-                    (element for element in obs_elements if element is not None), None
-                )
-                if first_non_none is None:
-                    merged_obs[key] = None
-                elif isinstance(first_non_none, torch.Tensor):
-                    merged_obs[key] = torch.cat(obs_elements, dim=0)
-                elif isinstance(first_non_none, list):
-                    merged_obs[key] = [
-                        item for sublist in obs_elements for item in sublist
-                    ]
-                else:
-                    merged_obs[key] = obs_elements
-            return merged_obs
-
-        def _merge_optional_tensor_field(
-            field_name: str,
-            *,
-            allow_partial_none: bool = False,
-            fill_value: float | bool = 0,
-        ) -> torch.Tensor | None:
-            values = [env_output[field_name] for env_output in env_outputs]
-            if all(value is None for value in values):
-                return None
-            if any(value is None for value in values):
-                if not allow_partial_none:
-                    raise ValueError(
-                        f"Inconsistent field '{field_name}': some shards are None while others are tensors."
-                    )
-                ref_tensor = next(value for value in values if value is not None)
-                filled_values = []
-                for env_output, value in zip(env_outputs, values):
-                    if value is None:
-                        batch_size = _get_batch_size(env_output)
-                        fill_shape = (batch_size, *ref_tensor.shape[1:])
-                        filled_values.append(
-                            torch.full(
-                                fill_shape,
-                                fill_value=fill_value,
-                                dtype=ref_tensor.dtype,
-                            )
-                        )
-                    else:
-                        filled_values.append(value)
-                values = filled_values
-            return torch.cat(values, dim=0)
-
-        merged_obs = _merge_obs_dicts([env_output["obs"] for env_output in env_outputs])
-        merged_final_obs = None
-        final_obs_list = [env_output["final_obs"] for env_output in env_outputs]
-        if any(final_obs is not None for final_obs in final_obs_list):
-            final_obs_or_obs = [
-                final_obs if final_obs is not None else env_output["obs"]
-                for env_output, final_obs in zip(env_outputs, final_obs_list)
-            ]
-            merged_final_obs = _merge_obs_dicts(final_obs_or_obs)
-
-        return EnvOutput(
-            obs=merged_obs,
-            final_obs=merged_final_obs,
-            dones=_merge_optional_tensor_field("dones"),
-            terminations=_merge_optional_tensor_field("terminations"),
-            truncations=_merge_optional_tensor_field("truncations"),
-            rewards=_merge_optional_tensor_field("rewards"),
-            intervene_actions=_merge_optional_tensor_field(
-                "intervene_actions", allow_partial_none=True, fill_value=0.0
-            ),
-            intervene_flags=_merge_optional_tensor_field(
-                "intervene_flags", allow_partial_none=True, fill_value=False
-            ),
-            rlt_switch_flags=_merge_optional_tensor_field(
-                "rlt_switch_flags", allow_partial_none=True, fill_value=False
-            ),
-        ).to_dict()
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "obs": self.prepare_observations(self.obs),
@@ -283,62 +172,439 @@ class RTCActionResponse:
 
 @dataclass(kw_only=True)
 class PolicyOutput:
-    """Policy/rollout-worker outputs for one embodied communication round."""
+    """Action-only response returned to an environment worker."""
 
-    actions: torch.Tensor = None  # [B, action_dim]
-    prev_logprobs: torch.Tensor = None  # [B, action_dim]
-    prev_values: torch.Tensor = None  # [B, 1]
+    actions: torch.Tensor
 
-    bootstrap_values: torch.Tensor = None  # [B, 1]
-    intervene_flags: torch.Tensor = None  # [B, num_action_chunks]
-    forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
-    versions: torch.Tensor = None  # [B, 1]
-
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.actions is not None:
             self.actions = self.actions.cpu().contiguous()
-        if self.prev_logprobs is not None:
-            self.prev_logprobs = self.prev_logprobs.cpu().contiguous()
-        if self.prev_values is not None:
-            self.prev_values = self.prev_values.cpu().contiguous()
-        if self.bootstrap_values is not None:
-            self.bootstrap_values = self.bootstrap_values.cpu().contiguous()
-        if self.intervene_flags is not None:
-            self.intervene_flags = self.intervene_flags.cpu().contiguous()
-        if self.forward_inputs:
-            self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
-        if self.versions is not None:
-            self.versions = self.versions.cpu().contiguous()
 
-    @staticmethod
-    def merge(
-        outputs: list["PolicyOutput"],
-    ) -> "PolicyOutput":
-        def _merge_optional_tensor(field_name: str) -> torch.Tensor | None:
-            values = [getattr(output, field_name) for output in outputs]
-            if all(value is None for value in values):
-                return None
-            if any(value is None for value in values):
-                raise ValueError(
-                    f"Inconsistent field '{field_name}': some shards are None while others are tensors."
+
+@dataclass(frozen=True)
+class TrajectoryKey:
+    """Identity of one action chunk produced by a logical environment source."""
+
+    step_id: int
+    epoch_id: int
+    env_rank: int
+    stage_id: int
+    chunk_id: int
+
+
+@dataclass(frozen=True)
+class TrajectorySource:
+    """Trajectory key and batch size carried by one routed source shard."""
+
+    key: TrajectoryKey
+    size: int
+    offset: int = 0
+
+
+@dataclass(kw_only=True)
+class EnvResult:
+    """Environment outcome associated with one policy output."""
+
+    rewards: torch.Tensor | None = None
+    dones: torch.Tensor | None = None
+    terminations: torch.Tensor | None = None
+    truncations: torch.Tensor | None = None
+    intervene_actions: torch.Tensor | None = None
+    intervene_flags: torch.Tensor | None = None
+    rlt_switch_flags: torch.Tensor | None = None
+    reward_model_output: torch.Tensor | None = None
+    reward_assign_lengths: list[int] | None = None
+    episode_data: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "rewards",
+            "dones",
+            "terminations",
+            "truncations",
+            "intervene_actions",
+            "intervene_flags",
+            "rlt_switch_flags",
+            "reward_model_output",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                setattr(self, field_name, value.cpu().contiguous())
+
+    @classmethod
+    def from_env_output(
+        cls,
+        env_output: EnvOutput,
+        reward_model_output: torch.Tensor | None = None,
+    ) -> "EnvResult":
+        """Build a transport result from an environment output."""
+        return cls(
+            rewards=env_output.rewards,
+            dones=env_output.dones,
+            terminations=env_output.terminations,
+            truncations=env_output.truncations,
+            intervene_actions=env_output.intervene_actions,
+            intervene_flags=env_output.intervene_flags,
+            rlt_switch_flags=env_output.rlt_switch_flags,
+            reward_model_output=reward_model_output,
+        )
+
+
+@dataclass(kw_only=True)
+class PolicyCompletion:
+    """Environment outcome completed by a subsequent policy request."""
+
+    sources: list[TrajectorySource]
+    env_result: EnvResult
+    next_obs: dict[str, Any]
+    requires_inference: bool
+
+    def __post_init__(self) -> None:
+        self.next_obs = put_tensor_device(self.next_obs, "cpu")
+
+
+@dataclass(kw_only=True)
+class PolicyInput:
+    """Policy inference input and optional preceding environment outcome."""
+
+    obs: dict[str, Any]
+    rlt_switch_flags: torch.Tensor | None = None
+    intervene_flags: torch.Tensor | None = None
+    sources: list[TrajectorySource] = field(default_factory=list)
+    completions: list[PolicyCompletion | None] = field(default_factory=list)
+    request_sizes: list[int] = field(default_factory=list)
+    is_last: bool = False
+
+    def __post_init__(self) -> None:
+        self.obs = put_tensor_device(self.obs, "cpu")
+        for name in ("rlt_switch_flags", "intervene_flags"):
+            value = getattr(self, name)
+            if value is not None:
+                setattr(self, name, value.cpu().contiguous())
+
+
+@dataclass(kw_only=True)
+class DummyPolicyInput(PolicyInput):
+    """Policy request whose actions are supplied without model inference."""
+
+    actions: torch.Tensor
+
+    def __post_init__(self) -> None:
+        """Move the request payload to CPU for transport."""
+        super().__post_init__()
+        self.actions = self.actions.cpu().contiguous()
+
+
+@dataclass(kw_only=True)
+class EmbodiedRolloutResult:
+    """Policy inference data retained for trajectory construction."""
+
+    actions: torch.Tensor
+    forward_inputs: dict[str, Any]
+    bootstrap_values: torch.Tensor | None = None
+    prev_logprobs: torch.Tensor | None = None
+    prev_values: torch.Tensor | None = None
+    intervene_flags: torch.Tensor | None = None
+    versions: torch.Tensor | None = None
+
+    def __post_init__(self) -> None:
+        self.actions = self.actions.cpu().contiguous()
+        self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
+        for field_name in (
+            "bootstrap_values",
+            "prev_logprobs",
+            "prev_values",
+            "intervene_flags",
+            "versions",
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                setattr(self, field_name, value.cpu().contiguous())
+
+
+def split_batch_value(value: Any, split_sizes: list[int]) -> list[Any]:
+    """Split a recursively nested batch on its leading dimension."""
+    if value is None:
+        return [None] * len(split_sizes)
+    if isinstance(value, torch.Tensor):
+        return [chunk.contiguous() for chunk in torch.split(value, split_sizes, dim=0)]
+    if isinstance(value, np.ndarray):
+        return list(np.split(value, np.cumsum(split_sizes)[:-1], axis=0))
+    if isinstance(value, dict):
+        chunks = [{} for _ in split_sizes]
+        for key, item in value.items():
+            for chunk, split_item in zip(chunks, split_batch_value(item, split_sizes)):
+                chunk[key] = split_item
+        return chunks
+    if isinstance(value, list):
+        offset = 0
+        chunks = []
+        for size in split_sizes:
+            chunks.append(value[offset : offset + size])
+            offset += size
+        return chunks
+    if isinstance(value, (bool, float, int, str)):
+        return [value] * len(split_sizes)
+    raise TypeError(f"Unsupported batch value: {type(value)}")
+
+
+def merge_batch_values(values: list[Any]) -> Any:
+    """Merge recursively nested batches on their leading dimension."""
+    if not values:
+        raise ValueError("Cannot merge an empty list of batch values.")
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError("Cannot merge present and absent batch values.")
+
+    first = values[0]
+    if isinstance(first, torch.Tensor):
+        return torch.cat(values, dim=0)
+    if isinstance(first, np.ndarray):
+        return np.concatenate(values, axis=0)
+    if isinstance(first, dict):
+        if any(value.keys() != first.keys() for value in values[1:]):
+            raise ValueError("Cannot merge batch dictionaries with different keys.")
+        return {
+            key: merge_batch_values([value[key] for value in values]) for key in first
+        }
+    if isinstance(first, list):
+        return [item for value in values for item in value]
+    if isinstance(first, (bool, float, int, str)):
+        return values
+    raise TypeError(f"Unsupported batch value: {type(first)}")
+
+
+def split_episode_data(
+    data: dict[str, Any] | None, split_sizes: list[int]
+) -> list[dict[str, Any] | None]:
+    """Split online LeRobot chunk data without splitting its time dimension."""
+    if data is None:
+        return [None] * len(split_sizes)
+
+    def split_steps(values: list[Any]) -> list[list[Any]]:
+        chunks = [[] for _ in split_sizes]
+        for value in values:
+            for chunk, split_item in zip(chunks, split_batch_value(value, split_sizes)):
+                chunk.append(split_item)
+        return chunks
+
+    return [
+        {
+            "chunk_actions": chunk_actions,
+            "obs_list": obs_list,
+            "terminations": terminations,
+            "truncations": truncations,
+            "infos_list": infos_list,
+        }
+        for chunk_actions, obs_list, terminations, truncations, infos_list in zip(
+            split_batch_value(data["chunk_actions"], split_sizes),
+            split_steps(data["obs_list"]),
+            split_batch_value(data["terminations"], split_sizes),
+            split_batch_value(data["truncations"], split_sizes),
+            split_steps(data["infos_list"]),
+        )
+    ]
+
+
+def merge_episode_data(data: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge online LeRobot chunk data without merging its time dimension."""
+    if not data:
+        raise ValueError("Cannot merge an empty list of episode data.")
+
+    def merge_steps(values: list[list[Any]]) -> list[Any]:
+        lengths = {len(value) for value in values}
+        if len(lengths) != 1:
+            raise ValueError("Cannot merge episode data with different chunk lengths.")
+        return [merge_batch_values(list(items)) for items in zip(*values)]
+
+    return {
+        "chunk_actions": merge_batch_values([value["chunk_actions"] for value in data]),
+        "obs_list": merge_steps([value["obs_list"] for value in data]),
+        "terminations": merge_batch_values([value["terminations"] for value in data]),
+        "truncations": merge_batch_values([value["truncations"] for value in data]),
+        "infos_list": merge_steps([value["infos_list"] for value in data]),
+    }
+
+
+def split_trajectory_sources(
+    sources: list[TrajectorySource], split_sizes: list[int]
+) -> list[list[TrajectorySource]]:
+    """Split routed source metadata along the batch dimension."""
+    if not sources:
+        return [[] for _ in split_sizes]
+    result = [[] for _ in split_sizes]
+    source_index = 0
+    source_offset = 0
+    for result_index, split_size in enumerate(split_sizes):
+        remaining = split_size
+        while remaining:
+            source = sources[source_index]
+            take_size = min(remaining, source.size - source_offset)
+            result[result_index].append(
+                TrajectorySource(
+                    key=source.key,
+                    size=take_size,
+                    offset=source.offset + source_offset,
                 )
-            return torch.cat(values, dim=0)
+            )
+            source_offset += take_size
+            remaining -= take_size
+            if source_offset == source.size:
+                source_index += 1
+                source_offset = 0
+    return result
 
-        forward_inputs_list = [output.forward_inputs for output in outputs]
-        merged_forward_inputs = (
-            {}
-            if all(not forward_inputs for forward_inputs in forward_inputs_list)
-            else cat_list_of_dict_tensor(forward_inputs_list)
+
+def split_env_result(env_result: EnvResult, split_sizes: list[int]) -> list[EnvResult]:
+    """Split an environment result on its batch dimension."""
+    fields = {
+        name: split_batch_value(getattr(env_result, name), split_sizes)
+        for name in env_result.__dataclass_fields__
+        if name != "episode_data"
+    }
+    episodes = split_episode_data(env_result.episode_data, split_sizes)
+    return [
+        EnvResult(
+            **{name: values[index] for name, values in fields.items()},
+            episode_data=episodes[index],
         )
-        return PolicyOutput(
-            actions=_merge_optional_tensor("actions"),
-            prev_logprobs=_merge_optional_tensor("prev_logprobs"),
-            prev_values=_merge_optional_tensor("prev_values"),
-            bootstrap_values=_merge_optional_tensor("bootstrap_values"),
-            intervene_flags=_merge_optional_tensor("intervene_flags"),
-            forward_inputs=merged_forward_inputs,
-            versions=_merge_optional_tensor("versions"),
+        for index in range(len(split_sizes))
+    ]
+
+
+def split_policy_input(
+    policy_input: PolicyInput, split_sizes: list[int]
+) -> list[PolicyInput]:
+    """Split a policy input on its batch dimension."""
+    if len(policy_input.completions) > 1:
+        raise ValueError("A producer policy input cannot contain merged completions.")
+    source_splits = split_trajectory_sources(policy_input.sources, split_sizes)
+    rlt_splits = split_batch_value(policy_input.rlt_switch_flags, split_sizes)
+    intervene_splits = split_batch_value(policy_input.intervene_flags, split_sizes)
+    completion = policy_input.completions[0] if policy_input.completions else None
+    if completion is None:
+        completion_splits = [None] * len(split_sizes)
+    else:
+        completion_sources = split_trajectory_sources(completion.sources, split_sizes)
+        env_results = split_env_result(completion.env_result, split_sizes)
+        next_observations = split_batch_value(completion.next_obs, split_sizes)
+        completion_splits = [
+            PolicyCompletion(
+                sources=completion_sources[index],
+                env_result=env_results[index],
+                next_obs=next_observations[index],
+                requires_inference=completion.requires_inference,
+            )
+            for index in range(len(split_sizes))
+        ]
+    input_type = (
+        DummyPolicyInput if isinstance(policy_input, DummyPolicyInput) else PolicyInput
+    )
+    action_splits = (
+        split_batch_value(policy_input.actions, split_sizes)
+        if isinstance(policy_input, DummyPolicyInput)
+        else [None] * len(split_sizes)
+    )
+    return [
+        input_type(
+            obs=obs,
+            rlt_switch_flags=rlt_splits[index],
+            intervene_flags=intervene_splits[index],
+            sources=source_splits[index],
+            completions=[completion_splits[index]],
+            request_sizes=[split_sizes[index]],
+            is_last=policy_input.is_last,
+            **(
+                {"actions": action_splits[index]}
+                if isinstance(policy_input, DummyPolicyInput)
+                else {}
+            ),
         )
+        for index, obs in enumerate(split_batch_value(policy_input.obs, split_sizes))
+    ]
+
+
+def merge_policy_inputs(policy_inputs: list[PolicyInput]) -> PolicyInput:
+    """Merge routed policy inputs in source order."""
+    if not policy_inputs:
+        raise ValueError("Cannot merge an empty list of policy inputs.")
+    dummy_inputs = [
+        policy_input
+        for policy_input in policy_inputs
+        if isinstance(policy_input, DummyPolicyInput)
+    ]
+    if dummy_inputs and len(dummy_inputs) != len(policy_inputs):
+        raise ValueError("Cannot merge inferred and dummy policy inputs.")
+
+    def get_batch_size(obs: dict[str, Any]) -> int:
+        for key in ("states", "main_images", "task_descriptions"):
+            value = obs.get(key)
+            if isinstance(value, (torch.Tensor, np.ndarray)):
+                return value.shape[0]
+            if isinstance(value, list):
+                return len(value)
+        raise ValueError("Cannot infer batch size from policy input observations.")
+
+    observations = [policy_input.obs for policy_input in policy_inputs]
+
+    def merge_optional_tensor(field_name: str) -> torch.Tensor | None:
+        values = [getattr(item, field_name) for item in policy_inputs]
+        if all(value is None for value in values):
+            return None
+        if any(value is None for value in values):
+            reference = next(value for value in values if value is not None)
+            values = [
+                value
+                if value is not None
+                else torch.full(
+                    (get_batch_size(obs), *reference.shape[1:]),
+                    False,
+                    dtype=reference.dtype,
+                )
+                for obs, value in zip(observations, values)
+            ]
+        return merge_batch_values(values)
+
+    sources: list[TrajectorySource] = []
+    for policy_input in policy_inputs:
+        for source in policy_input.sources:
+            if (
+                sources
+                and sources[-1].key == source.key
+                and sources[-1].offset + sources[-1].size == source.offset
+            ):
+                sources[-1] = TrajectorySource(
+                    key=source.key,
+                    size=sources[-1].size + source.size,
+                    offset=sources[-1].offset,
+                )
+            else:
+                sources.append(source)
+
+    input_type = DummyPolicyInput if dummy_inputs else PolicyInput
+    return input_type(
+        obs=merge_batch_values(observations),
+        rlt_switch_flags=merge_optional_tensor("rlt_switch_flags"),
+        intervene_flags=merge_optional_tensor("intervene_flags"),
+        sources=sources,
+        completions=[
+            completion
+            for policy_input in policy_inputs
+            for completion in policy_input.completions
+        ],
+        request_sizes=[
+            size
+            for policy_input in policy_inputs
+            for size in policy_input.request_sizes
+        ],
+        is_last=policy_inputs[0].is_last,
+        **(
+            {"actions": merge_batch_values([item.actions for item in dummy_inputs])}
+            if dummy_inputs
+            else {}
+        ),
+    )
 
 
 @dataclass(kw_only=True)
@@ -561,11 +827,25 @@ def convert_trajectories_to_batch(
 
 __all__ = [
     "ChunkStepResult",
-    "PolicyOutput",
+    "DummyPolicyInput",
+    "EmbodiedRolloutResult",
     "EnvOutput",
+    "EnvResult",
+    "PolicyCompletion",
+    "PolicyInput",
+    "PolicyOutput",
+    "TrajectoryKey",
+    "TrajectorySource",
     "RTCActionResponse",
     "RTCRequest",
     "Trajectory",
     "convert_trajectories_to_batch",
     "get_model_weights_id",
+    "merge_batch_values",
+    "merge_episode_data",
+    "merge_policy_inputs",
+    "split_batch_value",
+    "split_episode_data",
+    "split_policy_input",
+    "split_trajectory_sources",
 ]
