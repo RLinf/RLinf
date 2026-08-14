@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_rlt_stage2_ac_mlp"
+    experiment_name: "maniskill_rlt_stage2_td3_mlp_steam"
     logger_backends: ["wandb"]
 
   max_epochs: 5000
@@ -47,21 +47,22 @@ algorithm:
     train_every_transitions: 5
   group_size: 1
 
-  adv_type: embodied_sac
-  loss_type: rlt_ac
+  adv_type: rlt_td3
+  loss_type: rlt_td3
   loss_agg_func: "token-mean"
 
   agg_q: min
-  actor_agg_q: q1
+  actor_agg_q: min
   enable_drq: False
   q_head_type: ${actor.model.q_head_type}
   bootstrap_type: standard
   gamma: 0.99
   tau: 0.005
 
-  # RLT actor objective: -q_weight * Q + bc_weight * BC.
+  # TD3 actor objective: -q_weight * Q + bc_weight * BC.
   q_weight: 1.0
   bc_weight: 1.0
+  actor_update_action_noise: True
   reference_dropout_prob: 0.5
   # Schedule for the BC/Q weights in the actor objective. Disable it to use
   # the fixed bc_weight and q_weight above for the entire run.
@@ -71,8 +72,8 @@ algorithm:
     ramp_updates: 50000
     warmup_bc_weight: 7.0
     warmup_q_weight: 0.05
-    online_bc_weight: 2.5
-    online_q_weight: 0.45
+    online_bc_weight: 2.8
+    online_q_weight: 0.50
 
   entropy_tuning:
     alpha_type: fixed_alpha
@@ -93,7 +94,7 @@ algorithm:
   target_update_freq: 1
   target_update_type: all
   train_actor_steps: 1000
-  critic_actor_ratio: 4
+  critic_actor_ratio: 2
   critic_subsample_size: 0
   backup_entropy: False
 
@@ -110,6 +111,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
+      routing_source: rollout
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -120,11 +122,9 @@ env:
         near_hole_yz_margin: 1.5
         fallback_hole_radius: 0.03
       expert_takeover:
-        enable: True
-        # Simulated real-world takeover: only request expert after the RLT actor
-        # is already in critical phase and has made no measurable insertion
-        # progress for several action chunks. Rollout still masks this during
-        # warmup, and eval disables expert completely.
+        # Geometry remains oracle metrics; the rollout STEAM gate controls both
+        # learned-policy and simulation-expert routing.
+        enable: False
         trigger_mode: stalled_progress
         gate:
           require_grasp: True
@@ -162,6 +162,7 @@ env:
     rollout_epoch: 1
     total_num_envs: 256
     seed: 2026
+    group_size: 1
     auto_reset: False
     ignore_terminations: False
     use_fixed_reset_state_ids: True
@@ -169,6 +170,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
+      routing_source: rollout
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -181,7 +183,7 @@ env:
       expert_takeover:
         enable: False
         # Eval is full-task: base policy before critical phase, actor after
-        # critical phase, and no expert intervention.
+        # critical phase, and no expert intervention from the geometry gate.
         trigger_mode: stalled_progress
         gate:
           require_grasp: True
@@ -197,7 +199,6 @@ env:
     max_episode_steps: 500
     max_steps_per_rollout_epoch: 500
     policy_mode: eval
-    group_size: 1
     action_dim: 8
     num_action_chunks: 10
     ref_num_action_chunks: 10
@@ -238,13 +239,15 @@ rollout:
     proprio_dim: ${actor.model.proprio_dim}
     add_q_head: ${actor.model.add_q_head}
     q_head_type: ${actor.model.q_head_type}
-    fixed_std: ${actor.model.fixed_std}
+    mlp_hidden_dim: ${actor.model.mlp_hidden_dim}
+    mlp_num_hidden_layers: ${actor.model.mlp_num_hidden_layers}
+    actor_noise_sigma: ${actor.model.actor_noise_sigma}
     is_lora: False
     lora_rank: 32
 
   rlt_feature_model:
     model_type: "openpi_rlinf"
-    model_path: "/path/to/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_<step>/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -255,6 +258,7 @@ rollout:
     openpi_data:
       repo_id: "maniskill_peginsertionside_joint"
       default_prompt: "insert the peg in the hole"
+      norm_stats_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint/norm_stats.json"
     openpi:
       task: eval
       config_name: "pi05_rlt_maniskill_joint"
@@ -283,13 +287,34 @@ rollout:
       rlt_image_only: False
       rlt_use_mask: True
 
-  # Optional ManiSkill expert takeover model. Enable it with
-  # env.train.rlt_policy_switch.expert_takeover.enable=True. This should point
-  # to a stronger openpi_rlinf SFT checkpoint trained with the same task
-  # transforms; it predicts expert actions directly and does not use RLT tokens.
+  # STEAM-style automatic critical-phase routing. The critic compares raw
+  # ManiSkill image pairs at 10-step chunk boundaries; geometry is metrics only.
+  rlt_critical_phase_gate:
+    enable: True
+    mode: active
+    chunk_size: 10
+    lookback_chunks: 4
+    patience_chunks: 2
+    enter_threshold: 0.0
+    latch_until_done: True
+    main_image_key: image
+    wrist_image_key: wrist_image
+    expert_takeover:
+      enable: True
+      warmup_chunks: 4
+      patience_chunks: 3
+      enter_threshold: 0.0
+      latch_until_done: True
+    model:
+      model_type: "steam_value_model"
+      model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/steam_sft/rlt_steam_value_model_sft-20260813-10:01:45/rlt_steam_value_model_sft/checkpoints/global_step_2000/actor"
+      precision: bf16
+
+  # Simulation expert used only after the actor also shows sustained low
+  # progress according to the STEAM gate.
   expert_model:
     model_type: "openpi_rlinf"
-    model_path: "/path/to/rlt_maniskill_joint_pi05_sft_more_steps/checkpoints/global_step_<step>/actor"
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8
@@ -325,8 +350,8 @@ actor:
   enable_offload: False
 
   model:
-    model_type: "rlt_mlp_policy"
-    # RLT AC keeps the small Stage2 head in fp32 for Q-learning stability.
+    model_type: "rlt_td3_mlp_policy"
+    # RLT TD3 keeps the small Stage2 head in fp32 for Q-learning stability.
     precision: fp32
     policy_setup: "panda-qpos"
     action_dim: 8
@@ -337,7 +362,9 @@ actor:
     add_value_head: False
     add_q_head: True
     q_head_type: "default"
-    fixed_std: 0.002
+    mlp_hidden_dim: 256
+    mlp_num_hidden_layers: 2
+    actor_noise_sigma: 0.1
     is_lora: False
     lora_rank: 32
 
@@ -354,6 +381,9 @@ actor:
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "no_shard"
+    wrap_policy:
+      module_classes_to_wrap:
+        - TwinQCritic
     mixed_precision:
       param_dtype: ${actor.model.precision}
       reduce_dtype: ${actor.model.precision}
