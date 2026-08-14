@@ -1448,9 +1448,7 @@ class EnvWorker(Worker):
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
-                        infer_batch_size_fn=self._infer_rollout_batch_size
-                        if self.env_decoupled_mode
-                        else None,
+                        infer_batch_size_fn=self._infer_rollout_batch_size,
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     self._consume_rlt_gate_info(

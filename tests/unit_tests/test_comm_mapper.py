@@ -27,6 +27,8 @@ from rlinf.scheduler import (
     merge_batches,
     split_batch,
 )
+from rlinf.scheduler.worker.routing import validate_batch_size
+from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -271,6 +273,57 @@ def test_evaluate_splits_gate_policy_output():
     shards = sends[0]["split_fn"](sends[0]["data"], [4, 2])
     assert [shard.actions.shape[0] for shard in shards] == [4, 2]
     assert all(set(shard.forward_inputs) == set(RLT_GATE_INFO_KEYS) for shard in shards)
+
+
+def test_env_evaluate_accepts_gate_policy_output():
+    class _EvalEnv:
+        is_start = False
+
+        def reset(self):
+            return _make_obs(0, 6), {}
+
+    worker = object.__new__(EnvWorker)
+    worker.eval_rollout_epoch = 1
+    worker.n_eval_chunk_steps = 1
+    worker.stage_num = 1
+    worker.eval_num_envs_per_stage = 6
+    worker.eval_batch_size = 6
+    worker.env_decoupled_mode = False
+    worker.eval_env_list = [_EvalEnv()]
+    worker.eval_prev_done = [None]
+    worker.eval_enable_offload = False
+    worker.cfg = SimpleNamespace(
+        env=SimpleNamespace(
+            eval=SimpleNamespace(auto_reset=False),
+        ),
+        rollout=SimpleNamespace(group_name="rollout"),
+    )
+    worker.send_to = lambda **_: None
+
+    policy_output = PolicyOutput(
+        actions=torch.arange(12, dtype=torch.float32).view(6, 2),
+        forward_inputs={},
+    )
+
+    def _recv_from(**kwargs):
+        validate_batch_size(
+            policy_output,
+            kwargs["batch_size"],
+            kwargs.get("infer_batch_size_fn"),
+        )
+        return policy_output
+
+    worker.recv_from = _recv_from
+    worker.env_evaluate_step = lambda *_: (None, {})
+    worker.finish_rollout = lambda **_: None
+
+    result = inspect.unwrap(EnvWorker.evaluate)(
+        worker,
+        input_channel=None,
+        rollout_channel=None,
+    )
+
+    assert result == {}
 
 
 def test_merge_env_outputs_with_partial_optional_fields():
