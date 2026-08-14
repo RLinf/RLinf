@@ -314,7 +314,7 @@ Overview
 
       Franka · dual RealSense cameras
 
-| **You'll do:** collect dual-view episodes → preprocess into QwenTrend SFT dataset → fine-tune Qwen3-VL-4B → launch RLPD real-world training.
+| **You'll do:** collect dual-view episodes → preprocess into VLM trend SFT dataset → fine-tune Qwen3-VL-4B → launch RLPD real-world training.
 | **Prerequisites:** :doc:`franka` through data collection · :doc:`../../extending/reward_model`.
 
 Workflow
@@ -323,7 +323,7 @@ Workflow
 The full pipeline has three stages:
 
 1. **Data Collection** — Collect episodes with dual-view (wrist + global) image sequences on the real robot.
-2. **Supervised Fine-Tuning (SFT)** — Preprocess collected data into QwenTrend format and fine-tune Qwen3-VL-4B with LoRA.
+2. **Supervised Fine-Tuning (SFT)** — Preprocess collected data into VLM trend format and fine-tune Qwen3-VL-4B with LoRA.
 3. **Real-World RL Training** — Integrate the fine-tuned VLM reward model into RLPD training with ``history_buffer`` mode for online inference.
 
 
@@ -368,15 +368,23 @@ Why two cameras:
 Dual-view input allows the VLM to simultaneously focus on local manipulation details
 and global spatial relationships, improving trend judgment accuracy.
 
+Launch collection with the standard real-world entry script after updating
+``examples/embodiment/config/realworld_collect_data.yaml`` (camera serials,
+``target_ee_pose``, and ``data_collection.save_dir``):
+
+.. code-block:: bash
+
+   bash examples/embodiment/collect_data.sh realworld_collect_data
+
 
 Stage 2: Supervised Fine-Tuning (SFT)
 -------------------------------------
 
-2.1 Preprocess into QwenTrend Dataset
+2.1 Preprocess into VLM Trend Dataset
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The collected ``.pkl`` episodes must be converted to QwenTrend SFT format using
-``preprocess_qwentrend_reward_dataset.py``. Activate the virtual environment and
+The collected ``.pkl`` episodes must be converted to VLM trend SFT format using
+``preprocess_vlm_trend_reward_dataset.py``. Activate the virtual environment and
 set ``PYTHONPATH`` before running:
 
 .. code-block:: bash
@@ -389,9 +397,9 @@ and auto-labels based on GAE or TCP distance changes:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /path/to/collected_data \
-       --output-dir /path/to/processed_qwentrend_data \
+       --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --task-description "Pick up the peg and insert it into the hole."
 
@@ -400,9 +408,9 @@ TCP-to-target distance as the trend signal:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /path/to/collected_data \
-       --output-dir /path/to/processed_qwentrend_data \
+       --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ"
 
@@ -411,9 +419,9 @@ A concrete example (using ``demo_data/collected_data`` and target pose
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_qwentrend_reward_dataset.py \
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
        --raw-data-path /data/reward_qwen_data/demo_data/collected_data \
-       --output-dir /data/reward_qwen_data/processed_qwentrend_data \
+       --output-dir /data/reward_qwen_data/processed_vlm_trend_reward_data \
        --window-size 5 \
        --seed 42 \
        --target-ee-pose "0.490,0.0,0.076,3.131,0.019,-0.063"
@@ -430,7 +438,7 @@ Output directory structure:
 
 .. code-block:: text
 
-   processed_qwentrend_data/
+   processed_vlm_trend_reward_data/
    ├── dataset_info.json
    ├── train/
    │   ├── segments.jsonl
@@ -442,16 +450,16 @@ Output directory structure:
 2.2 Fine-Tune Qwen3-VL-4B
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_qwentrend.yaml``:
+Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``:
 
 .. code-block:: yaml
 
    data:
      type: vlm
-     dataset_name: "qwentrend_progress_sft"
-     train_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/train/segments.jsonl"
-     val_data_paths: "${oc.env:DUALVIEW_SFT_DATA_ROOT}/eval/segments.jsonl"
-     video_root: "${oc.env:DUALVIEW_SFT_DATA_ROOT}"
+     dataset_name: "vlm_trend_reward_sft"
+     train_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/train/segments.jsonl"
+     val_data_paths: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}/eval/segments.jsonl"
+     video_root: "${oc.env:VLM_TREND_REWARD_DATA_ROOT}"
 
    actor:
      model:
@@ -469,8 +477,8 @@ Set the environment variable and start training:
 
 .. code-block:: bash
 
-   export DUALVIEW_SFT_DATA_ROOT=/path/to/processed_qwentrend_data
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_qwentrend
+   export VLM_TREND_REWARD_DATA_ROOT=/path/to/processed_vlm_trend_reward_data
+   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_reward
 
 After training, note the LoRA checkpoint path (e.g., ``checkpoints/global_step_3000``)
 for use as ``reward.model.lora_path`` in the RL config.
@@ -482,7 +490,7 @@ Stage 3: Real-World Reinforcement Learning
 3.1 Configuration File
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Use ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_sglang_reward.yaml``
+Use ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_vlm_reward.yaml``
 as the RL training config. The core reward section:
 
 .. code-block:: yaml
@@ -500,19 +508,16 @@ as the RL training config. The core reward section:
 
      model:
        model_path: "/data/reward_qwen_data/Qwen3-VL-4B-Instruct"
-       model_type: "history_vlm"
+       model_type: "buffered_vlm"
        lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
        gt_success_bonus: 20.0
        precision: "bf16"
 
-       input_builder_name: qwentrend_input_builder
+       input_builder_name: vlm_trend_reward_input_builder
        input_builder_params:
          default_task_description: "Pick up the peg and insert it into the hole."
-         video_keys:
-           - main_images
-           - extra_view_images
 
-       reward_parser_name: qwentrend_reward_parser
+       reward_parser_name: vlm_trend_reward_parser
        reward_parser_params:
          positive_reward: 1.0
          negative_reward: -0.2
@@ -560,8 +565,8 @@ as the RL training config. The core reward section:
      - The Franka native reward is sparse (1.0 only at target). Training relies primarily on VLM trend judgment. Success is rewarded via ``gt_success_bonus``.
    * - ``gt_success_bonus: 20.0``
      - When the environment reports success (``infos["success"] = True``), adds +20.0 on top of the current step's VLM reward.
-   * - ``video_keys``
-     - ``[main_images, extra_view_images]`` — the VLM receives frames from both camera views.
+   * - ``history_buffers.history_window.history_keys``
+     - ``[main_images, extra_view_images]`` — the history window caches frames from both camera views for VLM inference.
    * - ``history_buffers.history_window``
      - Caches the last 5 frames of ``main_images`` and ``extra_view_images``, triggers inference only after at least 5 frames.
    * - ``worker_type: model``
@@ -620,31 +625,18 @@ Assuming the robot arm starts far from the target, gradually approaches, and eve
 Because ``history_reward_assign: true``, each VLM inference result is back-assigned
 to every step in that history window.
 
-3.5 Franka Env Success Info Fix
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+3.5 Franka Env Success Info
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Unlike simulation, the real-world Franka environment's ``step()`` originally returned
-an empty ``infos`` dict, preventing ``gt_success_bonus`` from working.
-Add the success write in ``franka_env.py``:
-
-.. code-block:: python
-
-   # rlinf/envs/realworld/franka/franka_env.py
-
-   truncated = self._num_steps >= self.config.max_num_steps
-   reward *= self.config.reward_scale
-
-   infos: dict = {}
-   if terminated:
-       infos["success"] = True
-
-   return observation, reward, terminated, truncated, infos
+RLinf writes ``infos["success"]=True`` in ``franka_env.py`` when an episode
+terminates successfully. This lets ``gt_success_bonus`` work on the real robot
+without any extra env-side changes.
 
 .. note::
 
-   This modification does not affect any other Franka env behavior. It is also
-   safe for configs that do not use ``gt_success_bonus`` (e.g., pure ResNet
-   reward scenarios).
+   Configs that do not use ``gt_success_bonus`` (for example pure ResNet reward
+   scenarios) are unaffected because ``apply_gt_success_bonus`` skips when no
+   success flag is present.
 
 3.6 Starting Training
 ~~~~~~~~~~~~~~~~~~~~~
@@ -654,7 +646,7 @@ Once hardware deployment and configuration are verified, run on the Ray head nod
 .. code-block:: bash
 
    bash examples/embodiment/run_realworld_async.sh \
-       realworld_peginsertion_rlpd_cnn_async_sglang_reward
+       realworld_peginsertion_rlpd_cnn_async_vlm_reward
 
 After training starts, the logs will show VLM inference outputs, reward
 distributions, and success signals.
@@ -670,7 +662,7 @@ distributions, and success signals.
      - Real-World (Franka)
    * - **Reward source**
      - VLM trend + gt_success_bonus (simulator provides automatically)
-     - VLM trend + gt_success_bonus (must manually write in env)
+     - VLM trend + gt_success_bonus (env writes ``infos["success"]`` on terminate)
    * - **Parallel envs**
      - 32 (many samples, high exploration)
      - 1 (single robot, limited samples)

@@ -945,7 +945,7 @@ is ``positive`` (moving toward the target), ``negative`` (moving away), or
 A ``gt_success_bonus`` of +20.0 is added when the robot reaches the target,
 helping the RL agent strongly associate the success state with high reward.
 
-The full pipeline has three stages: real-world data collection → QwenTrend
+The full pipeline has three stages: real-world data collection → VLM trend
 preprocessing + Qwen3-VL LoRA fine-tuning → RLPD training with online VLM reward
 inference. See :doc:`../examples/embodied/franka_reward_model` for detailed
 configuration and step-by-step instructions.

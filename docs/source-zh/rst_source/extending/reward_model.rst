@@ -920,6 +920,6 @@ Franka + Qwen VLM Reward Model
 同时通过 ``gt_success_bonus`` 在机械臂到达目标时追加 +20.0 的巨大奖励，
 帮助 Agent 明确认知"成功状态"。
 
-完整流程包括三个阶段：真机数据采集 → QwenTrend 数据预处理 + Qwen3-VL LoRA 微调 →
+完整流程包括三个阶段：真机数据采集 → VLM trend 数据预处理 + Qwen3-VL LoRA 微调 →
 RLPD 训练中接入 VLM reward model 在线推理。配置示例与详细步骤请参见
 :doc:`../examples/embodied/franka_reward_model`。
