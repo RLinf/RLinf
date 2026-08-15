@@ -613,9 +613,16 @@ configure_ascend() {
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     # The derived pin (==0.2 for torch 2.6) is x86_64-only; Ascend is aarch64.
+    # Keep a loose pin so uv can *resolve* torchcodec (embodied extra lists it),
+    # but do not install the wheel — see PLATFORM_UV_SYNC_ARGS below.
     PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.5"
     PLATFORM_EXTRA_OVERRIDES=()
-    PLATFORM_UV_SYNC_ARGS=()
+    # PyPI torchcodec>=0.11 ships CUDA wheels by default (0.16.0 dlopens
+    # libnvrtc.so.13). Ascend is CPU torch + torch-npu, so that import raises
+    # OSError. GR00T n1.5 only catches ImportError/RuntimeError around
+    # `import torchcodec`, which aborts libero_spatial_ppo_gr00t. Skip the
+    # package; n1.5 uses decord (built from source on aarch64) instead.
+    PLATFORM_UV_SYNC_ARGS=("--no-install-package" "torchcodec")
     PLATFORM_SYSTEM_SITE_PACKAGES=0
     PLATFORM_VENV_HOOK=""
     PLATFORM_COMMON_REQ_EXCLUDE_RE=""
@@ -870,6 +877,16 @@ EOF
             && uv pip install torch-npu)
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
+    fi
+    # A later `uv pip install` (lerobot, GR00T extras, …) may still pull a
+    # CUDA torchcodec wheel. Uninstall it when import fails so GR00T's
+    # optional `import torchcodec` raises ImportError (caught) rather than
+    # OSError: libnvrtc.so.13 (not caught). A wheel that does import is kept.
+    if python -c "import torchcodec" >/dev/null 2>&1; then
+        echo "[install.sh] torchcodec imports; keeping it."
+    elif python -c "import importlib.metadata as m; m.version('torchcodec')" >/dev/null 2>&1; then
+        echo "[install.sh] torchcodec is installed but does not import (likely a CUDA wheel without libnvrtc); uninstalling."
+        uv pip uninstall torchcodec || true
     fi
 }
 

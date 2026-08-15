@@ -29,7 +29,7 @@ from rlinf.models.embodiment.mlp_policy.iql_mlp_policy import (
 )
 from rlinf.scheduler import Worker
 from rlinf.utils.utils import collect_param_names_need_sync
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 def iql_expectile_loss(diff: torch.Tensor, expectile: float) -> torch.Tensor:
