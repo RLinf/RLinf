@@ -246,3 +246,80 @@ def split_dict(
                 splitted_batches[i][key] = value
 
     return splitted_batches
+
+
+def process_nested_dict_for_adv(nested_dict, rollout_epoch):
+    """
+    original shape: [rollout_epoch x n_chunk_steps, bsz, num_action_chunks, ...]
+    target shape: [n_chunk_steps, rollout_epoch x bsz, num_action_chunks, ...]
+    """
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if isinstance(value, torch.Tensor):
+            new_value = value.reshape(
+                rollout_epoch, -1, *value.shape[1:]
+            )  # [rollout_epoch, n_chunk_step, bsz, ...]
+            new_value = new_value.transpose(
+                0, 1
+            )  # [n_chunk_step, rollout_epoch, bsz, ...]
+            new_value = new_value.reshape(new_value.shape[0], -1, *new_value.shape[3:])
+            ret_dict[key] = new_value
+        elif isinstance(value, dict):
+            ret_dict[key] = process_nested_dict_for_adv(value, rollout_epoch)
+    return ret_dict
+
+
+def process_nested_dict_for_train(nested_dict, shuffle_id):
+    ret_dict = {}
+    for key, value in nested_dict.items():
+        if key in ["dones", "terminations", "truncations", "prev_values"]:
+            value = value[:-1]
+        if "env_info" in key:
+            raise NotImplementedError
+        if value is None:
+            ret_dict[key] = None
+        if isinstance(value, torch.Tensor):
+            ret_dict[key] = value.reshape(-1, *value.shape[2:])[shuffle_id]
+        elif isinstance(value, dict):
+            ret_dict[key] = process_nested_dict_for_train(value, shuffle_id)
+    return ret_dict
+
+
+def trim_nested_tensor_time_dim(value, target_steps: int, key_path=()):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        assert value.shape[0] in {target_steps, target_steps + 1}, (
+            f"Cannot trim field {'.'.join(key_path)!r} with shape "
+            f"{tuple(value.shape)} to {target_steps} OPD training steps."
+        )
+        return value[:target_steps]
+    if isinstance(value, dict):
+        return {
+            key: trim_nested_tensor_time_dim(
+                nested_value, target_steps, (*key_path, key)
+            )
+            for key, nested_value in value.items()
+        }
+    raise TypeError(
+        f"Unsupported field {'.'.join(key_path)!r} type {type(value)} for OPD trimming."
+    )
+
+
+def flatten_nested_tensor_time_batch(value, key_path=()):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        assert value.dim() >= 2, (
+            f"Cannot flatten field {'.'.join(key_path)!r} with shape "
+            f"{tuple(value.shape)} across time and batch."
+        )
+        return value.reshape(-1, *value.shape[2:])
+    if isinstance(value, dict):
+        return {
+            key: flatten_nested_tensor_time_batch(nested_value, (*key_path, key))
+            for key, nested_value in value.items()
+        }
+    raise TypeError(
+        f"Unsupported field {'.'.join(key_path)!r} type {type(value)} for flattening."
+    )
