@@ -38,7 +38,8 @@ class EpisodeTrace:
     score_ready: torch.Tensor
     actor_active: torch.Tensor
     oracle_active: torch.Tensor
-    reward_sum: torch.Tensor
+    success_signal: torch.Tensor
+    success_label_source: str
     versions: torch.Tensor | None
     complete: bool
 
@@ -101,6 +102,38 @@ def _optional_time_batch(
     return value.to(dtype=dtype)
 
 
+def _success_time_batch(
+    trace: dict[str, Any],
+    *,
+    like: torch.Tensor,
+    trace_path: Path,
+) -> tuple[torch.Tensor, str]:
+    # ManiSkill RLT peg insertion maps task success to termination. Reward is a
+    # compatibility fallback for older or externally generated trace formats.
+    if trace.get("terminations") is not None:
+        terminations = _as_time_batch(trace, "terminations", dtype=torch.bool)
+        if terminations.shape != like.shape:
+            raise ValueError(
+                f"Trace key 'terminations' in {trace_path} must have shape "
+                f"{tuple(like.shape)}, got {tuple(terminations.shape)}"
+            )
+        return terminations, "terminations"
+
+    if trace.get("reward_sum") is not None:
+        rewards = _as_time_batch(trace, "reward_sum", dtype=torch.float32)
+        if rewards.shape != like.shape:
+            raise ValueError(
+                f"Trace key 'reward_sum' in {trace_path} must have shape "
+                f"{tuple(like.shape)}, got {tuple(rewards.shape)}"
+            )
+        return rewards > 0, "reward_sum"
+
+    raise ValueError(
+        f"Trace {trace_path} has neither 'terminations' nor 'reward_sum'; "
+        "success labels cannot be reconstructed"
+    )
+
+
 def _episode_ranges(dones: torch.Tensor) -> Iterable[tuple[int, int, bool]]:
     previous_done = False
     start = 0
@@ -155,18 +188,17 @@ def load_episodes(
             dtype=torch.bool,
         )
         oracle_active = oracle_active & actor_active
-        rewards = _optional_time_batch(
+        success_signal, success_label_source = _success_time_batch(
             trace,
-            "reward_sum",
             like=score,
-            dtype=torch.float32,
+            trace_path=trace_path,
         )
-        dones = _optional_time_batch(
-            trace,
-            "dones",
-            like=score,
-            dtype=torch.bool,
-        )
+        dones = _as_time_batch(trace, "dones", dtype=torch.bool)
+        if dones.shape != score.shape:
+            raise ValueError(
+                f"Trace key 'dones' in {trace_path} must have shape "
+                f"{tuple(score.shape)}, got {tuple(dones.shape)}"
+            )
         versions = trace.get("versions")
         if versions is not None:
             if not isinstance(versions, torch.Tensor) or versions.shape != score.shape:
@@ -203,7 +235,8 @@ def load_episodes(
                         score_ready=score_ready[start:end, env_idx],
                         actor_active=actor_active[start:end, env_idx],
                         oracle_active=oracle_active[start:end, env_idx],
-                        reward_sum=rewards[start:end, env_idx],
+                        success_signal=success_signal[start:end, env_idx],
+                        success_label_source=success_label_source,
                         versions=episode_versions,
                         complete=complete,
                     )
@@ -273,7 +306,7 @@ def _evaluate_episode(
     )
     oracle_entry = _first_true(episode.oracle_active)
     critical_entry = _first_true(episode.actor_active)
-    success_entry = _first_true(episode.reward_sum > 0)
+    success_entry = _first_true(episode.success_signal)
 
     entry_delay = None
     if oracle_entry is not None and predicted_entry is not None:
@@ -440,6 +473,9 @@ def evaluate_parameters(
         "threshold": threshold,
         "patience_chunks": patience_chunks,
         "warmup_chunks": warmup_chunks,
+        "success_label_source": "+".join(
+            sorted({episode.success_label_source for episode in episodes})
+        ),
         **_aggregate_outcomes(
             outcomes,
             success_horizon_steps=success_horizon_steps,
@@ -860,6 +896,16 @@ def main() -> None:
     print(
         f"Chronological split ({split_strategy}): {len(calibration)} calibration, "
         f"{len(validation)} validation"
+    )
+    success_label_counts = {
+        source: sum(episode.success_label_source == source for episode in episodes)
+        for source in sorted({episode.success_label_source for episode in episodes})
+    }
+    print(
+        "Success labels: "
+        + ", ".join(
+            f"{source}={count}" for source, count in success_label_counts.items()
+        )
     )
     print(f"Thresholds: {','.join(f'{value:.6g}' for value in thresholds)}")
     print(f"Wrote {len(rows)} grid rows to {output}")
