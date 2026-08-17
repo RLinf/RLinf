@@ -39,9 +39,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
-        self._is_fastwam = (
-            str(self.cfg.actor.model.get("model_type", "")).lower() == "fastwam"
-        )
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = torch.cuda.current_device()
 
@@ -71,10 +68,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.data_loader, self.data_config = self.build_dataloader(
                 self.cfg.data.train_data_paths, eval_dataset=False
             )
-            # FastWAM seeds the process after model construction and before the
-            # first iterator is created. Defer iterator construction until
-            # init_worker() so its worker/RNG ordering matches upstream.
-            self.data_iter = None if self._is_fastwam else iter(self.data_loader)
+            self.data_iter = iter(self.data_loader)
 
         if self.cfg.data.get("val_data_paths") is not None:
             self.eval_data_loader, self.eval_data_config = self.build_dataloader(
@@ -95,76 +89,20 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.offload_param_and_grad()
             self.offload_optimizer()
 
-        if self._is_fastwam:
-            # Match FastWAM's set_global_seed(seed) after model construction:
-            # each process uses seed + its distributed rank.
-            from fastwam.utils.pytorch_utils import set_global_seed
-
-            set_global_seed(int(self.cfg.actor.seed))
-            self._set_training_mode()
-            if self.data_loader is not None:
-                self.data_iter = iter(self.data_loader)
-
-    def _set_training_mode(self) -> None:
-        """Set the model to training mode."""
-        self.model.train()
-
-    def setup_model_and_optimizer(self) -> None:
-        """Build the optimizer schedule from the runner's actual SFT horizon.
-
-        The official FastWAM trainer computes total optimizer steps from the
-        dataloader length, world size, gradient accumulation, and epoch/step
-        limits. RLinf's generic FSDP manager historically required a hard-coded
-        actor.optim.total_training_steps. Deriving it here keeps the SFT
-        scheduler aligned with the official 5% warmup and cosine horizon while
-        retaining explicit runner overrides for smoke tests.
-        """
-        if not self._is_fastwam:
-            return super().setup_model_and_optimizer()
-
+    def infer_total_training_steps(self) -> int:
+        """Infer the SFT optimizer horizon from the runner limits."""
         max_epochs = int(self.cfg.runner.get("max_epochs", -1))
         max_steps = int(self.cfg.runner.get("max_steps", -1))
         steps_per_epoch = max(int(self.get_max_steps_per_epoch()), 1)
 
+        step_limits = []
         if max_epochs > 0:
-            total_steps = steps_per_epoch * max_epochs
-            if max_steps >= 0:
-                total_steps = min(total_steps, max_steps)
-        elif max_steps >= 0:
-            total_steps = max_steps
-        else:
-            total_steps = steps_per_epoch
+            step_limits.append(steps_per_epoch * max_epochs)
+        if max_steps >= 0:
+            step_limits.append(max_steps)
 
-        total_steps = max(int(total_steps), 1)
-        self._cfg.optim.total_training_steps = total_steps
-        logging.info(
-            "[SFT] scheduler horizon resolved from runner: steps_per_epoch=%d "
-            "max_epochs=%d max_steps=%d total_training_steps=%d",
-            steps_per_epoch,
-            max_epochs,
-            max_steps,
-            total_steps,
-        )
-        super().setup_model_and_optimizer()
-        self._set_training_mode()
-
-        # FSDPModelManager pre-warms AdamW state with a zero-lr optimizer step
-        # so checkpoint loading has materialized state entries. Official
-        # FastWAM starts from an untouched optimizer, where the first real
-        # update has AdamW step=1. Restore that state only for fresh FastWAM
-        # runs; a resumed run must keep the checkpoint's optimizer step.
-        if (
-            str(self.cfg.actor.model.get("model_type", "")).lower() == "fastwam"
-            and self.cfg.runner.get("resume_dir", None) is None
-        ):
-            with torch.no_grad():
-                for state in self.optimizer.state.values():
-                    step = state.get("step")
-                    if isinstance(step, torch.Tensor):
-                        step.zero_()
-                    elif step is not None:
-                        state["step"] = 0
-            logging.info("[SFT] reset FastWAM AdamW warmup step for a fresh run")
+        total_steps = min(step_limits) if step_limits else steps_per_epoch
+        return max(int(total_steps), 1)
 
     def model_provider_func(self):
         model = get_model(self.cfg.actor.model)
@@ -178,23 +116,17 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.model.set_global_step(global_step)
 
     def get_max_steps_per_epoch(self):
-        if self.data_loader is not None:
-            if self._is_fastwam:
-                # Match Wan22Trainer._estimate_total_train_steps exactly:
-                # first count global micro-batches, then apply accumulation.
-                dataset_size = len(self.data_loader.dataset)
-                global_micro_steps = max(
-                    math.ceil(
-                        dataset_size / (self.micro_batch_size * self._world_size)
-                    ),
-                    1,
-                )
-                return max(
-                    math.ceil(global_micro_steps / self.gradient_accumulation),
-                    1,
-                )
-            return max(1, len(self.data_loader) // self.gradient_accumulation)
-        return 0
+        if self.data_loader is None:
+            return 0
+
+        num_micro_batches = len(self.data_loader)
+        if self.data_loader.drop_last:
+            return max(1, num_micro_batches // self.gradient_accumulation)
+
+        return max(
+            1,
+            math.ceil(num_micro_batches / self.gradient_accumulation),
+        )
 
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
@@ -227,7 +159,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
 
     def run_training(self):
         with self.worker_timer():
-            self._set_training_mode()
+            self.model.train()
 
             metrics = {}
 

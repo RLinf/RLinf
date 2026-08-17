@@ -29,22 +29,6 @@ class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
 
-    def _set_training_mode(self) -> None:
-        """Apply the official FastWAM train/eval mode split."""
-        if not self._is_fastwam:
-            return super()._set_training_mode()
-
-        # Official Wan22Trainer calls model.eval(), then enables training only
-        # for model.dit (the MoT) and the optional proprio encoder.
-        self.model.eval()
-        dit = getattr(self.model, "dit", None)
-        if dit is None:
-            raise AttributeError("FastWAM model must expose the 'dit'/MoT module.")
-        dit.train()
-        proprio_encoder = getattr(self.model, "proprio_encoder", None)
-        if proprio_encoder is not None:
-            proprio_encoder.train()
-
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         if (
             SupportedModel(self.cfg.actor.model.model_type)
