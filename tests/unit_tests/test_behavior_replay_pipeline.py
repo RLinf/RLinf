@@ -319,3 +319,104 @@ class TestActionNoiseIndices:
     def test_parse_single_int(self):
         result = BehaviorReplayInitializer._parse_int_sequence(3)
         assert result == (3,)
+
+
+# ---------------------------------------------------------------------------
+# _parse_reset_payload (BehaviorProcess)
+# ---------------------------------------------------------------------------
+
+
+class TestParseResetPayload:
+    """Tests for BehaviorProcess._parse_reset_payload (CPU-only, no env)."""
+
+    @staticmethod
+    def _parse(payload):
+        from rlinf.envs.behavior.behavior_env import BehaviorProcess
+
+        return BehaviorProcess._parse_reset_payload(payload)
+
+    def test_none_payload(self):
+        """None payload → reset all."""
+        indices, instance_ids, is_full = self._parse(None)
+        assert indices is None
+        assert instance_ids is None
+        assert is_full is False
+
+    def test_bool_list_payload(self):
+        """list[bool] → reset indices for True elements."""
+        indices, instance_ids, is_full = self._parse(
+            [True, False, True, False]
+        )
+        assert indices == [0, 2]
+        assert instance_ids is None
+        assert is_full is False
+
+    def test_bool_list_all_false(self):
+        """All False → empty reset indices."""
+        indices, instance_ids, is_full = self._parse([False, False])
+        assert indices == []
+        assert instance_ids is None
+
+    def test_dict_payload_with_instance_ids(self):
+        """list[dict] with instance_id → parsed correctly."""
+        payload = [
+            {"reset": True, "instance_id": 100},
+            {"reset": False},
+            {"reset": True, "instance_id": 200},
+        ]
+        indices, instance_ids, is_full = self._parse(payload)
+        assert indices == [0, 2]
+        assert instance_ids == [100, 200]
+        assert is_full is False
+
+    def test_dict_payload_full_reset(self):
+        """All dicts have full_reset=True."""
+        payload = [
+            {"reset": True, "full_reset": True},
+            {"reset": True, "full_reset": True},
+        ]
+        indices, instance_ids, is_full = self._parse(payload)
+        assert indices == [0, 1]
+        assert instance_ids is None
+        assert is_full is True
+
+    def test_dict_payload_no_instance_ids(self):
+        """list[dict] without instance_id → instance_ids=None."""
+        payload = [
+            {"reset": True},
+            {"reset": True, "full_reset": False},
+        ]
+        indices, instance_ids, is_full = self._parse(payload)
+        assert indices == [0, 1]
+        assert instance_ids is None
+        assert is_full is False
+
+    def test_dict_payload_mixed_instance_ids_raises(self):
+        """Some dicts have instance_id, some don't → ValueError."""
+        payload = [
+            {"reset": True, "instance_id": 100},
+            {"reset": True},  # missing instance_id
+        ]
+        try:
+            self._parse(payload)
+            assert False, "should have raised ValueError"
+        except ValueError as e:
+            assert "instance_id" in str(e)
+
+    def test_dict_payload_empty(self):
+        """Empty dict list → empty reset."""
+        indices, instance_ids, is_full = self._parse([])
+        assert indices == []
+        assert instance_ids is None
+
+    def test_dict_payload_partial_reset_with_instance_ids(self):
+        """Only some envs reset, all with instance_ids."""
+        payload = [
+            {"reset": True, "instance_id": 42},
+            {"reset": False},
+            {"reset": True, "instance_id": 99},
+        ]
+        indices, instance_ids, is_full = self._parse(payload)
+        assert indices == [0, 2]
+        assert instance_ids == [42, 99]
+        assert is_full is False
