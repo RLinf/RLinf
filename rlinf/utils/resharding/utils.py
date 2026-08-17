@@ -27,6 +27,8 @@ def get_tp_reshard_fn(model_type: str):
         return tp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return tp_reshard_fn_qwen3_moe
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
+        return tp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
             f"get_tp_reshard_fn for model_type {model_type} is not implemented"
@@ -37,9 +39,21 @@ def get_tpe_reshard_fn(model_type: str):
     model_type = SupportedModel(model_type)
     if model_type == SupportedModel.QWEN3_MOE:
         return tpe_reshard_fn_qwen3_moe
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
+        return tpe_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
             f"get_tpe_reshard_fn for model_type {model_type} is not implemented"
+        )
+
+
+def get_ep_reshard_fn(model_type: str):
+    model_type = SupportedModel(model_type)
+    if model_type in (SupportedModel.DEEPSEEK_V3,):
+        return ep_reshard_fn_deepseek_v3
+    else:
+        raise NotImplementedError(
+            f"get_ep_reshard_fn for model_type {model_type} is not implemented"
         )
 
 
@@ -51,6 +65,8 @@ def get_pp_reshard_fn(model_type: str):
         return pp_reshard_fn_qwen3_dense
     elif model_type == SupportedModel.QWEN3_MOE:
         return pp_reshard_fn_qwen3_moe
+    elif model_type in (SupportedModel.DEEPSEEK_V3,):
+        return pp_reshard_fn_deepseek_v3
     else:
         raise NotImplementedError(
             f"get_pp_reshard_fn for model_type {model_type} is not implemented"
@@ -211,6 +227,59 @@ def tp_reshard_fn_qwen3_moe(model_state_dict, merge_factor, tp_group):
     return model_state_dict
 
 
+def tp_reshard_fn_deepseek_v3(model_state_dict, merge_factor, tp_group):
+    param_skip_tp_reshard = [
+        "linear_q_up_proj.layer_norm_weight",
+        "linear_kv_up_proj.layer_norm_weight",
+        "linear_q_down_proj.weight",
+        "linear_kv_down_proj.weight",
+        "input_layernorm.weight",
+        "pre_mlp_layernorm.weight",
+        "linear_fc1.layer_norm_weight",
+        "final_layernorm.weight",
+        "router.weight",
+        "router.expert_bias",
+    ]
+
+    param_reshard_column_parallel_linear = [
+        "word_embeddings.weight",
+        "output_layer.weight",
+        "self_attention.linear_q_up_proj.weight",
+        "self_attention.linear_q_proj.weight",
+        "self_attention.linear_kv_up_proj.weight",
+        "mlp.linear_fc1.weight",
+        "shared_experts.linear_fc1.weight",
+    ]
+
+    param_reshard_row_parallel_linear = [
+        "self_attention.linear_proj.weight",
+        "mlp.linear_fc2.weight",
+        "shared_experts.linear_fc2.weight",
+    ]
+
+    param_reshard_skip_weight = [
+        "linear_fc1.weight",
+        "linear_fc2.weight",
+    ]
+
+    for k, v in model_state_dict.items():
+        if any(param in k for param in param_skip_tp_reshard):
+            model_state_dict[k] = v.clone()
+            continue
+        if any(param in k for param in param_reshard_column_parallel_linear):
+            dim = 0
+        elif any(param in k for param in param_reshard_row_parallel_linear):
+            dim = 1
+        elif any(param in k for param in param_reshard_skip_weight):
+            continue
+        else:
+            assert False, f"Unknown parameter: {k}"
+        model_state_dict[k] = _gather_tp_group_tensor_and_reshard(
+            v, dim, merge_factor, tp_group
+        )
+    return model_state_dict
+
+
 ##############################
 # tpe reshard fn implementation
 ##############################
@@ -260,6 +329,75 @@ def tpe_reshard_fn_qwen3_moe(
             del value
 
     return model_state_dict
+
+
+def tpe_reshard_fn_deepseek_v3(
+    model_state_dict, tpe_size, tpe_group, rollout_tp_size, dst_tp_rank
+):
+    for key, value in model_state_dict.items():
+        if "linear_fc1.weight" in key:
+            dim = 0
+        elif "linear_fc2.weight" in key:
+            dim = 1
+        else:
+            continue
+        if tpe_size != 1:
+            value = _gather_tp_group_tensor_and_reshard(value, dim, tpe_size, tpe_group)
+        if dim == 0:
+            # fc1: split fused gate+up, then slice per rollout tp rank.
+            tpe_split_size = value.shape[dim] // tpe_size
+            tpe_value_slice = torch.split(value, tpe_split_size, dim=dim)
+
+            gate_proj_shards = []
+            up_proj_shards = []
+
+            for i, weight in enumerate(tpe_value_slice):
+                weight_chunk = torch.chunk(weight, 2, dim=0)
+                gate_proj_shards.append(weight_chunk[0])
+                up_proj_shards.append(weight_chunk[1])
+
+            gate_weight = torch.cat(gate_proj_shards, dim=dim)
+            up_weight = torch.cat(up_proj_shards, dim=dim)
+
+            rollout_split_size = gate_weight.shape[dim] // rollout_tp_size
+            gate_value_slice = torch.split(gate_weight, rollout_split_size, dim=dim)
+            up_value_slice = torch.split(up_weight, rollout_split_size, dim=dim)
+
+            model_state_dict[key] = torch.cat(
+                [gate_value_slice[dst_tp_rank], up_value_slice[dst_tp_rank]],
+                dim=0,
+            ).contiguous()
+            del gate_weight, up_weight, gate_value_slice, up_value_slice, value
+        else:
+            rollout_split_size = value.shape[dim] // rollout_tp_size
+            value_slice = torch.split(value, rollout_split_size, dim=dim)
+            model_state_dict[key] = value_slice[dst_tp_rank].contiguous()
+            del value
+
+    return model_state_dict
+
+
+def ep_reshard_fn_deepseek_v3(
+    expert_params, rollout_ep_size, dst_ep_rank, num_moe_experts
+):
+    """EP-distribute: select this rollout ep rank's subset of FULL experts.
+    Used when rollout_ep_size > 1.
+    i.e. `...mlp.experts.local_experts.{G}.linear_fc1.weight` with GLOBAL expert
+    id G in [0, num_moe_experts).
+    Extensible to dp>1+ep: generalize dst_ep_rank to a (dp_rank, ep_rank) pair
+    and recompute `start`/`end` here (the only place that needs to change).
+    """
+    experts_per_rank = num_moe_experts // rollout_ep_size
+    start = dst_ep_rank * experts_per_rank
+    end = start + experts_per_rank
+    out = {}
+    for key, val in expert_params.items():
+        if "local_experts." not in key:
+            continue
+        g = int(key.split("local_experts.")[1].split(".")[0])
+        if start <= g < end:
+            out[key] = val
+    return out
 
 
 ##############################
@@ -329,4 +467,9 @@ def pp_reshard_fn_qwen3_dense(model_state_dict, pp_group, dtype):
 
 def pp_reshard_fn_qwen3_moe(model_state_dict, pp_group, dtype):
     """Reshard pipeline parallel weights for Qwen3 MoE models."""
+    return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)
+
+
+def pp_reshard_fn_deepseek_v3(model_state_dict, pp_group, dtype):
+    """Reshard pipeline parallel weights for DeepSeek-V3 models."""
     return _pp_reshard_fn_Qwen_model(model_state_dict, pp_group, dtype)

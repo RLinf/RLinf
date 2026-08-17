@@ -23,12 +23,13 @@ from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler.worker.worker import Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
-from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
-from rlinf.utils.utils import clear_memory, masked_mean
-from rlinf.workers.actor.fsdp_actor_worker import (
-    EmbodiedFSDPActor,
+from rlinf.utils.nested_dict_process import (
     process_nested_dict_for_train,
+    put_tensor_device,
+    split_dict_to_chunk,
 )
+from rlinf.utils.utils import clear_memory, masked_mean
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):

@@ -13,8 +13,6 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
-
 支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
 
 示例配置
@@ -73,6 +71,8 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - MolmoAct2
 
 DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。
+
+如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
 完整评测流程
 ------------

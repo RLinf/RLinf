@@ -150,7 +150,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
@@ -170,9 +170,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.3-franka
+    rlinf/rlinf:agentic-rlinf0.4-franka
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
 
 目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
 
@@ -240,7 +240,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
@@ -258,9 +258,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+    rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 
@@ -591,6 +591,8 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 
 自然地，你可以按照同样的方式扩展到更多的机器人。
 关于此类异构硬件配置语法的更多细节，请参考 :doc:`../../guides/hetero`。
+
+如需在真机上通过与动作块执行重叠来隐藏策略推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
 
 

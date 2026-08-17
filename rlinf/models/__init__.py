@@ -74,8 +74,8 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
-    def _build_openpi_pytorch(cfg: DictConfig, torch_dtype):
-        from rlinf.models.embodiment.openpi_pytorch import get_model
+    def _build_openpi_rlinf(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.openpi_rlinf import get_model
 
         return get_model(cfg, torch_dtype)
 
@@ -95,6 +95,11 @@ def _register_builtin_models():
         return get_model(cfg, torch_dtype)
 
     def _build_rlt_mlp_policy(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.mlp_policy import get_model
+
+        return get_model(cfg, torch_dtype)
+
+    def _build_rlt_td3_mlp_policy(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.mlp_policy import get_model
 
         return get_model(cfg, torch_dtype)
@@ -199,8 +204,8 @@ def _register_builtin_models():
         force=True,
     )
     register_model(
-        SupportedModel.OPENPI_PYTORCH.value,
-        _build_openpi_pytorch,
+        SupportedModel.OPENPI_RLINF.value,
+        _build_openpi_rlinf,
         category="embodied",
         force=True,
     )
@@ -225,6 +230,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.RLT_MLP_POLICY.value,
         _build_rlt_mlp_policy,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.RLT_TD3_MLP_POLICY.value,
+        _build_rlt_td3_mlp_policy,
         category="embodied",
         force=True,
     )

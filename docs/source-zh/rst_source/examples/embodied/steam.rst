@@ -103,7 +103,7 @@ STEAM 工作原理
 .. code:: bash
 
    # 中国大陆用户可使用以下镜像以获得更快下载速度：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
