@@ -1003,7 +1003,7 @@ class BehaviorEnv(gym.Env):
                 episode_info["return"] / episode_info["episode_len"]
             )
             if self.ignore_terminations:
-                episode_info["success_at_end"] = info["success"]
+                episode_info["success_at_end"] = done_dict.get("success", False)
 
             info_lists.append(episode_info)
 
