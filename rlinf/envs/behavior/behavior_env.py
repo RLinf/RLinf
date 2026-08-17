@@ -75,6 +75,9 @@ class BehaviorProcess:
         self.logger = get_logger()
         self.pipeline_stage_num = pipeline_stage_num
         self.replay_seed_offset = replay_seed_offset
+        self.group_size = int(OmegaConf.select(cfg, "group_size", default=1))
+        if self.group_size <= 0:
+            raise ValueError(f"env.group_size must be positive, got {self.group_size}.")
         omni_cfg = setup_omni_cfg(cfg)
         self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
 
@@ -214,15 +217,90 @@ class BehaviorProcess:
             )
         return tuple(zip(*results))
 
-    def reset(self, reset_indices=None, get_obs=True):
+    @staticmethod
+    def _parse_reset_payload(payload):
+        """Parse a reset payload into (reset_indices, instance_ids, is_full_reset).
+
+        Supports three formats:
+        - ``None``: reset all envs.
+        - ``list[bool]``: each element indicates whether to reset that env.
+        - ``list[dict]``: each dict may contain ``reset`` (bool), ``full_reset``
+          (bool), and ``instance_id`` (int) keys.
+
+        Args:
+            payload: Reset specification in one of the supported formats.
+
+        Returns:
+            Tuple of (reset_indices, instance_ids, is_full_reset).
+            ``instance_ids`` is None when not provided.
+
+        Raises:
+            ValueError: If instance_ids are provided for some but not all
+                reset envs.
+        """
+        if payload is None:
+            return None, None, False
+
+        if payload and all(isinstance(item, dict) for item in payload):
+            reset_indices = [
+                idx
+                for idx, item in enumerate(payload)
+                if bool(item.get("reset", True))
+            ]
+            is_full_reset = all(
+                bool(item.get("full_reset", False)) for item in payload
+            )
+            instance_ids = [
+                int(payload[idx]["instance_id"])
+                for idx in reset_indices
+                if payload[idx].get("instance_id") is not None
+            ]
+            if instance_ids and len(instance_ids) != len(reset_indices):
+                raise ValueError(
+                    "Reset payload must provide instance_id for every reset env "
+                    "or for none of them."
+                )
+            return reset_indices, instance_ids or None, is_full_reset
+
+        # Legacy format: list[bool] where True means reset.
+        reset_indices = [idx for idx, flag in enumerate(payload) if bool(flag)]
+        return reset_indices, None, False
+
+    def reset(self, reset_indices_or_payload=None, get_obs=True):
+        # Detect payload format (dict list → replay reset with per-env
+        # instance IDs).
+        if reset_indices_or_payload is None:
+            # Full reset of all envs — use the fast vectorized path.
+            self.instance_loader.prepare_reset(self.env)
+            result = self._call_reset(get_obs=get_obs)
+            if not get_obs:
+                return None, None
+            raw_obs, infos = result
+            return list(raw_obs), list(infos)
+
+        if reset_indices_or_payload and isinstance(
+            reset_indices_or_payload[0], dict
+        ):
+            # Payload-based reset with optional per-env instance IDs (replay).
+            reset_indices, instance_ids, _is_full_reset = self._parse_reset_payload(
+                reset_indices_or_payload
+            )
+            if not reset_indices:
+                return [], []
+            raw_obs, infos = self._reset_env_indices(
+                reset_indices, instance_ids=instance_ids
+            )
+            return raw_obs, infos
+
+        # Legacy format: list[int] — partial reset of selected env indices
+        # (used by env_reset_slice which passes local_rows).
+        reset_indices = reset_indices_or_payload
         self.instance_loader.prepare_reset(self.env)
         result = self._call_reset(
-            reset_indices=reset_indices,
-            get_obs=get_obs,
+            reset_indices=reset_indices, get_obs=get_obs
         )
         if not get_obs:
             return None, None
-
         raw_obs, infos = result
         return list(raw_obs), list(infos)
 
@@ -317,9 +395,7 @@ class BehaviorProcess:
 
         child_envs = getattr(self.env, "envs", [])
         selected_env = SimpleNamespace(envs=[child_envs[i] for i in reset_indices])
-        reset_group_size = 1 if instance_ids is not None else getattr(
-            self, "group_size", None
-        )
+        reset_group_size = 1 if instance_ids is not None else self.group_size
         self.instance_loader.prepare_reset(
             selected_env, instance_ids=instance_ids, group_size=reset_group_size
         )
