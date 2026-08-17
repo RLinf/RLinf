@@ -500,19 +500,26 @@ class ActivityInstanceLoader:
         activity_instance_id: int,
         instance_resample_mode: str,
         activity_instances: tuple[ActivityInstanceFile, ...],
+        seed: int | None = None,
     ):
         self.omni_cfg = omni_cfg
         self.activity_name = activity_name
         self.activity_instance_id = activity_instance_id
         self.instance_resample_mode = instance_resample_mode
         self.activity_instances = activity_instances
+        self._rng = random.Random(seed)
 
     @classmethod
-    def from_omni_cfg(cls, omni_cfg: DictConfig) -> "ActivityInstanceLoader":
+    def from_omni_cfg(
+        cls, omni_cfg: DictConfig, seed_offset: int = 0
+    ) -> "ActivityInstanceLoader":
         """Build an instance loader from OmniGibson task config.
 
         Args:
             omni_cfg: Full OmniGibson config used to construct the BEHAVIOR env.
+            seed_offset: Added to the config seed to derive the sampling RNG seed,
+                so each env shard can sample activity instances deterministically
+                and independently.
 
         Returns:
             A configured activity instance loader.
@@ -520,11 +527,23 @@ class ActivityInstanceLoader:
         Raises:
             ValueError: If the instance-resample configuration is invalid.
         """
+        seed = int(OmegaConf.select(omni_cfg, "seed", default=0) or 0) + int(
+            seed_offset
+        )
         activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
         activity_definition_id = OmegaConf.select(
             omni_cfg, "task.activity_definition_id"
         )
         activity_instance_id = OmegaConf.select(omni_cfg, "task.activity_instance_id")
+        parsed_instance_ids = parse_activity_instance_ids(activity_instance_id)
+        if parsed_instance_ids is None:
+            requested_instance_ids = None
+        elif len(parsed_instance_ids) == 1:
+            requested_instance_ids = None
+            activity_instance_id = parsed_instance_ids[0]
+        else:
+            requested_instance_ids = parsed_instance_ids
+            activity_instance_id = requested_instance_ids[0]
         activity_instance_dir = OmegaConf.select(omni_cfg, "task.activity_instance_dir")
         instance_resample_mode = OmegaConf.select(
             omni_cfg, "task.instance_resample_mode"
@@ -576,12 +595,19 @@ class ActivityInstanceLoader:
                     "task.instance_resample_mode='online' requires "
                     "task.use_presampled_robot_pose to be False."
                 )
+            OmegaConf.update(
+                omni_cfg,
+                "task.activity_instance_id",
+                activity_instance_id,
+                merge=False,
+            )
             return cls(
                 omni_cfg=omni_cfg,
                 activity_name=activity_name,
                 activity_instance_id=activity_instance_id,
                 instance_resample_mode=instance_resample_mode,
                 activity_instances=(),
+                seed=seed,
             )
 
         if activity_instance_dir is None:
@@ -590,12 +616,19 @@ class ActivityInstanceLoader:
                     "task.activity_instance_dir must be set when "
                     "task.instance_resample_mode is 'offline'."
                 )
+            OmegaConf.update(
+                omni_cfg,
+                "task.activity_instance_id",
+                activity_instance_id,
+                merge=False,
+            )
             return cls(
                 omni_cfg=omni_cfg,
                 activity_name=activity_name,
                 activity_instance_id=activity_instance_id,
                 instance_resample_mode=instance_resample_mode,
                 activity_instances=(),
+                seed=seed,
             )
 
         if online_object_sampling:
@@ -618,12 +651,36 @@ class ActivityInstanceLoader:
             )
         )
         if instance_resample_mode == "disabled":
+            if requested_instance_ids is not None:
+                raise ValueError(
+                    "task.instance_resample_mode='disabled' requires exactly one "
+                    "task.activity_instance_id."
+                )
             instance_ids = {entry.instance_id for entry in activity_instances}
             if activity_instance_id not in instance_ids:
                 raise ValueError(
                     f"task.activity_instance_id={activity_instance_id} is not present in "
                     f"task.activity_instance_dir={activity_instance_dir}."
                 )
+        elif requested_instance_ids is not None:
+            by_id = {
+                entry.instance_id: entry for entry in activity_instances
+            }
+            activity_instances = tuple(by_id[i] for i in requested_instance_ids)
+
+        # Challenge tro_state instances are applied after construction; bootstrap
+        # OmniGibson from the complete seed template (instance 0) first. Otherwise
+        # OmniGibson derives `scene_instance` from `activity_instance_id` and looks
+        # for `..._0_<id>_template.json`, which only exists for instance 0.
+        bootstrap_activity_instance_id = (
+            0 if instance_file_format == "tro_state" else activity_instance_id
+        )
+        OmegaConf.update(
+            omni_cfg,
+            "task.activity_instance_id",
+            bootstrap_activity_instance_id,
+            merge=False,
+        )
 
         return cls(
             omni_cfg=omni_cfg,
@@ -631,6 +688,7 @@ class ActivityInstanceLoader:
             activity_instance_id=activity_instance_id,
             instance_resample_mode=instance_resample_mode,
             activity_instances=activity_instances,
+            seed=seed,
         )
 
     def prepare_reset(
@@ -705,8 +763,8 @@ class ActivityInstanceLoader:
             return []
         instances = list(self.activity_instances)
         if count <= len(instances):
-            return random.sample(instances, k=count)
-        return [random.choice(instances) for _ in range(count)]
+            return self._rng.sample(instances, k=count)
+        return [self._rng.choice(instances) for _ in range(count)]
 
     def _get_activity_instance(self, instance_id: int) -> ActivityInstanceFile:
         for instance_file in self.activity_instances:
