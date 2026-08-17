@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
-    from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
