@@ -306,19 +306,18 @@ rollout:
     wrist_image_key: wrist_image
     expert_takeover:
       enable: True
-      # Collect actor-only critical-phase traces before enabling intervention.
-      mode: shadow
-      warmup_chunks: 4
+      # Balanced profile calibrated from actor-only shadow traces.
+      mode: active
+      warmup_chunks: 8
       patience_chunks: 3
-      enter_threshold: 0.0
+      enter_threshold: -0.236502
       latch_until_done: True
     model:
       model_type: "steam_value_model"
       model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/steam_sft/rlt_steam_value_model_sft-20260813-10:01:45/rlt_steam_value_model_sft/checkpoints/global_step_2000/actor"
       precision: bf16
 
-  # The simulation expert remains configured for the later calibrated active run.
-  # It is not invoked while expert_takeover.mode is shadow.
+  # The simulation expert is invoked by the learned actor-to-expert gate.
   expert_model:
     model_type: "openpi_rlinf"
     model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
