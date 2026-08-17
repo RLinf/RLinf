@@ -79,7 +79,9 @@ class BehaviorProcess:
         if self.group_size <= 0:
             raise ValueError(f"env.group_size must be positive, got {self.group_size}.")
         omni_cfg = setup_omni_cfg(cfg)
-        self.instance_loader = ActivityInstanceLoader.from_omni_cfg(omni_cfg)
+        self.instance_loader = ActivityInstanceLoader.from_omni_cfg(
+            omni_cfg, seed_offset=self.replay_seed_offset
+        )
 
         # create env and apply env wrapper if enabled
         omni_cfg_dict = OmegaConf.to_container(
@@ -443,6 +445,7 @@ class BehaviorProcessPool:
         worker_info,
         pipeline_stage_num: int,
         num_envs: int,
+        seed_offset: int = 0,
     ) -> tuple["BehaviorProcessPool", int]:
         """Attach to the shared pool and return ``(pool, pool_offset)``."""
         if cls._shared_pool is None:  # pool init
@@ -456,6 +459,7 @@ class BehaviorProcessPool:
                 total_envs_per_worker,
                 num_env_subprocess,
                 pipeline_stage_num,
+                seed_offset,
             )
 
         idx = cls._pipeline_next_idx
@@ -489,6 +493,7 @@ class BehaviorProcessPool:
         total_num_envs: int,
         num_env_subprocess: int,
         pipeline_stage_num: int,
+        seed_offset: int = 0,
     ):
         if total_num_envs % num_env_subprocess != 0:
             raise ValueError(
@@ -500,6 +505,7 @@ class BehaviorProcessPool:
         self.total_num_envs = total_num_envs
         self.num_env_subprocess = num_env_subprocess
         self.num_env_shard = total_num_envs // num_env_subprocess
+        self.seed_offset = seed_offset
         self.skip_intermediate_obs_in_chunk = bool(
             OmegaConf.select(cfg, "skip_intermediate_obs_in_chunk", default=False)
         )
@@ -524,8 +530,9 @@ class BehaviorProcessPool:
                         self.cfg,
                         self.num_env_shard,
                         pipeline_stage_num,
+                        self.seed_offset + process_idx,
                     )
-                    for _ in range(self.num_env_subprocess)
+                    for process_idx in range(self.num_env_subprocess)
                 ]
 
                 # Wait for all instances to initialize and fetch their activity name
@@ -765,6 +772,7 @@ class BehaviorEnv(gym.Env):
                 self.worker_info,
                 self.pipeline_stage_num,
                 self.num_envs,
+                self.seed_offset,
             )
 
     def _load_tasks_cfg(self, activity_name: str):
