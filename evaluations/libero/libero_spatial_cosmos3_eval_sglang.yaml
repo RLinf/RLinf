@@ -86,8 +86,9 @@ rollout:
   model:
     model_type: "cosmos3"
     precision: bf16
-    model_path: /mnt/public/new_fuxu/RLinf-cosmos3-sft/logs/20260814-02:36:22-libero_sft_cosmos3/libero_sft_cosmos3/checkpoints/global_step_3500/converted/model_diffusers
-    action_stats_path: /mnt/public/new_fuxu/cosmos-framework/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+    model_path: path/to/Cosmos3-Nano
+    # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
+    action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
     action_normalization: "quantile_rot"
     embodiment_tag: "libero_sim"
     is_lora: False

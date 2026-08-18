@@ -26,10 +26,10 @@ runner:
   val_check_interval: -1
   save_interval: 500
   log_interval: 50
-  resume_dir: /mnt/public/new_fuxu/RLinf-cosmos3-sft/logs/20260814-02:36:22-libero_sft_cosmos3/libero_sft_cosmos3/checkpoints/global_step_3500
+  resume_dir: null
 
 data:
-  train_data_paths: /mnt/public/new_fuxu/data/LIBERO_LeRobot_v3
+  train_data_paths: path/to/LIBERO_LeRobot_v3
   num_workers: 4
   prefetch_factor: 4
   val_ratio: 0.01
@@ -51,8 +51,8 @@ actor:
     load_to_device: false
     # Cosmos3 power-EMA (rate=0.1); RLinf updates net_ema each optimizer step.
     ema_enabled: true
-    model_path: /mnt/public/new_fuxu/model/Cosmos3-Nano-DCP-py311
-    wan_vae_path: /mnt/public/hf_models/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
+    model_path: path/to/Cosmos3-Nano-DCP
+    wan_vae_path: path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
     max_samples_per_batch: 32
 
   optim:
