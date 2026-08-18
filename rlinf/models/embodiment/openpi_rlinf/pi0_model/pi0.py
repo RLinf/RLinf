@@ -180,8 +180,19 @@ class Pi0(model.BaseModel):
         input_mask = []
         ar_mask = []
 
-        # Embed images through SigLIP
-        for name in obs.images:
+        missing_images = [name for name in model.IMAGE_KEYS if name not in obs.images]
+        missing_masks = [
+            name for name in model.IMAGE_KEYS if name not in obs.image_masks
+        ]
+        if missing_images or missing_masks:
+            raise ValueError(
+                "OpenPI observation is missing canonical image inputs: "
+                f"images={missing_images}, masks={missing_masks}."
+            )
+
+        # Image position is part of the Pi0 prefix contract. Never inherit the
+        # ordering of a trajectory or transport dictionary here.
+        for name in model.IMAGE_KEYS:
             image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
             tokens.append(image_tokens)
 

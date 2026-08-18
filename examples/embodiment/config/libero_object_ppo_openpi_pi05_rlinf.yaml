@@ -1,0 +1,28 @@
+defaults:
+  - libero_object_ppo_openpi_pi05
+  - override model@actor.model: pi0_5_rlinf_libero
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "libero_object_ppo_openpi_pi05_rlinf"
+
+rollout:
+  model:
+    precision: bf16
+
+actor:
+  model:
+    model_type: "openpi_rlinf"
+    num_action_chunks: 5
+    num_steps: 5
+    add_value_head: True
+    openpi:
+      noise_level: 0.3
+      value_after_vlm: True
+  fsdp_config:
+    use_orig_params: True
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32

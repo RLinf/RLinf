@@ -1,0 +1,44 @@
+model_type: "openpi_rlinf"
+
+model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT"
+
+# Keep FP32 optimizer master weights on the actor. LIBERO PPO entry configs use
+# BF16 FSDP forward compute and a BF16 rollout copy of these weights.
+precision: fp32
+
+pi05: True
+is_lora: False
+lora_rank: 32
+
+# LIBERO executes either 5 or 10 actions per environment step, while the
+# pretrained Pi0.5 policy always predicts a 10-action model-space horizon.
+num_action_chunks: 10
+action_dim: 7
+use_proprio: True
+num_steps: 5
+add_value_head: False
+
+openpi:
+  task: rl
+  config_name: "pi05_libero"
+  num_images_in_input: 2
+  model_action_horizon: 10
+  model_action_dim: 32
+  action_chunk: ${..num_action_chunks}
+  action_env_dim: ${..action_dim}
+  num_steps: ${..num_steps}
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 200
+  discrete_state_input: False
+
+  noise_method: "flow_sde"
+  noise_level: 0.5
+  joint_logprob: False
+  ignore_last: False
+  train_expert_only: True
+
+  value_after_vlm: False
+  value_vlm_mode: "mean_token"
+  value_mask_mode: "legacy_openpi"
+  detach_critic_input: False

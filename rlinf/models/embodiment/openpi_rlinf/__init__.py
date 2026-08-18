@@ -70,10 +70,29 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             f"{[str(model_path / rel) for rel in FULL_WEIGHTS_CANDIDATES]}."
         )
 
+    action_chunk = int(cfg.num_action_chunks)
+    action_env_dim = int(cfg.action_dim)
+    model_action_horizon = int(
+        OmegaConf.select(model_cfg, "model_action_horizon", default=action_chunk)
+    )
+    model_action_dim = int(model_cfg.model_action_dim)
+    if action_chunk > model_action_horizon:
+        raise ValueError(
+            "openpi_rlinf action chunk cannot exceed the model action horizon: "
+            f"num_action_chunks={action_chunk}, "
+            f"openpi.model_action_horizon={model_action_horizon}."
+        )
+    if action_env_dim > model_action_dim:
+        raise ValueError(
+            "openpi_rlinf environment action dim cannot exceed the model action dim: "
+            f"action_dim={action_env_dim}, "
+            f"openpi.model_action_dim={model_action_dim}."
+        )
+
     pi0_kwargs = {
         "pi05": pi05,
-        "action_horizon": int(cfg.num_action_chunks),
-        "action_dim": int(model_cfg.model_action_dim),
+        "action_horizon": model_action_horizon,
+        "action_dim": model_action_dim,
         "paligemma_variant": str(model_cfg.paligemma_variant),
         "action_expert_variant": str(model_cfg.action_expert_variant),
         "dtype": "bfloat16",
@@ -97,9 +116,6 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         model = model.to(target_dtype)
 
     num_steps = int(cfg.num_steps)
-    action_chunk = int(cfg.num_action_chunks)
-    action_env_dim = int(cfg.action_dim)
-
     task = OmegaConf.select(model_cfg, "task", default=None)
     if task is None:
         raise ValueError(

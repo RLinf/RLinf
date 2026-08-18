@@ -531,9 +531,10 @@ def convert_trajectories_to_batch(
                 batch["next_obs"][key] = torch.cat(tensors, dim=1)
 
     if trajectories[0].forward_inputs:
-        all_keys: set[str] = set()
+        all_keys: dict[str, None] = {}
         for traj in trajectories:
-            all_keys.update(traj.forward_inputs.keys())
+            for key in traj.forward_inputs:
+                all_keys.setdefault(key, None)
         batch["forward_inputs"] = {}
         for key in all_keys:
             tensors = [

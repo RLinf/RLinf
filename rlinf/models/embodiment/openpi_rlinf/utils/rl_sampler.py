@@ -19,14 +19,13 @@ implementation in :mod:`rlinf.models.embodiment.openpi.openpi_action_model`, but
 as plain functions that operate on the vendored ``Pi0`` model's
 ``build_prefix_cache`` / ``run_suffix`` / ``velocity_from_suffix`` primitives.
 
-Scope (only what BEHAVIOR pi05 PPO needs):
+Scope (the Pi0.5 PPO path shared by BEHAVIOR and LIBERO):
 - ``noise_method``: ``flow_ode`` (deterministic Euler step) and ``flow_sde``
   (Euler + per-step Gaussian noise). ``flow_cps`` / ``flow_noise`` are
   rejected so the failure is loud.
 - ``joint_logprob = False`` only — a single random denoise step is the
   stochastic one; every other step is a deterministic flow_ode step.
-- ``value_after_vlm = True`` with ``mean_token`` pooling (the only combination
-  the BEHAVIOR pi05 config uses).
+- ``value_after_vlm = True`` with ``mean_token`` pooling.
 """
 
 from __future__ import annotations
@@ -124,21 +123,65 @@ def value_from_prefix(
     prefix_mask: torch.Tensor,
     *,
     mode: str = "mean_token",
+    mask_mode: str = "valid",
+    num_images_in_input: int | None = None,
+    max_token_len: int | None = None,
 ) -> torch.Tensor:
     """Pool ``prefix_out`` with ``prefix_mask`` and run ``value_head`` → ``[B]``.
 
-    ``mean_token`` averages over all valid prefix tokens (images + language),
-    which is the BEHAVIOR pi05 configuration. Other pooling modes from the
-    original code (``first_token``/``last_token``) are not wired through
-    here — they raise ``NotImplementedError`` so a config typo fails loudly
-    rather than silently producing a wrong value.
+    ``mask_mode="valid"`` averages over the observation's actual prefix mask.
+    ``mask_mode="legacy_openpi"`` reproduces the legacy PPO wrapper, which
+    selects the first ``num_images_in_input`` image blocks and the complete
+    fixed-width language block. Other value pooling modes raise loudly rather
+    than silently producing a different critic input.
     """
     if mode != "mean_token":
         raise NotImplementedError(
             f"value_vlm_mode={mode!r} is not implemented in the PyTorch OpenPI "
             "RL port. Supported: 'mean_token'."
         )
-    mask_f = prefix_mask.to(prefix_out.dtype).unsqueeze(-1)
+    if mask_mode == "valid":
+        value_mask = prefix_mask
+    elif mask_mode == "legacy_openpi":
+        if num_images_in_input is None or max_token_len is None:
+            raise ValueError(
+                "legacy_openpi value pooling requires num_images_in_input and "
+                "max_token_len."
+            )
+        num_image_slots = 3
+        image_prefix_len = prefix_out.shape[1] - max_token_len
+        if image_prefix_len <= 0 or image_prefix_len % num_image_slots != 0:
+            raise ValueError(
+                "Cannot derive OpenPI image token blocks from prefix shape: "
+                f"prefix_len={prefix_out.shape[1]}, max_token_len={max_token_len}."
+            )
+        if not 0 <= num_images_in_input <= num_image_slots:
+            raise ValueError(
+                "num_images_in_input must be between 0 and 3 for OpenPI value "
+                f"pooling, got {num_images_in_input}."
+            )
+        image_token_len = image_prefix_len // num_image_slots
+        selected_image_len = num_images_in_input * image_token_len
+        padded_image_len = image_prefix_len - selected_image_len
+        value_mask = torch.cat(
+            [
+                torch.ones(
+                    selected_image_len, dtype=torch.bool, device=prefix_out.device
+                ),
+                torch.zeros(
+                    padded_image_len, dtype=torch.bool, device=prefix_out.device
+                ),
+                torch.ones(max_token_len, dtype=torch.bool, device=prefix_out.device),
+            ]
+        ).unsqueeze(0)
+        value_mask = value_mask.expand(prefix_out.shape[0], -1)
+    else:
+        raise ValueError(
+            f"Unknown OpenPI value mask mode {mask_mode!r}; supported modes are "
+            "'valid' and 'legacy_openpi'."
+        )
+
+    mask_f = value_mask.to(prefix_out.dtype).unsqueeze(-1)
     summed = (prefix_out * mask_f).sum(dim=1)
     denom = mask_f.sum(dim=1).clamp(min=1.0)
     # Keep the pooled features in the prefix dtype so the value head's bf16/fp32

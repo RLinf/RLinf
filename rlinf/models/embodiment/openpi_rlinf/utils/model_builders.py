@@ -173,6 +173,12 @@ def _build_rl_model(
         value_vlm_mode=str(
             OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
         ),
+        value_mask_mode=str(
+            OmegaConf.select(model_cfg, "value_mask_mode", default="valid")
+        ),
+        num_images_in_input=int(
+            OmegaConf.select(model_cfg, "num_images_in_input", default=3)
+        ),
         detach_critic_input=bool(
             OmegaConf.select(model_cfg, "detach_critic_input", default=False)
         ),

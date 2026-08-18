@@ -42,6 +42,8 @@ class OpenPiPytorchRLConfig:
     ignore_last: bool = False
     value_after_vlm: bool = False
     value_vlm_mode: str = "mean_token"
+    value_mask_mode: str = "valid"
+    num_images_in_input: int = 3
     detach_critic_input: bool = False
     train_expert_only: bool = False
     config_name: str = ""
@@ -181,10 +183,16 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
 
         prefix_out, prefix_mask, kv_cache = self.model.build_prefix_cache(observation)
 
-        # VLM-pooled value (BEHAVIOR pi05): one value per sample, reused as the
+        # VLM-pooled Pi0.5 value: one value per sample, reused as the
         # rollout ``prev_values`` independent of the chosen denoise index.
         vlm_value = rl_sampler.value_from_prefix(
-            self.value_head, prefix_out, prefix_mask, mode=rl_cfg.value_vlm_mode
+            self.value_head,
+            prefix_out,
+            prefix_mask,
+            mode=rl_cfg.value_vlm_mode,
+            mask_mode=rl_cfg.value_mask_mode,
+            num_images_in_input=rl_cfg.num_images_in_input,
+            max_token_len=self.model.max_token_len,
         )
 
         # Single stochastic denoise step picked uniformly; the remaining steps
@@ -257,9 +265,11 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         # torch.split over forward_inputs values, so nested image / mask dicts
         # are unsupported. Encode them with prefixed scalar keys here and decode
         # symmetrically in default_forward.
-        for k, v in observation.images.items():
+        for k in pi0_model_module.IMAGE_KEYS:
+            v = observation.images[k]
             forward_inputs[f"obs_image__{k}"] = v.contiguous()
-        for k, v in observation.image_masks.items():
+        for k in pi0_model_module.IMAGE_KEYS:
+            v = observation.image_masks[k]
             forward_inputs[f"obs_image_mask__{k}"] = v.contiguous()
 
         return actions, {
@@ -295,13 +305,28 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         B = chains.shape[0]
         device = chains.device
 
-        images: dict[str, torch.Tensor] = {}
-        image_masks: dict[str, torch.Tensor] = {}
+        cached_images: dict[str, torch.Tensor] = {}
+        cached_image_masks: dict[str, torch.Tensor] = {}
         for key, value in forward_inputs.items():
             if key.startswith("obs_image__"):
-                images[key[len("obs_image__") :]] = value
+                cached_images[key[len("obs_image__") :]] = value
             elif key.startswith("obs_image_mask__"):
-                image_masks[key[len("obs_image_mask__") :]] = value
+                cached_image_masks[key[len("obs_image_mask__") :]] = value
+        missing_images = [
+            key for key in pi0_model_module.IMAGE_KEYS if key not in cached_images
+        ]
+        missing_masks = [
+            key for key in pi0_model_module.IMAGE_KEYS if key not in cached_image_masks
+        ]
+        if missing_images or missing_masks:
+            raise ValueError(
+                "openpi_rlinf PPO inputs are missing canonical images: "
+                f"images={missing_images}, masks={missing_masks}."
+            )
+        images = {key: cached_images[key] for key in pi0_model_module.IMAGE_KEYS}
+        image_masks = {
+            key: cached_image_masks[key] for key in pi0_model_module.IMAGE_KEYS
+        }
         observation = Observation(
             images=images,
             image_masks=image_masks,
@@ -354,7 +379,13 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
 
         if compute_values and rl_cfg.add_value_head and rl_cfg.value_after_vlm:
             values = rl_sampler.value_from_prefix(
-                self.value_head, prefix_out, prefix_mask, mode=rl_cfg.value_vlm_mode
+                self.value_head,
+                prefix_out,
+                prefix_mask,
+                mode=rl_cfg.value_vlm_mode,
+                mask_mode=rl_cfg.value_mask_mode,
+                num_images_in_input=rl_cfg.num_images_in_input,
+                max_token_len=self.model.max_token_len,
             )
         else:
             values = torch.zeros(B, device=device, dtype=torch.float32)
