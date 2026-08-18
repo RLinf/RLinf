@@ -30,6 +30,7 @@ runner:
 
 data:
   train_data_paths: path/to/LIBERO_LeRobot_v3
+  data_type: "libero_all"
   num_workers: 4
   prefetch_factor: 4
   val_ratio: 0.01

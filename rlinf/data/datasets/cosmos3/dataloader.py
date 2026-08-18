@@ -38,7 +38,7 @@ _VALID_DATA_TYPES = frozenset(_DATA_TYPE_TO_EXPERIMENT.keys())
 
 
 def _detect_data_type(data_paths: str) -> str:
-    """Auto-detect cosmos3_data_type from the dataset directory structure."""
+    """Auto-detect data_type from the dataset directory structure."""
     import os as _os
     _LIBERO_SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
     if all(_os.path.isdir(_os.path.join(data_paths, s)) for s in _LIBERO_SUITES):
@@ -69,17 +69,17 @@ def build_cosmos3_sft_dataloader(
     model_cfg = cfg.actor.model
     data_cfg = cfg.data
 
-    data_type = data_cfg.get("cosmos3_data_type", None)
+    data_type = data_cfg.get("data_type", None)
     if data_type is None:
         # Auto-detect the data type from the dataset directory structure.
         data_type = _detect_data_type(str(data_paths))
         logger.info(
-            f"Auto-detected cosmos3_data_type='{data_type}' from "
+            f"Auto-detected data_type='{data_type}' from "
             f"dataset at {data_paths}"
         )
 
     assert data_type in _VALID_DATA_TYPES, (
-        f"Invalid cosmos3_data_type='{data_type}'. "
+        f"Invalid data_type='{data_type}'. "
         f"Valid: {sorted(_VALID_DATA_TYPES)}"
     )
 
@@ -113,7 +113,7 @@ def build_cosmos3_sft_dataloader(
 
     logger.info(
         "Cosmos3 SFT dataloader (cosmos PackingDataLoader): "
-        "cosmos3_data_type='%s' -> experiment='%s' dataset=%s "
+        "data_type='%s' -> experiment='%s' dataset=%s "
         "len=%s max_samples_per_batch=%s world=%d rank=%d",
         data_type,
         experiment_name,

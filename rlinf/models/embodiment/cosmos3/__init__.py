@@ -142,13 +142,13 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from rlinf.data.datasets.cosmos3.dataloader import _DATA_TYPE_TO_EXPERIMENT
 
-    # cosmos3_data_type is defaulted + validated in validate_cosmos3_sft_model_cfg.
+    # data_type is defaulted + validated in validate_cosmos3_sft_model_cfg.
     # All libero variants share the same model config (only dataloaders differ),
     # so this just maps it to a valid experiment to instantiate the model.
-    experiment_name = _DATA_TYPE_TO_EXPERIMENT[cfg.get("cosmos3_data_type")]
+    experiment_name = _DATA_TYPE_TO_EXPERIMENT[cfg.get("data_type")]
     logger.info(
-        "Cosmos3 get_model: cosmos3_data_type='%s' -> experiment='%s'",
-        cfg.get("cosmos3_data_type"), experiment_name,
+        "Cosmos3 get_model: data_type='%s' -> experiment='%s'",
+        cfg.get("data_type"), experiment_name,
     )
     model_path = cfg.get("model_path")
 
