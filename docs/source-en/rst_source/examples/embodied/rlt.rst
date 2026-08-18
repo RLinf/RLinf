@@ -727,6 +727,45 @@ joint-control SFT checkpoint. Keep the expert's OpenPI dataconfig and norm
 stats aligned with the Stage 2 dataset. The expert is only used for train
 rollout; eval rollout runs without expert takeover and measures the learned actor.
 
+STEAM Gate Routing Ownership
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The STEAM gate exposes independent switches for the two routing boundaries.
+``actor_switch.enable`` controls whether STEAM owns the base-to-actor boundary,
+while ``expert_takeover.enable`` controls STEAM expert requests after the actual
+actor phase has started. The legacy top-level ``mode`` remains supported, but
+new configurations should set ``actor_switch.mode`` explicitly.
+
+Use ``maniskill_rlt_stage2_td3_mlp_steam.yaml`` for STEAM on both boundaries.
+It sets ``routing_source: rollout`` and enables both learned switches. Use
+``maniskill_rlt_stage2_td3_mlp_geometry_steam_expert.yaml`` for geometry on the
+base-to-actor boundary and STEAM on the actor-to-expert boundary. The hybrid
+configuration is equivalent to:
+
+.. code:: yaml
+
+   env:
+     train:
+       rlt_policy_switch:
+         routing_source: environment
+     eval:
+       rlt_policy_switch:
+         routing_source: environment
+
+   rollout:
+     rlt_critical_phase_gate:
+       enable: True
+       actor_switch:
+         enable: False
+         mode: active
+       expert_takeover:
+         enable: True
+         mode: active
+
+STEAM still computes its critical-phase prediction when ``actor_switch.enable``
+is false. That prediction is logged for comparison, but geometry determines the
+actual actor phase and when the STEAM expert warmup begins.
+
 Replay Buffer Behavior
 ----------------------
 
@@ -781,12 +820,12 @@ Useful RLT signals:
   ManiSkill rollout / replay diagnostics (logged from trajectories received by the actor):
 
   - ``train/replay/record_transition_rate``: fraction of collected steps saved as RLT transitions (from ``forward_inputs.record_transition``).
-  - ``train/replay/steam_critical_active_rate`` and ``train/replay/geometry_critical_active_rate``: STEAM critical-phase coverage and the geometry-only oracle coverage. Geometry never controls rollout routing when ``routing_source: rollout``.
+  - ``train/replay/steam_critical_active_rate`` and ``train/replay/geometry_critical_active_rate``: independent STEAM and geometry critical-phase coverage. ``routing_source: rollout`` with ``actor_switch.enable: True`` uses STEAM for routing; ``routing_source: environment`` with ``actor_switch.enable: False`` uses geometry.
   - ``train/replay/actual_base_action_rate``, ``train/replay/actual_actor_action_rate``, and ``train/replay/actual_expert_action_rate``: mutually exclusive fractions of chunks actually executed by each policy. The three rates sum to one.
   - ``train/replay/steam_expert_request_rate``: fraction of chunks where the learned gate requested expert takeover; this can differ from the actual expert action rate during warmup, evaluation, or shadow mode.
   - ``env/steam_critical_entered`` and ``env/steam_critical_entry_step``: whether and when STEAM detected a critical phase, independent of schedule warmup.
   - ``env/actual_actor_entered`` and ``env/actual_actor_entry_step``: whether and when actor actions first actually controlled the environment.
-  - ``env/geometry_critical_entered`` and ``env/geometry_critical_entry_step``: geometry-only oracle entry for timing comparison; these metrics do not affect actions.
+  - ``env/geometry_critical_entered`` and ``env/geometry_critical_entry_step``: geometry entry timing. It is comparison-only in the all-STEAM configuration and controls base-to-actor routing in the hybrid configuration.
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
   RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):

@@ -31,6 +31,7 @@ RLT_GATE_INFO_KEYS = (
     "rlt_gate_score_min",
     "rlt_gate_score_mean",
     "rlt_gate_prediction_variance",
+    "rlt_gate_steam_critical_active",
     "rlt_gate_actor_active",
     "rlt_route_base_active",
     "rlt_route_actor_active",
@@ -91,9 +92,20 @@ class SteamCriticalPhaseGate:
 
     def __init__(self, model: Any, cfg: Any) -> None:
         self.model = model
-        self.mode = str(cfg.get("mode", "active"))
-        if self.mode not in ("active", "shadow"):
-            raise ValueError("critical phase gate mode must be 'active' or 'shadow'")
+        actor_cfg = cfg.get("actor_switch", None)
+        if actor_cfg is None:
+            self.actor_switch_enabled = True
+            self.actor_mode = str(cfg.get("mode", "active"))
+        else:
+            actor_cfg = actor_cfg or {}
+            self.actor_switch_enabled = bool(actor_cfg.get("enable", True))
+            self.actor_mode = str(actor_cfg.get("mode", cfg.get("mode", "active")))
+        if self.actor_mode not in ("active", "shadow"):
+            raise ValueError(
+                "critical phase gate actor_switch.mode must be 'active' or 'shadow'"
+            )
+        # Keep the legacy attribute for callers inspecting an old-style config.
+        self.mode = self.actor_mode
         self.chunk_size = int(cfg.get("chunk_size", 10))
         self.lookback_chunks = int(cfg.get("lookback_chunks", 3))
         self.patience_chunks = int(cfg.get("patience_chunks", 2))
@@ -106,7 +118,10 @@ class SteamCriticalPhaseGate:
 
         expert_cfg = cfg.get("expert_takeover", {}) or {}
         self.expert_takeover_enabled = bool(expert_cfg.get("enable", False))
-        self.expert_mode = str(expert_cfg.get("mode", "active"))
+        expert_mode = expert_cfg.get("mode", "active")
+        if actor_cfg is None and self.actor_mode == "shadow":
+            expert_mode = "shadow"
+        self.expert_mode = str(expert_mode)
         if self.expert_mode not in ("active", "shadow"):
             raise ValueError(
                 "critical phase gate expert_takeover.mode must be 'active' or 'shadow'"
@@ -157,6 +172,11 @@ class SteamCriticalPhaseGate:
         """Return the device holding the STEAM model parameters."""
         return next(self.model.parameters()).device
 
+    @property
+    def controls_actor_routing(self) -> bool:
+        """Return whether STEAM owns the base-to-actor routing decision."""
+        return self.actor_switch_enabled and self.actor_mode == "active"
+
     def eval(self) -> None:
         self.model.eval()
 
@@ -174,6 +194,7 @@ class SteamCriticalPhaseGate:
         bool_keys = {
             "rlt_gate_entered",
             "rlt_gate_score_ready",
+            "rlt_gate_steam_critical_active",
             "rlt_gate_actor_active",
             "rlt_route_base_active",
             "rlt_route_actor_active",
@@ -324,6 +345,23 @@ class SteamCriticalPhaseGate:
         return mask.reshape(batch_size, -1).any(dim=1)
 
     @staticmethod
+    def _normalize_actor_switch(
+        actor_switch: torch.Tensor | None,
+        *,
+        batch_size: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if actor_switch is None:
+            return torch.zeros(batch_size, device=device, dtype=torch.bool)
+        switch = torch.as_tensor(actor_switch, device=device, dtype=torch.bool)
+        if switch.numel() % batch_size != 0:
+            raise ValueError(
+                "external actor switch size does not match STEAM gate batch: "
+                f"{switch.numel()} values for batch size {batch_size}"
+            )
+        return switch.reshape(batch_size, -1)[:, -1]
+
+    @staticmethod
     def _to_device(value: Any, device: torch.device) -> Any:
         if torch.is_tensor(value):
             return value.to(device=device, non_blocking=True)
@@ -388,6 +426,7 @@ class SteamCriticalPhaseGate:
         mode: Literal["train", "eval"],
         stage_id: int,
         reset_mask: torch.Tensor | None = None,
+        external_actor_switch: torch.Tensor | None = None,
         actor_routing_enabled: bool = True,
         expert_routing_enabled: bool = True,
     ) -> GateDecision:
@@ -482,9 +521,16 @@ class SteamCriticalPhaseGate:
         else:
             state.latched = (state.latched | enter_now) & low_progress
 
-        actor_active = (
-            state.latched & bool(actor_routing_enabled) & (self.mode == "active")
-        )
+        steam_critical_active = state.latched
+        if self.controls_actor_routing:
+            actor_active = steam_critical_active
+        else:
+            actor_active = self._normalize_actor_switch(
+                external_actor_switch,
+                batch_size=batch_size,
+                device=self.device,
+            )
+        actor_active = actor_active & bool(actor_routing_enabled)
         actor_started_now = actor_active & (~state.actor_active)
         state.actor_active = actor_active
         state.critical_chunk_count = torch.where(
@@ -523,12 +569,9 @@ class SteamCriticalPhaseGate:
             state.expert_latched = (
                 state.expert_latched | expert_enter_now
             ) & expert_low_progress
-        route_flags = state.latched
-        route_expert_flags = state.expert_latched
-        if self.mode == "shadow":
-            route_flags = torch.zeros_like(route_flags)
-            route_expert_flags = torch.zeros_like(route_expert_flags)
-        elif self.expert_mode == "shadow":
+        route_flags = actor_active
+        route_expert_flags = state.expert_latched & actor_active
+        if self.expert_mode == "shadow":
             route_expert_flags = torch.zeros_like(route_expert_flags)
 
         route_expert_active = route_expert_flags & bool(expert_routing_enabled)
@@ -555,6 +598,7 @@ class SteamCriticalPhaseGate:
             "rlt_gate_score_min": score[:, None],
             "rlt_gate_score_mean": score_mean[:, None],
             "rlt_gate_prediction_variance": prediction_variance[:, None],
+            "rlt_gate_steam_critical_active": steam_critical_active[:, None],
             "rlt_gate_actor_active": actor_active[:, None],
             "rlt_route_base_active": (~(route_actor_active | route_expert_active))[
                 :, None

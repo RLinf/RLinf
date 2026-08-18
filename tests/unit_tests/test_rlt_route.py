@@ -14,12 +14,51 @@
 
 import torch
 
+from rlinf.algorithms.rlt.rollout import predict_rlt_actions
 from rlinf.algorithms.rlt.route import RLTRouteContext, SimulatorRLTRoute
 
 
 class _ConstantExpert:
     def predict_action_batch(self, **_):
         return torch.full((3, 2, 2), 2.0), {}
+
+
+class _TwoItemExpert:
+    def predict_action_batch(self, **_):
+        return torch.full((2, 2, 2), 2.0), {}
+
+
+class _FakePolicy:
+    def predict_action_batch(self, env_obs, **_):
+        return torch.ones((2, 2, 2)), {"forward_inputs": dict(env_obs)}
+
+
+class _FakeFeatureModel:
+    def extract_rlt_obs(self, _):
+        return {
+            "z_rl": torch.zeros((2, 1)),
+            "proprio": torch.zeros((2, 1)),
+            "ref_chunk": torch.zeros((2, 4)),
+        }
+
+
+class _HybridGate:
+    controls_actor_routing = False
+
+    def step(self, _env_obs, *, external_actor_switch, **_):
+        assert torch.equal(
+            external_actor_switch,
+            torch.tensor([[False], [True]]),
+        )
+        return type(
+            "Decision",
+            (),
+            {
+                "actor_switch": torch.tensor([[True], [False]]),
+                "expert_requested": torch.tensor([[False], [True]]),
+                "diagnostics": {},
+            },
+        )()
 
 
 def test_simulator_route_records_mutually_exclusive_action_sources():
@@ -60,4 +99,28 @@ def test_simulator_route_records_mutually_exclusive_action_sources():
     assert torch.equal(
         route_flags,
         torch.eye(3, dtype=torch.bool),
+    )
+
+
+def test_rollout_preserves_geometry_actor_switch_with_steam_expert_gate():
+    geometry_actor = torch.tensor([[False], [True]])
+
+    actions, result = predict_rlt_actions(
+        policy_model=_FakePolicy(),
+        feature_model=_FakeFeatureModel(),
+        rlt_route=SimulatorRLTRoute(use_schedule=False, warmup_updates=0),
+        env_obs={},
+        final_obs=None,
+        mode="train",
+        rlt_switch_flags=geometry_actor,
+        expert_model=_TwoItemExpert(),
+        critical_phase_gate=_HybridGate(),
+    )
+
+    assert torch.equal(actions[0], torch.zeros((2, 2)))
+    assert torch.equal(actions[1], torch.full((2, 2), 2.0))
+    assert torch.equal(result["forward_inputs"]["record_transition"], geometry_actor)
+    assert torch.equal(
+        result["forward_inputs"]["intervention_requested"],
+        torch.tensor([[False], [True]]),
     )

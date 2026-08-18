@@ -105,7 +105,7 @@ def collect_trajectory_replay_metrics(
         (
             "replay/steam_critical_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_actor_active"
+                trajectory, "rlt_gate_steam_critical_active"
             ),
             "steam_critical_active_sum",
             "steam_critical_active_count",

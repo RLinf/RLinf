@@ -33,6 +33,7 @@ RLT_GATE_TRACE_KEYS = (
     "rlt_gate_score_min",
     "rlt_gate_score_mean",
     "rlt_gate_prediction_variance",
+    "rlt_gate_steam_critical_active",
     "rlt_gate_actor_active",
     "actual_base_action",
     "actual_actor_action",

@@ -111,6 +111,7 @@ class ManiskillRLTEnv(ManiskillEnv):
     }
     _RLT_GATE_INFO_KEYS = (
         *_RLT_GATE_METRIC_MAP.values(),
+        "rlt_gate_steam_critical_active",
         "rlt_gate_actor_active",
         "rlt_route_base_active",
         "rlt_route_actor_active",
@@ -120,6 +121,7 @@ class ManiskillRLTEnv(ManiskillEnv):
     _RLT_GATE_BOOL_INFO_KEYS = frozenset(
         {
             "rlt_gate_entered",
+            "rlt_gate_steam_critical_active",
             "rlt_gate_actor_active",
             "rlt_gate_expert_entered",
             "rlt_route_base_active",

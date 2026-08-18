@@ -70,6 +70,7 @@ def predict_rlt_actions(
                 mode=mode,
                 stage_id=stage_id,
                 reset_mask=reset_mask,
+                external_actor_switch=rlt_switch_flags,
                 actor_routing_enabled=rlt_route.actor_routing_enabled(version),
                 expert_routing_enabled=rlt_route.expert_routing_enabled(
                     version,
@@ -77,7 +78,8 @@ def predict_rlt_actions(
                     expert_model=expert_model,
                 ),
             )
-            route_switch_flags = gate_decision.actor_switch
+            if bool(getattr(critical_phase_gate, "controls_actor_routing", True)):
+                route_switch_flags = gate_decision.actor_switch
             route_intervene_requested = gate_decision.expert_requested
             result["rollout_infos"] = gate_decision.diagnostics
             result["forward_inputs"].update(

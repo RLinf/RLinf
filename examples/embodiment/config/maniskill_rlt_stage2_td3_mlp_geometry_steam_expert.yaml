@@ -24,7 +24,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "maniskill_rlt_stage2_td3_mlp_steam"
+    experiment_name: "maniskill_rlt_stage2_td3_mlp_geometry_steam_expert"
     logger_backends: ["wandb"]
 
   max_epochs: 5000
@@ -119,7 +119,8 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
-      routing_source: rollout
+      # Geometry owns base-to-actor routing; STEAM only requests the expert.
+      routing_source: environment
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -130,7 +131,7 @@ env:
         near_hole_yz_margin: 1.5
         fallback_hole_radius: 0.03
       expert_takeover:
-        # Geometry is an oracle for calibration and never controls routing.
+        # The separate geometry expert condition remains metrics-only.
         enable: False
         oracle_metrics:
           enable: True
@@ -175,7 +176,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
-      routing_source: rollout
+      routing_source: environment
       task_mode: full_task
       trigger_mode: auto
       latch_until_done: True
@@ -292,12 +293,12 @@ rollout:
       rlt_image_only: False
       rlt_use_mask: True
 
-  # Independent STEAM base-to-actor and actor-to-expert routing. The critic
-  # compares raw ManiSkill image pairs at 10-step chunk boundaries.
+  # Keep STEAM critical-phase predictions as shadow metrics, while geometry
+  # controls base-to-actor and STEAM controls actor-to-expert routing.
   rlt_critical_phase_gate:
     enable: True
     actor_switch:
-      enable: True
+      enable: False
       mode: active
     chunk_size: 10
     # Short history removes fixed entry latency; the stricter score threshold

@@ -77,6 +77,9 @@ def test_collect_trajectory_replay_metrics_reports_explicit_route_sources():
         forward_inputs={
             "record_transition": torch.tensor([[[False]], [[True]], [[True]]]),
             "rlt_gate_actor_active": torch.tensor([[[False]], [[True]], [[True]]]),
+            "rlt_gate_steam_critical_active": torch.tensor(
+                [[[True]], [[False]], [[False]]]
+            ),
             "geometry_critical_active": torch.tensor([[[False]], [[False]], [[True]]]),
             "actual_base_action": torch.tensor([[[True]], [[False]], [[False]]]),
             "actual_actor_action": torch.tensor([[[False]], [[True]], [[False]]]),
@@ -90,7 +93,7 @@ def test_collect_trajectory_replay_metrics_reports_explicit_route_sources():
     assert metrics["replay/actual_base_action_rate"] == pytest.approx(1 / 3)
     assert metrics["replay/actual_actor_action_rate"] == pytest.approx(1 / 3)
     assert metrics["replay/actual_expert_action_rate"] == pytest.approx(1 / 3)
-    assert metrics["replay/steam_critical_active_rate"] == pytest.approx(2 / 3)
+    assert metrics["replay/steam_critical_active_rate"] == pytest.approx(1 / 3)
     assert metrics["replay/geometry_critical_active_rate"] == pytest.approx(1 / 3)
     assert "replay/actor_switch_rate" not in metrics
     assert "replay/intervention_rate" not in metrics
