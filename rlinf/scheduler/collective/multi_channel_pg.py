@@ -28,6 +28,32 @@ from .collective_group import (
 )
 
 
+def _empty_pinned(
+    shape: torch.Size, dtype: torch.dtype, device_type: str
+) -> torch.Tensor:
+    """Allocate contiguous page-locked host memory for an accelerator tensor.
+
+    ``pin_memory=True`` pins against the default accelerator, which some
+    out-of-tree backends (torch_musa) do not register until something has
+    pinned for them by name. They return ordinary pageable memory instead of
+    failing, silently costing the DMA the caller asked for, so pin by device
+    name when that happens.
+
+    Args:
+        shape (torch.Size): The shape of the buffer.
+        dtype (torch.dtype): The dtype of the buffer.
+        device_type (str): The accelerator device type to pin for.
+
+    Returns:
+        torch.Tensor: A contiguous pinned host buffer.
+
+    """
+    buffer = torch.empty(shape, dtype=dtype, pin_memory=True)
+    if buffer.is_pinned():
+        return buffer
+    return torch.empty(shape, dtype=dtype).pin_memory(device_type)
+
+
 class MultiChannelProcessGroup:
     """A wrapper class for multiple dist.ProcessGroup that supports multi-channel communication.
 
@@ -309,8 +335,8 @@ class MultiChannelProcessGroup:
 
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            # Transfer to CPU if accel CCL is not available
-            tensor = tensor.to("cpu")
+            # Stage in pinned host memory if accel CCL is not available
+            tensor = self._stage_to_pinned_cpu(tensor)
         group = (
             self._send_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -347,8 +373,11 @@ class MultiChannelProcessGroup:
         # NOTE: GLOO backend doesn't support dist.Work.get_future, use broadcast to simulate send/recv instead
         recv_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
-            # Create a new tensor on CPU if accel CCL is not available
-            recv_tensor = torch.empty_like(tensor, device="cpu")
+            # Receive into contiguous pinned host memory if accel CCL is not
+            # available. Not empty_like: it keeps the destination's strides,
+            # while GLOO fills the buffer's storage linearly, which scrambles
+            # a dense but non-contiguous destination.
+            recv_tensor = _empty_pinned(tensor.shape, tensor.dtype, tensor.device.type)
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -385,11 +414,16 @@ class MultiChannelProcessGroup:
         broadcast_tensor = tensor
         if self._no_accel_ccl and device == CollectiveGroup.ACCEL:
             if self._cur_rank == src:
-                # Transfer to CPU if accel CCL is not available
-                broadcast_tensor = broadcast_tensor.to("cpu")
+                # Stage in pinned host memory if accel CCL is not available
+                broadcast_tensor = self._stage_to_pinned_cpu(broadcast_tensor)
             else:
-                # Create a new tensor on CPU if accel CCL is not available for non-src ranks
-                broadcast_tensor = torch.empty_like(tensor, device="cpu")
+                # Receive into contiguous pinned host memory on non-src ranks.
+                # Not empty_like: it keeps the destination's strides, while
+                # GLOO fills the buffer's storage linearly, which scrambles a
+                # dense but non-contiguous destination.
+                broadcast_tensor = _empty_pinned(
+                    tensor.shape, tensor.dtype, tensor.device.type
+                )
 
         group = (
             self._collective_accel_ccl_process_groups[channel_id]
@@ -406,6 +440,32 @@ class MultiChannelProcessGroup:
             )
         else:
             self._copy_to_accel_tensor(device, tensor, broadcast_tensor)
+
+    @staticmethod
+    def _stage_to_pinned_cpu(tensor: torch.Tensor) -> torch.Tensor:
+        """Copy a tensor into freshly page-locked, contiguous host memory.
+
+        Pinning lets the device-to-host copy run as a full-bandwidth DMA
+        instead of going through the driver's staging buffer. The result is
+        always contiguous: GLOO puts the staged tensor on the wire by reading
+        its storage linearly, so a dense but non-contiguous input (e.g. a
+        transposed view) would otherwise be sent in an order the peer cannot
+        reconstruct.
+
+        Args:
+            tensor (torch.Tensor): The tensor to stage.
+
+        Returns:
+            torch.Tensor: A contiguous pinned host copy of ``tensor``, or a
+                contiguous view of ``tensor`` itself if it already lives in
+                host memory.
+
+        """
+        if tensor.device.type == "cpu":
+            return tensor.contiguous()
+        pinned = _empty_pinned(tensor.shape, tensor.dtype, tensor.device.type)
+        pinned.copy_(tensor)
+        return pinned
 
     def _copy_to_accel_tensor(
         self, device: str, accel_tensor: torch.Tensor, cpu_tensor: torch.Tensor
@@ -459,6 +519,7 @@ class MultiChannelProcessGroup:
             pg_name = dist._get_process_group_name(group)
             msg = f"Broadcast failed on ProcessGroup {pg_name} rank {self._cur_rank} with error: {error}. Args - tensor: {tensor}, src: {src}, group: {group}, async_op: {async_op}."
             self._logger.error(msg)
+            raise
 
     @staticmethod
     def _create_process_group(

@@ -176,5 +176,5 @@ that to the user; it's not an install bug.
 - **`setup_mirror` fails: `cannot overwrite multiple values ... insteadOf`** —
   prior interrupted runs left duplicate `url.<mirror>.insteadOf` entries in the
   global git config. Clear them with
-  `git config --global --unset-all url."https://ghfast.top/github.com/".insteadOf`
+  `git config --global --unset-all url."https://gh-proxy.com/github.com/".insteadOf`
   then retry. Also environmental, not an install.sh bug.

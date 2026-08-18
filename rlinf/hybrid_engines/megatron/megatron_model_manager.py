@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import gc
+import importlib.util
 import inspect
 import itertools
+import os
 from contextlib import contextmanager, nullcontext
 from functools import partial
 from typing import TYPE_CHECKING, Iterator, Optional
@@ -25,7 +27,8 @@ from megatron.core import tensor_parallel
 from omegaconf import DictConfig
 
 from rlinf.config import build_config, build_transformer_config
-from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.models.tokenization.hf import hf_tokenizer
+from rlinf.scheduler import Worker
 from rlinf.utils.flops import FLOPSCalculator, ModelConfig
 from rlinf.utils.initialize import initialize_megatron, set_megatron_args
 from rlinf.utils.logging import get_logger
@@ -93,10 +96,8 @@ if TYPE_CHECKING:
     pass
 
 # Check if FUSCO is available
-try:
-    import importlib.util
-    import os
 
+try:
     from fusco import FUSCOLibrary
 
     if importlib.util.find_spec("idxtools") is None:
@@ -298,10 +299,37 @@ class MegatronModelManager:
         mrope_section = getattr(provider, "mrope_section", [16, 24, 24])
         position_embedding_type = getattr(provider, "position_embedding_type", "mrope")
 
-        # Set the provider field with the RLinf transformer_config
-        for name in provider_field_names:
-            if hasattr(self.transformer_config, name):
-                setattr(provider, name, getattr(self.transformer_config, name))
+        # Set the provider field with the RLinf transformer_config.
+        # Only override user-controllable runtime fields
+        # e.g. multi_latent_attention=True -> False
+        _model_type = getattr(self._cfg.model, "model_type", None)
+        if _model_type in ("deepseek_v3",):
+            _mbridge_user_override_fields = {
+                "fp16",
+                "bf16",
+                "params_dtype",
+                "recompute_granularity",
+                "recompute_method",
+                "recompute_num_layers",
+                "sequence_parallel",
+                "tensor_model_parallel_size",
+                "pipeline_model_parallel_size",
+                "expert_model_parallel_size",
+                "context_parallel_size",
+                "gradient_accumulation_fusion",
+                "moe_aux_loss_coeff",
+                "moe_router_bias_update_rate",
+            }
+            for name in provider_field_names:
+                if not hasattr(self.transformer_config, name):
+                    continue
+                if name in _mbridge_user_override_fields:
+                    # Runtime/training field: user override is legitimate.
+                    setattr(provider, name, getattr(self.transformer_config, name))
+        else:
+            for name in provider_field_names:
+                if hasattr(self.transformer_config, name):
+                    setattr(provider, name, getattr(self.transformer_config, name))
 
         # Preserve HF/provider-specific multimodal rope values.
         provider.mrope_section = mrope_section
@@ -592,12 +620,23 @@ class MegatronModelManager:
             args.load = load_path
             if self.mbridge:
                 args.phase_transition_iterations = None
-            load_checkpoint(
-                self.model,
-                self.optimizer,
-                self.lr_scheduler,
-                checkpointing_context=self.checkpoint_context,
-            )
+            # [torch>=2.6 defaults torch.load to weights_only=True
+            original_torch_load = torch.load
+
+            def trusted_torch_load(*load_args, **load_kwargs):
+                load_kwargs.setdefault("weights_only", False)
+                return original_torch_load(*load_args, **load_kwargs)
+
+            torch.load = trusted_torch_load
+            try:
+                load_checkpoint(
+                    self.model,
+                    self.optimizer,
+                    self.lr_scheduler,
+                    checkpointing_context=self.checkpoint_context,
+                )
+            finally:
+                torch.load = original_torch_load
 
     def load_state_dict(self, state_dict, strict=True):
         if len(self.model) == 1:
@@ -837,7 +876,7 @@ class MegatronModelManager:
             return
 
         gc.collect()
-        torch.cuda.empty_cache()
+        Worker.torch_platform.empty_cache()
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
                 for buffer in model_chunk.buffers:
@@ -859,7 +898,7 @@ class MegatronModelManager:
                                 buffer.param_data.cpu_data, non_blocking=True
                             )
             else:
-                device_id = torch.cuda.current_device()
+                device_id = Worker.torch_platform.current_device()
                 for _, param in model_chunk.named_parameters():
                     if self.is_weight_offloaded:
                         param.data = param.data.to(device_id, non_blocking=True)
@@ -927,7 +966,7 @@ class MegatronModelManager:
         def load_tensor_to_gpu(tensor):
             if tensor is None:
                 return
-            device_id = torch.cuda.current_device()
+            device_id = Worker.torch_platform.current_device()
             tensor.data = tensor.data.to(device_id, non_blocking=True)
 
         def load_group_to_gpu(group):
@@ -962,17 +1001,17 @@ class MegatronModelManager:
         for _opt in _iter_opts(self.optimizer):
             self.offload_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
-                # Offloading through resetting the storage size can ensure that the tensor can be offloaded correctly even when it has tensor views.
-                if "exp_avg" in v and v["exp_avg"].is_cuda:
-                    buffer = v["exp_avg"]
-                    cpu_data = self._get_pinned_buffer(buffer)
-                    cpu_data.copy_(buffer.data, non_blocking=True)
-                    buffer.storage().resize_(0)
-                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
-                    buffer = v["exp_avg_sq"]
-                    cpu_data = self._get_pinned_buffer(buffer)
-                    cpu_data.copy_(buffer.data, non_blocking=True)
-                    buffer.storage().resize_(0)
+                # Offloading through resetting the storage size can ensure that
+                # the tensor can be offloaded correctly even when it has tensor
+                # views. Mirrors the onload path: same three keys.
+                for _k in ("exp_avg", "exp_avg_sq", "master_param"):
+                    if _k not in v:
+                        continue
+                    _t = v[_k]
+                    if torch.is_tensor(_t) and _t.is_cuda:
+                        cpu_data = self._get_pinned_buffer(_t)
+                        cpu_data.copy_(_t.data, non_blocking=True)
+                        _t.storage().resize_(0)
         clear_memory()
 
         self.is_optimizer_offloaded = True
@@ -989,14 +1028,17 @@ class MegatronModelManager:
         for _opt in _iter_opts(self.optimizer):
             self.load_megatron_copy_params(_opt)
             for v in _opt.optimizer.state.values():
-                if "exp_avg" in v and v["exp_avg"].is_cuda:
-                    v["exp_avg"].data = v["exp_avg"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
-                if "exp_avg_sq" in v and v["exp_avg_sq"].is_cuda:
-                    v["exp_avg_sq"].data = v["exp_avg_sq"].cpu_data.to(
-                        torch.cuda.current_device(), non_blocking=True
-                    )
+                # support resuming training w/o precision aware optimizer
+                _dev = Worker.torch_platform.current_device()
+                for _k in ("exp_avg", "exp_avg_sq", "master_param"):
+                    if _k not in v:
+                        continue
+                    _t = v[_k]
+                    _has_cd = hasattr(_t, "cpu_data")
+                    if _has_cd:
+                        _t.data = _t.cpu_data.to(_dev, non_blocking=True)
+                    elif not _t.is_cuda:
+                        _t.data = _t.to(_dev)
         clear_memory()
         self.is_optimizer_offloaded = False
 

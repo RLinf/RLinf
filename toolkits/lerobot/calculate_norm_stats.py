@@ -21,7 +21,7 @@ import tqdm
 import tyro
 from openpi.training.config import DataConfig
 
-from rlinf.data.lerobot_paths import resolve_lerobot_dataset_root
+from rlinf.data.storage.lerobot import resolve_lerobot_dataset_root
 from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
 

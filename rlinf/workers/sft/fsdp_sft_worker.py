@@ -22,7 +22,7 @@ import torch
 from omegaconf import DictConfig
 from tqdm import tqdm
 
-from rlinf.data.utils import forward_set_epoch
+from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
 from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
@@ -38,8 +38,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
+        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = Worker.torch_platform.current_device()
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 

@@ -33,7 +33,12 @@ from ..cluster.utils import (
     extract_dataclass_tensor_fields,
     unflatten_dataclass_tensor_fields,
 )
-from ..manager import CollectiveGroupInfo, CollectiveManager, WorkerInfo
+from ..manager import (
+    CollectiveGroupInfo,
+    CollectiveManager,
+    NetEmulationManager,
+    WorkerInfo,
+)
 from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
 
@@ -231,6 +236,17 @@ class CollectiveGroup:
         self._mc_group = None
         self._worker = Worker.current_worker
         self._coll_manager = CollectiveManager.get_proxy()
+        # The net emulation manager is only launched when cluster.net_emulation is
+        # enabled. The driver advertises that through the env var, so that a manager
+        # that is merely slow to register is waited for rather than mistaken for a
+        # disabled one.
+        from ..cluster import Cluster, ClusterEnvVar
+
+        self._net_emu_manager = (
+            NetEmulationManager.get_proxy()
+            if Cluster.get_sys_env_var(ClusterEnvVar.NET_EMULATION, "0") == "1"
+            else None
+        )
         self._logger = logging.getLogger(cur_worker_address.get_name())
         self._lock = threading.Lock()
         # Lazily populated sub-groups for the hybrid broadcast path.
@@ -350,6 +366,7 @@ class CollectiveGroup:
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
         """
         self._init_process_group(options=options)
+        self._wait_for_net_emulation(object, piggyback_payload)
         # First send object type to the destination worker
         object_type_tensor = torch.tensor(object_type, dtype=torch.int, device="cpu")
         self._send(object_type_tensor, CollectiveGroup.CPU, comm_id)
@@ -551,6 +568,7 @@ class CollectiveGroup:
             )
 
         self._init_process_group(options=options)
+        self._wait_for_net_emulation(tensor)
         self._logger.debug(
             f"Sending tensor to Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
@@ -674,6 +692,7 @@ class CollectiveGroup:
 
         self._init_process_group(options=options)
         src_rank = self._worker_addresses.index(src_addr)
+        self._wait_for_net_emulation_broadcast(src_rank, object)
 
         object_type_tensor = torch.empty(1, dtype=torch.int, device="cpu")
         if self._rank == src_rank:
@@ -1160,6 +1179,55 @@ class CollectiveGroup:
             src=src_rank,
             async_op=async_op,
         )
+
+    def _wait_for_net_emulation(self, *payloads: Any) -> None:
+        """Pause for the emulated link delay before a send, if emulation is on."""
+        if self._net_emu_manager is None:
+            return
+        self._sleep_for_reservation(
+            self._net_emu_manager.reserve(
+                self._cur_worker_address.get_name(),
+                self._worker_addresses[self._peer_rank].get_name(),
+                self._estimate_payload_size(payloads),
+            )
+        )
+
+    def _wait_for_net_emulation_broadcast(self, src_rank: int, *payloads: Any) -> None:
+        """Pause for the emulated link delay before a broadcast, if emulation is on.
+
+        Only the source rank waits: the receivers are already blocked inside the
+        collective until it starts sending.
+        """
+        if self._net_emu_manager is None or self._rank != src_rank:
+            return
+        dsts = [
+            address.get_name()
+            for rank, address in enumerate(self._worker_addresses)
+            if rank != src_rank
+        ]
+        if not dsts:
+            return
+        self._sleep_for_reservation(
+            self._net_emu_manager.reserve_broadcast(
+                self._cur_worker_address.get_name(),
+                dsts,
+                self._estimate_payload_size(payloads),
+            )
+        )
+
+    @staticmethod
+    def _estimate_payload_size(payloads: Iterable[Any]) -> int:
+        """Total estimated wire size of everything about to go out."""
+        return sum(
+            NetEmulationManager.estimate_payload_size_bytes(payload)
+            for payload in payloads
+        )
+
+    @staticmethod
+    def _sleep_for_reservation(remaining: float) -> None:
+        """Wait out the transfer time the net emulation manager booked."""
+        if remaining > 0:
+            time.sleep(remaining)
 
     def _init_group(self):
         if self._group_info is None:

@@ -26,8 +26,8 @@ from rlinf.data.datasets.dagger import (
     RollingLeRobotDataset,
     build_dataloader_from_dataset,
 )
-from rlinf.data.embodied_io_struct import Trajectory
-from rlinf.data.replay_buffer import TrajectoryReplayBuffer
+from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Channel, Worker
 from rlinf.utils import drq
@@ -35,7 +35,7 @@ from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict, compute_split_num
 from rlinf.utils.nested_dict_process import put_tensor_device, split_dict_to_chunk
 from rlinf.utils.utils import clear_memory
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
@@ -331,7 +331,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def recv_lerobot_rollout_trajectories(self, input_channel: Channel) -> None:
         """Receive episodes from EnvWorker and append them to the memory dataset.
 
-        EnvWorkers collect completed episodes via ``EmbodiedLerobotRolloutResult``
+        EnvWorkers collect completed episodes via ``EmbodiedLerobotTrajectoryBuilder``
         and send them here each interact round. Empty batches are not sent by env;
         if the dataset is still below ``min_frames``, training is skipped later.
         """
@@ -407,7 +407,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
             self._pending_archive_path = None
             self._pending_archive_episodes = []
 
-        from rlinf.data.lerobot_writer import LeRobotDatasetWriter
+        from rlinf.data.storage.lerobot import LeRobotDatasetWriter
 
         writer = LeRobotDatasetWriter()
         first = pending_episodes[0][0]

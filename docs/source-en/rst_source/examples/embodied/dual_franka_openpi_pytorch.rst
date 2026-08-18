@@ -1,10 +1,12 @@
 Using Dual Franka with OpenPI PyTorch
 =====================================
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_arm_small.jpg
+
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
    :width: 80%
+   :alt: RLinf PyTorch dual-Franka deployment
 
-   Franka arm hardware used as the basis for the dual-Franka GELLO collection and π₀.₅ deployment workflow.
+   Fine-tune and deploy a dual-Franka policy with RLinf PyTorch.
 
 Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the robot nodes.
 
@@ -409,6 +411,9 @@ On the training node:
    cd /path/to/RLinf
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
+   export HF_LEROBOT_HOME=/path/to/lerobot_root
+   export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
+
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID
@@ -425,11 +430,11 @@ Checkpoints are saved under
 is the ``repo_id`` under which ``norm_stats.json`` is stored; and ``model_path``
 is the model path selected for training. The model used in this
 guide must first be converted from the ``openpi-jax`` format. See
-``sft_openpi_pytorch.rst`` for details. The conversion utility is located at:
+``sft_openpi_rlinf.rst`` for details. The conversion utility is located at:
 
 .. code-block:: text
 
-   rlinf/utils/ckpt_convertor/openpi/sft2new.py
+   rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
 
 Before deployment, convert the checkpoint produced by SFT into the deployment
 checkpoint format:

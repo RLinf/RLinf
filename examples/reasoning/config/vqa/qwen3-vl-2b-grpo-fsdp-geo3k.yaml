@@ -130,7 +130,7 @@ rollout:
 
 
 data:
-  type: vision_language
+  type: vlm
   dataset_name: base
   max_prompt_length: 4096
   filter_prompt_by_length: False

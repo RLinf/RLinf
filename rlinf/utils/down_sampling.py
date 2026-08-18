@@ -17,7 +17,7 @@ import re as _re
 import numpy as np
 import torch
 
-from rlinf.data.io_struct import RolloutResult
+from rlinf.data.schema.reasoning_results import RolloutResult
 
 
 def down_sample_batch(rollout_result: RolloutResult, down_sampling_config: dict):

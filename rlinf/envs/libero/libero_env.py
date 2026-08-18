@@ -16,6 +16,7 @@ import copy
 import glob
 import importlib
 import os
+import re
 import sys
 from typing import Optional, Union
 
@@ -57,6 +58,23 @@ def _repoint_libero_config(libero_module) -> None:
 
 
 logger = get_logger()
+
+
+def _read_bddl_language_and_goal(bddl_path: str):
+    """Parse (:language ...) and a compact (:goal ...) summary from a BDDL file."""
+    try:
+        with open(bddl_path, "r", encoding="utf-8") as f:
+            bddl_text = f.read()
+    except OSError:
+        return None, None
+    lang_m = re.search(r"\(:language\s+([^)]+)\)", bddl_text)
+    language = lang_m.group(1).strip() if lang_m else None
+    goal_m = re.search(r"\(:goal\s*\n?\s*\(And\s*\(([^)]+)\)\)", bddl_text)
+    if goal_m is None:
+        goal_m = re.search(r"\(:goal[\s\S]*?\(And\s*\(([^)]+)\)\)", bddl_text)
+    goal = goal_m.group(1).strip() if goal_m else None
+    return language, goal
+
 
 libero_type = get_libero_type()
 
@@ -269,6 +287,7 @@ class LiberoEnv(gym.Env):
         suite_keyword = suite_name.replace("libero_", "").strip()
 
         task_descriptions = []
+        pert_init_folders = []
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
 
@@ -277,6 +296,11 @@ class LiberoEnv(gym.Env):
                 task_descriptions.append(
                     self.task_descriptions[env_id]
                     if hasattr(self, "task_descriptions")
+                    else ""
+                )
+                pert_init_folders.append(
+                    self._pert_init_folders[env_id]
+                    if hasattr(self, "_pert_init_folders")
                     else ""
                 )
                 continue
@@ -415,9 +439,31 @@ class LiberoEnv(gym.Env):
                     "seed": self.seed,
                 }
             )
-            task_descriptions.append(task.language)
+            # LIBERO-PRO: use selected BDDL language (not original suite task.language)
+            # and remember the perturbation folder for pruned_init loading.
+            pert_folder = os.path.basename(os.path.dirname(os.path.abspath(final_path)))
+            pert_init_folders.append(pert_folder)
+            if variant == "pro":
+                bddl_lang, bddl_goal = _read_bddl_language_and_goal(final_path)
+                desc = bddl_lang if bddl_lang else task.language
+                task_descriptions.append(desc)
+                if self.is_eval:
+                    logger.info(
+                        "[LIBERO-PRO lang] env=%s pert_folder=%s "
+                        "prompt=%r suite_orig=%r bddl_lang=%r goal=%r bddl=%s",
+                        env_id,
+                        pert_folder,
+                        desc,
+                        task.language,
+                        bddl_lang,
+                        bddl_goal,
+                        final_path,
+                    )
+            else:
+                task_descriptions.append(task.language)
 
         self.task_descriptions = task_descriptions
+        self._pert_init_folders = pert_init_folders
         return env_fn_params
 
     def _compute_total_num_group_envs(self):
@@ -558,6 +604,73 @@ class LiberoEnv(gym.Env):
     def _get_reset_states(self, env_idx):
         if env_idx is None:
             env_idx = np.arange(self.num_envs)
+
+        variant = os.environ.get(
+            "LIBERO_TYPE",
+            self.cfg.get("libero_variant", "standard")
+            if hasattr(self.cfg, "get")
+            else "standard",
+        )
+        # LIBERO-PRO: load pruned_init from the selected perturbation folder
+        # (e.g. libero_object_task/), not the original suite folder.
+        if variant == "pro" and getattr(self, "_pert_init_folders", None):
+            import liberopro.liberopro as l_pro
+
+            init_root = l_pro.get_libero_path("init_states")
+            init_state = []
+            for env_id in env_idx:
+                task = self.task_suite.get_task(self.task_ids[env_id])
+                folder = self._pert_init_folders[env_id] or task.problem_folder
+                pert_init_path = os.path.join(init_root, folder, task.init_states_file)
+                states = None
+                init_path = None
+                used_folder = folder
+                if os.path.exists(pert_init_path):
+                    loaded = torch.load(pert_init_path, weights_only=False)
+                    n = len(loaded) if hasattr(loaded, "__len__") else 0
+                    if n == 0:
+                        if self.is_eval:
+                            logger.warning(
+                                "[LIBERO-PRO init] empty pruned_init, skip: %s",
+                                pert_init_path,
+                            )
+                    else:
+                        states = loaded
+                        init_path = pert_init_path
+                if states is None:
+                    msg = (
+                        "[LIBERO-PRO init] perturbation init missing or empty; "
+                        "suite fallback is invalid for eval "
+                        f"env={env_id} wanted_folder={folder} "
+                        f"file={task.init_states_file} path={pert_init_path}"
+                    )
+                    if self.is_eval:
+                        logger.error(msg)
+                        raise RuntimeError(msg)
+                    states = self.task_suite.get_task_init_states(self.task_ids[env_id])
+                    init_path = f"<suite:{task.problem_folder}/{task.init_states_file}>"
+                    used_folder = task.problem_folder
+                    logger.warning(
+                        "%s; falling back to suite init for training: %s n=%s",
+                        msg,
+                        init_path,
+                        len(states),
+                    )
+                trial = int(self.trial_ids[env_id])
+                if trial >= len(states):
+                    trial = trial % len(states)
+                init_state.append(states[trial])
+                if self.is_eval and env_id == env_idx[0]:
+                    logger.info(
+                        "[LIBERO-PRO init] env=%s folder=%s trial=%s path=%s n=%s",
+                        env_id,
+                        used_folder,
+                        trial,
+                        init_path,
+                        len(states),
+                    )
+            return init_state
+
         init_state = [
             self.task_suite.get_task_init_states(self.task_ids[env_id])[
                 self.trial_ids[env_id]
@@ -742,6 +855,39 @@ class LiberoEnv(gym.Env):
         self._reset_metrics(env_idx)
         infos = {}
         return obs, infos
+
+    def get_camera_meta(
+        self, camera_name: str = "agentview", height: int = 256, width: int = 256
+    ) -> dict:
+        """Fetch camera intrinsics/extrinsics and depth planes.
+
+        Returns camera calibration from worker 0's robosuite sim: intrinsic
+        matrix, cam-to-world transform, and depth near/far.  The agentview
+        camera is fixed in the world, so this is constant per episode.
+        """
+        return self.env.workers[0].get_camera_meta(
+            camera_name=camera_name, height=height, width=width
+        )
+
+    def render_camera(
+        self,
+        camera_name: str = "agentview",
+        height: int = 1024,
+        width: int = 1024,
+        depth: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Render an arbitrary camera at the requested resolution.
+
+        Returns:
+            The rendered RGB image, or a ``(rgb, depth)`` tuple when
+            *depth* is True.
+        """
+        return self.env.workers[0].render_camera(
+            camera_name=camera_name,
+            height=height,
+            width=width,
+            depth=depth,
+        )
 
     def step(self, actions=None, auto_reset=True):
         """Step the environment with the given actions."""

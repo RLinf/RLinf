@@ -23,19 +23,21 @@ from omegaconf import DictConfig, OmegaConf
 
 from rlinf.algorithms.registry import calculate_adv_and_returns
 from rlinf.algorithms.rlt.transition import update_rlt_transitions
-from rlinf.data.embodied_io_struct import (
+from rlinf.data.schema.embodied_trajectory_builder import (
+    EmbodiedLerobotTrajectoryBuilder,
+    EmbodiedTrajectoryBuilder,
+)
+from rlinf.data.schema.embodied_types import (
     ChunkStepResult,
-    EmbodiedLerobotRolloutResult,
-    EmbodiedRolloutResult,
     EnvOutput,
-    RolloutResult,
+    PolicyOutput,
     Trajectory,
     convert_trajectories_to_batch,
 )
 from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
-from rlinf.envs.wrappers import RecordVideo
+from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
@@ -53,6 +55,7 @@ from rlinf.utils.utils import (
     preprocess_embodied_batch,
 )
 from rlinf.workers.env.history_manager import HistoryManager
+from rlinf.workers.env.smooth_intervene import SmoothInterveneController
 
 
 class EnvWorker(Worker):
@@ -75,9 +78,9 @@ class EnvWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_rlt = (
-            OmegaConf.select(self.cfg, "algorithm.loss_type", default="") == "rlt_ac"
-        )
+        self.enable_rlt = OmegaConf.select(
+            self.cfg, "algorithm.loss_type", default=""
+        ) in {"rlt_ac", "rlt_td3"}
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
@@ -173,6 +176,15 @@ class EnvWorker(Worker):
             ]
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
 
+        self.smooth_intervene = SmoothInterveneController.from_cfg(
+            self.cfg,
+            stage_num=self.stage_num,
+            enable_train=self.enable_train,
+            train_num_envs_per_stage=(
+                self.train_num_envs_per_stage if self.enable_train else 0
+            ),
+        )
+
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
             # The batch_router is a dictionary that maps the tag to the list of batch_index.
@@ -183,11 +195,13 @@ class EnvWorker(Worker):
                 "the world size of env must be greater than the world size of rollout in env_decoupled_mode"
             )
 
-    def _prepare_rollout_results(self, rollout_results: list | None = None) -> list:
-        if self.enable_online_lerobot and rollout_results is not None:
-            for stage_rollout in rollout_results:
-                stage_rollout.rewards.clear()
-            return rollout_results
+    def _prepare_trajectory_builders(
+        self, trajectory_builders: list | None = None
+    ) -> list:
+        if self.enable_online_lerobot and trajectory_builders is not None:
+            for stage_builder in trajectory_builders:
+                stage_builder.rewards.clear()
+            return trajectory_builders
 
         collect_only_success = bool(
             OmegaConf.select(
@@ -199,7 +213,7 @@ class EnvWorker(Worker):
         max_episode_length = self.cfg.env.train.max_episode_steps
         if self.enable_online_lerobot:
             return [
-                EmbodiedLerobotRolloutResult(
+                EmbodiedLerobotTrajectoryBuilder(
                     max_episode_length=max_episode_length,
                     num_envs=self.train_num_envs_per_stage,
                     only_success=collect_only_success,
@@ -209,7 +223,7 @@ class EnvWorker(Worker):
                 for _ in range(self.stage_num)
             ]
         return [
-            EmbodiedRolloutResult(max_episode_length=max_episode_length)
+            EmbodiedTrajectoryBuilder(max_episode_length=max_episode_length)
             for _ in range(self.stage_num)
         ]
 
@@ -389,6 +403,11 @@ class EnvWorker(Worker):
                 total_num_processes=self._world_size * self.stage_num,
                 worker_info=self.worker_info,
             )
+            if (
+                self.cfg.env.get("delay_sampler", None)
+                and env_cfg is not self.cfg.env.eval
+            ):
+                env = InsertDelay(env, self.cfg.env.delay_sampler)
             if env_cfg.video_cfg.save_video:
                 env = RecordVideo(env, env_cfg.video_cfg)
             if env_cfg.get("data_collection", None) and getattr(
@@ -431,9 +450,22 @@ class EnvWorker(Worker):
                 if self.eval_enable_offload:
                     get_env_attr(self.eval_env_list[i], "offload")()
 
+    async def _maybe_wait_env_delay(self, stage_id: int) -> None:
+        """Wait out the delay ``InsertDelay`` sampled for this stage, if it is on.
+
+        The wrapper only samples the delay; waiting here keeps the emulated sensor
+        latency off the event loop so co-scheduled coroutines keep running.
+        """
+        env = self.env_list[stage_id]
+        if get_env_attr(env, "wait_delay") is None:
+            return
+        await env.wait_delay()
+
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor, stage_id: int
+        self,
+        chunk_actions: torch.Tensor,
+        stage_id: int,
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """
         This function is used to interact with the environment.
@@ -654,16 +686,16 @@ class EnvWorker(Worker):
 
     @staticmethod
     def _infer_rollout_batch_size(data: Any) -> int:
-        """Infer batch dim for routed shards; supports RolloutResult and plain tensor payloads.
+        """Infer batch dim for routed shards; supports PolicyOutput and plain tensor payloads.
 
-        When the channel carries a non-``RolloutResult`` shard (e.g. reward tensor or eval
+        When the channel carries a non-``PolicyOutput`` shard (e.g. reward tensor or eval
         actions) into a rollout recv, avoid assuming dataclass fields and delegate or use
         the leading dimension of dense arrays.
         """
 
         if isinstance(data, torch.Tensor) or isinstance(data, np.ndarray):
             return int(data.shape[0])
-        if isinstance(data, RolloutResult):
+        if isinstance(data, PolicyOutput):
             for field_name in (
                 "actions",
                 "prev_logprobs",
@@ -849,7 +881,7 @@ class EnvWorker(Worker):
             )
             for env_id in range(self.train_num_envs_per_stage)
         ]
-        rollout_rewards = self.rollout_results[stage_id].rewards
+        rollout_rewards = self.trajectory_builders[stage_id].rewards
         rollout_rewards_length = len(rollout_rewards)
         reward_assign_lengths = [
             min(reward_assign_length, rollout_rewards_length)
@@ -879,9 +911,9 @@ class EnvWorker(Worker):
                 self.env_list[stage_id].is_start = True
                 extracted_obs, infos = self.env_list[stage_id].reset()
                 if self.enable_online_lerobot:
-                    rollout_results = getattr(self, "rollout_results", None)
-                    if rollout_results is not None:
-                        rollout_results[stage_id].reset_episode_buffers()
+                    trajectory_builders = getattr(self, "trajectory_builders", None)
+                    if trajectory_builders is not None:
+                        trajectory_builders[stage_id].reset_episode_buffers()
                 dones = get_zero_dones()
                 terminations = dones.clone()
                 truncations = dones.clone()
@@ -931,9 +963,15 @@ class EnvWorker(Worker):
         return data
 
     def _send_train_bootstrap(
-        self, rollout_channel: Channel, env_outputs: list[EnvOutput]
+        self,
+        rollout_channel: Channel,
+        env_outputs: list[EnvOutput],
+        skip_stage_ids: set[int] | None = None,
     ) -> None:
+        skip_stage_ids = skip_stage_ids or set()
         for stage_id in range(self.stage_num):
+            if stage_id in skip_stage_ids:
+                continue
             env_output: EnvOutput = env_outputs[stage_id]
             env_batch = env_output.to_dict()
             self.send_to(
@@ -946,9 +984,17 @@ class EnvWorker(Worker):
                 decoupled_mode=self.env_decoupled_mode,
             )
 
-    def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
+    def _bootstrap_and_send_train(
+        self,
+        rollout_channel: Channel,
+        skip_stage_ids: set[int] | None = None,
+    ) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
-        self._send_train_bootstrap(rollout_channel, env_outputs)
+        self._send_train_bootstrap(
+            rollout_channel,
+            env_outputs,
+            skip_stage_ids=skip_stage_ids,
+        )
         return env_outputs
 
     def prefetch_train_bootstrap(self, rollout_channel: Channel) -> None:
@@ -959,7 +1005,8 @@ class EnvWorker(Worker):
                 "Call interact() to consume it before prefetching again."
             )
         self._prefetched_train_bootstrap = self._bootstrap_and_send_train(
-            rollout_channel
+            rollout_channel,
+            skip_stage_ids=self.smooth_intervene.active_stage_ids(),
         )
 
     def record_env_metrics(
@@ -979,12 +1026,12 @@ class EnvWorker(Worker):
 
     @Worker.timer("env/send_rollout_trajectories")
     async def send_rollout_trajectories(
-        self, rollout_result: EmbodiedRolloutResult, channel: Channel
+        self, trajectory_builder: EmbodiedTrajectoryBuilder, channel: Channel
     ):
-        trajectories: list[Trajectory] = rollout_result.to_splited_trajectories(
+        trajectories: list[Trajectory] = trajectory_builder.to_splited_trajectories(
             self.actor_split_num
         )
-        rollout_result.clear()
+        trajectory_builder.clear()
         for trajectory in trajectories:
             channel.put(trajectory, async_op=True)
         del trajectories
@@ -1019,8 +1066,8 @@ class EnvWorker(Worker):
         *,
         cooperative_yield: bool,
     ) -> dict[str, torch.Tensor]:
-        self.rollout_results = self._prepare_rollout_results(
-            getattr(self, "rollout_results", None)
+        self.trajectory_builders = self._prepare_trajectory_builders(
+            getattr(self, "trajectory_builders", None)
         )
         env_metrics = defaultdict(list)
         rlt_pending_obs: list[dict[str, Any] | None] = [None] * self.stage_num
@@ -1030,7 +1077,13 @@ class EnvWorker(Worker):
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
             else:
-                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+                env_outputs = self._bootstrap_and_send_train(
+                    rollout_channel,
+                    skip_stage_ids=self.smooth_intervene.active_stage_ids(),
+                )
+
+            for stage_id in range(self.stage_num):
+                await self._maybe_wait_env_delay(stage_id)
 
             for chunk_step_idx in range(self.n_train_chunk_steps):
                 for stage_id in range(self.stage_num):
@@ -1040,7 +1093,7 @@ class EnvWorker(Worker):
                     env_output = env_outputs[stage_id]
                     curr_obs = env_output.obs
                     if env_output.intervene_actions is not None:
-                        self.rollout_results[stage_id].update_last_actions(
+                        self.trajectory_builders[stage_id].update_last_actions(
                             env_output.intervene_actions,
                             env_output.intervene_flags,
                         )
@@ -1058,87 +1111,118 @@ class EnvWorker(Worker):
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
 
-                    rollout_result = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="train_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.train_batch_size,
-                        merge_fn=RolloutResult.merge_rollout_results,
-                        infer_batch_size_fn=self._infer_rollout_batch_size,
-                        decoupled_mode=self.env_decoupled_mode,
-                    )
+                    if self.smooth_intervene.is_active(stage_id):
+                        policy_output = self.smooth_intervene.build_dummy_policy_output(
+                            stage_id,
+                            env=self.env_list[stage_id],
+                            curr_obs=env_output.obs,
+                        )
+                    else:
+                        policy_output = self.recv_from(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=input_channel,
+                            tag="train_rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            batch_size=self.train_batch_size,
+                            merge_fn=PolicyOutput.merge,
+                            infer_batch_size_fn=self._infer_rollout_batch_size,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                        self.smooth_intervene.remember_policy_output(
+                            stage_id, policy_output
+                        )
                     rewards = self.compute_bootstrap_rewards(
-                        env_output, rollout_result.bootstrap_values, reward_model_output
+                        env_output, policy_output.bootstrap_values, reward_model_output
                     )
                     chunk_step_result = ChunkStepResult(
-                        actions=rollout_result.forward_inputs.get("action", None),
+                        actions=policy_output.forward_inputs.get("action", None),
                         prev_logprobs=(
-                            rollout_result.prev_logprobs
+                            policy_output.prev_logprobs
                             if self.collect_prev_infos
                             else None
                         ),
                         prev_values=(
-                            rollout_result.prev_values
+                            policy_output.prev_values
                             if self.collect_prev_infos
                             else None
                         ),
-                        forward_inputs=rollout_result.forward_inputs,
-                        versions=rollout_result.versions,
+                        forward_inputs=policy_output.forward_inputs,
+                        versions=policy_output.versions,
                         dones=env_output.dones,
                         truncations=env_output.truncations,
                         terminations=env_output.terminations,
                         rewards=rewards,
                     )
 
-                    self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                    self.trajectory_builders[stage_id].append_step_result(
+                        chunk_step_result
+                    )
                     if (
                         self.reward_mode == "history_buffer"
                         and self.history_reward_assign
                         and reward_model_output is not None
                     ):
                         self.assign_history_reward(stage_id, reward_model_output)
-                    if rollout_result.intervene_flags is not None:
-                        self.rollout_results[
+                    if policy_output.intervene_flags is not None:
+                        self.trajectory_builders[
                             stage_id
                         ].mark_last_step_with_intervene_flags(
-                            rollout_result.intervene_flags
+                            policy_output.intervene_flags
                         )
                     if self.enable_rlt and self.collect_transitions:
                         update_rlt_transitions(
                             stage_id,
                             rlt_pending_obs,
-                            self.rollout_results,
-                            rollout_result,
+                            self.trajectory_builders,
+                            policy_output,
                             cache_current=True,
+                            intervene_actions=env_output.intervene_actions,
+                            intervene_flags=env_output.intervene_flags,
                         )
 
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
-                        rollout_result.actions, stage_id
+                        policy_output.actions,
+                        stage_id,
                     )
-                    stage_rollout = self.rollout_results[stage_id]
-                    if isinstance(stage_rollout, EmbodiedLerobotRolloutResult):
-                        stage_rollout.append_chunk_episode_data(
-                            rollout_result=rollout_result,
+                    # Emulated observation latency: wait before the obs goes out,
+                    # without blocking the other coroutines in this worker.
+                    await self._maybe_wait_env_delay(stage_id)
+                    stage_builder = self.trajectory_builders[stage_id]
+                    if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
+                        stage_builder.append_chunk_episode_data(
+                            policy_output=policy_output,
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
-                    self.send_to(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
-                        mode="train",
-                        tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        decoupled_mode=self.env_decoupled_mode,
+                    skip_rollout_send = self.smooth_intervene.on_chunk_done(
+                        stage_id,
+                        env_output.intervene_flags,
+                        env_output.dones,
                     )
+                    if not skip_rollout_send:
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=self._build_rollout_input_data(env_batch),
+                            mode="train",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                    if (
+                        get_env_attr(self.env_list[stage_id], "insert_delay_metrics")
+                        is not None
+                    ):
+                        env_metrics["time/interact_delay"].append(
+                            self.env_list[stage_id].insert_delay_metrics()
+                        )
                     if self.collect_transitions and not self.enable_rlt:
                         next_obs = (
                             env_output.final_obs
                             if env_output.dones.any() and self.cfg.env.train.auto_reset
                             else env_output.obs
                         )
-                        self.rollout_results[stage_id].append_transitions(
+                        self.trajectory_builders[stage_id].append_transitions(
                             curr_obs, next_obs
                         )
 
@@ -1154,7 +1238,7 @@ class EnvWorker(Worker):
             for stage_id in range(self.stage_num):
                 env_output = env_outputs[stage_id]
                 if env_output.intervene_actions is not None:
-                    self.rollout_results[stage_id].update_last_actions(
+                    self.trajectory_builders[stage_id].update_last_actions(
                         env_output.intervene_actions,
                         env_output.intervene_flags,
                     )
@@ -1173,21 +1257,31 @@ class EnvWorker(Worker):
                         env_metrics["reward_model_output"].append(
                             reward_model_output.detach().float().reshape(-1).cpu()
                         )
-                rollout_result = self.recv_from(
-                    group_name=self.cfg.rollout.group_name,
-                    channel=input_channel,
-                    tag="train_rollout_results",
-                    route_key=stage_id if not self.env_decoupled_mode else None,
-                    batch_size=self.train_batch_size,
-                    merge_fn=RolloutResult.merge_rollout_results,
-                    infer_batch_size_fn=self._infer_rollout_batch_size,
-                    decoupled_mode=self.env_decoupled_mode,
-                )
+                if self.smooth_intervene.is_active(stage_id):
+                    policy_output = self.smooth_intervene.build_dummy_policy_output(
+                        stage_id,
+                        env=self.env_list[stage_id],
+                        curr_obs=env_output.obs,
+                    )
+                else:
+                    policy_output = self.recv_from(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=input_channel,
+                        tag="train_rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        batch_size=self.train_batch_size,
+                        merge_fn=PolicyOutput.merge,
+                        infer_batch_size_fn=self._infer_rollout_batch_size,
+                        decoupled_mode=self.env_decoupled_mode,
+                    )
+                    self.smooth_intervene.remember_policy_output(
+                        stage_id, policy_output
+                    )
                 rewards = self.compute_bootstrap_rewards(
-                    env_output, rollout_result.bootstrap_values, reward_model_output
+                    env_output, policy_output.bootstrap_values, reward_model_output
                 )
-                final_actions = rollout_result.forward_inputs.get("action", None)
-                final_forward_inputs = rollout_result.forward_inputs
+                final_actions = policy_output.forward_inputs.get("action", None)
+                final_forward_inputs = policy_output.forward_inputs
                 if (
                     OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
                     == "embodied_dagger"
@@ -1198,21 +1292,19 @@ class EnvWorker(Worker):
                 chunk_step_result = ChunkStepResult(
                     actions=final_actions,
                     prev_logprobs=(
-                        rollout_result.prev_logprobs
-                        if self.collect_prev_infos
-                        else None
+                        policy_output.prev_logprobs if self.collect_prev_infos else None
                     ),
                     prev_values=(
-                        rollout_result.prev_values if self.collect_prev_infos else None
+                        policy_output.prev_values if self.collect_prev_infos else None
                     ),
                     forward_inputs=final_forward_inputs,
-                    versions=rollout_result.versions,
+                    versions=policy_output.versions,
                     dones=env_output.dones,
                     truncations=env_output.truncations,
                     terminations=env_output.terminations,
                     rewards=rewards,
                 )
-                self.rollout_results[stage_id].append_step_result(chunk_step_result)
+                self.trajectory_builders[stage_id].append_step_result(chunk_step_result)
                 if (
                     self.reward_mode == "history_buffer"
                     and self.history_reward_assign
@@ -1223,17 +1315,19 @@ class EnvWorker(Worker):
                     update_rlt_transitions(
                         stage_id,
                         rlt_pending_obs,
-                        self.rollout_results,
-                        rollout_result,
+                        self.trajectory_builders,
+                        policy_output,
                         cache_current=False,
+                        intervene_actions=env_output.intervene_actions,
+                        intervene_flags=env_output.intervene_flags,
                     )
 
             if self.use_training_pipeline and actor_channel is not None:
                 await self.send_rollout_trajectories_pipeline(
-                    self.rollout_results, actor_channel
+                    self.trajectory_builders, actor_channel
                 )
-                self.rollout_results = self._prepare_rollout_results(
-                    getattr(self, "rollout_results", None)
+                self.trajectory_builders = self._prepare_trajectory_builders(
+                    getattr(self, "trajectory_builders", None)
                 )
 
             self.store_last_obs_and_intervened_info(env_outputs)
@@ -1242,12 +1336,12 @@ class EnvWorker(Worker):
         if not self.use_training_pipeline and actor_channel is not None:
             if self.enable_online_lerobot:
                 for stage_id in range(self.stage_num):
-                    episodes = self.rollout_results[stage_id].drain_episodes()
+                    episodes = self.trajectory_builders[stage_id].drain_episodes()
                     await self.send_lerobot_episodes(episodes, actor_channel)
             else:
                 for stage_id in range(self.stage_num):
                     await self.send_rollout_trajectories(
-                        self.rollout_results[stage_id], actor_channel
+                        self.trajectory_builders[stage_id], actor_channel
                     )
 
         for key, value in env_metrics.items():
@@ -1310,7 +1404,7 @@ class EnvWorker(Worker):
 
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
-                    rollout_results = self.recv_from(
+                    policy_output = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
@@ -1322,9 +1416,9 @@ class EnvWorker(Worker):
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     raw_chunk_actions = (
-                        rollout_results.actions
-                        if hasattr(rollout_results, "actions")
-                        else rollout_results
+                        policy_output.actions
+                        if hasattr(policy_output, "actions")
+                        else policy_output
                     )
                     if isinstance(raw_chunk_actions, torch.Tensor):
                         raw_chunk_actions = raw_chunk_actions.detach().cpu().numpy()
@@ -1448,7 +1542,7 @@ class EnvWorker(Worker):
 
     async def send_rollout_trajectories_pipeline(
         self,
-        rollout_results: list[EmbodiedRolloutResult],
+        trajectory_builders: list[EmbodiedTrajectoryBuilder],
         channel: Channel,
     ) -> None:
         pending_batches: list[tuple[int, dict[str, torch.Tensor]]] = []
@@ -1457,9 +1551,9 @@ class EnvWorker(Worker):
         )
 
         with self.worker_timer("prepare_micro_batches"):
-            for stage_id, rollout_result in enumerate(rollout_results):
+            for stage_id, trajectory_builder in enumerate(trajectory_builders):
                 actor_splits = self.pipeline_stage_actor_splits[stage_id]
-                trajectories = rollout_result.to_splited_trajectories_by_sizes(
+                trajectories = trajectory_builder.to_splited_trajectories_by_sizes(
                     [split_size for _, split_size in actor_splits]
                 )
 

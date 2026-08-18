@@ -39,17 +39,20 @@ actor:
   seed: 42
 
   model:
-    model_type: "openpi"
-    precision: null
+    model_type: "openpi_rlinf"
+    precision: fp32
     is_lora: False
     model_path: "/path/to/model"
     num_action_chunks: 20
+    action_dim: 7
+    add_value_head: False
     num_steps: 4
     openpi_data:
       # Used as OpenPI's norm-stats asset id. Keep this identical in Stage2.
       repo_id: "realworld_peg_insertion_rlt_stage1"
 
     openpi:
+      task: sft
       config_name: "pi05_franka_state"
       num_images_in_input: 1
       train_expert_only: False
@@ -57,6 +60,15 @@ actor:
       noise_params: [0.16, 0.12, 200]
       joint_logprob: True
       detach_critic_input: True
+      action_horizon: ${actor.model.num_action_chunks}
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
+      num_steps: ${actor.model.num_steps}
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
 
       # Joint SFT objective: loss = rlt_loss + rlt_alpha * vla_loss.
       use_rlt: True
@@ -84,6 +96,6 @@ actor:
     use_orig_params: False
     gradient_checkpointing: False
     mixed_precision:
-      param_dtype: ${actor.model.precision}
-      reduce_dtype: ${actor.model.precision}
-      buffer_dtype: ${actor.model.precision}
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32

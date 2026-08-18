@@ -165,19 +165,14 @@ Trainer 迁移开销主要随模型规模增长（1.5B 亚毫秒级到 32B 数�
 .. code-block:: bibtex
 
    @inproceedings{wang2026dynarl,
-     author    = {Yuanqing Wang and Hao Lin and Junhao Hu and Chunyang Zhu
-                  and Quanlu Zhang and Zhen Guo and Yuchen Zhang and Xu Fu
-                  and Si Xu and Bo Dai and Zixiao Huang and Chao Yu
-                  and Boxun Li and Guohao Dai and Zhi Yang and Yu Wang},
-     title     = {{DynaRL}: Flexible and Dynamic Scheduling of {Large-Scale}
-                  Reinforcement Learning Training},
-     booktitle = {20th USENIX Symposium on Operating Systems Design and
-                  Implementation (OSDI 26)},
-     year      = {2026},
-     isbn      = {978-1-939133-55-7},
-     address   = {Seattle, WA},
-     pages     = {847--862},
-     url       = {https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing},
+     author = {Yuanqing Wang and Hao Lin and Junhao Hu and Chunyang Zhu and Quanlu Zhang and Zhen Guo and Yuchen Zhang and Xu Fu and Si Xu and Bo Dai and Zixiao Huang and Chao Yu and Boxun Li and Guohao Dai and Zhi Yang and Yu Wang},
+     title = {{DynaRL}: Flexible and Dynamic Scheduling of {Large-Scale} Reinforcement Learning Training},
+     booktitle = {20th USENIX Symposium on Operating Systems Design and Implementation (OSDI 26)},
+     year = {2026},
+     isbn = {978-1-939133-55-7},
+     address = {Seattle, WA},
+     pages = {847--862},
+     url = {https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing},
      publisher = {USENIX Association},
-     month     = jul
+     month = jul
    }

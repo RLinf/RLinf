@@ -25,8 +25,8 @@ from rlinf.agents.wideseek_r1.eval_runner import (
 from rlinf.agents.wideseek_r1.tools import WideSeekR1ToolWorker
 from rlinf.agents.wideseek_r1.wideseek_r1 import WideSeekR1AgentLoopWorker
 from rlinf.config import validate_cfg
-from rlinf.data.datasets import create_rl_dataset
-from rlinf.data.tokenizers import hf_tokenizer
+from rlinf.data.datasets.reasoning import create_reasoning_datasets
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Cluster, NodePlacementStrategy, PackedPlacementStrategy
 from rlinf.utils.placement import (
     MultiAgentModelParallelEvalComponentPlacement,
@@ -163,7 +163,7 @@ def main(cfg) -> None:
 
     # Dataset
     tokenizer = hf_tokenizer(cfg.rollout.model.model_path)
-    train_ds, val_ds = create_rl_dataset(cfg, tokenizer)
+    train_ds, val_ds = create_reasoning_datasets(cfg, tokenizer)
 
     # Tool workers group
     if cfg.tools.online is True:

@@ -26,11 +26,8 @@ from sglang.srt.server_args import ServerArgs
 from transformers import AutoTokenizer
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import (
-    RolloutRequest,
-    RolloutResult,
-    SeqGroupInfo,
-)
+from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
+from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import (
@@ -67,7 +64,8 @@ class SGLangWorker(Worker):
         self._placement = placement
 
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self._cfg_rollout.model.model_path
+            self._cfg_rollout.model.model_path,
+            trust_remote_code=self._cfg_rollout.model.trust_remote_code,
         )
         self._return_logprobs = self._cfg_rollout.return_logprobs
         sampling_params = None
@@ -195,6 +193,7 @@ class SGLangWorker(Worker):
             max_running_requests=self._cfg_rollout.max_running_requests,
             dist_init_addr=f"127.0.0.1:{str(self.acquire_free_port())}",
             tool_call_parser=self._cfg_rollout.sglang.get("tool_call_parser", None),
+            trust_remote_code=self._cfg_rollout.model.trust_remote_code,
         )
 
         self.log_on_first_rank(f"{server_args=}")

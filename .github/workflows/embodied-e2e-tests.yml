@@ -17,7 +17,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill SAC test
@@ -43,7 +42,15 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled
-      
+
+      - name: ManiSkill Async SAC test with env decoupled mode and real simulator delay
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run_async.sh maniskill_sac_mlp_async_decoupled_with_delay
+
       - name: ManiSkill Async SAC eval test with env decoupled mode
         timeout-minutes: 20
         run: |
@@ -114,7 +121,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill SAC test
@@ -143,7 +149,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: Xsquare-turtle2 SAC dummy test
@@ -265,7 +270,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
       - name: ManiSkill PPO test
@@ -302,7 +306,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openvla-oft --env maniskill_libero
 
       - name: ManiSkill GRPO test
@@ -357,7 +360,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh --platform amd embodied --model openvla-oft --env libero
 
       - name: Libero-Goal GRPO test
@@ -367,6 +369,46 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_goal_grpo_openvlaoft osmesa
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-openpi-maniskill-libero-musa-test:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openpi --env maniskill_libero
+
+      - name: LIBERO-10 PPO OpenPI Pi05 test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: ManiSkill PPO OpenPI Pi05 test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=BRIDGE
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_async_ppo_openpi_pi05_musa osmesa
+          ray stop
 
       - name: Clean up
         run: |
@@ -385,7 +427,6 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh --platform ascend embodied --model openvla-oft --env libero
 
       - name: Libero-Goal GRPO test
@@ -448,16 +489,15 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-      - name: ManiSkill API Reward PPO test (managed SGLang)
+      - name: ManiSkill VLM Trend Reward PPO test (managed SGLang)
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_qwentrend_sglang_reward
+          bash tests/e2e_tests/embodied/run.sh maniskill_ppo_mlp_vlm_trend_reward_sglang
 
       - name: ManiSkill ResNet Reward PPO test
         timeout-minutes: 20
@@ -572,7 +612,7 @@ jobs:
           source .venv/bin/activate
           export OMNIGIBSON_DATA_PATH=/workspace/dataset/behavior-datasets
           export ISAAC_PATH=/workspace/dataset/isaac-sim
-          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_pytorch_eval
+          bash tests/e2e_tests/evaluations/run.sh behavior_openpi_rlinf_eval
 
       - name: Clean up
         run: |
@@ -593,7 +633,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           bash requirements/install.sh embodied --model gr00t --env maniskill_libero
 
@@ -622,7 +661,6 @@ jobs:
           export UV_PATH=/workspace/dataset/.uv
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T/
           export DECORD_PATH=/workspace/dataset/decord
           bash requirements/install.sh --platform ascend embodied --model gr00t --env libero
@@ -717,7 +755,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
       - name: Maniskill PPO Pi05 training pipeline test
@@ -813,7 +850,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model openpi --env maniskill_libero
 
           source .venv/bin/activate
@@ -1053,7 +1089,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export DEXBOTIC_PATH=/workspace/dataset/dexbotic
           bash requirements/install.sh embodied --model dexbotic --env maniskill_libero
 
@@ -1083,7 +1118,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export STARVLA_PATH=/workspace/dataset/starVLA
           bash requirements/install.sh embodied --model starvla --env maniskill_libero
 
@@ -1113,7 +1147,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export OPENSORA_PATH=/workspace/dataset/opensora
           bash requirements/install.sh embodied --model openvla-oft --env opensora
 
@@ -1143,7 +1176,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export WAN_PATH=/workspace/dataset/wan
           bash requirements/install.sh embodied --model openvla-oft --env wan
 
@@ -1207,7 +1239,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export LIBERO_PRO_PATH=/workspace/dataset/LIBERO-PRO
           bash requirements/install.sh embodied --model openvla-oft --env liberopro
 
@@ -1238,7 +1269,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
           bash requirements/install.sh embodied --model openvla-oft --env liberoplus
 
@@ -1269,7 +1299,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export EVO1_PATH=/workspace/dataset/Evo-1
           bash requirements/install.sh embodied --model evo1 --env libero
 
@@ -1301,7 +1330,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           bash requirements/install.sh embodied --model abot_m0 --env maniskill_libero
 
       - name: Patch ABot-M0 VGGT path
@@ -1338,7 +1366,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export LIBERO_PLUS_PATH=/workspace/dataset/LIBERO-PLUS
           bash requirements/install.sh embodied --model abot_m0 --env liberoplus
 
@@ -1408,7 +1435,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.6/
           bash requirements/install.sh embodied --model gr00t_n1d6 --env maniskill_libero
 
@@ -1438,7 +1464,6 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          export LIBERO_PATH=/workspace/dataset/LIBERO
           export GR00T_PATH=/workspace/dataset/Isaac-GR00T-1.7/
           bash requirements/install.sh embodied --model gr00t_n1d7 --env maniskill_libero
 
@@ -1480,6 +1505,37 @@ jobs:
           export POLARIS_DATA_PATH=/workspace/dataset/PolaRiS-Hub
           source /workspace/dataset/isaac-sim-5.1/setup_conda_env.sh
           bash tests/e2e_tests/embodied/run.sh polaris_tapeintocontainer_ppo_openpi_pi05
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-molmoact2-libero-eval-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export MOLMOACT2_LEROBOT_PATH=/workspace/dataset/lerobot-molmoact2
+          bash requirements/install.sh embodied --model molmoact2 --env libero
+
+      - name: LIBERO MolmoAct2 evaluation test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export ROBOT_PLATFORM=LIBERO
+          export LIBERO_TYPE=standard
+          bash tests/e2e_tests/embodied/run_eval.sh libero_10_molmoact2_eval
 
       - name: Clean up
         run: |

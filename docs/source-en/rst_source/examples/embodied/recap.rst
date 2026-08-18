@@ -109,7 +109,7 @@ Installation
 .. code:: bash
 
    # For mainland China users, you can use the following for better download speed:
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -125,9 +125,9 @@ Installation
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # For mainland China users, you can use the following for better download speed:
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 Please switch to the OpenPI virtual environment via the built-in ``switch_env`` utility:
 
@@ -809,7 +809,7 @@ File Structure
    rlinf/
    ├── models/embodiment/value_model/recap/     # value critic, config, checkpoint utils
    ├── data/datasets/recap/                     # value_dataset.py, cfg_model.py, ...
-   └── data/process/                            # shared, model-agnostic (RECAP + STEAM)
+   └── algorithms/offline/process/              # shared, model-agnostic (RECAP + STEAM)
        ├── advantage.py                          # quantile threshold + boolean label
        ├── distributed.py                        # sharded-inference helpers
        └── mixture_config.py                     # meta/mixture_config.yaml tag I/O

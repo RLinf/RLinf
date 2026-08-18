@@ -1,5 +1,5 @@
-Franka 真机强化学习
-========================================
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,68 +13,6 @@ Franka 真机强化学习
    基础 RLinf 真机 RL 流程使用的 Franka Emika Panda 机械臂。
 
 使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
-
-相关 Franka 配置
-----------------
-
-探索其他 Franka 硬件、传感器与训练配方。
-
-.. grid:: 1 2 2 3
-   :gutter: 2
-
-   .. grid-item-card:: Reward Model
-      :link: franka_reward_model
-      :link-type: doc
-
-      使用学习到的奖励模型训练 Franka。
-
-   .. grid-item-card:: ZED + Robotiq
-      :link: franka_zed_robotiq
-      :link-type: doc
-
-      使用 ZED 相机与 Robotiq 夹爪。
-
-   .. grid-item-card:: GELLO
-      :link: franka_gello
-      :link-type: doc
-
-      使用 GELLO 进行关节级遥操作数据采集。
-
-   .. grid-item-card:: VR / PICO
-      :link: franka_vr
-      :link-type: doc
-
-      使用 VR / PICO 设备进行遥操作。
-
-   .. grid-item-card:: Dexterous Hand
-      :link: franka_dexhand
-      :link-type: doc
-
-      为 Franka 配置灵巧手末端执行器。
-
-   .. grid-item-card:: Pi0 SFT
-      :link: franka_pi0_sft_deploy
-      :link-type: doc
-
-      在 Franka 上部署 π₀ SFT 策略。
-
-   .. grid-item-card:: HG-DAgger
-      :link: hg-dagger
-      :link-type: doc
-
-      人类介入的 DAgger 交互式训练。
-
-   .. grid-item-card:: Dual-Arm
-      :link: dual_franka
-      :link-type: doc
-
-      运行双臂 Franka 配置。
-
-   .. grid-item-card:: Dual PICO DAgger
-      :link: dual_franka_pico_dagger
-      :link-type: doc
-
-      使用 PICO 采集双臂数据并运行 HG-DAgger。
 
 概览
 ----------------------------------------
@@ -192,7 +130,6 @@ Franka 真机强化学习
   <div style="flex: 1; text-align: center;">
       <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
   </div>
-
 .. warning::
 
   请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
@@ -213,7 +150,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
@@ -233,9 +170,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.3-franka
+    rlinf/rlinf:agentic-rlinf0.4-franka
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-franka
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
 
 目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
 
@@ -303,7 +240,7 @@ A. 克隆 RLinf 仓库
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
   git clone https://github.com/RLinf/RLinf.git
   cd RLinf
 
@@ -321,9 +258,9 @@ B. 安装依赖
     --network host \
     --name rlinf \
     -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+    rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
     # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 **方式 2：自定义环境（Custom Environment）**
 
@@ -655,6 +592,8 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 自然地，你可以按照同样的方式扩展到更多的机器人。
 关于此类异构硬件配置语法的更多细节，请参考 :doc:`../../guides/hetero`。
 
+如需在真机上通过与动作块执行重叠来隐藏策略推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
+
 
 
 可视化与结果
@@ -726,18 +665,3 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
     </video>
     <p><em>充电器插电（Charger）</em></p>
   </div>
-
-.. toctree::
-   :hidden:
-   :maxdepth: 1
-
-   Reward Model <franka_reward_model>
-   ZED + Robotiq <franka_zed_robotiq>
-   GELLO <franka_gello>
-   VR / PICO <franka_vr>
-   Dexterous Hand <franka_dexhand>
-   Pi0 SFT <franka_pi0_sft_deploy>
-   HG-DAgger <hg-dagger>
-   Dual-Arm <dual_franka>
-   Dual-Arm OpenPI PyTorch <dual_franka_openpi_pytorch>
-   Dual PICO DAgger <dual_franka_pico_dagger>

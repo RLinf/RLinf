@@ -80,7 +80,7 @@ represents a transition, and `[act_0, r_0, dones, ...]` represents a
 
    time ->
    [ obs_0, obs_1, act_0, r_0, dones_0, ... ] --┐
-   [ obs_1, obs_2, act_1, r_1, dones_1, ... ] --┼-- EmbodiedRolloutResult -- Trajectory
+   [ obs_1, obs_2, act_1, r_1, dones_1, ... ] --┼-- EmbodiedTrajectoryBuilder -- Trajectory
    [ obs_2, obs_3, act_2, r_2, dones_2, ... ] --┤                                |
    [ obs_3, obs_4, act_3, r_3, dones_3, ... ] --┘                           Channel(put)
 

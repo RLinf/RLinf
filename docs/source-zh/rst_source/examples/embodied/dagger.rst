@@ -118,7 +118,7 @@ DAgger 工作原理
 
 1. **混合 rollout 与专家重标注** — 与经典 DAgger 相同的 ``beta`` 调度与专家重标注。
 2. **Episode 收集** — 当 ``algorithm.dagger.online_lerobot.enabled`` 为 ``True`` 时，
-   EnvWorker 使用 :class:`~rlinf.data.embodied_io_struct.EmbodiedLerobotRolloutResult`
+   EnvWorker 使用 :class:`~rlinf.data.schema.embodied_trajectory_builder.EmbodiedLerobotTrajectoryBuilder`
    累积各 env 的帧并导出完整 episode。
 3. **Actor 接收** — 完成的 episode 经 ``recv_lerobot_rollout_trajectories`` 写入 rolling dataset。
 4. **滑动窗口训练** — actor 从 ``RollingLeRobotDataset`` 采样（可选 decoded cache），
@@ -147,9 +147,9 @@ Docker 镜像或等价的本地环境。
       --network host \
       --name rlinf \
       -v .:/workspace/RLinf \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
       # 如果需要国内加速下载镜像，可以使用：
-      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+      # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
 
 请通过镜像内置的 ``switch_env`` 工具切换到对应的虚拟环境：
 

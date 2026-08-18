@@ -4,7 +4,7 @@
 本节展示了 **RLinf 目前支持的示例集合**，
 展示该框架如何应用于不同场景，并演示其在实际中的高效性。示例库会随着时间不断扩展，涵盖新的场景和任务，以展示 RLinf 的多样性和可扩展性。
 
-具身智能是 RLinf 的核心方向。具身示例被拆分为以下五个入口，便于按你的实际起点快速定位：
+具身智能是 RLinf 的核心方向。具身示例被拆分为以下七个入口，便于按你的实际起点快速定位：
 
 .. grid:: 1 2 3 3
    :gutter: 3
@@ -21,11 +21,23 @@
 
       在真实机器人硬件上运行 —— Franka 系列，以及 GimArm、XSquare Turtle2、DOS-W1。
 
-   .. grid-item-card:: 模型
+   .. grid-item-card:: 具身模型
       :link: vla_wam_index
       :link-type: doc
 
-      对某个模型家族做 RL 微调 —— π₀、GR00T、Lingbot-VLA、OpenSora、Wan 等。
+      对具身模型做 RL 微调 —— π₀、GR00T、StarVLA、Lingbot-VLA 等。
+
+   .. grid-item-card:: 世界模型
+      :link: world_model_index
+      :link-type: doc
+
+      训练和微调世界模型 —— OpenSora、Wan 等。
+
+   .. grid-item-card:: 奖励模型
+      :link: embodied/reward_model_index
+      :link-type: doc
+
+      构建用于仿真与真实机器人强化学习流程的奖励模型。
 
    .. grid-item-card:: SFT
       :link: sft_index
@@ -33,7 +45,7 @@
 
       用于产出 RL 冷启动检查点的监督微调（SFT）配方。
 
-   .. grid-item-card:: 算法
+   .. grid-item-card:: RL
       :link: methods_index
       :link-type: doc
 
@@ -62,8 +74,10 @@
 
    模拟器 <simulators_index>
    真机 <real_world_index>
-   模型 <vla_wam_index>
+   具身模型 <vla_wam_index>
+   世界模型 <world_model_index>
+   奖励模型 <embodied/reward_model_index>
    SFT <sft_index>
-   算法 <methods_index>
+   RL <methods_index>
    智能体 <agentic/index>
    系统 <system/index>

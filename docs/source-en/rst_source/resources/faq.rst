@@ -95,6 +95,21 @@ Using Ray Legacy Debugger (Fallback)
 Rendering Issues
 ------------------------------------
 
+Which GPU does EGL rendering use?
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf assigns each worker its own rendering device: it asks the driver for the
+EGL index of the GPU that worker was given and exports it as
+``MUJOCO_EGL_DEVICE_ID`` (MuJoCo, robosuite) and ``EGL_DEVICE_ID`` (other EGL
+renderers, e.g. pyrender). This matters because EGL device indices and CUDA
+device ids are different namespaces: EGL lists every device the driver can see,
+so in a container holding a subset of a node's GPUs, CUDA device 0 is usually
+*not* EGL device 0.
+
+Set ``MUJOCO_EGL_DEVICE_ID`` yourself only to override that choice; an explicit
+value is always respected. Setting it to a CUDA ordinal renders on the wrong GPU
+whenever the two namespaces disagree.
+
 RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -1,6 +1,7 @@
 ARG BUILD_TARGET=embodied
 ARG TARGETARCH
-# Hardware platform for the install: nvidia (default), amd (ROCm), or ascend (CANN).
+# Hardware platform for the install: nvidia (default), amd (ROCm), ascend (CANN),
+# or musa (Moore Threads).
 ARG PLATFORM=nvidia
 # Per-platform runtime versions. Override these for common CUDA/ROCm/CANN bumps, or
 # override the full base-image args below for a different image family/Ubuntu.
@@ -8,14 +9,22 @@ ARG CUDA_VER=12.8.1
 ARG ROCM_VER=6.4
 ARG ROCM_ARCHS=gfx90a;gfx942
 ARG CANN_VER=9.0.0-910b
+ARG MUSA_VER=v2.1.5-musa4.3.7
 ARG UBUNTU_VER=22.04
-ARG NVIDIA_BASE_IMAGE=nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
-ARG AMD_BASE_IMAGE=rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
+# Registry prefix for the Docker Hub base images, with a trailing slash.
+# Empty pulls from Docker Hub; set e.g. REGISTRY_MIRROR=m.daocloud.io/docker.io/ when it is unreachable.
+ARG REGISTRY_MIRROR=
+ARG NVIDIA_BASE_IMAGE=${REGISTRY_MIRROR}nvidia/cuda:${CUDA_VER}-cudnn-devel-ubuntu${UBUNTU_VER}
+ARG AMD_BASE_IMAGE=${REGISTRY_MIRROR}rocm/dev-ubuntu-${UBUNTU_VER}:${ROCM_VER}-complete
+# Ascend lives on Huawei SWR, not Docker Hub.
 ARG ASCEND_BASE_IMAGE=swr.cn-south-1.myhuaweicloud.com/ascendhub/cann:${CANN_VER}-ubuntu${UBUNTU_VER}-py3.11
+# MUSA lives on the Moore Threads registry, not Docker Hub.
+ARG MUSA_BASE_IMAGE=registry.mthreads.com/mcctest/ai/training-suite:${MUSA_VER}
+ARG FRANKA_BASE_IMAGE=${REGISTRY_MIRROR}ubuntu:20.04
 
 
 ##################################################################################################
-# Platform base resolution (selects between NVIDIA, AMD/ROCm, and Ascend/CANN)
+# Platform base resolution (NVIDIA, AMD/ROCm, Ascend/CANN, Moore Threads/MUSA)
 ##################################################################################################
 FROM ${NVIDIA_BASE_IMAGE} AS base-image-platform-nvidia
 FROM ${AMD_BASE_IMAGE} AS base-image-platform-amd
@@ -27,6 +36,9 @@ ENV PYTORCH_ROCM_ARCH=${ROCM_ARCHS}
 ENV AMD_VISIBLE_DEVICES=all
 FROM ${ASCEND_BASE_IMAGE} AS base-image-platform-ascend
 ENV ASCEND_VISIBLE_DEVICES=all
+FROM ${MUSA_BASE_IMAGE} AS base-image-platform-musa
+ENV MTHREADS_VISIBLE_DEVICES=all
+ENV MTHREADS_DRIVER_CAPABILITIES=all
 
 ##################################################################################################
 # Base images for different build targets — all derive from the platform base
@@ -38,6 +50,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-behavior-openpi
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-metaworld
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-calvin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa
+FROM base-image-platform-${PLATFORM} AS base-image-embodied-robocasa365
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-isaaclab
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-robotwin
 FROM base-image-platform-${PLATFORM} AS base-image-embodied-opensora
@@ -54,7 +67,7 @@ FROM base-image-platform-${PLATFORM} AS base-image-embodied-genesis
 
 # Franka depends on ros-noetic (Ubuntu 20.04) and is GPU-agnostic, so it
 # bypasses the platform switch and always uses a plain Ubuntu base.
-FROM ubuntu:20.04 AS base-image-embodied-franka
+FROM ${FRANKA_BASE_IMAGE} AS base-image-embodied-franka
 
 
 ##################################################################################################
@@ -78,7 +91,10 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
             if [ "$TARGETARCH" = "arm64" ]; then \
                 sed -i 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
             else \
-                sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list.d/ubuntu.sources; \
+                sed -i \
+                    -e 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                    -e 's@//security.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                    /etc/apt/sources.list.d/ubuntu.sources; \
             fi; \
         elif [ "$TARGETARCH" = "arm64" ]; then \
             sed -i \
@@ -86,7 +102,10 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
                 -e 's@//ports.ubuntu.com@//mirrors.ustc.edu.cn@g' \
                 /etc/apt/sources.list; \
         else \
-            sed -i 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' /etc/apt/sources.list; \
+            sed -i \
+                -e 's@//.*archive.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                -e 's@//security.ubuntu.com@//mirrors.ustc.edu.cn@g' \
+                /etc/apt/sources.list; \
         fi; \
     fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -209,10 +228,6 @@ RUN chmod +x /usr/local/bin/download_assets
 ##################################################################################################
 FROM embodied-common-image AS embodied-maniskill_libero-image
 
-# Clone the LIBERO env repo once into a shared path; every model below reuses it
-# (via clone_or_reuse_repo) instead of re-downloading it per venv.
-ENV LIBERO_PATH=/opt/envs/LIBERO
-
 # Install openvla env
 RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env maniskill_libero && \
     bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env maniskill_libero && \
@@ -306,6 +321,20 @@ RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 
 
 ##################################################################################################
+# Embodied: RoboCasa365
+##################################################################################################
+FROM embodied-common-image AS embodied-robocasa365-image
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env robocasa365
+
+RUN source switch_env openpi && download_assets ${INSTALL_MIRROR_OPTION} --dir /opt/assets --assets openpi
+RUN link_assets
+
+# Set default env
+RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
+
+
+##################################################################################################
 # Embodied: IsaacLab
 ##################################################################################################
 FROM embodied-common-image AS embodied-isaaclab-image
@@ -332,6 +361,16 @@ FROM embodied-common-image AS embodied-franka-image
 RUN for v in 0.10.0 0.13.3 0.14.1 0.15.0 0.18.0 0.19.0; do \
             LIBFRANKA_VERSION="$v" FRANKA_ROS_VERSION=0.10.0 bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franka-$v" --env franka; \
         done
+
+# Franky environments. franky-control ships libfranka inside a prebuilt wheel,
+# so these need no ROS/catkin build and are kept in separate venvs from the
+# franka-$v ones above. Only the libfranka versions with published wheels are
+# built: https://github.com/Brunch-Life/franky/releases
+RUN for v in 0.15.0 0.19.0; do \
+            LIBFRANKA_VERSION="$v" bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv "franky-$v" --env franka-franky; \
+        done
+
+RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform nvidia embodied --venv franka-dexhand --env franka-dexhand
 
 # Set default env (recommended libfranka 0.15.0)
 RUN echo "source ${UV_PATH}/franka-0.15.0/bin/activate" >> ~/.bashrc
@@ -401,16 +440,19 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 ##################################################################################################
 FROM embodied-common-image AS embodied-libero-image
 
-# Clone the LIBERO env repo once into a shared path; every model below reuses it
-# (via clone_or_reuse_repo) instead of re-downloading it per venv.
-ENV LIBERO_PATH=/opt/envs/LIBERO
-
-# Install openvla, openvla-oft, dreamzero, gr00t, and evo1 envs
-RUN bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero
+# Ascend supports the openvla, openvla-oft and gr00t models only.
+RUN if [ "${RLINF_PLATFORM}" = "ascend" ]; then \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero; \
+    else \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla --model openvla --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openvla-oft --model openvla-oft --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv dreamzero --model dreamzero --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv gr00t --model gr00t --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv molmoact2 --model molmoact2 --env libero && \
+        bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv evo1 --model evo1 --env libero; \
+    fi
 
 # Set default env
 RUN echo "source ${UV_PATH}/openvla/bin/activate" >> ~/.bashrc

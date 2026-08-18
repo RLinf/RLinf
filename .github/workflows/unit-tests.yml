@@ -50,6 +50,7 @@ jobs:
           uv venv
           source .venv/bin/activate
           UV_TORCH_BACKEND=auto uv sync
+          uv pip install gymnasium imageio
           uv pip install "transformers<=5.9.0"
 
       - name: Run pytest
@@ -62,7 +63,7 @@ jobs:
               ray stop
           done
 
-  scheduler-unit-tests-rocm:
+  unit-tests-rocm:
     runs-on: rocm
     steps:
       - name: Checkout code
@@ -78,7 +79,7 @@ jobs:
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
-      - name: Run scheduler unit tests
+      - name: Run unit tests
         timeout-minutes: 20
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
@@ -93,7 +94,7 @@ jobs:
           rm -rf .venv
           uv cache prune
 
-  scheduler-unit-tests-ascend:
+  unit-tests-ascend:
     runs-on: ascend
     steps:
       - name: Checkout code
@@ -109,7 +110,38 @@ jobs:
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
 
-      - name: Run scheduler unit tests
+      - name: Run unit tests
+        timeout-minutes: 60
+        run: |
+          export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
+          source .venv/bin/activate
+          for file in tests/unit_tests/test_*.py; do
+              pytest "$file"
+              ray stop
+          done
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  unit-tests-musa:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA environment and install dependencies
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --env dummy
+          source .venv/bin/activate
+          uv pip install "transformers<=5.9.0"
+
+      - name: Run unit tests
         timeout-minutes: 60
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH

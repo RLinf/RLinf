@@ -103,7 +103,7 @@ STEAM 工作原理
 .. code:: bash
 
    # 中国大陆用户可使用以下镜像以获得更快下载速度：
-   # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+   # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf
 
@@ -500,7 +500,7 @@ STEAM 实验结果
 文件结构
 ----------------------------------------
 
-STEAM 将各步骤脚本自包含在 ``examples/`` 下（绑定模型的推理 + 标注逻辑），模型 / 数据集代码在 ``rlinf/models``、``rlinf/data/datasets`` 下，与 RECAP 共享的模型无关后处理在 ``rlinf/data/process/`` 下：
+STEAM 将各步骤脚本自包含在 ``examples/`` 下（绑定模型的推理 + 标注逻辑），模型 / 数据集代码在 ``rlinf/models``、``rlinf/data/datasets`` 下，与 RECAP 共享的模型无关后处理在 ``rlinf/algorithms/offline/process/`` 下：
 
 .. code-block:: text
 
@@ -532,7 +532,7 @@ STEAM 将各步骤脚本自包含在 ``examples/`` 下（绑定模型的推理 +
    │   ├── ensemble_modeling_critic.py          # worst-of-N + coerce_to_ensemble
    │   └── checkpoint_merge.py
    ├── data/datasets/steam/                     # pair_dataset.py、mixture.py、binning.py
-   └── data/process/                            # 共享、模型无关（RECAP + STEAM）
+   └── algorithms/offline/process/              # 共享、模型无关（RECAP + STEAM）
        ├── advantage.py                         # 分位数阈值 + 布尔标签
        ├── distributed.py                       # 分片推理辅助
        └── mixture_config.py                    # meta/mixture_config.yaml tag I/O

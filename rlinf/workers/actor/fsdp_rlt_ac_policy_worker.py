@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
-from rlinf.data.embodied_io_struct import Trajectory
+from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.scheduler import Worker
 from rlinf.utils.distributed import all_reduce_dict
@@ -223,6 +223,12 @@ class RLTACLossMixin:
         }
         return bc_weight, q_weight, metrics
 
+    def _next_actions_for_critic_target(self, next_obs):
+        return self.model(
+            forward_type=ForwardType.SAC,
+            obs=next_obs,
+        )
+
     @Worker.timer("forward_critic")
     def forward_critic(self, batch):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
@@ -241,10 +247,7 @@ class RLTACLossMixin:
         )
 
         with torch.no_grad():
-            next_actions, _, _ = self.model(
-                forward_type=ForwardType.SAC,
-                obs=next_obs,
-            )
+            next_actions, _, _ = self._next_actions_for_critic_target(next_obs)
 
             if not use_crossq:
                 all_qf_next_target = self.target_model(
@@ -527,7 +530,7 @@ class RLTACReplayMixin:
 
                 # Dones have one extra initial slot, so transition t reads
                 # terminal flags from t+1. Rewards are already action-aligned
-                # by EmbodiedRolloutResult because the initial empty reward is
+                # by EmbodiedTrajectoryBuilder because the initial empty reward is
                 # skipped and the final reward is appended after rollout.
                 done_idx = min(
                     t + 1,

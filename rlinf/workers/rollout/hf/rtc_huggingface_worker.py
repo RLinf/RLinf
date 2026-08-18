@@ -26,7 +26,7 @@ import torch
 from omegaconf.omegaconf import DictConfig
 from tqdm import tqdm
 
-from rlinf.data.embodied_io_struct import RTCActionResponse, RTCRequest
+from rlinf.data.schema.embodied_types import RTCActionResponse, RTCRequest
 from rlinf.scheduler import Channel, Worker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 

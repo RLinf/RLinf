@@ -30,7 +30,8 @@ from vllm.sampling_params import SamplingParams
 from vllm.v1.engine.async_llm import AsyncLLM as AsyncLLMEngine
 
 from rlinf.config import torch_dtype_from_precision
-from rlinf.data.io_struct import RolloutRequest, RolloutResult, SeqGroupInfo
+from rlinf.data.schema.reasoning_requests import RolloutRequest, SeqGroupInfo
+from rlinf.data.schema.reasoning_results import RolloutResult
 from rlinf.scheduler import Channel, Worker
 from rlinf.scheduler.dynamic_scheduler.manager import RolloutScalingScheduler
 from rlinf.scheduler.dynamic_scheduler.utils import get_scheduler_channel
@@ -108,7 +109,7 @@ class VLLMWorker(Worker):
 
     def _load_tokenizer(self):
         model_path = self._cfg.rollout.model.model_path
-        trust_remote_code = self._cfg.actor.tokenizer.get("trust_remote_code", False)
+        trust_remote_code = self._cfg.rollout.model.trust_remote_code
         try:
             tokenizer = AutoTokenizer.from_pretrained(
                 model_path,
@@ -343,7 +344,7 @@ class VLLMWorker(Worker):
             "enable_prefix_caching": self._cfg.rollout.vllm.enable_prefix_caching,
             "max_num_batched_tokens": self._cfg.rollout.vllm.max_num_batched_tokens,
             "load_format": "dummy" if not self._cfg.rollout.validate_weight else "auto",
-            "trust_remote_code": self._cfg.actor.tokenizer.trust_remote_code,
+            "trust_remote_code": self._cfg.rollout.model.trust_remote_code,
             "max_model_len": self._cfg.runner.seq_length,
             "max_num_seqs": self._cfg.rollout.max_running_requests,
             "enable_sleep_mode": True,  # it enables offload weights

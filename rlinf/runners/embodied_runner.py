@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from rlinf.workers.actor.async_fsdp_sac_policy_worker import (
         AsyncEmbodiedSACFSDPPolicy,
     )
-    from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+    from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
     from rlinf.workers.actor.fsdp_nft_policy_worker import EmbodiedNFTFSDPPolicy
     from rlinf.workers.actor.fsdp_sac_policy_worker import EmbodiedSACFSDPPolicy
     from rlinf.workers.env.async_env_worker import AsyncEnvWorker
@@ -483,8 +483,8 @@ class EmbodiedRunner:
         start_time = time.time()
         for _step in range(start_step, self.max_steps):
             # set global step
-            self.actor.set_global_step(self.global_step)
-            self.rollout.set_global_step(self.global_step)
+            self.actor.set_global_step(self.global_step).wait()
+            self.rollout.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step
@@ -567,8 +567,8 @@ class EmbodiedRunner:
         start_time = time.time()
         for _step in range(start_step, self.max_steps):
             # set global step
-            self.actor.set_global_step(self.global_step)
-            self.rollout.set_global_step(self.global_step)
+            self.actor.set_global_step(self.global_step).wait()
+            self.rollout.set_global_step(self.global_step).wait()
 
             profiled_step = (
                 self.global_step

@@ -35,7 +35,6 @@ except ImportError:
         AutoModelForVision2Seq = None
 
 from rlinf.config import SupportedModel, torch_dtype_from_precision
-from rlinf.data.tokenizers import hf_tokenizer
 from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
@@ -45,6 +44,7 @@ from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
     get_lr_scheduler,
 )
+from rlinf.models.tokenization.hf import hf_tokenizer
 from rlinf.scheduler import Worker
 from rlinf.utils.logging import get_logger
 from rlinf.utils.utils import (
