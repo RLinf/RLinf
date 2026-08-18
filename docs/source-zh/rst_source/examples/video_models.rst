@@ -293,7 +293,7 @@ prompt，``env.*.dataset.split`` 用于选择对应文件。
 预期实验结果
 ------------
 
-.. figure:: /_static/images/diffusion_nft_expected_results.png
+.. figure:: https://github.com/user-attachments/assets/6161b286-8df9-41c3-945e-cf30ffd9f185
    :align: center
    :width: 92%
 
