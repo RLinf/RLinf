@@ -60,6 +60,13 @@ from rlinf.workers.env.smooth_intervene import SmoothInterveneController
 
 
 class EnvWorker(Worker):
+    # Class-level default so the observation send path is safe even when the
+    # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
+    # unit tests). ``None`` means "use the scheduler's default split"; when
+    # ``env.obs_compression`` is enabled, ``__init__`` installs the compressing
+    # ``split_fn`` (see ``_split_and_compress_obs``).
+    _obs_split_fn = None
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
