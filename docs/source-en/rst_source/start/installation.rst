@@ -36,25 +36,26 @@ environment list.
   Python 3.11.14; some environments such as ``behavior`` and ``d4rl`` require
   Python 3.10.
 - Use ``--torch <version>`` only when you need a different PyTorch wheel.
-- Use ``--platform amd`` or ``--platform ascend`` for experimental non-NVIDIA
-  installs. See :doc:`../guides/amd_rocm` and :doc:`../guides/ascend_cann`.
+- Use ``--platform amd``, ``--platform ascend``, or ``--platform musa`` for
+  experimental non-NVIDIA installs. See :doc:`../guides/amd_rocm`,
+  :doc:`../guides/ascend_cann`, and :doc:`../guides/moore_threads_musa`.
 
 Option 2: Docker
 ----------------
 
 Each image bundles a ready-to-run stack (for example,
-``agentic-rlinf0.3-maniskill_libero``). Pull and run it, then select the model
+``agentic-rlinf0.4-maniskill_libero``). Pull and run it, then select the model
 environment inside the container:
 
 .. code-block:: bash
 
-   docker pull rlinf/rlinf:agentic-rlinf0.3-maniskill_libero
+   docker pull rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
    docker run -it --gpus all \
       --shm-size 100g \
       --net=host \
       --name rlinf \
       -e NVIDIA_DRIVER_CAPABILITIES=all \
-      rlinf/rlinf:agentic-rlinf0.3-maniskill_libero /bin/bash
+      rlinf/rlinf:agentic-rlinf0.4-maniskill_libero /bin/bash
 
    git clone https://github.com/RLinf/RLinf.git
    cd RLinf

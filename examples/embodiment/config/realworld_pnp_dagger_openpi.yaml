@@ -56,11 +56,20 @@ runner:
 
 algorithm:
   dagger:
-    init_beta: 1.0
-    beta_schedule: "exponential"
-    beta_decay: 0.99
-    # HG-DAgger: only expert-acted data is saved.
+    # Train on every frame from successful episodes. Human-intervened frames
+    # still carry intervene_flag=True and store the executed expert action.
     only_save_expert: True
+    online_lerobot:
+      enabled: True
+      only_success: True
+      robot_type: "panda"
+      fps: 10
+      # Real-world episodes are expensive; archive every completed success.
+      finalize_interval: 1
+      data_path: ${runner.logger.log_path}/online_lerobot
+      rolling_lerobot_window_size: 50000
+      min_frames: 1
+      lerobot_num_workers: 0
 
   gamma: 0.99
 
@@ -68,23 +77,38 @@ algorithm:
   adv_type: gae
   loss_type: embodied_dagger
 
-  replay_buffer:
-    enable_cache: True
-    cache_size: 200
-    min_buffer_size: 4
-    sample_window_size: 200
-    auto_save: False
-
 env:
   group_name: "EnvGroup"
 
   train:
     rollout_epoch: 1
+    smooth_intervene: True
     auto_reset: True
     ignore_terminations: False
     total_num_envs: 1
     no_gripper: False
-    use_spacemouse: True
+    use_spacemouse: False
+    use_pico: True
+    pico:
+      # Address of the PICO / XRoboToolkit publisher on the Franka node.
+      zmq_addr: "ipc:///tmp/vr_data.ipc"
+      hand: "right"
+      # Hold grip to take over; releasing it returns control to the policy.
+      control_trigger: "grip"
+      control_threshold: 0.85
+      gripper_close_button: "A"
+      gripper_open_button: "B"
+      position_scale: 1.0
+      rotation_scale: 1.0
+      max_stale_s: 0.2
+      calibration:
+        enabled: True
+        required: True
+        auto_calibrate_on_start: True
+        button: "trigger"
+        threshold: 0.5
+        head_forward_axis: "-z"
+        base_position: [0.0, 0.0, 0.0]
     max_steps_per_rollout_epoch: 180
     max_episode_steps: 180
     override_cfg:
@@ -99,7 +123,8 @@ env:
     auto_reset: True
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: True
+    use_spacemouse: False
+    use_pico: False
     max_steps_per_rollout_epoch: 180
     max_episode_steps: 180
     override_cfg:
@@ -140,6 +165,8 @@ actor:
       train_expert_only: False
       detach_critic_input: True
       action_chunk: ${actor.model.num_action_chunks}
+    openpi_data:
+      repo_id: "NORM_STATS_REPO_ID"
 
   optim:
     lr: 1.0e-5

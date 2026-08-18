@@ -344,6 +344,11 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
     ``PicoExpert`` emits a 7D delta-TCP action with rotation as a normalized
     rotvec.  This wrapper adapts that output to the dual TCP env layout:
     ``[L_xyz, L_rot6d, L_grip, R_xyz, R_rot6d, R_grip]``.
+
+    When ``hold_current_when_inactive`` is False, releasing grip keeps the last
+    intervened TCP command for the rest of the current action chunk (not marked
+    as intervention). ``on_action_chunk_begin`` clears that latch so the next
+    chunk can resume policy actions cleanly.
     """
 
     def __init__(
@@ -379,11 +384,21 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
 
         self.left = False
         self.right = False
+        # After mid-chunk release, keep the last intervened absolute TCP command
+        # until the next action chunk begins (cleared via on_action_chunk_begin).
+        self._post_intervene_hold = dict.fromkeys(self.experts, False)
+        self._last_arm_action = dict.fromkeys(self.experts)
+
+    def on_action_chunk_begin(self) -> None:
+        """Clear mid-chunk hold latches so the next chunk can resume policy actions."""
+        self._post_intervene_hold = dict.fromkeys(self.experts, False)
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         self.left = False
         self.right = False
+        self.on_action_chunk_begin()
+        self._last_arm_action = dict.fromkeys(self.experts)
         return obs, info
 
     @staticmethod
@@ -448,6 +463,51 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
         target_pose = np.concatenate([target_pos, target_rot.as_quat()])
         return self._tcp_pose_to_rot6d_action(target_pose, gripper_action)
 
+    def get_hold_action(self, fallback_action: np.ndarray | None = None) -> np.ndarray:
+        """Return absolute TCP hold actions for both arms.
+
+        Used by smooth-intervene dummy chunks so inactive arms keep the measured
+        TCP pose when ``hold_current_when_inactive`` is False. Gripper commands
+        are taken from ``fallback_action`` when provided.
+        """
+        target_shape = self.env.action_space.shape
+        target_dim = int(np.prod(target_shape))
+        if target_dim != 20:
+            raise ValueError(
+                "DualFrankaTcpPicoIntervention expects DualFrankaTcpEnv's 20D "
+                f"action space, got action_space.shape={target_shape}."
+            )
+
+        tcp_pose = np.asarray(self.get_wrapper_attr("get_tcp_pose")(), dtype=np.float32)
+        if tcp_pose.size != 14:
+            raise ValueError(
+                "DualFrankaTcpPicoIntervention expects get_tcp_pose() to return "
+                f"14 values, got shape {tcp_pose.shape}."
+            )
+
+        if fallback_action is None:
+            action_flat = np.zeros(target_dim, dtype=np.float32)
+        else:
+            action_flat = np.asarray(fallback_action, dtype=np.float32).reshape(-1)
+            if action_flat.size != target_dim:
+                action_flat = _match_action_space(
+                    action_flat, action_flat, (target_dim,)
+                )
+
+        per_arm_dim = target_dim // 2
+        hold_action = np.concatenate(
+            [
+                self._current_tcp_action(tcp_pose, action_flat, 0, per_arm_dim),
+                self._current_tcp_action(tcp_pose, action_flat, 1, per_arm_dim),
+            ]
+        ).astype(np.float32)
+        hold_action = np.clip(
+            hold_action,
+            self.env.action_space.low.reshape(-1),
+            self.env.action_space.high.reshape(-1),
+        )
+        return hold_action.reshape(target_shape)
+
     def action(self, action: np.ndarray) -> tuple[np.ndarray, bool, dict[str, Any]]:
         target_shape = self.env.action_space.shape
         target_dim = int(np.prod(target_shape))
@@ -510,12 +570,25 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
             replaced_by_side[side] = bool(replaced)
             pico_info[f"{side}_pico_replaced"] = bool(replaced)
             if replaced:
-                new_action[action_slice] = self._expert_delta_to_tcp_action(
+                pico_action = self._expert_delta_to_tcp_action(
                     expert_action,
                     tcp_pose[tcp_slice],
                     action_scale,
                 )
+                new_action[action_slice] = pico_action
+                self._last_arm_action[side] = np.asarray(
+                    pico_action, dtype=np.float32
+                ).copy()
+                self._post_intervene_hold[side] = True
                 replaced_any = True
+            elif (
+                self._post_intervene_hold[side]
+                and not self.hold_current_when_inactive
+                and self._last_arm_action[side] is not None
+            ):
+                # Mid-chunk release: hold last action until next chunk begins.
+                # Do not mark intervene so expert training skips these frames.
+                new_action[action_slice] = self._last_arm_action[side]
 
         pico_info["pico_active"] = bool(self.left or self.right)
         pico_info["pico_ready"] = bool(
@@ -538,10 +611,7 @@ class DualFrankaTcpPicoIntervention(gym.ActionWrapper):
         new_action, replaced, pico_info = self.action(action)
 
         obs, rew, done, truncated, info = self.env.step(new_action)
-        should_record_intervention = replaced
-        if self.hand == "dual" and not self.hold_current_when_inactive:
-            should_record_intervention = bool(pico_info["pico_dual_replaced"])
-        if should_record_intervention or self.hold_current_when_inactive:
+        if replaced or self.hold_current_when_inactive:
             info["intervene_action"] = new_action
             info["intervene_flag"] = np.ones(1)
         info.update(pico_info)

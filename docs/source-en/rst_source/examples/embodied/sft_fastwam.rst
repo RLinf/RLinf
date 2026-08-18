@@ -140,14 +140,15 @@ Use ``dataset_stats_path`` for the released normalization statistics:
 FastWAM and RLinf Configuration
 -------------------------------
 
-The standard evaluation YAML reads examples/embodiment/config/model/fastwam.yaml.
-Before use, replace the model_path and dataset_stats_path placeholders in that
-file with local model files:
+The smoke evaluation YAML inherits the shared
+``examples/embodiment/config/model/fastwam.yaml`` preset. Do not edit that
+preset: append the following two launch-time overrides to an evaluation
+command:
 
-.. code-block:: yaml
+.. code-block:: text
 
-   model_path: your_path_to/FASTWAM_CHECKPOINT
-   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+   rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT
+   rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 RLinf composes FastWAM's upstream YAML with OmegaConf without changing Hydra's
 global state. The two configuration layers have separate responsibilities:
@@ -187,37 +188,30 @@ supported alias.
 Evaluate
 --------
 
-Use evaluations/libero/libero_fastwam_full_eval.yaml to evaluate an SFT
-checkpoint. Before launch, replace its two placeholder paths with local files.
-They are not environment variables and are not resolved or downloaded
-automatically. Keep existing checkpoints, dataset statistics, and datasets in
-place.
+FastWAM provides separate smoke and full-suite configurations.
 
-.. code-block:: yaml
-
-   model_path: your_path_to/FASTWAM_SFT_CKPT
-   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
-
-The single ``libero_spatial_fastwam_eval.yaml`` config replaces separate small,
-large, LIBERO-Plus, language-only, and future-video YAML files.
-
-**Standard LIBERO smoke evaluation:**
-
-.. code-block:: bash
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval
-
-**Larger evaluation:** run 80 trajectories through eight reusable environment
-processes and disable video recording:
+**Standard LIBERO smoke evaluation** uses
+``libero_spatial_fastwam_eval.yaml``. It is intended to validate a local
+checkpoint on a small Spatial batch; pass the two paths without editing the
+shared model preset:
 
 .. code-block:: bash
 
    MUJOCO_GL=egl bash evaluations/run_eval.sh \
      libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 \
-     env.eval.max_steps_per_rollout_epoch=2400 \
-     env.eval.video_cfg.save_video=false
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+
+**Full-suite evaluation** uses
+``evaluations/libero/libero_fastwam_full_eval.yaml``. Before running it,
+replace that file's ``rollout.model.model_path`` and
+``rollout.model.dataset_stats_path`` placeholders with local files; they are
+not environment variables and are not downloaded automatically. Then run:
+
+.. code-block:: bash
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval
 
 **LIBERO-Plus:** select all perturbations or a single family with environment
 variables; the YAML stays unchanged:
@@ -225,11 +219,15 @@ variables; the YAML stays unchanged:
 .. code-block:: bash
 
    LIBERO_TYPE=plus LIBERO_SUFFIX=all MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
    LIBERO_TYPE=plus LIBERO_SUFFIX=language MUJOCO_GL=egl \
      bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false
+     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 **Future-video visualization:** action generation remains batched; optional
 future imagination is generated only for the first sample and capped by
@@ -242,7 +240,9 @@ future imagination is generated only for the first sample and capped by
      env.eval.total_num_envs=2 \
      env.eval.video_cfg.save_video=false \
      rollout.model.visualize_future_video=true \
-     rollout.model.future_video_dir=/workspace/future_video_demo
+     rollout.model.future_video_dir=/workspace/future_video_demo \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 Supervised Fine-Tuning
 ----------------------
@@ -260,8 +260,7 @@ terminal from the repository root; use tmux for long downloads and training:
    #!/usr/bin/env bash
    set -euo pipefail
 
-   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-   REPO_PATH="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+   REPO_PATH="$(git rev-parse --show-toplevel)"
    PYTHON_BIN="${REPO_PATH}/.venv/bin/python"
    FASTWAM_PATH="${FASTWAM_PATH:-${REPO_PATH}/.venv/FastWAM}"
    CHECKPOINT_DIR="${FASTWAM_CHECKPOINT_DIR:-${REPO_PATH}/checkpoints/fastwam_release}"

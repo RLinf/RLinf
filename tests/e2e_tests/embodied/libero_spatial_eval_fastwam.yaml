@@ -61,6 +61,8 @@ env:
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
     is_eval: true
+    # Only FastWAM needs terminal slots to remain inactive after fixed-state exhaustion.
+    stop_when_eval_exhausted: true
     libero_variant: standard
     perturbation_suffix: null
     video_cfg:

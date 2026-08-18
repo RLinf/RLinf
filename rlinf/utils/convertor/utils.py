@@ -621,11 +621,198 @@ class Qwen3MoEConvertor(Qwen3BaseConvertor):
         ]
 
 
+class DeepseekV3Convertor(BaseConvertor):
+    """mg2hf convertor for DeepSeek-V3 text backbone.
+
+    Architecture: Multi-Latent Attention (MLA) + MoE with a shared expert and
+    routed experts (TE grouped-gemm layout, converted to local_experts by
+    moe_te_group_to_seq upstream). All MLA projections and norms map 1:1
+    (SPLIT_NONE); TP sharding for them is handled by tp_reshard_fn_deepseek_v3.
+    Fused fc1 (dense / shared / routed-expert) is decomposed into gate+up.
+    """
+
+    def build_rules(self) -> list[ConvertorRule]:
+        LID = r"(?P<i>\d+)"
+        EID = r"(?P<ei>\d+)"
+        WB = r"(?P<wb>weight|bias)"
+
+        return [
+            # ---- model-level ----
+            ConvertorRule(
+                re.compile(r"embedding\.word_embeddings\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"model.embed_tokens.weight"],
+            ),
+            ConvertorRule(
+                re.compile(r"decoder\.final_layernorm\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"model.norm.weight"],
+            ),
+            ConvertorRule(
+                re.compile(r"output_layer\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"lm_head.weight"],
+            ),
+            # MLA attention (all SPLIT_NONE; TP handled by tp_reshard_fn)
+            # Moonlight (q_lora_rank=None): standard q_proj, no low-rank decomposition.
+            # DeepSeek-V3 (q_lora_rank=1536) does NOT have linear_q_proj.
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_q_proj\.weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.q_proj.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_q_down_proj\.weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.q_a_proj.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_q_up_proj\.weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.q_b_proj.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_q_up_proj\.layer_norm_weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.q_a_layernorm.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_kv_down_proj\.weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.kv_a_proj_with_mqa.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_kv_up_proj\.weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.kv_b_proj.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_kv_up_proj\.layer_norm_weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.kv_a_layernorm.weight"],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.self_attention\.linear_proj\.{WB}$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.self_attn.o_proj.\g<wb>"],
+            ),
+            # ---- layer norms ----
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.input_layernorm\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.input_layernorm.weight"],
+            ),
+            # MoE-layer post-attention norm
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.pre_mlp_layernorm\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.post_attention_layernorm.weight"],
+            ),
+            # dense-layer post-attention norm (fused into fc1 layernorm)
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.layer_norm_weight$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.post_attention_layernorm.weight"],
+            ),
+            # ---- dense MLP (dense FFN layer) ----
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc1\.{WB}$"),
+                TransformType.SPLIT_FC1,
+                [
+                    r"model.layers.\g<i>.mlp.gate_proj.\g<wb>",
+                    r"model.layers.\g<i>.mlp.up_proj.\g<wb>",
+                ],
+            ),
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.linear_fc2\.{WB}$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.down_proj.\g<wb>"],
+            ),
+            # ---- shared expert MLP ----
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.shared_experts\.linear_fc1\.{WB}$"
+                ),
+                TransformType.SPLIT_FC1,
+                [
+                    r"model.layers.\g<i>.mlp.shared_experts.gate_proj.\g<wb>",
+                    r"model.layers.\g<i>.mlp.shared_experts.up_proj.\g<wb>",
+                ],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.shared_experts\.linear_fc2\.{WB}$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.shared_experts.down_proj.\g<wb>"],
+            ),
+            # ---- routed experts (after moe_te_group_to_seq -> local_experts.{EID}) ----
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.experts\.local_experts\.{EID}\.linear_fc1\.{WB}$"
+                ),
+                TransformType.SPLIT_EXPERT_FC1,
+                [
+                    r"model.layers.\g<i>.mlp.experts.\g<ei>.gate_proj.\g<wb>",
+                    r"model.layers.\g<i>.mlp.experts.\g<ei>.up_proj.\g<wb>",
+                ],
+            ),
+            ConvertorRule(
+                re.compile(
+                    rf"decoder\.layers\.{LID}\.mlp\.experts\.local_experts\.{EID}\.linear_fc2\.{WB}$"
+                ),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.experts.\g<ei>.down_proj.\g<wb>"],
+            ),
+            # ---- router ----
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.router\.weight$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.gate.weight"],
+            ),
+            ConvertorRule(
+                re.compile(rf"decoder\.layers\.{LID}\.mlp\.router\.expert_bias$"),
+                TransformType.SPLIT_NONE,
+                [r"model.layers.\g<i>.mlp.gate.e_score_correction_bias"],
+            ),
+        ]
+
+    def convert(self, state_dict: dict) -> dict:
+        converted = super().convert(state_dict)
+        # on sglang 0.4.6 kv_a_proj_with_mqa must arrive before q_a_proj
+        # not functionally required on 0.5.12
+        kv = {k: v for k, v in converted.items() if "kv_a_proj_with_mqa" in k}
+        qa = {k: v for k, v in converted.items() if "q_a_proj" in k and "kv_a" not in k}
+        if kv and qa:
+            rest = {k: v for k, v in converted.items() if k not in kv and k not in qa}
+            converted = {**kv, **rest, **qa}
+        return converted
+
+
 _MG2HF_CONVERTOR_REGISTRY = {
     SupportedModel.QWEN2_5: Qwen25Convertor,
     SupportedModel.QWEN2_5_VL: Qwen25VLConvertor,
     SupportedModel.QWEN3: Qwen3DenseConvertor,
     SupportedModel.QWEN3_MOE: Qwen3MoEConvertor,
+    SupportedModel.DEEPSEEK_V3: DeepseekV3Convertor,
 }
 
 

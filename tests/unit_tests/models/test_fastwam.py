@@ -220,3 +220,16 @@ def test_gradient_checkpointing_is_controlled_by_policy(fastwam_modules) -> None
     assert not policy.video_expert.use_gradient_checkpointing
     assert not policy.action_expert.use_gradient_checkpointing
     assert not policy.mot.mot_checkpoint_mixed_attn
+
+
+def test_fastwam_eval_configs_opt_into_safe_slot_exhaustion() -> None:
+    """Only FastWAM eval configs enable terminal-slot suppression."""
+    repo_root = Path(__file__).resolve().parents[3]
+    for relative_path in (
+        "evaluations/libero/libero_spatial_fastwam_eval.yaml",
+        "evaluations/libero/libero_fastwam_full_eval.yaml",
+        "tests/e2e_tests/embodied/libero_spatial_eval_fastwam.yaml",
+    ):
+        assert "stop_when_eval_exhausted: true" in (
+            repo_root / relative_path
+        ).read_text(encoding="utf-8")

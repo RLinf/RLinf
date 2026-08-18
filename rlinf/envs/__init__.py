@@ -14,6 +14,12 @@
 
 from enum import Enum
 
+from rlinf.utils.robosuite_compat import install_robosuite_egl_device_shim
+
+# Must run before any simulator is imported, in worker processes and in the
+# simulator subprocesses they spawn alike. See ``rlinf.utils.robosuite_compat``.
+install_robosuite_egl_device_shim()
+
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"

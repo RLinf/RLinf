@@ -267,36 +267,10 @@ class FSDPModelManager:
         except Exception as e:
             self._logger.warning(f"[FSDP] Liger kernels not applied: {e}")
 
-    def infer_total_training_steps(self) -> int:
-        """Infer the optimizer's total number of training steps.
-
-        Subclasses with access to the training horizon should override this
-        method when ``optim.total_training_steps`` may be left unset.
-
-        Returns:
-            The inferred total number of optimizer steps.
-
-        Raises:
-            NotImplementedError: If the subclass cannot infer the training
-                horizon.
-        """
-        raise NotImplementedError(
-            "optim.total_training_steps must be configured or inferred by the "
-            "FSDP worker."
-        )
-
     def setup_model_and_optimizer(self) -> None:
         """
         Setup model, lr_scheduler, optimizer and grad_scaler.
         """
-        if self._cfg.optim.get("total_training_steps") is None:
-            total_training_steps = self.infer_total_training_steps()
-            self._cfg.optim.total_training_steps = total_training_steps
-            self._logger.info(
-                "[FSDP] Inferred optim.total_training_steps=%d",
-                total_training_steps,
-            )
-
         module = self.model_provider_func()
 
         # Enable gradient checkpointing if configured

@@ -154,6 +154,10 @@ def initialize_megatron(cfg: DictConfig):
     args = set_megatron_args(cfg)
     _set_timers(args)
 
+    from rlinf.utils.logging import configure_third_party_logging
+
+    configure_third_party_logging()
+
     # init rerun state
     def state_save_func():
         return {
@@ -259,11 +263,13 @@ def _compile_dependencies(cfg: DictConfig):
     if torch.distributed.get_rank() == 0:
         start_time = time.time()
         print("> compiling and loading fused kernels ...", flush=True)
-        fused_kernels.load(cfg)
+        if fused_kernels is not None:
+            fused_kernels.load(cfg)
         torch.distributed.barrier()
     else:
         torch.distributed.barrier()
-        fused_kernels.load(cfg)
+        if fused_kernels is not None:
+            fused_kernels.load(cfg)
     # Simple barrier to make sure all ranks have passed the
     # compilation phase successfully before moving on to the
     # rest of the program. We think this might ensure that

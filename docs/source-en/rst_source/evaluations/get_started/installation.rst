@@ -18,8 +18,11 @@ Choose ``<model>`` and ``<env>`` to match your target benchmark:
      - Recommended ``--model``
      - Recommended ``--env``
    * - LIBERO
-     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``fastwam``
+     - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``molmoact2``
      - ``maniskill_libero`` or ``libero``
+   * - LIBERO / LIBERO-Plus
+     - ``fastwam``
+     - ``libero`` or ``liberoplus``
    * - RoboTwin
      - ``openvla-oft`` / ``openpi`` / ``lingbotvla``
      - ``robotwin``
@@ -41,15 +44,7 @@ For more installation options, see :doc:`../../start/installation`.
 Benchmark-Specific Environment Variables
 ----------------------------------------
 
-Configure the following when your benchmark requires them (LIBERO is handled automatically by ``install.sh``; see below):
-
-**LIBERO**
-
-With ``--env libero``, ``install.sh`` clones LIBERO into ``.venv/libero`` by default and appends it to ``PYTHONPATH`` in the activate script. To use an existing checkout instead, set ``LIBERO_PATH`` before installation:
-
-.. code-block:: bash
-
-   export LIBERO_PATH=/path/to/LIBERO
+Configure the following when your benchmark requires them:
 
 **RoboTwin**
 

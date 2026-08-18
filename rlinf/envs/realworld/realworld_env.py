@@ -115,6 +115,43 @@ class RealWorldEnv(gym.Env):
             self.env.call("get_wrapper_attr", "task_description")
         )
 
+    def get_hold_actions(
+        self, fallback_actions: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Return per-env hold actions for smooth-intervene dummy chunks.
+
+        Prefers an intervention wrapper's ``get_hold_action`` (e.g. absolute TCP
+        hold). When unavailable, returns zeros so relative-action teleop setups
+        keep a no-op command (same as the previous dummy-chunk behavior).
+        """
+        action_dim = int(self.action_space.shape[-1])
+        holds: list[np.ndarray] = []
+        for env_id, env in enumerate(self.env.envs):
+            fallback = None
+            if fallback_actions is not None:
+                fallback = np.asarray(fallback_actions[env_id], dtype=np.float32)
+
+            get_hold_action = None
+            try:
+                get_hold_action = env.get_wrapper_attr("get_hold_action")
+            except AttributeError:
+                get_hold_action = None
+
+            if callable(get_hold_action):
+                hold = np.asarray(get_hold_action(fallback), dtype=np.float32).reshape(
+                    -1
+                )
+            else:
+                hold = np.zeros(action_dim, dtype=np.float32)
+
+            if hold.size != action_dim:
+                raise ValueError(
+                    "get_hold_actions expected action dim "
+                    f"{action_dim}, got {hold.size} for env_id={env_id}."
+                )
+            holds.append(hold)
+        return np.stack(holds, axis=0)
+
     @property
     def action_space(self):
         return self.env.action_space
@@ -290,6 +327,16 @@ class RealWorldEnv(gym.Env):
             infos,
         )
 
+    def _notify_action_chunk_begin(self) -> None:
+        """Tell intervention wrappers a new action chunk is starting."""
+        for env in self.env.envs:
+            try:
+                on_begin = env.get_wrapper_attr("on_action_chunk_begin")
+            except AttributeError:
+                continue
+            if callable(on_begin):
+                on_begin()
+
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
@@ -304,6 +351,7 @@ class RealWorldEnv(gym.Env):
         raw_chunk_intervene_actions = []
         raw_chunk_intervene_flag = []
         raw_chunk_rlt_switch_flags = []
+        self._notify_action_chunk_begin()
         for i in range(chunk_size):
             actions = chunk_actions[:, i]
             extracted_obs, step_reward, terminations, truncations, infos = self.step(

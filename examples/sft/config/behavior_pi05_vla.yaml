@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5_pytorch@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
 
@@ -65,7 +65,7 @@ actor:
   global_batch_size: 256
   seed: 42
 
-  # actor.model comes from `defaults: model/pi0_5_pytorch@actor.model` (the
+  # actor.model comes from `defaults: model/pi0_5_rlinf@actor.model` (the
   # path-free shape template). The experiment config supplies the filesystem
   # paths so the model template stays reusable.
   model:

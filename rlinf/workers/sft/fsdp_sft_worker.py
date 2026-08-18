@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-import math
 import os
 from abc import abstractmethod
 from typing import Any
@@ -39,8 +38,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         super().__init__(cfg.actor, self._world_size, self._rank)
 
         self.cfg = cfg
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = torch.cuda.current_device()
+        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = Worker.torch_platform.current_device()
 
         self._component_placement = HybridComponentPlacement(cfg, Cluster())
 
@@ -83,18 +82,21 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._data_iter_offset = 0
 
     def init_worker(self):
+        self._set_total_training_steps_if_unset()
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
 
-    def infer_total_training_steps(self) -> int:
-        """Infer the SFT optimizer horizon from the runner limits."""
+    def _set_total_training_steps_if_unset(self) -> None:
+        """Derive the SFT scheduler horizon only when the recipe omits it."""
+        if self._cfg.optim.get("total_training_steps") is not None:
+            return
+
         max_epochs = int(self.cfg.runner.get("max_epochs", -1))
         max_steps = int(self.cfg.runner.get("max_steps", -1))
         steps_per_epoch = max(int(self.get_max_steps_per_epoch()), 1)
-
         step_limits = []
         if max_epochs > 0:
             step_limits.append(steps_per_epoch * max_epochs)
@@ -102,7 +104,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             step_limits.append(max_steps)
 
         total_steps = min(step_limits) if step_limits else steps_per_epoch
-        return max(int(total_steps), 1)
+        self._cfg.optim.total_training_steps = max(int(total_steps), 1)
+        self._logger.info(
+            "[SFT] Inferred optim.total_training_steps=%d",
+            self._cfg.optim.total_training_steps,
+        )
 
     def model_provider_func(self):
         model = get_model(self.cfg.actor.model)
@@ -118,15 +124,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
     def get_max_steps_per_epoch(self):
         if self.data_loader is None:
             return 0
-
-        num_micro_batches = len(self.data_loader)
-        if self.data_loader.drop_last:
-            return max(1, num_micro_batches // self.gradient_accumulation)
-
-        return max(
-            1,
-            math.ceil(num_micro_batches / self.gradient_accumulation),
-        )
+        return max(1, len(self.data_loader) // self.gradient_accumulation)
 
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
