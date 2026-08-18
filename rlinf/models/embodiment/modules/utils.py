@@ -36,7 +36,12 @@ def get_act_func(activation):
 
 
 def make_mlp(
-    in_channels, mlp_channels, act_builder=nn.ReLU, last_act=True, use_layer_norm=False
+    in_channels,
+    mlp_channels,
+    act_builder=nn.ReLU,
+    last_act=True,
+    use_layer_norm=False,
+    dropout=0.0,
 ):
     c_in = in_channels
     module_list = []
@@ -46,6 +51,8 @@ def make_mlp(
             if use_layer_norm:
                 module_list.append(nn.LayerNorm(c_out))
             module_list.append(act_builder())
+            if dropout > 0:
+                module_list.append(nn.Dropout(dropout))
         c_in = c_out
     return module_list
 

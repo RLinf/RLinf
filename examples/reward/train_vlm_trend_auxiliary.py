@@ -20,9 +20,9 @@ Stages:
   scalar_head   Train ScalarPotentialHead on feature shards
 
 Example:
-  python examples/reward/train_vlm_trend_success_model.py --stage teacher ...
-  python examples/reward/train_vlm_trend_success_model.py --stage extract ...
-  python examples/reward/train_vlm_trend_success_model.py --stage scalar_head ...
+  python examples/reward/train_vlm_trend_auxiliary.py --stage teacher ...
+  python examples/reward/train_vlm_trend_auxiliary.py --stage extract ...
+  python examples/reward/train_vlm_trend_auxiliary.py --stage scalar_head ...
 
 Multi-GPU extract: launch one --stage extract per rank with --rank/--world-size
 (same pattern as the collection loop in the docs).
@@ -52,24 +52,53 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm.auto import tqdm
 
 from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
-from rlinf.data.datasets.vlm_trend_io import (
+from rlinf.data.datasets.vlm.vlm_trend_reward import (
     extract_extra_view_image,
+    first_success_transition,
     potential_prompt,
     source_episode_hash,
     to_numpy_float32,
     to_uint8_rgb,
+    transition_observations,
 )
+from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.reward.vlm_reward_model import (
     ScalarPotentialHead,
     VLMRewardModel,
 )
 from rlinf.utils.logging import get_logger
-from rlinf.utils.state_success_value import (
-    StateSuccessValue,
-    stack_state_history,
-)
 
 logger = get_logger()
+
+
+def _build_teacher(
+    input_dim: int, hidden_dim: int, num_layers: int, dropout: float
+) -> nn.Sequential:
+    """Build the state teacher with RLinf's existing MLP factory."""
+    return nn.Sequential(
+        *make_mlp(
+            input_dim,
+            [hidden_dim] * num_layers + [1],
+            act_builder=nn.SiLU,
+            last_act=False,
+            use_layer_norm=True,
+            dropout=dropout,
+        )
+    )
+
+
+def stack_state_history(
+    states: list[np.ndarray], index: int, history_size: int
+) -> np.ndarray:
+    """Concatenate a left-padded state history."""
+    first = states[0]
+    return np.concatenate(
+        [
+            states[index - offset] if index >= offset else first
+            for offset in range(history_size - 1, -1, -1)
+        ]
+    ).astype(np.float32)
+
 
 # --- stage: teacher ---
 
@@ -105,7 +134,7 @@ def _build_targets(length: int, success: bool, gamma: float, mode: str) -> np.nd
 
 
 def load_state_dataset(
-    raw_data_path: str,
+    raw_data_paths: list[str],
     history_size: int,
     gamma: float,
     target_mode: str,
@@ -120,11 +149,15 @@ def load_state_dataset(
     Returns:
         ``((train_x, train_y), (val_x, val_y), metadata)``.
     """
-    pkl_files = sorted(glob(os.path.join(raw_data_path, "*.pkl")))
+    pkl_files = sorted(
+        path
+        for raw_data_path in raw_data_paths
+        for path in glob(os.path.join(raw_data_path, "*.pkl"))
+    )
     if max_episodes is not None:
         pkl_files = pkl_files[:max_episodes]
     if not pkl_files:
-        raise ValueError(f"No episode pkl files found in {raw_data_path}")
+        raise ValueError(f"No episode pkl files found in {raw_data_paths}")
 
     rng = random.Random(seed)
     rng.shuffle(pkl_files)
@@ -150,7 +183,10 @@ def load_state_dataset(
         except (EOFError, pickle.UnpicklingError, OSError) as exc:
             logger.warning("Skipping unreadable episode %s: %s", pkl_path, exc)
             continue
-        observations = episode.get("observations", [])
+        observations, _ = transition_observations(episode)
+        first_success = first_success_transition(episode, len(observations))
+        if first_success is not None:
+            observations = observations[: first_success + 1]
         if not observations:
             continue
         states = []
@@ -215,7 +251,7 @@ def evaluate_teacher(
         for batch_x, batch_y in loader:
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
-            logits = model(batch_x)
+            logits = model(batch_x).squeeze(-1)
             loss = nn.functional.binary_cross_entropy_with_logits(logits, batch_y)
             losses.append(float(loss.detach().cpu()))
             preds.append(torch.sigmoid(logits).detach().cpu())
@@ -228,6 +264,7 @@ def evaluate_teacher(
         "loss": float(np.mean(losses)),
         "mse": float(mse),
         "mae": float(mae),
+        "model_potential": float(1.0 - mae),
         "pred_mean": float(pred.mean().item()),
         "target_mean": float(target.mean().item()),
     }
@@ -243,7 +280,7 @@ def run_teacher(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     train_data, val_data, metadata = load_state_dataset(
-        raw_data_path=args.raw_data_path,
+        raw_data_paths=args.raw_data_path,
         history_size=args.history_size,
         gamma=args.gamma,
         target_mode=args.target_mode,
@@ -297,11 +334,11 @@ def run_teacher(args: argparse.Namespace) -> None:
         mean=mean.squeeze(0).astype(float).tolist(),
         std=std.squeeze(0).astype(float).tolist(),
     )
-    model = StateSuccessValue(
-        input_dim=cfg.state_dim * cfg.history_size,
-        hidden_dim=cfg.hidden_dim,
-        num_layers=cfg.num_layers,
-        dropout=cfg.dropout,
+    model = _build_teacher(
+        cfg.state_dim * cfg.history_size,
+        cfg.hidden_dim,
+        cfg.num_layers,
+        cfg.dropout,
     ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -324,7 +361,7 @@ def run_teacher(args: argparse.Namespace) -> None:
             for batch_x, batch_y in pbar:
                 batch_x = batch_x.to(device, non_blocking=True)
                 batch_y = batch_y.to(device, non_blocking=True)
-                logits = model(batch_x)
+                logits = model(batch_x).squeeze(-1)
                 loss = nn.functional.binary_cross_entropy_with_logits(logits, batch_y)
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -362,16 +399,17 @@ def run_teacher(args: argparse.Namespace) -> None:
                 break
 
     final_metrics = evaluate_teacher(model, val_loader, device)
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "config": asdict(cfg),
-            "metadata": metadata,
-            "step": global_step,
-            "val_metrics": final_metrics,
-        },
-        output_dir / "final.pt",
-    )
+    final_checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "config": asdict(cfg),
+        "metadata": metadata,
+        "step": global_step,
+        "val_metrics": final_metrics,
+    }
+    torch.save(final_checkpoint, output_dir / "final.pt")
+    if final_metrics["loss"] < best_val:
+        best_val = final_metrics["loss"]
+        torch.save(final_checkpoint, output_dir / "best.pt")
     with (output_dir / "summary.json").open("w", encoding="utf-8") as f:
         json.dump(
             {
@@ -570,6 +608,7 @@ def run_extract(args: argparse.Namespace) -> None:
             "lora_path": args.checkpoint,
             "precision": "bf16",
             "inference_mode": "generate",
+            "subprocessor_kwargs": {"video_processor": {"do_sample_frames": True}},
             "input_builder_name": "vlm_trend_reward_input_builder",
             "input_builder_params": {
                 "history_buffer_names": ["history_window"],
@@ -712,6 +751,7 @@ def evaluate_scalar_head(
                 ]
             )
         ),
+        "model_potential": float(1.0 - torch.abs(values - potential_targets).mean()),
         "predicted_delta_mean": float(predicted_deltas.mean()),
         "predicted_delta_std": float(predicted_deltas.std()),
     }
@@ -837,6 +877,21 @@ def run_scalar_head(args: argparse.Namespace) -> None:
     best_metrics: dict[str, Any] = {}
 
     with metrics_path.open("w", encoding="utf-8") as metrics_file:
+        baseline = evaluate_scalar_head(
+            model,
+            eval_features,
+            eval_targets,
+            progress_features,
+            progress_deltas,
+            progress_labels,
+            device,
+            args.eval_batch_size,
+            args.progress_deadband,
+        )
+        baseline["epoch"] = 0
+        metrics_file.write(json.dumps(baseline) + "\n")
+        metrics_file.flush()
+        logger.info("%s", json.dumps(baseline))
         for epoch in range(1, args.epochs + 1):
             train_losses = _train_one_epoch(
                 model, optimizer, loader, progress_loader, args, device
@@ -880,7 +935,7 @@ def run_scalar_head(args: argparse.Namespace) -> None:
 
 
 def _add_teacher_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--raw-data-path", required=True)
+    parser.add_argument("--raw-data-path", action="append", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--history-size", type=int, default=5)
     parser.add_argument("--gamma", type=float, default=0.97)
@@ -976,7 +1031,7 @@ def main(argv: list[str] | None = None) -> None:
             pre.print_help()
             print(
                 "\nStage-specific flags follow --stage. Example:\n"
-                "  python examples/reward/train_vlm_trend_success_model.py "
+                "  python examples/reward/train_vlm_trend_auxiliary.py "
                 "--stage teacher --help"
             )
             sys.exit(0)

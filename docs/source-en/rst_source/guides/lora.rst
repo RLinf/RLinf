@@ -52,29 +52,9 @@ By default, RLinf applies LoRA to the following modules:
 
 .. note::
 
-   Bare ``"proj"`` also matches Conv3d ``patch_embed.proj`` on Qwen3-VL, which
-   Peft cannot wrap. Qwen3-VL recipes (for example the VLM Trend SFT YAMLs)
-   should set ``lora_target_modules`` explicitly and omit ``"proj"``:
-
-   .. code:: yaml
-
-     actor:
-       model:
-         is_lora: true
-         lora_rank: 16
-         lora_target_modules:
-           - q_proj
-           - k_proj
-           - v_proj
-           - o_proj
-           - gate_proj
-           - up_proj
-           - down_proj
-           - qkv
-           - fc1
-           - fc2
-           - out_proj
-           - lm_head
+   Bare ``"proj"`` also matches Qwen3-VL's Conv3d ``patch_embed.proj``, which
+   Peft cannot wrap. Qwen3-VL recipes must override ``lora_target_modules`` and
+   omit ``"proj"``; see ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``.
 
 New LoRA Training
 ~~~~~~~~~~~~~~~~~

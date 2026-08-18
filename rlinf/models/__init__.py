@@ -361,28 +361,11 @@ def resolve_lora_target_modules(cfg: DictConfig) -> list[str]:
 
 
 def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
-    """Attach Peft LoRA adapters when ``cfg.is_lora`` is enabled.
-
-    Args:
-        model: The base model to wrap (or load adapters onto).
-        cfg: Model config with ``is_lora``, optional ``lora_path``,
-            ``lora_rank``, ``lora_target_modules``, and ``model_type``.
-
-    Returns:
-        The model with LoRA adapters attached (or ``model`` unchanged when
-        ``is_lora`` is false). Default ``target_modules`` match main (including
-        bare ``"proj"``); override via ``cfg.lora_target_modules`` when needed
-        (e.g. Qwen3-VL Success SFT YAMLs). Loading an existing adapter prefers
-        the shared ``resolve_lora_adapter_dir`` / legacy ``full_weights.pt``
-        path from ``rlinf.utils.lora_adapter``, then falls back to
-        ``PeftModel.from_pretrained`` so Hugging Face Hub repo IDs still work.
-    """
+    """Attach or load Peft LoRA when ``cfg.is_lora`` is enabled."""
     if not cfg.get("is_lora", False):
         return model
 
     from peft import LoraConfig, PeftModel, get_peft_model
-
-    from rlinf.utils.lora_adapter import load_adapter_onto_model
 
     model_type = str(cfg.model_type)
     if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
@@ -405,14 +388,7 @@ def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
         else:
             model = get_peft_model(model, lora_config)
     else:
-        try:
-            model = load_adapter_onto_model(
-                model, cfg.lora_path, adapter_name="default", is_trainable=True
-            )
-        except FileNotFoundError:
-            # Shared loader only resolves local checkpoint layouts. Hub repo
-            # IDs (and other Peft-remote sources) keep the historical contract.
-            model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
+        model = PeftModel.from_pretrained(model, cfg.lora_path, is_trainable=True)
 
     if hasattr(model, "value_head"):
         for param in model.value_head.parameters():

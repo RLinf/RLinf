@@ -15,11 +15,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from peft import (
+    LoraConfig,
+    PeftModel,
+    get_peft_model,
+    set_peft_model_state_dict,
+)
 
 # AutoModelForVision2Seq was renamed to AutoModelForImageTextToText in transformers >= 5.0
 try:
@@ -44,7 +51,85 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     BaseRewardParser,
     get_reward_parser,
 )
-from rlinf.utils.lora_adapter import load_adapter_onto_model
+
+
+def _rlinf_checkpoint_state(path: str) -> dict[str, torch.Tensor] | None:
+    """Load LoRA tensors from either a Peft directory or RLinf checkpoint."""
+    candidates = [
+        Path(path),
+        Path(path) / "full_weights.pt",
+        Path(path) / "model_state_dict" / "full_weights.pt",
+        Path(path) / "actor" / "model_state_dict" / "full_weights.pt",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            state = torch.load(candidate, map_location="cpu", weights_only=True)
+            return {
+                key.removeprefix("module."): value
+                for key, value in state.items()
+                if "lora_" in key
+            }
+    return None
+
+
+def _load_adapter(
+    model: torch.nn.Module, path: str, adapter_name: str = "default"
+) -> torch.nn.Module:
+    """Load one Peft-native or RLinf full-weights LoRA adapter."""
+    adapter_dir = next(
+        (
+            candidate
+            for candidate in (
+                Path(path),
+                Path(path) / "lora_adapter",
+                Path(path) / "actor" / "lora_adapter",
+            )
+            if (candidate / "adapter_config.json").is_file()
+        ),
+        None,
+    )
+    if adapter_dir is not None:
+        if isinstance(model, PeftModel):
+            model.load_adapter(str(adapter_dir), adapter_name=adapter_name)
+            if adapter_name != "default":
+                model.set_adapter("default")
+            return model
+        return PeftModel.from_pretrained(
+            model, str(adapter_dir), adapter_name=adapter_name
+        )
+
+    state = _rlinf_checkpoint_state(path)
+    if not state:
+        raise FileNotFoundError(f"No LoRA adapter found under {path}")
+    rank = next(int(value.shape[0]) for key, value in state.items() if "lora_A" in key)
+    targets = sorted(
+        {key.split(".lora_")[0].split(".")[-1] for key in state if ".lora_" in key}
+    )
+    config = LoraConfig(
+        r=rank,
+        lora_alpha=rank,
+        lora_dropout=0.0,
+        target_modules=targets,
+        init_lora_weights="gaussian",
+    )
+    if isinstance(model, PeftModel):
+        model.add_adapter(adapter_name, config)
+    else:
+        model = get_peft_model(model, config, adapter_name=adapter_name)
+    # RLinf full checkpoints retain Peft's source adapter segment (``default``),
+    # while set_peft_model_state_dict inserts the destination adapter itself.
+    state = {
+        key.replace(".lora_A.default.", ".lora_A.").replace(
+            ".lora_B.default.", ".lora_B."
+        ): value
+        for key, value in state.items()
+    }
+    result = set_peft_model_state_dict(model, state, adapter_name=adapter_name)
+    if result.unexpected_keys:
+        raise RuntimeError(f"Unexpected LoRA checkpoint keys: {result.unexpected_keys}")
+    if adapter_name != "default":
+        model.set_adapter("default")
+    return model
 
 
 class ScalarPotentialHead(torch.nn.Module):
@@ -146,7 +231,7 @@ class VLMRewardModel(BaseRewardModel):
         )
 
         if self.lora_path:
-            self._model = load_adapter_onto_model(
+            self._model = _load_adapter(
                 self._model, self.lora_path, adapter_name="default"
             )
 
@@ -280,7 +365,7 @@ class BufferedVLMRewardModel(VLMRewardModel):
     def setup_model(self) -> None:
         super().setup_model()
         if self.success_lora_path:
-            self._model = load_adapter_onto_model(
+            self._model = _load_adapter(
                 self._model, self.success_lora_path, adapter_name="success"
             )
             self._success_adapter_name = "success"

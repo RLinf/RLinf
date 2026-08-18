@@ -55,29 +55,9 @@ LoRA（Low-Rank Adaptation，低秩适配）是一种参数高效的微调方法
 
 .. note::
 
-   裸 ``"proj"`` 在 Qwen3-VL 上也会匹配 Conv3d ``patch_embed.proj``，Peft 无法包装。
-   Qwen3-VL 配方（例如 VLM Trend 的 SFT YAML）应显式设置 ``lora_target_modules``，
-   并省略 ``"proj"``：
-
-   .. code:: yaml
-
-     actor:
-       model:
-         is_lora: true
-         lora_rank: 16
-         lora_target_modules:
-           - q_proj
-           - k_proj
-           - v_proj
-           - o_proj
-           - gate_proj
-           - up_proj
-           - down_proj
-           - qkv
-           - fc1
-           - fc2
-           - out_proj
-           - lm_head
+   裸 ``"proj"`` 也会匹配 Qwen3-VL 的 Conv3d ``patch_embed.proj``，Peft 无法包装。
+   Qwen3-VL 配方必须覆盖 ``lora_target_modules`` 并省略 ``"proj"``；参见
+   ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``。
 
 新建 LoRA 训练
 ~~~~~~~~~~~~~~~~~

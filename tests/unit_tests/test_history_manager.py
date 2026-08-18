@@ -79,7 +79,6 @@ def test_build_history_input_emits_on_interval_tick():
 
 def test_build_history_input_emits_full_window_on_done():
     cfg = _history_cfg()
-    cfg.model.history_buffers.main.history_size = 2
     cfg.model.history_buffers.main.input_interval = 5
     cfg.model.history_buffers.main.input_on_done_full_window = True
     manager = HistoryManager(cfg, num_envs=2)

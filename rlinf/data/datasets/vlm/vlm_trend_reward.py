@@ -13,17 +13,304 @@
 # limitations under the License.
 
 
+import hashlib
 import os
 import pickle
+import random
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any, Optional, Union
 
+import numpy as np
 import torch
 from omegaconf import DictConfig
 from transformers import AutoProcessor, AutoTokenizer
+from transformers.video_utils import VideoMetadata
 
 from rlinf.data.datasets.common.item import SftDatasetItem
 from rlinf.data.datasets.vlm.base import VLMBaseDataset
 from rlinf.data.datasets.vlm.registry import VLMDatasetRegistry
+
+DEFAULT_TASK_DESCRIPTION = (
+    "Pick up the red cube and place it on the green spot on the table."
+)
+
+
+def _video_metadata(video: Any) -> VideoMetadata:
+    """Describe an in-memory video without resampling its frames."""
+    frame_count = len(video)
+    return VideoMetadata(
+        total_num_frames=frame_count,
+        fps=24.0,
+        duration=frame_count / 24.0,
+        frames_indices=list(range(frame_count)),
+    )
+
+
+def to_uint8_rgb(image: Any) -> np.ndarray:
+    """Convert an image tensor/array to uint8 RGB."""
+    if torch.is_tensor(image):
+        image = image.detach().cpu().numpy()
+    image = np.asarray(image)
+    if image.dtype != np.uint8:
+        image = np.clip(image, 0, 255).astype(np.uint8)
+    if image.ndim == 2:
+        image = np.repeat(image[..., None], 3, axis=-1)
+    if image.ndim != 3:
+        raise ValueError(f"Invalid image shape: {image.shape}")
+    return image[..., :3]
+
+
+def to_numpy_float32(value: Any) -> np.ndarray:
+    """Convert tensor/array metadata to float32 numpy."""
+    if torch.is_tensor(value):
+        value = value.detach().cpu().numpy()
+    return np.asarray(value, dtype=np.float32)
+
+
+def extract_extra_view_image(extra_view_images: Any) -> Any | None:
+    """Return the first extra-view frame from either a frame or frame stack."""
+    if extra_view_images is None:
+        return None
+    ndim = getattr(extra_view_images, "ndim", 0)
+    if ndim == 3:
+        return extra_view_images
+    if ndim == 4 and len(extra_view_images):
+        return extra_view_images[0]
+    return None
+
+
+def extract_dual_view_frames(
+    observations: list[dict[str, Any]], start_idx: int, end_idx: int
+) -> tuple[list[Any], list[Any]] | None:
+    """Extract aligned main and extra camera frames for one inclusive window."""
+    main, extra = [], []
+    for observation in observations[start_idx : end_idx + 1]:
+        main_frame = observation.get("main_images")
+        extra_frame = observation.get("third_view_images")
+        if extra_frame is None:
+            extra_frame = extract_extra_view_image(observation.get("extra_view_images"))
+        if main_frame is None or extra_frame is None:
+            return None
+        main.append(main_frame)
+        extra.append(extra_frame)
+    return (main, extra) if len(main) == end_idx - start_idx + 1 else None
+
+
+def transition_observations(
+    episode: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    """Return action-aligned observations and their offset in the episode.
+
+    Current collectors store a leading reset observation, while older episode
+    pickles may contain only post-action observations. Online history buffers
+    see post-action observations only, so skip the reset entry when present.
+    """
+    observations = episode.get("observations", [])
+    actions = episode.get("actions", [])
+    offset = int(len(observations) == len(actions) + 1)
+    count = min(len(actions), len(observations) - offset)
+    return observations[offset : offset + count], offset
+
+
+def first_success_transition(
+    episode: dict[str, Any], transition_count: int
+) -> int | None:
+    """Return the first action-aligned success index, if the episode succeeded."""
+    infos = episode.get("infos", [])
+    actions = episode.get("actions", [])
+    info_offset = int(len(infos) == len(actions) + 1)
+    for index, info in enumerate(infos[info_offset : info_offset + transition_count]):
+        if isinstance(info, dict) and _as_bool(info.get("success")):
+            return index
+    if bool(episode.get("success", False)) and transition_count:
+        return transition_count - 1
+    return None
+
+
+def load_episode_pickle(path: str) -> dict[str, Any] | None:
+    """Load one rollout pickle, returning None for unreadable files."""
+    try:
+        with open(path, "rb") as handle:
+            return pickle.load(handle)
+    except (EOFError, pickle.UnpicklingError, OSError):
+        return None
+
+
+def _as_bool(value: Any) -> bool:
+    if value is None:
+        return False
+    return bool(value.item() if hasattr(value, "item") else value)
+
+
+def inspect_episode(
+    path: str,
+    window_size: int,
+    default_task: str = DEFAULT_TASK_DESCRIPTION,
+) -> dict[str, Any] | None:
+    """Read the fields shared by terminal-success preprocessing."""
+    episode = load_episode_pickle(path)
+    if episode is None:
+        return None
+    observations, observation_offset = transition_observations(episode)
+    actions = episode.get("actions", [])
+    if len(observations) < window_size or len(actions) < window_size:
+        return None
+    end_step = min(len(observations), len(actions)) - 1
+    first_success = first_success_transition(episode, end_step + 1)
+    success = bool(episode.get("success", False) or first_success is not None)
+    if first_success is not None:
+        end_step = min(end_step, first_success)
+    success_steps = [end_step] if success else []
+    absolute_path = os.path.abspath(path)
+    return {
+        "path": absolute_path,
+        "task": str(
+            episode.get("task")
+            or episode.get("task_description")
+            or episode.get("task_name")
+            or default_task
+        ),
+        "end_step": end_step,
+        "observation_offset": observation_offset,
+        "success_steps": success_steps,
+        "success": success,
+        "is_complete": (
+            success
+            or bool(episode.get("terminated", []) and episode["terminated"][-1])
+            or bool(episode.get("truncated", []) and episode["truncated"][-1])
+        ),
+        "source_run": Path(absolute_path).parent.parent.name,
+    }
+
+
+def split_for(path: str, val_split: float) -> str:
+    """Assign a source episode to a stable train/eval split."""
+    fraction = int(hashlib.sha256(path.encode()).hexdigest()[:8], 16) / 2**32
+    return "eval" if fraction < val_split else "train"
+
+
+def source_episode_hash(path: str) -> int:
+    """Return a stable integer hash used for rank-local feature extraction."""
+    return int(hashlib.sha256(path.encode()).hexdigest()[:16], 16)
+
+
+def potential_prompt(task: str, window_size: int, num_bins: int = 10) -> str:
+    """Build the absolute-potential prompt used offline and online."""
+    return (
+        "You are estimating task-conditioned success potential for a robot "
+        f"manipulation state. Task: {task}. The two synchronized videos show "
+        f"the same {window_size}-frame history from two camera views. Predict "
+        f"the final state's potential as exactly one digit from 0 to {num_bins - 1}, "
+        f"where 0 is furthest from eventual success and {num_bins - 1} is closest."
+    )
+
+
+def progress_prompt(task: str, window_size: int, gap_steps: int | None = None) -> str:
+    """Build the paired-window progress prompt."""
+    gap_steps = window_size if gap_steps is None else gap_steps
+    relation = (
+        "immediately adjacent"
+        if gap_steps == window_size
+        else f"separated by {gap_steps} environment steps"
+    )
+    return (
+        "You are judging local task progress in a robot manipulation trajectory. "
+        f"Task: {task}. In each synchronized camera video, the first {window_size} "
+        f"frames are the earlier clip and the next {window_size} frames are the "
+        f"later clip; their final states are {relation}. Compare their final states. "
+        "Answer with exactly one word: up, same, or down."
+    )
+
+
+def _terminal_row(
+    item: dict[str, Any], window_size: int, end_step: int, success: bool
+) -> dict[str, Any]:
+    answer = "1" if success else "0"
+    observation_offset = item["observation_offset"]
+    source_end_step = end_step + observation_offset
+    prompt = (
+        "Estimate task-conditioned success potential for this robot manipulation "
+        f"state. Task: {item['task']}. The two synchronized videos show the same "
+        f"{window_size}-frame history from two camera views."
+    )
+    return {
+        "task": item["task"],
+        "prompt": prompt,
+        "question": prompt,
+        "answer": answer,
+        "pkl_path": item["path"],
+        "source_episode_path": item["path"],
+        "source_run": item["source_run"],
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": prompt}]},
+            {"role": "assistant", "content": [{"type": "text", "text": answer}]},
+        ],
+        "segment_metadata": {
+            "start_step": source_end_step - window_size + 1,
+            "end_step": source_end_step,
+            "window_size": window_size,
+            "progress_gap_steps": None,
+            "success": success,
+            "sample_type": "potential",
+            "target_name": "terminal_success",
+            "is_complete": item["is_complete"],
+            "target_type": "success_observed" if success else "online_negative",
+            "source_run": item["source_run"],
+        },
+        "supervision": {
+            "score_name": "terminal_success",
+            "teacher_value": float(success),
+            "teacher_delta": 0.0,
+        },
+    }
+
+
+def build_terminal_success_rows(
+    raw_data_paths: list[str],
+    window_size: int,
+    interval: int,
+    val_split: float,
+    workers: int,
+    seed: int,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+    """Build unbalanced online-matched 0/1 windows.
+
+    Every fixed-interval window is retained at the online inference cadence.
+    No class balancing, positive oversampling, synthetic positives, or
+    hard-negative mining is performed.
+    """
+    paths = sorted(path for root in raw_data_paths for path in Path(root).glob("*.pkl"))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        inspected = list(
+            executor.map(lambda p: inspect_episode(str(p), window_size), paths)
+        )
+    items = [item for item in inspected if item is not None]
+    rows_by_split = {"train": [], "eval": []}
+    stats: dict[str, Any] = {"input_episodes": len(paths), "splits": {}}
+    for split in rows_by_split:
+        rows = rows_by_split[split]
+        for item in items:
+            if split_for(item["path"], val_split) != split:
+                continue
+            first = window_size - 1
+            end_steps = list(range(first, item["end_step"] + 1, interval))
+            success_steps = {step for step in item["success_steps"] if step >= first}
+            end_steps.extend(success_steps - set(end_steps))
+            rows.extend(
+                _terminal_row(item, window_size, end, end in success_steps)
+                for end in sorted(end_steps)
+            )
+        random.Random(seed + (split == "eval")).shuffle(rows)
+        positives = sum(row["answer"] == "1" for row in rows)
+        stats["splits"][split] = {
+            "positive": positives,
+            "negative": len(rows) - positives,
+            "interval": interval,
+        }
+    stats["complete_episodes"] = sum(item["is_complete"] for item in items)
+    stats["partial_episodes"] = len(items) - stats["complete_episodes"]
+    return rows_by_split, stats
 
 
 def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
@@ -154,11 +441,8 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
                 )
                 rendered_prompts.append(rendered_prompt_i)
                 rendered_labels.append(rendered_label_i)
-                videos_kwargs["video_metadata"].append(
-                    [
-                        {"total_num_frames": len(video), "fps": 24.0}
-                        for video in videos_i
-                    ]
+                videos_kwargs["video_metadata"].extend(
+                    _video_metadata(video) for video in videos_i
                 )
 
             full_inputs = processor(
@@ -185,9 +469,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         prompt_text = prompt_texts[0]
         rendered_prompt, rendered_label = _render_prompt_text(prompt_text, answer_text)
         videos_kwargs = {
-            "video_metadata": [
-                {"total_num_frames": len(video), "fps": 24.0} for video in videos
-            ],
+            "video_metadata": [_video_metadata(video) for video in videos],
         }
 
         full_inputs = processor(
@@ -233,6 +515,11 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
             self._processor = AutoProcessor.from_pretrained(
                 self.cfg.actor.model.model_path
             )
+            do_sample_frames = self.cfg.data.get("video_do_sample_frames")
+            if do_sample_frames is not None:
+                self._processor.video_processor.do_sample_frames = bool(
+                    do_sample_frames
+                )
 
         _, full_inputs, label_inputs = self.process_inputs(
             processor=self._processor,
@@ -290,35 +577,17 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         main_frames = payload.get("main_frames")
         extra_view_frames = payload.get("extra_view_frames")
         if main_frames is None or extra_view_frames is None:
-            # Sparse-line rows reference a raw rollout episode and carry the
-            # window in segment_metadata; slice the dual-view frames on the fly.
-            observations = payload.get("observations")
             metadata = raw.get("segment_metadata", {})
-            start = metadata.get("start_step")
-            end = metadata.get("end_step")
+            observations = payload.get("observations")
+            start, end = metadata.get("start_step"), metadata.get("end_step")
             if observations is None or start is None or end is None:
                 raise ValueError(
-                    f"Sample {idx} pkl missing dual-view frames or episode window metadata"
+                    f"Sample {idx} pkl missing dual-view frames or episode metadata"
                 )
-            selected = observations[int(start) : int(end) + 1]
-            main_frames = [observation.get("main_images") for observation in selected]
-            extra_view_frames = []
-            for observation in selected:
-                extra = observation.get("third_view_images")
-                if extra is None:
-                    extra = observation.get("extra_view_images")
-                    if extra is not None and getattr(extra, "ndim", 0) == 4:
-                        extra = extra[0]
-                extra_view_frames.append(extra)
-            expected = int(end) - int(start) + 1
-            if (
-                len(selected) != expected
-                or any(frame is None for frame in main_frames)
-                or any(frame is None for frame in extra_view_frames)
-            ):
-                raise ValueError(
-                    f"Sample {idx} has an invalid dual-view episode window"
-                )
+            frames = extract_dual_view_frames(observations, int(start), int(end))
+            if frames is None:
+                raise ValueError(f"Sample {idx} has an invalid dual-view window")
+            main_frames, extra_view_frames = frames
         return (
             question,
             answer_text,

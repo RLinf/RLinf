@@ -13,16 +13,16 @@
 # limitations under the License.
 
 import json
+import logging
 import os
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
-from rlinf.utils.lora_adapter import export_lora_adapter
+from rlinf.models import apply_lora
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
@@ -30,6 +30,13 @@ from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+
+    def model_provider_func(self):
+        """Load HF VLMs through the existing LoRA path when requested."""
+        model = super().model_provider_func()
+        if not hasattr(model, "peft_config"):
+            model = apply_lora(model, self.cfg.actor.model)
+        return model
 
     def _save_data_state(self, save_path: str):
         state = {
@@ -43,16 +50,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         super().save_checkpoint(save_path, step)
         if self._rank == 0:
             self._save_data_state(save_path)
-        # Opt-in Peft adapter export beside preserved full_weights.pt.
-        # Default off so ordinary LoRA SFT jobs are not charged extra I/O/barriers.
-        if bool(self.cfg.actor.model.get("export_lora_adapter", False)):
-            export_lora_adapter(
-                self.model,
-                save_path,
-                rank=self._rank,
-                log_info=self.log_info,
-                log_warning=self.log_warning,
-            )
 
     def _load_data_state(self, load_path: str):
         path = os.path.join(load_path, "data_state.json")
@@ -148,11 +145,12 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 drop_last=True,
                 collate_fn=collate_fn,
             )
-            self.log_info(
+            logging.info(
                 f"Build data loader from {data_paths} with {len(train_dataset)} samples"
             )
-            if len(data_loader) == 0:
-                raise ValueError(f"data_loader is empty; check data_path {data_paths}")
+            assert len(data_loader) != 0, (
+                f"data_loader is not empty, please check the data_path {data_paths}"
+            )
 
             data_config = {
                 "dataset_name": dataset_name,
@@ -167,18 +165,6 @@ class FSDPVlmSftWorker(FSDPSftWorker):
             )
 
     def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int]:
-        """Generate answers for an eval batch and score them against gold.
-
-        Args:
-            batch: Collated eval batch with ``prompt``, ``answer``,
-                ``attention_mask`` and ``multi_modal_inputs``.
-
-        Returns:
-            A count dictionary with ``correct``, ``total``, ``binary_total`` and
-            per-class correct/total. Always returns this shape so dataset-level
-            aggregation in :meth:`run_eval` cannot drop batches. Balanced
-            accuracy is decided later from ``binary_total == total``.
-        """
         counts = {
             "correct": 0,
             "total": 0,
@@ -192,22 +178,13 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         answers = batch["answer"]
         attention_mask = batch["attention_mask"].to(self.device)
         multi_modal_inputs = batch["multi_modal_inputs"]
-        for k, v in multi_modal_inputs.items():
-            if isinstance(v, list):
-                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
-            else:
-                multi_modal_inputs[k] = v.to(device=self.device)
-
+        for key, value in multi_modal_inputs.items():
+            if isinstance(value, list):
+                value = torch.cat(value, dim=0)
+            multi_modal_inputs[key] = value.to(device=self.device)
         eos_token_id = self.tokenizer.eos_token_id
-        pad_token_id = (
-            self.tokenizer.pad_token_id
-            if self.tokenizer.pad_token_id is not None
-            else (eos_token_id if eos_token_id is not None else 0)
-        )
-
+        pad_token_id = self.tokenizer.pad_token_id or eos_token_id or 0
         with torch.no_grad():
-            # use kv cache to generate the text
-            # the generate_with_kv_cache() is more efficient than the generate() in utils.py
             generate_ids = generate_with_kv_cache(
                 model=self.model,
                 eos_token_id=eos_token_id,
@@ -217,116 +194,42 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 attention_mask=attention_mask,
                 multi_modal_inputs=multi_modal_inputs,
             )
-
-        # encode the generated text
-        for i in range(len(answers)):
-            new_token_ids = generate_ids[i, input_ids.shape[1] :]
-            full_pred_text = self.tokenizer.decode(
-                new_token_ids.tolist(), skip_special_tokens=False
+        for index, gold_text in enumerate(answers):
+            decoded = self.tokenizer.decode(
+                generate_ids[index, input_ids.shape[1] :].tolist(),
+                skip_special_tokens=False,
             )
-
-            pred_text = vlm_extract_answer(
-                full_pred_text, self.cfg.actor.model.model_type
+            predicted = vlm_normalize_text(
+                vlm_extract_answer(decoded, self.cfg.actor.model.model_type)
             )
-            gold_text = answers[i]
-
-            normalized_pred = vlm_normalize_text(pred_text)
-            normalized_gold = vlm_normalize_text(gold_text)
-            is_correct = normalized_pred == normalized_gold
+            gold = vlm_normalize_text(gold_text)
+            correct = predicted == gold
             counts["total"] += 1
-            counts["correct"] += int(is_correct)
-            if normalized_gold in {"0", "1"}:
+            counts["correct"] += int(correct)
+            if gold in {"0", "1"}:
                 counts["binary_total"] += 1
-                class_name = "positive" if normalized_gold == "1" else "negative"
-                counts[f"{class_name}_total"] += 1
-                counts[f"{class_name}_correct"] += int(is_correct)
-
+                name = "positive" if gold == "1" else "negative"
+                counts[f"{name}_total"] += 1
+                counts[f"{name}_correct"] += int(correct)
         return counts
 
     def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Compute eval metrics; add class-aware ones only for fully binary data.
-
-        Args:
-            counts: Aggregated counts from :meth:`get_eval_model_output`
-                (``correct``, ``total``, ``binary_total`` and per-class
-                correct/total).
-
-        Returns:
-            Always includes ``eval_accuracy``. When every gold label in the eval
-            set is binary (``binary_total == total``), also returns
-            positive-class recall, negative-class accuracy, balanced accuracy
-            and per-class totals.
-        """
-        metrics = {
-            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
-        }
-        if counts.get("binary_total", 0) != counts["total"]:
+        metrics = super().compute_eval_metrics(counts)
+        if counts["binary_total"] != counts["total"]:
             return metrics
-
-        positive_accuracy = counts["positive_correct"] / max(
-            1, counts["positive_total"]
-        )
-        negative_accuracy = counts["negative_correct"] / max(
-            1, counts["negative_total"]
-        )
+        positive = counts["positive_correct"] / max(1, counts["positive_total"])
+        negative = counts["negative_correct"] / max(1, counts["negative_total"])
         metrics.update(
-            {
-                "positive_recall": positive_accuracy,
-                "negative_accuracy": negative_accuracy,
-                "balanced_accuracy": (positive_accuracy + negative_accuracy) / 2,
-                "positive_total": counts["positive_total"],
-                "negative_total": counts["negative_total"],
-            }
+            positive_recall=positive,
+            negative_accuracy=negative,
+            model_success=(positive + negative) / 2,
         )
         return metrics
-
-    def weighted_answer_loss(
-        self,
-        logits: torch.Tensor,
-        labels: torch.Tensor,
-        answers: list[str],
-        success_weight: float,
-        non_success_weight: float,
-    ) -> torch.Tensor:
-        """Compute answer-token CE with normalized per-sample class weights.
-
-        Args:
-            logits: Model logits of shape ``(batch, seq, vocab)``.
-            labels: Target token ids of shape ``(batch, seq)`` with ``-100`` at
-                masked positions.
-            answers: Per-sample gold answer strings; ``"1"`` selects the success
-                weight, anything else the non-success weight.
-            success_weight: Per-sample weight for success (``"1"``) answers.
-            non_success_weight: Per-sample weight for non-success answers.
-
-        Returns:
-            The scalar weighted mean cross-entropy over answer tokens.
-        """
-        shift_logits = logits[:, :-1].contiguous()
-        shift_labels = labels[:, 1:].contiguous()
-        token_losses = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.shape[-1]),
-            shift_labels.view(-1),
-            ignore_index=-100,
-            reduction="none",
-        ).view_as(shift_labels)
-        valid_tokens = shift_labels.ne(-100)
-        token_counts = valid_tokens.sum(dim=1).clamp_min(1)
-        sample_losses = (token_losses * valid_tokens).sum(dim=1) / token_counts
-        weights = torch.tensor(
-            [
-                success_weight if str(answer).strip() == "1" else non_success_weight
-                for answer in answers
-            ],
-            device=sample_losses.device,
-            dtype=sample_losses.dtype,
-        )
-        return (sample_losses * weights).sum() / weights.sum().clamp_min(1e-8)
 
     def get_train_model_output(
         self, batch: dict[str, Any]
     ) -> tuple[torch.Tensor, dict[str, Any]]:
-        # Move the input batch to the compute device.
+        # hundle the input batch
         input_ids = batch["prompt"].to(self.device)
         attention_mask = batch["attention_mask"].to(self.device, dtype=torch.bool)
         multi_modal_inputs = batch["multi_modal_inputs"]
@@ -349,15 +252,5 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 **multi_modal_inputs,
             )
 
-        reweight_cfg = self.cfg.actor.model.get("sample_reweight", {})
-        if reweight_cfg.get("enabled", False):
-            loss = self.weighted_answer_loss(
-                outputs.logits,
-                labels,
-                batch["answer"],
-                float(reweight_cfg.get("success_weight", 1.0)),
-                float(reweight_cfg.get("non_success_weight", 1.0)),
-            )
-        else:
-            loss = outputs.loss
+        loss = outputs.loss
         return loss, {"loss": loss.detach().item()}

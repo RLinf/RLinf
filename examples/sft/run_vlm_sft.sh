@@ -1,5 +1,4 @@
 #! /bin/bash
-# Copyright 2026 The RLinf Authors.
 # clear
 export VLM_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$VLM_PATH"))

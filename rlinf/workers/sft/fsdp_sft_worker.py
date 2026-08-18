@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 from rlinf.data.datasets.common.epoch import forward_set_epoch
 from rlinf.hybrid_engines.fsdp.fsdp_model_manager import FSDPModelManager
-from rlinf.models import apply_lora, get_model
+from rlinf.models import get_model
 from rlinf.scheduler import Cluster, Worker
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import append_to_dict
@@ -92,10 +92,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         model = get_model(self.cfg.actor.model)
         if model is not None:
             return model
-        # VLM SFT types (e.g. qwen3_vl) are loaded via the HF fallback and are
-        # not in the embodied registry — still attach LoRA when configured.
-        model = super().model_provider_func()
-        return apply_lora(model, self.cfg.actor.model)
+        return super().model_provider_func()
 
     def set_global_step(self, global_step):
         self.global_step = global_step
@@ -108,18 +105,8 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         return 0
 
     def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Convert reduced evaluation counts into logged metrics.
-
-        Args:
-            counts: Aggregated eval counts with at least ``correct`` and
-                ``total`` keys (subclasses may pass richer class-aware counts).
-
-        Returns:
-            A metrics dict suitable for the eval logger.
-        """
-        return {
-            "eval_accuracy": counts["correct"] / max(1, counts["total"]),
-        }
+        """Convert reduced evaluation counts into logged metrics."""
+        return {"eval_accuracy": counts["correct"] / max(1, counts["total"])}
 
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
@@ -138,30 +125,24 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.model.eval()
             total = eval_step * self.eval_batch_size
             correct = 0
-            class_counts = None
+            counts = None
 
             # get the next batch
             for _ in range(eval_step):
                 result = self.get_eval_model_output(next(eval_data_iter))
                 if isinstance(result, dict):
-                    if class_counts is None:
-                        class_counts = dict.fromkeys(result, 0)
+                    counts = counts or dict.fromkeys(result, 0)
                     for key, value in result.items():
-                        class_counts[key] += value
+                        counts[key] += value
                 else:
                     correct += result
                 eval_pbar.update(1)
 
-            if class_counts is None:
-                metrics = {
-                    "eval_accuracy": float(correct / max(1, total)),
-                }
-                return all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
-
-            class_counts = all_reduce_dict(
-                class_counts, op=torch.distributed.ReduceOp.SUM
-            )
-            return self.compute_eval_metrics(class_counts)
+            if counts is not None:
+                counts = all_reduce_dict(counts, op=torch.distributed.ReduceOp.SUM)
+                return self.compute_eval_metrics(counts)
+            metrics = {"eval_accuracy": float(correct / max(1, total))}
+            return all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
 
     def run_training(self):
         with self.worker_timer():

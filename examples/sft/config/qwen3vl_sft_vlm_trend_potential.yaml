@@ -1,0 +1,30 @@
+# Dense potential/progress LoRA; only data and schedule differ from Trend.
+defaults:
+  - qwen3vl_sft_vlm_trend_reward
+  - _self_
+
+runner:
+  max_epochs: 400
+  max_steps: 400
+  val_check_interval: 100
+  save_interval: 100
+  experiment_name: qwen3_vl_vlm_trend_potential_sft
+  output_dir: ${oc.env:OUTPUT_ROOT,logs/vlm_trend_potential_sft}
+
+data:
+  train_data_paths: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}/train/segments.jsonl"
+  val_data_paths: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}/eval/segments.jsonl"
+  video_root: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}"
+  data_root: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}"
+  video_do_sample_frames: true
+
+actor:
+  micro_batch_size: 4
+  eval_batch_size: 16
+  global_batch_size: 256
+  model:
+    model_path: ${oc.env:VLM_MODEL_PATH}
+    sample_reweight:
+      enabled: false
+  optim:
+    lr_warmup_steps: 20

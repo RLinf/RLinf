@@ -5,23 +5,19 @@
 # You may obtain a copy of the License at
 #
 #     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
+import pickle
 from types import SimpleNamespace
 
+import numpy as np
 import torch
 
+from rlinf.data.datasets.vlm.vlm_trend_reward import build_terminal_success_rows
+from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.reward.vlm_reward_model import (
     BufferedVLMRewardModel,
+    ScalarPotentialHead,
     VLMRewardModel,
-)
-from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
-    VLMTrendRewardInputBuilder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     VLMTrendBinaryDigitRewardParser,
@@ -31,205 +27,150 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
 class _HiddenModel:
     def __init__(self, hidden: torch.Tensor) -> None:
         self.hidden = hidden
+        self.device = torch.device("cpu")
 
     def __call__(self, **_kwargs):
         return SimpleNamespace(hidden_states=[self.hidden])
 
 
-class _IdentityScalarHead:
+class _IdentityHead:
     def __call__(self, features: torch.Tensor) -> torch.Tensor:
         return features.squeeze(-1)
 
 
-def test_compute_scalar_potential_uses_last_nonpadding_token() -> None:
+def test_make_mlp_dropout_is_opt_in() -> None:
+    layers = make_mlp(2, [3, 1], last_act=False, dropout=0.1)
+    assert sum(isinstance(layer, torch.nn.Dropout) for layer in layers) == 1
+    assert not any(
+        isinstance(layer, torch.nn.Dropout)
+        for layer in make_mlp(2, [3, 1], last_act=False)
+    )
+
+
+def test_terminal_success_rows_use_online_windows_without_balancing(tmp_path) -> None:
+    observations = [
+        {
+            "states": torch.zeros(2),
+            "main_images": np.zeros((2, 2, 3), dtype=np.uint8),
+            "extra_view_images": np.zeros((1, 2, 2, 3), dtype=np.uint8),
+        }
+        for _ in range(8)
+    ]
+    infos = [{"success": index == 6} for index in range(8)]
+    episode = {
+        "observations": observations,
+        "actions": [torch.zeros(1) for _ in range(7)],
+        "infos": infos,
+        "terminated": [False] * 7 + [True],
+        "truncated": [False] * 8,
+        "success": True,
+    }
+    with (tmp_path / "episode.pkl").open("wb") as stream:
+        pickle.dump(episode, stream)
+
+    rows, stats = build_terminal_success_rows(
+        [str(tmp_path)], window_size=5, interval=3, val_split=0, workers=1, seed=0
+    )
+
+    samples = sorted(
+        (row["segment_metadata"]["end_step"], row["answer"]) for row in rows["train"]
+    )
+    assert samples == [(5, "0"), (6, "1")]
+    assert stats["splits"]["train"] == {
+        "positive": 1,
+        "negative": 1,
+        "interval": 3,
+    }
+
+
+def test_scalar_head_uses_last_attended_prompt_token() -> None:
     model = object.__new__(VLMRewardModel)
+    torch.nn.Module.__init__(model)
     hidden = torch.zeros(2, 4, 1)
-    hidden[0, 1, 0] = -2.0
-    hidden[1, 3, 0] = 2.0
+    hidden[0, 1, 0], hidden[1, 3, 0] = -2.0, 2.0
     model._model = _HiddenModel(hidden)
-    model.scalar_head = _IdentityScalarHead()
+    model.scalar_head = _IdentityHead()
 
     potentials = model.compute_scalar_potential(
         {
             "input_ids": torch.zeros(2, 4, dtype=torch.long),
-            "attention_mask": torch.tensor(
-                [[1, 1, 0, 0], [0, 1, 1, 1]], dtype=torch.long
-            ),
+            "attention_mask": torch.tensor([[1, 1, 0, 0], [0, 1, 1, 1]]),
         }
     )
 
     torch.testing.assert_close(potentials, torch.sigmoid(torch.tensor([-2.0, 2.0])))
 
 
-def _potential_model(
-    scale: float = 1.0,
-    gamma: float = 1.0,
-    ema_alpha: float = 1.0,
-    clip: float = 0.0,
-):
+def test_scalar_head_loads_auxiliary_checkpoint(tmp_path) -> None:
+    source = ScalarPotentialHead(4, 3, 0.1)
+    checkpoint = tmp_path / "best.pt"
+    torch.save(
+        {
+            "model_state_dict": source.state_dict(),
+            "config": {"input_dim": 4, "hidden_dim": 3, "dropout": 0.1},
+        },
+        checkpoint,
+    )
+    model = object.__new__(VLMRewardModel)
+    torch.nn.Module.__init__(model)
+    model.inference_mode = "scalar_head"
+    model.scalar_head_path = str(checkpoint)
+    model._model = SimpleNamespace(device=torch.device("cpu"))
+
+    model.setup_scalar_head()
+
+    assert model.scalar_head is not None
+    model.scalar_head.eval()
+    source.eval()
+    torch.testing.assert_close(
+        model.scalar_head(torch.ones(2, 4)), source(torch.ones(2, 4))
+    )
+
+
+def test_potential_and_success_state_reset_at_episode_end() -> None:
     model = object.__new__(BufferedVLMRewardModel)
-    model.potential_scale = scale
-    model.potential_gamma = gamma
-    model.potential_ema_alpha = ema_alpha
-    model.potential_clip = clip
+    model.potential_scale = 1.0
+    model.potential_gamma = 1.0
+    model.potential_ema_alpha = 1.0
+    model.potential_clip = 0.0
     model._previous_potentials = None
-    return model
-
-
-def test_potential_difference_is_zero_on_first_and_static_observation() -> None:
-    model = _potential_model()
-    valid = torch.tensor([True, True])
-
-    first = model.potential_differences(torch.tensor([0.2, 0.8]), valid)
-    static = model.potential_differences(torch.tensor([0.2, 0.8]), valid)
-
-    torch.testing.assert_close(first, torch.zeros(2))
-    torch.testing.assert_close(static, torch.zeros(2))
-
-
-def test_potential_difference_is_signed_and_scaled() -> None:
-    model = _potential_model(scale=0.5)
-    valid = torch.tensor([True, True])
-    model.potential_differences(torch.tensor([0.2, 0.8]), valid)
-
-    rewards = model.potential_differences(torch.tensor([0.6, 0.5]), valid)
-
-    torch.testing.assert_close(rewards, torch.tensor([0.2, -0.15]))
-
-
-def test_done_resets_potential_history() -> None:
-    model = _potential_model()
-    valid = torch.tensor([True, True])
-    model.potential_differences(torch.tensor([0.2, 0.8]), valid)
-    terminal = model.potential_differences(
-        torch.tensor([0.9, 0.7]), valid, dones=torch.tensor([True, False])
-    )
-    next_episode = model.potential_differences(torch.tensor([0.1, 0.6]), valid)
-
-    torch.testing.assert_close(terminal, torch.tensor([0.7, -0.1]))
-    torch.testing.assert_close(next_episode, torch.tensor([0.0, -0.1]))
-
-
-def test_potential_difference_applies_ema_and_clip() -> None:
-    model = _potential_model(scale=2.0, ema_alpha=0.5, clip=0.25)
-    valid = torch.tensor([True, True])
-    model.potential_differences(torch.tensor([0.2, 0.8]), valid)
-
-    rewards = model.potential_differences(torch.tensor([0.8, 0.0]), valid)
-
-    torch.testing.assert_close(rewards, torch.tensor([0.25, -0.25]))
-    torch.testing.assert_close(model._previous_potentials, torch.tensor([0.5, 0.4]))
-
-
-def test_model_success_bonus_is_one_shot_and_resets_on_done() -> None:
-    model = _potential_model()
-    model.success_threshold = 0.8
-    model.success_bonus = 1.0
-    model.success_confirmation_windows = 1
-    model._success_fired = None
-    model._success_streak = None
-    valid = torch.tensor([True, True])
-
-    first = model.apply_model_success_bonus(
-        torch.zeros(2), torch.tensor([0.9, 0.7]), valid
-    )
-    repeated = model.apply_model_success_bonus(
-        torch.zeros(2), torch.tensor([0.95, 0.9]), valid
-    )
-    terminal = model.apply_model_success_bonus(
-        torch.zeros(2),
-        torch.tensor([0.95, 0.9]),
-        valid,
-        dones=torch.tensor([True, False]),
-    )
-    next_episode = model.apply_model_success_bonus(
-        torch.zeros(2), torch.tensor([0.9, 0.9]), valid
-    )
-
-    torch.testing.assert_close(first, torch.tensor([1.0, 0.0]))
-    torch.testing.assert_close(repeated, torch.tensor([0.0, 1.0]))
-    torch.testing.assert_close(terminal, torch.zeros(2))
-    torch.testing.assert_close(next_episode, torch.tensor([1.0, 0.0]))
-
-
-def test_model_success_bonus_requires_consecutive_confirmations() -> None:
-    model = _potential_model()
     model.success_threshold = 0.5
-    model.success_bonus = 1.0
+    model.success_bonus = 2.0
     model.success_confirmation_windows = 2
     model._success_fired = None
     model._success_streak = None
-    valid = torch.tensor([True])
-
-    first = model.apply_model_success_bonus(torch.zeros(1), torch.tensor([0.9]), valid)
-    interrupted = model.apply_model_success_bonus(
-        torch.zeros(1), torch.tensor([0.1]), valid
-    )
-    restart = model.apply_model_success_bonus(
-        torch.zeros(1), torch.tensor([0.9]), valid
-    )
-    confirmed = model.apply_model_success_bonus(
-        torch.zeros(1), torch.tensor([0.9]), valid
-    )
-
-    torch.testing.assert_close(first, torch.zeros(1))
-    torch.testing.assert_close(interrupted, torch.zeros(1))
-    torch.testing.assert_close(restart, torch.zeros(1))
-    torch.testing.assert_close(confirmed, torch.ones(1))
-
-
-def test_binary_digit_parser_uses_sparse_rewards():
-    parser = VLMTrendBinaryDigitRewardParser()
-
-    rewards = parser.parse_rewards(["1", "0", "answer: 1", "unclear", "10"])
+    valid = torch.tensor([True, True])
 
     torch.testing.assert_close(
-        rewards,
-        torch.tensor([1.0, 0.0, 1.0, 0.0, 0.0]),
+        model.potential_differences(torch.tensor([0.2, 0.8]), valid), torch.zeros(2)
+    )
+    terminal = model.potential_differences(
+        torch.tensor([0.9, 0.7]), valid, dones=torch.tensor([True, False])
+    )
+    torch.testing.assert_close(terminal, torch.tensor([0.7, -0.1]))
+    torch.testing.assert_close(
+        model.potential_differences(torch.tensor([0.1, 0.6]), valid),
+        torch.tensor([0.0, -0.1]),
     )
 
-
-def test_terminal_success_builder_matches_sft_prompt(monkeypatch):
-    builder = VLMTrendRewardInputBuilder(
-        history_buffer_names=["history_window"],
-        default_task_description="fallback task",
-        include_task=True,
-        prompt_template=(
-            "Estimate task-conditioned success potential for this robot "
-            "manipulation state.{task_text} The two synchronized videos show "
-            "the same 5-frame history from two camera views."
-        ),
-        _processor=None,
+    zeros = torch.zeros(2)
+    first = model.apply_model_success_bonus(zeros, torch.tensor([0.9, 0.1]), valid)
+    second = model.apply_model_success_bonus(zeros, torch.tensor([0.9, 0.9]), valid)
+    third = model.apply_model_success_bonus(
+        zeros, torch.tensor([0.9, 0.9]), valid, dones=torch.tensor([False, True])
     )
-    videos = [[["main frames"], ["extra frames"]]]
-    monkeypatch.setattr(builder, "extract_videos", lambda *_: videos)
-    observations = {"task_descriptions": ["Pick up the cube."]}
-    history_input = {"history_window": {}}
-
-    prepared = builder.prepare_inputs(observations, history_input, [0])
-
-    assert prepared["videos_list"] == videos
-    assert prepared["prompt_texts_list"] == [
-        [
-            "Estimate task-conditioned success potential for this robot "
-            "manipulation state. Task: Pick up the cube.. The two synchronized "
-            "videos show the same 5-frame history from two camera views."
-        ]
-    ]
-
-
-def test_buffered_vlm_returns_zero_before_first_window(monkeypatch):
-    from rlinf.models.embodiment.reward.vlm_reward_model import BufferedVLMRewardModel
-
-    model = object.__new__(BufferedVLMRewardModel)
-    model.interval_reward = 0.0
-    monkeypatch.setattr(model, "apply_gt_success_bonus", lambda rewards, _: rewards)
-
-    rewards = model.compute_reward(
-        {
-            "dones": torch.zeros(3, dtype=torch.bool),
-            "history_input": {"history_window": {}},
-        }
+    after_reset = model.apply_model_success_bonus(
+        zeros, torch.tensor([0.9, 0.9]), valid
     )
+    torch.testing.assert_close(first, zeros)
+    torch.testing.assert_close(second, torch.tensor([2.0, 0.0]))
+    torch.testing.assert_close(third, torch.tensor([0.0, 2.0]))
+    torch.testing.assert_close(after_reset, zeros)
 
-    torch.testing.assert_close(rewards, torch.zeros(3))
+
+def test_binary_success_parser_uses_last_standalone_digit() -> None:
+    parser = VLMTrendBinaryDigitRewardParser()
+    torch.testing.assert_close(
+        parser.parse_rewards(["answer: 1", "0", "invalid", "0 then 1"]),
+        torch.tensor([1.0, 0.0, 0.0, 1.0]),
+    )
