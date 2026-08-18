@@ -17,7 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 from rlinf.data.datasets.diffusion import EnvRecord, ImageConditionedDataset
 from rlinf.envs.diffusion.utils import media_to_uint8_nhwc
@@ -50,6 +49,11 @@ class LeRobotImageConditionedDataset(ImageConditionedDataset):
 
     @classmethod
     def from_config(cls, cfg: Any) -> "LeRobotImageConditionedDataset":
+        try:  # lerobot >= 0.2 layout
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        except ModuleNotFoundError:  # lerobot < 0.2
+            from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+
         sample_mode = getattr(cfg, "sample_mode", "episode")
         future_seconds = float(cfg.future_seconds)
         if sample_mode not in ("episode", "frame"):
