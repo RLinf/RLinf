@@ -104,8 +104,8 @@ pose/gripper state 注入模型 core；π0.5 不向模型 core 注入该连续 s
      - 共用
      - 共用
    * - Legacy PT converter
-     - ``pt_to_realworld_pt``
-     - ``pt_to_realworld_pt``
+     - ``openpi_rlinf_to_openpi_pytorch``
+     - ``openpi_rlinf_to_openpi_pytorch``
    * - OpenPI_RLinf converter
      - ``sft_to_openpi_rlinf``
      - ``sft_to_openpi_rlinf``
@@ -475,7 +475,8 @@ Checkpoint 保存到
 ----------------------------------------
 
 π0 与 π0.5 的 SFT checkpoint 都支持两种部署格式。legacy real-world PT
-部署使用 ``pt_to_realworld_pt``，其中 reference model 必须与 SFT variant
+部署使用 ``openpi_rlinf_to_openpi_pytorch`` 的 PT 输出，其中 reference model
+必须与 SFT variant
 匹配，即对应的原始 OpenPI PyTorch π0 或 π0.5 base 权重。该转换器要求 SFT
 checkpoint 为 FP32，并在 PT 到 PT 的直接转换中始终保持 FP32。程序会根据
 匹配的 reference 自动选择 π0 的标准 RMSNorm 映射或 π0.5 的自适应 RMSNorm
@@ -487,10 +488,12 @@ checkpoint 为 FP32，并在 PT 到 PT 的直接转换中始终保持 FP32。程
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode pt_to_realworld_pt \
-     --ckpt INPUT_CHECKPOINT \
-     --output OUTPUT_DIRECTORY \
-     --reference-model OPENPI_PYTORCH_REFERENCE
+     --mode openpi_rlinf_to_openpi_pytorch \
+     --input-model INPUT_CHECKPOINT \
+     --output-model OUTPUT_DIRECTORY \
+     --reference-model OPENPI_PYTORCH_REFERENCE \
+     --output-format pt \
+     --dtype fp32
 
 Legacy 输出目录为：
 

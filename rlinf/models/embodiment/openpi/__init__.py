@@ -87,10 +87,8 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             all_state_dict.update(state_dict)
         model.load_state_dict(all_state_dict, strict=False)
 
-    if torch_dtype == torch.float32:
-        model = model.to(dtype=torch.float32)
-    elif torch_dtype == torch.bfloat16:
-        model = model.to(dtype=torch.bfloat16)
+    if torch_dtype is not None:
+        model = model.to(dtype=torch_dtype)
     else:
         # Preserve the existing OpenPI mixed-precision behavior for
         # precision=null configurations.

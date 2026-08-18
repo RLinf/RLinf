@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,pt_to_realworld_pt} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
@@ -163,7 +163,8 @@ carry and cannot be reconstructed. Therefore:
   or a torch `model.pt`. `--reference-model` is an OpenPI PyTorch model dir.
 - **Output**: `<output-model>/model.safetensors` (+ `config.json` from the
   reference); norm-stats copied to `--output-norm-stats`.
-- **Dtype policy**: with a reference model, all output tensors are cast to bf16.
+- **Dtype policy**: use ``--dtype bf16`` (default) or ``--dtype fp32`` to select
+  the floating-point output dtype for safetensors output.
 - **Norm-stats**: input copied verbatim to the output path.
 
 ```bash
@@ -177,7 +178,7 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openp
 
 ---
 
-## `pt_to_realworld_pt`
+### FP32 `full_weights.pt` output
 
 RLinf SFT-trained Pi0 or Pi0.5 checkpoint -> FP32 real-world OpenPI PyTorch
 `full_weights.pt`. The conversion is a direct PT-to-PT path and never creates a
@@ -203,8 +204,10 @@ BF16 intermediate. This mode does not copy norm-stats or other assets.
 
 ```bash
 python -m rlinf.utils.ckpt_convertor.openpi.convert \
-    --mode pt_to_realworld_pt \
-    --ckpt            /path/to/checkpoints/global_step_20000 \
-    --output          /path/to/checkpoints/global_step_20000_openpi_deploy \
-    --reference-model /path/to/pi0_or_pi05_base_pytorch
+    --mode openpi_rlinf_to_openpi_pytorch \
+    --input-model    /path/to/checkpoints/global_step_20000 \
+    --output-model   /path/to/checkpoints/global_step_20000_openpi_deploy \
+    --reference-model /path/to/pi0_or_pi05_base_pytorch \
+    --output-format pt \
+    --dtype fp32
 ```

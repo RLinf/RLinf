@@ -3,7 +3,7 @@ model_type: "openpi_rlinf"
 # OpenPI_RLinf Pi0 model shape for Dual-Franka tcp_rot6d evaluation. The
 # checkpoint path is supplied by the real-world evaluation config.
 model_path: "/path/to/model/openpi_rlinf"
-precision: fp32
+precision: bf16
 pi05: false
 
 is_lora: false

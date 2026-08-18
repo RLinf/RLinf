@@ -27,24 +27,40 @@ denotes the OpenPI PyTorch layout. The public CLI mode remains
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
+import tempfile
+from collections import Counter
+from collections.abc import Mapping
+from typing import Any
 
 import torch
 
 from rlinf.utils.ckpt_convertor.openpi._core import (
     NORM_STATS_SUBDIR,
+    as_state_dict,
     copy_norm_stats,
     load_safetensors,
     resolve_model_safetensors,
     save_safetensors,
+    strip_wrapper_prefix,
 )
 
 ACTION_EXPERT_LM_HEAD = "paligemma_with_expert.gemma_expert.lm_head.weight"
+EMBED_TOKENS_KEY = (
+    "paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight"
+)
 _OPENPI_SIGLIP = "paligemma_with_expert.paligemma.model.vision_tower.vision_model."
 _OPENPI_PALIGEMMA_LLM = "paligemma_with_expert.paligemma.model.language_model."
 _OPENPI_GEMMA_EXPERT = "paligemma_with_expert.gemma_expert.model."
+_WEIGHTS_CANDIDATES = (
+    "actor/model_state_dict/full_weights.pt",
+    "model_state_dict/full_weights.pt",
+    "full_weights.pt",
+)
+_DEPLOY_WEIGHTS_REL = pathlib.Path("actor/model_state_dict/full_weights.pt")
 
 
 def new_to_old_state_dict(
@@ -201,7 +217,7 @@ def new_to_old_state_dict(
 
 
 def _reference_uses_action_expert_adarms(
-    reference_state_dict: dict[str, torch.Tensor],
+    reference_state_dict: Mapping[str, Any],
 ) -> bool:
     """Infer Pi0.5's action-expert norm layout from a reference checkpoint."""
     return any(
@@ -212,6 +228,220 @@ def _reference_uses_action_expert_adarms(
         )
         for key in reference_state_dict
     )
+
+
+def _resolve_full_weights(path: str | pathlib.Path) -> pathlib.Path:
+    """Resolve a checkpoint file or directory to ``full_weights.pt``."""
+    path = pathlib.Path(path)
+    if path.is_file():
+        return path
+    for relative in _WEIGHTS_CANDIDATES:
+        candidate = path / relative
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"No full_weights.pt found under {path}")
+
+
+def _resolve_output_pt(output: str | pathlib.Path) -> pathlib.Path:
+    """Resolve an output file or deployment directory to ``full_weights.pt``."""
+    output = pathlib.Path(output)
+    if output.suffix == ".pt":
+        return output
+    return output / _DEPLOY_WEIGHTS_REL
+
+
+def _detect_variant(state_dict: Mapping[str, Any]) -> str:
+    """Detect Pi0 or Pi0.5 from the model projection keys."""
+    keys = set(state_dict)
+    is_pi0 = {
+        "state_proj.weight",
+        "action_time_mlp_in.weight",
+        "action_time_mlp_out.weight",
+    }.issubset(keys)
+    is_pi05 = {
+        "time_mlp_in.weight",
+        "time_mlp_out.weight",
+    }.issubset(keys) and "state_proj.weight" not in keys
+    if is_pi0 == is_pi05:
+        raise ValueError(
+            "Cannot unambiguously detect Pi0/Pi0.5 from projection keys: "
+            f"state_proj={'state_proj.weight' in keys}, "
+            f"action_time_mlp={'action_time_mlp_in.weight' in keys}, "
+            f"time_mlp={'time_mlp_in.weight' in keys}"
+        )
+    return "pi0" if is_pi0 else "pi05"
+
+
+def _load_reference(
+    reference: str | pathlib.Path,
+) -> tuple[dict[str, tuple[int, ...]], torch.Tensor, str]:
+    """Load a reference schema, action-expert head, and model variant."""
+    reference = pathlib.Path(reference)
+    if reference.is_dir():
+        safetensors_path = reference / "model.safetensors"
+        reference = (
+            safetensors_path
+            if safetensors_path.is_file()
+            else _resolve_full_weights(reference)
+        )
+
+    if reference.suffix == ".safetensors":
+        from safetensors import safe_open
+
+        with safe_open(str(reference), framework="pt", device="cpu") as handle:
+            keys = list(handle.keys())
+            if ACTION_EXPERT_LM_HEAD not in keys:
+                raise KeyError(f"Reference {reference} lacks {ACTION_EXPERT_LM_HEAD!r}")
+            schema = {key: tuple(handle.get_slice(key).get_shape()) for key in keys}
+            head = handle.get_tensor(ACTION_EXPERT_LM_HEAD).float().contiguous()
+            return schema, head, _detect_variant(schema)
+
+    loaded = torch.load(
+        str(reference), map_location="cpu", weights_only=False, mmap=True
+    )
+    state_dict = as_state_dict(loaded)
+    if ACTION_EXPERT_LM_HEAD not in state_dict:
+        raise KeyError(f"Reference {reference} lacks {ACTION_EXPERT_LM_HEAD!r}")
+    schema = {key: tuple(tensor.shape) for key, tensor in state_dict.items()}
+    head = state_dict[ACTION_EXPERT_LM_HEAD].detach().float().cpu().contiguous()
+    return schema, head, _detect_variant(schema)
+
+
+def _validate_source_fp32(state_dict: Mapping[str, torch.Tensor]) -> None:
+    """Validate that every floating-point source tensor uses FP32."""
+    bad = {
+        key: str(tensor.dtype)
+        for key, tensor in state_dict.items()
+        if tensor.is_floating_point() and tensor.dtype != torch.float32
+    }
+    if bad:
+        raise TypeError(
+            f"Source is not an all-fp32 SFT checkpoint; {len(bad)} floating "
+            f"tensors are non-fp32, examples={list(bad.items())[:10]}"
+        )
+
+
+def _validate_fp32_output(
+    state_dict: Mapping[str, torch.Tensor],
+    shape_schema: Mapping[str, tuple[int, ...]],
+) -> dict[str, Any]:
+    """Validate FP32 deployment keys and shapes against a reference schema."""
+    expected = set(shape_schema)
+    actual = set(state_dict)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        raise RuntimeError(
+            f"Deploy key mismatch: missing={missing[:20]}, extra={extra[:20]}"
+        )
+
+    shape_bad = [
+        (key, tuple(state_dict[key].shape), shape_schema[key])
+        for key in sorted(expected)
+        if tuple(state_dict[key].shape) != shape_schema[key]
+    ]
+    if shape_bad:
+        raise RuntimeError(f"Deploy shape mismatch: {shape_bad[:20]}")
+
+    dtype_bad = [
+        (key, str(tensor.dtype))
+        for key, tensor in state_dict.items()
+        if tensor.is_floating_point() and tensor.dtype != torch.float32
+    ]
+    if dtype_bad:
+        raise RuntimeError(f"Non-fp32 deploy tensors: {dtype_bad[:20]}")
+
+    dtype_counts = Counter(str(tensor.dtype) for tensor in state_dict.values())
+    tensor_bytes = sum(
+        tensor.numel() * tensor.element_size() for tensor in state_dict.values()
+    )
+    return {
+        "keys": len(state_dict),
+        "dtype_counts": dict(dtype_counts),
+        "tensor_bytes": tensor_bytes,
+        "tensor_gib": tensor_bytes / 1024**3,
+    }
+
+
+def convert_fp32_pt(
+    checkpoint: str | pathlib.Path,
+    reference_model: str | pathlib.Path,
+    output: str | pathlib.Path,
+) -> pathlib.Path:
+    """Convert an RLinf Pi0/Pi0.5 SFT checkpoint to OpenPI PyTorch FP32 PT."""
+    source_path = _resolve_full_weights(checkpoint)
+    output_path = _resolve_output_pt(output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists():
+        raise FileExistsError(f"Refusing to overwrite existing output: {output_path}")
+
+    loaded = torch.load(
+        str(source_path), map_location="cpu", weights_only=False, mmap=True
+    )
+    bare = strip_wrapper_prefix(as_state_dict(loaded), cast_dtype=None)
+    _validate_source_fp32(bare)
+    variant = _detect_variant(bare)
+
+    reference_schema, reference_head, reference_variant = _load_reference(
+        reference_model
+    )
+    if reference_variant != variant:
+        raise ValueError(
+            "Source/reference model variant mismatch: "
+            f"source={variant}, reference={reference_variant}"
+        )
+
+    action_expert_uses_adarms = _reference_uses_action_expert_adarms(reference_schema)
+    if action_expert_uses_adarms != (variant == "pi05"):
+        raise ValueError(
+            "Reference normalization layout does not match the detected model "
+            f"variant: variant={variant}, "
+            f"action_expert_uses_adarms={action_expert_uses_adarms}"
+        )
+
+    deploy = new_to_old_state_dict(
+        bare, action_expert_uses_adarms=action_expert_uses_adarms
+    )
+    if "llm.embedder.embedding.weight" not in bare:
+        raise KeyError("SFT checkpoint lacks llm.embedder.embedding.weight")
+    deploy[EMBED_TOKENS_KEY] = bare["llm.embedder.embedding.weight"]
+    deploy[ACTION_EXPERT_LM_HEAD] = reference_head
+    deploy = {
+        key: (
+            tensor.detach().float().cpu().contiguous()
+            if tensor.is_floating_point()
+            else tensor.detach().cpu().contiguous()
+        )
+        for key, tensor in deploy.items()
+    }
+
+    reference_schema[EMBED_TOKENS_KEY] = tuple(deploy[EMBED_TOKENS_KEY].shape)
+    report = _validate_fp32_output(deploy, reference_schema)
+    report.update(
+        {
+            "variant": variant,
+            "source": str(source_path),
+            "reference": str(reference_model),
+            "output": str(output_path),
+        }
+    )
+
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=output_path.name + ".tmp.", dir=str(output_path.parent)
+    )
+    os.close(fd)
+    temporary_path = pathlib.Path(temporary_name)
+    try:
+        torch.save(deploy, temporary_path)
+        os.replace(temporary_path, output_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+    report_path = output_path.with_suffix(output_path.suffix + ".report.json")
+    report["file_bytes"] = output_path.stat().st_size
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2))
+    return output_path
 
 
 def _convert_llm_expert(
@@ -275,6 +505,7 @@ def convert_trained_ckpt(
     output_dir: str,
     reference_model: str,
     norm_stats: str | None = None,
+    dtype: torch.dtype = torch.bfloat16,
 ) -> None:
     """Convert OpenPI_RLinf trained weights with an OpenPI PyTorch reference."""
     import safetensors.torch
@@ -306,8 +537,8 @@ def convert_trained_ckpt(
     ):
         openpi_pytorch_state_dict[ACTION_EXPERT_LM_HEAD] = reference_head.clone()
     for key, tensor in openpi_pytorch_state_dict.items():
-        if tensor.dtype != torch.bfloat16:
-            openpi_pytorch_state_dict[key] = tensor.to(torch.bfloat16)
+        if tensor.is_floating_point() and tensor.dtype != dtype:
+            openpi_pytorch_state_dict[key] = tensor.to(dtype)
 
     reference_keys = set(reference_state_dict)
     converted_keys = set(openpi_pytorch_state_dict)
@@ -380,17 +611,25 @@ def add_arguments(parser) -> None:
     """Register the ``openpi_rlinf_to_openpi_pytorch`` mode arguments."""
     parser.add_argument(
         "--input-model",
+        "--ckpt",
+        dest="input_model",
         required=True,
-        help="OpenPI_RLinf checkpoint directory, model.safetensors, or model.pt",
+        help="OpenPI_RLinf checkpoint directory, full_weights.pt, or safetensors",
     )
     parser.add_argument(
-        "--input-norm-stats", required=True, help="norm_stats.json to copy across"
+        "--input-norm-stats", default=None, help="norm_stats.json to copy across"
     )
     parser.add_argument(
-        "--output-model", required=True, help="output OpenPI PyTorch checkpoint dir"
+        "--output-model",
+        "--output",
+        dest="output_model",
+        required=True,
+        help="output OpenPI PyTorch checkpoint path or directory",
     )
     parser.add_argument(
-        "--output-norm-stats", required=True, help="destination norm_stats.json path"
+        "--output-norm-stats",
+        default=None,
+        help="destination norm_stats.json path",
     )
     parser.add_argument(
         "--reference-model",
@@ -400,10 +639,36 @@ def add_arguments(parser) -> None:
             "action-expert lm_head and validate keys/shapes"
         ),
     )
+    parser.add_argument(
+        "--output-format",
+        choices=("safetensors", "pt"),
+        default="safetensors",
+        help="output checkpoint format; PT output is written as full_weights.pt",
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=("bf16", "fp32"),
+        default="bf16",
+        help="floating-point dtype for the converted checkpoint",
+    )
 
 
 def run(args) -> None:
     """Execute ``openpi_rlinf_to_openpi_pytorch`` from parsed arguments."""
+    if args.output_format == "pt":
+        if not args.reference_model:
+            raise ValueError("--reference-model is required for PT output")
+        if args.dtype != "fp32":
+            raise ValueError("PT output currently requires --dtype fp32")
+        convert_fp32_pt(args.input_model, args.reference_model, args.output_model)
+        return
+
+    if not args.input_norm_stats or not args.output_norm_stats:
+        raise ValueError(
+            "--input-norm-stats and --output-norm-stats are required for "
+            "safetensors output"
+        )
+
     if args.reference_model:
         input_path = pathlib.Path(args.input_model)
         if input_path.is_dir():
@@ -412,6 +677,7 @@ def run(args) -> None:
             input_ckpt=str(input_path),
             output_dir=args.output_model,
             reference_model=args.reference_model,
+            dtype=torch.bfloat16 if args.dtype == "bf16" else torch.float32,
         )
         copy_norm_stats(args.input_norm_stats, args.output_norm_stats)
     else:

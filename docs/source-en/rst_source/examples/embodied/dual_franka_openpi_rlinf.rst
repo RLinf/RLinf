@@ -106,8 +106,8 @@ not inject this continuous state into the model core.
      - Shared
      - Shared
    * - Legacy PT converter
-     - ``pt_to_realworld_pt``
-     - ``pt_to_realworld_pt``
+     - ``openpi_rlinf_to_openpi_pytorch``
+     - ``openpi_rlinf_to_openpi_pytorch``
    * - OpenPI_RLinf converter
      - ``sft_to_openpi_rlinf``
      - ``sft_to_openpi_rlinf``
@@ -494,7 +494,8 @@ Convert SFT Checkpoints for Deployment
 --------------------------------------
 
 Both Pi0 and Pi0.5 SFT checkpoints support two deployment formats. For legacy
-real-world PT deployment, use ``pt_to_realworld_pt``. The reference model must
+real-world PT deployment, use ``openpi_rlinf_to_openpi_pytorch`` with PT output.
+The reference model must
 match the SFT variant: use the corresponding original OpenPI PyTorch Pi0 or
 Pi0.5 base weights. This converter requires an FP32 SFT checkpoint and preserves
 FP32 throughout the direct PT-to-PT conversion. It automatically selects Pi0's
@@ -507,10 +508,12 @@ layout, or ``bf16`` for pure BF16 weights.
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode pt_to_realworld_pt \
-     --ckpt INPUT_CHECKPOINT \
-     --output OUTPUT_DIRECTORY \
-     --reference-model OPENPI_PYTORCH_REFERENCE
+     --mode openpi_rlinf_to_openpi_pytorch \
+     --input-model INPUT_CHECKPOINT \
+     --output-model OUTPUT_DIRECTORY \
+     --reference-model OPENPI_PYTORCH_REFERENCE \
+     --output-format pt \
+     --dtype fp32
 
 The legacy output directory is:
 

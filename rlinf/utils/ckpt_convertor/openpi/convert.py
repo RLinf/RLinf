@@ -14,14 +14,13 @@
 
 """Unified OpenPI Pi0 and Pi0.5 checkpoint convertor.
 
-Dispatches to five modes over a shared core:
+Dispatches to four modes over a shared core:
 
     jax_to_openpi_rlinf              JAX Pi0/Pi05 checkpoint -> OpenPI_RLinf layout
     openpi_pytorch_to_openpi_rlinf   OpenPI PyTorch layout -> OpenPI_RLinf layout
     sft_to_openpi_rlinf              RLinf SFT full_weights.pt -> OpenPI_RLinf
                                    layout selected by ``--config-name`` and ``--dtype``
     openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
-    pt_to_realworld_pt              RLinf SFT PT -> FP32 real-world OpenPI PT
 
 Usage::
 
@@ -42,7 +41,6 @@ from rlinf.utils.ckpt_convertor.openpi import (
     jax_to_openpi_rlinf,
     openpi_pytorch_to_openpi_rlinf,
     openpi_rlinf_to_openpi_pytorch,
-    pt_to_realworld_pt,
     pt_to_safetensors,
 )
 
@@ -54,7 +52,6 @@ _MODES = {
     "openpi_pytorch_to_openpi_rlinf": openpi_pytorch_to_openpi_rlinf,
     "sft_to_openpi_rlinf": pt_to_safetensors,
     "openpi_rlinf_to_openpi_pytorch": openpi_rlinf_to_openpi_pytorch,
-    "pt_to_realworld_pt": pt_to_realworld_pt,
 }
 
 
