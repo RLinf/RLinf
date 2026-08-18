@@ -113,6 +113,17 @@ class RLTRoute(ABC):
         del version
         return True
 
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        """Return whether a learned expert request can take effect now."""
+        del version, mode, expert_model
+        return False
+
     @abstractmethod
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         """Route student actions among actor, reference, and optional expert."""
@@ -146,6 +157,12 @@ class RealworldRLTRoute(RLTRoute):
         result["forward_inputs"]["actor_switch"] = result["forward_inputs"][
             "record_transition"
         ]
+        actual_actor = result["forward_inputs"]["actor_switch"]
+        result["forward_inputs"]["actual_base_action"] = ~actual_actor
+        result["forward_inputs"]["actual_actor_action"] = actual_actor
+        result["forward_inputs"]["actual_expert_action"] = torch.zeros_like(
+            actual_actor
+        )
         return RLTRouteOutput(actions=routed_actions, result=result)
 
 
@@ -161,6 +178,19 @@ class SimulatorRLTRoute(RLTRoute):
 
     def actor_routing_enabled(self, version: int) -> bool:
         return self._ready_for_online(version)
+
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        return (
+            self._ready_for_online(version)
+            and mode == "train"
+            and expert_model is not None
+        )
 
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         actions = ctx.student_actions
@@ -244,10 +274,16 @@ class SimulatorRLTRoute(RLTRoute):
             )
             forward_inputs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
 
+        actual_actor_action = actor_switch & (~expert_takeover)
+        actual_expert_action = expert_takeover
+        actual_base_action = ~(actual_actor_action | actual_expert_action)
         forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
         forward_inputs["record_transition"] = critical_phase[:, None]
-        forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
+        forward_inputs["actor_switch"] = actual_actor_action[:, None]
         forward_inputs["intervention_requested"] = requested_expert_takeover[:, None]
+        forward_inputs["actual_base_action"] = actual_base_action[:, None]
+        forward_inputs["actual_actor_action"] = actual_actor_action[:, None]
+        forward_inputs["actual_expert_action"] = actual_expert_action[:, None]
         result["intervene_flags"] = intervene_flags
         return RLTRouteOutput(actions=routed_actions, result=result)
 

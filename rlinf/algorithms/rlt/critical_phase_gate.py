@@ -32,6 +32,13 @@ RLT_GATE_INFO_KEYS = (
     "rlt_gate_score_mean",
     "rlt_gate_prediction_variance",
     "rlt_gate_actor_active",
+    "rlt_route_base_active",
+    "rlt_route_actor_active",
+    "rlt_route_actor_entered",
+    "rlt_route_actor_entry_step",
+    "rlt_route_expert_active",
+    "rlt_route_expert_entered",
+    "rlt_route_expert_entry_step",
     "rlt_gate_chunk_index",
     "rlt_gate_critical_chunk_count",
     "rlt_gate_expert_candidate",
@@ -60,11 +67,15 @@ class _GateState:
     entered: torch.Tensor
     entry_step: torch.Tensor
     actor_active: torch.Tensor
+    route_actor_entered: torch.Tensor
+    route_actor_entry_step: torch.Tensor
     critical_chunk_count: torch.Tensor
     expert_low_progress_count: torch.Tensor
     expert_latched: torch.Tensor
     expert_entered: torch.Tensor
     expert_entry_step: torch.Tensor
+    route_expert_entered: torch.Tensor
+    route_expert_entry_step: torch.Tensor
     chunk_index: torch.Tensor
 
 
@@ -98,8 +109,7 @@ class SteamCriticalPhaseGate:
         self.expert_mode = str(expert_cfg.get("mode", "active"))
         if self.expert_mode not in ("active", "shadow"):
             raise ValueError(
-                "critical phase gate expert_takeover.mode must be "
-                "'active' or 'shadow'"
+                "critical phase gate expert_takeover.mode must be 'active' or 'shadow'"
             )
         self.expert_enter_threshold = float(
             expert_cfg.get("enter_threshold", self.enter_threshold)
@@ -165,6 +175,11 @@ class SteamCriticalPhaseGate:
             "rlt_gate_entered",
             "rlt_gate_score_ready",
             "rlt_gate_actor_active",
+            "rlt_route_base_active",
+            "rlt_route_actor_active",
+            "rlt_route_actor_entered",
+            "rlt_route_expert_active",
+            "rlt_route_expert_entered",
             "rlt_gate_expert_candidate",
             "rlt_gate_expert_active",
             "rlt_gate_expert_requested",
@@ -172,9 +187,11 @@ class SteamCriticalPhaseGate:
         }
         long_keys = {
             "rlt_gate_entry_step",
+            "rlt_route_actor_entry_step",
             "rlt_gate_chunk_index",
             "rlt_gate_critical_chunk_count",
             "rlt_gate_expert_entry_step",
+            "rlt_route_expert_entry_step",
         }
         diagnostics = {}
         for key in RLT_GATE_INFO_KEYS:
@@ -270,6 +287,12 @@ class SteamCriticalPhaseGate:
             entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
             entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
             actor_active=torch.zeros(batch_size, device=device, dtype=torch.bool),
+            route_actor_entered=torch.zeros(
+                batch_size, device=device, dtype=torch.bool
+            ),
+            route_actor_entry_step=torch.zeros(
+                batch_size, device=device, dtype=torch.long
+            ),
             critical_chunk_count=torch.zeros(
                 batch_size, device=device, dtype=torch.long
             ),
@@ -279,6 +302,12 @@ class SteamCriticalPhaseGate:
             expert_latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
             expert_entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
             expert_entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
+            route_expert_entered=torch.zeros(
+                batch_size, device=device, dtype=torch.bool
+            ),
+            route_expert_entry_step=torch.zeros(
+                batch_size, device=device, dtype=torch.long
+            ),
             chunk_index=torch.zeros(batch_size, device=device, dtype=torch.long),
         )
 
@@ -360,6 +389,7 @@ class SteamCriticalPhaseGate:
         stage_id: int,
         reset_mask: torch.Tensor | None = None,
         actor_routing_enabled: bool = True,
+        expert_routing_enabled: bool = True,
     ) -> GateDecision:
         images = self._extract_images(env_obs)
         batch_size = next(iter(images.values())).shape[0]
@@ -385,11 +415,15 @@ class SteamCriticalPhaseGate:
             state.entered[reset] = False
             state.entry_step[reset] = 0
             state.actor_active[reset] = False
+            state.route_actor_entered[reset] = False
+            state.route_actor_entry_step[reset] = 0
             state.critical_chunk_count[reset] = 0
             state.expert_low_progress_count[reset] = 0
             state.expert_latched[reset] = False
             state.expert_entered[reset] = False
             state.expert_entry_step[reset] = 0
+            state.route_expert_entered[reset] = False
+            state.route_expert_entry_step[reset] = 0
             state.chunk_index[reset] = 0
 
         for image_key, current_images in images.items():
@@ -449,9 +483,7 @@ class SteamCriticalPhaseGate:
             state.latched = (state.latched | enter_now) & low_progress
 
         actor_active = (
-            state.latched
-            & bool(actor_routing_enabled)
-            & (self.mode == "active")
+            state.latched & bool(actor_routing_enabled) & (self.mode == "active")
         )
         actor_started_now = actor_active & (~state.actor_active)
         state.actor_active = actor_active
@@ -499,6 +531,23 @@ class SteamCriticalPhaseGate:
         elif self.expert_mode == "shadow":
             route_expert_flags = torch.zeros_like(route_expert_flags)
 
+        route_expert_active = route_expert_flags & bool(expert_routing_enabled)
+        route_actor_active = actor_active & (~route_expert_active)
+        route_actor_started_now = route_actor_active & (~state.route_actor_entered)
+        state.route_actor_entry_step = torch.where(
+            route_actor_started_now,
+            state.chunk_index * self.chunk_size,
+            state.route_actor_entry_step,
+        )
+        state.route_actor_entered = state.route_actor_entered | route_actor_active
+        route_expert_started_now = route_expert_active & (~state.route_expert_entered)
+        state.route_expert_entry_step = torch.where(
+            route_expert_started_now,
+            state.chunk_index * self.chunk_size,
+            state.route_expert_entry_step,
+        )
+        state.route_expert_entered = state.route_expert_entered | route_expert_active
+
         diagnostics = {
             "rlt_gate_entered": state.entered[:, None],
             "rlt_gate_entry_step": state.entry_step[:, None],
@@ -507,6 +556,15 @@ class SteamCriticalPhaseGate:
             "rlt_gate_score_mean": score_mean[:, None],
             "rlt_gate_prediction_variance": prediction_variance[:, None],
             "rlt_gate_actor_active": actor_active[:, None],
+            "rlt_route_base_active": (~(route_actor_active | route_expert_active))[
+                :, None
+            ],
+            "rlt_route_actor_active": route_actor_active[:, None],
+            "rlt_route_actor_entered": state.route_actor_entered[:, None],
+            "rlt_route_actor_entry_step": state.route_actor_entry_step[:, None],
+            "rlt_route_expert_active": route_expert_active[:, None],
+            "rlt_route_expert_entered": state.route_expert_entered[:, None],
+            "rlt_route_expert_entry_step": state.route_expert_entry_step[:, None],
             "rlt_gate_chunk_index": state.chunk_index[:, None],
             "rlt_gate_critical_chunk_count": state.critical_chunk_count[:, None],
             "rlt_gate_expert_candidate": expert_low_progress[:, None],

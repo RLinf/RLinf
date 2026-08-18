@@ -781,9 +781,12 @@ Useful RLT signals:
   ManiSkill rollout / replay diagnostics (logged from trajectories received by the actor):
 
   - ``train/replay/record_transition_rate``: fraction of collected steps saved as RLT transitions (from ``forward_inputs.record_transition``).
-  - ``train/replay/actor_switch_rate``: fraction of collected steps where the actor/student action actually controlled the env (from ``forward_inputs.actor_switch``).
-  - ``train/replay/intervention_requested_rate``: fraction of steps where the env requested expert takeover (from ``forward_inputs.intervention_requested``).
-  - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
+  - ``train/replay/steam_critical_active_rate`` and ``train/replay/geometry_critical_active_rate``: STEAM critical-phase coverage and the geometry-only oracle coverage. Geometry never controls rollout routing when ``routing_source: rollout``.
+  - ``train/replay/actual_base_action_rate``, ``train/replay/actual_actor_action_rate``, and ``train/replay/actual_expert_action_rate``: mutually exclusive fractions of chunks actually executed by each policy. The three rates sum to one.
+  - ``train/replay/steam_expert_request_rate``: fraction of chunks where the learned gate requested expert takeover; this can differ from the actual expert action rate during warmup, evaluation, or shadow mode.
+  - ``env/steam_critical_entered`` and ``env/steam_critical_entry_step``: whether and when STEAM detected a critical phase, independent of schedule warmup.
+  - ``env/actual_actor_entered`` and ``env/actual_actor_entry_step``: whether and when actor actions first actually controlled the environment.
+  - ``env/geometry_critical_entered`` and ``env/geometry_critical_entry_step``: geometry-only oracle entry for timing comparison; these metrics do not affect actions.
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
   RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):

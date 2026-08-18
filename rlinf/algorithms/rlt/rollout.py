@@ -71,6 +71,11 @@ def predict_rlt_actions(
                 stage_id=stage_id,
                 reset_mask=reset_mask,
                 actor_routing_enabled=rlt_route.actor_routing_enabled(version),
+                expert_routing_enabled=rlt_route.expert_routing_enabled(
+                    version,
+                    mode=mode,
+                    expert_model=expert_model,
+                ),
             )
             route_switch_flags = gate_decision.actor_switch
             route_intervene_requested = gate_decision.expert_requested

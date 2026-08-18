@@ -18,7 +18,11 @@ import math
 import pytest
 import torch
 
-from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.utils.metric_utils import (
+    collect_trajectory_replay_metrics,
+    compute_evaluate_metrics,
+)
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -66,3 +70,27 @@ def test_compute_evaluate_metrics_reports_prefixed_interact_delay_stats():
     assert float(metrics["env/median_delay"]) == pytest.approx(0.18)
     assert float(metrics["env/max_delay"]) == pytest.approx(0.24)
     assert float(metrics["env/min_delay"]) == pytest.approx(0.12)
+
+
+def test_collect_trajectory_replay_metrics_reports_explicit_route_sources():
+    trajectory = Trajectory(
+        forward_inputs={
+            "record_transition": torch.tensor([[[False]], [[True]], [[True]]]),
+            "rlt_gate_actor_active": torch.tensor([[[False]], [[True]], [[True]]]),
+            "geometry_critical_active": torch.tensor([[[False]], [[False]], [[True]]]),
+            "actual_base_action": torch.tensor([[[True]], [[False]], [[False]]]),
+            "actual_actor_action": torch.tensor([[[False]], [[True]], [[False]]]),
+            "actual_expert_action": torch.tensor([[[False]], [[False]], [[True]]]),
+            "intervention_requested": torch.tensor([[[False]], [[False]], [[True]]]),
+        }
+    )
+
+    metrics = collect_trajectory_replay_metrics([trajectory])
+
+    assert metrics["replay/actual_base_action_rate"] == pytest.approx(1 / 3)
+    assert metrics["replay/actual_actor_action_rate"] == pytest.approx(1 / 3)
+    assert metrics["replay/actual_expert_action_rate"] == pytest.approx(1 / 3)
+    assert metrics["replay/steam_critical_active_rate"] == pytest.approx(2 / 3)
+    assert metrics["replay/geometry_critical_active_rate"] == pytest.approx(1 / 3)
+    assert "replay/actor_switch_rate" not in metrics
+    assert "replay/intervention_rate" not in metrics

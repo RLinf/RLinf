@@ -103,29 +103,55 @@ def collect_trajectory_replay_metrics(
             "record_transition_count",
         ),
         (
-            "replay/actor_switch_rate",
+            "replay/steam_critical_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "actor_switch"
+                trajectory, "rlt_gate_actor_active"
             ),
-            "actor_switch_sum",
-            "actor_switch_count",
+            "steam_critical_active_sum",
+            "steam_critical_active_count",
         ),
         (
-            "replay/intervention_requested_rate",
+            "replay/geometry_critical_active_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "geometry_critical_active"
+            ),
+            "geometry_critical_active_sum",
+            "geometry_critical_active_count",
+        ),
+        (
+            "replay/actual_base_action_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actual_base_action"
+            ),
+            "actual_base_action_sum",
+            "actual_base_action_count",
+        ),
+        (
+            "replay/actual_actor_action_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actual_actor_action"
+            ),
+            "actual_actor_action_sum",
+            "actual_actor_action_count",
+        ),
+        (
+            "replay/steam_expert_request_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "intervention_requested"
             ),
-            "intervention_requested_sum",
-            "intervention_requested_count",
+            "steam_expert_request_sum",
+            "steam_expert_request_count",
         ),
         (
-            "replay/intervention_rate",
-            lambda trajectory: trajectory.intervene_flags,
-            "intervention_sum",
-            "intervention_count",
+            "replay/actual_expert_action_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actual_expert_action"
+            ),
+            "actual_expert_action_sum",
+            "actual_expert_action_count",
         ),
         (
-            "replay/expert_candidate_rate",
+            "replay/steam_expert_candidate_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "rlt_gate_expert_candidate"
             ),
@@ -133,7 +159,7 @@ def collect_trajectory_replay_metrics(
             "expert_candidate_count",
         ),
         (
-            "replay/expert_gate_active_rate",
+            "replay/steam_expert_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "rlt_gate_expert_active"
             ),
@@ -141,7 +167,7 @@ def collect_trajectory_replay_metrics(
             "expert_gate_active_count",
         ),
         (
-            "replay/oracle_expert_active_rate",
+            "replay/geometry_expert_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "rlt_oracle_expert_active"
             ),

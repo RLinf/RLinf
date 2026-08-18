@@ -100,14 +100,21 @@ class ManiskillRLTEnv(ManiskillEnv):
     _RLT_INTERVENTION_GATE_TRIGGER = "intervention_gate"
     _RLT_STALLED_PROGRESS_TRIGGER = "stalled_progress"
     _RLT_GATE_METRIC_MAP = {
-        "learned_critical_entered": "rlt_gate_entered",
-        "learned_critical_entry_step": "rlt_gate_entry_step",
-        "learned_expert_entered": "rlt_gate_expert_entered",
-        "learned_expert_entry_step": "rlt_gate_expert_entry_step",
+        "steam_critical_entered": "rlt_gate_entered",
+        "steam_critical_entry_step": "rlt_gate_entry_step",
+        "actual_actor_entered": "rlt_route_actor_entered",
+        "actual_actor_entry_step": "rlt_route_actor_entry_step",
+        "steam_expert_entered": "rlt_gate_expert_entered",
+        "steam_expert_entry_step": "rlt_gate_expert_entry_step",
+        "actual_expert_entered": "rlt_route_expert_entered",
+        "actual_expert_entry_step": "rlt_route_expert_entry_step",
     }
     _RLT_GATE_INFO_KEYS = (
         *_RLT_GATE_METRIC_MAP.values(),
         "rlt_gate_actor_active",
+        "rlt_route_base_active",
+        "rlt_route_actor_active",
+        "rlt_route_expert_active",
     )
     _RLT_REQUIRED_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
     _RLT_GATE_BOOL_INFO_KEYS = frozenset(
@@ -115,34 +122,42 @@ class ManiskillRLTEnv(ManiskillEnv):
             "rlt_gate_entered",
             "rlt_gate_actor_active",
             "rlt_gate_expert_entered",
+            "rlt_route_base_active",
+            "rlt_route_actor_active",
+            "rlt_route_actor_entered",
+            "rlt_route_expert_active",
+            "rlt_route_expert_entered",
         }
     )
-    _RLT_ORACLE_METRIC_MAP = {
-        "oracle_expert_entered": "rlt_oracle_expert_entered",
-        "oracle_expert_entry_step": "rlt_oracle_expert_entry_step",
+    _RLT_GEOMETRY_EXPERT_METRIC_MAP = {
+        "geometry_expert_entered": "rlt_oracle_expert_entered",
+        "geometry_expert_entry_step": "rlt_oracle_expert_entry_step",
     }
     _RLT_ORACLE_TRACE_INFO_KEYS = (
         "rlt_oracle_expert_candidate",
         "rlt_oracle_expert_active",
     )
     _RLT_ATTACHED_INFO_KEYS = (
-        "entered_actor_phase_once",
-        "actor_switch_step",
-        "actor_switch_step_nonzero",
+        "geometry_critical_active",
+        "geometry_critical_entered",
+        "geometry_critical_entry_step",
         *_RLT_GATE_METRIC_MAP,
-        *_RLT_ORACLE_METRIC_MAP,
+        *_RLT_GEOMETRY_EXPERT_METRIC_MAP,
         *_RLT_ORACLE_TRACE_INFO_KEYS,
     )
     _RLT_EPISODE_METRIC_KEYS = (
-        "entered_actor_phase_once",
-        "actor_switch_step",
-        "actor_switch_step_nonzero",
-        "learned_critical_entered",
-        "learned_critical_entry_step",
-        "learned_expert_entered",
-        "learned_expert_entry_step",
-        "oracle_expert_entered",
-        "oracle_expert_entry_step",
+        "geometry_critical_entered",
+        "geometry_critical_entry_step",
+        "steam_critical_entered",
+        "steam_critical_entry_step",
+        "actual_actor_entered",
+        "actual_actor_entry_step",
+        "steam_expert_entered",
+        "steam_expert_entry_step",
+        "actual_expert_entered",
+        "actual_expert_entry_step",
+        "geometry_expert_entered",
+        "geometry_expert_entry_step",
     )
 
     def __init__(
@@ -257,12 +272,14 @@ class ManiskillRLTEnv(ManiskillEnv):
                 start_active,
                 dtype=torch.bool,
             ),
-            "entered_actor_phase_once": torch.full(
+            "geometry_critical_entered": torch.full(
                 (batch_size,),
                 start_active,
                 dtype=torch.bool,
             ),
-            "actor_switch_step": torch.zeros(batch_size, dtype=torch.float32),
+            "geometry_critical_entry_step": torch.zeros(
+                batch_size, dtype=torch.float32
+            ),
             "expert_takeover_active": torch.zeros(batch_size, dtype=torch.bool),
             "expert_progress_guard": torch.zeros(batch_size, dtype=torch.bool),
             "progress_initialized": torch.zeros(batch_size, dtype=torch.bool),
@@ -271,29 +288,15 @@ class ManiskillRLTEnv(ManiskillEnv):
             "best_progress_score": torch.zeros(batch_size, dtype=torch.float32),
             "stalled_progress_chunks": torch.zeros(batch_size, dtype=torch.float32),
             "expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
-            "oracle_expert_takeover_active": torch.zeros(
-                batch_size, dtype=torch.bool
-            ),
+            "oracle_expert_takeover_active": torch.zeros(batch_size, dtype=torch.bool),
             "oracle_expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
             "oracle_expert_entered": torch.zeros(batch_size, dtype=torch.bool),
-            "oracle_expert_entry_step": torch.zeros(
-                batch_size, dtype=torch.float32
-            ),
-            "oracle_expert_progress_guard": torch.zeros(
-                batch_size, dtype=torch.bool
-            ),
-            "oracle_progress_initialized": torch.zeros(
-                batch_size, dtype=torch.bool
-            ),
-            "oracle_best_progress_x": torch.zeros(
-                batch_size, dtype=torch.float32
-            ),
-            "oracle_best_progress_yz": torch.zeros(
-                batch_size, dtype=torch.float32
-            ),
-            "oracle_best_progress_score": torch.zeros(
-                batch_size, dtype=torch.float32
-            ),
+            "oracle_expert_entry_step": torch.zeros(batch_size, dtype=torch.float32),
+            "oracle_expert_progress_guard": torch.zeros(batch_size, dtype=torch.bool),
+            "oracle_progress_initialized": torch.zeros(batch_size, dtype=torch.bool),
+            "oracle_best_progress_x": torch.zeros(batch_size, dtype=torch.float32),
+            "oracle_best_progress_yz": torch.zeros(batch_size, dtype=torch.float32),
+            "oracle_best_progress_score": torch.zeros(batch_size, dtype=torch.float32),
             "oracle_stalled_progress_chunks": torch.zeros(
                 batch_size, dtype=torch.float32
             ),
@@ -332,13 +335,9 @@ class ManiskillRLTEnv(ManiskillEnv):
             if key not in rollout_infos:
                 continue
             dtype = (
-                torch.bool
-                if key in self._RLT_GATE_BOOL_INFO_KEYS
-                else torch.float32
+                torch.bool if key in self._RLT_GATE_BOOL_INFO_KEYS else torch.float32
             )
-            value = torch.as_tensor(
-                rollout_infos[key], device=self.device, dtype=dtype
-            )
+            value = torch.as_tensor(rollout_infos[key], device=self.device, dtype=dtype)
             if value.numel() % self.num_envs != 0:
                 raise ValueError(
                     f"Rollout info {key!r} has {value.numel()} values for "
@@ -416,13 +415,13 @@ class ManiskillRLTEnv(ManiskillEnv):
 
         switched_now = (~previous_rlt_switch_flags) & rlt_switch_flags
         elapsed_steps = self._rlt_elapsed_steps(infos, device)
-        state["actor_switch_step"] = torch.where(
+        state["geometry_critical_entry_step"] = torch.where(
             switched_now,
             elapsed_steps,
-            state["actor_switch_step"],
+            state["geometry_critical_entry_step"],
         )
-        state["entered_actor_phase_once"] = (
-            state["entered_actor_phase_once"] | rlt_switch_flags | switched_now
+        state["geometry_critical_entered"] = (
+            state["geometry_critical_entered"] | rlt_switch_flags | switched_now
         )
         state["rlt_switch_flags"] = rlt_switch_flags
         self._update_rlt_expert_takeover_state(infos=infos, device=device)
@@ -454,13 +453,11 @@ class ManiskillRLTEnv(ManiskillEnv):
         switch_info = {
             "rlt_switch_flags": rlt_switch_flags[:, None],
             "intervene_flag": intervene_flag[:, None],
-            "entered_actor_phase_once": state["entered_actor_phase_once"][:, None],
-            "actor_switch_step": state["actor_switch_step"][:, None],
-            "actor_switch_step_nonzero": torch.where(
-                state["entered_actor_phase_once"],
-                state["actor_switch_step"],
-                torch.zeros_like(state["actor_switch_step"]),
-            )[:, None],
+            "geometry_critical_active": rlt_switch_flags[:, None],
+            "geometry_critical_entered": state["geometry_critical_entered"][:, None],
+            "geometry_critical_entry_step": state["geometry_critical_entry_step"][
+                :, None
+            ],
         }
         switch_info.update(
             {
@@ -470,16 +467,16 @@ class ManiskillRLTEnv(ManiskillEnv):
         )
         switch_info.update(
             {
-                "rlt_oracle_expert_candidate": state[
-                    "oracle_expert_candidate"
-                ][:, None],
-                "rlt_oracle_expert_active": state[
-                    "oracle_expert_takeover_active"
-                ][:, None],
-                "oracle_expert_entered": state["oracle_expert_entered"][:, None],
-                "oracle_expert_entry_step": state[
-                    "oracle_expert_entry_step"
-                ][:, None],
+                "rlt_oracle_expert_candidate": state["oracle_expert_candidate"][
+                    :, None
+                ],
+                "rlt_oracle_expert_active": state["oracle_expert_takeover_active"][
+                    :, None
+                ],
+                "geometry_expert_entered": state["oracle_expert_entered"][:, None],
+                "geometry_expert_entry_step": state["oracle_expert_entry_step"][
+                    :, None
+                ],
             }
         )
         return switch_info
@@ -675,9 +672,7 @@ class ManiskillRLTEnv(ManiskillEnv):
         min_score_progress = float(gate_cfg.get("min_score_progress", 0.002))
         x_improved = hole_x > (state[best_x_key] + min_x_progress)
         yz_improved = yz_dist < (state[best_yz_key] - min_yz_progress)
-        score_improved = progress_score > (
-            state[best_score_key] + min_score_progress
-        )
+        score_improved = progress_score > (state[best_score_key] + min_score_progress)
         improved = monitor_progress & (x_improved | yz_improved | score_improved)
 
         no_progress = monitor_progress & (~improved)
@@ -970,9 +965,7 @@ class ManiskillRLTEnv(ManiskillEnv):
             self._rlt_switch_state[key] = value.to(device)
         return self._rlt_switch_state
 
-    def _rlt_rollout_infos_to(
-        self, device: torch.device
-    ) -> dict[str, torch.Tensor]:
+    def _rlt_rollout_infos_to(self, device: torch.device) -> dict[str, torch.Tensor]:
         for key, value in self._rlt_rollout_infos.items():
             self._rlt_rollout_infos[key] = value.to(device)
         return self._rlt_rollout_infos

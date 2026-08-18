@@ -735,9 +735,12 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
   ManiSkill rollout / replay 诊断（由 actor 收到 trajectory 后统计）：
 
   - ``train/replay/record_transition_rate``：收集到的 step 中被保存为 RLT transition 的比例（来自 ``forward_inputs.record_transition``）。
-  - ``train/replay/actor_switch_rate``：收集到的 step 中实际由 actor/student action 控制环境的比例（来自 ``forward_inputs.actor_switch``）。
-  - ``train/replay/intervention_requested_rate``：env 请求 expert 接管的比例（来自 ``forward_inputs.intervention_requested``）。
-  - ``train/replay/intervention_rate``：route 实际应用 expert action 的比例（来自 ``trajectory.intervene_flags``）。
+  - ``train/replay/steam_critical_active_rate`` 和 ``train/replay/geometry_critical_active_rate``：STEAM critical phase 覆盖比例和纯几何 oracle 覆盖比例。使用 ``routing_source: rollout`` 时，几何条件不会参与动作路由。
+  - ``train/replay/actual_base_action_rate``、``train/replay/actual_actor_action_rate`` 和 ``train/replay/actual_expert_action_rate``：实际由三个 policy 执行的互斥 chunk 比例，三者之和为 1。
+  - ``train/replay/steam_expert_request_rate``：学习门控请求 expert 接管的 chunk 比例；在 warmup、评估或 shadow 模式下，它可能和实际 expert action 比例不同。
+  - ``env/steam_critical_entered`` 和 ``env/steam_critical_entry_step``：STEAM 是否及何时检测到 critical phase，不受 schedule warmup 影响。
+  - ``env/actual_actor_entered`` 和 ``env/actual_actor_entry_step``：actor action 是否及何时第一次真正控制环境。
+  - ``env/geometry_critical_entered`` 和 ``env/geometry_critical_entry_step``：用于时机对比的纯几何 oracle，不影响实际动作。
   - ``train/replay/transition_count``、``train/replay/reward_mean``、``train/replay/reward_positive_rate``、``train/replay/done_rate``：当前 collect step 的 ManiSkill transition-replay 入库统计。
 
   RLT schedule / learner backlog（ManiSkill ``algorithm.rlt_schedule.enable``）：

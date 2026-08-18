@@ -57,11 +57,14 @@ from rlinf.utils.utils import (
 from rlinf.workers.env.history_manager import HistoryManager
 from rlinf.workers.env.smooth_intervene import SmoothInterveneController
 
-_RLT_ORACLE_TRACE_DTYPES = {
+_RLT_GEOMETRY_TRACE_DTYPES = {
+    "geometry_critical_active": torch.bool,
+    "geometry_critical_entered": torch.bool,
+    "geometry_critical_entry_step": torch.float32,
     "rlt_oracle_expert_candidate": torch.bool,
     "rlt_oracle_expert_active": torch.bool,
-    "oracle_expert_entered": torch.bool,
-    "oracle_expert_entry_step": torch.float32,
+    "geometry_expert_entered": torch.bool,
+    "geometry_expert_entry_step": torch.float32,
 }
 
 
@@ -1011,7 +1014,7 @@ class EnvWorker(Worker):
         env_infos = env_output.env_infos
         if not isinstance(env_infos, dict):
             env_infos = {}
-        for key, dtype in _RLT_ORACLE_TRACE_DTYPES.items():
+        for key, dtype in _RLT_GEOMETRY_TRACE_DTYPES.items():
             value = env_infos.get(key)
             if value is None:
                 normalized = torch.zeros((batch_size, 1), dtype=dtype)

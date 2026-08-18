@@ -298,9 +298,11 @@ rollout:
     enable: True
     mode: active
     chunk_size: 10
-    lookback_chunks: 4
-    patience_chunks: 2
-    enter_threshold: 0.0
+    # Short history removes fixed entry latency; the stricter score threshold
+    # limits broad low-progress triggers until trace-based calibration is rerun.
+    lookback_chunks: 2
+    patience_chunks: 1
+    enter_threshold: -0.1
     latch_until_done: True
     main_image_key: image
     wrist_image_key: wrist_image
