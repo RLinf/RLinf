@@ -97,7 +97,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -2210,6 +2210,49 @@ install_dreamzero_model() {
     esac
 }
 
+install_cosmos3_deps() {
+    local cosmos_path
+    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/nvidia-cosmos/cosmos-framework.git)
+    if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
+        git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-main}" >&2
+    fi
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
+    python -m pip install -e "$cosmos_path" --no-deps --ignore-requires-python
+
+    python -m pip install --no-deps 'nvidia-cudnn-cu13>=9.22'
+
+    local natten_wheel natten_url
+    natten_wheel="natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl"
+    natten_url="https://github.com/SHI-Labs/NATTEN/releases/download/v0.21.6/${natten_wheel}"
+    python -m pip install --no-deps "${natten_url}" 2>/dev/null || \
+    python -m pip install --no-deps "https://ghfast.top/${natten_url}" 2>/dev/null || \
+    echo "[install.sh] WARNING: natten wheel unavailable (github + proxy both failed)." \
+         "Training will fail without it. Install manually from https://whl.natten.org." >&2
+}
+
+install_cosmos3_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            install_cosmos3_deps
+            install_flash_attn
+            ;;
+        "")
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_cosmos3_deps
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Cosmos3 model." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -3070,6 +3113,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                cosmos3)
+                    install_cosmos3_model
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
