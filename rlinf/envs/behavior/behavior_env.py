@@ -1759,8 +1759,21 @@ class BehaviorEnv(gym.Env):
 
     @staticmethod
     def _extract_info_done(info: dict) -> bool:
-        tc = info["done"]["termination_conditions"]
-        return any(v["done"] for v in tc.values())
+        done_info = info.get("done", {}) if isinstance(info, dict) else {}
+        if isinstance(done_info, bool):
+            return done_info
+        if not isinstance(done_info, dict):
+            return False
+        if bool(done_info.get("success", False)):
+            return True
+        termination_conditions = done_info.get("termination_conditions", {})
+        if not isinstance(termination_conditions, dict):
+            return False
+        return any(
+            bool(value.get("done", False))
+            for value in termination_conditions.values()
+            if isinstance(value, dict)
+        )
 
     @staticmethod
     def _clone_obs(obs):
