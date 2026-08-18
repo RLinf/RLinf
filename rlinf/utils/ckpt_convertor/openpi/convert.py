@@ -21,7 +21,7 @@ Dispatches to five modes over a shared core:
     sft_to_openpi_rlinf              RLinf SFT full_weights.pt -> OpenPI_RLinf
                                    layout selected by ``--config-name`` and ``--dtype``
     openpi_rlinf_to_openpi_pytorch   OpenPI_RLinf layout -> OpenPI PyTorch layout
-    pt_to_realworld_pt              RLinf SFT PT -> real-world OpenPI PT
+    pt_to_realworld_pt              RLinf SFT PT -> FP32 real-world OpenPI PT
 
 Usage::
 

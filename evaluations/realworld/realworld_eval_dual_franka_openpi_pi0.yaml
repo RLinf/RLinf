@@ -1,6 +1,6 @@
 defaults:
   - env/realworld_dual_franka_tcp_rot6d@env.eval
-  - model/pi0_5@rollout.model
+  - model/pi0@rollout.model
   - _self_
   - override hydra/job_logging: stdout
 
@@ -54,7 +54,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: dual-franka-openpi
-    experiment_name: "realworld-eval-openpi-pi05"
+    experiment_name: "realworld-eval-openpi-pi0"
     logger_backends: ["tensorboard"]
 
 env:
@@ -90,12 +90,15 @@ rollout:
   model:
     model_path: MODEL_PATH
     precision: fp32
+    pi05: false
     num_action_chunks: 20
     action_dim: 20
+    num_steps: 5
     openpi:
-      config_name: pi05_dualfranka_tcp_rot6d
+      config_name: pi0_dualfranka_tcp_rot6d
       num_images_in_input: 3
       action_chunk: ${..num_action_chunks}
+      num_steps: ${..num_steps}
       action_env_dim: ${..action_dim}
       train_expert_only: false
       detach_critic_input: true

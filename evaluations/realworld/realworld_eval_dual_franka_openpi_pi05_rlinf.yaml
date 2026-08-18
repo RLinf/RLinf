@@ -89,7 +89,7 @@ rollout:
   collect_prev_infos: false
   model:
     model_path: MODEL_PATH
-    precision: bf16
+    precision: fp32
     pi05: true
     num_action_chunks: 20
     action_dim: 20
@@ -110,4 +110,3 @@ rollout:
     openpi_data:
       repo_id: DATASET_REPO_ID
       norm_stats_path: NORM_STATS_PATH
-

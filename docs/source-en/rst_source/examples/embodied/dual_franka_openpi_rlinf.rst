@@ -60,14 +60,14 @@ Tasks
      - ``realworld_collect_data_gello_joint_dual_franka``
      - Collect dual-arm joint trajectories.
    * - SFT
-     - ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
-     - Fine-tune Pi0 or Pi0.5 on tcp_rot6d actions.
+     - ``realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d`` / ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
+     - Fine-tune Pi0 or Pi0.5 with the matching tcp_rot6d config.
    * - Deployment (OpenPI PyTorch)
-     - ``realworld_eval_dual_franka_openpi_pi05``
-     - Deploy the legacy ``full_weights.pt`` checkpoint.
+     - ``realworld_eval_dual_franka_openpi_pi0`` / ``realworld_eval_dual_franka_openpi_pi05``
+     - Deploy the legacy FP32 ``full_weights.pt`` checkpoint.
    * - Deployment (OpenPI_RLinf)
-     - ``realworld_eval_dual_franka_openpi_pi05_rlinf``
-     - Deploy the new-format ``model.safetensors`` checkpoint.
+     - ``realworld_eval_dual_franka_openpi_pi0_rlinf`` / ``realworld_eval_dual_franka_openpi_pi05_rlinf``
+     - Deploy the new-format FP32 ``model.safetensors`` checkpoint.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -201,10 +201,16 @@ Use the repository-provided configs and replace the required parameters:
      - GELLO joint-space collection
    * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
      - π₀.₅ SFT on converted tcp_rot6d data
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+     - π₀ SFT on converted tcp_rot6d data
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0.yaml``
+     - Legacy OpenPI PyTorch Pi0 deployment in FP32
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0_rlinf.yaml``
+     - OpenPI_RLinf Pi0 deployment in FP32
    * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05.yaml``
-     - Legacy OpenPI PyTorch deployment
+     - Legacy OpenPI PyTorch Pi0.5 deployment in FP32
    * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05_rlinf.yaml``
-     - OpenPI_RLinf deployment
+     - OpenPI_RLinf Pi0.5 deployment in FP32
    * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
      - Shared joint-space hardware defaults
    * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
@@ -467,8 +473,9 @@ config:
    bash examples/sft/run_vla_sft.sh SFT_CONFIG_NAME
 
 Update ``train_data_paths``, ``model_path``, ``assets_dir``, ``asset_id``,
-logger settings, and cluster placement in
-``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``.
+logger settings, and cluster placement in the matching
+``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+or ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``.
 Checkpoints are saved under
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
 
@@ -489,7 +496,13 @@ Convert SFT Checkpoints for Deployment
 Both Pi0 and Pi0.5 SFT checkpoints support two deployment formats. For legacy
 real-world PT deployment, use ``pt_to_realworld_pt``. The reference model must
 match the SFT variant: use the corresponding original OpenPI PyTorch Pi0 or
-Pi0.5 base weights.
+Pi0.5 base weights. This converter requires an FP32 SFT checkpoint and preserves
+FP32 throughout the direct PT-to-PT conversion. It automatically selects Pi0's
+standard RMSNorm mapping or Pi0.5's adaptive RMSNorm mapping from the matching
+reference; no additional variant argument is required.
+Deployment precision is controlled by ``rollout.model.precision`` in the YAML:
+use ``fp32`` for pure FP32 weights, ``null`` for the existing OpenPI mixed-precision
+layout, or ``bf16`` for pure BF16 weights.
 
 .. code-block:: bash
 
@@ -505,6 +518,7 @@ The legacy output directory is:
 
    OUTPUT_DIRECTORY/
    ├── actor/model_state_dict/full_weights.pt
+   ├── actor/model_state_dict/full_weights.pt.report.json
    └── DATASET_REPO_ID/norm_stats.json  # copy separately
 
 For OpenPI_RLinf deployment, use ``sft_to_openpi_rlinf``. Set
@@ -520,7 +534,7 @@ For OpenPI_RLinf deployment, use ``sft_to_openpi_rlinf``. Set
      --output-model OUTPUT_MODEL \
      --output-norm-stats OUTPUT_MODEL/DATASET_REPO_ID/norm_stats.json \
      --config-name CONFIG_NAME \
-     --dtype bf16
+     --dtype fp32
 
 The OpenPI_RLinf output directory is:
 
@@ -569,12 +583,16 @@ Launch deployment
 
 Reuse the Ray cluster from collection, or restart it with the same environment
 variables. Launch the policy through the :doc:`real-world evaluation guide
-<../../evaluations/guides/realworld>` with either
-``realworld_eval_dual_franka_openpi_pi05`` or
-``realworld_eval_dual_franka_openpi_pi05_rlinf``.
+<../../evaluations/guides/realworld>` with the configuration matching the model
+variant and deployment format.
+For deployment, set ``rollout.model.precision`` in the YAML to select the model
+precision: use ``fp32`` for pure FP32 precision, ``null`` for OpenPI's default
+mixed precision, or ``bf16`` for pure BF16 precision.
 
 .. code-block:: bash
 
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0_rlinf
    bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05
    bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05_rlinf
 

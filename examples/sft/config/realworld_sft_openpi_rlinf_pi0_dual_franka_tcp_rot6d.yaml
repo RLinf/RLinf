@@ -1,0 +1,102 @@
+defaults:
+  - model/pi0_rlinf@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+# Dual-Franka tcp_rot6d SFT on the OpenPI_RLinf Pi0 path. The existing
+# Dual-Franka loader and pi0_dualfranka_tcp_rot6d transform pipeline are shared
+# with Pi0.5; this config overrides the generic Pi0 RoboTwin model shape.
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "dual_franka_tcp_rot6d_openpi_rlinf_pi0_sft"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 100
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 2000
+
+data:
+  train_data_paths: /path/to/dual_franka_dataset
+  repo_id: "<repo_id>/tcp_rot6d_v1"
+  num_workers: 4
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  eval_batch_size: 1
+  global_batch_size: 16
+  seed: 0
+
+  model:
+    model_path: /path/to/pi0_base_openpi_rlinf
+    pi05: false
+    num_action_chunks: 20
+    action_dim: 20
+    use_proprio: true
+    num_steps: 5
+    add_value_head: false
+    openpi:
+      task: sft
+      config_name: pi0_dualfranka_tcp_rot6d
+      num_images_in_input: 3
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 64
+      discrete_state_input: false
+      assets_dir: /path/to/openpi_assets
+      asset_id: "<repo_id>"
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 1000
+    lr_scheduler: "openpi_cosine"
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "full_shard"
+    use_orig_params: true
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

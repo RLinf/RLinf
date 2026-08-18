@@ -179,19 +179,27 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openp
 
 ## `pt_to_realworld_pt`
 
-RLinf SFT-trained Pi0 or Pi0.5 checkpoint -> real-world OpenPI PyTorch
-`full_weights.pt`. This mode does not copy norm-stats or other assets.
+RLinf SFT-trained Pi0 or Pi0.5 checkpoint -> FP32 real-world OpenPI PyTorch
+`full_weights.pt`. The conversion is a direct PT-to-PT path and never creates a
+BF16 intermediate. This mode does not copy norm-stats or other assets.
 
 - **Input**: `--ckpt` accepts a saved SFT checkpoint directory or its
   `full_weights.pt`.
+- **Input precision**: every floating-point tensor in the SFT checkpoint must be
+  FP32. The converter fails instead of presenting BF16/FP16 weights expanded to
+  FP32 as a full-precision conversion.
 - **Output**: `--output` accepts a direct `.pt` path or a deploy directory. For a
-  directory, the converter writes `actor/model_state_dict/full_weights.pt`.
+  directory, the converter writes `actor/model_state_dict/full_weights.pt` and
+  a neighboring `full_weights.pt.report.json`. Existing output weights are not
+  overwritten.
 - **Reference model**: `--reference-model` is the OpenPI PyTorch model used to
   identify the Pi0/Pi0.5 expert layout, supply the action-expert `lm_head`, and
   validate the converted keys and shapes.
-- **Deploy dtypes**: the converter restores the real-world mixed-precision
-  layout from model structure. It does not require a JSON schema or an existing
-  deploy checkpoint as a dtype reference.
+- **Deploy dtype**: every floating-point output tensor is FP32. Key and tensor
+  layout conversion is performed directly without a lossy BF16 intermediate.
+- **Variant handling**: Pi0 uses the reference's standard RMSNorm layout and
+  Pi0.5 uses its adaptive RMSNorm layout. The source variant, reference variant,
+  and normalization layout must agree.
 
 ```bash
 python -m rlinf.utils.ckpt_convertor.openpi.convert \

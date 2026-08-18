@@ -59,14 +59,14 @@ OpenPI_RLinf safetensors 后端部署到双节点 Franka rig。
      - ``realworld_collect_data_gello_joint_dual_franka``
      - 采集双臂关节轨迹。
    * - SFT
-     - ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
-     - 在 tcp_rot6d 动作上微调 π0 或 π0.5。
+     - ``realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d`` / ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
+     - 使用对应的 tcp_rot6d 配置微调 π0 或 π0.5。
    * - Deployment（OpenPI PyTorch）
-     - ``realworld_eval_dual_franka_openpi_pi05``
-     - 使用 legacy ``full_weights.pt`` 在机器人节点上部署。
+     - ``realworld_eval_dual_franka_openpi_pi0`` / ``realworld_eval_dual_franka_openpi_pi05``
+     - 使用 legacy FP32 ``full_weights.pt`` 在机器人节点上部署。
    * - Deployment（OpenPI_RLinf）
-     - ``realworld_eval_dual_franka_openpi_pi05_rlinf``
-     - 使用新版 ``model.safetensors`` 在机器人节点上部署。
+     - ``realworld_eval_dual_franka_openpi_pi0_rlinf`` / ``realworld_eval_dual_franka_openpi_pi05_rlinf``
+     - 使用新版 FP32 ``model.safetensors`` 在机器人节点上部署。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -195,10 +195,16 @@ RLinf 安装脚本只安装运行依赖；PREEMPT_RT 内核与实时权限请按
      - GELLO 关节空间采集
    * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
      - 在转换后的 tcp_rot6d 数据上执行 π₀.₅ SFT
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+     - 在转换后的 tcp_rot6d 数据上执行 π₀ SFT
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0.yaml``
+     - legacy OpenPI PyTorch π0 FP32 真机部署
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0_rlinf.yaml``
+     - OpenPI_RLinf π0 FP32 真机部署
    * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05.yaml``
-     - legacy OpenPI PyTorch 真机部署
+     - legacy OpenPI PyTorch π0.5 FP32 真机部署
    * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05_rlinf.yaml``
-     - OpenPI_RLinf 真机部署
+     - OpenPI_RLinf π0.5 FP32 真机部署
    * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
      - 关节空间硬件默认配置
    * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
@@ -448,7 +454,8 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
 
    bash examples/sft/run_vla_sft.sh SFT_CONFIG_NAME
 
-并在 ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
+并在对应的 ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+或 ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
 中更新 ``train_data_paths``、``model_path``、``assets_dir``、``asset_id``、``logger`` 设置和集群放置。
 Checkpoint 保存到
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
@@ -469,7 +476,13 @@ Checkpoint 保存到
 
 π0 与 π0.5 的 SFT checkpoint 都支持两种部署格式。legacy real-world PT
 部署使用 ``pt_to_realworld_pt``，其中 reference model 必须与 SFT variant
-匹配，即对应的原始 OpenPI PyTorch π0 或 π0.5 base 权重。
+匹配，即对应的原始 OpenPI PyTorch π0 或 π0.5 base 权重。该转换器要求 SFT
+checkpoint 为 FP32，并在 PT 到 PT 的直接转换中始终保持 FP32。程序会根据
+匹配的 reference 自动选择 π0 的标准 RMSNorm 映射或 π0.5 的自适应 RMSNorm
+映射，不需要额外传入 variant 参数。
+部署精度可通过 YAML 中的 ``rollout.model.precision`` 控制：设为 ``fp32``
+时使用纯 FP32 权重，设为 ``null`` 时保留 OpenPI 原有的混合精度布局，设为
+``bf16`` 时使用纯 BF16 权重。
 
 .. code-block:: bash
 
@@ -485,6 +498,7 @@ Legacy 输出目录为：
 
    OUTPUT_DIRECTORY/
    ├── actor/model_state_dict/full_weights.pt
+   ├── actor/model_state_dict/full_weights.pt.report.json
    └── DATASET_REPO_ID/norm_stats.json  # 需要单独复制
 
 OpenPI_RLinf 部署使用 ``sft_to_openpi_rlinf``。π0 的 ``CONFIG_NAME`` 为
@@ -500,7 +514,7 @@ OpenPI_RLinf 部署使用 ``sft_to_openpi_rlinf``。π0 的 ``CONFIG_NAME`` 为
      --output-model OUTPUT_MODEL \
      --output-norm-stats OUTPUT_MODEL/DATASET_REPO_ID/norm_stats.json \
      --config-name CONFIG_NAME \
-     --dtype bf16
+     --dtype fp32
 
 OpenPI_RLinf 输出目录为：
 
@@ -547,12 +561,16 @@ OpenPI_RLinf 输出目录为：
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。策略启动由
-:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用
-``realworld_eval_dual_franka_openpi_pi05`` 或
-``realworld_eval_dual_franka_openpi_pi05_rlinf``。
+:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用与
+模型 variant 和部署格式匹配的配置。
+部署时，可在 YAML 中通过 ``rollout.model.precision`` 选择模型精度：设置为
+``fp32`` 时使用纯 FP32 精度，设置为 ``null`` 时使用 OpenPI 默认的混合精度，
+设置为 ``bf16`` 时使用纯 BF16 精度。
 
 .. code-block:: bash
 
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0_rlinf
    bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05
    bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05_rlinf
 
