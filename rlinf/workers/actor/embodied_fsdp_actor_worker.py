@@ -55,7 +55,6 @@ from rlinf.utils.placement import (
 from rlinf.utils.utils import (
     clear_memory,
     get_loss_agg_func,
-    masked_mean,
     reshape_entropy,
 )
 
@@ -626,7 +625,14 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             SupportedModel.OPENVLA_OFT,
             SupportedModel.PI0_FAST,
         ]:
-            kwargs["temperature"] = self.cfg.rollout.sampling_params.temperature_train
+            temperature = self.cfg.rollout.sampling_params.temperature_train
+            if (
+                SupportedModel(self.cfg.actor.model.model_type)
+                == SupportedModel.PI0_FAST
+                and not self.cfg.rollout.sampling_params.do_sample
+            ):
+                temperature = 1.0
+            kwargs["temperature"] = temperature
             kwargs["top_k"] = self.cfg.rollout.sampling_params.top_k
         elif SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T,

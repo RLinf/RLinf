@@ -60,6 +60,15 @@ def build_lerobot_batch_from_env_obs(
     *,
     image_size: int | None = None,
 ) -> dict[str, Any]:
+    """Convert RLinf environment observations to LeRobot policy inputs.
+
+    Args:
+        env_obs: Batched images, robot states, and task descriptions.
+        image_size: Optional square image size expected by the policy.
+
+    Returns:
+        A LeRobot-compatible policy input batch.
+    """
     batch: dict[str, Any] = {}
     batch["observation.images.image"] = _image_to_chw_float(
         env_obs["main_images"], image_size

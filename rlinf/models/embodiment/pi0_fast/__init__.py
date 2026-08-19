@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import importlib
-import logging
 import os
 import re
 
@@ -26,6 +25,9 @@ from omegaconf import DictConfig
 from rlinf.models.embodiment.pi0_fast.pi0_fast_action_model import (
     PI0FastForRLActionPrediction,
 )
+from rlinf.utils.logging import get_logger
+
+logger = get_logger()
 
 _TEXT_TOKENIZER_ALLOW_PATTERNS = (
     "tokenizer_config.json",
@@ -95,7 +97,7 @@ def _apply_pi0_fast_lora(
     if trainable_params == 0:
         raise RuntimeError("PI0-Fast LoRA did not match any trainable modules.")
     total_params = sum(param.numel() for param in policy.parameters())
-    logging.info(
+    logger.info(
         "PI0-Fast LoRA enabled: rank=%d target_scope=%s "
         "trainable_params=%d total_params=%d",
         rank,
@@ -384,7 +386,7 @@ def _validate_artifact_pins(model_path: str, model_cfg: DictConfig) -> None:
             "pi0_fast requires pinned public artifacts; missing: " + ", ".join(missing)
         )
     if model_is_hub_repo and model_path != PI0_FAST_MODEL_ID:
-        logging.warning(
+        logger.warning(
             "Using non-default PI0-Fast model repository %s with explicit revisions.",
             model_path,
         )
@@ -397,7 +399,20 @@ def _validate_action_shape(cfg: DictConfig) -> None:
             raise ValueError(f"pi0_fast requires model.{field} > 0, got {value!r}.")
 
 
-def get_model(cfg: DictConfig, torch_dtype=None):
+def get_model(
+    cfg: DictConfig,
+    torch_dtype: torch.dtype | None = None,
+) -> PI0FastForRLActionPrediction:
+    """Build an RLinf policy wrapper around LeRobot's PI0FastPolicy.
+
+    Args:
+        cfg: PI0-Fast model configuration.
+        torch_dtype: Requested model dtype. The checkpoint's native mixed-dtype
+            layout is preserved regardless of this value.
+
+    Returns:
+        The PI0-Fast policy adapted to RLinf's embodied policy interface.
+    """
     pi0_fast_module = _load_lerobot_pi0_fast()
     model_cfg = cfg.get("pi0_fast", {})
     configured_model_path = str(cfg.model_path)

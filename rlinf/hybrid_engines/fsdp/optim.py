@@ -106,6 +106,7 @@ class FP32MasterAdamW(Optimizer):
     def step(
         self, closure: Callable[[], torch.Tensor] | None = None
     ) -> torch.Tensor | None:
+        """Apply one AdamW update through FP32 master parameters."""
         loss = None
         if closure is not None:
             with torch.enable_grad():

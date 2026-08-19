@@ -14,12 +14,15 @@
 
 import math
 
+import pytest
 import torch
 
 import rlinf.models.embodiment.pi0_fast.pi0_fast_action_model as action_model_module
 from rlinf.models.embodiment.pi0_fast.fast_replay import (
     _preprocess_images,
+    _sample_next_token,
     build_action_sequence_metadata,
+    compute_token_logprobs,
     replay_action_logits,
     safe_detokenize_actions,
 )
@@ -229,6 +232,44 @@ class _TeacherForcingPolicy(torch.nn.Module):
         self._paligemma_tokenizer = type("FakeTokenizer", (), {"bos_token_id": 9})()
 
 
+def test_compute_token_logprobs_skips_entropy_when_disabled():
+    logits = torch.tensor([[[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]]])
+    action_tokens = torch.tensor([[2, 0]])
+    action_token_mask = torch.tensor([[True, True]])
+
+    logprobs, entropy = compute_token_logprobs(
+        logits,
+        action_tokens,
+        action_token_mask,
+        compute_entropy=False,
+    )
+
+    expected = (
+        torch.log_softmax(logits, dim=-1)
+        .gather(-1, action_tokens.unsqueeze(-1))
+        .squeeze(-1)
+    )
+    assert torch.allclose(logprobs, expected)
+    assert entropy is None
+
+
+def test_sample_next_token_uses_argmax_when_sampling_is_disabled(monkeypatch):
+    logits = torch.tensor([[1.0, 3.0, 2.0]])
+
+    def fail_multinomial(*args, **kwargs):
+        raise AssertionError("greedy decoding must not call torch.multinomial")
+
+    monkeypatch.setattr(torch, "multinomial", fail_multinomial)
+    token, logprob = _sample_next_token(
+        logits,
+        temperature=0.3,
+        do_sample=False,
+    )
+
+    assert token.item() == 1
+    assert torch.allclose(logprob, torch.log_softmax(logits, dim=-1)[:, 1])
+
+
 def test_native_action_sequence_mask_stops_after_first_end_marker():
     policy = _FakeActionSequencePolicy()
     tokens = torch.tensor(
@@ -367,6 +408,7 @@ def test_generate_action_tokens_forwards_temperature_to_fallback(monkeypatch):
         num_action_chunks,
         action_dim,
         temperature,
+        do_sample,
         compute_logprobs,
     ):
         captured.update(
@@ -377,6 +419,7 @@ def test_generate_action_tokens_forwards_temperature_to_fallback(monkeypatch):
                 "num_action_chunks": num_action_chunks,
                 "action_dim": action_dim,
                 "temperature": temperature,
+                "do_sample": do_sample,
                 "compute_logprobs": compute_logprobs,
             }
         )
@@ -411,6 +454,7 @@ def test_generate_action_tokens_forwards_temperature_to_fallback(monkeypatch):
         "num_action_chunks": 10,
         "action_dim": 7,
         "temperature": 0.42,
+        "do_sample": True,
         "compute_logprobs": True,
     }
 
@@ -486,8 +530,15 @@ def test_predict_action_batch_preserves_generated_token_logprobs(monkeypatch):
     )
     expected_logprobs = torch.tensor([[-0.1, -0.2, 0.0, 0.0]])
 
-    def fake_generate(batch, *, temperature, compute_logprobs):
-        del batch, temperature, compute_logprobs
+    def fake_generate(
+        batch,
+        *,
+        temperature,
+        do_sample,
+        max_action_tokens,
+        compute_logprobs,
+    ):
+        del batch, temperature, do_sample, max_action_tokens, compute_logprobs
         return {
             "actions": torch.zeros(1, 10, 7),
             "action_tokens": torch.tensor([[11, 12, 0, 0]]),
@@ -514,6 +565,106 @@ def test_predict_action_batch_preserves_generated_token_logprobs(monkeypatch):
     assert torch.equal(result["prev_logprobs"], expected_logprobs)
 
 
+def test_predict_action_batch_honors_greedy_sampling_and_token_limit(monkeypatch):
+    model = PI0FastForRLActionPrediction(
+        _FakeNativePolicy(),
+        action_dim=7,
+        num_action_chunks=10,
+        max_action_tokens=4,
+    )
+    captured = {}
+
+    def fake_generate(
+        batch,
+        *,
+        temperature,
+        do_sample,
+        max_action_tokens,
+        compute_logprobs,
+    ):
+        del batch, compute_logprobs
+        captured.update(
+            temperature=temperature,
+            do_sample=do_sample,
+            max_action_tokens=max_action_tokens,
+        )
+        return {
+            "actions": torch.zeros(1, 10, 7),
+            "action_tokens": torch.tensor([[11, 12, 13]]),
+            "action_token_mask": torch.ones(1, 3, dtype=torch.bool),
+            "action_logprob_mask": torch.ones(1, 3, dtype=torch.bool),
+            "token_logprobs": torch.zeros(1, 3),
+        }
+
+    monkeypatch.setattr(model, "_generate_action_tokens_with_logprobs", fake_generate)
+    env_obs = {
+        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+        "task_descriptions": ["pick up the object"],
+    }
+
+    model.predict_action_batch(
+        env_obs,
+        mode="train",
+        calculate_logprobs=True,
+        do_sample=False,
+        temperature=1.0,
+        max_new_tokens=3,
+    )
+
+    assert captured == {
+        "temperature": 1.0,
+        "do_sample": False,
+        "max_action_tokens": 3,
+    }
+
+
+@pytest.mark.parametrize(
+    ("sampling_kwargs", "parameter_name"),
+    [
+        ({"top_k": 10}, "top_k"),
+        ({"top_p": 0.9}, "top_p"),
+    ],
+)
+def test_predict_action_batch_rejects_unsupported_sampling_truncation(
+    monkeypatch,
+    sampling_kwargs,
+    parameter_name,
+):
+    model = PI0FastForRLActionPrediction(
+        _FakeNativePolicy(),
+        action_dim=7,
+        num_action_chunks=10,
+        max_action_tokens=4,
+    )
+    monkeypatch.setattr(
+        model,
+        "_generate_action_tokens_with_logprobs",
+        lambda *args, **kwargs: {
+            "actions": torch.zeros(1, 10, 7),
+            "action_tokens": torch.zeros(1, 4, dtype=torch.long),
+            "action_token_mask": torch.ones(1, 4, dtype=torch.bool),
+            "action_logprob_mask": torch.ones(1, 4, dtype=torch.bool),
+            "token_logprobs": torch.zeros(1, 4),
+        },
+    )
+    env_obs = {
+        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
+        "states": torch.zeros(1, 8),
+        "task_descriptions": ["pick up the object"],
+    }
+
+    with pytest.raises(ValueError, match=parameter_name):
+        model.predict_action_batch(
+            env_obs,
+            mode="train",
+            calculate_logprobs=True,
+            **sampling_kwargs,
+        )
+
+
 def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
     monkeypatch,
 ):
@@ -525,8 +676,15 @@ def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
         postprocessor=lambda actions: actions + 5,
     )
 
-    def fake_generate(batch, *, temperature, compute_logprobs):
-        del batch, temperature, compute_logprobs
+    def fake_generate(
+        batch,
+        *,
+        temperature,
+        do_sample,
+        max_action_tokens,
+        compute_logprobs,
+    ):
+        del batch, temperature, do_sample, max_action_tokens, compute_logprobs
         return {
             "actions": torch.zeros(1, 10, 7),
             "action_tokens": torch.tensor([[11, 12, 13, 14]]),
