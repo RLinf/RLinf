@@ -26,9 +26,32 @@ import ray
 import torch
 from omegaconf import DictConfig, OmegaConf
 
-from rlinf.envs.behavior.instance_loader import (
-    RLINF_REPLAY_METADATA_KEY,
-    ActivityInstanceLoader,
+from rlinf.envs.behavior.action_controls import (
+    action_like_values,
+    apply_action_mask,
+    apply_first_chunk_action_override,
+    parse_action_mask,
+    parse_first_chunk_action_override,
+    r1pro_noop_action,
+    robot_joint_positions_list,
+)
+from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
+from rlinf.envs.behavior.replay_runtime import (
+    apply_replay_tro_metadata,
+    stage_idx_from_info,
+    stage_idx_from_reward,
+    task_reward,
+    to_int_or_none,
+)
+from rlinf.envs.behavior.stage_rewards import (
+    completion_bonus_tensor,
+    extract_episode_done,
+    extract_episode_success,
+    is_target_stage_success,
+    stage_cumulative_reward_tensor,
+    stage_sparse_reward_tensor,
+    stage_weighted_reward_tensor,
+    task_reward_from_info,
 )
 from rlinf.envs.behavior.utils import (
     apply_env_wrapper,
@@ -213,130 +236,41 @@ class BehaviorProcess:
 
     @staticmethod
     def _parse_action_mask(cfg: DictConfig) -> list[bool] | None:
-        mask_cfg = OmegaConf.select(cfg, "action_mask", default=None)
-        if mask_cfg is None:
-            return None
-        if not bool(OmegaConf.select(cfg, "action_mask.enabled", default=True)):
-            return None
-
-        mask = OmegaConf.select(cfg, "action_mask.mask", default=None)
-        if mask is None:
-            action_dim = int(OmegaConf.select(cfg, "action_mask.action_dim", default=23))
-            mask = [True] * action_dim
-            if bool(OmegaConf.select(cfg, "action_mask.freeze_base", default=False)):
-                mask[:3] = [False] * min(3, action_dim)
-            if bool(OmegaConf.select(cfg, "action_mask.freeze_trunk", default=False)):
-                start, end = 3, min(7, action_dim)
-                mask[start:end] = [False] * (end - start)
-        else:
-            mask = OmegaConf.to_container(mask, resolve=True)
-
-        if not isinstance(mask, (list, tuple)) or not mask:
-            raise ValueError("env.action_mask.mask must be a non-empty bool list.")
-        return [bool(value) for value in mask]
+        return parse_action_mask(cfg)
 
     @staticmethod
     def _parse_first_chunk_action_override(
         cfg: DictConfig,
     ) -> tuple[bool, list[int], float]:
-        override_cfg = OmegaConf.select(cfg, "first_chunk_action_override", default=None)
-        if override_cfg is None:
-            return False, [], -1.0
-        enabled = bool(
-            OmegaConf.select(cfg, "first_chunk_action_override.enabled", default=False)
-        )
-        action_ids = OmegaConf.select(
-            cfg, "first_chunk_action_override.action_ids", default=[]
-        )
-        if action_ids is None:
-            action_ids = []
-        if not isinstance(action_ids, (list, tuple)):
-            action_ids = OmegaConf.to_container(action_ids, resolve=True)
-        if not isinstance(action_ids, (list, tuple)):
-            raise ValueError(
-                "env.first_chunk_action_override.action_ids must be a list."
-            )
-        action_value = float(
-            OmegaConf.select(cfg, "first_chunk_action_override.value", default=-1.0)
-        )
-        return enabled, [int(action_id) for action_id in action_ids], action_value
+        return parse_first_chunk_action_override(cfg)
 
     @staticmethod
     def _action_like_values(action, values: list[float]):
-        if torch.is_tensor(action):
-            return torch.as_tensor(values, dtype=action.dtype, device=action.device)
-        dtype = getattr(action, "dtype", np.float32)
-        return np.asarray(values, dtype=dtype)
+        return action_like_values(action, values)
 
     @staticmethod
     def _robot_joint_positions_list(robot) -> list[float]:
-        joint_positions = robot.get_joint_positions()
-        if torch.is_tensor(joint_positions):
-            return joint_positions.detach().cpu().reshape(-1).tolist()
-        return np.asarray(joint_positions).reshape(-1).tolist()
+        return robot_joint_positions_list(robot)
 
     def _r1pro_noop_action(self, robot, action):
-        action_dim = int(action.shape[-1])
-        values = [0.0] * action_dim
-        joint_positions = self._robot_joint_positions_list(robot)
-        if action_dim >= 23 and len(joint_positions) >= 28:
-            values[3:7] = joint_positions[6:10]
-            values[7:14] = [joint_positions[i] for i in (10, 12, 14, 16, 18, 20, 22)]
-            values[14:21] = [joint_positions[i] for i in (11, 13, 15, 17, 19, 21, 23)]
-            values[21] = joint_positions[24] + joint_positions[25]
-            values[22] = joint_positions[26] + joint_positions[27]
-        return self._action_like_values(action, values)
+        return r1pro_noop_action(robot, action)
 
     def _apply_action_mask(self, actions):
-        if self.action_mask is None:
-            return actions
-
-        action_dim = int(actions.shape[-1])
-        if action_dim != len(self.action_mask):
-            raise ValueError(
-                f"env.action_mask.mask length {len(self.action_mask)} does not "
-                f"match action_dim {action_dim}."
-            )
-
-        masked_actions = actions.clone() if torch.is_tensor(actions) else actions.copy()
-        child_envs = getattr(self.env, "envs", [])
-        for env_idx in range(int(actions.shape[0])):
-            robot = self._get_robot_from_child_env(child_envs[env_idx])
-            if robot is None:
-                continue
-            noop_action = self._r1pro_noop_action(robot, actions[env_idx])
-            for action_idx, use_policy_action in enumerate(self.action_mask):
-                if not use_policy_action:
-                    masked_actions[env_idx, action_idx] = noop_action[action_idx]
-        return masked_actions
+        return apply_action_mask(
+            actions,
+            self.action_mask,
+            getattr(self.env, "envs", []),
+            self._get_robot_from_child_env,
+        )
 
     def _apply_first_chunk_action_override(self, actions, env_mask: np.ndarray):
-        if (
-            not self.first_chunk_action_override_enabled
-            or not self.first_chunk_action_ids
-            or not env_mask.any()
-        ):
-            return actions
-
-        action_dim = int(actions.shape[-1])
-        invalid_action_ids = [
-            action_id
-            for action_id in self.first_chunk_action_ids
-            if action_id < 0 or action_id >= action_dim
-        ]
-        if invalid_action_ids:
-            raise ValueError(
-                "env.first_chunk_action_override.action_ids contains invalid "
-                f"indices {invalid_action_ids} for action_dim {action_dim}."
-            )
-
-        overridden_actions = (
-            actions.clone() if torch.is_tensor(actions) else actions.copy()
+        return apply_first_chunk_action_override(
+            actions,
+            env_mask,
+            self.first_chunk_action_override_enabled,
+            self.first_chunk_action_ids,
+            self.first_chunk_action_value,
         )
-        env_indices = np.flatnonzero(env_mask).tolist()
-        for action_id in self.first_chunk_action_ids:
-            overridden_actions[env_indices, action_id] = self.first_chunk_action_value
-        return overridden_actions
 
     @staticmethod
     def _get_robot_from_child_env(child_env):
@@ -625,37 +559,19 @@ class BehaviorProcess:
 
     @staticmethod
     def _to_int_or_none(value):
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+        return to_int_or_none(value)
 
     @staticmethod
     def _task_reward(child_env):
-        try:
-            return child_env.task.task_reward
-        except Exception:
-            return None
+        return task_reward(child_env)
 
     @classmethod
     def _stage_idx_from_info(cls, info: dict | None) -> int | None:
-        if info is None:
-            return None
-        task_reward = info.get("task_reward", {})
-        if isinstance(task_reward, dict):
-            return cls._to_int_or_none(task_reward.get("current_stage_idx"))
-        return cls._to_int_or_none(info.get("current_stage_idx"))
+        return stage_idx_from_info(info)
 
     @classmethod
     def _stage_idx_from_reward(cls, child_env) -> int | None:
-        task_reward = cls._task_reward(child_env)
-        if task_reward is None:
-            return None
-        return cls._to_int_or_none(
-            getattr(task_reward, "current_stage_idx", None)
-        )
+        return stage_idx_from_reward(child_env)
 
     def _apply_replay_tro_metadata(self, child_env, info: dict | None) -> dict:
         """Inject RLinf replay metadata from tro_state into the env info dict.
@@ -666,66 +582,7 @@ class BehaviorProcess:
         ``task_reward.set_active_stage_index`` so downstream reward
         computations start from the intended stage.
         """
-        base_env = self._unwrap_child_env(child_env)
-        scene = getattr(base_env, "scene", None)
-        if scene is None or not hasattr(scene, "get_task_metadata"):
-            return {} if info is None else info
-
-        metadata = scene.get_task_metadata(key=RLINF_REPLAY_METADATA_KEY)
-        if not isinstance(metadata, dict):
-            return {} if info is None else info
-
-        info = {} if info is None else info
-        stage_idx = self._to_int_or_none(metadata.get("stage_index"))
-        stage_prompts = metadata.get("stage_prompts")
-        if not isinstance(stage_prompts, (list, tuple)):
-            stage_prompts = []
-        stage_prompts = [
-            str(prompt).strip() for prompt in stage_prompts if str(prompt).strip()
-        ]
-
-        task_reward = self._task_reward(base_env)
-        total_stages = self._to_int_or_none(getattr(task_reward, "_total_stages", None))
-        if stage_idx is not None and hasattr(task_reward, "set_active_stage_index"):
-            if total_stages is None or 0 <= stage_idx < total_stages:
-                task_reward.set_active_stage_index(stage_idx)
-
-        replay_info = info.get("replay_init")
-        if not isinstance(replay_info, dict):
-            replay_info = {}
-            info["replay_init"] = replay_info
-        replay_info.update(metadata)
-        replay_info["replay_stage_prompts"] = stage_prompts
-        if stage_idx is not None:
-            replay_info["replay_stage_idx"] = stage_idx
-
-        reward_info = info.get("reward")
-        if not isinstance(reward_info, dict):
-            reward_info = {}
-            info["reward"] = reward_info
-        task_info = reward_info.get("task_specific")
-        if not isinstance(task_info, dict):
-            task_info = {}
-            reward_info["task_specific"] = task_info
-
-        if stage_idx is not None:
-            task_info["current_stage_idx"] = stage_idx
-            task_info.setdefault("completed_stage_count", stage_idx)
-        if total_stages is not None:
-            task_info["total_stage_count"] = total_stages
-        if stage_idx is not None and 0 <= stage_idx < len(stage_prompts):
-            task_info["current_stage_prompt"] = stage_prompts[stage_idx]
-        stage_defs = getattr(task_reward, "_stage_defs", None)
-        if (
-            isinstance(stage_defs, list)
-            and stage_idx is not None
-            and 0 <= stage_idx < len(stage_defs)
-        ):
-            stage_name = stage_defs[stage_idx].get("name")
-            if stage_name is not None:
-                task_info["current_stage_name"] = stage_name
-        task_info.setdefault("completion_bonus", 0.0)
-        return info
+        return apply_replay_tro_metadata(self._unwrap_child_env(child_env), info)
 
     def _reset_env_indices(
         self, reset_indices: list[int], instance_ids: list[int] | None = None
@@ -1416,73 +1273,23 @@ class BehaviorEnv(gym.Env):
         return obs
 
     def _completion_bonus_tensor(self, infos, reward):
-        bonuses = []
-        for info in infos or [{} for _ in range(self.num_envs)]:
-            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
-            task_reward = reward_info.get("task_specific", {})
-            bonuses.append(float(task_reward.get("completion_bonus", 0.0) or 0.0))
-        return self.reward_coef * torch.as_tensor(
-            bonuses, dtype=reward.dtype, device=reward.device
-        )
+        return completion_bonus_tensor(infos, reward, self.reward_coef)
 
     def _is_target_stage_success(self, task_reward: dict) -> bool:
-        if self.success_stage_idx is None:
-            return False
-        current_stage_idx = task_reward.get("current_stage_idx", None)
-        if current_stage_idx is None:
-            return False
-        try:
-            current_stage_idx = int(current_stage_idx)
-        except (TypeError, ValueError):
-            return False
-        completion_bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
-        return current_stage_idx == self.success_stage_idx and completion_bonus != 0.0
+        return is_target_stage_success(task_reward, self.success_stage_idx)
 
     def _stage_sparse_reward_tensor(self, rewards, infos=None):
-        reward = torch.as_tensor(rewards)
-        bonuses = []
-        for info in infos or [{} for _ in range(int(reward.numel()))]:
-            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
-            task_reward = reward_info.get("task_specific", {})
-            if not isinstance(task_reward, dict):
-                task_reward = {}
-            bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
-            bonuses.append(bonus if self._is_target_stage_success(task_reward) else 0.0)
-        return self.reward_coef * torch.as_tensor(
-            bonuses, dtype=reward.dtype, device=reward.device
+        return stage_sparse_reward_tensor(
+            rewards, infos, self.reward_coef, self.success_stage_idx
         )
 
     def _stage_weighted_reward_tensor(self, rewards, infos=None):
-        reward = torch.as_tensor(rewards)
-        bonuses = []
-        for info in infos or [{} for _ in range(int(reward.numel()))]:
-            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
-            task_reward = reward_info.get("task_specific", {})
-            if not isinstance(task_reward, dict):
-                task_reward = {}
-            stage_idx = int(task_reward.get("current_stage_idx", 0) or 0) - 1
-            bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
-            if 0 <= stage_idx < len(self.stage_reward_weights):
-                bonus *= self.stage_reward_weights[stage_idx]
-            else:
-                bonus = 0.0
-            bonuses.append(bonus)
-        return self.reward_coef * torch.as_tensor(
-            bonuses, dtype=reward.dtype, device=reward.device
+        return stage_weighted_reward_tensor(
+            rewards, infos, self.reward_coef, self.stage_reward_weights
         )
 
     def _stage_cumulative_reward_tensor(self, rewards, infos=None):
-        reward = torch.as_tensor(rewards)
-        counts = []
-        for info in infos or [{} for _ in range(int(reward.numel()))]:
-            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
-            task_reward = reward_info.get("task_specific", {})
-            if not isinstance(task_reward, dict):
-                task_reward = {}
-            counts.append(float(task_reward.get("completed_stage_count", 0.0) or 0.0))
-        return self.reward_coef * torch.as_tensor(
-            counts, dtype=reward.dtype, device=reward.device
-        )
+        return stage_cumulative_reward_tensor(rewards, infos, self.reward_coef)
 
     def _calc_step_reward(self, rewards, infos=None):
         reward = self.reward_coef * rewards
@@ -1503,26 +1310,12 @@ class BehaviorEnv(gym.Env):
         return reward_diff + completion_bonus
 
     def _extract_episode_success(self, info: dict | None) -> bool:
-        if not isinstance(info, dict):
-            return False
-        reward_info = info.get("reward", {})
-        if isinstance(reward_info, dict):
-            task_reward = reward_info.get("task_specific", {})
-        else:
-            task_reward = {}
-        if self.success_stage_idx is not None:
-            return self._is_target_stage_success(task_reward)
-        done_dict = info.get("done", {})
-        if isinstance(done_dict, dict):
-            return bool(done_dict.get("success", False))
-        return bool(info.get("success", False))
+        return extract_episode_success(info, self.success_stage_idx)
 
     def _extract_episode_done(self, info: dict | None) -> bool:
-        if not isinstance(info, dict):
-            return False
-        if self.success_stage_idx is not None:
-            return self._extract_episode_success(info)
-        return self._extract_info_done(info)
+        return extract_episode_done(
+            info, self.success_stage_idx, self._extract_info_done
+        )
 
     def _info_done_tensor(self, infos, device=None) -> torch.Tensor:
         done_flags = [self._extract_episode_done(info) for info in infos]
@@ -1677,11 +1470,7 @@ class BehaviorEnv(gym.Env):
         for local_idx, (env_idx, reward, info) in enumerate(
             zip(env_indices, rewards, infos)
         ):
-            reward_info = info.get("reward", {}) if isinstance(info, dict) else {}
-            if isinstance(reward_info, dict):
-                task_reward = reward_info.get("task_specific", {})
-            else:
-                task_reward = {}
+            task_reward = task_reward_from_info(info)
             completion_bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
             step_success = self._extract_episode_success(info)
             end_success = (
