@@ -28,7 +28,8 @@ def _worker(total_training_steps=None, *, max_epochs=-1, max_steps=-1, steps=1):
         {"runner": {"max_epochs": max_epochs, "max_steps": max_steps}}
     )
     worker._logger = Mock()
-    worker.get_max_steps_per_epoch = Mock(return_value=steps)
+    if steps is not None:
+        worker.get_max_steps_per_epoch = Mock(return_value=steps)
     return worker
 
 
@@ -58,7 +59,7 @@ def test_sft_worker_keeps_legacy_floor_epoch_length() -> None:
         def __len__(self) -> int:
             return 5
 
-    worker = _worker()
+    worker = _worker(steps=None)
     worker.data_loader = DataLoader()
     worker.gradient_accumulation = 2
 
