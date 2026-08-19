@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from rlinf.models.embodiment.pi0_fast.data_pipeline import (
@@ -72,3 +73,14 @@ def test_float_images_are_left_untouched():
     assert torch.allclose(
         batch["observation.images.image"], torch.full((1, 3, 4, 4), 0.5)
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [-0.01, 1.01, float("inf"), float("nan")],
+)
+def test_float_images_must_be_finite_and_normalized(value):
+    images = torch.full((1, 4, 4, 3), value, dtype=torch.float32)
+
+    with pytest.raises(ValueError, match=r"finite values in \[0, 1\]"):
+        build_lerobot_batch_from_env_obs(_uint8_obs(images))

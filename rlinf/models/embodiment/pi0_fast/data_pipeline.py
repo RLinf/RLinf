@@ -27,6 +27,14 @@ def _image_to_chw_float(
             f"Expected image [B,H,W,C] or [B,C,H,W], got {tuple(image.shape)}"
         )
     needs_rescale = not image.is_floating_point()
+    if not needs_rescale and image.numel() > 0:
+        valid_unit_range = (
+            torch.isfinite(image).all() & (image >= 0).all() & (image <= 1).all()
+        )
+        if not bool(valid_unit_range):
+            raise ValueError(
+                "Floating-point images must contain finite values in [0, 1]"
+            )
     if image.shape[-1] in (1, 3):
         image = image.permute(0, 3, 1, 2).contiguous()
     elif image.shape[1] not in (1, 3):

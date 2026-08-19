@@ -483,7 +483,8 @@ class MultiStepRolloutWorker(Worker):
             else self._eval_sampling_params
         )
 
-        if SupportedModel(self.model_cfg.model_type) in [
+        model_type = SupportedModel(self.model_cfg.model_type)
+        if model_type in [
             SupportedModel.OPENPI,
             SupportedModel.OPENPI_RLINF,
             SupportedModel.PI0_FAST,
@@ -500,11 +501,13 @@ class MultiStepRolloutWorker(Worker):
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
-            else:
+            elif model_type == SupportedModel.PI0_FAST:
                 kwargs = dict(kwargs)
                 kwargs["mode"] = mode
+            else:
+                kwargs = {"mode": mode}
 
-        if SupportedModel(self.model_cfg.model_type) in [
+        if model_type in [
             SupportedModel.CNN_POLICY,
             SupportedModel.FLOW_POLICY,
             SupportedModel.MLP_POLICY,

@@ -20,6 +20,27 @@ import torch
 from torch.optim import Optimizer
 
 
+def validate_fp32_master_adamw_config(
+    *,
+    strategy: str,
+    sharding_strategy: str,
+    is_lora: bool,
+) -> None:
+    """Validate the FSDP configurations exercised by FP32MasterAdamW."""
+    strategy = str(strategy).lower()
+    sharding_strategy = str(sharding_strategy).lower()
+    if (
+        strategy != "fsdp"
+        or sharding_strategy not in {"no_shard", "full_shard"}
+        or not is_lora
+    ):
+        raise ValueError(
+            "use_fp32_master_params currently supports only FSDP1 LoRA training "
+            "with fsdp_config.strategy=fsdp and sharding_strategy set to "
+            "no_shard or full_shard."
+        )
+
+
 class FP32MasterAdamW(Optimizer):
     """AdamW with FP32 state and master weights for low-precision parameters.
 
@@ -131,17 +152,25 @@ class FP32MasterAdamW(Optimizer):
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Load optimizer state without casting FP32 tensors to parameter dtype."""
         saved_groups = state_dict["param_groups"]
-        current_params = [
-            param for group in self.param_groups for param in group["params"]
-        ]
-        saved_param_ids = [
-            param_id for group in saved_groups for param_id in group["params"]
-        ]
-        if len(current_params) != len(saved_param_ids):
-            super().load_state_dict(state_dict)
-            return
+        if len(saved_groups) != len(self.param_groups) or any(
+            len(saved_group["params"]) != len(current_group["params"])
+            for saved_group, current_group in zip(
+                saved_groups, self.param_groups, strict=False
+            )
+        ):
+            raise ValueError(
+                "Cannot load FP32MasterAdamW state with a different parameter topology."
+            )
 
-        saved_to_current = dict(zip(saved_param_ids, current_params, strict=True))
+        saved_to_current = {
+            param_id: param
+            for saved_group, current_group in zip(
+                saved_groups, self.param_groups, strict=True
+            )
+            for param_id, param in zip(
+                saved_group["params"], current_group["params"], strict=True
+            )
+        }
         fp32_state: dict[torch.Tensor, dict[str, torch.Tensor]] = {}
         state_without_fp32 = {}
         for param_id, saved_state in state_dict["state"].items():

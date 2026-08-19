@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
-from rlinf.hybrid_engines.fsdp.optim import FP32MasterAdamW, build_adamw
+from rlinf.hybrid_engines.fsdp.optim import (
+    FP32MasterAdamW,
+    build_adamw,
+    validate_fp32_master_adamw_config,
+)
 
 
 def _run_constant_gradient_steps(optimizer, parameter, count):
@@ -82,6 +87,23 @@ def test_fp32_master_adamw_state_dict_round_trip_preserves_master_weight():
     )
 
 
+def test_fp32_master_adamw_rejects_incompatible_state_topology():
+    parameter = torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16))
+    optimizer = FP32MasterAdamW([parameter])
+    parameter.grad = torch.ones_like(parameter)
+    optimizer.step()
+
+    restored = FP32MasterAdamW(
+        [
+            torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16)),
+            torch.nn.Parameter(torch.ones(1, dtype=torch.bfloat16)),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="parameter topology"):
+        restored.load_state_dict(optimizer.state_dict())
+
+
 def test_build_adamw_selects_fp32_master_implementation_when_enabled():
     optimizer = build_adamw(
         [{"params": list(torch.nn.Linear(2, 2).parameters()), "lr": 1e-4}],
@@ -146,3 +168,33 @@ def test_fp32_master_adamw_matches_torch_adamw_for_fp32_parameters():
 
     assert torch.allclose(actual, expected, atol=1e-7, rtol=1e-6)
     assert "fp32_master_param" not in actual_optimizer.state[actual]
+
+
+@pytest.mark.parametrize("sharding_strategy", ["no_shard", "full_shard"])
+def test_fp32_master_config_accepts_fsdp1_lora(sharding_strategy):
+    validate_fp32_master_adamw_config(
+        strategy="fsdp",
+        sharding_strategy=sharding_strategy,
+        is_lora=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("strategy", "sharding_strategy", "is_lora"),
+    [
+        ("fsdp2", "no_shard", True),
+        ("fsdp2", "full_shard", True),
+        ("fsdp", "shard_grad_op", True),
+        ("fsdp", "no_shard", False),
+        ("fsdp", "full_shard", False),
+    ],
+)
+def test_fp32_master_config_rejects_unsupported_combinations(
+    strategy, sharding_strategy, is_lora
+):
+    with pytest.raises(ValueError, match="FSDP1.*LoRA"):
+        validate_fp32_master_adamw_config(
+            strategy=strategy,
+            sharding_strategy=sharding_strategy,
+            is_lora=is_lora,
+        )
