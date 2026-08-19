@@ -140,14 +140,13 @@ sequences.
 
 Malformed sequences are not resampled. They execute a safe zero action, receive
 the normal environment failure feedback, and remain in the policy objective.
-This keeps sampling on-policy while making decode failures visible in
-``prefix_valid_rate``, ``end_marker_rate``, and ``decode_valid_rate``.
+This keeps sampling on-policy.
 
 Monitoring
 ----------
 
-In addition to ``env/success_once`` and ``eval/success_once``, monitor the three
-sequence-validity rates, group-success histogram and keep fraction, token
-entropy, gradient norm, ``approx_kl``, and log-ratio finite/min/max statistics.
+In addition to ``env/success_once`` and ``eval/success_once``, monitor the
+group-success histogram and keep fraction, token entropy, gradient norm,
+``approx_kl``, and log-ratio finite/min/max statistics.
 The first actor update should have finite replay log-probabilities and a ratio
 close to one before the optimizer changes the policy.

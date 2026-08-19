@@ -26,6 +26,7 @@ def _image_to_chw_float(
         raise ValueError(
             f"Expected image [B,H,W,C] or [B,C,H,W], got {tuple(image.shape)}"
         )
+    needs_rescale = not image.is_floating_point()
     if image.shape[-1] in (1, 3):
         image = image.permute(0, 3, 1, 2).contiguous()
     elif image.shape[1] not in (1, 3):
@@ -41,7 +42,7 @@ def _image_to_chw_float(
         )
     else:
         image = image.to(dtype=torch.float32)
-    if image.numel() > 0 and image.max() > 1:
+    if needs_rescale:
         image = image / 255.0
     return image
 

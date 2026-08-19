@@ -74,14 +74,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         self.enable_offload = self.cfg.actor.get("enable_offload", False)
         self._opd_teacher_model = None
         self.entropy_op_type = self.cfg.algorithm.get("entropy_op_type", "torch")
-        self._is_pi0_fast = (
-            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.PI0_FAST
-        )
-        self._pi0_fast_loss_agg_func = (
-            get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
-            if self._is_pi0_fast
-            else None
-        )
+        self.loss_agg_func = get_loss_agg_func(self.cfg.algorithm.loss_agg_func)
         self._group_success_metrics: dict[str, float] = {}
 
         self.enable_sft_co_train = cfg.actor.get("enable_sft_co_train", False)
@@ -768,15 +761,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "max_episode_steps": self.cfg.env.train.max_episode_steps,
             "task_type": self.cfg.runner.task_type,
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
+            "logprob_mask": output_dict.get("logprob_mask", None),
+            "loss_agg_func": self.loss_agg_func,
+            "log_logprob_diagnostics": self.cfg.algorithm.get(
+                "log_logprob_diagnostics",
+                self.cfg.algorithm.get("logprob_type") == "sequence_token_level",
+            ),
         }
-        if self._is_pi0_fast:
-            loss_kwargs.update(
-                {
-                    "logprob_mask": output_dict.get("logprob_mask", None),
-                    "loss_agg_func": self._pi0_fast_loss_agg_func,
-                    "log_logprob_diagnostics": True,
-                }
-            )
 
         if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,

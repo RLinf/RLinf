@@ -447,9 +447,9 @@ def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
     )
 
     assert torch.count_nonzero(actions) == 0
-    assert result["forward_inputs"]["pi0_fast_prefix_valid"].tolist() == [[1.0]]
-    assert result["forward_inputs"]["pi0_fast_end_marker_present"].tolist() == [[1.0]]
-    assert result["forward_inputs"]["pi0_fast_decode_valid"].tolist() == [[0.0]]
+    assert "pi0_fast_prefix_valid" not in result["forward_inputs"]
+    assert "pi0_fast_end_marker_present" not in result["forward_inputs"]
+    assert "pi0_fast_decode_valid" not in result["forward_inputs"]
 
 
 def test_policy_image_keys_are_aliased_from_generic_batch_keys():

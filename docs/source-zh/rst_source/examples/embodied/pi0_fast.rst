@@ -133,13 +133,12 @@ PI0-FAST 原生生成完整动作字符串，RLinf 不预先注入 ``Action:`` �
 序列的有效 token 求平均，再对序列求平均。
 
 非法序列不会重采样，而是执行安全零动作，由环境正常返回失败反馈，并继续参与策略
-目标。这样既保持 on-policy 采样，也可以通过 ``prefix_valid_rate``、
-``end_marker_rate`` 和 ``decode_valid_rate`` 观察解码异常。
+目标。这样既保持 on-policy 采样。
 
 监控指标
 --------------------
 
-除了 ``env/success_once`` 和 ``eval/success_once``，建议关注三个序列合法率、分组成功
-直方图与保留比例、token entropy、gradient norm、``approx_kl``，以及 log-ratio 的
-finite/min/max 指标。第一次 actor update 在优化器修改权重前，应满足 replay logprob
-全部 finite 且 ratio 接近 1。
+除了 ``env/success_once`` 和 ``eval/success_once``，建议关注分组成功直方图与保留比例、
+token entropy、gradient norm、``approx_kl``，以及 log-ratio 的 finite/min/max 指标。
+第一次 actor update 在优化器修改权重前，应满足 replay logprob 全部 finite 且 ratio
+接近 1。

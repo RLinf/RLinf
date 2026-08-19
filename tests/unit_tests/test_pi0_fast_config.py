@@ -114,6 +114,8 @@ def test_pi0_fast_published_experiment_sizes_match_validated_runs():
 
     assert eval_cfg.env.eval.total_num_envs == 500
     assert eval_cfg.rollout.sampling_params.temperature_eval == 0.0
+    assert train_cfg.rollout.sampling_params.temperature_train == 0.3
+    assert train_cfg.rollout.sampling_params.temperature_eval == 0.0
     assert train_cfg.runner.max_steps == 330
     assert train_cfg.runner.val_check_interval == 10
     assert train_cfg.env.train.total_num_envs == 256
@@ -139,11 +141,13 @@ def test_pi0_fast_example_configs_compose_with_model_defaults():
         assert model_cfg.get("add_value_head") is None
 
     assert train_cfg.algorithm.adv_type == "grpo"
-    assert train_cfg.algorithm.logprob_type == "model_token_level"
+    assert train_cfg.algorithm.logprob_type == "sequence_token_level"
     assert train_cfg.algorithm.loss_agg_func == "seq-mean-token-mean"
     assert train_cfg.env.eval.seed == 0
-    assert train_cfg.actor.model.pi0_fast.temperature_train == 0.3
-    assert train_cfg.actor.model.pi0_fast.temperature_eval == 0.0
+    assert train_cfg.rollout.sampling_params.temperature_train == 0.3
+    assert train_cfg.rollout.sampling_params.temperature_eval == 0.0
+    assert "temperature_train" not in train_cfg.actor.model.pi0_fast
+    assert "temperature_eval" not in train_cfg.actor.model.pi0_fast
 
 
 def test_existing_starvla_config_still_composes():

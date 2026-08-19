@@ -501,7 +501,8 @@ class MultiStepRolloutWorker(Worker):
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
             else:
-                kwargs = {"mode": mode}
+                kwargs = dict(kwargs)
+                kwargs["mode"] = mode
 
         if SupportedModel(self.model_cfg.model_type) in [
             SupportedModel.CNN_POLICY,

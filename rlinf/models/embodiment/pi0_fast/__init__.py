@@ -17,6 +17,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import re
 
 import torch
 import torch.nn as nn
@@ -36,6 +37,16 @@ _TEXT_TOKENIZER_ALLOW_PATTERNS = (
 
 PI0_FAST_MODEL_ID = "lerobot/pi0fast-libero"
 PI0_FAST_TEXT_TOKENIZER_ID = "google/paligemma-3b-pt-224"
+
+_HF_REPO_ID_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*$")
+
+# LeRobot loads these tokenizers by name without accepting a revision, so the only
+# way to pin them is to rewrite the name into a resolved local snapshot path.
+# (repo id field on the policy config, revision field, files worth downloading)
+_PINNED_TOKENIZERS = (
+    ("text_tokenizer_name", "text_tokenizer_revision", _TEXT_TOKENIZER_ALLOW_PATTERNS),
+    ("action_tokenizer_name", "action_tokenizer_revision", None),
+)
 
 
 def _resolve_pi0_fast_lora_target_modules(target_scope: str) -> tuple[str, str]:
@@ -96,6 +107,13 @@ def _apply_pi0_fast_lora(
 
 
 def _looks_like_hf_repo_id(name_or_path: str) -> bool:
+    """Tell an HF Hub repo id apart from a filesystem path.
+
+    A repo id is exactly ``namespace/name``. Checkpoint directories are nested
+    deeper (``.../checkpoints/global_step_10``), so requiring a single separator
+    keeps them from being taken for a hub repo when the directory is missing --
+    for instance when a relative path is resolved against an unexpected cwd.
+    """
     expanded = os.path.expanduser(str(name_or_path))
     if os.path.exists(expanded):
         return False
@@ -103,28 +121,33 @@ def _looks_like_hf_repo_id(name_or_path: str) -> bool:
         return False
     if "://" in expanded:
         return False
-    return "/" in expanded
+    return bool(_HF_REPO_ID_RE.match(expanded))
+
+
+def _opt_cfg(model_cfg: DictConfig, key: str, cast=str):
+    """Return ``model_cfg[key]`` coerced by ``cast``, or None when unset."""
+    value = model_cfg.get(key)
+    return None if value is None else cast(value)
 
 
 def _hf_load_kwargs(model_cfg: DictConfig) -> dict:
-    load_kwargs = {}
-    if model_cfg.get("cache_dir") is not None:
-        load_kwargs["cache_dir"] = str(model_cfg.cache_dir)
-    if model_cfg.get("revision") is not None:
-        load_kwargs["revision"] = str(model_cfg.revision)
-    if model_cfg.get("local_files_only") is not None:
-        load_kwargs["local_files_only"] = bool(model_cfg.local_files_only)
-    return load_kwargs
+    load_kwargs = {
+        "cache_dir": _opt_cfg(model_cfg, "cache_dir"),
+        "revision": _opt_cfg(model_cfg, "revision"),
+        "local_files_only": _opt_cfg(model_cfg, "local_files_only", bool),
+    }
+    return {key: value for key, value in load_kwargs.items() if value is not None}
 
 
 def _resolve_hf_snapshot(
     name_or_path: str,
     *,
-    cache_dir: str | None = None,
+    model_cfg: DictConfig,
     revision: str | None = None,
-    local_files_only: bool | None = None,
     allow_patterns: tuple[str, ...] | None = None,
 ) -> str:
+    """Download a pinned HF artifact and return its local snapshot directory."""
+    local_files_only = _opt_cfg(model_cfg, "local_files_only", bool)
     if revision is None and not local_files_only:
         return str(name_or_path)
     if not _looks_like_hf_repo_id(str(name_or_path)):
@@ -137,55 +160,41 @@ def _resolve_hf_snapshot(
             "pi0_fast requires huggingface_hub to resolve pinned HF artifacts."
         ) from exc
 
-    kwargs = {}
-    if cache_dir is not None:
-        kwargs["cache_dir"] = cache_dir
-    if revision is not None:
-        kwargs["revision"] = revision
-    if local_files_only is not None:
-        kwargs["local_files_only"] = local_files_only
-    if allow_patterns is not None:
-        kwargs["allow_patterns"] = list(allow_patterns)
-    return snapshot_download(repo_id=str(name_or_path), **kwargs)
+    kwargs = {
+        "cache_dir": _opt_cfg(model_cfg, "cache_dir"),
+        "revision": revision,
+        "local_files_only": local_files_only,
+        "allow_patterns": None if allow_patterns is None else list(allow_patterns),
+    }
+    return snapshot_download(
+        repo_id=str(name_or_path),
+        **{key: value for key, value in kwargs.items() if value is not None},
+    )
 
 
 def _resolve_model_path(model_path: str, model_cfg: DictConfig) -> str:
-    load_kwargs = _hf_load_kwargs(model_cfg)
     return _resolve_hf_snapshot(
         model_path,
-        cache_dir=load_kwargs.get("cache_dir"),
-        revision=load_kwargs.get("revision"),
-        local_files_only=load_kwargs.get("local_files_only"),
+        model_cfg=model_cfg,
+        revision=_opt_cfg(model_cfg, "revision"),
     )
 
 
 def _resolve_policy_tokenizers(policy_config, model_cfg: DictConfig) -> None:
-    cache_dir = None
-    if model_cfg.get("cache_dir") is not None:
-        cache_dir = str(model_cfg.cache_dir)
-    local_files_only = None
-    if model_cfg.get("local_files_only") is not None:
-        local_files_only = bool(model_cfg.local_files_only)
-    text_revision = model_cfg.get("text_tokenizer_revision")
-    if model_cfg.get("text_tokenizer_name") is not None:
-        policy_config.text_tokenizer_name = str(model_cfg.text_tokenizer_name)
-    policy_config.text_tokenizer_name = _resolve_hf_snapshot(
-        policy_config.text_tokenizer_name,
-        cache_dir=cache_dir,
-        revision=str(text_revision) if text_revision is not None else None,
-        local_files_only=local_files_only,
-        allow_patterns=_TEXT_TOKENIZER_ALLOW_PATTERNS,
-    )
-
-    action_revision = model_cfg.get("action_tokenizer_revision")
-    if model_cfg.get("action_tokenizer_name") is not None:
-        policy_config.action_tokenizer_name = str(model_cfg.action_tokenizer_name)
-    policy_config.action_tokenizer_name = _resolve_hf_snapshot(
-        policy_config.action_tokenizer_name,
-        cache_dir=cache_dir,
-        revision=str(action_revision) if action_revision is not None else None,
-        local_files_only=local_files_only,
-    )
+    for name_key, revision_key, allow_patterns in _PINNED_TOKENIZERS:
+        name = _opt_cfg(model_cfg, name_key)
+        if name is None:
+            name = getattr(policy_config, name_key)
+        setattr(
+            policy_config,
+            name_key,
+            _resolve_hf_snapshot(
+                name,
+                model_cfg=model_cfg,
+                revision=_opt_cfg(model_cfg, revision_key),
+                allow_patterns=allow_patterns,
+            ),
+        )
 
 
 def _load_lerobot_pi0_fast():
@@ -229,7 +238,6 @@ def _load_policy_config(pi0_fast_module, model_path: str, cfg: DictConfig):
 
     override_names = (
         "max_action_tokens",
-        "temperature",
         "max_decoding_steps",
         "fast_skip_tokens",
         "use_kv_cache",
@@ -356,29 +364,44 @@ def _cast_model_to_dtype(
 
 
 def _validate_artifact_pins(model_path: str, model_cfg: DictConfig) -> None:
-    required = {
-        "revision": model_cfg.get("revision"),
-        "text_tokenizer_name": model_cfg.get("text_tokenizer_name"),
-        "text_tokenizer_revision": model_cfg.get("text_tokenizer_revision"),
-        "action_tokenizer_name": model_cfg.get("action_tokenizer_name"),
-        "action_tokenizer_revision": model_cfg.get("action_tokenizer_revision"),
-    }
+    required = {}
+    # A local checkpoint directory carries no hub revision to pin. The tokenizers
+    # are always fetched from the hub, so their pins stay mandatory either way.
+    model_is_hub_repo = _looks_like_hf_repo_id(model_path)
+    if model_is_hub_repo:
+        required["revision"] = model_cfg.get("revision")
+    required.update(
+        {
+            "text_tokenizer_name": model_cfg.get("text_tokenizer_name"),
+            "text_tokenizer_revision": model_cfg.get("text_tokenizer_revision"),
+            "action_tokenizer_name": model_cfg.get("action_tokenizer_name"),
+            "action_tokenizer_revision": model_cfg.get("action_tokenizer_revision"),
+        }
+    )
     missing = [name for name, value in required.items() if not value]
     if missing:
         raise ValueError(
             "pi0_fast requires pinned public artifacts; missing: " + ", ".join(missing)
         )
-    if _looks_like_hf_repo_id(model_path) and model_path != PI0_FAST_MODEL_ID:
+    if model_is_hub_repo and model_path != PI0_FAST_MODEL_ID:
         logging.warning(
             "Using non-default PI0-Fast model repository %s with explicit revisions.",
             model_path,
         )
 
 
+def _validate_action_shape(cfg: DictConfig) -> None:
+    for field in ("num_action_chunks", "action_dim"):
+        value = cfg.get(field, 0)
+        if not value or int(value) <= 0:
+            raise ValueError(f"pi0_fast requires model.{field} > 0, got {value!r}.")
+
+
 def get_model(cfg: DictConfig, torch_dtype=None):
     pi0_fast_module = _load_lerobot_pi0_fast()
     model_cfg = cfg.get("pi0_fast", {})
     configured_model_path = str(cfg.model_path)
+    _validate_action_shape(cfg)
     _validate_artifact_pins(configured_model_path, model_cfg)
     model_path = _resolve_model_path(configured_model_path, model_cfg)
     policy_config = _load_policy_config(pi0_fast_module, model_path, cfg)
