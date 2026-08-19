@@ -554,41 +554,6 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
         }
         rollout_metrics.update(returns_metrics)
 
-    forward_inputs = data_buffer.get("forward_inputs", {})
-    validity_metric_keys = {
-        "pi0_fast_prefix_valid": "prefix_valid_rate",
-        "pi0_fast_end_marker_present": "end_marker_rate",
-        "pi0_fast_decode_valid": "decode_valid_rate",
-    }
-    if isinstance(forward_inputs, dict) and any(
-        key in forward_inputs for key in validity_metric_keys
-    ):
-        decision_mask = None
-        dones = data_buffer.get("dones")
-        if dones is not None:
-            unfiltered_loss_mask, _ = compute_loss_mask(dones)
-            decision_mask = unfiltered_loss_mask.any(dim=-1)
-        elif loss_mask is not None:
-            decision_mask = loss_mask.to(dtype=torch.bool)
-            while decision_mask.ndim > 2:
-                decision_mask = decision_mask.any(dim=-1)
-
-        for input_key, metric_key in validity_metric_keys.items():
-            if input_key not in forward_inputs:
-                continue
-            values = forward_inputs[input_key].to(dtype=torch.float32)
-            while values.ndim > 2 and values.shape[-1] == 1:
-                values = values.squeeze(-1)
-            if decision_mask is not None:
-                mask = decision_mask.to(device=values.device)
-                if mask.shape != values.shape:
-                    mask = torch.broadcast_to(mask, values.shape)
-                values = values[mask]
-            else:
-                values = values.reshape(-1)
-            mean_value, _, _ = reduce_metrics(values)
-            rollout_metrics[metric_key] = mean_value
-
     return rollout_metrics
 
 

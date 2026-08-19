@@ -308,16 +308,16 @@ def preprocess_loss_inputs(
 
     bsz = logprobs.shape[0]
     proximal_logprobs = kwargs.get("proximal_logprobs", None)
-    if logprob_type == "model_token_level":
+    if logprob_type == "sequence_token_level":
         if logprobs.ndim != 2 or old_logprobs.shape != logprobs.shape:
             raise ValueError(
-                "model_token_level expects matching [batch, token] logprobs, got "
+                "sequence_token_level expects matching [batch, token] logprobs, got "
                 f"{tuple(logprobs.shape)} and {tuple(old_logprobs.shape)}"
             )
         if logprob_mask is None or logprob_mask.shape != logprobs.shape:
             mask_shape = None if logprob_mask is None else tuple(logprob_mask.shape)
             raise ValueError(
-                "model_token_level requires logprob_mask with shape "
+                "sequence_token_level requires logprob_mask with shape "
                 f"{tuple(logprobs.shape)}, got {mask_shape}"
             )
         token_mask = logprob_mask.to(device=logprobs.device, dtype=torch.bool)

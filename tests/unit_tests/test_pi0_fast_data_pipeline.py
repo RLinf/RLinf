@@ -33,3 +33,42 @@ def test_build_lerobot_batch_maps_libero_obs():
     assert batch["observation.images.image2"].shape == (2, 3, 224, 224)
     assert batch["observation.state"].shape == (2, 8)
     assert batch["task"] == ["pick up the object", "open the drawer"]
+
+
+def _uint8_obs(main_images):
+    return {
+        "main_images": main_images,
+        "states": torch.zeros(main_images.shape[0], 8),
+        "task_descriptions": ["pick up the object"] * main_images.shape[0],
+    }
+
+
+def test_uint8_images_are_rescaled_to_unit_range():
+    images = torch.full((1, 4, 4, 3), 255, dtype=torch.uint8)
+
+    batch = build_lerobot_batch_from_env_obs(_uint8_obs(images))
+
+    assert torch.allclose(batch["observation.images.image"], torch.ones(1, 3, 4, 4))
+
+
+def test_near_black_uint8_images_are_still_rescaled():
+    # A frame whose brightest pixel is 1 must become 1/255, not stay at 1.0.
+    # Scaling by observed maximum would silently skip this frame.
+    images = torch.zeros(1, 4, 4, 3, dtype=torch.uint8)
+    images[0, 0, 0, 0] = 1
+
+    batch = build_lerobot_batch_from_env_obs(_uint8_obs(images))
+
+    assert torch.allclose(
+        batch["observation.images.image"].max(), torch.tensor(1.0 / 255.0)
+    )
+
+
+def test_float_images_are_left_untouched():
+    images = torch.full((1, 4, 4, 3), 0.5, dtype=torch.float32)
+
+    batch = build_lerobot_batch_from_env_obs(_uint8_obs(images))
+
+    assert torch.allclose(
+        batch["observation.images.image"], torch.full((1, 3, 4, 4), 0.5)
+    )

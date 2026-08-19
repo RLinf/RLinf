@@ -635,36 +635,23 @@ def replay_action_logits(
     action_tokens = action_tokens.to(device=tokens.device, dtype=torch.long)
     action_token_mask = action_token_mask.to(device=tokens.device, dtype=torch.bool)
 
-    prefix_embs, prefix_pad_masks, prefix_att_masks, _, _ = model.embed_prefix_fast(
-        images,
-        img_masks,
-        tokens,
-        masks,
-        fast_action_tokens=None,
-        fast_action_masks=None,
-    )
-    prefix_embs = _ensure_prefix_precision(model, prefix_embs)
-    prefix_out = _forward_embeds(model, prefix_embs, prefix_pad_masks, prefix_att_masks)
-    first_logits = lm_head(prefix_out[:, -1:, :])
-    hidden = prefix_out[:, -1, :]
 
-    if action_tokens.shape[1] == 1:
-        return first_logits, hidden
-
-    fast_input_tokens = action_tokens[:, :-1]
-    fast_input_masks = action_token_mask[:, :-1]
+    single_token = action_tokens.shape[1] == 1
     prefix_embs, prefix_pad_masks, prefix_att_masks, _, num_fast_embs = (
         model.embed_prefix_fast(
             images,
             img_masks,
             tokens,
             masks,
-            fast_action_tokens=fast_input_tokens,
-            fast_action_masks=fast_input_masks,
+            fast_action_tokens=None if single_token else action_tokens[:, :-1],
+            fast_action_masks=None if single_token else action_token_mask[:, :-1],
         )
     )
     prefix_embs = _ensure_prefix_precision(model, prefix_embs)
     prefix_out = _forward_embeds(model, prefix_embs, prefix_pad_masks, prefix_att_masks)
-    fast_hidden = prefix_out[:, -num_fast_embs:, :]
-    tail_logits = lm_head(fast_hidden)
-    return torch.cat([first_logits, tail_logits], dim=1), prefix_out[:, -1, :]
+
+    if single_token:
+        return lm_head(prefix_out[:, -1:, :]), prefix_out[:, -1, :]
+
+    logits = lm_head(prefix_out[:, -num_fast_embs - 1 :, :])
+    return logits, prefix_out[:, -1, :]

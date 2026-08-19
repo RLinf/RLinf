@@ -42,7 +42,7 @@ algorithm:
   group_size: 2
   reward_coef: 1.0
   reward_type: chunk_level
-  logprob_type: model_token_level
+  logprob_type: sequence_token_level
   entropy_type: token_level
   update_epoch: 1
   adv_type: grpo
@@ -95,8 +95,8 @@ env:
 rollout:
   sampling_params:
     do_sample: True
-    temperature_train: ${actor.model.pi0_fast.temperature_train}
-    temperature_eval: ${actor.model.pi0_fast.temperature_eval}
+    temperature_train: 0.3
+    temperature_eval: 0.0
     top_k: 0
     top_p: 1.0
     repetition_penalty: 1.0
@@ -125,8 +125,6 @@ actor:
     lora_rank: 2
     lora_target_scope: "all_linear"
     pi0_fast:
-      temperature_train: 0.3
-      temperature_eval: 0.0
       gradient_checkpointing: True
 
   optim:

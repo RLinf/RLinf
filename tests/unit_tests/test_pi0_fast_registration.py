@@ -210,6 +210,66 @@ def test_pi0_fast_rejects_unvalidated_lora_target_scope():
         raise AssertionError("Expected language-only LoRA to be rejected")
 
 
+def test_pi0_fast_repo_id_is_distinguished_from_nested_local_path():
+    import rlinf.models.embodiment.pi0_fast as pi0_fast
+
+    assert pi0_fast._looks_like_hf_repo_id("lerobot/pi0fast-libero") is True
+    assert pi0_fast._looks_like_hf_repo_id("google/paligemma-3b-pt-224") is True
+    # A checkpoint directory resolved against an unexpected cwd must not be
+    # mistaken for a hub repo, otherwise the failure surfaces as an HF 404.
+    assert (
+        pi0_fast._looks_like_hf_repo_id("outputs/run1/checkpoints/global_step_50")
+        is False
+    )
+
+
+def test_pi0_fast_local_checkpoint_does_not_require_model_revision(
+    monkeypatch, tmp_path
+):
+    import rlinf.models.embodiment.pi0_fast as pi0_fast
+
+    fake_config = _FakePI0FastConfig()
+    monkeypatch.setattr(pi0_fast, "_load_lerobot_pi0_fast", lambda: _FakePI0FastModule)
+    monkeypatch.setattr(pi0_fast, "_load_optional_processor", lambda *args: None)
+    monkeypatch.setattr(
+        pi0_fast,
+        "_load_policy_config",
+        lambda pi0_fast_module, model_path, cfg: fake_config,
+    )
+
+    cfg = _pi0_fast_cfg(
+        model_path=str(tmp_path),
+        pi0_fast={
+            "text_tokenizer_name": "google/paligemma-3b-pt-224",
+            "text_tokenizer_revision": "35e4f46485b4d07967e7e9935bc3786aad50687c",
+            "action_tokenizer_name": "jadechoghari/tokenizer-lib-mean",
+            "action_tokenizer_revision": "79ae83e3cbd8786dcb84b628569f8d076ca8151e",
+        },
+    )
+
+    model = get_model(cfg)
+
+    assert model.policy.model_path == str(tmp_path)
+
+
+def test_pi0_fast_local_checkpoint_still_requires_tokenizer_pins(monkeypatch, tmp_path):
+    import rlinf.models.embodiment.pi0_fast as pi0_fast
+
+    monkeypatch.setattr(pi0_fast, "_load_lerobot_pi0_fast", lambda: _FakePI0FastModule)
+    cfg = _pi0_fast_cfg(model_path=str(tmp_path), pi0_fast={})
+
+    try:
+        get_model(cfg)
+    except ValueError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("Expected missing tokenizer pins to fail")
+
+    assert "revision" not in message.split("missing: ")[1].split(", ")
+    assert "text_tokenizer_revision" in message
+    assert "action_tokenizer_name" in message
+
+
 def test_pi0_fast_requires_all_public_artifact_pins(monkeypatch):
     import rlinf.models.embodiment.pi0_fast as pi0_fast
 

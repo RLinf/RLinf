@@ -43,7 +43,7 @@ algorithm:
   group_size: 1
   reward_coef: 1.0
   reward_type: chunk_level
-  logprob_type: model_token_level
+  logprob_type: sequence_token_level
   entropy_type: token_level
   update_epoch: 1
   adv_type: grpo
@@ -82,7 +82,7 @@ env:
 rollout:
   sampling_params:
     do_sample: False
-    temperature_train: ${rollout.model.pi0_fast.temperature_train}
+    temperature_train: 0.3
     temperature_eval: 0.0
     top_k: 0
     top_p: 1.0

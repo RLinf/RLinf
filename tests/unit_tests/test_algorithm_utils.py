@@ -18,7 +18,7 @@ from rlinf.algorithms.utils import preprocess_loss_inputs
 from rlinf.utils.utils import seq_mean_token_mean
 
 
-def test_model_token_level_broadcasts_advantage_and_combines_masks():
+def test_sequence_token_level_broadcasts_advantage_and_combines_masks():
     logprobs = torch.zeros(2, 4)
     old_logprobs = torch.zeros_like(logprobs)
     advantages = torch.tensor([[[1.5]], [[-0.5]]])
@@ -29,7 +29,7 @@ def test_model_token_level_broadcasts_advantage_and_combines_masks():
         logprobs=logprobs,
         old_logprobs=old_logprobs,
         advantages=advantages,
-        logprob_type="model_token_level",
+        logprob_type="sequence_token_level",
         reward_type="chunk_level",
         loss_mask=env_loss_mask,
         logprob_mask=token_mask,

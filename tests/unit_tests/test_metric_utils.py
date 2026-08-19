@@ -21,7 +21,6 @@ import torch
 from rlinf.utils.metric_utils import (
     compute_evaluate_metrics,
     compute_group_success_metrics,
-    compute_rollout_metrics,
 )
 
 
@@ -92,41 +91,3 @@ def test_compute_group_success_metrics_covers_binary_group_outcomes():
         )
     assert metrics["group_mixed_fraction"] == pytest.approx(0.75)
     assert metrics["group_filter_keep_fraction"] == pytest.approx(0.75)
-
-
-def test_compute_rollout_metrics_reports_pi0_fast_validity_before_reward_filter(
-    monkeypatch,
-):
-    from rlinf.scheduler.worker.worker import Worker
-
-    platform = type(
-        "FakeTorchPlatform",
-        (),
-        {"current_device": staticmethod(lambda: torch.device("cpu"))},
-    )()
-    monkeypatch.setattr(Worker, "torch_platform", platform)
-    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *args, **kwargs: None)
-
-    data_buffer = {
-        "dones": torch.tensor(
-            [
-                [[False], [False]],
-                [[True], [False]],
-                [[True], [True]],
-            ]
-        ),
-        "loss_mask": torch.zeros(2, 2, 1, dtype=torch.bool),
-        "forward_inputs": {
-            "pi0_fast_prefix_valid": torch.tensor([[[1.0], [0.0]], [[0.0], [1.0]]]),
-            "pi0_fast_end_marker_present": torch.tensor(
-                [[[1.0], [1.0]], [[0.0], [1.0]]]
-            ),
-            "pi0_fast_decode_valid": torch.tensor([[[1.0], [0.0]], [[0.0], [0.0]]]),
-        },
-    }
-
-    metrics = compute_rollout_metrics(data_buffer)
-
-    assert metrics["prefix_valid_rate"] == pytest.approx(2 / 3)
-    assert metrics["end_marker_rate"] == pytest.approx(1.0)
-    assert metrics["decode_valid_rate"] == pytest.approx(1 / 3)

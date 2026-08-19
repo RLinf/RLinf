@@ -264,20 +264,6 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
             forward_inputs["action_logprob_mask"] = (
                 generated["action_logprob_mask"].detach().cpu()
             )
-        validity_keys = {
-            "prefix_valid": "pi0_fast_prefix_valid",
-            "end_marker_present": "pi0_fast_end_marker_present",
-            "decode_valid": "pi0_fast_decode_valid",
-        }
-        for generated_key, storage_key in validity_keys.items():
-            if generated_key in generated:
-                forward_inputs[storage_key] = (
-                    generated[generated_key]
-                    .to(dtype=torch.float32)
-                    .view(-1, 1)
-                    .detach()
-                    .cpu()
-                )
         result = {
             "prev_logprobs": prev_logprobs.detach().cpu()
             if torch.is_tensor(prev_logprobs)

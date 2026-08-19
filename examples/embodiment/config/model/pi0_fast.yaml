@@ -13,7 +13,6 @@ is_lora: False
 lora_rank: 32
 lora_target_scope: "all_linear"
 
-use_proprio: True
 policy_setup: "libero"
 
 pi0_fast:
@@ -24,8 +23,6 @@ pi0_fast:
   action_tokenizer_revision: "79ae83e3cbd8786dcb84b628569f8d076ca8151e"
   max_action_tokens: 256
   image_size: 224
-  temperature_train: 0.3
-  temperature_eval: 0.0
   use_kv_cache: True
   gradient_checkpointing: False
   require_action_token_prefix: True

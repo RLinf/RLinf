@@ -917,25 +917,6 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
-    if model_type == SupportedModel.PI0_FAST:
-        assert model_cfg.get("num_action_chunks", 0) > 0, (
-            "pi0_fast requires model.num_action_chunks > 0."
-        )
-        assert model_cfg.get("action_dim", 0) > 0, (
-            "pi0_fast requires model.action_dim > 0."
-        )
-        pi0_fast_cfg = model_cfg.get("pi0_fast", {})
-        required_artifacts = {
-            "revision": "model",
-            "text_tokenizer_name": "text tokenizer",
-            "text_tokenizer_revision": "text tokenizer",
-            "action_tokenizer_name": "action tokenizer",
-            "action_tokenizer_revision": "action tokenizer",
-        }
-        for field, artifact in required_artifacts.items():
-            assert pi0_fast_cfg.get(field), (
-                f"pi0_fast requires a pinned {artifact} `{field}`."
-            )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
