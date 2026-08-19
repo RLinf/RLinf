@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Literal
 
 import torch
@@ -31,6 +32,8 @@ from rlinf.models.embodiment.pi0_fast.fast_replay import (
 
 
 class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
+    """Adapt LeRobot PI0-Fast generation and replay to RLinf's policy API."""
+
     def __init__(
         self,
         policy: nn.Module,
@@ -41,8 +44,8 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         image_size: int | None = None,
         temperature_train: float = 0.3,
         temperature_eval: float = 0.0,
-        preprocessor=None,
-        postprocessor=None,
+        preprocessor: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        postprocessor: Callable[[torch.Tensor], torch.Tensor] | None = None,
     ) -> None:
         super().__init__()
         self.policy = policy
@@ -55,7 +58,12 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         self.preprocessor = preprocessor
         self.postprocessor = postprocessor
 
-    def forward(self, forward_type=ForwardType.DEFAULT, **kwargs: Any):
+    def forward(
+        self,
+        forward_type: ForwardType = ForwardType.DEFAULT,
+        **kwargs: Any,
+    ) -> Any:
+        """Dispatch a supported RLinf forward pass."""
         if forward_type == ForwardType.DEFAULT:
             return self.default_forward(**kwargs)
         raise NotImplementedError(
@@ -169,15 +177,20 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         batch: dict[str, Any],
         *,
         temperature: float,
+        do_sample: bool = True,
+        max_action_tokens: int | None = None,
         compute_logprobs: bool = True,
     ) -> dict[str, torch.Tensor]:
+        if max_action_tokens is None:
+            max_action_tokens = self.max_action_tokens
         return generate_action_tokens_with_logprobs(
             self.policy,
             batch,
-            max_action_tokens=self.max_action_tokens,
+            max_action_tokens=max_action_tokens,
             num_action_chunks=self.num_action_chunks,
             action_dim=self.action_dim,
             temperature=temperature,
+            do_sample=do_sample,
             compute_logprobs=compute_logprobs,
         )
 
@@ -193,12 +206,25 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
 
     def predict_action_batch(
         self,
-        env_obs,
+        env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "train",
         compute_values: bool = False,
         calculate_logprobs: bool | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
+        """Generate one action chunk batch for rollout or evaluation.
+
+        Args:
+            env_obs: Batched RLinf environment observations.
+            mode: Rollout mode. Evaluation without replay uses native LeRobot
+                inference; training returns tokens and behavior logprobs.
+            compute_values: Reserved for policies with a critic head.
+            calculate_logprobs: Override behavior-logprob collection.
+            **kwargs: RLinf sampling parameters.
+
+        Returns:
+            Decoded actions and replay inputs needed by the actor update.
+        """
         batch = build_lerobot_batch_from_env_obs(env_obs, image_size=self.image_size)
         batch = self._prepare_lerobot_batch(batch)
         temperature = float(
@@ -207,6 +233,25 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
                 self.temperature_train if mode == "train" else self.temperature_eval,
             )
         )
+        do_sample = bool(kwargs.get("do_sample", temperature > 0))
+        top_k = int(kwargs.get("top_k", 0))
+        top_p = float(kwargs.get("top_p", 1.0))
+        if top_k != 0:
+            raise ValueError(
+                "pi0_fast does not support top-k sampling during RL rollout; "
+                f"set top_k=0, got {top_k}."
+            )
+        if top_p != 1.0:
+            raise ValueError(
+                "pi0_fast does not support top-p sampling during RL rollout; "
+                f"set top_p=1.0, got {top_p}."
+            )
+        max_action_tokens = int(kwargs.get("max_new_tokens", self.max_action_tokens))
+        if not 0 < max_action_tokens <= self.max_action_tokens:
+            raise ValueError(
+                "pi0_fast max_new_tokens must be in "
+                f"[1, {self.max_action_tokens}], got {max_action_tokens}."
+            )
         if calculate_logprobs is None:
             calculate_logprobs = mode == "train"
         if mode == "eval" and not calculate_logprobs and not compute_values:
@@ -223,6 +268,8 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         generated = self._generate_action_tokens_with_logprobs(
             batch,
             temperature=temperature,
+            do_sample=do_sample,
+            max_action_tokens=max_action_tokens,
             compute_logprobs=bool(calculate_logprobs),
         )
         actions = generated["actions"][:, : self.num_action_chunks, : self.action_dim]
@@ -252,6 +299,7 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
                 generated["action_tokens"],
                 action_logprob_mask,
                 temperature=temperature,
+                compute_entropy=False,
             )
 
         forward_inputs = {
@@ -280,8 +328,21 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         compute_entropy: bool = False,
         compute_values: bool = False,
         temperature: float | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, torch.Tensor | None]:
+        """Replay rollout tokens and return actor-update policy statistics.
+
+        Args:
+            forward_inputs: Cached rollout inputs and sampled action tokens.
+            compute_logprobs: Return selected-token log probabilities.
+            compute_entropy: Return token entropy when enabled.
+            compute_values: Reserved for policies with a critic head.
+            temperature: Rollout sampling temperature.
+            **kwargs: Additional RLinf forward arguments, currently unused.
+
+        Returns:
+            Log probabilities, token mask, optional entropy, and no value head.
+        """
         del kwargs
         if temperature is None:
             temperature = self.temperature_train
@@ -298,6 +359,7 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
             action_tokens,
             action_logprob_mask,
             temperature=temperature,
+            compute_entropy=compute_entropy,
         )
         return {
             "logprobs": token_logprobs if compute_logprobs else None,

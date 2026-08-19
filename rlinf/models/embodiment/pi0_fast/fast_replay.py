@@ -42,7 +42,20 @@ def compute_token_logprobs(
     action_token_mask: torch.Tensor,
     *,
     temperature: float = 1.0,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    compute_entropy: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Compute selected-token log probabilities and optional policy entropy.
+
+    Args:
+        logits: Policy logits shaped ``[batch, tokens, vocabulary]``.
+        action_tokens: Sampled token ids shaped ``[batch, tokens]``.
+        action_token_mask: Boolean mask selecting policy-objective tokens.
+        temperature: Temperature used to sample the action tokens.
+        compute_entropy: Whether to materialize the full-vocabulary entropy.
+
+    Returns:
+        Per-token log probabilities and optional per-token entropy.
+    """
     if logits.ndim != 3:
         raise ValueError(f"Expected logits [B,T,V], got {tuple(logits.shape)}")
     if logits.shape[:2] != action_tokens.shape:
@@ -53,12 +66,17 @@ def compute_token_logprobs(
     if temperature <= 0:
         raise ValueError(f"temperature must be positive, got {temperature}")
     action_tokens = action_tokens.to(device=logits.device)
-    logp_all = torch.log_softmax(logits.float() / temperature, dim=-1)
-    logprobs = logp_all.gather(
+    scaled_logits = logits.float() / temperature
+    selected_logits = scaled_logits.gather(
         dim=-1, index=action_tokens.long().unsqueeze(-1)
     ).squeeze(-1)
+    logprobs = selected_logits - torch.logsumexp(scaled_logits, dim=-1)
     mask = action_token_mask.to(dtype=torch.bool, device=logprobs.device)
     logprobs = torch.where(mask, logprobs, torch.zeros_like(logprobs))
+    if not compute_entropy:
+        return logprobs, None
+
+    logp_all = torch.log_softmax(scaled_logits, dim=-1)
     probs = torch.exp(logp_all)
     entropy = -(probs * logp_all).sum(dim=-1)
     entropy = torch.where(mask, entropy, torch.zeros_like(entropy))
@@ -208,9 +226,9 @@ def _forward_embeds(model, prefix_embs, prefix_pad_masks, prefix_att_masks):
 
 
 def _sample_next_token(
-    logits: torch.Tensor, *, temperature: float
+    logits: torch.Tensor, *, temperature: float, do_sample: bool = True
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if temperature > 0:
+    if do_sample and temperature > 0:
         sampling_logits = logits / temperature
         probs = torch.softmax(sampling_logits, dim=-1)
         next_token = torch.multinomial(probs, num_samples=1)
@@ -271,7 +289,7 @@ def _bpe_vocab_size(policy) -> int:
 
 
 def build_action_sequence_metadata(
-    policy,
+    policy: Any,
     action_tokens: torch.Tensor,
     generation_mask: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
@@ -335,7 +353,7 @@ def build_action_sequence_metadata(
 
 
 def safe_detokenize_actions(
-    policy,
+    policy: Any,
     action_tokens: torch.Tensor,
     *,
     action_horizon: int,
@@ -439,15 +457,32 @@ def _advance_kv_cache(
 
 
 def generate_action_tokens_with_logprobs(
-    policy,
+    policy: Any,
     batch: dict[str, Any],
     *,
     max_action_tokens: int,
     num_action_chunks: int,
     action_dim: int,
     temperature: float,
+    do_sample: bool = True,
     compute_logprobs: bool = True,
 ) -> dict[str, torch.Tensor]:
+    """Generate a native FAST action sequence and optional behavior logprobs.
+
+    Args:
+        policy: LeRobot PI0-Fast policy.
+        batch: Prepared LeRobot policy inputs.
+        max_action_tokens: Maximum number of autoregressive tokens to generate.
+        num_action_chunks: Number of decoded action chunks returned to RLinf.
+        action_dim: Number of action dimensions per chunk.
+        temperature: Sampling temperature.
+        do_sample: Use multinomial sampling when true, otherwise greedy decoding.
+        compute_logprobs: Replay generated tokens to compute behavior logprobs.
+
+    Returns:
+        Generated tokens, masks, decoded actions, validity metadata, and optional
+        behavior log probabilities.
+    """
     if getattr(getattr(policy, "config", None), "use_kv_cache", True):
         model = getattr(policy, "model", None)
         restore_gradient_checkpointing = bool(
@@ -463,6 +498,7 @@ def generate_action_tokens_with_logprobs(
                 num_action_chunks=num_action_chunks,
                 action_dim=action_dim,
                 temperature=temperature,
+                do_sample=do_sample,
                 compute_logprobs=compute_logprobs,
             )
         finally:
@@ -496,7 +532,9 @@ def generate_action_tokens_with_logprobs(
             model, prefix_embs, prefix_pad_masks, prefix_att_masks
         )
         logits = lm_head(prefix_out[:, -1, :])
-        next_token, _ = _sample_next_token(logits, temperature=temperature)
+        next_token, _ = _sample_next_token(
+            logits, temperature=temperature, do_sample=do_sample
+        )
         action_tokens[:, step] = next_token.squeeze(-1)
         if step < max_action_tokens - 1:
             prefix_embs, prefix_pad_masks, prefix_att_masks = _append_action_token(
@@ -528,6 +566,7 @@ def generate_action_tokens_with_logprobs(
             action_tokens,
             metadata["action_logprob_mask"],
             temperature=temperature,
+            compute_entropy=False,
         )
         result["token_logprobs"] = token_logprobs
     return result
@@ -541,6 +580,7 @@ def _generate_action_tokens_with_logprobs_kv_cache(
     num_action_chunks: int,
     action_dim: int,
     temperature: float,
+    do_sample: bool = True,
     compute_logprobs: bool = True,
 ) -> dict[str, torch.Tensor]:
     model = policy.model
@@ -581,7 +621,9 @@ def _generate_action_tokens_with_logprobs_kv_cache(
     current_pad_mask = prefix_pad_masks
 
     for step in range(max_action_tokens):
-        next_token, _ = _sample_next_token(logits, temperature=temperature)
+        next_token, _ = _sample_next_token(
+            logits, temperature=temperature, do_sample=do_sample
+        )
         action_tokens[:, step] = next_token.squeeze(-1)
         if step < max_action_tokens - 1:
             logits, past_key_values, current_pad_mask = _advance_kv_cache(
@@ -618,23 +660,34 @@ def _generate_action_tokens_with_logprobs_kv_cache(
             action_tokens,
             metadata["action_logprob_mask"],
             temperature=temperature,
+            compute_entropy=False,
         )
         result["token_logprobs"] = token_logprobs
     return result
 
 
 def replay_action_logits(
-    policy,
+    policy: Any,
     forward_inputs: dict[str, torch.Tensor],
     action_tokens: torch.Tensor,
     action_token_mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Replay sampled FAST tokens with one teacher-forcing policy forward.
+
+    Args:
+        policy: LeRobot PI0-Fast policy.
+        forward_inputs: Cached rollout observations and language inputs.
+        action_tokens: Tokens sampled during rollout.
+        action_token_mask: Mask identifying generated token positions.
+
+    Returns:
+        Per-token logits and the final hidden state used for diagnostics.
+    """
     model = policy.model
     images, img_masks, tokens, masks = _condition_prefix(policy, forward_inputs)
     lm_head = model.paligemma_with_expert.paligemma.lm_head
     action_tokens = action_tokens.to(device=tokens.device, dtype=torch.long)
     action_token_mask = action_token_mask.to(device=tokens.device, dtype=torch.bool)
-
 
     single_token = action_tokens.shape[1] == 1
     prefix_embs, prefix_pad_masks, prefix_att_masks, _, num_fast_embs = (

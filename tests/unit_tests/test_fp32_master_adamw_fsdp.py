@@ -39,6 +39,18 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _distributed_process_group():
+    use_cuda = torch.cuda.is_available()
+    dist.init_process_group(backend="nccl" if use_cuda else "gloo")
+    if use_cuda:
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    try:
+        yield
+    finally:
+        dist.destroy_process_group()
+
+
 class _LoRALikeLinear(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -98,52 +110,46 @@ def test_fp32_master_adamw_restores_with_fsdp_distributed_state_dict(
     use_orig_params,
 ):
     use_cuda = torch.cuda.is_available()
-    dist.init_process_group(backend="nccl" if use_cuda else "gloo")
     local_rank = int(os.environ["LOCAL_RANK"])
     device = torch.device("cuda", local_rank) if use_cuda else torch.device("cpu")
-    if use_cuda:
-        torch.cuda.set_device(local_rank)
-    try:
-        assert dist.get_world_size() >= 2, "FULL_SHARD test requires at least 2 ranks"
-        model, optimizer = _build_model_and_optimizer(
-            device, use_orig_params=use_orig_params
-        )
-        _train_step(model, optimizer, device)
+    assert dist.get_world_size() >= 2, "FULL_SHARD test requires at least 2 ranks"
+    model, optimizer = _build_model_and_optimizer(
+        device, use_orig_params=use_orig_params
+    )
+    _train_step(model, optimizer, device)
 
-        options = StateDictOptions(full_state_dict=False, cpu_offload=True)
-        model_state, optimizer_state = get_state_dict(
-            model=model, optimizers=optimizer, options=options
-        )
+    options = StateDictOptions(full_state_dict=False, cpu_offload=True)
+    model_state, optimizer_state = get_state_dict(
+        model=model, optimizers=optimizer, options=options
+    )
 
-        restored_model, restored_optimizer = _build_model_and_optimizer(
-            device, use_orig_params=use_orig_params
-        )
-        set_state_dict(
-            model=restored_model,
-            optimizers=restored_optimizer,
-            model_state_dict=model_state,
-            optim_state_dict=optimizer_state,
-            options=options,
-        )
+    restored_model, restored_optimizer = _build_model_and_optimizer(
+        device, use_orig_params=use_orig_params
+    )
+    set_state_dict(
+        model=restored_model,
+        optimizers=restored_optimizer,
+        model_state_dict=model_state,
+        optim_state_dict=optimizer_state,
+        options=options,
+    )
 
-        assert len(optimizer.state) == len(restored_optimizer.state)
-        for original_state, restored_state in zip(
-            optimizer.state.values(), restored_optimizer.state.values(), strict=True
-        ):
-            for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
-                assert restored_state[key].dtype == torch.float32
-                assert torch.equal(restored_state[key], original_state[key])
+    assert len(optimizer.state) == len(restored_optimizer.state)
+    for original_state, restored_state in zip(
+        optimizer.state.values(), restored_optimizer.state.values(), strict=True
+    ):
+        for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
+            assert restored_state[key].dtype == torch.float32
+            assert torch.equal(restored_state[key], original_state[key])
 
-        _train_step(model, optimizer, device)
-        _train_step(restored_model, restored_optimizer, device)
-        for original_param, restored_param in zip(
-            model.parameters(), restored_model.parameters(), strict=True
-        ):
-            assert torch.equal(original_param, restored_param)
-        for original_state, restored_state in zip(
-            optimizer.state.values(), restored_optimizer.state.values(), strict=True
-        ):
-            for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
-                assert torch.equal(restored_state[key], original_state[key])
-    finally:
-        dist.destroy_process_group()
+    _train_step(model, optimizer, device)
+    _train_step(restored_model, restored_optimizer, device)
+    for original_param, restored_param in zip(
+        model.parameters(), restored_model.parameters(), strict=True
+    ):
+        assert torch.equal(original_param, restored_param)
+    for original_state, restored_state in zip(
+        optimizer.state.values(), restored_optimizer.state.values(), strict=True
+    ):
+        for key in ("fp32_master_param", "exp_avg", "exp_avg_sq"):
+            assert torch.equal(restored_state[key], original_state[key])
