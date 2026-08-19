@@ -2212,7 +2212,7 @@ install_dreamzero_model() {
 
 install_cosmos3_deps() {
     local cosmos_path
-    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/nvidia-cosmos/cosmos-framework.git)
+    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
     if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
         git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-main}" >&2
     fi

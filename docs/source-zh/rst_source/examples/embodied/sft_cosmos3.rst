@@ -41,6 +41,7 @@ Cosmos3 监督微调（LIBERO）
 
 .. code-block:: bash
 
+   unset PYTHONPATH
    # 国内用户可加 --use-mirror 加速下载。
    bash requirements/install.sh embodied --model cosmos3 --env libero
    source .venv/bin/activate
@@ -101,7 +102,7 @@ Cosmos3-Nano 的理解塔基于 Qwen3-VL-8B-Instruct，SFT 启动时会经 ``Aut
 准备基座模型
 ----------------------------------------
 
-Cosmos3 SFT **从非动作基座 Cosmos3-Nano 热启动，只训练动作头**。把 ``actor.model.model_path`` 指向基座权重目录（DCP 格式），``wan_vae_path`` 指向 Wan2.2 VAE：
+Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头**。``actor.model.model_path`` 必须指向一个 **DCP 格式**的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
 
 .. code-block:: yaml
 
@@ -113,6 +114,45 @@ Cosmos3 SFT **从非动作基座 Cosmos3-Nano 热启动，只训练动作头**�
        model_path: /path/to/Cosmos3-Nano-DCP
        wan_vae_path: /path/to/Wan2.2-TI2V-5B/Wan2.2_VAE.pth
        load_to_device: false          # 见下方 warning
+
+准备基座 DCP 权重
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**第 1 步：下载 Cosmos3-Nano（diffusers 格式）**
+
+从 Hugging Face 下载 ``nvidia/Cosmos3-Nano``。它是 **diffusers/safetensors 格式**（``model_index.json`` + ``transformer/*.safetensors`` 分片 + ``vae/`` + ``text_tokenizer/`` 等），**不是 DCP**——SFT 还不能直接用，需第 2 步转成 DCP。
+
+.. code-block:: bash
+
+   # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
+   huggingface-cli download nvidia/Cosmos3-Nano \
+     --local-dir /path/to/Cosmos3-Nano
+
+.. note::
+
+   基座用 ``--local-dir`` 下载到**普通目录**即可。
+
+**第 2 步：转成 DCP**
+
+SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``_load_base_weights`` 用 ``_is_safetensors_checkpoint`` 判定格式——它只检查路径**顶层**是否有 ``*.safetensors`` 文件（非递归）。diffusers 目录把分片放在 ``transformer/`` 等子目录里、顶层没有，判定为 ``False``，于是落到 DCP 加载分支（``_load_model`` + ``CustomLoadPlanner``），而 diffusers 目录又不是 DCP，会加载失败。
+
+因此必须先把 diffusers 转成 DCP，再给 ``model_path`` 用。用 cosmos_framework 的 ``convert_model_to_dcp.py``：它读取 ``nvidia/Cosmos3-Nano``（diffusers）、重建模型、用 ``torch.distributed.checkpoint`` 存成分片 DCP。
+
+.. code-block:: bash
+
+   # 在训练用的 venv 里跑（保证 DCP metadata 与训练 Python 版本一致）
+   python -m cosmos_framework.scripts.convert_model_to_dcp \
+     --checkpoint-path /path/to/Cosmos3-Nano \
+     --no-use-ema-weights \
+     -o /path/to/Cosmos3-Nano-DCP
+
+**这条命令做什么：** 读取 ``nvidia/Cosmos3-Nano``（diffusers/safetensors）→ 经 ``Cosmos3OmniModel.from_pretrained_dcp`` 重建 → 用 ``torch.distributed.checkpoint`` 存成分片 DCP（``model/__0_*.distcp`` + ``.metadata`` + ``checkpoint.json``）。产物即上面 ``actor.model.model_path`` 指向的目录。
+
+.. note::
+
+   - ``--checkpoint-path`` 既接受模型名（``Cosmos3-Nano``，触发 HF 下载）也接受本地路径（已下载的 diffusers 目录）。离线机器先下好 diffusers 再指本地路径，避免联网。
+   - DCP 的 ``.metadata`` 是 pickle 序列化、**与保存时的 Python 版本绑定**——所以 ``convert_model_to_dcp`` 必须在与训练**相同的 Python / venv** 里跑，产出的 DCP 才能在训练时加载（本地目录名带 ``-py311`` 后缀就是这个意思：在 py3.11 下重存的 DCP）。
+   - 这与 Qwen3-VL 的 HF 缓存是两回事：本步转换的是基座模型权重，Qwen3-VL 是 tokenizer（见上方「离线缓存 Qwen3-VL-8B-Instruct」）。
 
 准备数据
 ----------------------------------------
@@ -213,18 +253,88 @@ SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weig
    4) model_hf   --cosmos_framework.scripts.convert_model_to_diffusers-->    model_diffusers
       并将 model_index.json 的 _class_name 改为 Cosmos3OmniDiffusersPipeline
 
+先设好路径变量（下面四步都引用）：
+
 .. code-block:: bash
 
-   # 第 3、4 步（前两步为权重前缀清洗与 DCP 打包）
+   # SFT 产出的 RLinf checkpoint（omni.net.* 前缀）
+   SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
+   # 转换工作目录（四步产物都放这里）
+   OUT="/path/to/converted"
+   mkdir -p "$OUT"
+
+**第 1 步：** ``full_weights.pt`` → ``model.safetensors``（去掉 ``omni.`` 前缀，让 cosmos 能识别 ``net.*`` / ``net_ema.*``）。
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import torch, os
+   from safetensors.torch import save_file
+
+   SRC  = os.environ["SRC"]
+   OUTD = os.path.join(os.environ["OUT"], "model_safetensors")
+   os.makedirs(OUTD, exist_ok=True)
+
+   print("Loading full_weights.pt (~91GB)...")
+   sd = torch.load(SRC, map_location="cpu", weights_only=False)
+   print(f"Loaded {len(sd)} keys")
+
+   # Strip "omni." prefix: omni.net.* -> net.*, omni.net_ema.* -> net_ema.*
+   stripped = {(k[5:] if k.startswith("omni.") else k): v.contiguous() for k, v in sd.items()}
+   print(f"Stripped to {len(stripped)} keys (e.g. {list(stripped.keys())[:3]})")
+
+   dst = os.path.join(OUTD, "model.safetensors")
+   save_file(stripped, dst)
+   print(f"Saved {os.path.getsize(dst)/1e9:.1f} GB -> {dst}")
+   PY
+
+.. note::
+
+   ``export`` 命令前先 ``export SRC=... OUT=...``（上面代码块读这两个环境变量）。``weights_only=False`` 因为 RLinf 存的是带元信息的 state dict。
+
+**第 2 步：** ``model.safetensors`` → ``model_dcp``（转成 DCP 目录，``export_model`` 只认 DCP 格式）。
+
+.. code-block:: bash
+
+   python - <<'PY'
+   import os, math, torch
+   from safetensors.torch import load_file
+   import torch.distributed.checkpoint as dcp
+   from torch.distributed.checkpoint.filesystem import FileSystemWriter
+   from cosmos_framework.checkpoint.dcp import CustomSavePlanner
+
+   SRC = os.path.join(os.environ["OUT"], "model_safetensors", "model.safetensors")
+   OUT = os.path.join(os.environ["OUT"], "model_dcp", "model")
+   os.makedirs(OUT, exist_ok=True)
+
+   state_dict = load_file(SRC)
+   print(f"Loaded {len(state_dict)} keys")
+
+   # ~5GB per shard（与 transformers 默认 max_shard_size 对齐）
+   nbytes  = sum(v.numel() * v.element_size() for v in state_dict.values() if isinstance(v, torch.Tensor))
+   nshards = max(1, math.ceil(nbytes / (5 * 1024**3)))
+   writer  = FileSystemWriter(OUT, thread_count=nshards)
+   dcp.save(state_dict=state_dict, storage_writer=writer, planner=CustomSavePlanner())
+   print(f"Saved DCP -> {OUT}")
+   PY
+
+.. note::
+
+   这一步依赖 ``cosmos_framework.checkpoint.dcp.CustomSavePlanner``，所以须在 cosmos framework 环境里跑（与下面 3、4 步同环境）。产物 ``$OUT/model_dcp/`` 即下一步 ``export_model --checkpoint-path`` 的输入。
+
+**第 3、4 步：** DCP → HF → diffusers（cosmos framework 自带脚本）。
+
+.. code-block:: bash
+
    python -m cosmos_framework.scripts.export_model \
-     --checkpoint-path /path/to/model_dcp \
+     --checkpoint-path "$OUT/model_dcp" \
      --config-file /path/to/cosmos3_action_libero/config.yaml \
      --no-use-ema-weights \
-     -o /path/to/converted/model_hf
+     -o "$OUT/model_hf"
 
    python -m cosmos_framework.scripts.convert_model_to_diffusers \
-     --checkpoint-path /path/to/converted/model_hf \
-     -o /path/to/converted/model_diffusers
+     --checkpoint-path "$OUT/model_hf" \
+     -o "$OUT/model_diffusers"
 
 第 3 步把 DCP 权重按 cosmos 训练配置导出成 HF 格式 ``model_hf``；
 
