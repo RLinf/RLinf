@@ -1,0 +1,99 @@
+# Canonical mixed ALOHA Pi0.5 full-parameter SFT configuration using the
+# JAX-aligned openpi_rlinf model. Hardware: one node, two H100 80GB GPUs.
+# This entry point starts from the fp32 Pi0.5 base checkpoint, not a LoRA or
+# legacy OpenPI SFT checkpoint.
+
+defaults:
+  - model/pi0_5_rlinf@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: 0-1
+
+runner:
+  task_type: sft
+  resume_dir: null
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: aloha_sft_openpi_pi05_full_fsdp2h100
+    logger_backends: [tensorboard]
+  max_epochs: -1
+  # The Pi0.5 ALOHA reference recipe trains for 20k steps while its cosine
+  # schedule is parameterized over 30k steps.
+  max_steps: 20000
+  val_check_interval: -1
+  # Every checkpoint is resumable and also exports full_weights.pt.
+  save_interval: 5000
+
+data:
+  # Pass the concrete LeRobot v3.0 dataset root to the official OpenPI loader.
+  train_data_paths: ${oc.env:ALOHA_DATASET_ROOT}
+  num_workers: 4
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  # Start from the maintained two-GPU openpi_rlinf batch size. Increase only
+  # after measuring H100 memory with the 50-step action horizon.
+  micro_batch_size: 16
+  global_batch_size: 32
+  seed: 0
+
+  model:
+    # Keep fp32 optimizer master weights; FSDP casts parameters to bf16 only
+    # for forward/backward computation.
+    precision: fp32
+    model_path: ${oc.env:PI05_MODEL_PATH}
+    # pi05_aloha_robotwin uses a 50-step action horizon and pads 14-D ALOHA
+    # actions to the model's 32-D action space.
+    num_action_chunks: 20
+    action_dim: 14
+    is_lora: false
+    add_value_head: false
+    openpi:
+      config_name: pi05_aloha_robotwin
+      num_images_in_input: 3
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
+    openpi_data:
+      # These statistics were computed from lerobot-data_mixed_8_v30. Do not
+      # reuse the old sandwich_merged statistics for the mixed dataset.
+      norm_stats_path: ${oc.env:ALOHA_NORM_STATS_PATH}
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_warmup_steps: 1000
+    total_training_steps: 30000
+    lr_scheduler: openpi_cosine
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    use_orig_params: true
+    enable_gradient_accumulation: false
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+    save_full_model_weights: true
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32

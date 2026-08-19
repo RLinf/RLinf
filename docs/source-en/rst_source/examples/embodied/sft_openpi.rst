@@ -120,17 +120,20 @@ When you train OpenPI on a newly collected LeRobot dataset, compute dataset
 normalization statistics before launching SFT. This is especially important for
 a real-world collected dataset.
 
-RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_stats for ``state`` and ``actions``. You can use it like:
+RLinf provides ``toolkits/lerobot/calculate_norm_stats_fast.py`` to calculate
+normalization statistics for ``state`` and ``actions`` without reading or
+decoding image and video columns. It scans the full dataset, including the final
+partial batch. Use it as follows:
 
 .. code:: bash
 
    # Local dataset directory (contains meta/info.json):
-   python toolkits/lerobot/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats_fast.py \
        --config-name pi0_realworld \
        --repo-id /path/to/realworld_franka_bin_relocation
 
    # Or a Hugging Face repo id cached under ~/.cache/huggingface/lerobot by default:
-   python toolkits/lerobot/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats_fast.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
@@ -139,9 +142,16 @@ RLinf provides ``toolkits/lerobot/calculate_norm_stats.py`` to calculate norm_st
    - ``--repo-id`` accepts a local dataset path or a LeRobot Hugging Face repo id.
    - Optionally set ``HF_LEROBOT_HOME`` to change the cache parent for repo ids (default: ``~/.cache/huggingface/lerobot``).
    - ``config_name`` must match your custom openpi dataconfig used by training.
+   - The default output is ``<resolved_dataset_root>/norm_stats_fast.json``. The
+     script refuses to overwrite an existing file unless ``--overwrite`` is set.
+   - Use ``--output-path /path/to/name.json`` to select another output file.
 
-The script writes the generated stats under ``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``.
-The OpenPI loader later reads the normalization stats from ``<model_path>/<repo_id>`` at runtime.
+OpenPI normally auto-loads a file named ``norm_stats.json``. After validating the
+fast result, either point the training config's ``norm_stats_path`` at the new
+file or explicitly promote it to ``norm_stats.json``. The fast script never
+replaces the official file automatically. If a custom data transform derives
+``state`` or ``actions`` from real image pixels, use the reference
+``toolkits/lerobot/calculate_norm_stats.py`` instead.
 
 A practical tip for stable training is to manually check the normalization statistics for very small standard deviations or narrow q99–q01 ranges. Increasing the standard deviation or widening the q99–q01 gap can help stabilize training, especially in two-stage pipelines that transition from SFT to online training.
 

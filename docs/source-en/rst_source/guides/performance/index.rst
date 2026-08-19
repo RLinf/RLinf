@@ -22,6 +22,8 @@ training efficiency becomes the bottleneck.
      - Dynamically schedule resources during training.
    * - :doc:`Profiling <../profile>`
      - System-level profiling of Ray worker processes.
+   * - :doc:`Policy Server Comparison <../policy_server_compare>`
+     - Diagnose OpenPI and RLinf policy server outputs, randomness, latency, and action jitter on identical observations.
    * - :doc:`5D Parallelism <../5D>`
      - Configure 5D parallelism for large models.
 
@@ -34,4 +36,5 @@ training efficiency becomes the bottleneck.
    Auto Placement <../auto_placement>
    Dynamic Scheduling <../dynamic_scheduling>
    Profiling <../profile>
+   Policy Server Comparison <../policy_server_compare>
    5D Parallelism <../5D>

@@ -118,18 +118,19 @@ RLinf 支持 LeRobot 格式的数据集，通过 ``config_name`` 字段指定。
 当你在新采集的 LeRobot 数据集上训练 OpenPI 时，需要在启动 SFT 之前先计算
 归一化统计。这对真实机器人采集的数据集尤其重要。
 
-RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
-``state`` 和 ``actions`` 计算 ``norm_stats``。使用方式如下：
+RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats_fast.py``，无需读取或解码
+图像和视频列，即可为 ``state`` 和 ``actions`` 计算全量归一化统计；最后一个不足
+完整 batch 的尾批也会纳入统计。使用方式如下：
 
 .. code:: bash
 
    # 本地数据集目录（包含 meta/info.json）：
-   python toolkits/lerobot/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats_fast.py \
        --config-name pi0_realworld \
        --repo-id /path/to/realworld_franka_bin_relocation
 
    # 或使用默认缓存在 ~/.cache/huggingface/lerobot 下的 Hugging Face repo id：
-   python toolkits/lerobot/calculate_norm_stats.py \
+   python toolkits/lerobot/calculate_norm_stats_fast.py \
        --config-name pi0_realworld \
        --repo-id realworld_franka_bin_relocation
 
@@ -138,9 +139,15 @@ RLinf 提供了 ``toolkits/lerobot/calculate_norm_stats.py``，用于为
    - ``--repo-id`` 可以是本地数据集路径，也可以是 LeRobot 的 Hugging Face repo id。
    - 可选：通过 ``HF_LEROBOT_HOME`` 修改 repo id 的缓存父目录（默认：``~/.cache/huggingface/lerobot``）。
    - ``config_name`` 必须与训练时使用的自定义 OpenPI dataconfig 一致。
+   - 默认输出为 ``<resolved_dataset_root>/norm_stats_fast.json``。除非显式设置
+     ``--overwrite``，否则脚本不会覆盖已有文件。
+   - 使用 ``--output-path /path/to/name.json`` 可以指定其他输出文件。
 
-该脚本会将生成的统计信息写入 ``<assets_dir>/<exp_name>/<repo_id>/norm_stats.json``。
-OpenPI 加载器会在运行时从 ``<model_path>/<repo_id>`` 读取归一化统计信息。
+OpenPI 默认自动加载名为 ``norm_stats.json`` 的文件。验证快速计算结果后，可在训练
+配置中将 ``norm_stats_path`` 指向新文件，或显式将其提升为 ``norm_stats.json``。
+快速脚本不会自动替换正式文件。如果自定义 data transform 通过真实图像像素计算
+``state`` 或 ``actions``，请改用参考实现
+``toolkits/lerobot/calculate_norm_stats.py``。
 
 另一个有助于稳定训练的实用建议是，手动检查归一化统计中是否存在非常小的标准差，
 或过窄的 q99-q01 区间。适当增大标准差，或拉宽 q99-q01 的范围，通常有助于提升

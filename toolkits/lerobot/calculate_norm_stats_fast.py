@@ -627,7 +627,7 @@ def main(
     target = (
         output_path.expanduser().resolve()
         if output_path is not None
-        else dataset_root / "norm_stats_fast.json"
+        else dataset_root / "norm_stats.json"
     )
     _check_output_available(target, overwrite)
 

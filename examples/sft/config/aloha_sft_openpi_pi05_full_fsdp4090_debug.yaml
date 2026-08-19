@@ -1,0 +1,81 @@
+# One-step structural debug for the JAX-aligned openpi_rlinf path only; do not
+# use this configuration for the formal 2xH100 run.
+defaults:
+  - model/pi0_5_rlinf@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    "actor,env,rollout": 0-0
+
+runner:
+  task_type: sft
+  resume_dir: null
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: aloha_sft_openpi_pi05_full_fsdp4090_debug
+    logger_backends: [tensorboard]
+  max_epochs: -1
+  max_steps: 1
+  val_check_interval: -1
+  save_interval: -1
+
+data:
+  train_data_paths: sandwich_merged
+  num_workers: 0
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  # Smoke-test precision only: one 48 GiB 4090 cannot hold fp32 parameters,
+  # gradients, and both Adam moments, while CPU offload exceeds this node's
+  # 100 GiB host-memory limit. The formal 2xH100 config keeps fp32 masters.
+  micro_batch_size: 1
+  global_batch_size: 1
+  seed: 0
+  model:
+    precision: bf16
+    model_path: /inspire/hdd/global_user/czxs253130583/fangchuan/data/model/lerobot/pi05_base
+    num_action_chunks: 20
+    action_dim: 14
+    is_lora: false
+    add_value_head: false
+    openpi:
+      config_name: pi05_aloha_robotwin
+      num_images_in_input: 3
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
+    openpi_data:
+      norm_stats_path: /inspire/hdd/global_user/czxs253130583/fangchuan/data/model/lerobot/pi05_base/aloha_sandwich_merged/norm_stats.json
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    lr_warmup_steps: 1000
+    total_training_steps: 30000
+    lr_scheduler: openpi_cosine
+    num_cycles: 0.5
+    min_lr: 2.5e-6
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    use_orig_params: true
+    enable_gradient_accumulation: false
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+    save_full_model_weights: true
+    mixed_precision: {param_dtype: bf16, reduce_dtype: fp32, buffer_dtype: fp32}

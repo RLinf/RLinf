@@ -21,6 +21,8 @@
      - 训练过程中动态调度资源。
    * - :doc:`Profiling <../profile>`
      - 对 Ray worker 进程进行系统级 profiling。
+   * - :doc:`Policy Server 对比 <../policy_server_compare>`
+     - 使用相同 observation 诊断 OpenPI 与 RLinf policy server 的输出、随机性、延迟和 action 抖动。
    * - :doc:`5D 并行 <../5D>`
      - 为大模型配置 5D 并行。
 
@@ -33,4 +35,5 @@
    自动 Placement <../auto_placement>
    动态调度 <../dynamic_scheduling>
    Profiling <../profile>
+   Policy Server 对比 <../policy_server_compare>
    5D 并行 <../5D>
