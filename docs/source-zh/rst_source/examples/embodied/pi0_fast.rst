@@ -100,7 +100,8 @@ GRPO 微调
 参考配置每次 update 采样 1,024 条轨迹（256 个并行环境、4 个 rollout epoch），
 group size 为 8，actor micro batch size 为 16，并且每 10 步在 256 个固定 episode
 上评测。训练采样温度为 0.3，评测使用 greedy decoding。actor 采用 all-linear
-LoRA，并在 FSDP ``NO_SHARD`` 下启用可选的 FP32-master AdamW。
+LoRA，并启用可选的 FP32-master AdamW。该优化器支持 FSDP1 的 ``NO_SHARD``
+和 ``FULL_SHARD``；参考配置使用 ``NO_SHARD``。
 
 一次 actor seed 1234 的开发阶段长训得到以下 ``success_once``。这些数据用于证明
 接入链路可以训练，不代表多 seed 的收敛保证：

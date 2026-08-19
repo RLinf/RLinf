@@ -103,7 +103,8 @@ The reference configuration samples 1,024 trajectories per update (256
 parallel environments, four rollout epochs), uses group size 8, actor micro
 batch size 16, and evaluates 256 fixed episodes every 10 steps. Sampling uses
 temperature 0.3; evaluation is greedy. The actor uses all-linear LoRA and the
-optional FP32-master AdamW path under FSDP ``NO_SHARD``.
+optional FP32-master AdamW path. This optimizer supports FSDP1 ``NO_SHARD`` and
+``FULL_SHARD``; the reference configuration uses ``NO_SHARD``.
 
 One seed-1234 development run reported the following ``success_once`` values.
 These measurements demonstrate the integration but are not a multi-seed

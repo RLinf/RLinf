@@ -20,6 +20,7 @@ import rlinf.models.embodiment.pi0_fast.pi0_fast_action_model as action_model_mo
 from rlinf.models.embodiment.pi0_fast.fast_replay import (
     _preprocess_images,
     build_action_sequence_metadata,
+    replay_action_logits,
     safe_detokenize_actions,
 )
 from rlinf.models.embodiment.pi0_fast.pi0_fast_action_model import (
@@ -145,6 +146,89 @@ class _FakeActionSequencePolicy:
         return torch.ones(tokens.shape[0], action_horizon, action_dim)
 
 
+class _ReplayLMHead(torch.nn.Module):
+    def forward(self, hidden_states):
+        return torch.cat([hidden_states + offset for offset in range(4)], dim=-1)
+
+
+class _ReplayLanguageModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        attention = type(
+            "FakeAttention",
+            (),
+            {"q_proj": torch.nn.Linear(1, 1, bias=False)},
+        )()
+        self.layers = [type("FakeLayer", (), {"self_attn": attention})()]
+
+
+class _ReplayPaliGemma(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.language_model = _ReplayLanguageModel()
+        self.lm_head = _ReplayLMHead()
+
+
+class _ReplayPaliGemmaWithExpert(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.paligemma = _ReplayPaliGemma()
+        self.forward_calls = 0
+
+    def forward(self, *, inputs_embeds, **kwargs):
+        del kwargs
+        self.forward_calls += 1
+        return (inputs_embeds[0], None), None
+
+
+class _TeacherForcingModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.paligemma_with_expert = _ReplayPaliGemmaWithExpert()
+
+    def embed_prefix_fast(
+        self,
+        images,
+        image_masks,
+        tokens,
+        token_masks,
+        *,
+        fast_action_tokens,
+        fast_action_masks,
+    ):
+        del images, image_masks
+        embeddings = tokens.float().unsqueeze(-1)
+        pad_masks = token_masks
+        num_fast_embs = 0
+        if fast_action_tokens is not None:
+            fast_embeddings = fast_action_tokens.float().unsqueeze(-1)
+            embeddings = torch.cat([embeddings, fast_embeddings], dim=1)
+            pad_masks = torch.cat([pad_masks, fast_action_masks], dim=1)
+            num_fast_embs = fast_action_tokens.shape[1]
+        attention_masks = pad_masks[:, None, :] & pad_masks[:, :, None]
+        return embeddings, pad_masks, attention_masks, None, num_fast_embs
+
+    def _prepare_attention_masks_4d(self, attention_masks, *, dtype):
+        del dtype
+        return attention_masks
+
+
+class _TeacherForcingPolicy(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.anchor = torch.nn.Parameter(torch.zeros(1))
+        self.model = _TeacherForcingModel()
+        self.config = type(
+            "FakeConfig",
+            (),
+            {
+                "image_features": {"observation.images.image": object()},
+                "image_resolution": (2, 2),
+            },
+        )()
+        self._paligemma_tokenizer = type("FakeTokenizer", (), {"bos_token_id": 9})()
+
+
 def test_native_action_sequence_mask_stops_after_first_end_marker():
     policy = _FakeActionSequencePolicy()
     tokens = torch.tensor(
@@ -163,6 +247,29 @@ def test_native_action_sequence_mask_stops_after_first_end_marker():
         [True, True, True, True, False, False],
         [True, True, True, True, True, True],
     ]
+
+
+def test_replay_action_logits_uses_one_teacher_forced_forward_without_shift():
+    policy = _TeacherForcingPolicy()
+    forward_inputs = {
+        "observation.images.image": torch.zeros(1, 3, 2, 2),
+        "observation.language.tokens": torch.tensor([[7, 8]]),
+        "observation.language.attention_mask": torch.ones(1, 2, dtype=torch.bool),
+    }
+    action_tokens = torch.tensor([[1, 2, 3]])
+    action_token_mask = torch.ones_like(action_tokens, dtype=torch.bool)
+
+    logits, final_hidden = replay_action_logits(
+        policy, forward_inputs, action_tokens, action_token_mask
+    )
+
+    expected_hidden = torch.tensor([[[9.0], [1.0], [2.0]]])
+    expected_logits = torch.cat(
+        [expected_hidden + offset for offset in range(4)], dim=-1
+    )
+    assert policy.model.paligemma_with_expert.forward_calls == 1
+    assert torch.equal(logits, expected_logits)
+    assert torch.equal(final_hidden, torch.tensor([[2.0]]))
 
 
 def test_native_action_sequence_mask_keeps_invalid_samples_for_failure_signal():

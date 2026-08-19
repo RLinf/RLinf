@@ -39,7 +39,10 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
-from rlinf.hybrid_engines.fsdp.optim import build_adamw
+from rlinf.hybrid_engines.fsdp.optim import (
+    build_adamw,
+    validate_fp32_master_adamw_config,
+)
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
@@ -566,16 +569,13 @@ class FSDPModelManager:
 
         use_fp32_master_params = self._cfg.optim.get("use_fp32_master_params", False)
         if use_fp32_master_params:
-            sharding_strategy = self._cfg.fsdp_config.get(
-                "sharding_strategy", "full_shard"
+            validate_fp32_master_adamw_config(
+                strategy=self._cfg.fsdp_config.get("strategy", "fsdp2"),
+                sharding_strategy=self._cfg.fsdp_config.get(
+                    "sharding_strategy", "full_shard"
+                ),
+                is_lora=self._cfg.model.get("is_lora", False),
             )
-            if sharding_strategy != "no_shard" or not self._cfg.model.get(
-                "is_lora", False
-            ):
-                raise ValueError(
-                    "use_fp32_master_params is currently supported only with "
-                    "fsdp_config.sharding_strategy=no_shard and model.is_lora=true."
-                )
             optimizer = build_adamw(
                 param_groups,
                 eps=adam_eps,
