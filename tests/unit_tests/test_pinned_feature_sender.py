@@ -107,7 +107,6 @@ class _FakeSender:
 
 
 class _FakePolicyOutputBuilder:
-    _build_policy_output = MultiStepRolloutWorker._build_policy_output
     _build_policy_output_with_transport = (
         MultiStepRolloutWorker._build_policy_output_with_transport
     )
@@ -118,12 +117,23 @@ class _FakePolicyOutputBuilder:
         self.version = 3
         self._pinned_feature_ipc_enabled = pinned_feature_ipc_enabled
         self.retained_forward_inputs = None
+        self.transport_events = []
+
+    def _build_policy_output(self, actions, result, *, final_obs=None):
+        self.transport_events.append("build")
+        return MultiStepRolloutWorker._build_policy_output(
+            self,
+            actions,
+            result,
+            final_obs=final_obs,
+        )
 
     @staticmethod
     def get_bootstrap_values(_final_obs):
         return None
 
     async def _retain_pinned_feature_block(self, forward_inputs) -> None:
+        self.transport_events.append("retain")
         self.retained_forward_inputs = forward_inputs
 
 
@@ -173,6 +183,7 @@ def test_policy_output_transport_wrapper_awaits_pinned_retention():
 
     assert isinstance(output, PolicyOutput)
     assert builder.retained_forward_inputs is output.forward_inputs
+    assert builder.transport_events == ["retain", "build"]
 
 
 def test_async_rollout_rejects_pinned_feature_transport(monkeypatch):
