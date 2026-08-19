@@ -2220,21 +2220,14 @@ install_cosmos3_deps() {
     uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
     python -m pip install -e "$cosmos_path" --no-deps --ignore-requires-python
 
-    # PYTHON_VERSION (script global, set by --python) drives the cp tag and the
-    # 3.11 typing backfill. Cosmos3 targets 3.12 natively; on 3.11 `from typing
-    # import override` (3.12+) fails, so we backfill it site-wide.
-    local py_major py_minor _py_patch
-    IFS='.' read -r py_major py_minor _py_patch <<< "${PYTHON_VERSION:-3.11.14}"
-    local py_tag="cp${py_major}${py_minor}"
-
-    # On Python < 3.12, backfill typing.override via sitecustomize.py so any
-    # python invocation in this venv (convert_model_to_dcp, SFT, eval) imports
-    # cosmos_framework cleanly -- no manual PYTHONPATH. No-op on 3.12+.
-    if [[ ${py_major} -lt 3 || ( ${py_major} -eq 3 && ${py_minor} -lt 12 ) ]]; then
-        local _sp
-        _sp=$(python -c 'import site;print(site.getsitepackages()[0])' 2>/dev/null || true)
-        if [ -n "$_sp" ] && [ ! -f "$_sp/sitecustomize.py" ]; then
-            cat > "$_sp/sitecustomize.py" <<'PYEOF'
+    # Cosmos3 targets Python 3.12; on 3.11 `from typing import override` fails
+    # (override is 3.12+) and cosmos_framework won't import (convert_model_to_dcp,
+    # SFT, eval all hit it). Backfill typing.override site-wide via sitecustomize.py
+    # so any python invocation in this venv imports cleanly -- no manual PYTHONPATH.
+    local _sp
+    _sp=$(python -c 'import site;print(site.getsitepackages()[0])' 2>/dev/null || true)
+    if [ -n "$_sp" ] && [ ! -f "$_sp/sitecustomize.py" ]; then
+        cat > "$_sp/sitecustomize.py" <<'PYEOF'
 # Backfill Python 3.12 typing names on 3.11 so cosmos_framework (which targets
 # the 3.12 docker image) imports cleanly. `override` is a no-op decorator.
 import typing as _t
@@ -2245,16 +2238,13 @@ if not hasattr(_t, "override"):
     except Exception:
         pass
 PYEOF
-            echo "[install.sh] Wrote py3.11 typing.override backfill to $_sp/sitecustomize.py" >&2
-        fi
+        echo "[install.sh] Wrote py3.11 typing.override backfill to $_sp/sitecustomize.py" >&2
     fi
 
     python -m pip install --no-deps 'nvidia-cudnn-cu13>=9.22'
 
-    # NATTEN v0.21.6 ships per-cp-tag wheels for torch2.11.0+cu13.0 (cp311 and
-    # cp312 both exist). Pick the one matching this venv's Python ABI tag.
     local natten_wheel natten_url
-    natten_wheel="natten-0.21.6+torch2110cu130-${py_tag}-${py_tag}-linux_x86_64.whl"
+    natten_wheel="natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl"
     natten_url="https://github.com/SHI-Labs/NATTEN/releases/download/v0.21.6/${natten_wheel}"
     python -m pip install --no-deps "${natten_url}" 2>/dev/null || \
     python -m pip install --no-deps "https://ghfast.top/${natten_url}" 2>/dev/null || \
