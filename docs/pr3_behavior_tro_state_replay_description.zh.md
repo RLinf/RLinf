@@ -265,7 +265,7 @@ Reward modes：
 
 ## Prompt 和 Observation Handling
 
-文件：`rlinf/envs/behavior/action_controls.py`
+文件：`rlinf/envs/behavior/behavior_env.py`
 
 关键符号：
 
@@ -333,7 +333,7 @@ Reward modes：
 
 ### Action controls
 
-文件：`rlinf/envs/behavior/behavior_env.py`
+文件：`rlinf/envs/behavior/action_controls.py`
 
 关键符号：
 
