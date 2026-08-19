@@ -501,19 +501,43 @@ Pi0.5 base weights. This converter requires an FP32 SFT checkpoint and preserves
 FP32 throughout the direct PT-to-PT conversion. It automatically selects Pi0's
 standard RMSNorm mapping or Pi0.5's adaptive RMSNorm mapping from the matching
 reference; no additional variant argument is required.
-Deployment precision is controlled by ``rollout.model.precision`` in the YAML:
-use ``fp32`` for pure FP32 weights, ``null`` for the existing OpenPI mixed-precision
-layout, or ``bf16`` for pure BF16 weights.
+Deployment precision is controlled by ``rollout.model.precision`` in the YAML.
+Its behavior depends on the backend:
+
+Deployment Precision by Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Backend
+     - ``fp32``
+     - ``bf16``
+     - ``null``
+   * - Legacy OpenPI
+     - Pure FP32
+     - Pure BF16
+     - Existing OpenPI mixed precision
+   * - OpenPI_RLinf
+     - Pure FP32
+     - Pure BF16
+     - Keeps the BF16 dtype created by ``Pi0Config``; not a separate mode
+
+For legacy OpenPI PyTorch deployment, use
+``openpi_rlinf_to_openpi_pytorch``. Set ``INPUT_CHECKPOINT`` to the RLinf SFT
+checkpoint, set ``OPENPI_PYTORCH_REFERENCE`` to the original OpenPI PyTorch Pi0
+or Pi0.5 base model matching the SFT variant, and use ``OUTPUT_DIRECTORY`` for
+the converted output.
 
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode openpi_rlinf_to_openpi_pytorch \
-     --input-model INPUT_CHECKPOINT \
-     --output-model OUTPUT_DIRECTORY \
+     --mode            openpi_rlinf_to_openpi_pytorch \
+     --input-model     INPUT_CHECKPOINT \
      --reference-model OPENPI_PYTORCH_REFERENCE \
-     --output-format pt \
-     --dtype fp32
+     --output-model    OUTPUT_DIRECTORY \
+     --output-format   pt \
+     --dtype           fp32
 
 The legacy output directory is:
 
@@ -588,9 +612,8 @@ Reuse the Ray cluster from collection, or restart it with the same environment
 variables. Launch the policy through the :doc:`real-world evaluation guide
 <../../evaluations/guides/realworld>` with the configuration matching the model
 variant and deployment format.
-For deployment, set ``rollout.model.precision`` in the YAML to select the model
-precision: use ``fp32`` for pure FP32 precision, ``null`` for OpenPI's default
-mixed precision, or ``bf16`` for pure BF16 precision.
+Set ``rollout.model.precision`` according to the backend-specific table above.
+For OpenPI_RLinf, use ``fp32`` or ``bf16`` when an explicit precision is desired.
 
 .. code-block:: bash
 

@@ -481,21 +481,44 @@ Checkpoint 保存到
 checkpoint 为 FP32，并在 PT 到 PT 的直接转换中始终保持 FP32。程序会根据
 匹配的 reference 自动选择 π0 的标准 RMSNorm 映射或 π0.5 的自适应 RMSNorm
 映射，不需要额外传入 variant 参数。
-部署精度可通过 YAML 中的 ``rollout.model.precision`` 控制：设为 ``fp32``
-时使用纯 FP32 权重，设为 ``null`` 时保留 OpenPI 原有的混合精度布局，设为
-``bf16`` 时使用纯 BF16 权重。
+部署精度可通过 YAML 中的 ``rollout.model.precision`` 控制，其行为取决于
+所使用的 backend：
+
+不同 Backend 的部署精度
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Backend
+     - ``fp32``
+     - ``bf16``
+     - ``null``
+   * - Legacy OpenPI
+     - 纯 FP32
+     - 纯 BF16
+     - OpenPI 原有的混合精度
+   * - OpenPI_RLinf
+     - 纯 FP32
+     - 纯 BF16
+     - 保持 ``Pi0Config`` 创建时的 BF16；不是独立的精度模式
+
+OpenPI PyTorch 部署使用 ``openpi_rlinf_to_openpi_pytorch``。将
+``INPUT_CHECKPOINT`` 设置为 RLinf SFT checkpoint，将
+``OPENPI_PYTORCH_REFERENCE`` 设置为与 SFT variant 匹配的原始 OpenPI
+PyTorch π0 或 π0.5 base model，并通过 ``OUTPUT_DIRECTORY`` 指定输出目录。
 
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode openpi_rlinf_to_openpi_pytorch \
-     --input-model INPUT_CHECKPOINT \
-     --output-model OUTPUT_DIRECTORY \
+     --mode            openpi_rlinf_to_openpi_pytorch \
+     --input-model     INPUT_CHECKPOINT \
      --reference-model OPENPI_PYTORCH_REFERENCE \
-     --output-format pt \
-     --dtype fp32
+     --output-model    OUTPUT_DIRECTORY \
+     --output-format   pt \
+     --dtype           fp32
 
-Legacy 输出目录为：
+OpenPI PyTorch 输出目录为：
 
 .. code-block:: text
 
@@ -566,9 +589,8 @@ OpenPI_RLinf 输出目录为：
 可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。策略启动由
 :doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用与
 模型 variant 和部署格式匹配的配置。
-部署时，可在 YAML 中通过 ``rollout.model.precision`` 选择模型精度：设置为
-``fp32`` 时使用纯 FP32 精度，设置为 ``null`` 时使用 OpenPI 默认的混合精度，
-设置为 ``bf16`` 时使用纯 BF16 精度。
+请根据上表中对应 backend 的规则设置 ``rollout.model.precision``。
+OpenPI_RLinf 如需显式指定精度，请使用 ``fp32`` 或 ``bf16``。
 
 .. code-block:: bash
 
