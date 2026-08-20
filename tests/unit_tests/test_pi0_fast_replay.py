@@ -808,3 +808,68 @@ def test_eval_without_logprobs_uses_native_policy_path():
         "prev_values": None,
         "forward_inputs": {},
     }
+
+
+def test_eval_decode_failure_falls_back_to_safe_native_generation(monkeypatch):
+    policy = _FakeNativePolicy()
+
+    def fail_native_decode(batch):
+        policy.predict_calls += 1
+        raise AssertionError("Token sequence does not start with ['Action', ':']")
+
+    monkeypatch.setattr(policy, "predict_action_chunk", fail_native_decode)
+    model = PI0FastForRLActionPrediction(
+        policy,
+        action_dim=7,
+        num_action_chunks=10,
+        max_action_tokens=5,
+    )
+    captured = {}
+
+    def safe_generate(
+        batch,
+        *,
+        temperature,
+        do_sample,
+        max_action_tokens,
+        compute_logprobs,
+    ):
+        captured.update(
+            {
+                "batch_size": batch["observation.state"].shape[0],
+                "temperature": temperature,
+                "do_sample": do_sample,
+                "max_action_tokens": max_action_tokens,
+                "compute_logprobs": compute_logprobs,
+            }
+        )
+        return {
+            "actions": torch.ones(2, 10, 7),
+            "decode_valid": torch.tensor([True, False]),
+        }
+
+    monkeypatch.setattr(model, "_generate_action_tokens_with_logprobs", safe_generate)
+    env_obs = {
+        "main_images": torch.zeros(2, 64, 64, 3),
+        "wrist_images": torch.zeros(2, 64, 64, 3),
+        "states": torch.zeros(2, 8),
+        "task_descriptions": ["task a", "task b"],
+    }
+
+    actions, result = model.predict_action_batch(env_obs, mode="eval")
+
+    assert policy.predict_calls == 1
+    assert torch.equal(actions[0], torch.ones(10, 7))
+    assert torch.count_nonzero(actions[1]) == 0
+    assert captured == {
+        "batch_size": 2,
+        "temperature": 0.0,
+        "do_sample": False,
+        "max_action_tokens": 5,
+        "compute_logprobs": False,
+    }
+    assert result == {
+        "prev_logprobs": None,
+        "prev_values": None,
+        "forward_inputs": {},
+    }

@@ -142,7 +142,7 @@ def test_pi0_fast_example_configs_compose_with_model_defaults():
 
     assert train_cfg.algorithm.adv_type == "grpo"
     assert train_cfg.algorithm.logprob_type == "sequence_token_level"
-    assert train_cfg.algorithm.loss_agg_func == "seq-mean-token-mean"
+    assert train_cfg.algorithm.loss_agg_func == "token-mean"
     assert train_cfg.env.eval.seed == 0
     assert train_cfg.rollout.sampling_params.temperature_train == 0.3
     assert train_cfg.rollout.sampling_params.temperature_eval == 0.0
