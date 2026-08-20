@@ -48,8 +48,6 @@ def _detect_data_type(data_paths: str) -> str:
 
 def build_cosmos3_sft_dataloader(
     cfg,
-    world_size: int,
-    rank: int,
     data_paths,
     eval_dataset: bool = False,
 ):
@@ -114,13 +112,11 @@ def build_cosmos3_sft_dataloader(
     logger.info(
         "Cosmos3 SFT dataloader (cosmos PackingDataLoader): "
         "data_type='%s' -> experiment='%s' dataset=%s "
-        "len=%s max_samples_per_batch=%s world=%d rank=%d",
+        "len=%s max_samples_per_batch=%s",
         data_type,
         experiment_name,
         data_paths,
         num_batches,
         max_samples_per_batch,
-        world_size,
-        rank,
     )
     return loader, {"num_samples": num_batches if num_batches > 0 else 1}

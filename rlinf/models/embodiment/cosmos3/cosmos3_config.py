@@ -40,24 +40,16 @@ logger = get_logger()
 
 def validate_cosmos3_sft_model_cfg(model_cfg: DictConfig) -> DictConfig:
     """Validate a Cosmos3 SFT cfg."""
-    from rlinf.data.datasets.cosmos3.dataloader import _VALID_DATA_TYPES
 
     with open_dict(model_cfg):
         model_path = model_cfg.get("model_path", None)
         assert model_path, "Cosmos3 SFT requires actor.model.model_path"
 
-        data_type = model_cfg.setdefault("data_type", "libero_10")
-        assert data_type in _VALID_DATA_TYPES, (
-            f"Invalid data_type='{data_type}'. "
-            f"Valid: {sorted(_VALID_DATA_TYPES)}"
-        )
-
     logger.info(
-        "Cosmos3 SFT model cfg validated: model_path=%s data_type=%s "
+        "Cosmos3 SFT model cfg validated: model_path=%s "
         "ema_enabled=%s disable_cosmos_parallelism=%s (keys_to_select=%d, "
         "lr_multipliers=%d, skip=%d)",
         model_path,
-        data_type,
         model_cfg.get("ema_enabled"),
         model_cfg.get("disable_cosmos_parallelism"),
         len(model_cfg.get("keys_to_select", [])),

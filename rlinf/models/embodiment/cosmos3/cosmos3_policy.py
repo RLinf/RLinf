@@ -59,7 +59,7 @@ class Cosmos3Policy(nn.Module, BasePolicy):
     def set_global_step(self, step: int) -> None:
         """Called once per global (optimizer) step by ``FSDPSftWorker``."""
         step = int(step)
-        if self._ema_enabled and step > self._global_step:
+        if self._ema_enabled and step == self._global_step + 1:
             self._update_ema(self._global_step)
         self._global_step = step
 

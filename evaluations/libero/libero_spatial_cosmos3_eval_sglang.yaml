@@ -86,6 +86,8 @@ rollout:
   model:
     model_type: "cosmos3"
     precision: bf16
+    raw_action_dim: 10  # model action representation: 3 trans + 6 rot6d + 1 gripper
+    action_dim: 7  # env action dim (libero: 3 trans + 3 axis-angle + 1 gripper)
     model_path: path/to/Cosmos3-Nano
     # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/data/generator/action/normalizer_stats/libero_native_frame_wise_relative_rot6d.json
     action_stats_path: path/to/libero_native_frame_wise_relative_rot6d.json
@@ -100,4 +102,3 @@ rollout:
     action_view_point: "ego_view"
     num_frames: 17
     size: "320x192"
-    raw_action_dim: 10

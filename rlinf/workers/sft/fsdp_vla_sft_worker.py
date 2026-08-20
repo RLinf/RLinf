@@ -68,7 +68,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             )
 
             return build_cosmos3_sft_dataloader(
-                self.cfg, self._world_size, self._rank, data_paths, eval_dataset
+                self.cfg, data_paths, eval_dataset
             )
         elif model_type == SupportedModel.EVO1:
             from rlinf.models.embodiment.evo1.sft_builder import (

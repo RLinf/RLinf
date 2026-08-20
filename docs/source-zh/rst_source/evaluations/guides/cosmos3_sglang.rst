@@ -6,7 +6,9 @@ Cosmos3 SGLang 评测
 工作原理
 ----------------------------------------
 
-每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成同步 HTTP 端点 ``POST /v1/actions/generations``。eval driver 拉起 server group 并把各 server URL 下发给对应 rollout worker；worker 发送批量观测，收到归一化的 rot6d 动作后，由 ``sglang_adapter`` 去归一化并转成环境可执行的 7 维 axis-angle，送入 LIBERO。
+每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成同步 HTTP 端点 ``POST /v1/actions/generations``。
+
+eval driver 拉起 server group 并把各 server URL 下发给对应 rollout worker；worker 发送批量观测，收到归一化的 rot6d 动作后，由 ``sglang_adapter`` 去归一化并转成环境可执行的 7 维 axis-angle，送入 LIBERO。
 
 .. code:: text
 
@@ -28,7 +30,6 @@ Cosmos3 SGLang 评测
 
    bash requirements/install.sh embodied --env libero --model cosmos3
    source .venv/bin/activate
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
 
 Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang：
 
@@ -62,16 +63,6 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang：
      eval:
        total_num_envs: 128   # 按 GPU 数 / 显存调整（示例 8 卡用 128）
 
-以及 shell 环境变量：
-
-.. code-block:: bash
-
-   export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
-   export MUJOCO_GL=egl             # 有 GPU 渲染时；纯 CPU 用 osmesa
-   export PYOPENGL_PLATFORM=egl
-   export NO_PROXY=127.0.0.1,localhost   # 避免本地 HTTP 请求走 proxy
-   export HF_HUB_OFFLINE=1           # 离线环境
-
 改好后运行：
 
 .. code-block:: bash
@@ -79,10 +70,6 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang：
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
 **这条命令做什么：** 每张 GPU 起一个 Cosmos3 SGLang server，起 LIBERO 环境跑评测，逐 episode 打印成功与否，最后汇总成功率。日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
-
-.. note::
-
-   ``rollout.sglang.server.model_path`` 默认引用 ``${rollout.model.model_path}``，所以通常只改前者、后者跟随；本地盘场景为避免解析歧义，建议两处都显式写。
 
 关键配置
 ----------------------------------------
