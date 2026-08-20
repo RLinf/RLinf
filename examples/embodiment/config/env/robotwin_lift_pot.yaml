@@ -65,6 +65,6 @@ task_config:
   pcd_down_sample_num: 1024
   pcd_crop: true
   save_path: ./data
-  clear_cache_freq: 1
+  clear_cache_freq: 8
   collect_data: true
   eval_video_log: true
