@@ -50,6 +50,7 @@ Cosmos3's data transforms and normalization stats depend on cosmos-framework; se
 
 .. code-block:: bash
 
+   # git clone git@github.com:NVIDIA/cosmos-framework.git
    export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
 
 Offline Cache: Qwen3-VL-8B-Instruct and Wan2.2 Models

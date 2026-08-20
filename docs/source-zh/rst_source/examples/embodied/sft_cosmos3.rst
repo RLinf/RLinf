@@ -50,6 +50,7 @@ Cosmos3 的数据变换与归一化统计依赖 cosmos-framework，训练前设�
 
 .. code-block:: bash
 
+   # git clone git@github.com:NVIDIA/cosmos-framework.git
    export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
 
 离线缓存 Qwen3-VL-8B-Instruct 和 Wan2.2 模型
