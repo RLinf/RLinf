@@ -61,6 +61,9 @@ def build_official_openpi_sft_dataloader(
     if model_type == SupportedModel.OPENPI_RLINF:
         config = dataclasses.replace(
             config,
+            model=dataclasses.replace(
+                config.model, action_horizon=int(model_cfg.num_action_chunks)
+            ),
             num_workers=int(
                 OmegaConf.select(cfg, "data.num_workers", default=config.num_workers)
             ),

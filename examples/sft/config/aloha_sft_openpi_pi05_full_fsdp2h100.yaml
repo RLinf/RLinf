@@ -46,7 +46,7 @@ actor:
   group_name: ActorGroup
   training_backend: fsdp
   # Start from the maintained two-GPU openpi_rlinf batch size. Increase only
-  # after measuring H100 memory with the 50-step action horizon.
+  # after measuring H100 memory with the 20-step action horizon.
   micro_batch_size: 16
   global_batch_size: 32
   seed: 0
@@ -56,8 +56,9 @@ actor:
     # for forward/backward computation.
     precision: fp32
     model_path: ${oc.env:PI05_MODEL_PATH}
-    # pi05_aloha_robotwin uses a 50-step action horizon and pads 14-D ALOHA
-    # actions to the model's 32-D action space.
+    # Override pi05_aloha_robotwin's default 50-step horizon with 20 steps. The
+    # official data loader uses this value too and pads 14-D ALOHA actions to
+    # the model's 32-D action space.
     num_action_chunks: 20
     action_dim: 14
     is_lora: false
