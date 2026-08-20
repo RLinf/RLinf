@@ -81,6 +81,136 @@ def _preload_numba_llvmlite() -> None:
             pass
 
 
+def _extract_obs_image(raw_obs):
+    state = None
+    for sensor_data in raw_obs.values():
+        assert isinstance(sensor_data, dict)
+        for k, v in sensor_data.items():
+            if "left_realsense_link:Camera:0" in k:
+                left_image = convert_uint8_rgb(v["rgb"])
+            elif "right_realsense_link:Camera:0" in k:
+                right_image = convert_uint8_rgb(v["rgb"])
+            elif "zed_link:Camera:0" in k:
+                zed_image = convert_uint8_rgb(v["rgb"])
+            elif "proprio" in k:
+                state = v
+    assert state is not None, (
+        "state is not found in the observation which is required for the behavior training."
+    )
+
+    return {
+        "main_images": zed_image,  # [H, W, C]
+        "wrist_images": torch.stack(
+            [left_image, right_image], axis=0
+        ),  # [N_IMG, H, W, C]
+        "state": state,
+    }
+
+
+def _parse_trunk_proprio_randomization(cfg):
+    random_cfg = cfg.get("trunk_proprio_randomization", None)
+    if random_cfg is None or not random_cfg.get("enabled", False):
+        return None
+
+    indices = list(random_cfg.get("indices", [236, 237, 238, 239]))
+    low = list(random_cfg.get("low", [0.0, -0.45, 0.0, 0.0]))
+    high = list(random_cfg.get("high", [0.7, 0.35, 0.18, 0.0]))
+    fixed_values = list(random_cfg.get("fixed_values", [None, None, None, 0.0]))
+    if not (len(indices) == len(low) == len(high) == len(fixed_values)):
+        raise ValueError(
+            "env.trunk_proprio_randomization indices, low, high, and "
+            "fixed_values must have the same length."
+        )
+    return {
+        "indices": [int(index) for index in indices],
+        "low": [float(value) for value in low],
+        "high": [float(value) for value in high],
+        "fixed_values": [
+            None if value is None else float(value) for value in fixed_values
+        ],
+    }
+
+
+def _clone_obs(obs):
+    cloned = {}
+    for key, value in obs.items():
+        if torch.is_tensor(value):
+            cloned[key] = value.clone()
+        elif isinstance(value, list):
+            cloned[key] = list(value)
+        else:
+            cloned[key] = copy.deepcopy(value)
+    return cloned
+
+
+def _merge_obs_rows(base_obs, update_obs, env_indices):
+    merged_obs = _clone_obs(base_obs)
+    for key, update_value in update_obs.items():
+        if key not in merged_obs:
+            merged_obs[key] = update_value
+            continue
+        base_value = merged_obs[key]
+        if torch.is_tensor(base_value):
+            index = torch.as_tensor(
+                env_indices, device=base_value.device, dtype=torch.long
+            )
+            merged_obs[key][index] = update_value.to(base_value.device)
+        elif isinstance(base_value, list):
+            for local_idx, env_idx in enumerate(env_indices):
+                base_value[env_idx] = update_value[local_idx]
+        else:
+            merged_obs[key] = update_value
+    return merged_obs
+
+
+def _merge_info_rows(base_infos, update_infos, env_indices, num_envs: int):
+    merged_infos = copy.deepcopy(base_infos)
+
+    def merge_value(base_value, update_value):
+        if isinstance(update_value, dict):
+            if not isinstance(base_value, dict):
+                base_value = {}
+            for key, child_update in update_value.items():
+                base_value[key] = merge_value(base_value.get(key), child_update)
+            return base_value
+
+        if torch.is_tensor(update_value):
+            if not torch.is_tensor(base_value):
+                base_shape = (num_envs, *update_value.shape[1:])
+                base_value = torch.zeros(
+                    base_shape, dtype=update_value.dtype, device=update_value.device
+                )
+            index = torch.as_tensor(
+                env_indices, device=base_value.device, dtype=torch.long
+            )
+            base_value[index] = update_value.to(base_value.device)
+            return base_value
+
+        return update_value
+
+    for key, value in update_infos.items():
+        merged_infos[key] = merge_value(merged_infos.get(key), value)
+    return merged_infos
+
+
+def _reset_payload_with_instance_ids(
+    reset_mask: list[bool],
+    instance_ids: list[int] | None,
+    full_reset: bool = False,
+):
+    if instance_ids is None:
+        return reset_mask
+
+    instance_iter = iter(instance_ids)
+    payload = []
+    for should_reset in reset_mask:
+        item = {"reset": bool(should_reset), "full_reset": full_reset}
+        if should_reset:
+            item["instance_id"] = next(instance_iter)
+        payload.append(item)
+    return payload
+
+
 @ray.remote(num_cpus=1)
 class BehaviorProcess:
     def __init__(
@@ -976,7 +1106,7 @@ class BehaviorEnv(gym.Env):
         self._ordered_reset_epoch = 0
         self._ordered_reset_instance_ids = None
         self._stage_prompt_lists: list[list[str] | None] = [None] * self.num_envs
-        self.trunk_proprio_randomization = self._parse_trunk_proprio_randomization(cfg)
+        self.trunk_proprio_randomization = _parse_trunk_proprio_randomization(cfg)
         self._trunk_proprio_random_values = None
         self._trunk_proprio_rng = torch.Generator()
         self._trunk_proprio_rng.manual_seed(self.seed + 100003)
@@ -1037,7 +1167,7 @@ class BehaviorEnv(gym.Env):
         if not reset_indices:
             return [], [], []
         instance_ids = self._ordered_reset_ids_for_indices(reset_indices)
-        payload = self._reset_payload_with_instance_ids(reset_mask, instance_ids)
+        payload = _reset_payload_with_instance_ids(reset_mask, instance_ids)
         self._ensure_pool()
         s = self.pool.num_env_shard
         payload_shards = [
@@ -1053,55 +1183,6 @@ class BehaviorEnv(gym.Env):
         raw_obs = [all_raw_obs[i] for i in reset_indices]
         raw_infos = [all_infos[i] for i in reset_indices]
         return reset_indices, raw_obs, raw_infos
-
-    def _extract_obs_image(self, raw_obs):
-        state = None
-        for sensor_data in raw_obs.values():
-            assert isinstance(sensor_data, dict)
-            for k, v in sensor_data.items():
-                if "left_realsense_link:Camera:0" in k:
-                    left_image = convert_uint8_rgb(v["rgb"])
-                elif "right_realsense_link:Camera:0" in k:
-                    right_image = convert_uint8_rgb(v["rgb"])
-                elif "zed_link:Camera:0" in k:
-                    zed_image = convert_uint8_rgb(v["rgb"])
-                elif "proprio" in k:
-                    state = v
-        assert state is not None, (
-            "state is not found in the observation which is required for the behavior training."
-        )
-
-        return {
-            "main_images": zed_image,  # [H, W, C]
-            "wrist_images": torch.stack(
-                [left_image, right_image], axis=0
-            ),  # [N_IMG, H, W, C]
-            "state": state,
-        }
-
-    @staticmethod
-    def _parse_trunk_proprio_randomization(cfg):
-        random_cfg = cfg.get("trunk_proprio_randomization", None)
-        if random_cfg is None or not random_cfg.get("enabled", False):
-            return None
-
-        indices = list(random_cfg.get("indices", [236, 237, 238, 239]))
-        low = list(random_cfg.get("low", [0.0, -0.45, 0.0, 0.0]))
-        high = list(random_cfg.get("high", [0.7, 0.35, 0.18, 0.0]))
-        fixed_values = list(random_cfg.get("fixed_values", [None, None, None, 0.0]))
-        if not (len(indices) == len(low) == len(high) == len(fixed_values)):
-            raise ValueError(
-                "env.trunk_proprio_randomization indices, low, high, and "
-                "fixed_values must have the same length."
-            )
-        return {
-            "indices": [int(index) for index in indices],
-            "low": [float(value) for value in low],
-            "high": [float(value) for value in high],
-            "fixed_values": [
-                None if value is None else float(value) for value in fixed_values
-            ],
-        }
 
     def _resample_trunk_proprio_randomization(self, env_indices=None) -> None:
         if self.trunk_proprio_randomization is None:
@@ -1228,7 +1309,7 @@ class BehaviorEnv(gym.Env):
     def _wrap_obs(self, obs_list, infos=None, env_indices=None):
         extracted_obs_list = []
         for obs in obs_list:
-            extracted_obs = self._extract_obs_image(obs)
+            extracted_obs = _extract_obs_image(obs)
             extracted_obs_list.append(extracted_obs)
 
         states = torch.stack(
@@ -1524,70 +1605,9 @@ class BehaviorEnv(gym.Env):
             if isinstance(value, dict)
         )
 
-    @staticmethod
-    def _clone_obs(obs):
-        cloned = {}
-        for key, value in obs.items():
-            if torch.is_tensor(value):
-                cloned[key] = value.clone()
-            elif isinstance(value, list):
-                cloned[key] = list(value)
-            else:
-                cloned[key] = copy.deepcopy(value)
-        return cloned
-
-    @staticmethod
-    def _merge_obs_rows(base_obs, update_obs, env_indices):
-        merged_obs = BehaviorEnv._clone_obs(base_obs)
-        for key, update_value in update_obs.items():
-            if key not in merged_obs:
-                merged_obs[key] = update_value
-                continue
-            base_value = merged_obs[key]
-            if torch.is_tensor(base_value):
-                index = torch.as_tensor(
-                    env_indices, device=base_value.device, dtype=torch.long
-                )
-                merged_obs[key][index] = update_value.to(base_value.device)
-            elif isinstance(base_value, list):
-                for local_idx, env_idx in enumerate(env_indices):
-                    base_value[env_idx] = update_value[local_idx]
-            else:
-                merged_obs[key] = update_value
-        return merged_obs
-
-    def _merge_info_rows(self, base_infos, update_infos, env_indices):
-        merged_infos = copy.deepcopy(base_infos)
-
-        def merge_value(base_value, update_value):
-            if isinstance(update_value, dict):
-                if not isinstance(base_value, dict):
-                    base_value = {}
-                for key, child_update in update_value.items():
-                    base_value[key] = merge_value(base_value.get(key), child_update)
-                return base_value
-
-            if torch.is_tensor(update_value):
-                if not torch.is_tensor(base_value):
-                    base_shape = (self.num_envs, *update_value.shape[1:])
-                    base_value = torch.zeros(
-                        base_shape, dtype=update_value.dtype, device=update_value.device
-                    )
-                index = torch.as_tensor(
-                    env_indices, device=base_value.device, dtype=torch.long
-                )
-                base_value[index] = update_value.to(base_value.device)
-                return base_value
-
-            return update_value
-
-        for key, value in update_infos.items():
-            merged_infos[key] = merge_value(merged_infos.get(key), value)
-        return merged_infos
-
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         reset_indices = dones.nonzero(as_tuple=False).flatten().tolist()
-        final_obs = self._clone_obs(extracted_obs)
+        final_obs = _clone_obs(extracted_obs)
         final_info = copy.deepcopy(infos)
 
         reset_indices, reset_raw_obs, reset_raw_infos = self.env_reset_partial(
@@ -1600,9 +1620,7 @@ class BehaviorEnv(gym.Env):
                 reset_raw_infos,
                 env_indices=reset_indices,
             )
-            extracted_obs = self._merge_obs_rows(
-                extracted_obs, reset_obs, reset_indices
-            )
+            extracted_obs = _merge_obs_rows(extracted_obs, reset_obs, reset_indices)
 
             self._reset_metrics(reset_indices)
             reset_rewards = torch.zeros(
@@ -1611,7 +1629,9 @@ class BehaviorEnv(gym.Env):
             reset_infos = self._record_metrics(
                 reset_rewards, reset_raw_infos, env_indices=reset_indices
             )
-            infos = self._merge_info_rows(infos, reset_infos, reset_indices)
+            infos = _merge_info_rows(
+                infos, reset_infos, reset_indices, self.num_envs
+            )
 
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
@@ -1654,24 +1674,6 @@ class BehaviorEnv(gym.Env):
             ordered_ids[(base_index + int(env_idx)) % len(ordered_ids)]
             for env_idx in reset_indices
         ]
-
-    @staticmethod
-    def _reset_payload_with_instance_ids(
-        reset_mask: list[bool],
-        instance_ids: list[int] | None,
-        full_reset: bool = False,
-    ):
-        if instance_ids is None:
-            return reset_mask
-
-        instance_iter = iter(instance_ids)
-        payload = []
-        for should_reset in reset_mask:
-            item = {"reset": bool(should_reset), "full_reset": full_reset}
-            if should_reset:
-                item["instance_id"] = next(instance_iter)
-            payload.append(item)
-        return payload
 
     def dump_replay_tro_states(self, payload: dict) -> list[dict]:
         """Dispatch ``dump_replay_tro_states`` to every Ray actor in the pool."""
