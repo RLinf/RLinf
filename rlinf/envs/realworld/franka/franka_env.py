@@ -45,6 +45,7 @@ from .utils import (
 @dataclass
 class FrankaRobotConfig:
     robot_ip: Optional[str] = None
+    embodied_runtime_robot_id: Optional[str] = None
     camera_serials: Optional[list[str]] = None
     camera_names: Optional[dict[str, str]] = None
     camera_type: Optional[str] = None
@@ -233,6 +234,10 @@ class FrankaEnv(gym.Env):
         )
         if self.config.robot_ip is None:
             self.config.robot_ip = self.hardware_info.config.robot_ip
+        if self.config.embodied_runtime_robot_id is None:
+            self.config.embodied_runtime_robot_id = getattr(
+                self.hardware_info.config, "embodied_runtime_robot_id", None
+            )
         if self.config.camera_serials is None:
             self.config.camera_serials = self.hardware_info.config.camera_serials
         if self.config.camera_type is None:
@@ -268,6 +273,7 @@ class FrankaEnv(gym.Env):
             end_effector_type=self.config.end_effector_type,
             end_effector_config=self.config.end_effector_config,
             gripper_connection=self.config.gripper_connection,
+            embodied_runtime_robot_id=self.config.embodied_runtime_robot_id,
         )
 
     def _setup_reward_worker(self):
