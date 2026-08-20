@@ -133,11 +133,11 @@
 
 .. important::
 
-   资产 **必须** 放置在 ``rlinf/envs/maniskill/assets`` 目录下——环境会从该路径加载资产。请将其复制到环境包目录：
+   资产 **必须** 放置在 ``rlinf/envs/sim/maniskill/assets`` 目录下——环境会从该路径加载资产。请将其复制到环境包目录：
 
 .. code:: bash
 
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/maniskill/assets
+   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
 
 下载模型
 ----------------------------------------

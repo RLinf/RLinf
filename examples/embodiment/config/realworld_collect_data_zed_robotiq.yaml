@@ -45,7 +45,7 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    teleop: spacemouse
     override_cfg:
       target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       success_hold_steps: 1

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Interactive smoke test for :class:`FrankyController`. Type ``help`` at
+"""Interactive smoke test for :class:`FrankyArm`. Type ``help`` at
 the prompt for the command list. Set ``FRANKA_ROBOT_IP`` (and optionally
 ``FRANKA_GRIPPER_TYPE`` / ``FRANKA_GRIPPER_PORT``) before running.
 
@@ -37,9 +37,7 @@ if not ray.is_initialized():
 import numpy as np  # noqa: E402
 from scipy.spatial.transform import Rotation as R  # noqa: E402
 
-from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
-    FrankyController,
-)
+from rlinf.robotics.parts.arms.franky import FrankyArm  # noqa: E402
 
 # Franka Emika Panda factory "ready" pose.
 HOME_JOINTS = [0.0, -0.785, 0.0, -2.356, 0.0, 1.571, 0.785]
@@ -60,10 +58,11 @@ def main() -> None:
     gripper_type = os.environ.get("FRANKA_GRIPPER_TYPE", "robotiq")
     gripper_connection = os.environ.get("FRANKA_GRIPPER_PORT")
 
-    controller = FrankyController.launch_controller(
+    controller = FrankyArm.spawn(
         robot_ip=robot_ip,
         gripper_type=gripper_type,
         gripper_connection=gripper_connection,
+        node_rank=0,
     )
 
     # Wait for the controller to publish a valid state.

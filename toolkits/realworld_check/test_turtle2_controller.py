@@ -14,14 +14,11 @@
 
 import time
 
-from rlinf.envs.realworld.xsquare.turtle2_smooth_controller import (
-    Turtle2SmoothController,
-)
+from rlinf.robotics.parts.arms.turtle2 import Turtle2Connection
 
 
 def main():
-    controller = Turtle2SmoothController.launch_controller(freq=50)
-    # controller = Turtle2SmoothController()
+    controller = Turtle2Connection.spawn(freq=50, node_rank=0)
 
     while True:
         try:

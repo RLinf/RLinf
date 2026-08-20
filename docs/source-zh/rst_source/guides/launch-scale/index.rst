@@ -17,6 +17,8 @@
      - 在云端与边缘之间拆分推理与训练。
    * - :doc:`真机机器人 <../realworld_robot>`
      - 在真实机器人硬件上运行 RL。
+   * - :doc:`遥操作 <../teleoperation>`
+     - 让操作者在 rollout 中途从策略手里接管。
 
 .. toctree::
    :hidden:
@@ -25,3 +27,4 @@
    异构集群 <../hetero>
    云边协同 <../cloud_edge>
    真机机器人 <../realworld_robot>
+   遥操作 <../teleoperation>

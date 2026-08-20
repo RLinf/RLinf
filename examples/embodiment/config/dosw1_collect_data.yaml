@@ -46,7 +46,7 @@ env:
   eval:
     keyboard_intervention_wrapper: True
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     ignore_terminations: False
     auto_reset: False
     override_cfg:

@@ -111,12 +111,32 @@ env:
   eval:
     rollout_epoch: 1
     total_num_envs: 1
+    no_gripper: False
+    # The same hand as env.train: the policy's action is arm(6) + hand(6) and
+    # its state includes hand_position(6), so evaluating on a gripper would not
+    # fit the model this run trains.
+    override_cfg:
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      end_effector_type: "ruiyan_hand"
+      end_effector_config:
+        port: "/dev/ttyUSB0"
+        baudrate: 460800
+        motor_ids: [1, 2, 3, 4, 5, 6]
+        default_velocity: 2000
+        default_current: 800
+        default_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_target_state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_reset_state: [0.4, 0.0, 0.0, 0.0, 0.0, 0.0]
+      hand_action_scale: 1.0
+      joint_reset_qpos: [0, 0, 0, -1.9, 0, 2, 0]
+      use_dense_reward: False
+      is_dummy: False
 
   train:
     ignore_terminations: False
     total_num_envs: 1
     no_gripper: False
-    use_spacemouse: True
+    teleop: [spacemouse, glove]
     glove_config:
       left_port: "/dev/ttyACM0"
       frequency: 30

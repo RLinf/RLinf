@@ -204,8 +204,7 @@ Ray 会在启动时记录当前 Python 解释器与环境变量，因此务必�
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -332,8 +331,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -353,8 +351,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -371,7 +368,7 @@ SFT 导出的 checkpoint 会作为在线阶段的学生模型初始化。更多 
 
 ``online_lerobot.enabled: True`` 表示启用在线 LeRobot 数据链路。env worker 按 episode 收集 rollout，并将满足过滤条件的 episode 发送给 actor；actor 将其加入 ``RollingLeRobotDataset`` 进行训练，因此在线训练不再使用 trajectory replay buffer。
 
-``smooth_intervene: True`` 会在 PICO 接管持续到 action chunk 最后一帧时绕过下一次策略推理。env worker 使用 dummy chunk 持续驱动遥操 wrapper，并在松开 ``grip`` 或 episode 结束后恢复正常推理。该模式仅支持 PICO：必须 ``env.train.use_pico: True``，且 ``env.train.use_spacemouse: False``；同时要求每个 env worker pipeline stage 只运行一个环境。``env.eval.use_pico: False`` 表示评测阶段只运行策略，不启用人工接管。
+``smooth_intervene: True`` 会在 PICO 接管持续到 action chunk 最后一帧时绕过下一次策略推理。env worker 使用 dummy chunk 持续驱动遥操 wrapper，并在松开 ``grip`` 或 episode 结束后恢复正常推理。该模式仅支持 PICO：``env.train.teleop`` 必须是 ``pico``；同时要求每个 env worker pipeline stage 只运行一个环境。``env.eval.teleop: none`` 表示评测阶段只运行策略，不启用人工接管。
 
 ``only_success: True`` 会丢弃失败 episode。``only_save_expert: True`` 仍将完整的
 成功 episode 保存在 LeRobot 归档中，但在线 sampler 只暴露 action chunk 内所有非

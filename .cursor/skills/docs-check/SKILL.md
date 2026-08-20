@@ -24,6 +24,9 @@ python3 .cursor/skills/docs-check/build_docs.py            # en + zh
 
 # Does CJK punctuation break inline markup, loudly or silently?
 python3 .cursor/skills/docs-check/check_rst_markup.py      # needs docutils
+
+# Does the page still name things the code has?
+python3 .cursor/skills/docs-check/check_doc_symbols.py
 ```
 
 ## Inputs
@@ -134,3 +137,4 @@ character is the single most common way to break `rlinf-cn`. Grep for
 - Detailed checklist and paths: [reference.md](reference.md)
 - Local Read the Docs gate for both languages: [build_docs.py](build_docs.py)
 - Inline-markup checker: [check_rst_markup.py](check_rst_markup.py)
+- Name checker: [check_doc_symbols.py](check_doc_symbols.py)

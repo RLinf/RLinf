@@ -86,7 +86,7 @@ RoboTwin 是双臂操作仿真平台，提供放置、调整、点击等多种�
      - click_bell
      - LingBotVLA
 
-若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
+若 ``evaluations/robotwin/<config>.yaml`` 不存在，``run_eval.sh`` 会回退到 ``examples/embodiment/config/`` 下同名配置（需设置 ``runner.only_eval: True`` 与 ``runner.task_type: embodied_eval``）。``rlinf/envs/sim/robotwin/seeds/eval_seeds.json`` 中另有 **22 个任务** 的评测种子，其余任务可从训练配置派生评测 YAML（见 :doc:`../reference/configuration`）。
 
 完整评测流程
 ------------
@@ -135,7 +135,7 @@ RoboTwin 评测对 ``eval_seeds.json`` 中每个任务的 **success seed** 各�
 评测协议概述
 ~~~~~~~~~~~~
 
-RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。种子列表位于 ``rlinf/envs/robotwin/seeds/eval_seeds.json``，按 ``task_name`` 索引；当前文件覆盖 **22 个任务** （150–320 条种子不等）。
+RoboTwin 评测使用预筛选的 **success seeds** 作为每条轨迹的随机种子，以固定初始场景与语言指令。种子列表位于 ``rlinf/envs/sim/robotwin/seeds/eval_seeds.json``，按 ``task_name`` 索引；当前文件覆盖 **22 个任务** （150–320 条种子不等）。
 
 在 ``RoboTwinEnv`` 中：
 

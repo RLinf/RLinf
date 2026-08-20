@@ -135,7 +135,7 @@ Note that in the Bin-relocation task, the target end-effector pose represents
 the midpoint of the lowest point in the motion space. Specifically, to prevent
 the Franka end-effector from colliding with the rim of the container, a
 workspace region is carved out around the target pose to limit the robot's
-range of motion. See ``rlinf/envs/realworld/franka/tasks/franka_bin_relocation.py``
+range of motion. See ``rlinf/envs/real/franka/bin_relocation.py``
 for details.
 
 Follow the **Obtain the target pose** section in :doc:`franka` and use the

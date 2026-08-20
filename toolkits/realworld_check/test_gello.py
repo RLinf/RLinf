@@ -44,15 +44,15 @@ if not ray.is_initialized():
 
 from gello.dynamixel.driver import DynamixelDriver  # noqa: E402
 
-from rlinf.envs.realworld.common.gello.gello_joint_expert import (  # noqa: E402
-    GelloJointExpert,
-)
-from rlinf.envs.realworld.franka.franky_controller import (  # noqa: E402
+from rlinf.envs.real.utils.pose import wrap_to_pi  # noqa: E402
+from rlinf.robotics.parts.arms.franky import (  # noqa: E402
     JOINT_LIMITS_LOWER,
     JOINT_LIMITS_UPPER,
-    FrankyController,
+    FrankyArm,
 )
-from rlinf.envs.realworld.franka.utils import wrap_to_pi  # noqa: E402
+from rlinf.robotics.parts.teleop.readers.gello_joint import (  # noqa: E402
+    GelloJointExpert,
+)
 
 # ───────────────────────── shared helpers ──────────────────────────────
 
@@ -121,18 +121,16 @@ def fmt_deg(q: np.ndarray) -> str:
     return "[" + ", ".join(f"{math.degrees(v):+.1f}°" for v in q) + "]"
 
 
-def setup_franky() -> FrankyController:
-    """Connect to the local Franka via FrankyController and wait until it is up."""
+def setup_franky():
+    """Connect to the local Franka via FrankyArm and wait until it is up."""
     robot_ip = os.environ.get("FRANKA_ROBOT_IP", "172.16.0.2")
     gripper_port = _resolve_local_robotiq_port()
     print(f"Connecting to Franka at {robot_ip} ...", flush=True)
-    controller = FrankyController.launch_controller(
+    controller = FrankyArm.spawn(
         robot_ip=robot_ip,
-        env_idx=0,
-        node_rank=0,
-        worker_rank=0,
         gripper_type="robotiq",
         gripper_connection=gripper_port,
+        node_rank=0,
     )
     for _ in range(60):
         if controller.is_robot_up().wait()[0]:
@@ -164,7 +162,7 @@ def setup_gello_expert() -> GelloJointExpert:
     return gello
 
 
-def safe_reset_to(controller: FrankyController, q_target: Sequence[float]) -> None:
+def safe_reset_to(controller, q_target: Sequence[float]) -> None:
     """Move robot to ``q_target`` via the slow safe path with actionable errors.
 
     Bails out with a hint if the robot is too far from ``q_target`` (the
@@ -584,14 +582,14 @@ def _calib_read_raw_gripper(driver, n_samples: int = 30) -> float:
     return float(np.median(np.asarray(samples)))
 
 
-def _calib_wait_for_enter(prompt: str, driver=None) -> None:
+def _calib_wait_for_enter(prompt: str, gello=None) -> None:
     """Block on ENTER while optionally streaming raw GELLO values."""
     print()
     print(prompt)
-    if driver is not None:
+    if gello is not None:
         print("(raw motor positions stream below — press ENTER when GELLO matches)")
     try:
-        if driver is None:
+        if gello is None:
             input("  press ENTER to continue: ")
             return
         import select
@@ -604,7 +602,7 @@ def _calib_wait_for_enter(prompt: str, driver=None) -> None:
                 return
             now = time.time()
             if now - last_print > 0.2:
-                q = driver.get_joints()
+                q = gello.get_joints()
                 arm = np.asarray(q[:CALIB_NUM_ARM], dtype=np.float64)
                 line = "  raw motors: " + " ".join(
                     f"J{i + 1}={arm[i]:+.3f}" for i in range(CALIB_NUM_ARM)

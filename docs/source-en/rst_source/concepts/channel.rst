@@ -11,15 +11,19 @@ A new channel can be created using::
 
     Worker.create_channel(
         channel_name,
-        node_id=0,
-        maxsize=0
+        maxsize=0,
+        distributed=False,
+        node_rank=0,
+        local=False,
     )
 
 This method:
 
-- **Determines placement** — If ``group_affinity`` or ``group_rank_affinity`` are not specified, the channel is hosted in the current worker’s **group** and **rank** (same node and GPU).
-- **Launches a dedicated channel actor** — Uses ``PackedPlacementStrategy`` to start a ``ChannelWorker`` (that actually holds the queue) with ``num_processes=1`` on the selected node/GPU.
-- **Returns** a ``Channel`` object that wraps the actor. The channel actor’s address is ``channel_name:0``.
+- **Places the queue** — With ``local=True`` the queue stays inside the calling process, where no other worker can reach it. Otherwise a ``ChannelWorker`` actor holds it: one on the node given by ``node_rank``, or one on every node when ``distributed=True``.
+- **Launches the actor** — ``NodePlacementStrategy`` starts the ``ChannelWorker`` on the chosen node or nodes. Creating a channel whose name is already taken connects to the existing one instead of failing.
+- **Returns** a ``Channel`` object that wraps the actor.
+
+A distributed channel binds each ``key`` to one replica the first time that key is used, choosing the replica on the caller's own node, so data stays where it was produced. That pays off only when a key is always produced from the same node; a key arriving from anywhere buys routing overhead and no locality, so leave ``distributed`` at False.
 
 To connect to an existing channel from another worker, use::
 

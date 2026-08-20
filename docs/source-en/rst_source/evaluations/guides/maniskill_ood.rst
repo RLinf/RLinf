@@ -19,7 +19,7 @@ Download ManiSkill assets if not already present:
 
 .. code-block:: bash
 
-   cd rlinf/envs/maniskill
+   cd rlinf/envs/sim/maniskill
    # For faster downloads in China, you can set:
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
@@ -282,7 +282,7 @@ ManiSkill also supports training tasks such as ``PickCube-v1`` and ``PutCarrotOn
 FAQ
 ---
 
-- **Asset path:** Ensure ManiSkill assets are downloaded to ``rlinf/envs/maniskill/assets``.
+- **Asset path:** Ensure ManiSkill assets are downloaded to ``rlinf/envs/sim/maniskill/assets``.
 - **GPU simulation:** ``sim_backend: gpu`` requires an NVIDIA GPU; ``run_eval.sh`` sets ``MUJOCO_GL=osmesa`` etc. for headless environments.
 - **LoRA path:** OpenVLA-OFT eval requires ``lora_path``; without it the ManiSkill policy cannot load correctly.
 - **Checkpoint:** Batch mode passes ``.pt`` weights via ``CKPT_PATH``; single runs use ``runner.ckpt_path``.

@@ -206,8 +206,7 @@ export format to LeRobot:
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -335,8 +334,7 @@ your cluster, cameras, target pose, and checkpoints:
    env:
      train:
        smooth_intervene: True
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
        pico:
          zmq_addr: "ipc:///tmp/vr_data.ipc"
          hand: "right"
@@ -356,8 +354,7 @@ your cluster, cameras, target pose, and checkpoints:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
      eval:
-       use_spacemouse: False
-       use_pico: False
+       teleop: none
        override_cfg:
          target_ee_pose: [0.50, 0.00, 0.01, 3.14, 0.0, 0.0]
          camera_serials: ["CAMERA_SERIAL_1", "CAMERA_SERIAL_2"]
@@ -374,7 +371,7 @@ your cluster, cameras, target pose, and checkpoints:
 
 ``online_lerobot.enabled: True`` enables the online LeRobot data path. The env worker collects rollouts by episode and sends episodes that satisfy the configured filters to the actor; the actor adds them to ``RollingLeRobotDataset`` for training, so online training no longer uses the trajectory replay buffer.
 
-``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.use_pico`` must be ``True`` and ``env.train.use_spacemouse`` must be ``False``. It also requires one environment per env-worker pipeline stage. ``env.eval.use_pico: False`` keeps evaluation policy-only.
+``smooth_intervene: True`` bypasses policy inference when PICO intervention continues through the last frame of an action chunk. The env worker uses a dummy chunk to keep stepping the teleoperation wrapper and resumes normal inference after ``grip`` is released or the episode ends. It is PICO-only: ``env.train.teleop`` must be ``pico``. It also requires one environment per env-worker pipeline stage. ``env.eval.teleop: none`` keeps evaluation policy-only.
 
 ``only_success: True`` discards failed episodes. ``only_save_expert: True`` keeps
 the complete successful episode in the LeRobot archive, but restricts the online

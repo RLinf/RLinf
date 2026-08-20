@@ -24,19 +24,26 @@ enumeration actor must inherit the env vars set before Ray starts.
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 _SCENARIO = os.path.join(os.path.dirname(__file__), "_robot_autoconfig_cluster.py")
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
 
 def _run_scenario(mode: str) -> subprocess.CompletedProcess:
     """Run one cluster scenario in a fresh process and capture its output."""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (_REPO_ROOT, env.get("PYTHONPATH")) if path
+    )
     return subprocess.run(
         [sys.executable, _SCENARIO, mode],
         capture_output=True,
         text=True,
         timeout=420,
+        env=env,
     )
 
 

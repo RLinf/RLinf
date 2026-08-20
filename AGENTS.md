@@ -126,6 +126,43 @@ For debugging (breakpoints, rendering/EGL, network, NCCL/CUDA, timeouts), see th
 
 ## Style and contributing
 
+### Writing and communication
+
+These rules apply to all language communication in the project, including
+documentation, issues and pull requests, review comments, design discussions,
+release notes, commit messages, and user-facing replies.
+
+- Use natural, professional technical language. Write like an engineer explaining
+  a system clearly: neither casual developer chat nor formal bureaucracy. Avoid
+  colloquial phrases such as “看看长什么样”, “等需要时再看”, and “不用跟着改”, as
+  well as canned phrases such as “本文旨在”, “本节将”, and “进行相关操作”.
+- Explain before naming. Start from the concrete situation, state the relevant
+  distinction in ordinary language, introduce the exact class, method, field,
+  config, or API name, connect it to one example, and add edge cases only after
+  the normal path is clear. Headings must be understandable before their sections
+  are read; do not introduce an unexplained implementation term in a heading.
+- Write English directly and precisely. Prefer concrete nouns and verbs, vary
+  sentence and paragraph shape, and avoid chatty transitions, promotional
+  summaries, and formulaic prose.
+- Write Chinese according to natural Chinese logic rather than mirroring English
+  clause order. Use clear, restrained written technical language, full-width
+  punctuation, and one space between Chinese and English terms or numbers.
+- Keep familiar developer terms in English when translation sounds unusual or
+  makes the code harder to search, including `policy`, `key`, `value`, `mapping`,
+  `endpoint`, `worker`, `binding`, `wrapper`, `mock SDK`, `contract`, `shape`,
+  `schema`, and `API`. In RL prose, write `policy`, not “策略”.
+- Do not hard-wrap Chinese prose in RST. Keep each prose paragraph or prose list
+  item on one source line because reStructuredText renders internal newlines as
+  visible spaces. Preserve structural line breaks in headings, directives,
+  tables, and code blocks.
+- For documentation about adding tasks that run on physical hardware, use “New
+  Real-World Tasks” in English and “新增真机任务” in Chinese.
+
+Code identifiers, protocol fields, and literal log or error text still follow
+their source definitions. The voice rules in `docs/STYLE_GUIDE.md` apply to all
+project communication; its document structure and RST layout rules apply only to
+documentation.
+
 Google Python style; Ruff for lint/format; docstrings and type hints on public APIs. Logging: `rlinf.utils.logging.get_logger()` or Workers’ `self.log_*`. Config YAML: static values only; no computed fields; don’t overwrite user-facing fields in code. Commits: [Conventional Commits](https://www.conventionalcommits.org/), ~72-char subject, imperative; every commit `Signed-off-by:` (e.g. `git commit -s`). PRs: same title format, fill template, link issues; for perf-sensitive changes include test results. New behavior needs tests (unit or e2e); if e2e needs GPUs/hardware, document and skip appropriately in CI. Full details: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---

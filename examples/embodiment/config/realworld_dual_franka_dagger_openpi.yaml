@@ -104,10 +104,9 @@ env:
     ignore_terminations: False
     auto_reset: True
     no_gripper: False
-    use_spacemouse: False
-    use_gello: False
-    use_gello_joint: False
-    use_pico: True
+    teleop:
+      - {pico: {drives: left}}
+      - {pico: {drives: right}}
     # For online DAgger, use eval_control rather than start_end: the async env
     # worker does not consume start_end's pre_record / record_reset fields.
     # Pedals: a=start rollout, b=end failure, c=end success.
@@ -157,10 +156,7 @@ env:
     ignore_terminations: False
     auto_reset: True
     no_gripper: False
-    use_spacemouse: False
-    use_gello: False
-    use_gello_joint: False
-    use_pico: False
+    teleop: none
     keyboard_reward_wrapper: eval_control
     max_episode_steps: 10000
     max_steps_per_rollout_epoch: 10000

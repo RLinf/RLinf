@@ -103,7 +103,7 @@ BEHAVIOR evaluation runs **one task per launch** (selected by ``omni_config.task
 Evaluation protocol
 ~~~~~~~~~~~~~~~~~~~
 
-BEHAVIOR-1K defines 50 household tasks (names listed in ``rlinf/envs/behavior/behavior_task.jsonl``). The ``behavior_r1pro`` preset defaults to ``turning_on_radio`` on scene ``house_double_floor_lower``.
+BEHAVIOR-1K defines 50 household tasks (names listed in ``rlinf/envs/sim/behavior/behavior_task.jsonl``). The ``behavior_r1pro`` preset defaults to ``turning_on_radio`` on scene ``house_double_floor_lower``.
 
 Each evaluation trajectory is determined by:
 
@@ -229,5 +229,5 @@ FAQ
 - **Blurry or blocky rendering:** The GPU lacks Ray Tracing; use RTX 30/40 series or newer.
 - **Very slow startup:** First load of a large scene is expensive; keep ``partial_scene_load: true`` to load only task-relevant rooms.
 - **Fewer video frames than expected:** ``skip_intermediate_obs_in_chunk: True`` skips intermediate chunk frames and keeps only observations consumed by the policy.
-- **Instance load failure:** JSON filenames under ``activity_instance_dir`` must match ``activity_name``, ``activity_definition_id``, and ``scene_model``; see ``rlinf/envs/behavior/instance_loader.py``.
+- **Instance load failure:** JSON filenames under ``activity_instance_dir`` must match ``activity_name``, ``activity_definition_id``, and ``scene_model``; see ``rlinf/envs/sim/behavior/instance_loader.py``.
 - **Step count validation error:** ``max_steps_per_rollout_epoch`` must be divisible by ``rollout.model.num_action_chunks``.

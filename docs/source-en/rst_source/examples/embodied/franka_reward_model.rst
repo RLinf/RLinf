@@ -135,7 +135,7 @@ labeling, and dataset generation into one end-to-end run with no separate offlin
 - ``runner.val_split`` — fraction of labeled frames held out for validation.
 - ``runner.fail_success_ratio`` — fail-frame downsampling ratio during training-set post-processing.
 - ``env.eval.keyboard_reward_wrapper`` — set to ``single_stage`` to enable the keyboard interface.
-- ``env.eval.use_spacemouse`` — whether SpaceMouse is used for teleoperation.
+- ``env.eval.teleop`` — which device takes over from the policy.
 - ``env.eval.override_cfg.target_ee_pose`` — the target end-effector pose for the task.
 
 **Launching:**

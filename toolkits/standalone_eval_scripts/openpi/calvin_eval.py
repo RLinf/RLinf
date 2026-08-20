@@ -21,7 +21,7 @@ import tqdm
 from calvin_agent.evaluation.utils import get_env_state_for_initial_condition
 from calvin_env.envs.play_table_env import get_env
 
-from rlinf.envs.calvin import ENV_CFG_DIR, _get_calvin_tasks_and_reward
+from rlinf.envs.sim.calvin import ENV_CFG_DIR, _get_calvin_tasks_and_reward
 from toolkits.standalone_eval_scripts.openpi import setup_logger, setup_policy
 
 

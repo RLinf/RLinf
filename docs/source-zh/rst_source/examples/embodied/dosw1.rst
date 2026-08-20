@@ -509,7 +509,7 @@ Dummy 自检（可选）
     与四个端口是否与机器配置一致。
   - GPU 节点能否 ``ping`` 到机器人，并能在 50050–50053 建立 TCP 连接。
 
-**``RuntimeError: DOSW1SDKAdapter is not connected``**
+**``RuntimeError: DOSW1Connection is not connected``**
   connect 没有成功执行。回看此前日志中
   ``[DOSW1SDK] Connecting via AirbotRobot`` 一行的错误原因。
 

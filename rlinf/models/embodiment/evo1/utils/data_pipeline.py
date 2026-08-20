@@ -27,7 +27,7 @@ single tile, exactly mirroring the reference server, whereas a PIL image would
 trigger dynamic tiling and change the visual-token count.
 
 The RLinf LIBERO env already rotates the agentview/wrist frames 180 degrees to
-match training (see ``rlinf/envs/libero/utils.py``), so no extra flip is applied
+match training (see ``rlinf/envs/sim/libero/utils.py``), so no extra flip is applied
 here.
 """
 

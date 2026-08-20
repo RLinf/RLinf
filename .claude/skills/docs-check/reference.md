@@ -101,6 +101,20 @@ CUDA 设备 0 通常\ **并不是** EGL 设备 0。
 `WARNING` for the silent mis-render. Only the first blocks a PR, but a doc PR
 touching a Chinese page should leave no new warnings either.
 
+### Hard-wrapped Chinese prose
+
+reStructuredText joins source lines inside a paragraph with a space. Hard-wrapping
+Chinese prose therefore inserts a visible gap even when no space was typed:
+
+```rst
+定义奖励、成功条件
+或复位吗？
+```
+
+This renders as `成功条件 或复位`. Keep each Chinese prose paragraph and prose
+list item on one source line. Preserve newlines that define headings, directives,
+tables, and code blocks.
+
 Note that inline markup does **not** nest — `` **stuck in ``reach``** `` is a
 strong containing literal backtick characters, not a nested literal, and is
 perfectly legal.
@@ -113,6 +127,7 @@ perfectly legal.
 - [ ] `python3 .claude/skills/docs-check/build_docs.py` is clean for **both** `en` and `zh`
 - [ ] `python3 .claude/skills/docs-check/check_rst_markup.py` reports no new findings
 - [ ] Changed ZH pages have no ` `` ` or `**` touching `（`, `《` or a CJK character
+- [ ] Changed ZH prose has no hard wrap that creates a space between CJK characters
 
 ### Doc vs Code
 - [ ] Every config name in docs exists under `examples/embodiment/config/` or `env/`
@@ -126,6 +141,16 @@ perfectly legal.
 - [ ] Category indexes (e.g. embodied/index.rst) list the same toctree entries
 - [ ] Every EN RST file has a corresponding ZH file at the same relative path
 - [ ] Internal RLinf doc links use `:doc:`/relative links (no hardcoded ReadTheDocs `.../rst_source/...` URLs)
+
+### Natural language
+- [ ] The explanation starts from a reader-visible situation, then names the implementation
+- [ ] Every API term is explained before it appears in a concept/guide/extending heading
+- [ ] Examples connect technical names back to the plain-language model
+- [ ] English reads as direct engineering prose, without canned transitions or sales language
+- [ ] Chinese is organized as natural Chinese, not as a clause-by-clause translation
+- [ ] Chinese reads as professional technical prose, without casual-chat or bureaucratic phrasing
+- [ ] Familiar English developer terms stay searchable instead of receiving unusual translations
+- [ ] RL `policy` stays in English; “策略” is reserved for a generic strategy such as placement
 
 ### EN vs ZH
 - [ ] Same section headings (translated)

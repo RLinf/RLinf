@@ -224,7 +224,7 @@ Launch a config with ``run_embodiment.sh``:
 
    - BEHAVIOR throughput → increase env GPU count first, then tune ``env.num_env_subprocess`` and ``env.train.total_num_envs``.
    - Each BEHAVIOR process can use roughly 10 GiB of VRAM; tune subprocess count for your GPU memory.
-   - Cached task instances → generate them with ``rlinf/envs/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
+   - Cached task instances → generate them with ``rlinf/envs/sim/behavior/instance_generator.py`` and ``examples/embodiment/config/env/behavior_r1pro.yaml``.
    - Placement and throughput → :doc:`Placement <../../concepts/placement>` and :doc:`Execution modes <../../concepts/execution_modes>`
    - Metric definitions and logging backends → :doc:`Training metrics <../../reference/metrics>`
 
@@ -277,7 +277,7 @@ Configure Further
 
 The BEHAVIOR env is driven by ``examples/embodiment/config/env/behavior_r1pro.yaml``.
 RLinf first loads OmniGibson's base config (``base_config_name``) and then applies the
-``omni_config`` overrides (see ``setup_omni_cfg`` in ``rlinf/envs/behavior/utils.py``).
+``omni_config`` overrides (see ``setup_omni_cfg`` in ``rlinf/envs/sim/behavior/utils.py``).
 The fields below control reset behavior, scene loading, simulator frequencies, and
 throughput — most have sensible defaults and only need tuning for custom tasks or
 performance.
@@ -341,7 +341,7 @@ performance.
 Generating cached task instances
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``rlinf/envs/behavior/instance_generator.py`` generates ``*_template.json`` and
+``rlinf/envs/sim/behavior/instance_generator.py`` generates ``*_template.json`` and
 ``*_template-tro_state.json`` files directly from ``behavior_r1pro.yaml`` (it reads
 ``scene_model``, ``activity_name``, ``activity_definition_id``, the robot config, and
 room-loading settings, then temporarily switches to online object sampling). It writes to
@@ -352,12 +352,12 @@ room-loading settings, then temporarily switches to online object sampling). It 
 
    cd /path/to/RLinf
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format template \
      --start-idx 1 --end-idx 50
 
-   python rlinf/envs/behavior/instance_generator.py \
+   python rlinf/envs/sim/behavior/instance_generator.py \
      --config examples/embodiment/config/env/behavior_r1pro.yaml \
      --output-format tro_state \
      --start-idx 1 --end-idx 50

@@ -263,7 +263,7 @@ RoboTwin 支持 46 个操作任务。RLinf 提供了以下 ready-to-run 环境�
 .. note::
 
    提供的配置使用
-   ``rlinf/envs/robotwin/seeds/`` 下的 train/eval seed 文件。
+   ``rlinf/envs/sim/robotwin/seeds/`` 下的 train/eval seed 文件。
 
 可视化与结果
 ----------------------------------------

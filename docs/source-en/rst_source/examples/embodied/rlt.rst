@@ -460,7 +460,7 @@ Launch the async run from the master node:
 The default keyboard module implements the key phase switch used by RLT: press
 ``b`` to enter the Stage 2 actor-controlled phase. Other behavior can be
 customized for the task in
-``rlinf/envs/realworld/common/wrappers/keyboard_rlt_policy_switch_wrapper.py``.
+``rlinf/envs/real/wrappers/episode/policy_switch.py``.
 
 Run the ManiSkill Joint Example
 -------------------------------

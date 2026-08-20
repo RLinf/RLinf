@@ -18,8 +18,8 @@ import time
 
 import numpy as np
 
-from rlinf.envs.realworld.dosw1.dosw1_env import DOSW1Config
-from rlinf.envs.realworld.dosw1.dosw1_sdk import DOSW1SDKAdapter
+from rlinf.envs.real.dosw1.base import DOSW1Config
+from rlinf.robotics.parts.arms import DOSW1Connection
 
 
 def _parse_args() -> argparse.Namespace:
@@ -113,7 +113,16 @@ def _fmt(arr: np.ndarray) -> str:
 def main() -> None:
     args = _parse_args()
     cfg = _build_config(args)
-    sdk = DOSW1SDKAdapter(cfg)
+    sdk = DOSW1Connection(
+        robot_url=cfg.robot_url,
+        left_arm_port=cfg.left_arm_port,
+        right_arm_port=cfg.right_arm_port,
+        left_lead_port=cfg.left_lead_port,
+        right_lead_port=cfg.right_lead_port,
+        enable_human_in_loop=cfg.enable_human_in_loop,
+        gripper_width_max=cfg.gripper_width_max,
+        is_dummy=cfg.is_dummy,
+    )
 
     control_dt = 1.0 / max(args.control_hz, 1e-6)
     print_dt = 1.0 / max(args.print_hz, 1e-6)

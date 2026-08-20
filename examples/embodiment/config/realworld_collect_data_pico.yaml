@@ -39,8 +39,7 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: False
-    use_pico: True
+    teleop: pico
     no_gripper: False
     pico:
       zmq_addr: "ipc:///tmp/vr_data.ipc"

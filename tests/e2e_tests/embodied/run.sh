@@ -18,6 +18,16 @@ export MUJOCO_GL=${BACKEND}
 export PYOPENGL_PLATFORM=${BACKEND}
 export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
+# A "mock" config runs a real-world env against faked vendor SDKs, so the
+# hardware paths run without a robot. The fakes install themselves through
+# sitecustomize in every process, the driver and each scheduler worker alike,
+# which is why this is an environment setting rather than a config field.
+if [[ "${CONFIG}" == *mock* ]]; then
+    export RLINF_ROBOT_MOCKS=1
+    export PYTHONPATH=${REPO_PATH}/tests:${REPO_PATH}/tests/robot_mocks:$PYTHONPATH
+    echo "[mock] faking the vendor SDKs; no robot is required"
+fi
+
 # Base path to the BEHAVIOR dataset, which is the BEHAVIOR-1k repo's dataset folder
 # Only required when running the behavior experiment.
 export OMNIGIBSON_DATA_PATH=$OMNIGIBSON_DATA_PATH

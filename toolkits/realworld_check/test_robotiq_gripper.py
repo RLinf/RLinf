@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--baudrate", type=int, default=115200, help="Modbus baud rate")
     args = parser.parse_args()
 
-    from rlinf.envs.realworld.common.gripper.robotiq_gripper import RobotiqGripper
+    from rlinf.robotics.parts.end_effectors.grippers.robotiq import RobotiqGripper
 
     print(f"[INFO] Connecting to Robotiq gripper on {args.port} ...")
     gripper = RobotiqGripper(port=args.port, baudrate=args.baudrate)

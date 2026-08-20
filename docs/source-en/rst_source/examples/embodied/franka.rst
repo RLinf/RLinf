@@ -403,8 +403,7 @@ The key differences from the SpaceMouse config are:
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_..."  # Replace with your GELLO serial port
 
 **Running**

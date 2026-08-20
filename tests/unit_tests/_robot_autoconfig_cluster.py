@@ -97,6 +97,7 @@ import dataclasses  # noqa: E402
 
 from omegaconf import DictConfig  # noqa: E402
 
+import rlinf.robotics.robots  # noqa: E402, F401
 from rlinf.scheduler import (  # noqa: E402
     Cluster,
     FlexiblePlacementStrategy,

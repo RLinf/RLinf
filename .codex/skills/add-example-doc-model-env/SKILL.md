@@ -7,6 +7,12 @@ description: "Adds example documentation for a new model or environment in RLinf
 
 Use this skill when adding example documentation for a new **model** (e.g. π₀, GR00T, OpenVLA) or **environment** (e.g. LIBERO, ManiSkill, MetaWorld) in RLinf. Documentation is added for both **English** and **Chinese**.
 
+Before writing, read `docs/STYLE_GUIDE.md` and apply the `refine-docs` natural-language
+gate. Explain the reader's task before introducing implementation names; do not
+put an unexplained API term in a heading. Write English and Chinese independently
+from the same meaning instead of translating clause by clause. Keep familiar
+developer terms in English when an unusual translation would obscure the code.
+
 ---
 
 ## Steps
@@ -19,7 +25,8 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
    Path pattern: `docs/source-en/rst_source/examples/<category>/<name>.rst`  
    - Example (embodied): `docs/source-en/rst_source/examples/embodied/dexbotic.rst`  
    - Example (agentic): `docs/source-en/rst_source/examples/agentic/searchr1.rst`  
-   Follow the structure of existing examples in the same category (see [reference.md](reference.md)).
+   Follow `docs/STYLE_GUIDE.md` first, then use current examples in the same category
+   for category-specific details (see [reference.md](reference.md)).
 
 2. **Register in the English category index**  
    The embodied gallery is split into five category index files that live directly under `examples/` (not inside `embodied/`):
@@ -41,7 +48,10 @@ Use this skill when adding example documentation for a new **model** (e.g. π₀
 4. **Create the Chinese RST file**  
    Use the same `<category>` and `<name>` as in English:  
    Path: `docs/source-zh/rst_source/examples/<category>/<name>.rst`.  
-   Mirror the English content (same structure and sections). Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in both `source-en` and `source-zh`) as reference.
+   Keep the same structure, sections, commands, and technical meaning as English,
+   but rewrite the prose in natural Chinese. Do not mirror English sentence order.
+   Use existing EN/ZH pairs under the same category (e.g. `embodied/libero.rst` in
+   both `source-en` and `source-zh`) as reference.
 
 5. **Register in the Chinese category index**  
    Edit the matching Chinese index file — for embodied, the same five split indexes under `docs/source-zh/rst_source/examples/` (`simulators_index.rst`, `real_world_index.rst`, `vla_wam_index.rst`, `sft_index.rst`, `methods_index.rst`); for agentic/system, `docs/source-zh/rst_source/examples/<category>/index.rst`:  
@@ -80,6 +90,8 @@ Use existing examples in the same category (e.g. `embodied/libero.rst`, `embodie
 - [ ] English category index updated: `docs/source-en/rst_source/examples/<category>/index.rst` (toctree; optional gallery card).
 - [ ] If embodied eval env: `docs/source-en/rst_source/evaluations/index.rst` or the relevant evaluation guide updated with the new flow.
 - [ ] Chinese RST created: `docs/source-zh/rst_source/examples/<category>/<name>.rst`.
+- [ ] English and Chinese explain concepts before naming APIs; headings contain no unexplained implementation terms.
+- [ ] Chinese reads naturally and retains familiar, searchable English developer terms.
 - [ ] Chinese category index updated: `docs/source-zh/rst_source/examples/<category>/index.rst` (toctree; gallery card if added for EN).
 - [ ] If embodied eval env: Chinese evaluation page updated if it lists environments (use the same relative path pattern as EN).
 - [ ] README.md updated: new bullet in "What's NEW!" and, if applicable, entry in Key Features table (using the correct category path).

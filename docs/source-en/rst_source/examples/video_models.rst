@@ -108,7 +108,7 @@ media and terminates the episode.
      - Values logged by RLinf for training and evaluation.
 
 The environment is not tied to OCR. Reward and dataset implementations are
-loaded from ``rlinf.envs.diffusion`` and ``rlinf.data.datasets.diffusion`` using
+loaded from ``rlinf.envs.sim.diffusion`` and ``rlinf.data.datasets.diffusion`` using
 the ``dataset.type`` and ``reward.model`` fields, so another media scorer can be
 integrated behind the same one-step interface.
 

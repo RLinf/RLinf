@@ -1,6 +1,6 @@
 ---
 name: docs-check
-description: Cross-checks RLinf documentation against code and other docs, including English-Chinese parity checks. Use when adding or editing docs, reviewing doc PRs, validating commands/config keys/model-env names, or ensuring EN and ZH docs stay consistent.
+description: Cross-check RLinf documentation against code, natural explanation flow, and other docs, including English-Chinese parity. Use when adding or editing docs, reviewing doc PRs, validating commands/config keys/model-env names, or checking EN/ZH readability and consistency.
 ---
 
 # Docs Check
@@ -24,6 +24,9 @@ python3 .claude/skills/docs-check/build_docs.py            # en + zh
 
 # Does CJK punctuation break inline markup, loudly or silently?
 python3 .claude/skills/docs-check/check_rst_markup.py      # needs docutils
+
+# Does the page still name things the code has?
+python3 .claude/skills/docs-check/check_doc_symbols.py
 ```
 
 ## Inputs
@@ -68,7 +71,23 @@ If scope is unclear, default to checking:
    - Same commands, config keys, and model/env identifiers.
    - Translations preserve technical meaning (do not rename code symbols).
    - Corresponding EN/ZH pages use equivalent stable internal links.
-6. Report findings with severity and concrete fixes.
+6. Verify natural-language flow:
+   - Start from a concrete reader question, explain the idea in ordinary
+     language, then introduce the exact API term and example.
+   - Headings, cards, and opening sentences do not introduce unexplained
+     implementation terms. An identifier heading is appropriate only on a
+     lookup-oriented API or reference page, or after the term is established.
+   - English reads as direct colleague-to-colleague prose, without canned
+     transitions, uniform paragraph rhythms, or promotional summaries.
+   - Chinese follows natural Chinese logic rather than English clause order.
+     Familiar developer terms stay in English when translating them would sound
+     unusual or make the code harder to search.
+   - Chinese uses restrained written technical language: neither casual chat nor
+     bureaucratic prose.
+   - Chinese prose paragraphs and prose list items stay on one source line.
+     A hard wrap inside prose renders as a visible space between Chinese
+     characters even when the source contains no typed space.
+7. Report findings with severity and concrete fixes.
 
 ## Severity Rules
 
@@ -76,7 +95,11 @@ If scope is unclear, default to checking:
   build, so the page does not ship at all.
 - `Critical`: Wrong command/path/key/value that can break user workflow.
 - `Major`: Inconsistent docs that likely mislead users.
+- `Major`: An unexplained implementation term in a heading or opening breaks the
+  reading flow on a concept, guide, or extending page.
 - `Minor`: Wording/terminology drift without immediate breakage.
+- `Minor`: Formulaic or translated prose is understandable but does not read
+  naturally in its language.
 
 Prefer actionable findings with exact file paths and corrected values.
 
@@ -115,6 +138,12 @@ If no issues are found, explicitly state:
 - Do not invent model/env/config names; verify against source files.
 - Do not change code to match incorrect docs unless explicitly requested.
 - Keep EN and ZH technical tokens identical where applicable (paths, CLI flags, keys, enum values).
+- Do not force-translate familiar terms such as `policy`, `key`, `value`,
+  `mapping`, `endpoint`, `worker`, `binding`, `wrapper`, `mock SDK`, `contract`,
+  `shape`, `schema`, and `API`; explain their role in natural Chinese and retain
+  the searchable term when that is normal developer usage. In RL prose, keep
+  `policy` in English rather than translating it as “策略”; generic strategies,
+  such as a placement strategy, may still use “策略”.
 - When uncertain, flag as an assumption and request confirmation.
 - Do not keep RLinf internal links as hardcoded `readthedocs.io/.../rst_source/...` URLs; convert to `:doc:` or relative internal links.
 
@@ -134,3 +163,4 @@ character is the single most common way to break `rlinf-cn`. Grep for
 - Detailed checklist and paths: [reference.md](reference.md)
 - Local Read the Docs gate for both languages: [build_docs.py](build_docs.py)
 - Inline-markup checker: [check_rst_markup.py](check_rst_markup.py)
+- Name checker: [check_doc_symbols.py](check_doc_symbols.py)

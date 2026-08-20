@@ -7,6 +7,13 @@ description: Adds a new publication page to the RLinf Sphinx docs (EN + ZH) and 
 
 This skill adds **one new publication** (paper/tech report/system note) into the RLinf documentation, in **both English and Chinese**, following the existing Publications section conventions.
 
+Before writing, read `docs/STYLE_GUIDE.md`. Start from what the paper changes or
+what problem it solves, then introduce project-specific terms. Do not use an
+unexplained API or system name as a section heading. Write the Chinese page from
+the technical meaning rather than translating the English sentence by sentence;
+retain familiar English developer terms when that is the natural and searchable
+form.
+
 ## What to create
 
 - **EN page**: `docs/source-en/rst_source/resources/publications/<slug>.rst`
@@ -70,6 +77,8 @@ Sphinx displays pages in the **toctree listing order**.
 - [ ] Update EN/ZH `publications/index.rst` toctree + bullets (desired order)
 - [ ] Ensure Quickstart is exactly one link to the corresponding example page
 - [ ] Validate list-table `:widths:` counts match column counts
+- [ ] Explain project-specific terms before using them as shorthand or headings
+- [ ] Read EN and ZH independently for natural prose; do not accept clause-by-clause translation
 
 ## Example (minimal new publication page)
 
@@ -110,4 +119,3 @@ Citation
 
    @article{...}
 ```
-

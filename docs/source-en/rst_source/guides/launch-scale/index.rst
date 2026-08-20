@@ -18,6 +18,8 @@ connect RLinf to physical hardware.
      - Split inference and training across cloud and edge.
    * - :doc:`Real-World Robots <../realworld_robot>`
      - Run RL on physical robot hardware.
+   * - :doc:`Teleoperation <../teleoperation>`
+     - Let an operator take over from the policy mid-rollout.
 
 .. toctree::
    :hidden:
@@ -26,3 +28,4 @@ connect RLinf to physical hardware.
    Heterogeneous Clusters <../hetero>
    Cloud-Edge Collaboration <../cloud_edge>
    Real-World Robots <../realworld_robot>
+   Teleoperation <../teleoperation>
