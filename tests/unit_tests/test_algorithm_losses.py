@@ -76,6 +76,46 @@ def test_finite_fraction_is_not_scaled_by_episode_loss_weight():
     assert torch.allclose(metrics["actor/logprob_finite_fraction"], torch.tensor(1.0))
 
 
+def test_empty_loss_mask_uses_neutral_ratio_metrics():
+    logprobs = torch.zeros(1, 4, dtype=torch.float32, requires_grad=True)
+    loss, metrics = compute_ppo_actor_loss(
+        logprobs=logprobs,
+        old_logprobs=torch.zeros(1, 4, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        advantages=torch.ones(1, 4, dtype=torch.float32),
+        loss_mask=torch.zeros(1, 4, dtype=torch.bool),
+        log_logprob_diagnostics=True,
+    )
+
+    loss.backward()
+
+    assert torch.equal(loss, torch.tensor(0.0))
+    assert torch.equal(logprobs.grad, torch.zeros_like(logprobs))
+    assert torch.equal(metrics["actor/ratio"], torch.tensor(1.0))
+    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(1.0))
+    assert torch.equal(metrics["actor/ratio_abs"], torch.tensor(0.0))
+    assert torch.equal(metrics["actor/approx_kl"], torch.tensor(0.0))
+    assert torch.equal(metrics["actor/logprob_finite_fraction"], torch.tensor(1.0))
+    assert "actor/nonempty_microbatch_fraction" not in metrics
+
+
+def test_empty_loss_mask_fast_path_uses_neutral_ratio_metrics():
+    _, metrics = compute_ppo_actor_loss(
+        logprobs=torch.zeros(1, 4, dtype=torch.float32),
+        old_logprobs=torch.zeros(1, 4, dtype=torch.float32),
+        clip_ratio_low=0.2,
+        clip_ratio_high=0.2,
+        advantages=torch.ones(1, 4, dtype=torch.float32),
+        loss_mask=torch.zeros(1, 4, dtype=torch.bool),
+        fast_path_zero_loss_mask=True,
+    )
+
+    assert torch.equal(metrics["actor/ratio"], torch.tensor(1.0))
+    assert torch.equal(metrics["actor/clipped_ratio"], torch.tensor(1.0))
+    assert "actor/nonempty_microbatch_fraction" not in metrics
+
+
 def test_sequence_token_mean_is_not_overridden_by_episode_weighting():
     loss, _ = compute_ppo_actor_loss(
         logprobs=torch.zeros(2, 3, dtype=torch.float32),
