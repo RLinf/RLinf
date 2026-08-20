@@ -168,7 +168,9 @@ YAML 配置
 当 **相机在 GPU 服务器**、**机械臂与夹爪在 NUC** 时，需在 ``hardware.configs`` 中指定相机/夹爪类型及控制器所在节点。
 字段说明与采集配置示例见 :doc:`../examples/embodied/franka_zed_robotiq`。
 
-训练时可将 ``env`` 放在 GPU 节点组（负责相机采集），并通过 ``controller_node_rank`` 将 ``FrankaController`` 固定到 NUC：
+训练时需将 ``env`` 放在 Franka 节点组，以便获得 Franka 硬件配置。
+硬件配置中的 ``node_rank: 0`` 会让 env worker 继续在 GPU 节点采集相机数据，
+而 ``controller_node_rank: 1`` 会将 ``FrankaController`` 固定到 NUC：
 
 .. code-block:: yaml
 
@@ -179,7 +181,7 @@ YAML 配置
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu
