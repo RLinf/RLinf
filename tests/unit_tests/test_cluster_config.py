@@ -46,10 +46,17 @@ def accelerator_device_count() -> int:
 
 def path_merge_test_env_var() -> str:
     """Return a path-like env var that is safe to mutate during worker startup."""
-    if Worker.accelerator_type in (AcceleratorType.NPU, AcceleratorType.NPU.value):
-        # torch_npu loads HCCL shared libraries during Worker import. Mutating
-        # LD_LIBRARY_PATH in the actor runtime_env can hide the CANN library path
-        # before the test worker starts, so use another whitelisted path var.
+    if Worker.accelerator_type in (
+        AcceleratorType.NPU,
+        AcceleratorType.NPU.value,
+        AcceleratorType.MUSA_GPU,
+        AcceleratorType.MUSA_GPU.value,
+    ):
+        # torch_npu loads HCCL shared libraries during Worker import, and
+        # torch_musa loads the MUSA runtime the same way. Mutating
+        # LD_LIBRARY_PATH in the actor runtime_env can hide the CANN or MUSA
+        # library path before the test worker starts, so use another
+        # whitelisted path var.
         return "LIBRARY_PATH"
     return "LD_LIBRARY_PATH"
 

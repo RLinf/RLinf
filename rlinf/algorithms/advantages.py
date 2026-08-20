@@ -121,6 +121,49 @@ def compute_grpo_advantages(
     return advantages, None
 
 
+@register_advantage("grpo_video")
+def compute_grpo_video_advantages(
+    rewards: torch.Tensor,
+    loss_mask: torch.Tensor,
+    group_size: int,
+    **kwargs,
+):
+    """
+    Compute fine-grained GRPO advantages for video frame/chunk rewards.
+
+    After embodied preprocessing, action-level video rewards have shape
+    [num_steps, batch_size], where num_steps is usually the number of decoded
+    frame chunks and batch_size is ordered as [num_prompts * group_size]. This
+    function reshapes rewards to [num_steps, num_prompts, group_size] and returns
+    advantages with the same [num_steps, batch_size] shape, so each frame/chunk
+    can receive its own credit signal.
+
+    advantage_mode="frame":
+        Normalize each frame/chunk independently over the group_size samples.
+        Frame 0 only competes with frame 0 from other samples of the same prompt;
+        frame 1 only competes with frame 1, and so on.
+
+    advantage_mode="video":
+        Normalize all frame/chunk rewards within the same prompt group together
+        over dimensions [num_steps, group_size]. This keeps frame-level
+        advantages but uses one video-level mean/std per prompt group.
+    """
+    num_steps, batch_size = rewards.shape
+    grouped_rewards = rewards.reshape(num_steps, -1, group_size)
+    advantage_mode = kwargs.get("advantage_mode")
+    if advantage_mode == "frame":
+        grouped_reward_mean = grouped_rewards.mean(dim=-1, keepdim=True)
+        grouped_reward_std = grouped_rewards.std(dim=-1, keepdim=True)
+    elif advantage_mode == "video":
+        grouped_reward_mean = grouped_rewards.mean(dim=(0, 2), keepdim=True)
+        grouped_reward_std = grouped_rewards.std(dim=(0, 2), keepdim=True)
+    else:
+        raise ValueError(f"Unsupported grpo_video advantage_mode: {advantage_mode}")
+    advantages = (grouped_rewards - grouped_reward_mean) / (grouped_reward_std + 1e-6)
+    advantages = advantages.reshape(num_steps, batch_size)
+    return advantages * loss_mask, None
+
+
 @register_advantage("grpo_dynamic")
 def compute_grpo_dynamic_advantages(
     rewards: torch.Tensor,

@@ -14,6 +14,12 @@
 
 from enum import Enum
 
+from rlinf.utils.robosuite_compat import install_robosuite_egl_device_shim
+
+# Must run before any simulator is imported, in worker processes and in the
+# simulator subprocesses they spawn alike. See ``rlinf.utils.robosuite_compat``.
+install_robosuite_egl_device_shim()
+
 
 class SupportedEnvType(Enum):
     MANISKILL = "maniskill"
@@ -35,6 +41,7 @@ class SupportedEnvType(Enum):
     EMBODICHAIN = "embodichain"
     ROBOVERSE = "roboverse"
     D4RL = "d4rl"
+    DIFFUSION = "diffusion"
     POLARIS = "polaris"
 
 
@@ -144,6 +151,10 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.d4rl.d4rl_env import D4RLEnv
 
         return D4RLEnv
+    elif env_type == SupportedEnvType.DIFFUSION:
+        from rlinf.envs.diffusion import GenerationEnv
+
+        return GenerationEnv
     elif env_type == SupportedEnvType.POLARIS:
         from rlinf.envs.polaris.polaris_env import PolarisEnv
 

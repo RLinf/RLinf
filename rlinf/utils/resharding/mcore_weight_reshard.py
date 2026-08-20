@@ -201,7 +201,12 @@ class MegatronCoreWeightReshard:
                             key,
                             get_layer_num(key) + idx * pp_size * layers_per_chunk,
                         )
-                        if reshard_ep_model and "experts" in key:
+                        # shared_experts is EP-replicated (not EP-sharded)
+                        if (
+                            reshard_ep_model
+                            and "experts" in key
+                            and "shared_experts" not in key
+                        ):
                             expert_params[key2] = val
                         else:
                             tl_params[key2] = val
@@ -212,12 +217,22 @@ class MegatronCoreWeightReshard:
                 if "_extra_state" in key:
                     continue
                 if torch.is_tensor(val):
-                    if reshard_ep_model and "experts" in key:
+                    if (
+                        reshard_ep_model
+                        and "experts" in key
+                        and "shared_experts" not in key
+                    ):
                         expert_params[key] = val
                     elif "decoder.layers" in key:
                         tl_params[key] = val
                     else:
                         model_level_params[key] = val
+
+        # param split after routing: shared_experts must be in tl, not expert.
+        _n_shared_exp = sum(1 for _k in expert_params if "shared_experts" in _k)
+        assert _n_shared_exp == 0, (
+            "shared_experts leaked into expert_params; would crash EP gather"
+        )
 
         if vp_size > 1 or reshard_pp_model:
             # gather layers across pp ranks
@@ -266,14 +281,30 @@ class MegatronCoreWeightReshard:
                         )
                         ep_gathered_params[key2] = weight_list[idx]
 
-                # reshard experts across tpe ranks
-                ep_gathered_params = self.config.tpe_reshard_fn(
-                    ep_gathered_params,
-                    tpe_size,
-                    tpe_group,
-                    self.config.reshard_tp_size,
-                    dst_tp_rank,
-                )
+                # reshard experts for the rollout layout.
+                #   ep_reshard_fn selects this rank's slice by global expert id.
+                if (
+                    self.config.rollout_ep_size > 1
+                    and self.config.ep_reshard_fn is not None
+                ):
+                    assert tpe_size == 1, (
+                        "EP reshard (rollout_ep_size > 1) expects no "
+                        f"tensor-parallel-expert (tpe_size == 1), got tpe_size={tpe_size}"
+                    )
+                    ep_gathered_params = self.config.ep_reshard_fn(
+                        ep_gathered_params,
+                        self.config.rollout_ep_size,
+                        dst_tp_rank,  # == rollout ep rank in collocated (ep=tp)
+                        self.config.model_config.num_moe_experts,
+                    )
+                else:
+                    ep_gathered_params = self.config.tpe_reshard_fn(
+                        ep_gathered_params,
+                        tpe_size,
+                        tpe_group,
+                        self.config.reshard_tp_size,
+                        dst_tp_rank,
+                    )
 
                 # gather experts across pp ranks
                 pp_gathered_params = {}

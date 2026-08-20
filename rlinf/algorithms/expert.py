@@ -15,7 +15,7 @@
 import copy
 from typing import Any
 
-from omegaconf import open_dict
+from omegaconf import OmegaConf, open_dict
 
 
 def build_expert_model_config(
@@ -32,6 +32,16 @@ def build_expert_model_config(
 
     with open_dict(expert_model_config):
         for key, value in expert_cfg.items():
-            expert_model_config[key] = value
+            if (
+                key in expert_model_config
+                and OmegaConf.is_config(expert_model_config[key])
+                and OmegaConf.is_config(value)
+            ):
+                expert_model_config[key] = OmegaConf.merge(
+                    expert_model_config[key],
+                    value,
+                )
+            else:
+                expert_model_config[key] = value
 
     return expert_model_config
