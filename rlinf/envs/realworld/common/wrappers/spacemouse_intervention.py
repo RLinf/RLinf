@@ -73,6 +73,14 @@ class SpacemouseIntervention(gym.ActionWrapper):
                 self.last_intervene = time.time()
             gripper_action = self.gripper_action.copy()
             expert_a = np.concatenate((expert_a, gripper_action), axis=0)
+        else:
+            # Keep 7D when the env action space is 7D (e.g. no_gripper forces
+            # closed via GripperCloseEnv); pad closed gripper for teleop.
+            action_dim = int(np.prod(self.action_space.shape))
+            if action_dim >= 7 and expert_a.shape[0] == 6:
+                expert_a = np.concatenate(
+                    (expert_a, np.asarray([-1.0], dtype=np.float32)), axis=0
+                )
         if time.time() - self.last_intervene < 0.5:
             return expert_a, True
         return action, False

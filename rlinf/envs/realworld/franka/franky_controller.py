@@ -640,12 +640,18 @@ class FrankyController(Worker):
 
     def open_gripper(self) -> None:
         if self._end_effector_type.is_gripper:
-            self._gripper.open(speed=1.0)
+            try:
+                self._gripper.open(speed=1.0)
+            except Exception as e:
+                self._logger.warning("open_gripper failed (continuing): %s", e)
         self._logger.debug("Open gripper")
 
     def close_gripper(self) -> None:
         if self._end_effector_type.is_gripper:
-            self._gripper.close(speed=1.0)
+            try:
+                self._gripper.close(speed=1.0)
+            except Exception as e:
+                self._logger.warning("close_gripper failed (continuing): %s", e)
         self._logger.debug("Close gripper")
 
     def move_gripper(self, position: int, speed: float = 0.3) -> None:

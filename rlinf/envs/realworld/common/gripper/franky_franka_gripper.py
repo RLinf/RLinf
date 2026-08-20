@@ -64,20 +64,54 @@ class FrankyFrankaGripper(BaseGripper):
     def _speed_ms(self, speed: float) -> float:
         return _normalized_speed_to_ms(speed)
 
+    def _stop_quiet(self) -> None:
+        try:
+            self._gripper.stop()
+        except Exception:
+            pass
+
     def open(self, speed: float = 0.3) -> None:
-        self._gripper.open(self._speed_ms(speed))
+        try:
+            self._gripper.open(self._speed_ms(speed))
+        except Exception as exc:
+            # libfranka may reject open while a prior grasp/move is active.
+            self._logger.warning(
+                "Franky gripper open failed (%s); stop + retry via move", exc
+            )
+            self._stop_quiet()
+            try:
+                self._gripper.move(self._max_width, self._speed_ms(speed))
+            except Exception as move_exc:
+                self._logger.warning(
+                    "Franky gripper move(open) also failed (%s); continuing", move_exc
+                )
         self._is_open_flag = True
 
     def close(self, speed: float = 0.3, force: float = 130.0) -> None:
         # franky grasp force is in Newtons; map oversized ROS-style defaults down.
         grasp_force = float(force) if force <= 100.0 else self._grasp_force
-        self._gripper.grasp(
-            _CLOSE_WIDTH_M,
-            self._speed_ms(speed),
-            grasp_force,
-            epsilon_inner=1.0,
-            epsilon_outer=1.0,
-        )
+        speed_ms = self._speed_ms(speed)
+        try:
+            # grasp() often raises CommandException when closing on air / already
+            # closed / transient libfranka errors; that must not kill eval.
+            self._gripper.grasp(
+                _CLOSE_WIDTH_M,
+                speed_ms,
+                grasp_force,
+                epsilon_inner=1.0,
+                epsilon_outer=1.0,
+            )
+        except Exception as exc:
+            self._logger.warning(
+                "Franky gripper grasp failed (%s); falling back to move(close)", exc
+            )
+            self._stop_quiet()
+            try:
+                self._gripper.move(_CLOSE_WIDTH_M, speed_ms)
+            except Exception as move_exc:
+                self._logger.warning(
+                    "Franky gripper move(close) also failed (%s); continuing", move_exc
+                )
         self._is_open_flag = False
 
     def move(self, position: float, speed: float = 0.3) -> None:

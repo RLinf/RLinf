@@ -1,0 +1,126 @@
+defaults:
+  - env/realworld_block_peg_insertion@env.eval
+  - model/pi0_5_rlinf@rollout.model
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+    rollout:
+      node_group: train
+      placement: 0
+  node_groups:
+    - label: train
+      node_ranks: 0
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: /home/infini/liyanghao/RLinf-rlt/.venv/bin/python
+    - label: franka
+      node_ranks: 1
+      env_configs:
+        - node_ranks: 1
+          python_interpreter_path: /home/infini/liyanghao/RLinf-pico/.venv/bin/python
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 172.16.0.2
+            node_rank: 1
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "realworld-eval-openpi-rlinf-pni"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 20
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  # Weights are loaded via rollout.model.model_path (openpi_rlinf full_weights.pt).
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+
+  eval:
+    rollout_epoch: 20
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    keyboard_reward_wrapper: null
+    #no_gripper: True
+    use_spacemouse: False
+    max_episode_steps: 720
+    max_steps_per_rollout_epoch: 720
+
+    video_cfg:
+      save_video: False
+      info_on_video: True
+      video_base_dir: "/home/franka/franka/video-0805"
+
+    override_cfg:
+      #task_description: Pick up the block and insert it into the hole  # e.g. "pick up the object and place it into the container"
+      #target_ee_pose: [0.5550200939178467, 0.23316027224063873, 0.06312721967697144, 3.1156858808393775, -0.07035654894153476, -0.01925224087190558]
+      #target_ee_pose: [ 0.56140673, 0.03374824, 0.06293865, -3.11152733, -0.05016956, -0.09083917]
+      #target_ee_pose: [ 0.51940382 , 0.00320347 , 0.08353503 ,-3.12509237 ,-0.02129001, -0.06500843]
+      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
+      camera_serials: ["142122070838","141722078696"]
+      is_dummy: False
+      use_dense_reward: False
+      max_num_steps: ${env.eval.max_episode_steps}
+      binary_gripper_threshold: 0.5
+      enable_gripper_penalty: False
+      enable_camera_player: False
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+  collect_transitions: False
+  collect_prev_infos: False
+  enable_torch_compile: False
+  enable_cuda_graph: False
+  is_lora: False
+  model:
+    model_type: "openpi_rlinf"
+    precision: bf16
+    # SFT openpi_rlinf full wrapper (.pt with model.* keys); loaded by get_model.
+    model_path: /home/infini/liyanghao/model/pi05_rlinf_sft_0817.pt
+    num_action_chunks: 10
+    action_dim: 7
+    num_steps: 4
+    add_value_head: False
+    openpi_data:
+      repo_id: "realworld_franka_pni"
+      norm_stats_path: "/home/infini/liyanghao/model/pi05_base/pi05_base/realworld_franka_pni"
+    openpi:
+      task: eval
+      config_name: "pi05_realworld"
+      num_images_in_input: 2
+      action_chunk: ${..num_action_chunks}
+      action_horizon: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      num_steps: ${..num_steps}
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
+      detach_critic_input: True
+      train_expert_only: False
+      use_rlt: False
