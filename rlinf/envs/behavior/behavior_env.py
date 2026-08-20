@@ -27,13 +27,10 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from rlinf.envs.behavior.action_controls import (
-    action_like_values,
     apply_action_mask,
     apply_first_chunk_action_override,
     parse_action_mask,
     parse_first_chunk_action_override,
-    r1pro_noop_action,
-    robot_joint_positions_list,
 )
 from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
 from rlinf.envs.behavior.replay_runtime import (
@@ -47,7 +44,6 @@ from rlinf.envs.behavior.stage_rewards import (
     completion_bonus_tensor,
     extract_episode_done,
     extract_episode_success,
-    is_target_stage_success,
     stage_cumulative_reward_tensor,
     stage_sparse_reward_tensor,
     stage_weighted_reward_tensor,
@@ -161,12 +157,12 @@ class BehaviorProcess:
                 "advance every env with zeroed-out actions for inactive envs."
             )
 
-        self.action_mask = self._parse_action_mask(cfg)
+        self.action_mask = parse_action_mask(cfg)
         (
             self.first_chunk_action_override_enabled,
             self.first_chunk_action_ids,
             self.first_chunk_action_value,
-        ) = self._parse_first_chunk_action_override(cfg)
+        ) = parse_first_chunk_action_override(cfg)
         self._first_chunk_action_override_pending = np.zeros(num_envs, dtype=bool)
         self.trace_robot_joints = self._trace_robot_joints_enabled(cfg)
         self._joint_trace_frame_idx = 0
@@ -233,27 +229,6 @@ class BehaviorProcess:
             to_tensor(truncates),
             list(infos),
         )
-
-    @staticmethod
-    def _parse_action_mask(cfg: DictConfig) -> list[bool] | None:
-        return parse_action_mask(cfg)
-
-    @staticmethod
-    def _parse_first_chunk_action_override(
-        cfg: DictConfig,
-    ) -> tuple[bool, list[int], float]:
-        return parse_first_chunk_action_override(cfg)
-
-    @staticmethod
-    def _action_like_values(action, values: list[float]):
-        return action_like_values(action, values)
-
-    @staticmethod
-    def _robot_joint_positions_list(robot) -> list[float]:
-        return robot_joint_positions_list(robot)
-
-    def _r1pro_noop_action(self, robot, action):
-        return r1pro_noop_action(robot, action)
 
     def _apply_action_mask(self, actions):
         return apply_action_mask(
@@ -1272,38 +1247,23 @@ class BehaviorEnv(gym.Env):
         }
         return obs
 
-    def _completion_bonus_tensor(self, infos, reward):
-        return completion_bonus_tensor(infos, reward, self.reward_coef)
-
-    def _is_target_stage_success(self, task_reward: dict) -> bool:
-        return is_target_stage_success(task_reward, self.success_stage_idx)
-
-    def _stage_sparse_reward_tensor(self, rewards, infos=None):
-        return stage_sparse_reward_tensor(
-            rewards, infos, self.reward_coef, self.success_stage_idx
-        )
-
-    def _stage_weighted_reward_tensor(self, rewards, infos=None):
-        return stage_weighted_reward_tensor(
-            rewards, infos, self.reward_coef, self.stage_reward_weights
-        )
-
-    def _stage_cumulative_reward_tensor(self, rewards, infos=None):
-        return stage_cumulative_reward_tensor(rewards, infos, self.reward_coef)
-
     def _calc_step_reward(self, rewards, infos=None):
         reward = self.reward_coef * rewards
         if self.stage_sparse_reward:
-            return self._stage_sparse_reward_tensor(rewards, infos)
+            return stage_sparse_reward_tensor(
+                rewards, infos, self.reward_coef, self.success_stage_idx
+            )
         if self.stage_weighted_reward:
-            return self._stage_weighted_reward_tensor(rewards, infos)
+            return stage_weighted_reward_tensor(
+                rewards, infos, self.reward_coef, self.stage_reward_weights
+            )
         if self.stage_cumulative_reward:
-            return self._stage_cumulative_reward_tensor(rewards, infos)
+            return stage_cumulative_reward_tensor(rewards, infos, self.reward_coef)
 
         if not self.use_rel_reward:
             return reward
 
-        completion_bonus = self._completion_bonus_tensor(infos, reward)
+        completion_bonus = completion_bonus_tensor(infos, reward, self.reward_coef)
         dense_reward = reward - completion_bonus
         reward_diff = dense_reward - self.prev_step_reward.to(dense_reward.device)
         self.prev_step_reward = dense_reward.to(self.prev_step_reward.device)
