@@ -255,8 +255,26 @@ class PI0FastForRLActionPrediction(nn.Module, BasePolicy):
         if calculate_logprobs is None:
             calculate_logprobs = mode == "train"
         if mode == "eval" and not calculate_logprobs and not compute_values:
-            with torch.inference_mode():
-                actions = self.policy.predict_action_chunk(batch)
+            try:
+                with torch.inference_mode():
+                    actions = self.policy.predict_action_chunk(batch)
+            except (AssertionError, OverflowError, ValueError):
+                generated = self._generate_action_tokens_with_logprobs(
+                    batch,
+                    temperature=temperature,
+                    do_sample=do_sample,
+                    max_action_tokens=max_action_tokens,
+                    compute_logprobs=False,
+                )
+                actions = generated["actions"]
+                decode_valid = generated.get("decode_valid")
+                if decode_valid is not None:
+                    valid_action_mask = decode_valid.to(
+                        device=actions.device, dtype=torch.bool
+                    ).view(-1, 1, 1)
+                    actions = torch.where(
+                        valid_action_mask, actions, torch.zeros_like(actions)
+                    )
             actions = actions[:, : self.num_action_chunks, : self.action_dim]
             if self.postprocessor is not None:
                 actions = self.postprocessor(actions)
