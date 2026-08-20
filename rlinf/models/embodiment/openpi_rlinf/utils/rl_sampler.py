@@ -50,6 +50,7 @@ def sample_mean_var(
     noise_method: str,
     noise_level: float,
     num_steps: int,
+    timesteps: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Compute the ``(x_t_mean, x_t_std)`` pair for one denoise step.
 
@@ -63,12 +64,15 @@ def sample_mean_var(
         noise_method:  ``"flow_ode"`` or ``"flow_sde"``.
         noise_level:   scalar sigma scale (the YAML's ``openpi.noise_level``).
         num_steps:     total denoise steps.
+        timesteps:     optional precomputed schedule of length ``num_steps + 1``.
 
     Returns:
         ``(x_t_mean, x_t_std)``, both shape ``(B, H, A)``.
     """
     device = x_t.device
-    timesteps = get_timesteps(num_steps, device).to(x_t.dtype)
+    if timesteps is None:
+        timesteps = get_timesteps(num_steps, device)
+    timesteps = timesteps.to(dtype=x_t.dtype, device=device)
     t_input = timesteps[idx][:, None, None].expand_as(x_t)
     delta = (timesteps[idx] - timesteps[idx + 1])[:, None, None].expand_as(x_t)
     x0_pred = x_t - v_t * t_input

@@ -176,22 +176,23 @@ class Pi0(model.BaseModel):
             input_mask: (B, S) mask of valid tokens
             ar_mask: (S,) autoregressive mask (all False for prefix)
         """
-        tokens = []
-        input_mask = []
-        ar_mask = []
+        image_names = tuple(obs.images)
+        image_batches = [obs.images[name] for name in image_names]
+        batch_size = image_batches[0].shape[0]
+        image_tokens_batches = self.img(torch.cat(image_batches, dim=0))[0].split(
+            batch_size, dim=0
+        )
 
-        # Embed images through SigLIP
-        for name in obs.images:
-            image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
-            tokens.append(image_tokens)
-
-            # Image tokens use bidirectional attention
-            input_mask.append(
-                einops.repeat(
-                    obs.image_masks[name], "b -> b s", s=image_tokens.shape[1]
-                )
+        tokens = list(image_tokens_batches)
+        input_mask = [
+            einops.repeat(obs.image_masks[name], "b -> b s", s=image_tokens.shape[1])
+            for name, image_tokens in zip(
+                image_names, image_tokens_batches, strict=True
             )
-            ar_mask += [False] * image_tokens.shape[1]
+        ]
+        ar_mask = [False] * sum(
+            image_tokens.shape[1] for image_tokens in image_tokens_batches
+        )
 
         # Add language tokens
         if obs.tokenized_prompt is not None:
@@ -204,8 +205,7 @@ class Pi0(model.BaseModel):
         if self.pcd and obs.pcd_xyz is not None:
             # pcd_xyz: (B, 16, 2025, 3)
             # PointNet expects (B, num_points, 3)
-            B = obs.pcd_xyz.shape[0]
-            pcd_flat = obs.pcd_xyz.reshape(B, -1, 3)  # (B, 16*2025, 3)
+            pcd_flat = obs.pcd_xyz.reshape(batch_size, -1, 3)  # (B, 16*2025, 3)
             pcd_tokens = self.pointnet(pcd_flat)  # (B, 16, 2048)
             # Reshape to match expected dimensions
             if pcd_tokens.dim() == 2:
@@ -219,10 +219,13 @@ class Pi0(model.BaseModel):
             )
             ar_mask += [False] * pcd_tokens.shape[1]
 
-        tokens = torch.cat(tokens, dim=1)
-        input_mask = torch.cat(input_mask, dim=1)
-        ar_mask = torch.tensor(ar_mask, device=tokens.device)
-        return tokens, input_mask, ar_mask
+        prefix_tokens = torch.cat(tokens, dim=1)
+        prefix_mask = torch.cat(input_mask, dim=1)
+        return (
+            prefix_tokens,
+            prefix_mask,
+            torch.tensor(ar_mask, device=prefix_tokens.device),
+        )
 
     def embed_suffix(
         self,

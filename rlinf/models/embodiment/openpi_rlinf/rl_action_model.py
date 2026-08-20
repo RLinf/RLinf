@@ -188,27 +188,27 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         )
 
         # Single stochastic denoise step picked uniformly; the remaining steps
-        # are deterministic flow_ode. ``denoise_inds[:, 0]`` is the read site
-        # in default_forward (and matches the original RL contract where every
-        # column of denoise_inds carries the same chosen index).
+        # are deterministic flow_ode. PPO only needs the transition sampled at
+        # this step, rather than the complete denoise chain.
         hi = num_steps - 2 if rl_cfg.ignore_last else num_steps - 1
         chosen = random.randint(0, hi)
-        denoise_inds = torch.full(
-            (B, num_steps), chosen, device=device, dtype=torch.long
-        )
+        denoise_ind = torch.full((B,), chosen, device=device, dtype=torch.long)
         idx_step = torch.empty(B, device=device, dtype=torch.long)
         timesteps = rl_sampler.get_timesteps(num_steps, device)
 
-        chains = [noise]
-        log_probs: list[torch.Tensor] = []
         x_t = noise
+        chain_pre = None
+        chain_next = None
+        selected_logprob = None
 
         for idx in range(num_steps):
             method = rl_cfg.noise_method if idx == chosen else "flow_ode"
-            t_val = float(timesteps[idx].item())
-            t_tensor = torch.full((B,), t_val, device=device, dtype=torch.float32)
             suffix_act = self.model.run_suffix(
-                observation, x_t, t_tensor, kv_cache, prefix_mask
+                observation,
+                x_t,
+                timesteps[idx].expand(B),
+                kv_cache,
+                prefix_mask,
             )
             v_t = self.model.velocity_from_suffix(suffix_act).to(torch.float32)
             idx_step.fill_(idx)
@@ -219,34 +219,42 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
                 noise_method=method,
                 noise_level=rl_cfg.noise_level,
                 num_steps=num_steps,
+                timesteps=timesteps,
             )
             step_noise = torch.randn(
                 x_t.shape, device=device, dtype=torch.float32, generator=rng
             )
-            x_t = x_t_mean + step_noise * x_t_std
-            log_probs.append(rl_sampler.gaussian_logprob(x_t, x_t_mean, x_t_std))
-            chains.append(x_t)
+            x_t_next = x_t_mean + step_noise * x_t_std
+            if idx == chosen:
+                chain_pre = x_t
+                chain_next = x_t_next
+                selected_logprob = rl_sampler.gaussian_logprob(
+                    x_t_next, x_t_mean, x_t_std
+                )
+            x_t = x_t_next
 
         x_0 = x_t
-        chains_tensor = torch.stack(chains, dim=1).contiguous()  # [B, N+1, H, A]
-        log_probs_stacked = torch.stack(log_probs, dim=1)  # [B, N, H, A]
-        log_probs_picked = log_probs_stacked[
-            torch.arange(B, device=device), denoise_inds[:, 0]
-        ][:, : self.action_chunk, : self.action_env_dim]
-        log_probs_picked = log_probs_picked.float().contiguous()
+        assert chain_pre is not None and chain_next is not None
+        assert selected_logprob is not None
+        log_probs_picked = (
+            selected_logprob[:, : self.action_chunk, : self.action_env_dim]
+            .float()
+            .contiguous()
+        )
 
         prev_values = vlm_value[:, None].float().contiguous()  # [B, 1]
 
         env_outputs = self.output_transform(
             {"actions": x_0, "state": observation.state}
         )
-        # openpi Unnormalize runs in float64; cast env actions to float32 to match
-        # the eval path + legacy contract (and the env/rollout action dtype).
-        actions = env_outputs["actions"].to(device=device, dtype=torch.float32)
+        # openpi Unnormalize runs in float64; keep its CPU output for the
+        # rollout channel and only cast it to the expected action dtype.
+        actions = env_outputs["actions"].to(dtype=torch.float32)
 
         forward_inputs: dict[str, torch.Tensor] = {
-            "chains": chains_tensor,
-            "denoise_inds": denoise_inds,
+            "chain_pre": chain_pre.contiguous(),
+            "chain_next": chain_next.contiguous(),
+            "denoise_ind": denoise_ind,
             "obs_state": observation.state.contiguous(),
             "tokenized_prompt": observation.tokenized_prompt.contiguous(),
             "tokenized_prompt_mask": observation.tokenized_prompt_mask.contiguous(),
@@ -281,7 +289,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         return self.default_forward(**kwargs)
 
     def default_forward(self, forward_inputs: dict[str, torch.Tensor], **kwargs):
-        """PPO-time recompute of logprobs and values from the stored chain."""
+        """PPO-time recompute of logprobs and values from one stored transition."""
         rl_cfg = self.rl_cfg
         if rl_cfg.joint_logprob:
             raise NotImplementedError(
@@ -290,10 +298,11 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
 
         compute_values = kwargs.get("compute_values", True)
 
-        chains = forward_inputs["chains"]
-        denoise_inds = forward_inputs["denoise_inds"]
-        B = chains.shape[0]
-        device = chains.device
+        chain_pre = forward_inputs["chain_pre"]
+        chain_next = forward_inputs["chain_next"]
+        denoise_ind = forward_inputs["denoise_ind"].to(torch.long)
+        B = chain_pre.shape[0]
+        device = chain_pre.device
 
         images: dict[str, torch.Tensor] = {}
         image_masks: dict[str, torch.Tensor] = {}
@@ -322,29 +331,25 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
                 observation
             )
 
-        idx0 = denoise_inds[:, 0].to(torch.long)
-        arange_B = torch.arange(B, device=device)
-        chains_pre = chains[arange_B, idx0]  # x_t   at the chosen step
-        chains_next = chains[arange_B, idx0 + 1]  # x_{t-dt} actually drawn at rollout
-
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
-        t_input = timesteps[idx0].to(torch.float32)
+        t_input = timesteps[denoise_ind].to(torch.float32)
 
         suffix_act = self.model.run_suffix(
-            observation, chains_pre, t_input, kv_cache, prefix_mask
+            observation, chain_pre, t_input, kv_cache, prefix_mask
         )
         v_t = self.model.velocity_from_suffix(suffix_act).to(torch.float32)
 
         x_t_mean, x_t_std = rl_sampler.sample_mean_var(
-            chains_pre.to(torch.float32),
+            chain_pre.to(torch.float32),
             v_t,
-            idx0,
+            denoise_ind,
             noise_method=rl_cfg.noise_method,
             noise_level=rl_cfg.noise_level,
             num_steps=self.num_steps,
+            timesteps=timesteps,
         )
         log_probs = rl_sampler.gaussian_logprob(
-            chains_next.to(torch.float32), x_t_mean, x_t_std
+            chain_next.to(torch.float32), x_t_mean, x_t_std
         )
         log_probs = (
             log_probs[:, : self.action_chunk, : self.action_env_dim]
