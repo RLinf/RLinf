@@ -217,6 +217,42 @@ def test_receive_stream_validates_counts_and_acks_each_batch():
 
 
 @pytest.mark.parametrize(
+    ("num_action_chunks", "pipeline_stages", "expected"),
+    [
+        (1, 1, (1024, 8192)),
+        (16, 1, (64, 512)),
+        (16, 2, (128, 512)),
+    ],
+)
+def test_compute_stream_counts_follow_policy_decisions(
+    num_action_chunks, pipeline_stages, expected
+):
+    assert (
+        pinned_feature_stream.compute_rollout_backbone_stream_counts(
+            rollout_epochs=8,
+            max_steps_per_epoch=128,
+            num_action_chunks=num_action_chunks,
+            pipeline_stages=pipeline_stages,
+            total_num_envs=64,
+            world_size=8,
+        )
+        == expected
+    )
+
+
+def test_compute_stream_counts_reject_partial_action_chunk():
+    with pytest.raises(ValueError, match="divisible by num_action_chunks"):
+        pinned_feature_stream.compute_rollout_backbone_stream_counts(
+            rollout_epochs=8,
+            max_steps_per_epoch=127,
+            num_action_chunks=16,
+            pipeline_stages=1,
+            total_num_envs=64,
+            world_size=8,
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     [
         ("schema", 2, "unsupported pinned backbone metadata"),

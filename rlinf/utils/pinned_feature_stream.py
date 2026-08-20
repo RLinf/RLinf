@@ -21,6 +21,44 @@ from rlinf.utils.backbone_cache import ROLLOUT_BACKBONE_SAMPLE_ID_STRIDE
 from rlinf.utils.pinned_rollout_cache import PinnedRolloutBackboneCache
 
 
+def compute_rollout_backbone_stream_counts(
+    *,
+    rollout_epochs: int,
+    max_steps_per_epoch: int,
+    num_action_chunks: int,
+    pipeline_stages: int,
+    total_num_envs: int,
+    world_size: int,
+) -> tuple[int, int]:
+    """Return the number of policy-output blocks and feature samples per rank."""
+    values = {
+        "rollout_epochs": rollout_epochs,
+        "max_steps_per_epoch": max_steps_per_epoch,
+        "num_action_chunks": num_action_chunks,
+        "pipeline_stages": pipeline_stages,
+        "total_num_envs": total_num_envs,
+        "world_size": world_size,
+    }
+    invalid = [name for name, value in values.items() if value <= 0]
+    if invalid:
+        raise ValueError(f"rollout backbone stream counts require positive {invalid}")
+    if max_steps_per_epoch % num_action_chunks:
+        raise ValueError(
+            "max_steps_per_epoch must be divisible by num_action_chunks for "
+            "rollout backbone streaming"
+        )
+    if total_num_envs % (world_size * pipeline_stages):
+        raise ValueError(
+            "total_num_envs must be divisible by world_size * pipeline_stages "
+            "for rollout backbone streaming"
+        )
+
+    chunk_steps = max_steps_per_epoch // num_action_chunks
+    expected_blocks = rollout_epochs * chunk_steps * pipeline_stages
+    expected_samples = rollout_epochs * chunk_steps * total_num_envs // world_size
+    return expected_blocks, expected_samples
+
+
 async def receive_pinned_rollout_backbone_stream(
     worker: Any,
     *,

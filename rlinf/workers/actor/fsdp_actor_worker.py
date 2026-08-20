@@ -85,7 +85,10 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
-from rlinf.utils.pinned_feature_stream import receive_pinned_rollout_backbone_stream
+from rlinf.utils.pinned_feature_stream import (
+    compute_rollout_backbone_stream_counts,
+    receive_pinned_rollout_backbone_stream,
+)
 from rlinf.utils.pinned_rollout_cache import PinnedRolloutBackboneCache
 from rlinf.utils.placement import (
     HybridComponentPlacement,
@@ -1286,12 +1289,15 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             return {}
         if self._pinned_rollout_backbone_cache is not None:
             raise RuntimeError("previous rollout backbone cache is still active")
-        expected_blocks = int(
-            self.cfg.env.train.rollout_epoch
-            * self.cfg.env.train.max_steps_per_rollout_epoch
-        )
-        expected_samples = int(
-            expected_blocks * self.cfg.env.train.total_num_envs // self._world_size
+        expected_blocks, expected_samples = compute_rollout_backbone_stream_counts(
+            rollout_epochs=int(self.cfg.env.train.rollout_epoch),
+            max_steps_per_epoch=int(
+                self.cfg.env.train.max_steps_per_rollout_epoch
+            ),
+            num_action_chunks=int(self.cfg.actor.model.num_action_chunks),
+            pipeline_stages=int(self.stage_num),
+            total_num_envs=int(self.cfg.env.train.total_num_envs),
+            world_size=int(self._world_size),
         )
         cache, metadata, metrics = await receive_pinned_rollout_backbone_stream(
             self,

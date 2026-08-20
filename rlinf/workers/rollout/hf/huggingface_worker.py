@@ -44,6 +44,9 @@ from rlinf.utils.backbone_cache import (
     filter_rollout_backbone_transport,
     is_rollout_backbone_ipc_transport,
 )
+from rlinf.utils.pinned_feature_stream import (
+    compute_rollout_backbone_stream_counts,
+)
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -219,14 +222,18 @@ class MultiStepRolloutWorker(Worker):
             f"pinned-r{self._rank}-l{self._pinned_feature_lease_seq}"
         )
         self._pinned_feature_consumer_rank = self._rank
-        self._pinned_stream_expected_blocks = int(
-            self.cfg.env.train.rollout_epoch
-            * self.cfg.env.train.max_steps_per_rollout_epoch
-        )
-        self._pinned_stream_expected_samples = int(
-            self._pinned_stream_expected_blocks
-            * self.cfg.env.train.total_num_envs
-            // self._world_size
+        (
+            self._pinned_stream_expected_blocks,
+            self._pinned_stream_expected_samples,
+        ) = compute_rollout_backbone_stream_counts(
+            rollout_epochs=int(self.cfg.env.train.rollout_epoch),
+            max_steps_per_epoch=int(
+                self.cfg.env.train.max_steps_per_rollout_epoch
+            ),
+            num_action_chunks=int(self.model_cfg.num_action_chunks),
+            pipeline_stages=int(self.num_pipeline_stages),
+            total_num_envs=int(self.cfg.env.train.total_num_envs),
+            world_size=int(self._world_size),
         )
         if (
             self._pinned_stream_expected_blocks <= 0

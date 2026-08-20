@@ -68,6 +68,8 @@ class _FakeSender:
             )
         )
         self.actor_group_name = "actor"
+        self.model_cfg = SimpleNamespace(num_action_chunks=1)
+        self.num_pipeline_stages = 1
         self.torch_platform = _FakePlatform()
         self.sent = []
         self.logs = []
