@@ -81,32 +81,6 @@ def _preload_numba_llvmlite() -> None:
             pass
 
 
-def _extract_obs_image(raw_obs):
-    state = None
-    for sensor_data in raw_obs.values():
-        assert isinstance(sensor_data, dict)
-        for k, v in sensor_data.items():
-            if "left_realsense_link:Camera:0" in k:
-                left_image = convert_uint8_rgb(v["rgb"])
-            elif "right_realsense_link:Camera:0" in k:
-                right_image = convert_uint8_rgb(v["rgb"])
-            elif "zed_link:Camera:0" in k:
-                zed_image = convert_uint8_rgb(v["rgb"])
-            elif "proprio" in k:
-                state = v
-    assert state is not None, (
-        "state is not found in the observation which is required for the behavior training."
-    )
-
-    return {
-        "main_images": zed_image,  # [H, W, C]
-        "wrist_images": torch.stack(
-            [left_image, right_image], axis=0
-        ),  # [N_IMG, H, W, C]
-        "state": state,
-    }
-
-
 def _parse_trunk_proprio_randomization(cfg):
     random_cfg = cfg.get("trunk_proprio_randomization", None)
     if random_cfg is None or not random_cfg.get("enabled", False):
@@ -1306,10 +1280,35 @@ class BehaviorEnv(gym.Env):
             for env_idx, info in enumerate(infos)
         ]
 
+    def _extract_obs_image(self, raw_obs):
+        state = None
+        for sensor_data in raw_obs.values():
+            assert isinstance(sensor_data, dict)
+            for k, v in sensor_data.items():
+                if "left_realsense_link:Camera:0" in k:
+                    left_image = convert_uint8_rgb(v["rgb"])
+                elif "right_realsense_link:Camera:0" in k:
+                    right_image = convert_uint8_rgb(v["rgb"])
+                elif "zed_link:Camera:0" in k:
+                    zed_image = convert_uint8_rgb(v["rgb"])
+                elif "proprio" in k:
+                    state = v
+        assert state is not None, (
+            "state is not found in the observation which is required for the behavior training."
+        )
+
+        return {
+            "main_images": zed_image,  # [H, W, C]
+            "wrist_images": torch.stack(
+                [left_image, right_image], axis=0
+            ),  # [N_IMG, H, W, C]
+            "state": state,
+        }
+
     def _wrap_obs(self, obs_list, infos=None, env_indices=None):
         extracted_obs_list = []
         for obs in obs_list:
-            extracted_obs = _extract_obs_image(obs)
+            extracted_obs = self._extract_obs_image(obs)
             extracted_obs_list.append(extracted_obs)
 
         states = torch.stack(
