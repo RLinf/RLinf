@@ -41,6 +41,7 @@ from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
+from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -54,8 +55,6 @@ from rlinf.utils.utils import (
     pack_batch,
     preprocess_embodied_batch,
 )
-from rlinf.workers.env.history_manager import HistoryManager
-from rlinf.workers.env.smooth_intervene import SmoothInterveneController
 
 
 class EnvWorker(Worker):
