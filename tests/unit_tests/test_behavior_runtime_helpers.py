@@ -43,6 +43,7 @@ from rlinf.envs.behavior.stage_rewards import (
     stage_sparse_reward_tensor,
     stage_weighted_reward_tensor,
 )
+from rlinf.envs.behavior.utils import normalize_omnigibson_reward_config
 
 
 class FakeRobot:
@@ -205,8 +206,16 @@ class TestStageRewards:
 
     def test_stage_sparse_reward_only_rewards_target_stage(self):
         infos = [
-            {"reward": {"task_specific": {"current_stage_idx": 3, "completion_bonus": 1}}},
-            {"reward": {"task_specific": {"current_stage_idx": 2, "completion_bonus": 1}}},
+            {
+                "reward": {
+                    "task_specific": {"current_stage_idx": 3, "completion_bonus": 1}
+                }
+            },
+            {
+                "reward": {
+                    "task_specific": {"current_stage_idx": 2, "completion_bonus": 1}
+                }
+            },
         ]
 
         reward = stage_sparse_reward_tensor(
@@ -217,8 +226,16 @@ class TestStageRewards:
 
     def test_stage_weighted_reward_applies_per_stage_weights(self):
         infos = [
-            {"reward": {"task_specific": {"current_stage_idx": 1, "completion_bonus": 1}}},
-            {"reward": {"task_specific": {"current_stage_idx": 3, "completion_bonus": 2}}},
+            {
+                "reward": {
+                    "task_specific": {"current_stage_idx": 1, "completion_bonus": 1}
+                }
+            },
+            {
+                "reward": {
+                    "task_specific": {"current_stage_idx": 3, "completion_bonus": 2}
+                }
+            },
         ]
 
         reward = stage_weighted_reward_tensor(
@@ -240,11 +257,15 @@ class TestStageRewards:
     def test_episode_success_and_done_use_target_stage_when_configured(self):
         info = {
             "done": {"success": False},
-            "reward": {"task_specific": {"current_stage_idx": 3, "completion_bonus": 1}},
+            "reward": {
+                "task_specific": {"current_stage_idx": 3, "completion_bonus": 1}
+            },
         }
 
         assert extract_episode_success(info, success_stage_idx=3) is True
-        assert extract_episode_done(info, success_stage_idx=3, default_done_extractor=bool)
+        assert extract_episode_done(
+            info, success_stage_idx=3, default_done_extractor=bool
+        )
 
     def test_episode_success_falls_back_to_done_success(self):
         info = {"done": {"success": True}}
@@ -285,3 +306,29 @@ class TestReplayRuntime:
         assert stage_idx_from_info({"task_reward": {"current_stage_idx": "2"}}) == 2
         assert stage_idx_from_info({"current_stage_idx": "bad"}) is None
         assert stage_idx_from_reward(child_env) == 3
+
+
+class TestOmniGibsonRewardConfig:
+    def test_rlinf_stage_reward_mode_is_normalized_for_omnigibson(self):
+        cfg = OmegaConf.create(
+            {
+                "task": {
+                    "reward_config": {
+                        "reward_mode": "stage_weighted",
+                        "stage_reward_weights": [0.5, 1.0, 2.0],
+                    }
+                }
+            }
+        )
+
+        normalized = normalize_omnigibson_reward_config(cfg)
+
+        assert normalized.task.reward_config.reward_mode == "stage"
+        assert "stage_reward_weights" not in normalized.task.reward_config
+
+    def test_omnigibson_reward_mode_is_left_unchanged(self):
+        cfg = OmegaConf.create({"task": {"reward_config": {"reward_mode": "task"}}})
+
+        normalized = normalize_omnigibson_reward_config(cfg)
+
+        assert normalized.task.reward_config.reward_mode == "task"

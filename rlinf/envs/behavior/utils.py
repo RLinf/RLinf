@@ -22,6 +22,11 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
+RLINF_STAGE_REWARD_MODES = {
+    "stage_sparse",
+    "stage_weighted",
+    "stage_cumulative",
+}
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -222,7 +227,9 @@ def reset_robot_joint_state_to_reset_pose(
         return
 
     if preserve_base_pose and target_joint_positions.numel() > base_joint_dim:
-        target_joint_positions[:base_joint_dim] = current_joint_positions[:base_joint_dim]
+        target_joint_positions[:base_joint_dim] = current_joint_positions[
+            :base_joint_dim
+        ]
 
     keep_still = getattr(robot, "keep_still", None)
     if callable(keep_still):
@@ -296,6 +303,30 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
         )
 
 
+def normalize_omnigibson_reward_config(omni_cfg: DictConfig) -> DictConfig:
+    """Remove RLinf-only reward config before constructing OmniGibson envs."""
+    reward_mode = OmegaConf.select(
+        omni_cfg, "task.reward_config.reward_mode", default=None
+    )
+    reward_cfg = OmegaConf.select(omni_cfg, "task.reward_config", default=None)
+    if reward_cfg is None:
+        return omni_cfg
+
+    if str(reward_mode).lower() in RLINF_STAGE_REWARD_MODES:
+        OmegaConf.update(
+            omni_cfg,
+            "task.reward_config.reward_mode",
+            "stage",
+            merge=False,
+        )
+
+    if "stage_reward_weights" in reward_cfg:
+        with open_dict(reward_cfg):
+            reward_cfg.pop("stage_reward_weights", None)
+
+    return omni_cfg
+
+
 def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     """
     Setup OmniGibson's config, overrided by user-set config
@@ -324,6 +355,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     override_sub_cfg(omni_cfg, override_cfg, "macro")
     override_sub_cfg(omni_cfg, override_cfg, "task")
     override_sub_cfg(omni_cfg, override_cfg, "scene")
+    normalize_omnigibson_reward_config(omni_cfg)
     # here actually we only needs one robot config (and Behavior actually does do that)
     # we must use update rather than merge to keep default robot config fields.
     robot_override = OmegaConf.select(override_cfg, "robots[0]", default=None)

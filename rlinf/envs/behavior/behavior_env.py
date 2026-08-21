@@ -418,9 +418,7 @@ class BehaviorProcess:
             "chunk_step_idx": None if chunk_step_idx is None else int(chunk_step_idx),
             "robot_name": getattr(robot, "name", None),
             "joint_names": self._robot_joint_names(robot),
-            "joint_positions": self._tensor_to_float_list(
-                robot.get_joint_positions()
-            ),
+            "joint_positions": self._tensor_to_float_list(robot.get_joint_positions()),
             "joint_velocities": self._tensor_to_float_list(joint_velocities),
             "robot_position_world": self._tensor_to_float_list(robot_pos),
             "robot_quat_world": self._tensor_to_float_list(robot_quat),
@@ -570,13 +568,9 @@ class BehaviorProcess:
 
         if payload and all(isinstance(item, dict) for item in payload):
             reset_indices = [
-                idx
-                for idx, item in enumerate(payload)
-                if bool(item.get("reset", True))
+                idx for idx, item in enumerate(payload) if bool(item.get("reset", True))
             ]
-            is_full_reset = all(
-                bool(item.get("full_reset", False)) for item in payload
-            )
+            is_full_reset = all(bool(item.get("full_reset", False)) for item in payload)
             instance_ids = [
                 int(payload[idx]["instance_id"])
                 for idx in reset_indices
@@ -605,8 +599,9 @@ class BehaviorProcess:
             raw_obs, infos = result
             return list(raw_obs), list(infos)
 
-        if reset_indices_or_payload and isinstance(
-            reset_indices_or_payload[0], dict
+        if reset_indices_or_payload and (
+            isinstance(reset_indices_or_payload[0], dict)
+            or isinstance(reset_indices_or_payload[0], (bool, np.bool_))
         ):
             # Payload-based reset with optional per-env instance IDs (replay).
             reset_indices, instance_ids, _is_full_reset = self._parse_reset_payload(
@@ -614,18 +609,26 @@ class BehaviorProcess:
             )
             if not reset_indices:
                 return [], []
-            raw_obs, infos = self._reset_env_indices(
-                reset_indices, instance_ids=instance_ids
+            if instance_ids is not None:
+                raw_obs, infos = self._reset_env_indices(
+                    reset_indices, instance_ids=instance_ids
+                )
+                return raw_obs, infos
+            self.instance_loader.prepare_reset(self.env)
+            result = self._call_reset(
+                reset_indices=reset_indices,
+                get_obs=get_obs,
             )
-            return raw_obs, infos
+            if not get_obs:
+                return None, None
+            raw_obs, infos = result
+            return list(raw_obs), list(infos)
 
         # Legacy format: list[int] — partial reset of selected env indices
         # (used by env_reset_slice which passes local_rows).
         reset_indices = reset_indices_or_payload
         self.instance_loader.prepare_reset(self.env)
-        result = self._call_reset(
-            reset_indices=reset_indices, get_obs=get_obs
-        )
+        result = self._call_reset(reset_indices=reset_indices, get_obs=get_obs)
         if not get_obs:
             return None, None
         raw_obs, infos = result
@@ -895,13 +898,22 @@ class BehaviorProcessPool:
                 all_infos[pos] = info
         return all_raw_obs, all_infos
 
-    def env_reset_slice_partial(
-        self, global_start: int, num_envs: int, payload_shards: list
-    ):
+    def env_reset_slice_partial(self, global_start: int, num_envs: int, payload: list):
         """Reset a contiguous slice with per-env payload (e.g. instance IDs)."""
         if num_envs == 0:
             return [], []
+        if len(payload) != num_envs:
+            raise ValueError(
+                f"reset payload length ({len(payload)}) must match "
+                f"num_envs ({num_envs})."
+            )
         plan = self._slice_plan(global_start, num_envs)
+        payload_shards, reset_positions_by_proc = self._build_reset_payload_shards(
+            payload,
+            plan,
+            self.num_env_shard,
+            self.num_env_subprocess,
+        )
         refs = [
             self.env_processes[sp].reset.remote(payload_shards[sp])
             for sp, _positions, _local_rows in plan
@@ -909,11 +921,45 @@ class BehaviorProcessPool:
         shard_results = ray.get(refs)
         all_raw_obs: list = [None] * num_envs
         all_infos: list = [None] * num_envs
-        for (raw_obs, infos), (_sp, positions, _local_rows) in zip(shard_results, plan):
-            for pos, obs, info in zip(positions, raw_obs, infos):
+        for (raw_obs, infos), (sp, _positions, _local_rows) in zip(shard_results, plan):
+            for pos, obs, info in zip(reset_positions_by_proc[sp], raw_obs, infos):
                 all_raw_obs[pos] = obs
                 all_infos[pos] = info
         return all_raw_obs, all_infos
+
+    @staticmethod
+    def _reset_payload_item_enabled(item) -> bool:
+        if isinstance(item, dict):
+            return bool(item.get("reset", True))
+        return bool(item)
+
+    @classmethod
+    def _build_reset_payload_shards(
+        cls,
+        payload: list,
+        plan: list[tuple[int, list[int], list[int]]],
+        num_env_shard: int,
+        num_env_subprocess: int,
+    ) -> tuple[list[list], list[list[int]]]:
+        """Expand slice-order reset payload into local shard-order payloads."""
+        payload_is_dict = bool(payload) and all(
+            isinstance(item, dict) for item in payload
+        )
+        filler = {"reset": False} if payload_is_dict else False
+        payload_shards = [
+            [copy.deepcopy(filler) for _ in range(num_env_shard)]
+            for _ in range(num_env_subprocess)
+        ]
+        reset_positions_by_proc = [[] for _ in range(num_env_subprocess)]
+
+        for sp, positions, local_rows in plan:
+            for pos, local_row in zip(positions, local_rows):
+                item = payload[pos]
+                payload_shards[sp][local_row] = item
+                if cls._reset_payload_item_enabled(item):
+                    reset_positions_by_proc[sp].append(pos)
+
+        return payload_shards, reset_positions_by_proc
 
     def env_chunk_step_slice(
         self,
@@ -1078,7 +1124,7 @@ class BehaviorEnv(gym.Env):
             self.use_subtask_prompt = bool(use_subtask_prompt_cfg)
         self.prompt_override = prompt_override
         self._ordered_reset_epoch = 0
-        self._ordered_reset_instance_ids = None
+        self._ordered_reset_instance_ids = self._init_ordered_reset_instance_ids()
         self._stage_prompt_lists: list[list[str] | None] = [None] * self.num_envs
         self.trunk_proprio_randomization = _parse_trunk_proprio_randomization(cfg)
         self._trunk_proprio_random_values = None
@@ -1121,7 +1167,18 @@ class BehaviorEnv(gym.Env):
 
     def env_reset(self):
         self._ensure_pool()
-        return self.pool.env_reset_slice(self.pool_offset, self.num_envs)
+        instance_ids = self._ordered_reset_ids_for_indices(list(range(self.num_envs)))
+        if instance_ids is None:
+            return self.pool.env_reset_slice(self.pool_offset, self.num_envs)
+
+        payload = _reset_payload_with_instance_ids(
+            [True] * self.num_envs, instance_ids, full_reset=True
+        )
+        return self.pool.env_reset_slice_partial(
+            self.pool_offset,
+            self.num_envs,
+            payload,
+        )
 
     def env_chunk_step(self, chunk_actions: torch.Tensor):
         self._ensure_pool()
@@ -1143,15 +1200,10 @@ class BehaviorEnv(gym.Env):
         instance_ids = self._ordered_reset_ids_for_indices(reset_indices)
         payload = _reset_payload_with_instance_ids(reset_mask, instance_ids)
         self._ensure_pool()
-        s = self.pool.num_env_shard
-        payload_shards = [
-            payload[i * s : (i + 1) * s]
-            for i in range(self.pool.num_env_subprocess)
-        ]
         all_raw_obs, all_infos = self.pool.env_reset_slice_partial(
             self.pool_offset,
             self.num_envs,
-            payload_shards,
+            payload,
         )
         # Extract only the reset slots.
         raw_obs = [all_raw_obs[i] for i in reset_indices]
@@ -1174,9 +1226,7 @@ class BehaviorEnv(gym.Env):
         if not env_indices:
             return
 
-        low = torch.tensor(
-            self.trunk_proprio_randomization["low"], dtype=torch.float32
-        )
+        low = torch.tensor(self.trunk_proprio_randomization["low"], dtype=torch.float32)
         high = torch.tensor(
             self.trunk_proprio_randomization["high"], dtype=torch.float32
         )
@@ -1311,9 +1361,7 @@ class BehaviorEnv(gym.Env):
             extracted_obs = self._extract_obs_image(obs)
             extracted_obs_list.append(extracted_obs)
 
-        states = torch.stack(
-            [obs["state"] for obs in extracted_obs_list], axis=0
-        )
+        states = torch.stack([obs["state"] for obs in extracted_obs_list], axis=0)
         states = self._apply_trunk_proprio_randomization(states, env_indices)
         obs = {
             "main_images": torch.stack(
@@ -1545,9 +1593,7 @@ class BehaviorEnv(gym.Env):
                 "target_stage_success": step_success,
                 "done": episode_done,
                 "activity_instance_id": int(
-                    activity_instance_id
-                    if activity_instance_id is not None
-                    else -1
+                    activity_instance_id if activity_instance_id is not None else -1
                 ),
                 "held_in_hand_at_end": bool(held_in_hand),
             }
@@ -1628,9 +1674,7 @@ class BehaviorEnv(gym.Env):
             reset_infos = self._record_metrics(
                 reset_rewards, reset_raw_infos, env_indices=reset_indices
             )
-            infos = _merge_info_rows(
-                infos, reset_infos, reset_indices, self.num_envs
-            )
+            infos = _merge_info_rows(infos, reset_infos, reset_indices, self.num_envs)
 
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
@@ -1677,10 +1721,12 @@ class BehaviorEnv(gym.Env):
     def dump_replay_tro_states(self, payload: dict) -> list[dict]:
         """Dispatch ``dump_replay_tro_states`` to every Ray actor in the pool."""
         self._ensure_pool()
-        results = ray.get([
-            proc.dump_replay_tro_states.remote(payload)
-            for proc in self.pool.env_processes
-        ])
+        results = ray.get(
+            [
+                proc.dump_replay_tro_states.remote(payload)
+                for proc in self.pool.env_processes
+            ]
+        )
         merged = []
         for sub_results in results:
             merged.extend(sub_results)
