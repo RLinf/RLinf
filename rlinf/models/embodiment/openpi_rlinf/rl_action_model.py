@@ -265,11 +265,9 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         # torch.split over forward_inputs values, so nested image / mask dicts
         # are unsupported. Encode them with prefixed scalar keys here and decode
         # symmetrically in default_forward.
-        for k in pi0_model_module.IMAGE_KEYS:
-            v = observation.images[k]
+        for k, v in observation.images.items():
             forward_inputs[f"obs_image__{k}"] = v.contiguous()
-        for k in pi0_model_module.IMAGE_KEYS:
-            v = observation.image_masks[k]
+        for k, v in observation.image_masks.items():
             forward_inputs[f"obs_image_mask__{k}"] = v.contiguous()
 
         return actions, {
@@ -305,28 +303,13 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         B = chains.shape[0]
         device = chains.device
 
-        cached_images: dict[str, torch.Tensor] = {}
-        cached_image_masks: dict[str, torch.Tensor] = {}
+        images: dict[str, torch.Tensor] = {}
+        image_masks: dict[str, torch.Tensor] = {}
         for key, value in forward_inputs.items():
             if key.startswith("obs_image__"):
-                cached_images[key[len("obs_image__") :]] = value
+                images[key[len("obs_image__") :]] = value
             elif key.startswith("obs_image_mask__"):
-                cached_image_masks[key[len("obs_image_mask__") :]] = value
-        missing_images = [
-            key for key in pi0_model_module.IMAGE_KEYS if key not in cached_images
-        ]
-        missing_masks = [
-            key for key in pi0_model_module.IMAGE_KEYS if key not in cached_image_masks
-        ]
-        if missing_images or missing_masks:
-            raise ValueError(
-                "openpi_rlinf PPO inputs are missing canonical images: "
-                f"images={missing_images}, masks={missing_masks}."
-            )
-        images = {key: cached_images[key] for key in pi0_model_module.IMAGE_KEYS}
-        image_masks = {
-            key: cached_image_masks[key] for key in pi0_model_module.IMAGE_KEYS
-        }
+                image_masks[key[len("obs_image_mask__") :]] = value
         observation = Observation(
             images=images,
             image_masks=image_masks,

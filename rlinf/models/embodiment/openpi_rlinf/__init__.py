@@ -76,19 +76,6 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         OmegaConf.select(model_cfg, "model_action_horizon", default=action_chunk)
     )
     model_action_dim = int(model_cfg.model_action_dim)
-    if action_chunk > model_action_horizon:
-        raise ValueError(
-            "openpi_rlinf action chunk cannot exceed the model action horizon: "
-            f"num_action_chunks={action_chunk}, "
-            f"openpi.model_action_horizon={model_action_horizon}."
-        )
-    if action_env_dim > model_action_dim:
-        raise ValueError(
-            "openpi_rlinf environment action dim cannot exceed the model action dim: "
-            f"action_dim={action_env_dim}, "
-            f"openpi.model_action_dim={model_action_dim}."
-        )
-
     pi0_kwargs = {
         "pi05": pi05,
         "action_horizon": model_action_horizon,
