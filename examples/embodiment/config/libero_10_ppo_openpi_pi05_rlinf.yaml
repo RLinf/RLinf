@@ -102,7 +102,7 @@ rollout:
   # torch_compile_mode: "max-autotune"
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/RLinf-Pi05-LIBERO-SFT"
     precision: bf16
 
 actor:
@@ -114,7 +114,7 @@ actor:
   enable_offload: True
 
   model:
-    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
+    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/RLinf-Pi05-LIBERO-SFT"
     add_value_head: True
     openpi:
       value_after_vlm: True
