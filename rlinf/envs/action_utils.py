@@ -418,6 +418,8 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.DIFFUSION:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:
         chunk_actions = prepare_actions_for_polaris(
             raw_chunk_actions=raw_chunk_actions,
