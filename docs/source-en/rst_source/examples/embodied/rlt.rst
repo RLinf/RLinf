@@ -766,6 +766,23 @@ STEAM still computes its critical-phase prediction when ``actor_switch.enable``
 is false. That prediction is logged for comparison, but geometry determines the
 actual actor phase and when the STEAM expert warmup begins.
 
+Calibrate the STEAM base-to-actor gate from the completed hybrid-run traces:
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_critical_gate.py \
+     /path/to/maniskill_rlt_stage2_td3_mlp_geometry_steam_expert/gate_calibration
+
+The script replays candidate ``enter_threshold`` and ``patience_chunks`` values
+without running the environment again. It keeps geometry-negative episodes to
+measure false entries, uses the first 80% of complete episodes for calibration,
+and evaluates the selected parameters unchanged on a later 20% split. Model
+version boundaries are preferred when they are available. It writes
+``steam_critical_gate_grid.csv`` and ``steam_critical_gate_profile.csv`` under
+the trace directory, then prints the two recommended YAML values. Apply those
+values to ``maniskill_rlt_stage2_td3_mlp_steam.yaml`` while keeping the same
+``lookback_chunks`` used to collect the traces.
+
 Replay Buffer Behavior
 ----------------------
 

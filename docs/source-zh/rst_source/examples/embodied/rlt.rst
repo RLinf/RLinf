@@ -726,6 +726,22 @@ STEAM 控制 actor-to-expert 时，使用
 关闭 ``actor_switch.enable`` 后，STEAM 仍会计算自己的 critical-phase 预测用于对比，
 但实际 actor phase 及 STEAM expert warmup 的起点由几何门控决定。
 
+可以直接使用完成的 hybrid run trace 校准 STEAM base-to-actor 门控：
+
+.. code:: bash
+
+   python toolkits/rlt/calibrate_steam_critical_gate.py \
+     /path/to/maniskill_rlt_stage2_td3_mlp_geometry_steam_expert/gate_calibration
+
+该脚本不需要重新运行环境，而是离线尝试不同的 ``enter_threshold`` 和
+``patience_chunks``。它会保留几何门控从未进入 critical phase 的 episode 来统计误触，
+按时间顺序使用前 80% 的完整 episode 校准，再在后 20% 上原样验证选出的参数；
+存在多个 model version 时会优先在 version 边界划分。脚本会在 trace 目录中生成
+``steam_critical_gate_grid.csv`` 和
+``steam_critical_gate_profile.csv``，并打印推荐填写到 YAML 的两个值。将它们更新到
+``maniskill_rlt_stage2_td3_mlp_steam.yaml`` 时，应保持采集 trace 时使用的
+``lookback_chunks`` 不变。
+
 Replay Buffer 逻辑
 ------------------
 
