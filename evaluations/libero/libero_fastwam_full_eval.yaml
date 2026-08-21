@@ -40,6 +40,9 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
+    # Match FastWAM's released LIBERO evaluator base seed. RLinf's existing
+    # per-rank seed offset remains unchanged.
+    seed: 42
     rollout_epoch: 1
     total_num_envs: 20
     auto_reset: true
@@ -66,6 +69,8 @@ rollout:
   pipeline_stage_num: 1
   model:
     model_type: "fastwam"
+    # Match FastWAM's released evaluator, which inherits the global seed 42.
+    seed: 42
     # Replace both placeholders with the checkpoint and dataset-stats files to evaluate.
     model_path: your_path_to/FASTWAM_SFT_CKPT
     dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
