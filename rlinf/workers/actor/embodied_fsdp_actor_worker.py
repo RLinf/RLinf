@@ -526,7 +526,28 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         )
         metrics = {}
         update_epoch = self.cfg.algorithm.get("update_epoch", 1)
-        for _ in range(update_epoch):
+        target_kl_cfg = self.cfg.algorithm.get("target_kl", None)
+        target_kl = float(target_kl_cfg) if target_kl_cfg is not None else None
+        if target_kl is not None and target_kl <= 0:
+            raise ValueError(f"algorithm.target_kl must be positive, got {target_kl}.")
+
+        early_stopped = False
+        early_stop_kl = 0.0
+        optimizer_steps_applied = 0
+        epochs_started = 0
+
+        def mean_metric_values(values: list[float | torch.Tensor]) -> float:
+            scalars = [
+                float(value.detach().float().item())
+                if isinstance(value, torch.Tensor)
+                else float(value)
+                for value in values
+            ]
+            return sum(scalars) / len(scalars)
+
+        for epoch_idx in range(update_epoch):
+            epochs_started += 1
+            epoch_kl_start = len(metrics.get("actor/approx_kl", []))
             rollout_dataloader_iter = split_dict_to_chunk(
                 self.rollout_batch,
                 rollout_size // batch_size_per_rank,
@@ -549,6 +570,7 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 )
 
                 self.optimizer.zero_grad()
+                batch_kl_start = len(metrics.get("actor/approx_kl", []))
                 for idx, batch in enumerate(train_micro_batch):
                     self.train_micro_batch(
                         micro_batch=batch,
@@ -561,7 +583,36 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
                 self.torch_platform.empty_cache()
 
+                if target_kl is not None:
+                    batch_kl_values = metrics.get("actor/approx_kl", [])[
+                        batch_kl_start:
+                    ]
+                    if not batch_kl_values:
+                        raise RuntimeError(
+                            "algorithm.target_kl requires the policy loss to report "
+                            "actor/approx_kl."
+                        )
+                    local_batch_kl = mean_metric_values(batch_kl_values)
+                    global_batch_kl = all_reduce_dict(
+                        {"approx_kl": local_batch_kl},
+                        op=torch.distributed.ReduceOp.AVG,
+                    )["approx_kl"]
+                    if global_batch_kl > target_kl:
+                        self.optimizer.zero_grad()
+                        early_stopped = True
+                        early_stop_kl = global_batch_kl
+                        if self._rank == 0:
+                            self.logger.warning(
+                                "Stopping PPO updates early at epoch %d: "
+                                "approx_kl=%.6f exceeded target_kl=%.6f.",
+                                epoch_idx + 1,
+                                global_batch_kl,
+                                target_kl,
+                            )
+                        break
+
                 grad_norm, lr_list = self.optimizer_step()
+                optimizer_steps_applied += 1
                 data = {
                     "actor/grad_norm": grad_norm,
                     "actor/lr": lr_list[0],
@@ -569,8 +620,32 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
                 if len(lr_list) > 1:
                     data["critic/lr"] = lr_list[1]
                 append_to_dict(metrics, data)
+
+            epoch_kl_values = metrics.get("actor/approx_kl", [])[epoch_kl_start:]
+            if epoch_kl_values:
+                append_to_dict(
+                    metrics,
+                    {
+                        f"actor/approx_kl_epoch_{epoch_idx + 1}": mean_metric_values(
+                            epoch_kl_values
+                        )
+                    },
+                )
+            if early_stopped:
+                break
+
+        append_to_dict(
+            metrics,
+            {
+                "actor/early_stop_kl": float(early_stopped),
+                "actor/early_stop_kl_value": early_stop_kl,
+                "actor/optimizer_steps_applied": float(optimizer_steps_applied),
+                "actor/ppo_epochs_started": float(epochs_started),
+            },
+        )
         # put LR scheduler step here
-        self.lr_scheduler.step()
+        if optimizer_steps_applied > 0:
+            self.lr_scheduler.step()
         self.optimizer.zero_grad()
         clear_memory()
         explained_variance_stats = pop_critic_explained_variance_stats(metrics)
@@ -661,11 +736,24 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
         }
 
-        if SupportedModel(self.cfg.actor.model.model_type) in [
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        dual_clip_default = (
+            3.0
+            if model_type
+            in [
+                SupportedModel.GR00T_N1D6,
+                SupportedModel.GR00T_N1D7,
+            ]
+            else None
+        )
+        clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", dual_clip_default)
+        if clip_ratio_c is not None:
+            loss_kwargs["clip_ratio_c"] = clip_ratio_c
+
+        if model_type in [
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
         ]:
-            loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
                 loss_kwargs["clip_log_ratio_min"] = (
                     self.cfg.algorithm.clip_log_ratio_min
