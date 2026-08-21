@@ -222,17 +222,18 @@ def test_gradient_checkpointing_is_controlled_by_policy(fastwam_modules) -> None
     assert not policy.mot.mot_checkpoint_mixed_attn
 
 
-def test_fastwam_recipes_use_explicit_training_and_eval_horizons() -> None:
+def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    sft_config = (
-        repo_root / "examples/sft/config/libero_sft_fastwam.yaml"
-    ).read_text(encoding="utf-8")
+    sft_config = (repo_root / "examples/sft/config/libero_sft_fastwam.yaml").read_text(
+        encoding="utf-8"
+    )
     eval_config = (
         repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml"
     ).read_text(encoding="utf-8")
 
-    assert "max_steps: 21700" in sft_config
-    assert "total_training_steps: ${runner.max_steps}" in sft_config
+    assert "max_epochs: 10" in sft_config
+    assert "max_steps: -1" in sft_config
+    assert "total_training_steps: null" in sft_config
     assert "env,rollout: 0-3" in eval_config
     assert "total_num_envs: 20" in eval_config
     assert "max_steps_per_rollout_epoch: 10000" in eval_config

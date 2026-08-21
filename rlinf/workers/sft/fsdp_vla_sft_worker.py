@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 import os
 from typing import Any
 
@@ -27,6 +28,41 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
+
+    def init_worker(self):
+        self._set_fastwam_total_training_steps_if_missing()
+        super().init_worker()
+
+    def _set_fastwam_total_training_steps_if_missing(self) -> None:
+        """Derive FastWAM's scheduler horizon from the effective data size."""
+        model_type = SupportedModel(self.cfg.actor.model.model_type)
+        optim_cfg = self.cfg.actor.optim
+        if (
+            model_type != SupportedModel.FASTWAM
+            or optim_cfg.get("total_training_steps") is not None
+        ):
+            return
+
+        steps_per_epoch = self.get_max_steps_per_epoch()
+        max_epochs = self.cfg.runner.get("max_epochs", -1)
+        max_steps = self.cfg.runner.get("max_steps", -1)
+
+        step_limits = []
+        if max_epochs > 0:
+            step_limits.append(steps_per_epoch * max_epochs)
+        if max_steps >= 0:
+            step_limits.append(max_steps)
+
+        total_steps = min(step_limits) if step_limits else steps_per_epoch
+        optim_cfg.total_training_steps = max(1, total_steps)
+        logging.info(
+            "Derived FastWAM optim.total_training_steps=%d "
+            "from steps_per_epoch=%d, max_epochs=%d, max_steps=%d",
+            optim_cfg.total_training_steps,
+            steps_per_epoch,
+            max_epochs,
+            max_steps,
+        )
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)

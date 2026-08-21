@@ -34,11 +34,11 @@ runner:
     experiment_name: "libero_sft_fastwam"
     logger_backends: ["tensorboard"]
 
-  # The released LIBERO checkpoint is step_021700. Keep the official 10-epoch
-  # limit as a second stopping condition.
+  # The released LIBERO checkpoint is step_021700. Derive the training horizon
+  # from the effective dataloader size and the official 10-epoch limit.
   # Use runner.max_steps=1 for a smoke test without changing the real defaults.
   max_epochs: 10
-  max_steps: 21700
+  max_steps: -1
   # Official eval_every=200 is not enabled here because RLinf's generic
   # embodied SFT evaluator does not yet expose Wan22 rollout/video metrics.
   val_check_interval: -1
@@ -83,9 +83,10 @@ actor:
     lr_scheduler: "fastwam_cosine"
     lr_warmup_steps: -1
     lr_warmup_steps_ratio: 0.05
-    # Keep the scheduler and runner horizons explicit and in sync. A CLI
-    # runner.max_steps override (for example, 1 for smoke) updates both.
-    total_training_steps: ${runner.max_steps}
+    # Filled by the FastWAM SFT worker from the effective dataloader size,
+    # gradient accumulation, max_epochs, and an optional runner.max_steps cap.
+    # Explicit values remain untouched.
+    total_training_steps: null
 
   fsdp_config:
     strategy: "fsdp2"
