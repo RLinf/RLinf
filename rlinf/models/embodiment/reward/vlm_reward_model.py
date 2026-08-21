@@ -21,21 +21,6 @@ from typing import Any, Optional
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from peft import (
-    LoraConfig,
-    PeftModel,
-    get_peft_model,
-    set_peft_model_state_dict,
-)
-
-# AutoModelForVision2Seq was renamed to AutoModelForImageTextToText in transformers >= 5.0
-try:
-    from transformers import AutoModelForVision2Seq
-except ImportError:
-    try:
-        from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
-    except ImportError:
-        AutoModelForVision2Seq = None
 
 from rlinf.config import torch_dtype_from_precision
 from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
@@ -76,6 +61,13 @@ def _load_adapter(
     model: torch.nn.Module, path: str, adapter_name: str = "default"
 ) -> torch.nn.Module:
     """Load one Peft-native or RLinf full-weights LoRA adapter."""
+    from peft import (
+        LoraConfig,
+        PeftModel,
+        get_peft_model,
+        set_peft_model_state_dict,
+    )
+
     adapter_dir = next(
         (
             candidate
@@ -224,6 +216,15 @@ class VLMRewardModel(BaseRewardModel):
         return rewards
 
     def setup_model(self) -> None:
+        # AutoModelForVision2Seq was renamed to AutoModelForImageTextToText
+        # in transformers >= 5.0
+        try:
+            from transformers import AutoModelForVision2Seq
+        except ImportError:
+            from transformers import (
+                AutoModelForImageTextToText as AutoModelForVision2Seq,
+            )
+
         self._model = AutoModelForVision2Seq.from_pretrained(
             self.model_path,
             trust_remote_code=True,
