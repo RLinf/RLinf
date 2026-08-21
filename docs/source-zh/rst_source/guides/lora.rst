@@ -25,12 +25,11 @@ LoRA（Low-Rank Adaptation，低秩适配）是一种参数高效的微调方法
 - ``lora_rank``：LoRA 矩阵的秩（通常为 8–64），LoRA 会为每一层训练两个矩阵 A 和 B，  
   其形状分别为 [input-dim, lora-rank] 和 [lora-rank, output-dim]  
 - ``lora_path``：预训练 LoRA 权重的路径（为 null 表示新训练）  
-- ``lora_target_modules``：可选的 Peft ``target_modules`` 覆盖。支持 YAML 列表或逗号分隔字符串；未设置时使用下方默认列表。
 
 目标模块
 ---------------
 
-默认情况下，RLinf 会将 LoRA 应用于以下模块：
+RLinf 会自动将 LoRA 应用于以下模块：
 
 .. code:: python
 
@@ -42,7 +41,6 @@ LoRA（Low-Rank Adaptation，低秩适配）是一种参数高效的微调方法
       "q",         # Query 投影
       "kv",        # Key-Value 投影
       "fc3",       # 额外投影层
-      "out_proj",  # 输出投影
       "q_proj",    # Query 投影
       "k_proj",    # Key 投影
       "v_proj",    # Value 投影
@@ -52,12 +50,6 @@ LoRA（Low-Rank Adaptation，低秩适配）是一种参数高效的微调方法
       "down_proj", # 下投影
       "lm_head",   # 语言模型输出头
   ]
-
-.. note::
-
-   裸 ``"proj"`` 也会匹配 Qwen3-VL 的 Conv3d ``patch_embed.proj``，Peft 无法包装。
-   Qwen3-VL 配方必须覆盖 ``lora_target_modules`` 并省略 ``"proj"``；参见
-   ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``。
 
 新建 LoRA 训练
 ~~~~~~~~~~~~~~~~~

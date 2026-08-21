@@ -335,61 +335,6 @@ def _register_builtin_models():
 _register_builtin_models()
 
 
-# Historical default shared by OpenVLA / OpenPI / etc. Includes bare ``"proj"``.
-# Qwen3-VL recipes that must skip Conv3d ``patch_embed.proj`` set an explicit
-# ``actor.model.lora_target_modules`` override in their SFT YAML instead.
-_DEFAULT_LORA_TARGET_MODULES: list[str] = [
-    "proj",
-    "qkv",
-    "fc1",
-    "fc2",  # vision
-    "q",
-    "kv",
-    "fc3",
-    "out_proj",  # project
-    "q_proj",
-    "k_proj",
-    "v_proj",
-    "o_proj",
-    "gate_proj",
-    "up_proj",
-    "down_proj",
-    "lm_head",  # llm
-]
-
-
-def resolve_lora_target_modules(cfg: DictConfig) -> list[str]:
-    """Resolve LoRA ``target_modules`` from ``cfg`` or the framework default.
-
-    ``cfg.lora_target_modules`` may be a list or a comma-separated string
-    (legacy DreamZero-style). When unset, returns the historical default that
-    includes bare ``"proj"``. Recipes that must avoid wrapping Conv3d
-    ``patch_embed.proj`` (Qwen3-VL) should set an explicit override in YAML.
-
-    Args:
-        cfg: Actor model config that may contain ``lora_target_modules``.
-
-    Returns:
-        Non-empty list of Peft target module name substrings.
-
-    Raises:
-        ValueError: If ``lora_target_modules`` is set but resolves to no names.
-    """
-    override = cfg.get("lora_target_modules", None)
-    if override is None:
-        return list(_DEFAULT_LORA_TARGET_MODULES)
-    if isinstance(override, str):
-        modules = [part.strip() for part in override.split(",") if part.strip()]
-    else:
-        modules = [str(part).strip() for part in override if str(part).strip()]
-    if not modules:
-        raise ValueError(
-            "actor.model.lora_target_modules resolved to an empty list; "
-            "provide a non-empty comma-separated string or a list of module names."
-        )
-    return modules
-
-
 def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
     """Attach or load Peft LoRA when ``cfg.is_lora`` is enabled."""
     if not cfg.get("is_lora", False):
@@ -399,11 +344,46 @@ def apply_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
 
     model_type = str(cfg.model_type)
     if not hasattr(cfg, "lora_path") or cfg.lora_path is None:
+        # Qwen-VL patch_embed.proj is Conv3d and cannot use a linear LoRA.
+        if model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen2_5_vl"):
+            target_modules = [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "qkv",
+                "fc1",
+                "fc2",
+                "out_proj",
+                "lm_head",
+            ]
+        else:
+            target_modules = [
+                "proj",
+                "qkv",
+                "fc1",
+                "fc2",
+                "q",
+                "kv",
+                "fc3",
+                "out_proj",
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+                "lm_head",
+            ]
         lora_config = LoraConfig(
             r=cfg.lora_rank,
             lora_alpha=cfg.lora_rank,
             lora_dropout=0.0,
-            target_modules=resolve_lora_target_modules(cfg),
+            target_modules=target_modules,
             init_lora_weights="gaussian",
         )
         if SupportedModel(model_type) in (

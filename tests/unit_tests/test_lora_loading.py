@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import torch
 from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model
 from torch import nn
 
-from rlinf.models import apply_lora, resolve_lora_target_modules
+from rlinf.models import apply_lora
 from rlinf.models.embodiment.reward.vlm_reward_model import _load_adapter
 
 
@@ -31,29 +30,21 @@ class TinyModel(nn.Module):
         return self.q_proj(inputs)
 
 
-def test_resolve_lora_target_modules() -> None:
-    assert "proj" in resolve_lora_target_modules(OmegaConf.create({}))
-    assert resolve_lora_target_modules(
-        OmegaConf.create({"lora_target_modules": "q,k,v"})
-    ) == ["q", "k", "v"]
-    with pytest.raises(ValueError, match="empty list"):
-        resolve_lora_target_modules(OmegaConf.create({"lora_target_modules": ""}))
-
-
-def test_apply_lora_honours_explicit_target_modules() -> None:
+def test_apply_lora_uses_qwen_safe_targets() -> None:
     cfg = OmegaConf.create(
         {
             "is_lora": True,
-            "model_type": "mlp_policy",
+            "model_type": "qwen3_vl",
             "lora_rank": 2,
             "lora_path": None,
-            "lora_target_modules": ["q_proj"],
         }
     )
 
     model = apply_lora(TinyModel(), cfg)
 
-    assert set(next(iter(model.peft_config.values())).target_modules) == {"q_proj"}
+    targets = set(next(iter(model.peft_config.values())).target_modules)
+    assert "q_proj" in targets
+    assert "proj" not in targets
 
 
 def test_load_adapter_resolves_checkpoint_root(tmp_path) -> None:

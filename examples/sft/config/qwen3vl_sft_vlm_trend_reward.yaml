@@ -64,20 +64,6 @@ actor:
     model_path: /path/to/Qwen3-VL-4B-Instruct
     attn_implementation: flash_attention_2
     is_lora: true
-    # Qwen3-VL's Conv3d patch_embed.proj cannot be wrapped by a linear LoRA.
-    lora_target_modules: &qwen3_vl_lora_targets
-      - q_proj
-      - k_proj
-      - v_proj
-      - o_proj
-      - gate_proj
-      - up_proj
-      - down_proj
-      - qkv
-      - fc1
-      - fc2
-      - out_proj
-      - lm_head
     lora_rank: 16
     format_ce_coef: 2.0
     trainable_modules:

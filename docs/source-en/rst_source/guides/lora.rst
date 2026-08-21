@@ -22,12 +22,11 @@ LoRA can be configured in the actor model section of your YAML configuration:
 - ``is_lora``: Enable LoRA fine-tuning (True/False)
 - ``lora_rank``: Rank of LoRA matrices (typically 8-64), LoRA trains two matrices A and B for each layer, with shapes [input-dim, lora-rank] and [lora-rank, output-dim] respectively
 - ``lora_path``: Path to pre-trained LoRA weights (null for new training)
-- ``lora_target_modules``: Optional override for Peft ``target_modules``. Accepts a YAML list or a comma-separated string. When unset, RLinf uses the default list below.
 
 Target Modules
 ---------------
 
-By default, RLinf applies LoRA to the following modules:
+RLinf automatically applies LoRA to the following modules:
 
 .. code:: python
 
@@ -39,7 +38,6 @@ By default, RLinf applies LoRA to the following modules:
       "q",         # Query projections
       "kv",        # Key-Value projections
       "fc3",       # Additional projection layers
-      "out_proj",  # Output projection
       "q_proj",    # Query projection
       "k_proj",    # Key projection
       "v_proj",    # Value projection
@@ -49,12 +47,6 @@ By default, RLinf applies LoRA to the following modules:
       "down_proj", # Down projection
       "lm_head",   # Language model head
   ]
-
-.. note::
-
-   Bare ``"proj"`` also matches Qwen3-VL's Conv3d ``patch_embed.proj``, which
-   Peft cannot wrap. Qwen3-VL recipes must override ``lora_target_modules`` and
-   omit ``"proj"``; see ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``.
 
 New LoRA Training
 ~~~~~~~~~~~~~~~~~
