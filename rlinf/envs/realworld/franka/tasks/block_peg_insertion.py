@@ -124,12 +124,15 @@ class BlockPegInsertionEnv(FrankaEnv):
     def go_to_rest(self, joint_reset=False):
         """Release any held block, lift clear of the hole, then go to rest.
 
-        Open the gripper unconditionally (bypassing the binary-action gate so
-        the command is sent even if the cached state says it is already open),
-        raise the TCP to clear the peg/hole, then hand off to the parent reset.
+        When ``no_gripper`` is False, open the gripper unconditionally
+        (bypassing the binary-action gate so the command is sent even if the
+        cached state says it is already open). When ``no_gripper`` is True,
+        leave the jaw unchanged so a pre-closed grasp is not re-opened.
+        Then raise the TCP to clear the peg/hole and hand off to the parent.
         """
-        self._controller.open_gripper().wait()
-        time.sleep(0.6)
+        if not self.config.no_gripper:
+            self._controller.open_gripper().wait()
+            time.sleep(0.6)
         self._franka_state = self._controller.get_state().wait()[0]
         self._move_action(self._franka_state.tcp_pose)
         time.sleep(0.5)

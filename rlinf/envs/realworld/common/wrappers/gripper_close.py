@@ -22,6 +22,9 @@ class GripperCloseEnv(gym.ActionWrapper):
     Keeps the full 7D action vector (arm 6D + gripper). The 7th dim is always
     set to -1 (closed under Franka's binary gripper convention). Teleop or
     policy may still send 6D; missing gripper is padded as -1.
+
+    Pair with ``env.no_gripper=True`` so task ``go_to_rest`` does not open the
+    jaw on reset; this wrapper only constrains runtime actions.
     """
 
     _GRIPPER_CLOSED = -1.0
