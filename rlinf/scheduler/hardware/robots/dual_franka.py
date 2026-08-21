@@ -41,7 +41,7 @@ class DualFrankaRobot(Hardware):
 
     Both arms are managed by a single :class:`DualFrankaEnv` instance
     running on the ``node_rank`` specified in the config.  Each arm's
-    :class:`FrankyController` can optionally be placed on a different
+    :class:`FrankaController` can optionally be placed on a different
     node via ``left_controller_node_rank`` / ``right_controller_node_rank``.
     """
 
@@ -156,11 +156,11 @@ class DualFrankaConfig(HardwareConfig):
     """Serial port for the right arm's Robotiq gripper."""
 
     left_controller_node_rank: Optional[int] = None
-    """Node rank for the left arm's FrankyController.
+    """Node rank for the left arm's FrankaController.
     ``None`` means co-located with the env worker."""
 
     right_controller_node_rank: Optional[int] = None
-    """Node rank for the right arm's FrankyController.
+    """Node rank for the right arm's FrankaController.
     ``None`` means co-located with the env worker."""
 
     def __post_init__(self):  # noqa: D105

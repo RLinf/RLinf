@@ -17,23 +17,17 @@ cluster:
       node_group: franka
       placement: 0
     rollout:
-      node_group: train
+      node_group: "4090"
       placement: 0
   node_groups:
-    - label: train
+    - label: "4090"
       node_ranks: 0
-      env_configs:
-        - node_ranks: 0
-          python_interpreter_path: /home/infini/liyanghao/RLinf-rlt/.venv/bin/python
     - label: franka
       node_ranks: 1
-      env_configs:
-        - node_ranks: 1
-          python_interpreter_path: /home/infini/liyanghao/RLinf-pico/.venv/bin/python
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
             node_rank: 1
 
 runner:
@@ -62,7 +56,6 @@ env:
     auto_reset: True
     ignore_terminations: False
     keyboard_reward_wrapper: null
-    #no_gripper: True
     use_spacemouse: False
     max_episode_steps: 720
     max_steps_per_rollout_epoch: 720
@@ -70,15 +63,11 @@ env:
     video_cfg:
       save_video: False
       info_on_video: True
-      video_base_dir: "/home/franka/franka/video-0805"
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
     override_cfg:
-      #task_description: Pick up the block and insert it into the hole  # e.g. "pick up the object and place it into the container"
-      #target_ee_pose: [0.5550200939178467, 0.23316027224063873, 0.06312721967697144, 3.1156858808393775, -0.07035654894153476, -0.01925224087190558]
-      #target_ee_pose: [ 0.56140673, 0.03374824, 0.06293865, -3.11152733, -0.05016956, -0.09083917]
-      #target_ee_pose: [ 0.51940382 , 0.00320347 , 0.08353503 ,-3.12509237 ,-0.02129001, -0.06500843]
-      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
-      camera_serials: ["142122070838","141722078696"]
+      target_ee_pose: TARGET_EE_POSE
+      camera_serials: ["SERIAL1", "SERIAL2"]
       is_dummy: False
       use_dense_reward: False
       max_num_steps: ${env.eval.max_episode_steps}
@@ -100,14 +89,15 @@ rollout:
     model_type: "openpi_rlinf"
     precision: bf16
     # SFT openpi_rlinf full wrapper (.pt with model.* keys); loaded by get_model.
-    model_path: /home/infini/liyanghao/model/pi05_rlinf_sft_0817.pt
+    model_path: "/path/to/model"
     num_action_chunks: 10
     action_dim: 7
     num_steps: 4
     add_value_head: False
     openpi_data:
       repo_id: "realworld_franka_pni"
-      norm_stats_path: "/home/infini/liyanghao/model/pi05_base/pi05_base/realworld_franka_pni"
+      # Optional override; defaults to assets under the OpenPI checkpoint.
+      # norm_stats_path: "/path/to/norm_stats"
     openpi:
       task: eval
       config_name: "pi05_realworld"

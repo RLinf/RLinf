@@ -19,8 +19,8 @@ class BaseGripper(ABC):
     """Abstract base class for robot gripper control.
 
     All gripper implementations (Franka parallel gripper, Robotiq 2F, …)
-    must implement this interface so that :class:`FrankyController` (and the
-    legacy ROS :class:`FrankaController`) can use them interchangeably.
+    must implement this interface so that :class:`FrankaController` can
+    use them interchangeably.
     """
 
     @abstractmethod

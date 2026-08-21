@@ -32,7 +32,7 @@ cluster:
       hardware:
         type: Franka
         configs:
-          - robot_ip: 172.16.0.2
+          - robot_ip: ROBOT_IP
             node_rank: 1
             controller_node_rank: 1
             disable_validate: false
@@ -135,7 +135,7 @@ algorithm:
     # Preload previous online transitions without loading old MLP weights.
     # Point at rank_0/ or its parent replay_buffer/ directory.
     # Must keep runner.resume_dir null.
-    #load_path: /home/infini/liyanghao/RLinf-rlt/logs/20260818-15:12:28-realworld_rlt_stage2_ac_mlp/realworld_rlt_stage2_ac_mlp/checkpoints/global_step_8000/actor/sac_components/replay_buffer
+    # load_path: /path/to/replay_buffer
 
   target_update_freq: 1
   target_update_type: all
@@ -164,8 +164,7 @@ env:
       use_dense_reward: False
       reward_scale: 1.0
       max_num_steps: 720
-      #target_ee_pose: [ 5.19359231e-01 , 3.85411759e-03 , 8.38951361e-02 , 3.11919320e+00 ,-2.59836447e-03 ,-4.14700334e-02]
-      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
       enable_camera_player: False
 
@@ -188,7 +187,7 @@ env:
       use_dense_reward: False
       reward_scale: 1.0
       max_num_steps: 300
-      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
+      target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
       enable_camera_player: False
     video_cfg:
@@ -228,11 +227,12 @@ rollout:
     num_steps: 4
     add_value_head: False
     # Checkpoint produced by examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml.
-    model_path: "/home/infini/liyanghao/model/rlt_stage1_0817"
+    model_path: "/path/to/stage1/checkpoint"
     openpi_data:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.
       repo_id: "realworld_franka_pni"
-      norm_stats_path: "/home/infini/liyanghao/model/pi05_base/pi05_base/realworld_franka_pni"
+      # Optional override; defaults to assets under the OpenPI checkpoint.
+      # norm_stats_path: "/path/to/norm_stats"
     openpi:
       task: eval
       config_name: "pi05_realworld"

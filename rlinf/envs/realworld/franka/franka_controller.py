@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deprecated ROS/serl Franka controller.
-
-Single-arm and dual-arm envs now use
-:class:`~rlinf.envs.realworld.franka.franky_controller.FrankyController`
-(libfranka via ``franky``). This module is kept only for local ROS
-debugging / A-B comparison against the legacy ``serl_franka_controllers``
-stack. Prefer ``franky_controller`` for all new work.
-"""
-
 import sys
 import time
 from typing import Optional
@@ -42,7 +33,7 @@ from .franka_robot_state import FrankaRobotState
 
 
 class FrankaController(Worker):
-    """Franka robot arm controller (legacy ROS / serl path)."""
+    """Franka robot arm controller."""
 
     @staticmethod
     def launch_controller(

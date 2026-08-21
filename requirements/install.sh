@@ -97,7 +97,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -613,9 +613,16 @@ configure_ascend() {
     PLATFORM_FLASH_ATTN_PREBUILT=0
     PLATFORM_RELAX_TORCHCODEC=1
     # The derived pin (==0.2 for torch 2.6) is x86_64-only; Ascend is aarch64.
+    # Keep a loose pin so uv can *resolve* torchcodec (embodied extra lists it),
+    # but do not install the wheel — see PLATFORM_UV_SYNC_ARGS below.
     PLATFORM_TORCHCODEC_SPEC="torchcodec>=0.5"
     PLATFORM_EXTRA_OVERRIDES=()
-    PLATFORM_UV_SYNC_ARGS=()
+    # PyPI torchcodec>=0.11 ships CUDA wheels by default (0.16.0 dlopens
+    # libnvrtc.so.13). Ascend is CPU torch + torch-npu, so that import raises
+    # OSError. GR00T n1.5 only catches ImportError/RuntimeError around
+    # `import torchcodec`, which aborts libero_spatial_ppo_gr00t. Skip the
+    # package; n1.5 uses decord (built from source on aarch64) instead.
+    PLATFORM_UV_SYNC_ARGS=("--no-install-package" "torchcodec")
     PLATFORM_SYSTEM_SITE_PACKAGES=0
     PLATFORM_VENV_HOOK=""
     PLATFORM_COMMON_REQ_EXCLUDE_RE=""
@@ -870,6 +877,16 @@ EOF
             && uv pip install torch-npu)
     if [ -f /usr/local/Ascend/ascend-toolkit/set_env.sh ]; then
         echo "source /usr/local/Ascend/ascend-toolkit/set_env.sh" >> "$VENV_DIR/bin/activate"
+    fi
+    # A later `uv pip install` (lerobot, GR00T extras, …) may still pull a
+    # CUDA torchcodec wheel. Uninstall it when import fails so GR00T's
+    # optional `import torchcodec` raises ImportError (caught) rather than
+    # OSError: libnvrtc.so.13 (not caught). A wheel that does import is kept.
+    if python -c "import torchcodec" >/dev/null 2>&1; then
+        echo "[install.sh] torchcodec imports; keeping it."
+    elif python -c "import importlib.metadata as m; m.version('torchcodec')" >/dev/null 2>&1; then
+        echo "[install.sh] torchcodec is installed but does not import (likely a CUDA wheel without libnvrtc); uninstalling."
+        uv pip uninstall torchcodec || true
     fi
 }
 
@@ -1801,9 +1818,13 @@ install_openpi_model() {
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_calvin_env
+            # Stock transformers and rlinf-transformer-openpi share the
+            # transformers/ dir but are different packages; uninstall first so
+            # 4.57/5.x leftovers are not scanned as mistral-common backends.
+            uv pip uninstall -y transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
             ;;
         robocasa)
             create_and_sync_venv
@@ -2193,6 +2214,16 @@ install_dreamzero_model() {
     esac
 }
 
+install_diffusion_model() {
+    # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
+    # Python 3.10 in the generation examples.
+    PYTHON_VERSION="3.10"
+    create_and_sync_venv
+    install_common_embodied_deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    uv pip uninstall pynvml || true
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -2471,6 +2502,11 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
+    # calvin_models depends on sentence-transformers, which upgrades
+    # huggingface_hub to 1.x and transformers to 5.x. Restore the embodied
+    # pins so a calvin-only env still imports. OpenPI replaces this again
+    # after uninstalling stock transformers (different distribution name).
+    uv pip install "huggingface-hub>=0.34.0,<1.0" "transformers<=4.57.6"
     uv pip install --upgrade hydra-core==1.3.2
 }
 
@@ -2630,7 +2666,7 @@ install_franka_franky_env() {
     # --no-deps keeps the franka extra's pins (e.g. numpy<2); letting pip
     # re-resolve them breaks Ray pickling across nodes.
     uv pip install --reinstall-package franky-control --no-deps "$FRANKY_WHEEL"
-    #install_lerobot
+    install_lerobot
 }
 
 install_franka_dexhand_deps() {
@@ -3012,7 +3048,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ]; then
+            elif [ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "diffusion" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
@@ -3056,6 +3092,9 @@ main() {
                     ;;
                 qwen3_vl)
                     install_qwen3_vl_model
+                    ;;
+                diffusion)
+                    install_diffusion_model
                     ;;
                 evo1)
                     install_evo1_model

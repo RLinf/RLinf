@@ -223,14 +223,14 @@ class FrankaConfig(HardwareConfig):
     """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
 
     gripper_type: str = "franka"
-    """Gripper backend: ``"franka"`` (libfranka via franky) or ``"robotiq"`` (Modbus RTU)."""
+    """Gripper backend: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU)."""
 
     gripper_connection: Optional[str] = None
     """Serial port for Robotiq grippers (e.g. ``"/dev/ttyUSB0"``).
     Ignored when *gripper_type* is ``"franka"``."""
 
     controller_node_rank: Optional[int] = None
-    """Node rank where :class:`FrankyController` should run.
+    """Node rank where :class:`FrankaController` should run.
     When ``None`` (default), the controller is co-located with the env
     worker.  Set this when the arm/gripper and cameras are on different
     machines (e.g. cameras on a GPU server, arm on a NUC)."""

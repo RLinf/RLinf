@@ -26,21 +26,17 @@ def create_gripper(
     gripper_type: str = "franka",
     ros=None,
     port: Optional[str] = None,
-    robot_ip: Optional[str] = None,
     **kwargs,
 ) -> BaseGripper:
     """Factory that instantiates the right gripper backend.
 
     Args:
-        gripper_type: ``"franka"`` or ``"robotiq"``.
-        ros: :class:`ROSController` instance — used for the legacy ROS
-            Franka Hand path when ``robot_ip`` is not provided.
+        gripper_type: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU).
+        ros: :class:`ROSController` instance — required for ``"franka"``.
         port: Serial device path (e.g. ``"/dev/ttyUSB0"``) — required for
             ``"robotiq"``.
-        robot_ip: Arm/gripper IP — selects the libfranka ``franky.Gripper``
-            backend for ``"franka"`` (preferred; no ROS).
         **kwargs: Forwarded to the gripper constructor (e.g. ``max_width``,
-            ``baudrate``, ``slave_id``, ``grasp_force``).
+            ``baudrate``, ``slave_id``).
     """
     gt = gripper_type.lower()
     if gt == "robotiq":
@@ -53,14 +49,9 @@ def create_gripper(
 
         return RobotiqGripper(port=port, **kwargs)
     if gt == "franka":
-        if robot_ip is not None:
-            from .franky_franka_gripper import FrankyFrankaGripper
-
-            return FrankyFrankaGripper(robot_ip=robot_ip, **kwargs)
         if ros is None:
             raise ValueError(
-                "Franka gripper requires either robot_ip (franky/libfranka) "
-                "or a ROSController instance (legacy ROS path)."
+                "ROSController instance must be provided for Franka gripper."
             )
         from .franka_gripper import FrankaGripper
 

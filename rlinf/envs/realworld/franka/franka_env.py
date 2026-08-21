@@ -226,7 +226,7 @@ class FrankaEnv(gym.Env):
         return self._task_description
 
     def _setup_hardware(self):
-        from .franky_controller import FrankyController
+        from .franka_controller import FrankaController
 
         assert self.env_idx >= 0, "env_idx must be set for FrankaEnv."
 
@@ -263,14 +263,13 @@ class FrankaEnv(gym.Env):
         )
         if controller_node_rank is None:
             controller_node_rank = self.node_rank
-        self._controller = FrankyController.launch_controller(
+        self._controller = FrankaController.launch_controller(
             robot_ip=self.config.robot_ip,
             env_idx=self.env_idx,
             node_rank=controller_node_rank,
             worker_rank=self.env_worker_rank,
             end_effector_type=self.config.end_effector_type,
             end_effector_config=self.config.end_effector_config,
-            gripper_type=self.config.gripper_type,
             gripper_connection=self.config.gripper_connection,
         )
 
@@ -329,7 +328,6 @@ class FrankaEnv(gym.Env):
         start_time = time.time()
 
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        #print(f"env actions: {action}")
         xyz_delta = action[:3]
 
         self.next_position = self._franka_state.tcp_pose.copy()
