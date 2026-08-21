@@ -28,6 +28,7 @@ from rlinf.utils.nested_dict_process import (
     put_tensor_device,
     split_dict_to_chunk,
 )
+from rlinf.utils.pinned_offload import pinned_offload_context
 from rlinf.utils.utils import clear_memory, masked_mean
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
@@ -44,9 +45,53 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
         super().init_worker()
         self.init_rollout_model()
 
+    def offload_param_and_grad(self, offload_grad: bool = False) -> None:
+        """Override to also offload ``rollout_model_state_dict`` to CPU.
+
+        The parent implementation only moves FSDP model parameters and
+        gradients to CPU.  However, ``rollout_model_state_dict`` is a full
+        (un-sharded) copy of the model weights that stays on GPU if not
+        explicitly moved — consuming sizeof(bf16) x number of params of GPU memory
+        even during ``recv_rollout_trajectories`` when the model itself is
+        offloaded.  By piggybacking on the parent's offload, the rollout
+        state dict follows the same lifecycle: on CPU when the model is
+        offloaded (recv phase), on GPU when the model is loaded (training
+        phase).  Pinned memory is used for the GPU→CPU copy to maximise PCIe
+        bandwidth.
+        """
+        super().offload_param_and_grad(offload_grad)
+        rollout_state = getattr(self, "rollout_model_state_dict", None)
+        if rollout_state:
+            with pinned_offload_context():
+                for key, value in rollout_state.items():
+                    if torch.is_tensor(value) and value.is_cuda:
+                        rollout_state[key] = value.to("cpu")
+
+    def load_param_and_grad(self, device_id: int, load_grad: bool = False) -> None:
+        """Override to also load ``rollout_model_state_dict`` back to GPU.
+
+        Mirrors :meth:`offload_param_and_grad`: when the FSDP parameters are
+        loaded to GPU for training, also move ``rollout_model_state_dict``
+        so that ``soft_update_rollout_model`` (EMA update via ``lerp_``) and
+        ``_recompute_v_old`` (``load_state_dict`` into the ref model) can
+        operate on-GPU without cross-device copies.
+        """
+        super().load_param_and_grad(device_id, load_grad)
+        rollout_state = getattr(self, "rollout_model_state_dict", None)
+        if rollout_state:
+            device = (
+                torch.device(device_id)
+                if not isinstance(device_id, torch.device)
+                else device_id
+            )
+            for key, value in rollout_state.items():
+                if torch.is_tensor(value) and not value.is_cuda:
+                    rollout_state[key] = value.to(device)
+
     def init_rollout_model(self) -> None:
         """Initialize rollout model state for off-policy support."""
         self.rollout_model_state_dict = {}
+        self._cached_ref_model = None  # lazy-init, reused across iterations
         tau = self.cfg.algorithm.get("nft_tau", 1.0)
         if isinstance(tau, ListConfig):
             tau = list(tau)
@@ -113,12 +158,16 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
     # =======================================================================
 
     @Worker.timer("run_training")
-    def run_training(self) -> None:
+    def run_training(self) -> dict:
         """Run NFT training with off-policy decay support."""
-        if self.is_weight_offloaded:
-            self.load_param_and_grad(self.device)
-        if self.is_optimizer_offloaded:
-            self.load_optimizer(self.device)
+        tau = self._get_current_nft_tau()
+        if tau >= 1.0:
+            # On-policy: load model immediately since precompute doesn't
+            # need a ref model and the model is used throughout.
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
+                self.load_optimizer(self.device)
 
         self.model.train()
         rollout_size = (
@@ -134,6 +183,18 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 self.rollout_batch, shuffle_id
             )
             self._precompute_nft_training_inputs()
+
+        if tau < 1.0:
+            # Off-policy: defer loading the training model until *after*
+            # precompute.  During precompute (_recompute_v_old), the training
+            # model is offloaded to make room for the ref model, so loading
+            # it at the top would be immediately undone — a wasted GPU→CPU→GPU
+            # round trip.  By deferring, the model stays on CPU through the
+            # entire precompute phase and is only loaded when training begins.
+            if self.is_weight_offloaded:
+                self.load_param_and_grad(self.device)
+            if self.is_optimizer_offloaded:
+                self.load_optimizer(self.device)
 
         assert (
             self.cfg.actor.global_batch_size
@@ -267,21 +328,28 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             # On-policy: use training model directly
             ref_model = self.model
         else:
-            # Off-policy: build a temporary model with lagged rollout weights
+            # Off-policy: use a cached ref model with lagged rollout weights.
+            # The model is built once and reused across iterations; only
+            # load_state_dict + to(device) is needed each time.
             training_was_on_device = not self.is_weight_offloaded
             if training_was_on_device:
                 self.offload_param_and_grad()
                 clear_memory()
 
-            ref_model = self.model_provider_func()
-            ref_config = getattr(ref_model, "config", None)
-            # Compiling the reference model adds repeated compilation and cache overhead.
-            if hasattr(ref_config, "compile_transformer_forward"):
-                ref_config.compile_transformer_forward = False
-            ref_model.load_state_dict(self.get_rollout_state_dict(), strict=False)
-            ref_model.eval()
-            ref_model.requires_grad_(False)
+            if self._cached_ref_model is None:
+                ref_model = self.model_provider_func()
+                ref_config = getattr(ref_model, "config", None)
+                # Compiling the reference model adds repeated compilation and cache overhead.
+                if hasattr(ref_config, "compile_transformer_forward"):
+                    ref_config.compile_transformer_forward = False
+                ref_model.eval()
+                ref_model.requires_grad_(False)
+                self._cached_ref_model = ref_model
+            else:
+                ref_model = self._cached_ref_model
+
             ref_model.to(self.device)
+            ref_model.load_state_dict(self.get_rollout_state_dict(), strict=False)
             cleanup_rollout_model = True
 
         with torch.no_grad():
@@ -303,7 +371,8 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
                 v_old_buffer.append(out["v_theta"].detach().cpu())
 
         if cleanup_rollout_model:
-            del ref_model
+            with pinned_offload_context():
+                self._cached_ref_model.to("cpu")
             clear_memory()
             if training_was_on_device:
                 self.load_param_and_grad(self.device)
