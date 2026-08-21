@@ -1,5 +1,5 @@
 defaults:
-  - env/realworld_franka_sft_env@env.eval
+  - env/realworld_peg_insertion@env.eval
   - override hydra/job_logging: stdout
 
 hydra:
@@ -62,7 +62,7 @@ env:
     data_collection:
       enabled: True
       save_dir: ${runner.logger.log_path}/collected_data
-      export_format: "lerobot"
+      export_format: "pickle"
       only_success: True
       robot_type: "panda"
       fps: 10
