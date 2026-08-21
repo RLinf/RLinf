@@ -11,6 +11,7 @@
 defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
   - model/fastwam@actor.model
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
@@ -33,10 +34,11 @@ runner:
     experiment_name: "libero_sft_fastwam"
     logger_backends: ["tensorboard"]
 
-  # Official task/libero_uncond_2cam224_1e-4.yaml: 10 epochs, no step cap.
+  # The released LIBERO checkpoint is step_021700. Keep the official 10-epoch
+  # limit as a second stopping condition.
   # Use runner.max_steps=1 for a smoke test without changing the real defaults.
   max_epochs: 10
-  max_steps: -1
+  max_steps: 21700
   # Official eval_every=200 is not enabled here because RLinf's generic
   # embodied SFT evaluator does not yet expose Wan22 rollout/video metrics.
   val_check_interval: -1
@@ -81,9 +83,9 @@ actor:
     lr_scheduler: "fastwam_cosine"
     lr_warmup_steps: -1
     lr_warmup_steps_ratio: 0.05
-    # Resolved by FSDPSftWorker from the actual dataloader length and runner
-    # epoch/step limits, matching the official trainer's estimate.
-    total_training_steps: null
+    # Keep the scheduler and runner horizons explicit and in sync. A CLI
+    # runner.max_steps override (for example, 1 for smoke) updates both.
+    total_training_steps: ${runner.max_steps}
 
   fsdp_config:
     strategy: "fsdp2"

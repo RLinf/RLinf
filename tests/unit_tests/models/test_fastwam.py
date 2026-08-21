@@ -222,14 +222,17 @@ def test_gradient_checkpointing_is_controlled_by_policy(fastwam_modules) -> None
     assert not policy.mot.mot_checkpoint_mixed_attn
 
 
-def test_fastwam_eval_configs_opt_into_safe_slot_exhaustion() -> None:
-    """Only FastWAM eval configs enable terminal-slot suppression."""
+def test_fastwam_recipes_use_explicit_training_and_eval_horizons() -> None:
     repo_root = Path(__file__).resolve().parents[3]
-    for relative_path in (
-        "evaluations/libero/libero_spatial_fastwam_eval.yaml",
-        "evaluations/libero/libero_fastwam_full_eval.yaml",
-        "tests/e2e_tests/embodied/libero_spatial_eval_fastwam.yaml",
-    ):
-        assert "stop_when_eval_exhausted: true" in (
-            repo_root / relative_path
-        ).read_text(encoding="utf-8")
+    sft_config = (
+        repo_root / "examples/sft/config/libero_sft_fastwam.yaml"
+    ).read_text(encoding="utf-8")
+    eval_config = (
+        repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "max_steps: 21700" in sft_config
+    assert "total_training_steps: ${runner.max_steps}" in sft_config
+    assert "env,rollout: 0-3" in eval_config
+    assert "total_num_envs: 20" in eval_config
+    assert "max_steps_per_rollout_epoch: 10000" in eval_config

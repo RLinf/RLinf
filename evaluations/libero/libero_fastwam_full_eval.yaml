@@ -1,9 +1,10 @@
 # Full FastWAM/LIBERO benchmark through RLinf's native EmbodiedEvalRunner.
 #
 # The default suite is LIBERO-Spatial. Override task_suite_name for Goal/Object.
-# Eight RLinf worker pairs each host five environments. Their batched inference
-# covers 500 fixed initial states once (ceil(500 / 40) == 13 episodes per
-# environment); use the suite-specific LIBERO-10 limits noted below.
+# Four RLinf worker pairs each host five environments. With termination signals
+# ignored until truncation, every slot runs exactly 25 episodes and the batch
+# covers all 500 fixed initial states once. This config intentionally uses four
+# GPUs; use the suite-specific LIBERO-10 limits noted below.
 defaults:
   - env/libero_spatial@env.eval
   - model/fastwam@rollout.model
@@ -20,7 +21,7 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    env,rollout: all
+    env,rollout: 0-3
 
 runner:
   task_type: embodied_eval
@@ -40,20 +41,18 @@ env:
   group_name: "EnvGroup"
   eval:
     rollout_epoch: 1
-    total_num_envs: 40
+    total_num_envs: 20
     auto_reset: true
     ignore_terminations: true
     # FastWAM upstream: 30 open-gripper no-op steps followed by 400 controller
-    # steps for Spatial/Goal/Object. For LIBERO-10 override to 700 and 9100.
+    # steps for Spatial/Goal/Object. For LIBERO-10 override to 700 and 17500.
     num_steps_wait: 30
     max_episode_steps: 400
-    max_steps_per_rollout_epoch: 5200
+    max_steps_per_rollout_epoch: 10000
     group_size: 1
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
     is_eval: true
-    # Only FastWAM needs terminal slots to remain inactive after fixed-state exhaustion.
-    stop_when_eval_exhausted: true
     libero_variant: standard
     perturbation_suffix: null
     video_cfg:

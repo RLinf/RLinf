@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import math
 import os
 from typing import Any
 
@@ -170,10 +169,5 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
                 num_batches = get_official_openpi_sft_num_batches(self.data_loader)
             return max(1, num_batches // self.gradient_accumulation)
-
-        if model_type == SupportedModel.FASTWAM:
-            return max(
-                1, math.ceil(len(self.data_loader) / self.gradient_accumulation)
-            )
 
         return super().get_max_steps_per_epoch()

@@ -149,11 +149,6 @@ class LiberoEnv(gym.Env):
         self.ignore_terminations = cfg.ignore_terminations
         self.auto_reset = cfg.auto_reset
         self.is_eval = cfg.get("is_eval", False)
-        # Exhausted eval slots are a FastWAM-specific requirement. Keep the
-        # historical LIBERO evaluation path unchanged unless a config opts in.
-        self._stop_when_eval_exhausted = bool(
-            self.is_eval and cfg.get("stop_when_eval_exhausted", False)
-        )
 
         self._generator = np.random.default_rng(seed=self.seed)
         self._generator_ordered = np.random.default_rng(seed=0)
@@ -707,7 +702,6 @@ class LiberoEnv(gym.Env):
         self.success_episode_len = np.zeros(self.num_envs, dtype=np.int32)
         self._task_success_stats: dict[int, dict[str, int]] = {}
         self._eval_seen_trials: set[tuple[int, int]] = set()
-        self._eval_active = np.ones(self.num_envs, dtype=bool)
 
     def _reset_metrics(self, env_idx=None):
         if env_idx is not None:
@@ -835,8 +829,6 @@ class LiberoEnv(gym.Env):
                 pool = self.reset_state_ids_all[self.seed_offset]
                 self._eval_reset_pool = pool[pool >= 0].copy()
                 self.update_reset_state_ids()
-                if self._stop_when_eval_exhausted:
-                    self._eval_active[:] = True
             reset_state_ids = (
                 self.reset_state_ids if self.use_fixed_reset_state_ids else None
             )
@@ -904,39 +896,14 @@ class LiberoEnv(gym.Env):
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
 
-        active = (
-            self._eval_active
-            if self._stop_when_eval_exhausted
-            else np.ones(self.num_envs, dtype=bool)
-        )
-        if active.all():
-            raw_obs, _reward, terminations, info_lists = self.env.step(actions)
-        else:
-            # Once an eval slot has consumed its assigned reset states, its
-            # underlying simulator remains terminal. Do not send it even a
-            # no-op action: robosuite rejects stepping a terminated episode.
-            active_idx = np.flatnonzero(active)
-            raw_obs = list(self.current_raw_obs)
-            terminations = np.zeros(self.num_envs, dtype=bool)
-            info_lists = [{} for _ in range(self.num_envs)]
-            if len(active_idx) > 0:
-                active_obs, _reward, active_terminations, active_infos = self.env.step(
-                    actions[active_idx], active_idx
-                )
-                for local_idx, env_idx in enumerate(active_idx):
-                    raw_obs[env_idx] = active_obs[local_idx]
-                    terminations[env_idx] = active_terminations[local_idx]
-                    info_lists[env_idx] = active_infos[local_idx]
-
-        self._elapsed_steps += active.astype(self._elapsed_steps.dtype)
+        self._elapsed_steps += 1
+        raw_obs, _reward, terminations, info_lists = self.env.step(actions)
         self.current_raw_obs = raw_obs
         infos = list_of_dict_to_dict_of_list(info_lists)
-        terminations[~active] = False
-        truncations = (self.elapsed_steps >= self.cfg.max_episode_steps) & active
+        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
         obs = self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)
-        step_reward[~active] = 0.0
 
         infos = self._record_metrics(step_reward, terminations, infos)
         if self.ignore_terminations:
@@ -1045,11 +1012,6 @@ class LiberoEnv(gym.Env):
 
         new_reset_state_ids = self._get_ordered_reset_state_ids(len(env_idx))
         valid_mask = new_reset_state_ids >= 0
-        if self._stop_when_eval_exhausted:
-            # Do not step terminal simulators after their assigned fixed reset
-            # states are consumed. A fully inactive batch performs no simulator
-            # step; EmbodiedEvalRunner itself has a finite configured horizon.
-            self._eval_active[env_idx[~valid_mask]] = False
         env_to_reset = env_idx[valid_mask]
         if len(env_to_reset) > 0:
             self.reset_state_ids[env_to_reset] = new_reset_state_ids[valid_mask]

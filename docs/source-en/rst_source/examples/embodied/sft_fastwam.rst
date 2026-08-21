@@ -213,6 +213,39 @@ not environment variables and are not downloaded automatically. Then run:
    MUJOCO_GL=egl bash evaluations/run_eval.sh \
      libero libero_fastwam_full_eval
 
+The full-suite config intentionally uses GPUs ``0-3`` and 20 environments
+(five per worker). Because ``ignore_terminations=True`` keeps every trajectory
+running until ``max_episode_steps``, each environment runs exactly 25 episodes:
+``20 * 25 = 500`` fixed LIBERO initial states. This avoids the simulator and
+EGL-context cost of starting 500 environments while still using batched
+FastWAM inference.
+
+Do not change the placement to ``env,rollout: all`` on an eight-GPU host. The
+non-decoupled channel requires ``total_num_envs`` to be divisible by the
+rollout world size, but no multiple of eight divides LIBERO's 500 trajectories.
+Without padding or terminal-slot suppression, an eight-worker layout therefore
+either omits states or exhausts some slots early. The provided config uses four
+workers on both four- and eight-GPU hosts.
+
+Spatial is the default suite. Object and Goal use the same step limits; Long
+(``libero_10``) uses FastWAM's 700-step trajectory limit:
+
+.. code-block:: bash
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_object
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_goal
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_10 \
+     env.eval.max_episode_steps=700 \
+     env.eval.max_steps_per_rollout_epoch=17500
+
 **LIBERO-Plus:** select all perturbations or a single family with environment
 variables; the YAML stays unchanged:
 

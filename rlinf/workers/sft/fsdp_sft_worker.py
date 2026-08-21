@@ -82,33 +82,11 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._data_iter_offset = 0
 
     def init_worker(self):
-        self._set_total_training_steps_if_unset()
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
-
-    def _set_total_training_steps_if_unset(self) -> None:
-        """Derive the SFT scheduler horizon only when the recipe omits it."""
-        if self._cfg.optim.get("total_training_steps") is not None:
-            return
-
-        max_epochs = int(self.cfg.runner.get("max_epochs", -1))
-        max_steps = int(self.cfg.runner.get("max_steps", -1))
-        steps_per_epoch = max(int(self.get_max_steps_per_epoch()), 1)
-        step_limits = []
-        if max_epochs > 0:
-            step_limits.append(steps_per_epoch * max_epochs)
-        if max_steps >= 0:
-            step_limits.append(max_steps)
-
-        total_steps = min(step_limits) if step_limits else steps_per_epoch
-        self._cfg.optim.total_training_steps = max(int(total_steps), 1)
-        self._logger.info(
-            "[SFT] Inferred optim.total_training_steps=%d",
-            self._cfg.optim.total_training_steps,
-        )
 
     def model_provider_func(self):
         model = get_model(self.cfg.actor.model)
@@ -122,9 +100,9 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.model.set_global_step(global_step)
 
     def get_max_steps_per_epoch(self):
-        if self.data_loader is None:
-            return 0
-        return max(1, len(self.data_loader) // self.gradient_accumulation)
+        if self.data_loader is not None:
+            return max(1, len(self.data_loader) // self.gradient_accumulation)
+        return 0
 
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
