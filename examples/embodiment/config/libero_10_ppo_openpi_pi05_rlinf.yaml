@@ -1,28 +1,148 @@
 defaults:
-  - libero_10_ppo_openpi_pi05
-  - override model@actor.model: pi0_5_rlinf_libero
-  - _self_
+  - env/libero_10@env.train
+  - env/libero_10@env.eval
+  - model/pi0_5_rlinf_libero@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
 
 runner:
+  task_type: embodied
   logger:
+    log_path: "../results"
+    project_name: rlinf
     experiment_name: "libero_10_ppo_openpi_pi05_rlinf"
+    logger_backends: ["tensorboard"] # wandb, swanlab
+
+  max_epochs: 1000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 40
+
+  resume_dir: null # Optional: path to a saved checkpoint directory, such as 'checkpoints/global_step_10'. If not None, it will be used to resume training.
+  ckpt_path: null  # Optional: path to a .pt checkpoint. If not None, it will be loaded after the model is instantiated (for evaluation).
+
+algorithm:
+
+  normalize_advantages: True
+  kl_penalty: kl  # how to estimate kl divergence: kl or kl_penalty
+  group_size: 1
+  reward_coef: 1.0
+
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+  update_epoch: 4
+  adv_type: gae
+  loss_type: actor_critic
+  loss_agg_func: "token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    rollout_epoch: 8
+    total_num_envs: 64
+    max_episode_steps: 480 # max episode steps for truncation
+    max_steps_per_rollout_epoch: 480
+    reward_coef: ${algorithm.reward_coef}
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 500
+    auto_reset: True
+    ignore_terminations: True
+    max_episode_steps: 480
+    max_steps_per_rollout_epoch: 480
+    group_size: 1
+    use_fixed_reset_state_ids: True
+    is_eval: True
+    video_cfg:
+      save_video: True
+      video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  unnorm_key: libero_10
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  # you can enable torch compile by uncomment the following 2 lines:
+  # enable_torch_compile: True
+  # torch_compile_mode: "max-autotune"
+
   model:
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     precision: bf16
 
 actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  global_batch_size: 2048 # maximum : global batch size = micro batch size * actor num_processes.
+  seed: 42
+  enable_offload: True
+
   model:
-    model_type: "openpi_rlinf"
-    num_action_chunks: 10
-    num_steps: 5
+    model_path: "/path/to/model/RLinf-Pi05-LIBERO-SFT" # https://huggingface.co/RLinf/RLinf-Pi05-LIBERO-SFT
     add_value_head: True
     openpi:
-      noise_level: 0.5
       value_after_vlm: True
+
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+    total_training_steps: 1000
+    min_lr_rate: 0.1
+    lr_scheduler: "cosine" # Learning rate scheduler type. Choices: ["constant", "cosine"]. Default: "constant".
+
   fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "shard_grad_op"
     use_orig_params: True
+    gradient_checkpointing: False
     mixed_precision:
       param_dtype: bf16
       reduce_dtype: fp32
       buffer_dtype: fp32
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
