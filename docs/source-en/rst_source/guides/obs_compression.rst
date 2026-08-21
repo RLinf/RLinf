@@ -29,14 +29,8 @@ Two steps are applied per message:
 - **Entropy coding.** The result is compressed with ``lz4`` (fastest) or
   ``zstd`` (better ratio).
 
-Installation
-------------
-
-The codecs are optional dependencies:
-
-.. code-block:: bash
-
-   pip install rlinf[compression]   # installs lz4 and zstandard
+The ``lz4`` and ``zstandard`` codecs ship with RLinf as core dependencies, so
+no extra installation is required.
 
 How to Enable
 -------------

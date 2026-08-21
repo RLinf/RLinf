@@ -68,8 +68,8 @@ env:
   group_name: "EnvGroup"
 
   # Optional lossless compression of image observations on the Env -> Rollout
-  # channel. Disabled by default; requires `pip install rlinf[compression]`
-  # (lz4 / zstandard). Useful in bandwidth-constrained or multi-node setups.
+  # channel. Disabled by default. Useful in bandwidth-constrained or
+  # multi-node setups.
   obs_compression:
     enable: false     # turn on to compress uint8 image observations
     codec: lz4        # lz4 (faster) or zstd (better ratio)

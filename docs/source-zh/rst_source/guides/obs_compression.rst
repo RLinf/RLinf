@@ -22,14 +22,7 @@
   更好。
 - **熵编码**：使用 ``lz4``\ （最快）或 ``zstd``\ （压缩率更好）压缩结果。
 
-安装
-----
-
-编解码器为可选依赖：
-
-.. code-block:: bash
-
-   pip install rlinf[compression]   # 安装 lz4 与 zstandard
+``lz4`` 与 ``zstandard`` 编解码器已作为核心依赖随 RLinf 一并安装，无需额外安装。
 
 如何开启
 --------

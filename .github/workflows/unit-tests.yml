@@ -16,8 +16,6 @@ jobs:
           bash requirements/install.sh --no-flash-attn embodied --env dummy
           source .venv/bin/activate
           uv pip install "transformers<=5.9.0"
-          # Optional codecs so the obs-compression tests run instead of skipping.
-          uv pip install lz4 zstandard
 
       - name: Run pytest
         timeout-minutes: 20
@@ -54,8 +52,6 @@ jobs:
           UV_TORCH_BACKEND=auto uv sync
           uv pip install gymnasium imageio
           uv pip install "transformers<=5.9.0"
-          # Optional codecs so the obs-compression tests run instead of skipping.
-          uv pip install lz4 zstandard
 
       - name: Run pytest
         timeout-minutes: 20
