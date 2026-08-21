@@ -1818,9 +1818,13 @@ install_openpi_model() {
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_calvin_env
+            # Stock transformers and rlinf-transformer-openpi share the
+            # transformers/ dir but are different packages; uninstall first so
+            # 4.57/5.x leftovers are not scanned as mistral-common backends.
+            uv pip uninstall -y transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
             ;;
         robocasa)
             create_and_sync_venv
@@ -2498,6 +2502,11 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
+    # calvin_models depends on sentence-transformers, which upgrades
+    # huggingface_hub to 1.x and transformers to 5.x. Restore the embodied
+    # pins so a calvin-only env still imports. OpenPI replaces this again
+    # after uninstalling stock transformers (different distribution name).
+    uv pip install "huggingface-hub>=0.34.0,<1.0" "transformers<=4.57.6"
     uv pip install --upgrade hydra-core==1.3.2
 }
 
