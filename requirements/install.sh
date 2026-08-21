@@ -2210,13 +2210,59 @@ install_dreamzero_model() {
     esac
 }
 
+install_paddle_gpu() {
+    # PaddlePaddle GPU build. The PyPI ``paddlepaddle`` package is CPU-only;
+    # the GPU build lives on the PaddlePaddle wheel index as
+    # ``paddlepaddle-gpu``.  Select the CUDA-12 index when the system CUDA
+    # major version is >= 12, otherwise fall back to the CUDA-11 index, and
+    # finally to the CPU package if no CUDA is detected.
+    local paddle_ver="2.6.2"
+    local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/whl/linux/cuda12.0/paddlepaddle_gpu.html"
+    local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/mkl/avx_x86_64_gpu_cudnn_cudnn8_avx_mkl_paddlepaddle_gpu.html"
+
+    # Detect CUDA major version.  torch is already installed by
+    # create_and_sync_venv / install_common_embodied_deps, so
+    # detect_cuda_major_minor can probe torch.version.cuda.
+    local cuda_mm cuda_major
+    if cuda_mm=$(detect_cuda_major_minor) 2>/dev/null; then
+        cuda_major="${cuda_mm%% *}"
+    else
+        cuda_major=""
+    fi
+
+    # Uninstall any CPU paddlepaddle that diffusion.txt might have pulled in.
+    uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
+
+    if [ -n "$cuda_major" ] && [ "$cuda_major" -ge 12 ]; then
+        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver} for CUDA ${cuda_major}.x"
+        if pip install "paddlepaddle-gpu==${paddle_ver}" \
+               -f "${paddle_gpu_index_cuda12}" 2>&1; then
+            return 0
+        fi
+        echo "[install.sh] CUDA 12 paddlepaddle-gpu install failed; trying CUDA 11 index." >&2
+    fi
+
+    if [ -n "$cuda_major" ]; then
+        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver} for CUDA 11.x"
+        if pip install "paddlepaddle-gpu==${paddle_ver}" \
+               -f "${paddle_gpu_index_cuda11}" 2>&1; then
+            return 0
+        fi
+        echo "[install.sh] GPU paddlepaddle-gpu install failed; falling back to CPU." >&2
+    fi
+
+    echo "[install.sh] No CUDA detected; installing CPU paddlepaddle==${paddle_ver}."
+    uv pip install "paddlepaddle==${paddle_ver}"
+}
+
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
-    # Python 3.10 in the generation examples.
+    # Python 3.10 in the diffusion (generation) examples.
     PYTHON_VERSION="3.10"
     create_and_sync_venv
     install_common_embodied_deps
     uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    install_paddle_gpu
     uv pip uninstall pynvml || true
 }
 
