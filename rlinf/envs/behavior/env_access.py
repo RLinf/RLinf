@@ -18,12 +18,20 @@ from typing import Any
 
 
 def unwrap_behavior_env(env: Any) -> Any:
-    """Return the underlying OmniGibson environment.
+    """Return the underlying OmniGibson environment."""
+    current = env
+    seen: set[int] = set()
 
-    This intentionally preserves the current PR3 behavior: wrappers are not
-    unwrapped in the mechanical refactor pass.
-    """
-    return env
+    while True:
+        current_id = id(current)
+        if current_id in seen:
+            raise RuntimeError("Detected a cycle in OmniGibson wrapper chain.")
+        seen.add(current_id)
+
+        inner = getattr(current, "env", None)
+        if inner is None or inner is current:
+            return current
+        current = inner
 
 
 def get_behavior_robot(env: Any) -> Any | None:
@@ -53,8 +61,9 @@ def to_int_or_none(value: Any) -> int | None:
 
 
 def get_task_reward(env: Any) -> Any | None:
+    base_env = unwrap_behavior_env(env)
     try:
-        return env.task.task_reward
+        return base_env.task.task_reward
     except Exception:
         return None
 

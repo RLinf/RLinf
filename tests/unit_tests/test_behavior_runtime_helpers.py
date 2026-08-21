@@ -90,6 +90,11 @@ class FakeChildEnv:
         self.task = FakeTask()
 
 
+class FakeWrapper:
+    def __init__(self, env):
+        self.env = env
+
+
 class TestActionControls:
     def test_parse_action_mask_freezes_base_and_trunk(self):
         cfg = OmegaConf.create(
@@ -298,6 +303,20 @@ class TestReplayRuntime:
         child_env = FakeChildEnv(metadata=None)
 
         assert apply_replay_tro_metadata(child_env, info=None) == {}
+
+    def test_apply_replay_tro_metadata_unwraps_child_env(self):
+        child_env = FakeChildEnv(
+            {
+                "stage_index": "1",
+                "stage_prompts": ["move radio", "press radio"],
+            }
+        )
+
+        info = apply_replay_tro_metadata(FakeWrapper(child_env), info={})
+
+        assert child_env.task.task_reward.current_stage_idx == 1
+        assert info["replay_init"]["replay_stage_idx"] == 1
+        assert info["reward"]["task_specific"]["current_stage_prompt"] == "press radio"
 
     def test_stage_idx_helpers_parse_info_and_reward(self):
         child_env = FakeChildEnv({"stage_index": 1})

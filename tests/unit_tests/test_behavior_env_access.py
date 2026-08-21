@@ -47,12 +47,27 @@ class FakeWrapper:
         self.env = env
 
 
-def test_unwrap_behavior_env_preserves_pr3_behavior():
+def test_unwrap_behavior_env_returns_base_env():
     base = FakeEnv()
-    wrapped = FakeWrapper(base)
+    wrapped_once = FakeWrapper(base)
+    wrapped_twice = FakeWrapper(wrapped_once)
 
     assert unwrap_behavior_env(base) is base
-    assert unwrap_behavior_env(wrapped) is wrapped
+    assert unwrap_behavior_env(wrapped_once) is base
+    assert unwrap_behavior_env(wrapped_twice) is base
+
+
+def test_unwrap_behavior_env_rejects_cycles():
+    wrapper_a = FakeWrapper(None)
+    wrapper_b = FakeWrapper(wrapper_a)
+    wrapper_a.env = wrapper_b
+
+    try:
+        unwrap_behavior_env(wrapper_a)
+    except RuntimeError as exc:
+        assert "cycle" in str(exc)
+    else:
+        raise AssertionError("Expected wrapper cycle to raise RuntimeError.")
 
 
 def test_get_behavior_robot_prefers_task_agent_then_first_robot():
@@ -61,13 +76,17 @@ def test_get_behavior_robot_prefers_task_agent_then_first_robot():
 
     assert get_behavior_robot(FakeEnv(robot=task_robot)) is task_robot
     assert get_behavior_robot(FakeEnv(robot=None, robots=[fallback_robot])) is fallback_robot
+    assert get_behavior_robot(FakeWrapper(FakeEnv(robot=task_robot))) is task_robot
 
 
 def test_task_reward_and_stage_helpers():
     env = FakeEnv()
+    wrapped_env = FakeWrapper(env)
 
     assert get_task_reward(env) is env.task.task_reward
+    assert get_task_reward(wrapped_env) is env.task.task_reward
     assert stage_idx_from_reward(env) == 2
+    assert stage_idx_from_reward(wrapped_env) == 2
     assert stage_idx_from_info({"task_reward": {"current_stage_idx": "3"}}) == 3
     assert stage_idx_from_info({"current_stage_idx": "4"}) is None
     assert stage_idx_from_info({"current_stage_idx": "bad"}) is None

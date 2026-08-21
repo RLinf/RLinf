@@ -19,6 +19,7 @@ from typing import Any
 from rlinf.envs.behavior.env_access import (
     get_task_reward,
     to_int_or_none,
+    unwrap_behavior_env,
 )
 from rlinf.envs.behavior.env_access import (
     stage_idx_from_info as stage_idx_from_info,
@@ -31,6 +32,7 @@ from rlinf.envs.behavior.instance_loader import RLINF_REPLAY_METADATA_KEY
 
 def apply_replay_tro_metadata(child_env: Any, info: dict | None) -> dict:
     """Inject cached replay metadata into reset info and task reward state."""
+    child_env = unwrap_behavior_env(child_env)
     scene = getattr(child_env, "scene", None)
     if scene is None or not hasattr(scene, "get_task_metadata"):
         return {} if info is None else info
