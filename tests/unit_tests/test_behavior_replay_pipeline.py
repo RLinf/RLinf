@@ -22,14 +22,15 @@ Tests cover:
 - episode index parsing
 """
 
-import numpy as np
-import pytest
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from rlinf.envs.behavior.instance_loader import (
-    parse_activity_instance_ids,
-    RLINF_REPLAY_METADATA_KEY,
     DEFAULT_MIDROLLOUT_RESTORE_SETTLE_STEPS,
+    RLINF_REPLAY_METADATA_KEY,
+    parse_activity_instance_ids,
 )
 from rlinf.envs.behavior.replay_initializer import (
     BehaviorReplayInitializer,
@@ -38,7 +39,6 @@ from rlinf.envs.behavior.replay_initializer import (
     maybe_make_replay_initializer,
     replay_plans_to_infos,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_activity_instance_ids
@@ -295,18 +295,6 @@ class TestEpisodeIndexToInstanceId:
 
 class TestActionNoiseIndices:
     def test_default_none(self):
-        from omegaconf import OmegaConf
-
-        cfg = OmegaConf.create(
-            {
-                "replay_init": {
-                    "enabled": True,
-                    "dataset_root": "/tmp",
-                    "action_noise_indices": None,
-                },
-                "seed": 42,
-            }
-        )
         # This will fail on dataset_root but we just want to check the parse
         # We'll test via the static method directly
         result = BehaviorReplayInitializer._parse_int_sequence(None)
@@ -322,18 +310,18 @@ class TestActionNoiseIndices:
 
 
 # ---------------------------------------------------------------------------
-# _parse_reset_payload (BehaviorProcess)
+# parse_reset_payload
 # ---------------------------------------------------------------------------
 
 
 class TestParseResetPayload:
-    """Tests for BehaviorProcess._parse_reset_payload (CPU-only, no env)."""
+    """Tests for reset_runtime.parse_reset_payload (CPU-only, no env)."""
 
     @staticmethod
     def _parse(payload):
-        from rlinf.envs.behavior.behavior_env import BehaviorProcess
+        from rlinf.envs.behavior.reset_runtime import parse_reset_payload
 
-        return BehaviorProcess._parse_reset_payload(payload)
+        return parse_reset_payload(payload)
 
     def test_none_payload(self):
         """None payload → reset all."""

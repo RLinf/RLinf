@@ -83,7 +83,7 @@ def test_seed_offset_defaults_to_zero(monkeypatch):
 
 
 def test_reset_payload_shards_follow_interleaved_process_mapping():
-    from rlinf.envs.behavior.behavior_env import BehaviorProcessPool
+    from rlinf.envs.behavior.reset_runtime import build_reset_payload_shards
 
     payload = [
         {"reset": True, "instance_id": 10},
@@ -96,7 +96,7 @@ def test_reset_payload_shards_follow_interleaved_process_mapping():
         (1, [1, 3], [0, 1]),
     ]
 
-    payload_shards, reset_positions = BehaviorProcessPool._build_reset_payload_shards(
+    payload_shards, reset_positions = build_reset_payload_shards(
         payload,
         plan,
         num_env_shard=2,
@@ -109,7 +109,7 @@ def test_reset_payload_shards_follow_interleaved_process_mapping():
 
 
 def test_reset_payload_shards_track_sparse_reset_positions():
-    from rlinf.envs.behavior.behavior_env import BehaviorProcessPool
+    from rlinf.envs.behavior.reset_runtime import build_reset_payload_shards
 
     payload = [False, True, True, False]
     plan = [
@@ -117,7 +117,7 @@ def test_reset_payload_shards_track_sparse_reset_positions():
         (1, [1, 3], [0, 1]),
     ]
 
-    payload_shards, reset_positions = BehaviorProcessPool._build_reset_payload_shards(
+    payload_shards, reset_positions = build_reset_payload_shards(
         payload,
         plan,
         num_env_shard=2,

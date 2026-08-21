@@ -36,30 +36,20 @@ from rlinf.envs.behavior.behavior_metrics import (
     annotate_hold_metrics,
     apply_info_dones,
     extract_behavior_episode_done,
-    info_done_tensor,
 )
 from rlinf.envs.behavior.debug_utils import (
     RobotJointTracer,
-    robot_joint_names,
-    tensor_to_float_list,
-    trace_robot_joints_enabled,
 )
 from rlinf.envs.behavior.env_access import (
     get_behavior_robot,
-    get_task_reward,
-    stage_idx_from_info,
-    stage_idx_from_reward,
-    to_int_or_none,
     unwrap_behavior_env,
 )
 from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
 from rlinf.envs.behavior.observation_runtime import (
     apply_trunk_proprio_values,
-    compose_task_description,
     parse_trunk_proprio_randomization,
     sample_trunk_proprio_values,
     task_descriptions_from_infos,
-    update_stage_prompts_from_info,
 )
 from rlinf.envs.behavior.replay_runtime import apply_replay_tro_metadata
 from rlinf.envs.behavior.reset_runtime import (
@@ -68,7 +58,6 @@ from rlinf.envs.behavior.reset_runtime import (
     merge_info_rows,
     merge_obs_rows,
     parse_reset_payload,
-    reset_payload_item_enabled,
     reset_payload_with_instance_ids,
 )
 from rlinf.envs.behavior.stage_rewards import (
@@ -198,8 +187,6 @@ class BehaviorProcess:
             cfg,
             replay_seed_offset=self.replay_seed_offset,
         )
-        self.trace_robot_joints = self.joint_tracer.enabled
-        self._joint_trace_frame_idx = self.joint_tracer.frame_idx
 
     def get_activity_name(self):
         return self.instance_loader.activity_name
@@ -269,7 +256,7 @@ class BehaviorProcess:
             actions,
             self.action_mask,
             getattr(self.env, "envs", []),
-            self._get_robot_from_child_env,
+            get_behavior_robot,
         )
 
     def _apply_first_chunk_action_override(self, actions, env_mask: np.ndarray):
@@ -280,61 +267,6 @@ class BehaviorProcess:
             self.first_chunk_action_ids,
             self.first_chunk_action_value,
         )
-
-    @staticmethod
-    def _get_robot_from_child_env(child_env):
-        return get_behavior_robot(child_env)
-
-    @staticmethod
-    def _trace_robot_joints_enabled(cfg: DictConfig) -> bool:
-        return trace_robot_joints_enabled(cfg)
-
-    @staticmethod
-    def _tensor_to_float_list(value, digits: int = 6) -> list[float]:
-        return tensor_to_float_list(value, digits)
-
-    @staticmethod
-    def _robot_joint_names(robot) -> list[str]:
-        return robot_joint_names(robot)
-
-    def _log_robot_joint_trace(
-        self,
-        child_env,
-        local_env_idx: int,
-        event: str,
-        chunk_step_idx: int | None = None,
-        action=None,
-    ) -> None:
-        self.joint_tracer.frame_idx = self._joint_trace_frame_idx
-        self.joint_tracer.log_env(
-            child_env,
-            local_env_idx=local_env_idx,
-            event=event,
-            chunk_step_idx=chunk_step_idx,
-            action=action,
-        )
-
-    def _log_all_robot_joint_traces(
-        self,
-        event: str,
-        env_indices: list[int] | None = None,
-        chunk_step_idx: int | None = None,
-        actions=None,
-    ) -> None:
-        child_envs = getattr(self.env, "envs", [])
-        self.joint_tracer.frame_idx = self._joint_trace_frame_idx
-        self.joint_tracer.log_all(
-            child_envs,
-            event,
-            env_indices=env_indices,
-            chunk_step_idx=chunk_step_idx,
-            actions=actions,
-        )
-        self._joint_trace_frame_idx = self.joint_tracer.frame_idx
-
-    @classmethod
-    def _annotate_behavior_hold_metrics(cls, child_env, info: dict | None) -> dict:
-        return annotate_hold_metrics(child_env, info)
 
     def chunk_step(self, actions, env_indices):
         """Step a full chunk for one shard.
@@ -358,15 +290,20 @@ class BehaviorProcess:
                 )
             self._first_chunk_action_override_pending[:] = False
 
-        self._log_all_robot_joint_traces("pre_chunk", env_indices)
+        child_envs = getattr(self.env, "envs", [])
+        self.joint_tracer.log_all(child_envs, "pre_chunk", env_indices=env_indices)
 
         results: list[tuple] = []
         for t in range(chunk_size):
             is_last = t == chunk_size - 1
             need_obs = not self.skip_intermediate_obs_in_chunk or is_last
             step_actions = self._apply_action_mask(actions[:, t])
-            self._log_all_robot_joint_traces(
-                "pre_step", env_indices, chunk_step_idx=t, actions=step_actions
+            self.joint_tracer.log_all(
+                child_envs,
+                "pre_step",
+                env_indices=env_indices,
+                chunk_step_idx=t,
+                actions=step_actions,
             )
             results.append(
                 self._step_shard(step_actions, env_indices, need_obs=need_obs)
@@ -374,18 +311,13 @@ class BehaviorProcess:
             # Annotate hold/grasp metrics on the last step's infos.
             if is_last:
                 _obs, _rewards, _terminates, _truncates, step_infos = results[-1]
-                child_envs = getattr(self.env, "envs", [])
                 for local_idx, env_idx in enumerate(env_indices):
-                    step_infos[local_idx] = self._annotate_behavior_hold_metrics(
+                    step_infos[local_idx] = annotate_hold_metrics(
                         child_envs[env_idx], step_infos[local_idx]
                     )
 
-        self._log_all_robot_joint_traces("post_chunk", env_indices)
+        self.joint_tracer.log_all(child_envs, "post_chunk", env_indices=env_indices)
         return tuple(zip(*results))
-
-    @staticmethod
-    def _parse_reset_payload(payload):
-        return parse_reset_payload(payload)
 
     def reset(self, reset_indices_or_payload=None, get_obs=True):
         # Detect payload format (dict list → replay reset with per-env
@@ -404,7 +336,7 @@ class BehaviorProcess:
             or isinstance(reset_indices_or_payload[0], (bool, np.bool_))
         ):
             # Payload-based reset with optional per-env instance IDs (replay).
-            reset_indices, instance_ids, _is_full_reset = self._parse_reset_payload(
+            reset_indices, instance_ids, _is_full_reset = parse_reset_payload(
                 reset_indices_or_payload
             )
             if not reset_indices:
@@ -434,27 +366,6 @@ class BehaviorProcess:
         raw_obs, infos = result
         return list(raw_obs), list(infos)
 
-    @staticmethod
-    def _unwrap_child_env(child_env):
-        """Return the underlying OmniGibson env, unwrapping any thin wrappers."""
-        return unwrap_behavior_env(child_env)
-
-    @staticmethod
-    def _to_int_or_none(value):
-        return to_int_or_none(value)
-
-    @staticmethod
-    def _task_reward(child_env):
-        return get_task_reward(child_env)
-
-    @classmethod
-    def _stage_idx_from_info(cls, info: dict | None) -> int | None:
-        return stage_idx_from_info(info)
-
-    @classmethod
-    def _stage_idx_from_reward(cls, child_env) -> int | None:
-        return stage_idx_from_reward(child_env)
-
     def _apply_replay_tro_metadata(self, child_env, info: dict | None) -> dict:
         """Inject RLinf replay metadata from tro_state into the env info dict.
 
@@ -464,7 +375,7 @@ class BehaviorProcess:
         ``task_reward.set_active_stage_index`` so downstream reward
         computations start from the intended stage.
         """
-        return apply_replay_tro_metadata(self._unwrap_child_env(child_env), info)
+        return apply_replay_tro_metadata(unwrap_behavior_env(child_env), info)
 
     def _reset_env_indices(
         self, reset_indices: list[int], instance_ids: list[int] | None = None
@@ -708,7 +619,7 @@ class BehaviorProcessPool:
                 f"num_envs ({num_envs})."
             )
         plan = self._slice_plan(global_start, num_envs)
-        payload_shards, reset_positions_by_proc = self._build_reset_payload_shards(
+        payload_shards, reset_positions_by_proc = build_reset_payload_shards(
             payload,
             plan,
             self.num_env_shard,
@@ -726,25 +637,6 @@ class BehaviorProcessPool:
                 all_raw_obs[pos] = obs
                 all_infos[pos] = info
         return all_raw_obs, all_infos
-
-    @staticmethod
-    def _reset_payload_item_enabled(item) -> bool:
-        return reset_payload_item_enabled(item)
-
-    @classmethod
-    def _build_reset_payload_shards(
-        cls,
-        payload: list,
-        plan: list[tuple[int, list[int], list[int]]],
-        num_env_shard: int,
-        num_env_subprocess: int,
-    ) -> tuple[list[list], list[list[int]]]:
-        return build_reset_payload_shards(
-            payload,
-            plan,
-            num_env_shard,
-            num_env_subprocess,
-        )
 
     def env_chunk_step_slice(
         self,
@@ -1038,32 +930,6 @@ class BehaviorEnv(gym.Env):
             env_indices=env_indices,
         )
 
-    def _update_stage_prompts_from_info(
-        self, env_idx: int, info: dict | None
-    ) -> str | None:
-        return update_stage_prompts_from_info(
-            self._stage_prompt_lists,
-            env_idx,
-            info,
-        )
-
-    def _compose_task_description(self, stage_prompt: str | None) -> str:
-        return compose_task_description(
-            self.prompt_override,
-            self.task_description,
-            stage_prompt,
-        )
-
-    def _task_descriptions_from_infos(self, infos=None) -> list[str]:
-        return task_descriptions_from_infos(
-            num_envs=self.num_envs,
-            prompt_override=self.prompt_override,
-            use_subtask_prompt=self.use_subtask_prompt,
-            task_description=self.task_description,
-            stage_prompt_lists=self._stage_prompt_lists,
-            infos=infos,
-        )
-
     def _extract_obs_image(self, raw_obs):
         state = None
         for sensor_data in raw_obs.values():
@@ -1104,7 +970,14 @@ class BehaviorEnv(gym.Env):
             "wrist_images": torch.stack(
                 [obs["wrist_images"] for obs in extracted_obs_list], axis=0
             ),  # [N_ENV, N_IMG, H, W, C]
-            "task_descriptions": self._task_descriptions_from_infos(infos),
+            "task_descriptions": task_descriptions_from_infos(
+                num_envs=self.num_envs,
+                prompt_override=self.prompt_override,
+                use_subtask_prompt=self.use_subtask_prompt,
+                task_description=self.task_description,
+                stage_prompt_lists=self._stage_prompt_lists,
+                infos=infos,
+            ),
             "states": states,
         }
         return obs
@@ -1130,39 +1003,6 @@ class BehaviorEnv(gym.Env):
         reward_diff = dense_reward - self.prev_step_reward.to(dense_reward.device)
         self.prev_step_reward = dense_reward.to(self.prev_step_reward.device)
         return reward_diff + completion_bonus
-
-    def _extract_episode_success(self, info: dict | None) -> bool:
-        return extract_episode_success(info, self.success_stage_idx)
-
-    def _extract_episode_done(self, info: dict | None) -> bool:
-        return extract_behavior_episode_done(
-            info,
-            self.success_stage_idx,
-            self._extract_info_done,
-        )
-
-    def _info_done_tensor(self, infos, device=None) -> torch.Tensor:
-        return info_done_tensor(
-            infos,
-            self.success_stage_idx,
-            self._extract_info_done,
-            device=device,
-        )
-
-    def _apply_info_dones(
-        self,
-        terminations: torch.Tensor,
-        truncations: torch.Tensor,
-        infos: list[dict],
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return apply_info_dones(
-            terminations,
-            truncations,
-            infos,
-            ignore_terminations=self.ignore_terminations,
-            success_stage_idx=self.success_stage_idx,
-            default_done_extractor=self._extract_info_done,
-        )
 
     def reset(self):
         if self.enable_offload and self.pool is None:
@@ -1209,8 +1049,13 @@ class BehaviorEnv(gym.Env):
             step_rewards = self._calc_step_reward(raw_rewards, step_infos)
             raw_terminations = raw_terminations.bool()
             raw_truncations = raw_truncations.bool()
-            raw_terminations, raw_truncations, step_dones = self._apply_info_dones(
-                raw_terminations, raw_truncations, step_infos
+            raw_terminations, raw_truncations, step_dones = apply_info_dones(
+                raw_terminations,
+                raw_truncations,
+                step_infos,
+                ignore_terminations=self.ignore_terminations,
+                success_stage_idx=self.success_stage_idx,
+                default_done_extractor=self._extract_info_done,
             )
             infos_list.append(
                 self._record_metrics(step_rewards, step_infos, dones=step_dones)
@@ -1300,7 +1145,7 @@ class BehaviorEnv(gym.Env):
         ):
             task_reward = task_reward_from_info(info)
             completion_bonus = float(task_reward.get("completion_bonus", 0.0) or 0.0)
-            step_success = self._extract_episode_success(info)
+            step_success = extract_episode_success(info, self.success_stage_idx)
             end_success = (
                 step_success
                 if self.success_stage_idx is not None
@@ -1315,7 +1160,11 @@ class BehaviorEnv(gym.Env):
             episode_done = (
                 bool(dones[local_idx].item())
                 if isinstance(dones, torch.Tensor)
-                else self._extract_episode_done(info)
+                else extract_behavior_episode_done(
+                    info,
+                    self.success_stage_idx,
+                    self._extract_info_done,
+                )
             )
             episode_info = {
                 "episode_length": episode_length,
