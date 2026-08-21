@@ -21,6 +21,12 @@ from typing import Any
 import numpy as np
 from omegaconf import OmegaConf
 
+from rlinf.envs.behavior.env_access import (
+    get_task_reward,
+    stage_idx_from_info,
+    stage_idx_from_reward,
+    unwrap_behavior_env,
+)
 from rlinf.envs.behavior.instance_generator import build_output_path, dump_tro_state
 from rlinf.envs.behavior.replay_initializer import BehaviorReplayInitializer
 from rlinf.envs.utils import to_tensor
@@ -43,9 +49,9 @@ def build_replay_tro_metadata(
     info: dict | None,
     output_instance_id: int,
 ) -> dict[str, Any]:
-    stage_idx = process._stage_idx_from_info(info)
+    stage_idx = stage_idx_from_info(info)
     if stage_idx is None:
-        stage_idx = process._stage_idx_from_reward(child_env)
+        stage_idx = stage_idx_from_reward(child_env)
     if stage_idx is None:
         stage_idx = replay_initializer.stage_index
 
@@ -111,8 +117,8 @@ def step_replay_envs(
     )
 
 
-def get_grasp_rejection_targets(process, child_env) -> list[tuple[str, object]]:
-    task_reward = process._task_reward(child_env)
+def get_grasp_rejection_targets(child_env) -> list[tuple[str, object]]:
+    task_reward = get_task_reward(child_env)
     if task_reward is None:
         return []
 
@@ -133,7 +139,7 @@ def get_grasp_rejection_targets(process, child_env) -> list[tuple[str, object]]:
     return unique_targets
 
 
-def grasp_rejection_reason(process, child_env) -> str | None:
+def grasp_rejection_reason(child_env) -> str | None:
     try:
         from omnigibson.reward_functions.support_utils import is_target_in_hand
     except ImportError:
@@ -144,7 +150,7 @@ def grasp_rejection_reason(process, child_env) -> str | None:
     except Exception as exc:
         return f"failed_to_read_robot_grasp_state:{type(exc).__name__}"
 
-    for target_name, target_obj in get_grasp_rejection_targets(process, child_env):
+    for target_name, target_obj in get_grasp_rejection_targets(child_env):
         try:
             if is_target_in_hand(robot, target_obj):
                 obj_name = getattr(target_obj, "name", target_name)
@@ -197,8 +203,8 @@ def replay_plans(
             for local_idx, env_idx in enumerate(env_indices):
                 if rejection_reasons[local_idx] is not None:
                     continue
-                child_env = process._unwrap_child_env(child_envs[env_idx])
-                reason = grasp_rejection_reason(process, child_env)
+                child_env = unwrap_behavior_env(child_envs[env_idx])
+                reason = grasp_rejection_reason(child_env)
                 if reason is not None:
                     rejection_reasons[local_idx] = f"step={step_idx}:{reason}"
     return final_infos, rejection_reasons
@@ -286,7 +292,7 @@ def dump_replay_tro_states(process, payload: dict) -> list[dict]:
                 pending_jobs.append(batch_jobs[env_idx])
                 continue
 
-            child_env = process._unwrap_child_env(child_envs[env_idx])
+            child_env = unwrap_behavior_env(child_envs[env_idx])
             metadata = build_replay_tro_metadata(
                 process,
                 replay_initializer,

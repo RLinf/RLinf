@@ -16,39 +16,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from rlinf.envs.behavior.env_access import (
+    get_task_reward,
+    to_int_or_none,
+)
+from rlinf.envs.behavior.env_access import (
+    stage_idx_from_info as stage_idx_from_info,
+)
+from rlinf.envs.behavior.env_access import (
+    stage_idx_from_reward as stage_idx_from_reward,
+)
 from rlinf.envs.behavior.instance_loader import RLINF_REPLAY_METADATA_KEY
-
-
-def to_int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def task_reward(child_env: Any) -> Any | None:
-    try:
-        return child_env.task.task_reward
-    except Exception:
-        return None
-
-
-def stage_idx_from_info(info: dict | None) -> int | None:
-    if info is None:
-        return None
-    task_reward_info = info.get("task_reward", {})
-    if isinstance(task_reward_info, dict):
-        return to_int_or_none(task_reward_info.get("current_stage_idx"))
-    return to_int_or_none(info.get("current_stage_idx"))
-
-
-def stage_idx_from_reward(child_env: Any) -> int | None:
-    reward_obj = task_reward(child_env)
-    if reward_obj is None:
-        return None
-    return to_int_or_none(getattr(reward_obj, "current_stage_idx", None))
 
 
 def apply_replay_tro_metadata(child_env: Any, info: dict | None) -> dict:
@@ -70,7 +48,7 @@ def apply_replay_tro_metadata(child_env: Any, info: dict | None) -> dict:
         str(prompt).strip() for prompt in stage_prompts if str(prompt).strip()
     ]
 
-    reward_obj = task_reward(child_env)
+    reward_obj = get_task_reward(child_env)
     total_stages = to_int_or_none(getattr(reward_obj, "_total_stages", None))
     if stage_idx is not None and hasattr(reward_obj, "set_active_stage_index"):
         if total_stages is None or 0 <= stage_idx < total_stages:

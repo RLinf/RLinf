@@ -32,17 +32,47 @@ from rlinf.envs.behavior.action_controls import (
     parse_action_mask,
     parse_first_chunk_action_override,
 )
-from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
-from rlinf.envs.behavior.replay_runtime import (
-    apply_replay_tro_metadata,
+from rlinf.envs.behavior.behavior_metrics import (
+    annotate_hold_metrics,
+    apply_info_dones,
+    extract_behavior_episode_done,
+    info_done_tensor,
+)
+from rlinf.envs.behavior.debug_utils import (
+    RobotJointTracer,
+    robot_joint_names,
+    tensor_to_float_list,
+    trace_robot_joints_enabled,
+)
+from rlinf.envs.behavior.env_access import (
+    get_behavior_robot,
+    get_task_reward,
     stage_idx_from_info,
     stage_idx_from_reward,
-    task_reward,
     to_int_or_none,
+    unwrap_behavior_env,
+)
+from rlinf.envs.behavior.instance_loader import ActivityInstanceLoader
+from rlinf.envs.behavior.observation_runtime import (
+    apply_trunk_proprio_values,
+    compose_task_description,
+    parse_trunk_proprio_randomization,
+    sample_trunk_proprio_values,
+    task_descriptions_from_infos,
+    update_stage_prompts_from_info,
+)
+from rlinf.envs.behavior.replay_runtime import apply_replay_tro_metadata
+from rlinf.envs.behavior.reset_runtime import (
+    build_reset_payload_shards,
+    clone_obs,
+    merge_info_rows,
+    merge_obs_rows,
+    parse_reset_payload,
+    reset_payload_item_enabled,
+    reset_payload_with_instance_ids,
 )
 from rlinf.envs.behavior.stage_rewards import (
     completion_bonus_tensor,
-    extract_episode_done,
     extract_episode_success,
     stage_cumulative_reward_tensor,
     stage_sparse_reward_tensor,
@@ -79,110 +109,6 @@ def _preload_numba_llvmlite() -> None:
             importlib.import_module(name)
         except Exception:
             pass
-
-
-def _parse_trunk_proprio_randomization(cfg):
-    random_cfg = cfg.get("trunk_proprio_randomization", None)
-    if random_cfg is None or not random_cfg.get("enabled", False):
-        return None
-
-    indices = list(random_cfg.get("indices", [236, 237, 238, 239]))
-    low = list(random_cfg.get("low", [0.0, -0.45, 0.0, 0.0]))
-    high = list(random_cfg.get("high", [0.7, 0.35, 0.18, 0.0]))
-    fixed_values = list(random_cfg.get("fixed_values", [None, None, None, 0.0]))
-    if not (len(indices) == len(low) == len(high) == len(fixed_values)):
-        raise ValueError(
-            "env.trunk_proprio_randomization indices, low, high, and "
-            "fixed_values must have the same length."
-        )
-    return {
-        "indices": [int(index) for index in indices],
-        "low": [float(value) for value in low],
-        "high": [float(value) for value in high],
-        "fixed_values": [
-            None if value is None else float(value) for value in fixed_values
-        ],
-    }
-
-
-def _clone_obs(obs):
-    cloned = {}
-    for key, value in obs.items():
-        if torch.is_tensor(value):
-            cloned[key] = value.clone()
-        elif isinstance(value, list):
-            cloned[key] = list(value)
-        else:
-            cloned[key] = copy.deepcopy(value)
-    return cloned
-
-
-def _merge_obs_rows(base_obs, update_obs, env_indices):
-    merged_obs = _clone_obs(base_obs)
-    for key, update_value in update_obs.items():
-        if key not in merged_obs:
-            merged_obs[key] = update_value
-            continue
-        base_value = merged_obs[key]
-        if torch.is_tensor(base_value):
-            index = torch.as_tensor(
-                env_indices, device=base_value.device, dtype=torch.long
-            )
-            merged_obs[key][index] = update_value.to(base_value.device)
-        elif isinstance(base_value, list):
-            for local_idx, env_idx in enumerate(env_indices):
-                base_value[env_idx] = update_value[local_idx]
-        else:
-            merged_obs[key] = update_value
-    return merged_obs
-
-
-def _merge_info_rows(base_infos, update_infos, env_indices, num_envs: int):
-    merged_infos = copy.deepcopy(base_infos)
-
-    def merge_value(base_value, update_value):
-        if isinstance(update_value, dict):
-            if not isinstance(base_value, dict):
-                base_value = {}
-            for key, child_update in update_value.items():
-                base_value[key] = merge_value(base_value.get(key), child_update)
-            return base_value
-
-        if torch.is_tensor(update_value):
-            if not torch.is_tensor(base_value):
-                base_shape = (num_envs, *update_value.shape[1:])
-                base_value = torch.zeros(
-                    base_shape, dtype=update_value.dtype, device=update_value.device
-                )
-            index = torch.as_tensor(
-                env_indices, device=base_value.device, dtype=torch.long
-            )
-            base_value[index] = update_value.to(base_value.device)
-            return base_value
-
-        return update_value
-
-    for key, value in update_infos.items():
-        merged_infos[key] = merge_value(merged_infos.get(key), value)
-    return merged_infos
-
-
-def _reset_payload_with_instance_ids(
-    reset_mask: list[bool],
-    instance_ids: list[int] | None,
-    full_reset: bool = False,
-):
-    if instance_ids is None:
-        return reset_mask
-
-    instance_iter = iter(instance_ids)
-    payload = []
-    for should_reset in reset_mask:
-        item = {"reset": bool(should_reset), "full_reset": full_reset}
-        if should_reset:
-            item["instance_id"] = next(instance_iter)
-        payload.append(item)
-    return payload
 
 
 @ray.remote(num_cpus=1)
@@ -268,8 +194,12 @@ class BehaviorProcess:
             self.first_chunk_action_value,
         ) = parse_first_chunk_action_override(cfg)
         self._first_chunk_action_override_pending = np.zeros(num_envs, dtype=bool)
-        self.trace_robot_joints = self._trace_robot_joints_enabled(cfg)
-        self._joint_trace_frame_idx = 0
+        self.joint_tracer = RobotJointTracer.from_config(
+            cfg,
+            replay_seed_offset=self.replay_seed_offset,
+        )
+        self.trace_robot_joints = self.joint_tracer.enabled
+        self._joint_trace_frame_idx = self.joint_tracer.frame_idx
 
     def get_activity_name(self):
         return self.instance_loader.activity_name
@@ -353,41 +283,19 @@ class BehaviorProcess:
 
     @staticmethod
     def _get_robot_from_child_env(child_env):
-        base_env = BehaviorProcess._unwrap_child_env(child_env)
-        task = getattr(base_env, "task", None)
-        if task is not None and hasattr(task, "get_agent"):
-            robot = task.get_agent(base_env)
-            if robot is not None:
-                return robot
-        robots = getattr(base_env, "robots", None)
-        if robots:
-            return robots[0]
-        return None
+        return get_behavior_robot(child_env)
 
     @staticmethod
     def _trace_robot_joints_enabled(cfg: DictConfig) -> bool:
-        cfg_value = bool(OmegaConf.select(cfg, "trace_robot_joints", default=False))
-        env_value = os.environ.get("RLINF_BEHAVIOR_TRACE_JOINTS", "")
-        return cfg_value or env_value.lower() in {"1", "true", "yes", "on"}
+        return trace_robot_joints_enabled(cfg)
 
     @staticmethod
     def _tensor_to_float_list(value, digits: int = 6) -> list[float]:
-        if value is None:
-            return []
-        if torch.is_tensor(value):
-            value = value.detach().cpu().reshape(-1).tolist()
-        elif hasattr(value, "tolist"):
-            value = value.tolist()
-        if not isinstance(value, (list, tuple)):
-            value = [value]
-        return [round(float(item), digits) for item in value]
+        return tensor_to_float_list(value, digits)
 
     @staticmethod
     def _robot_joint_names(robot) -> list[str]:
-        joints = getattr(robot, "joints", None)
-        if isinstance(joints, dict):
-            return list(joints.keys())
-        return []
+        return robot_joint_names(robot)
 
     def _log_robot_joint_trace(
         self,
@@ -397,37 +305,13 @@ class BehaviorProcess:
         chunk_step_idx: int | None = None,
         action=None,
     ) -> None:
-        if not self.trace_robot_joints:
-            return
-
-        robot = self._get_robot_from_child_env(child_env)
-        if robot is None:
-            return
-
-        get_joint_velocities = getattr(robot, "get_joint_velocities", None)
-        if callable(get_joint_velocities):
-            joint_velocities = get_joint_velocities()
-        else:
-            joint_velocities = None
-        robot_pos, robot_quat = robot.get_position_orientation(frame="world")
-        record = {
-            "event": event,
-            "replay_seed_offset": self.replay_seed_offset,
-            "local_env_idx": int(local_env_idx),
-            "frame_idx": int(self._joint_trace_frame_idx),
-            "chunk_step_idx": None if chunk_step_idx is None else int(chunk_step_idx),
-            "robot_name": getattr(robot, "name", None),
-            "joint_names": self._robot_joint_names(robot),
-            "joint_positions": self._tensor_to_float_list(robot.get_joint_positions()),
-            "joint_velocities": self._tensor_to_float_list(joint_velocities),
-            "robot_position_world": self._tensor_to_float_list(robot_pos),
-            "robot_quat_world": self._tensor_to_float_list(robot_quat),
-        }
-        if action is not None:
-            record["action"] = self._tensor_to_float_list(action)
-        print(
-            f"RLINF_BEHAVIOR_JOINT_TRACE {json.dumps(record, sort_keys=True)}",
-            flush=True,
+        self.joint_tracer.frame_idx = self._joint_trace_frame_idx
+        self.joint_tracer.log_env(
+            child_env,
+            local_env_idx=local_env_idx,
+            event=event,
+            chunk_step_idx=chunk_step_idx,
+            action=action,
         )
 
     def _log_all_robot_joint_traces(
@@ -437,63 +321,20 @@ class BehaviorProcess:
         chunk_step_idx: int | None = None,
         actions=None,
     ) -> None:
-        if not self.trace_robot_joints:
-            return
-
         child_envs = getattr(self.env, "envs", [])
-        if env_indices is None:
-            env_indices = list(range(len(child_envs)))
-        for env_idx in env_indices:
-            action = None
-            if actions is not None:
-                action = actions[env_idx]
-            self._log_robot_joint_trace(
-                child_envs[env_idx],
-                local_env_idx=env_idx,
-                event=event,
-                chunk_step_idx=chunk_step_idx,
-                action=action,
-            )
-        self._joint_trace_frame_idx += 1
+        self.joint_tracer.frame_idx = self._joint_trace_frame_idx
+        self.joint_tracer.log_all(
+            child_envs,
+            event,
+            env_indices=env_indices,
+            chunk_step_idx=chunk_step_idx,
+            actions=actions,
+        )
+        self._joint_trace_frame_idx = self.joint_tracer.frame_idx
 
     @classmethod
     def _annotate_behavior_hold_metrics(cls, child_env, info: dict | None) -> dict:
-        info = {} if info is None else info
-        base_env = cls._unwrap_child_env(child_env)
-        reward_info = info.get("reward")
-        if not isinstance(reward_info, dict):
-            reward_info = {}
-            info["reward"] = reward_info
-        task_info = reward_info.get("task_specific")
-        if not isinstance(task_info, dict):
-            task_info = {}
-            reward_info["task_specific"] = task_info
-
-        task = getattr(base_env, "task", None)
-        activity_instance_id = cls._to_int_or_none(
-            getattr(task, "activity_instance_id", None)
-        )
-        if activity_instance_id is not None:
-            task_info["activity_instance_id"] = activity_instance_id
-
-        try:
-            from omnigibson.reward_functions.support_utils import (
-                get_stage_objects_by_name,
-                is_target_in_hand,
-            )
-
-            robot = cls._get_robot_from_child_env(base_env)
-            task_reward = cls._task_reward(base_env)
-            target_obj = getattr(task_reward, "_radio_obj", None)
-            if target_obj is None:
-                target_objects = get_stage_objects_by_name(base_env, ("radio_89",))
-                target_obj = target_objects[0] if target_objects else None
-            if robot is not None and target_obj is not None:
-                task_info["held_in_hand"] = bool(is_target_in_hand(robot, target_obj))
-        except Exception:
-            task_info["held_in_hand_available"] = False
-
-        return info
+        return annotate_hold_metrics(child_env, info)
 
     def chunk_step(self, actions, env_indices):
         """Step a full chunk for one shard.
@@ -544,48 +385,7 @@ class BehaviorProcess:
 
     @staticmethod
     def _parse_reset_payload(payload):
-        """Parse a reset payload into (reset_indices, instance_ids, is_full_reset).
-
-        Supports three formats:
-        - ``None``: reset all envs.
-        - ``list[bool]``: each element indicates whether to reset that env.
-        - ``list[dict]``: each dict may contain ``reset`` (bool), ``full_reset``
-          (bool), and ``instance_id`` (int) keys.
-
-        Args:
-            payload: Reset specification in one of the supported formats.
-
-        Returns:
-            Tuple of (reset_indices, instance_ids, is_full_reset).
-            ``instance_ids`` is None when not provided.
-
-        Raises:
-            ValueError: If instance_ids are provided for some but not all
-                reset envs.
-        """
-        if payload is None:
-            return None, None, False
-
-        if payload and all(isinstance(item, dict) for item in payload):
-            reset_indices = [
-                idx for idx, item in enumerate(payload) if bool(item.get("reset", True))
-            ]
-            is_full_reset = all(bool(item.get("full_reset", False)) for item in payload)
-            instance_ids = [
-                int(payload[idx]["instance_id"])
-                for idx in reset_indices
-                if payload[idx].get("instance_id") is not None
-            ]
-            if instance_ids and len(instance_ids) != len(reset_indices):
-                raise ValueError(
-                    "Reset payload must provide instance_id for every reset env "
-                    "or for none of them."
-                )
-            return reset_indices, instance_ids or None, is_full_reset
-
-        # Legacy format: list[bool] where True means reset.
-        reset_indices = [idx for idx, flag in enumerate(payload) if bool(flag)]
-        return reset_indices, None, False
+        return parse_reset_payload(payload)
 
     def reset(self, reset_indices_or_payload=None, get_obs=True):
         # Detect payload format (dict list → replay reset with per-env
@@ -637,7 +437,7 @@ class BehaviorProcess:
     @staticmethod
     def _unwrap_child_env(child_env):
         """Return the underlying OmniGibson env, unwrapping any thin wrappers."""
-        return child_env
+        return unwrap_behavior_env(child_env)
 
     @staticmethod
     def _to_int_or_none(value):
@@ -645,7 +445,7 @@ class BehaviorProcess:
 
     @staticmethod
     def _task_reward(child_env):
-        return task_reward(child_env)
+        return get_task_reward(child_env)
 
     @classmethod
     def _stage_idx_from_info(cls, info: dict | None) -> int | None:
@@ -929,9 +729,7 @@ class BehaviorProcessPool:
 
     @staticmethod
     def _reset_payload_item_enabled(item) -> bool:
-        if isinstance(item, dict):
-            return bool(item.get("reset", True))
-        return bool(item)
+        return reset_payload_item_enabled(item)
 
     @classmethod
     def _build_reset_payload_shards(
@@ -941,25 +739,12 @@ class BehaviorProcessPool:
         num_env_shard: int,
         num_env_subprocess: int,
     ) -> tuple[list[list], list[list[int]]]:
-        """Expand slice-order reset payload into local shard-order payloads."""
-        payload_is_dict = bool(payload) and all(
-            isinstance(item, dict) for item in payload
+        return build_reset_payload_shards(
+            payload,
+            plan,
+            num_env_shard,
+            num_env_subprocess,
         )
-        filler = {"reset": False} if payload_is_dict else False
-        payload_shards = [
-            [copy.deepcopy(filler) for _ in range(num_env_shard)]
-            for _ in range(num_env_subprocess)
-        ]
-        reset_positions_by_proc = [[] for _ in range(num_env_subprocess)]
-
-        for sp, positions, local_rows in plan:
-            for pos, local_row in zip(positions, local_rows):
-                item = payload[pos]
-                payload_shards[sp][local_row] = item
-                if cls._reset_payload_item_enabled(item):
-                    reset_positions_by_proc[sp].append(pos)
-
-        return payload_shards, reset_positions_by_proc
 
     def env_chunk_step_slice(
         self,
@@ -1126,7 +911,7 @@ class BehaviorEnv(gym.Env):
         self._ordered_reset_epoch = 0
         self._ordered_reset_instance_ids = self._init_ordered_reset_instance_ids()
         self._stage_prompt_lists: list[list[str] | None] = [None] * self.num_envs
-        self.trunk_proprio_randomization = _parse_trunk_proprio_randomization(cfg)
+        self.trunk_proprio_randomization = parse_trunk_proprio_randomization(cfg)
         self._trunk_proprio_random_values = None
         self._trunk_proprio_rng = torch.Generator()
         self._trunk_proprio_rng.manual_seed(self.seed + 100003)
@@ -1171,7 +956,7 @@ class BehaviorEnv(gym.Env):
         if instance_ids is None:
             return self.pool.env_reset_slice(self.pool_offset, self.num_envs)
 
-        payload = _reset_payload_with_instance_ids(
+        payload = reset_payload_with_instance_ids(
             [True] * self.num_envs, instance_ids, full_reset=True
         )
         return self.pool.env_reset_slice_partial(
@@ -1198,7 +983,7 @@ class BehaviorEnv(gym.Env):
         if not reset_indices:
             return [], [], []
         instance_ids = self._ordered_reset_ids_for_indices(reset_indices)
-        payload = _reset_payload_with_instance_ids(reset_mask, instance_ids)
+        payload = reset_payload_with_instance_ids(reset_mask, instance_ids)
         self._ensure_pool()
         all_raw_obs, all_infos = self.pool.env_reset_slice_partial(
             self.pool_offset,
@@ -1226,18 +1011,11 @@ class BehaviorEnv(gym.Env):
         if not env_indices:
             return
 
-        low = torch.tensor(self.trunk_proprio_randomization["low"], dtype=torch.float32)
-        high = torch.tensor(
-            self.trunk_proprio_randomization["high"], dtype=torch.float32
+        sampled = sample_trunk_proprio_values(
+            self.trunk_proprio_randomization,
+            count=len(env_indices),
+            generator=self._trunk_proprio_rng,
         )
-        sampled = low + torch.rand(
-            len(env_indices), dim, generator=self._trunk_proprio_rng
-        ) * (high - low)
-        for dim_idx, fixed_value in enumerate(
-            self.trunk_proprio_randomization["fixed_values"]
-        ):
-            if fixed_value is not None:
-                sampled[:, dim_idx] = float(fixed_value)
         self._trunk_proprio_random_values[env_indices] = sampled
 
     def _apply_trunk_proprio_randomization(self, states, env_indices=None):
@@ -1253,82 +1031,38 @@ class BehaviorEnv(gym.Env):
         if not env_indices:
             return states
 
-        states = states.clone()
-        indices = self.trunk_proprio_randomization["indices"]
-        if max(indices) >= states.shape[-1]:
-            if states.shape[-1] < 7:
-                return states
-            indices = [3, 4, 5, 6]
-
-        values = self._trunk_proprio_random_values[env_indices].to(
-            device=states.device,
-            dtype=states.dtype,
+        return apply_trunk_proprio_values(
+            states,
+            config=self.trunk_proprio_randomization,
+            values=self._trunk_proprio_random_values,
+            env_indices=env_indices,
         )
-        states[:, indices] = values
-        return states
 
     def _update_stage_prompts_from_info(
         self, env_idx: int, info: dict | None
     ) -> str | None:
-        if not isinstance(info, dict):
-            return None
-
-        stage_info = info
-        reward_info = info.get("reward")
-        if isinstance(reward_info, dict):
-            task_specific_info = reward_info.get("task_specific")
-            if isinstance(task_specific_info, dict):
-                stage_info = task_specific_info
-
-        replay_info = info.get("replay_init")
-        if isinstance(replay_info, dict):
-            replay_prompts = replay_info.get("replay_stage_prompts")
-            if isinstance(replay_prompts, (list, tuple)):
-                self._stage_prompt_lists[env_idx] = [
-                    str(prompt).strip()
-                    for prompt in replay_prompts
-                    if str(prompt).strip()
-                ]
-
-        explicit_prompt = (
-            stage_info.get("current_stage_prompt")
-            or stage_info.get("stage_prompt")
-            or stage_info.get("subtask_prompt")
+        return update_stage_prompts_from_info(
+            self._stage_prompt_lists,
+            env_idx,
+            info,
         )
-        if explicit_prompt:
-            return str(explicit_prompt).strip()
-
-        stage_idx = stage_info.get("current_stage_idx")
-        if stage_idx is None:
-            return None
-        try:
-            stage_idx = int(stage_idx)
-        except (TypeError, ValueError):
-            return None
-
-        stage_prompts = self._stage_prompt_lists[env_idx]
-        if not stage_prompts or stage_idx < 0 or stage_idx >= len(stage_prompts):
-            return None
-        return stage_prompts[stage_idx]
 
     def _compose_task_description(self, stage_prompt: str | None) -> str:
-        if self.prompt_override is not None:
-            return self.prompt_override
-        if stage_prompt:
-            return self.task_description + "\n" + stage_prompt
-        return self.task_description
+        return compose_task_description(
+            self.prompt_override,
+            self.task_description,
+            stage_prompt,
+        )
 
     def _task_descriptions_from_infos(self, infos=None) -> list[str]:
-        if self.prompt_override is not None:
-            return [self.prompt_override for _ in range(self.num_envs)]
-        if not self.use_subtask_prompt or infos is None:
-            return [self.task_description for _ in range(self.num_envs)]
-        return [
-            self._compose_task_description(
-                self._update_stage_prompts_from_info(env_idx, info)
-            )
-            for env_idx, info in enumerate(infos)
-        ]
+        return task_descriptions_from_infos(
+            num_envs=self.num_envs,
+            prompt_override=self.prompt_override,
+            use_subtask_prompt=self.use_subtask_prompt,
+            task_description=self.task_description,
+            stage_prompt_lists=self._stage_prompt_lists,
+            infos=infos,
+        )
 
     def _extract_obs_image(self, raw_obs):
         state = None
@@ -1401,13 +1135,19 @@ class BehaviorEnv(gym.Env):
         return extract_episode_success(info, self.success_stage_idx)
 
     def _extract_episode_done(self, info: dict | None) -> bool:
-        return extract_episode_done(
-            info, self.success_stage_idx, self._extract_info_done
+        return extract_behavior_episode_done(
+            info,
+            self.success_stage_idx,
+            self._extract_info_done,
         )
 
     def _info_done_tensor(self, infos, device=None) -> torch.Tensor:
-        done_flags = [self._extract_episode_done(info) for info in infos]
-        return torch.as_tensor(done_flags, dtype=torch.bool, device=device)
+        return info_done_tensor(
+            infos,
+            self.success_stage_idx,
+            self._extract_info_done,
+            device=device,
+        )
 
     def _apply_info_dones(
         self,
@@ -1415,14 +1155,14 @@ class BehaviorEnv(gym.Env):
         truncations: torch.Tensor,
         infos: list[dict],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        info_dones = self._info_done_tensor(infos, device=terminations.device)
-        if self.ignore_terminations:
-            terminations = torch.zeros_like(terminations, dtype=torch.bool)
-            truncations = torch.logical_or(truncations, info_dones)
-        else:
-            terminations = torch.logical_or(terminations, info_dones)
-        dones = torch.logical_or(terminations, truncations)
-        return terminations, truncations, dones
+        return apply_info_dones(
+            terminations,
+            truncations,
+            infos,
+            ignore_terminations=self.ignore_terminations,
+            success_stage_idx=self.success_stage_idx,
+            default_done_extractor=self._extract_info_done,
+        )
 
     def reset(self):
         if self.enable_offload and self.pool is None:
@@ -1652,7 +1392,7 @@ class BehaviorEnv(gym.Env):
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
         reset_indices = dones.nonzero(as_tuple=False).flatten().tolist()
-        final_obs = _clone_obs(extracted_obs)
+        final_obs = clone_obs(extracted_obs)
         final_info = copy.deepcopy(infos)
 
         reset_indices, reset_raw_obs, reset_raw_infos = self.env_reset_partial(
@@ -1665,7 +1405,7 @@ class BehaviorEnv(gym.Env):
                 reset_raw_infos,
                 env_indices=reset_indices,
             )
-            extracted_obs = _merge_obs_rows(extracted_obs, reset_obs, reset_indices)
+            extracted_obs = merge_obs_rows(extracted_obs, reset_obs, reset_indices)
 
             self._reset_metrics(reset_indices)
             reset_rewards = torch.zeros(
@@ -1674,7 +1414,7 @@ class BehaviorEnv(gym.Env):
             reset_infos = self._record_metrics(
                 reset_rewards, reset_raw_infos, env_indices=reset_indices
             )
-            infos = _merge_info_rows(infos, reset_infos, reset_indices, self.num_envs)
+            infos = merge_info_rows(infos, reset_infos, reset_indices, self.num_envs)
 
         # gymnasium calls it final observation but it really is just o_{t+1} or the true next observation
         infos["final_observation"] = final_obs
