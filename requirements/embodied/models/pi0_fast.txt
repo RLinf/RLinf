@@ -1,0 +1,7 @@
+# pi0-FAST backend runtime. Install through requirements/install.sh so this
+# lands in the dedicated Python 3.12.12 / torch 2.11 .venv-pi0-fast environment.
+# This commit is LeRobot v0.6.0-1-g8a74e0ac, which bumps the package to 0.6.1
+# and carries the PI0FastPolicy/tokenizer path used by the public checkpoint.
+lerobot[pi,libero] @ git+https://github.com/huggingface/lerobot.git@8a74e0ac6d01706d67fddfed682a09d694d9c8c0
+scipy
+safetensors

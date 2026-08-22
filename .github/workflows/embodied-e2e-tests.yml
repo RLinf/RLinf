@@ -1541,3 +1541,53 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-pi0-fast-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PI0-Fast environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh embodied --model pi0_fast --env libero
+
+      - name: PI0-Fast LeRobot API tests
+        timeout-minutes: 10
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv-pi0-fast/bin/activate
+          python -m pytest -q \
+            tests/unit_tests/test_pi0_fast_install.py \
+            tests/unit_tests/test_pi0_fast_lerobot_api.py
+
+      - name: PI0-Fast FSDP FULL_SHARD optimizer test
+        timeout-minutes: 10
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export RUN_FSDP_DISTRIBUTED_TESTS=1
+          source .venv-pi0-fast/bin/activate
+          torchrun --standalone --nproc-per-node=2 -m pytest -q \
+            tests/unit_tests/test_fp32_master_adamw_fsdp.py
+
+      - name: PI0-Fast LIBERO GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv-pi0-fast/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv-pi0-fast
+          uv cache prune

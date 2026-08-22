@@ -79,6 +79,11 @@ def _register_builtin_models():
 
         return get_model(cfg, torch_dtype)
 
+    def _build_pi0_fast(cfg: DictConfig, torch_dtype):
+        from rlinf.models.embodiment.pi0_fast import get_model
+
+        return get_model(cfg, torch_dtype)
+
     def _build_dexbotic_pi(cfg: DictConfig, torch_dtype):
         from rlinf.models.embodiment.dexbotic_pi import get_model
 
@@ -206,6 +211,12 @@ def _register_builtin_models():
     register_model(
         SupportedModel.OPENPI_RLINF.value,
         _build_openpi_rlinf,
+        category="embodied",
+        force=True,
+    )
+    register_model(
+        SupportedModel.PI0_FAST.value,
+        _build_pi0_fast,
         category="embodied",
         force=True,
     )
@@ -350,7 +361,7 @@ def get_model(cfg: DictConfig):
     ):
         model = model.to(Worker.torch_device_type)
 
-    if cfg.is_lora:
+    if cfg.is_lora and SupportedModel(model_type) != SupportedModel.PI0_FAST:
         from peft import LoraConfig, PeftModel, get_peft_model
 
         if not hasattr(cfg, "lora_path") or cfg.lora_path is None:

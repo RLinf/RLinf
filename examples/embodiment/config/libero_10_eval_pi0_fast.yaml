@@ -1,0 +1,132 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/pi0_fast@actor.model
+  - model/pi0_fast@rollout.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    # Exact 500-episode evaluation: 10 workers x 50 environments.
+    env,rollout: 0-9
+    # The current entrypoint initializes an actor even in eval-only mode.
+    actor: 10
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results/pi0_fast_libero10_eval"
+    project_name: rlinf
+    experiment_name: "pi0_fast_libero10_eval"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 1
+  max_steps: -1
+  only_eval: True
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+  reward_type: chunk_level
+  logprob_type: sequence_token_level
+  entropy_type: token_level
+  update_epoch: 1
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: "seq-mean-token-mean"
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  filter_rewards: False
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 0.9
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: False
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 500
+    seed: 0
+    reward_coef: 1.0
+    auto_reset: False
+    ignore_terminations: True
+    use_fixed_reset_state_ids: True
+    use_ordered_reset_state_ids: True
+    reset_gripper_open: True
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 520
+    group_size: 1
+    is_eval: True
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  sampling_params:
+    do_sample: False
+    temperature_train: 0.3
+    temperature_eval: 0.0
+    top_k: 0
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: ${rollout.model.pi0_fast.max_action_tokens}
+
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: False
+  pipeline_stage_num: 1
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 16
+  global_batch_size: 160
+  seed: 1234
+  enable_offload: False
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.01
+    clip_grad: 1.0
+    use_fp32_master_params: False
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null
+      cast_forward_inputs: True
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
+
+weight_syncer:
+  patch:
+    transport_device: cpu
