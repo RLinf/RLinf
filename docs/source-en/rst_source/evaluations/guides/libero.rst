@@ -3,7 +3,7 @@ LIBERO Evaluation
 
 LIBERO is a robotic manipulation simulation benchmark built on robosuite (MuJoCo), with suites including Spatial, Object, Goal, and Long. RLinf supports parallel VLA policy evaluation on LIBERO with task-level success metrics.
 
-Related training docs: :doc:`../../examples/embodied/libero`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
+Related training docs: :doc:`../../examples/embodied/libero`, :doc:`../../examples/embodied/sft_fastwam`, :ref:`LIBERO-Pro & LIBERO-Plus <liberopro-plus-benchmark>`
 
 Environment Setup
 -----------------
@@ -13,7 +13,9 @@ Environment Setup
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
+With ``--env libero``, the installer clones LIBERO into ``.venv/libero`` (or reuses an existing checkout when ``LIBERO_PATH`` is set) and appends it to ``PYTHONPATH`` in ``.venv/bin/activate``.
+
+Supported models include ``openpi``, ``openvla-oft``, ``starvla``, ``dreamzero``, ``fastwam``, and ``molmoact2`` — replace ``--model`` accordingly during installation.
 
 Example Configs
 ---------------
@@ -39,6 +41,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero (SGLang backend)
+   * - ``libero_spatial_fastwam_eval.yaml``
+     - Spatial / LIBERO-Plus
+     - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2

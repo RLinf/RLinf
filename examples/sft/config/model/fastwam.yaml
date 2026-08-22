@@ -1,0 +1,30 @@
+# FastWAM SFT model config.
+#
+# This follows the official LIBERO SFT recipe: load the pretrained Wan2.2 video
+# DiT, initialize ActionDiT from the official interpolated backbone payload, and
+# train only FastWAM's MoT (model.dit alias) plus the proprio encoder.
+model_type: "fastwam"
+precision: bf16
+# Required by rlinf get_model dispatcher; FastWAM is not loaded via LoRA.
+is_lora: false
+# Official training starts from the Wan2.2 base model. Set this explicitly to a
+# released FastWAM checkpoint only when intentionally reproducing checkpoint
+# fine-tuning rather than the official base-model SFT recipe.
+model_path: null
+dataset_stats_path: ${oc.env:FASTWAM_CHECKPOINT_DIR,checkpoints/fastwam_release}/libero_uncond_2cam224_dataset_stats.json
+
+# Only MoT experts (+ proprio encoder) are trainable.
+freeze_non_dit: true
+
+fastwam:
+  config_dir: null
+  config_name: sim_libero
+  overrides:
+    # The official training task loads pretrained Wan2.2 + ActionDiT weights.
+    - model.skip_dit_load_from_pretrain=false
+    - model.action_dit_pretrained_path=${oc.env:FASTWAM_ACTION_DIT_BACKBONE_PATH,checkpoints/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}
+    - model.mot_checkpoint_mixed_attn=false
+    # Training reads cached text embeddings, so the model itself need not load T5.
+    - model.load_text_encoder=false
+    # Use the same converted common-file redirect as the official model config.
+    - model.redirect_common_files=true

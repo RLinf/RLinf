@@ -839,7 +839,9 @@ class LiberoEnv(gym.Env):
             reset_state_ids = self._get_random_reset_state_ids(num_reset_states)
 
         self._reconfigure(reset_state_ids, env_idx)
-        for _ in range(15):
+        # FastWAM's official evaluator waits for 30 open-gripper no-op steps.
+        num_steps_wait = int(self.cfg.get("num_steps_wait", 0))
+        for _ in range(num_steps_wait):
             zero_actions = np.zeros((len(env_idx), 7))
             if self.cfg.reset_gripper_open:
                 zero_actions[:, -1] = -1

@@ -31,6 +31,7 @@ DEFAULT_NO_TEST_MODULES = [
     "rlinf/models",
     "rlinf/data/datasets/dreamzero",
     "rlinf/data/datasets/openpi_rlinf",
+    "rlinf/data/datasets/fastwam.py",
     "rlinf/data/datasets/recap/cfg_model.py",
     "rlinf/data/datasets/recap/utils.py",
     "rlinf/data/datasets/recap/value_dataset.py",
