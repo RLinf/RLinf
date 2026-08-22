@@ -44,12 +44,11 @@ from tqdm.auto import tqdm
 from rlinf.data.datasets.vlm.vlm_trend_reward import (
     DEFAULT_TASK_DESCRIPTION,
     build_terminal_success_rows,
-    extract_dual_view_frames,
     first_success_transition,
     potential_prompt,
     progress_prompt,
+    source_episode_hash,
     to_numpy_float32,
-    to_uint8_rgb,
     transition_observations,
 )
 from rlinf.models.embodiment.modules.utils import make_mlp
@@ -608,7 +607,7 @@ def preprocess_and_save_reward_datasets(
     return metadata
 
 
-def _parse_trend_args(argv: list[str] | None = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
     )
@@ -747,7 +746,8 @@ def _parse_trend_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _run_trend(args: argparse.Namespace) -> None:
+def run_trend(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     os.makedirs(args.output_dir, exist_ok=True)
 
     metadata = preprocess_and_save_reward_datasets(
@@ -786,19 +786,33 @@ def _run_trend(args: argparse.Namespace) -> None:
     print("=" * 80)
 
 
-def _state_value_model(config: dict[str, Any]) -> nn.Sequential:
-    """Rebuild the teacher with RLinf's existing MLP factory."""
-    channels = [int(config["hidden_dim"])] * int(config["num_layers"]) + [1]
-    return nn.Sequential(
-        *make_mlp(
-            int(config["state_dim"]) * int(config["history_size"]),
-            channels,
-            act_builder=nn.SiLU,
-            last_act=False,
-            use_layer_norm=True,
-            dropout=float(config.get("dropout", 0.0)),
-        )
-    )
+def write_manifest(
+    rows: list[dict[str, Any]], output_dir: str | Path, split: str
+) -> str:
+    """Write the JSONL consumed by the existing Qwen SFT dataset."""
+    split_dir = Path(output_dir) / split
+    split_dir.mkdir(parents=True, exist_ok=True)
+    manifest = split_dir / "segments.jsonl"
+    with manifest.open("w", encoding="utf-8") as stream:
+        for row in rows:
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return str(manifest)
+
+
+def write_sample_pickle(
+    payload: dict[str, Any],
+    pkl_dir: str | Path,
+    sample_id: str,
+    *,
+    overwrite: bool,
+) -> str:
+    """Write one dual-view sample in the existing Qwen dataset format."""
+    path = Path(pkl_dir) / f"{sample_id}.pkl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if overwrite or not (path.exists() and path.stat().st_size > 0):
+        with path.open("wb") as stream:
+            pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
+    return str(path.resolve())
 
 
 def load_value_model(
@@ -807,7 +821,17 @@ def load_value_model(
     """Load the lightweight state-success teacher checkpoint."""
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint["config"]
-    model = _state_value_model(config).to(device)
+    channels = [int(config["hidden_dim"])] * int(config["num_layers"]) + [1]
+    model = nn.Sequential(
+        *make_mlp(
+            int(config["state_dim"]) * int(config["history_size"]),
+            channels,
+            act_builder=nn.SiLU,
+            last_act=False,
+            use_layer_norm=True,
+            dropout=float(config.get("dropout", 0.0)),
+        )
+    ).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return (
@@ -816,18 +840,6 @@ def load_value_model(
         np.asarray(config["mean"], dtype=np.float32),
         np.asarray(config["std"], dtype=np.float32),
     )
-
-
-def _stack_state_history(
-    states: list[np.ndarray], index: int, history_size: int
-) -> np.ndarray:
-    first = states[0]
-    return np.concatenate(
-        [
-            states[index - offset] if index >= offset else first
-            for offset in range(history_size - 1, -1, -1)
-        ]
-    ).astype(np.float32)
 
 
 def score_states(
@@ -841,8 +853,17 @@ def score_states(
 ) -> np.ndarray:
     """Score all episode states with the state-success teacher."""
     history_size = int(config["history_size"])
+    first = states[0]
     inputs = np.stack(
-        [_stack_state_history(states, i, history_size) for i in range(len(states))]
+        [
+            np.concatenate(
+                [
+                    states[index - offset] if index >= offset else first
+                    for offset in range(history_size - 1, -1, -1)
+                ]
+            ).astype(np.float32)
+            for index in range(len(states))
+        ]
     )
     inputs = (inputs - mean[None]) / std[None]
     outputs = []
@@ -864,11 +885,7 @@ def _run_terminal_success(args: argparse.Namespace) -> None:
     )
     output_dir = Path(args.output_dir)
     for split, rows in rows_by_split.items():
-        split_dir = output_dir / split
-        split_dir.mkdir(parents=True, exist_ok=True)
-        with (split_dir / "segments.jsonl").open("w", encoding="utf-8") as stream:
-            for row in rows:
-                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+        write_manifest(rows, output_dir, split)
     (output_dir / "dataset_info.json").write_text(
         json.dumps(stats, indent=2), encoding="utf-8"
     )
@@ -928,61 +945,6 @@ def smooth_values(values: np.ndarray, window_size: int) -> np.ndarray:
     return np.clip(np.convolve(padded, kernel, mode="valid"), 0.0, 1.0)
 
 
-def _messages(prompt: str, answer: str) -> list[dict[str, Any]]:
-    return [
-        {"role": "user", "content": [{"type": "text", "text": prompt}]},
-        {"role": "assistant", "content": [{"type": "text", "text": answer}]},
-    ]
-
-
-def _sample_limit(args: argparse.Namespace, split: str, sample_type: str) -> int:
-    """Return the global cap for one split/sample type."""
-    suffix = "train" if split == "train" else "eval"
-    return int(getattr(args, f"{sample_type}_samples_{suffix}"))
-
-
-def _cached_episode(
-    source_path: str, source_cache: dict[str, dict[str, Any]]
-) -> dict[str, Any] | None:
-    episode = source_cache.get(source_path)
-    if episode is None:
-        try:
-            with open(source_path, "rb") as handle:
-                episode = pickle.load(handle)
-        except (EOFError, pickle.UnpicklingError, OSError) as error:
-            logger.warning("Skipping unreadable episode %s: %s", source_path, error)
-            return None
-        source_cache.clear()
-        source_cache[source_path] = episode
-    return episode
-
-
-def _candidate_frames(
-    candidate: Candidate, observations: list[Any], window_size: int
-) -> tuple[list[Any], list[Any]] | None:
-    """Extract dual-view frames for a potential or progress candidate."""
-    if candidate.sample_type == "progress":
-        earlier_frames = extract_dual_view_frames(
-            observations,
-            candidate.start_idx,
-            candidate.start_idx + window_size - 1,
-        )
-        later_frames = extract_dual_view_frames(
-            observations,
-            candidate.end_idx - window_size + 1,
-            candidate.end_idx,
-        )
-        if earlier_frames is None or later_frames is None:
-            return None
-        return (
-            earlier_frames[0] + later_frames[0],
-            earlier_frames[1] + later_frames[1],
-        )
-    return extract_dual_view_frames(
-        observations, candidate.start_idx, candidate.end_idx
-    )
-
-
 def _write_sample(
     candidate: Candidate,
     output_dir: Path,
@@ -990,13 +952,42 @@ def _write_sample(
     num_bins: int,
     window_size: int,
 ) -> dict[str, Any] | None:
-    episode = _cached_episode(candidate.source_path, source_cache)
+    episode = source_cache.get(candidate.source_path)
     if episode is None:
-        return None
-    frames = _candidate_frames(candidate, episode.get("observations", []), window_size)
+        try:
+            with open(candidate.source_path, "rb") as handle:
+                episode = pickle.load(handle)
+        except (EOFError, pickle.UnpicklingError, OSError) as error:
+            logger.warning(
+                "Skipping unreadable episode %s: %s", candidate.source_path, error
+            )
+            return None
+        source_cache.clear()
+        source_cache[candidate.source_path] = episode
+
+    observations = episode.get("observations", [])
+    if candidate.sample_type == "progress":
+        earlier = _extract_dual_view_frames(
+            observations,
+            candidate.start_idx,
+            candidate.start_idx + window_size - 1,
+        )
+        later = _extract_dual_view_frames(
+            observations,
+            candidate.end_idx - window_size + 1,
+            candidate.end_idx,
+        )
+        frames = (
+            None
+            if earlier is None or later is None
+            else (earlier[0] + later[0], earlier[1] + later[1])
+        )
+    else:
+        frames = _extract_dual_view_frames(
+            observations, candidate.start_idx, candidate.end_idx
+        )
     if frames is None:
         return None
-
     main_frames, extra_frames = frames
     stem = os.path.splitext(os.path.basename(candidate.source_path))[0]
     source_run = Path(candidate.source_path).parent.parent.name
@@ -1009,26 +1000,23 @@ def _write_sample(
         f"{candidate.sample_type}_{source_run}_{stem}_{candidate.start_idx:04d}_"
         f"{candidate.end_idx:04d}{gap_suffix}"
     )
-    pkl_dir = output_dir / candidate.split / "pkl"
-    pkl_dir.mkdir(parents=True, exist_ok=True)
-    sample_pkl = pkl_dir / f"{sample_id}.pkl"
-    with sample_pkl.open("wb") as handle:
-        pickle.dump(
-            {
-                "main_frames": [to_uint8_rgb(frame) for frame in main_frames],
-                "extra_view_frames": [to_uint8_rgb(frame) for frame in extra_frames],
-                "label": candidate.answer,
-                "sample_type": candidate.sample_type,
-                "teacher_value": candidate.teacher_value,
-                "teacher_delta": candidate.teacher_delta,
-                "source_episode_path": candidate.source_path,
-                "start_idx": candidate.start_idx,
-                "end_idx": candidate.end_idx,
-                "progress_gap_steps": candidate.progress_gap_steps,
-            },
-            handle,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
+    sample_pkl = write_sample_pickle(
+        {
+            "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
+            "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
+            "label": candidate.answer,
+            "sample_type": candidate.sample_type,
+            "teacher_value": candidate.teacher_value,
+            "teacher_delta": candidate.teacher_delta,
+            "source_episode_path": candidate.source_path,
+            "start_idx": candidate.start_idx,
+            "end_idx": candidate.end_idx,
+            "progress_gap_steps": candidate.progress_gap_steps,
+        },
+        output_dir / candidate.split / "pkl",
+        sample_id,
+        overwrite=True,
+    )
 
     if candidate.sample_type == "potential":
         prompt = potential_prompt(candidate.task, window_size, num_bins)
@@ -1041,8 +1029,8 @@ def _write_sample(
         "prompt": prompt,
         "question": prompt,
         "answer": candidate.answer,
-        "pkl_path": str(sample_pkl.resolve()),
-        "messages": _messages(prompt, candidate.answer),
+        "pkl_path": sample_pkl,
+        "messages": _build_messages(prompt, candidate.answer),
         "source_episode_path": candidate.source_path,
         "source_run": source_run,
         "segment_metadata": {
@@ -1067,7 +1055,10 @@ def _write_sample(
     }
 
 
-def _validate_preprocess_args(args: argparse.Namespace) -> None:
+def run_potential(args: argparse.Namespace) -> dict[str, Any]:
+    """Build potential/progress labels through the existing Qwen SFT pipeline."""
+    if args.progress_gap_steps is None:
+        args.progress_gap_steps = [args.window_size]
     if not 2 <= args.num_bins <= 10:
         raise ValueError("num_bins must be between 2 and 10 for single digit labels")
     if args.temporal_smoothing_window < 1 or args.temporal_smoothing_window % 2 == 0:
@@ -1081,11 +1072,10 @@ def _validate_preprocess_args(args: argparse.Namespace) -> None:
         )
     args.progress_gap_steps = sorted(set(args.progress_gap_steps))
 
-
-def _collect_pkl_files_and_splits(
-    args: argparse.Namespace, rng: random.Random
-) -> tuple[list[str], dict[str, str]]:
-    """List episode pickles and assign train/eval splits per collection root."""
+    rng = random.Random(args.seed)
+    np.random.seed(args.seed)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     files_by_root = {
         str(Path(root).resolve()): sorted(glob(os.path.join(root, "*.pkl")))
         for root in args.raw_data_path
@@ -1097,17 +1087,19 @@ def _collect_pkl_files_and_splits(
         pkl_files = pkl_files[: args.max_episodes]
     if not pkl_files:
         raise ValueError(f"No episode pkl files found in {args.raw_data_path}")
+
     split_by_path: dict[str, str] = {}
     for root_files in files_by_root.values():
         root_files = [path for path in root_files if path in pkl_files]
         rng.shuffle(root_files)
-        if args.val_split <= 0:
-            eval_count = 0
-        else:
-            eval_count = min(
+        eval_count = (
+            0
+            if args.val_split <= 0
+            else min(
                 len(root_files),
                 max(1, int(round(len(root_files) * args.val_split))),
             )
+        )
         split_by_path.update(
             {
                 path: ("eval" if index < eval_count else "train")
@@ -1124,73 +1116,13 @@ def _collect_pkl_files_and_splits(
                 f"applying --val-split {args.val_split}; for example "
                 "--only-split eval requires val_split > 0."
             )
-    return pkl_files, split_by_path
 
-
-def _add_episode_candidates(
-    *,
-    args: argparse.Namespace,
-    pkl_path: str,
-    split: str,
-    values: np.ndarray,
-    task: str,
-    success: bool,
-    observation_offset: int,
-    candidates: dict[tuple[str, str], list[Candidate]],
-) -> None:
-    """Append naturally distributed candidates from one scored episode."""
-    first_end = args.window_size - 1
-    for end_idx in range(first_end, len(values), args.stride):
-        start_idx = end_idx - args.window_size + 1
-        value = float(values[end_idx])
-        candidates[(split, "potential")].append(
-            Candidate(
-                pkl_path,
-                split,
-                "potential",
-                task,
-                success,
-                start_idx + observation_offset,
-                end_idx + observation_offset,
-                value,
-                0.0,
-                str(potential_bin(value, args.num_bins)),
-            )
-        )
-        for gap_steps in args.progress_gap_steps:
-            earlier_end = end_idx - gap_steps
-            if earlier_end < first_end:
-                continue
-            delta = value - float(values[earlier_end])
-            candidates[(split, "progress")].append(
-                Candidate(
-                    pkl_path,
-                    split,
-                    "progress",
-                    task,
-                    success,
-                    earlier_end - args.window_size + 1 + observation_offset,
-                    end_idx + observation_offset,
-                    value,
-                    delta,
-                    progress_label(delta, args.progress_deadband),
-                    gap_steps,
-                )
-            )
-
-
-def _score_episodes(
-    args: argparse.Namespace,
-    pkl_files: list[str],
-    split_by_path: dict[str, str],
-) -> tuple[dict[tuple[str, str], list[Candidate]], Counter[str], Counter[str]]:
-    """Score episodes and retain their natural candidate distribution."""
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     model, cfg, mean, std = load_value_model(args.value_checkpoint, device)
     candidates: dict[tuple[str, str], list[Candidate]] = defaultdict(list)
     episode_counts: Counter[str] = Counter()
     skipped: Counter[str] = Counter()
-
+    first_end = args.window_size - 1
     for pkl_path in tqdm(pkl_files, desc="Scoring episodes", unit="episode"):
         try:
             with open(pkl_path, "rb") as handle:
@@ -1206,12 +1138,11 @@ def _score_episodes(
         if len(observations) < args.window_size * 2:
             skipped["short_episode"] += 1
             continue
-        states = []
-        for observation in observations:
-            if "states" not in observation:
-                states = []
-                break
-            states.append(to_numpy_float32(observation["states"]).reshape(-1))
+        states = [
+            to_numpy_float32(observation["states"]).reshape(-1)
+            for observation in observations
+            if "states" in observation
+        ]
         if len(states) != len(observations):
             skipped["missing_states"] += 1
             continue
@@ -1228,29 +1159,49 @@ def _score_episodes(
             or args.task_description
             or DEFAULT_TASK_DESCRIPTION
         )
-        _add_episode_candidates(
-            args=args,
-            pkl_path=pkl_path,
-            split=split,
-            values=values,
-            task=task,
-            success=success,
-            observation_offset=observation_offset,
-            candidates=candidates,
-        )
-    return candidates, episode_counts, skipped
+        for end_idx in range(first_end, len(values), args.stride):
+            start_idx = end_idx - args.window_size + 1
+            value = float(values[end_idx])
+            candidates[(split, "potential")].append(
+                Candidate(
+                    pkl_path,
+                    split,
+                    "potential",
+                    task,
+                    success,
+                    start_idx + observation_offset,
+                    end_idx + observation_offset,
+                    value,
+                    0.0,
+                    str(potential_bin(value, args.num_bins)),
+                )
+            )
+            for gap_steps in args.progress_gap_steps:
+                earlier_end = end_idx - gap_steps
+                if earlier_end < first_end:
+                    continue
+                delta = value - float(values[earlier_end])
+                candidates[(split, "progress")].append(
+                    Candidate(
+                        pkl_path,
+                        split,
+                        "progress",
+                        task,
+                        success,
+                        earlier_end - args.window_size + 1 + observation_offset,
+                        end_idx + observation_offset,
+                        value,
+                        delta,
+                        progress_label(delta, args.progress_deadband),
+                        gap_steps,
+                    )
+                )
 
-
-def _select_candidates(
-    args: argparse.Namespace,
-    candidates: dict[tuple[str, str], list[Candidate]],
-    rng: random.Random,
-) -> tuple[list[Candidate], dict[str, dict[str, int | str]]]:
-    """Uniformly cap each split/sample type without class balancing."""
     selected = []
     selection = {}
     for (split, sample_type), items in sorted(candidates.items()):
-        limit = _sample_limit(args, split, sample_type)
+        suffix = "train" if split == "train" else "eval"
+        limit = int(getattr(args, f"{sample_type}_samples_{suffix}"))
         chosen = (
             rng.sample(items, limit)
             if limit > 0 and len(items) > limit
@@ -1262,18 +1213,6 @@ def _select_candidates(
             "selected": len(chosen),
             "method": "uniform_without_replacement",
         }
-    return selected, selection
-
-
-def _write_selected_rows(
-    args: argparse.Namespace,
-    candidates: dict[tuple[str, str], list[Candidate]],
-    output_dir: Path,
-    skipped: Counter[str],
-    rng: random.Random,
-) -> tuple[dict[str, list[dict[str, Any]]], dict[str, dict[str, int | str]]]:
-    """Materialize globally sampled candidates into per-sample pickles."""
-    selected, selection = _select_candidates(args, candidates, rng)
     selected.sort(key=lambda item: (item.source_path, item.sample_type, item.start_idx))
     rows_by_split: dict[str, list[dict[str, Any]]] = defaultdict(list)
     source_cache: dict[str, dict[str, Any]] = {}
@@ -1287,51 +1226,8 @@ def _write_selected_rows(
         )
         if row is None:
             skipped["missing_frames"] += 1
-            continue
-        rows_by_split[candidate.split].append(row)
-    return rows_by_split, selection
-
-
-def _split_metadata(rows: list[dict[str, Any]], manifest: Path) -> dict[str, Any]:
-    return {
-        "manifest": str(manifest),
-        "num_samples": len(rows),
-        "sample_type_counts": dict(
-            Counter(row["segment_metadata"]["sample_type"] for row in rows)
-        ),
-        "answer_counts": dict(Counter(row["answer"] for row in rows)),
-        "outcome_counts": dict(
-            Counter(
-                "success" if row["segment_metadata"]["success"] else "failure"
-                for row in rows
-            )
-        ),
-        "source_run_counts": dict(Counter(row["source_run"] for row in rows)),
-        "progress_gap_counts": dict(
-            Counter(
-                str(row["segment_metadata"]["progress_gap_steps"])
-                for row in rows
-                if row["segment_metadata"]["sample_type"] == "progress"
-            )
-        ),
-    }
-
-
-def run_potential(args: argparse.Namespace) -> dict[str, Any]:
-    """Build potential/progress SFT manifests from a state-value teacher."""
-    _validate_preprocess_args(args)
-    rng = random.Random(args.seed)
-    np.random.seed(args.seed)
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    pkl_files, split_by_path = _collect_pkl_files_and_splits(args, rng)
-    candidates, episode_counts, skipped = _score_episodes(
-        args, pkl_files, split_by_path
-    )
-    rows_by_split, selection = _write_selected_rows(
-        args, candidates, output_dir, skipped, rng
-    )
+        else:
+            rows_by_split[candidate.split].append(row)
 
     metadata: dict[str, Any] = {
         "raw_data_paths": args.raw_data_path,
@@ -1352,13 +1248,29 @@ def run_potential(args: argparse.Namespace) -> dict[str, Any]:
     for split in ("train", "eval"):
         rows = rows_by_split[split]
         rng.shuffle(rows)
-        split_dir = output_dir / split
-        split_dir.mkdir(parents=True, exist_ok=True)
-        manifest = split_dir / "segments.jsonl"
-        with manifest.open("w", encoding="utf-8") as handle:
-            for row in rows:
-                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-        metadata["splits"][split] = _split_metadata(rows, manifest)
+        manifest = write_manifest(rows, output_dir, split)
+        metadata["splits"][split] = {
+            "manifest": manifest,
+            "num_samples": len(rows),
+            "sample_type_counts": dict(
+                Counter(row["segment_metadata"]["sample_type"] for row in rows)
+            ),
+            "answer_counts": dict(Counter(row["answer"] for row in rows)),
+            "outcome_counts": dict(
+                Counter(
+                    "success" if row["segment_metadata"]["success"] else "failure"
+                    for row in rows
+                )
+            ),
+            "source_run_counts": dict(Counter(row["source_run"] for row in rows)),
+            "progress_gap_counts": dict(
+                Counter(
+                    str(row["segment_metadata"]["progress_gap_steps"])
+                    for row in rows
+                    if row["segment_metadata"]["sample_type"] == "progress"
+                )
+            ),
+        }
     with (output_dir / "dataset_info.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2, ensure_ascii=False)
     logger.info("%s", json.dumps(metadata, indent=2, ensure_ascii=False))
@@ -1399,20 +1311,192 @@ def _add_potential_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--device", default="cuda")
 
 
-def _run_potential(args: argparse.Namespace) -> dict[str, Any]:
-    """Apply potential-mode defaults then run the dense label pipeline."""
-    if args.progress_gap_steps is None:
-        args.progress_gap_steps = [args.window_size]
-    return run_potential(args)
+@torch.no_grad()
+def _encode_feature_batch(
+    model: Any,
+    prompts: list[str],
+    videos: list[list[Any]],
+) -> torch.Tensor:
+    """Pool Qwen features using the same processor path as VLM Trend SFT."""
+    from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
+
+    _, inputs, _ = VLMTrendRewardSFTDataset.process_inputs(
+        processor=model._processor,
+        system_prompt=None,
+        use_chat_template=True,
+        prompt_texts=[[prompt] for prompt in prompts],
+        videos=videos,
+        answer_text=None,
+    )
+    inputs = {
+        key: value.to(model._model.device) if torch.is_tensor(value) else value
+        for key, value in inputs.items()
+    }
+    return model.extract_prompt_features(inputs).cpu()
+
+
+def _feature_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+    with Path(args.manifest).open("r", encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+    rows = [
+        row
+        for row in rows
+        if row["segment_metadata"]["sample_type"] == args.sample_type
+        and source_episode_hash(row["source_episode_path"]) % args.world_size
+        == args.rank
+    ]
+    rows.sort(
+        key=lambda row: (
+            row["source_episode_path"],
+            row["segment_metadata"]["end_step"],
+        )
+    )
+    return rows if args.max_samples is None else rows[: args.max_samples]
+
+
+def _extract_features(
+    model: Any,
+    rows: list[dict[str, Any]],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
+
+    feature_batches = []
+    targets = []
+    labels = []
+    successes = []
+    source_paths = []
+    end_steps = []
+    for start in tqdm(
+        range(0, len(rows), args.batch_size),
+        desc=f"Extracting {args.sample_type} features",
+    ):
+        batch = rows[start : start + args.batch_size]
+        prompts = []
+        videos = []
+        for index, row in enumerate(batch, start=start):
+            _, _, source_videos, _ = VLMTrendRewardSFTDataset._parse_raw_record(
+                row, index, None
+            )
+            window_size = int(row["segment_metadata"]["window_size"])
+            if window_size != args.history_size:
+                raise ValueError(
+                    "--history-size must match the preprocessed manifest window size"
+                )
+            prompt = potential_prompt(row["task"], args.history_size, 10)
+            if args.sample_type == "potential":
+                prompts.append(prompt)
+                videos.append(source_videos)
+                targets.append(float(row["supervision"]["teacher_value"]))
+                successes.append(bool(row["segment_metadata"]["success"]))
+                source_paths.append(row["source_episode_path"])
+                end_steps.append(int(row["segment_metadata"]["end_step"]))
+            else:
+                main, extra = source_videos
+                if len(main) != 2 * window_size or len(extra) != 2 * window_size:
+                    raise ValueError("Progress samples must contain two full windows")
+                prompts.extend([prompt, prompt])
+                videos.extend(
+                    [
+                        [main[:window_size], extra[:window_size]],
+                        [main[window_size:], extra[window_size:]],
+                    ]
+                )
+                targets.append(float(row["supervision"]["teacher_delta"]))
+                labels.append(row["answer"])
+        encoded = _encode_feature_batch(model, prompts, videos)
+        if args.sample_type == "progress":
+            encoded = encoded.reshape(len(batch), 2, -1)
+        feature_batches.append(encoded)
+
+    payload: dict[str, Any] = {
+        "features": torch.cat(feature_batches).to(torch.float16),
+    }
+    if args.sample_type == "potential":
+        payload.update(
+            targets=torch.tensor(targets, dtype=torch.float32),
+            successes=torch.tensor(successes, dtype=torch.bool),
+            source_paths=source_paths,
+            end_steps=torch.tensor(end_steps, dtype=torch.int32),
+        )
+    else:
+        payload.update(
+            teacher_deltas=torch.tensor(targets, dtype=torch.float32),
+            labels=labels,
+        )
+    return payload
+
+
+def _run_features(args: argparse.Namespace) -> None:
+    from omegaconf import OmegaConf
+
+    from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
+
+    rows = _feature_rows(args)
+    if not rows:
+        raise ValueError("No manifest rows selected for this feature shard")
+    cfg = OmegaConf.create(
+        {
+            "model_path": args.model_path,
+            "lora_path": args.checkpoint,
+            "precision": "bf16",
+            "inference_mode": "generate",
+            "subprocessor_kwargs": {"video_processor": {"do_sample_frames": True}},
+            "input_builder_name": "vlm_trend_reward_input_builder",
+            "input_builder_params": {
+                "history_buffer_names": ["history_window"],
+                "prompt_template": (
+                    "You are currently performing the task: {task}. "
+                    "Given the current state, predict the success potential."
+                ),
+            },
+            "reward_parser_name": "base_reward_parser",
+            "reward_parser_params": {},
+        }
+    )
+    model = VLMRewardModel(cfg)
+    model._model.to(args.device).eval()
+    payload = _extract_features(model, rows, args)
+    payload["metadata"] = {
+        "manifest": args.manifest,
+        "checkpoint": args.checkpoint,
+        "sample_type": args.sample_type,
+        "rank": args.rank,
+        "world_size": args.world_size,
+        "num_samples": len(rows),
+        "history_size": args.history_size,
+    }
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, output)
+    logger.info("%s", json.dumps(payload["metadata"], indent=2))
+
+
+def _add_features_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--sample-type", choices=("potential", "progress"), required=True
+    )
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--history-size", type=int, default=5)
+    parser.add_argument("--rank", type=int, default=0)
+    parser.add_argument("--world-size", type=int, default=1)
+    parser.add_argument("--max-samples", type=int, default=None)
 
 
 _MODE_ADDERS = {
     "terminal_success": _add_terminal_success_args,
     "potential": _add_potential_args,
+    "features": _add_features_args,
 }
 _MODE_RUNNERS = {
     "terminal_success": _run_terminal_success,
-    "potential": _run_potential,
+    "potential": run_potential,
+    "features": _run_features,
 }
 
 
@@ -1432,7 +1516,7 @@ def main(argv: list[str] | None = None) -> None:
     if known.help:
         remaining = ["--help"]
     if known.mode == "trend":
-        _run_trend(_parse_trend_args(remaining))
+        run_trend(remaining)
         return
     parser = argparse.ArgumentParser(description=f"preprocess --mode {known.mode}")
     _MODE_ADDERS[known.mode](parser)

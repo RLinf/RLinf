@@ -16,7 +16,6 @@ import torch
 
 from rlinf.data.datasets.common.item import SftDatasetItem
 from rlinf.data.datasets.vlm import collate_fn
-from rlinf.workers.sft.fsdp_vlm_sft_worker import FSDPVlmSftWorker
 
 
 def test_sft_collate_supports_qwen_video_inputs() -> None:
@@ -40,21 +39,3 @@ def test_sft_collate_supports_qwen_video_inputs() -> None:
 
     assert len(batch["multi_modal_inputs"]["pixel_values_videos"]) == 2
     assert batch["multi_modal_inputs"]["video_grid_thw"].shape == (2, 3)
-
-
-def test_binary_eval_metric_reports_balanced_model_success() -> None:
-    worker = object.__new__(FSDPVlmSftWorker)
-    metrics = worker.compute_eval_metrics(
-        {
-            "correct": 5,
-            "total": 6,
-            "binary_total": 6,
-            "positive_correct": 2,
-            "positive_total": 2,
-            "negative_correct": 3,
-            "negative_total": 4,
-        }
-    )
-
-    assert metrics["eval_accuracy"] == 5 / 6
-    assert metrics["model_success"] == 0.875

@@ -104,10 +104,6 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             return max(1, len(self.data_loader) // self.gradient_accumulation)
         return 0
 
-    def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        """Convert reduced evaluation counts into logged metrics."""
-        return {"eval_accuracy": counts["correct"] / max(1, counts["total"])}
-
     def run_eval(self):
         assert self.eval_data_loader is not None, "eval_data_loader is not set"
 
@@ -125,24 +121,17 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.model.eval()
             total = eval_step * self.eval_batch_size
             correct = 0
-            counts = None
 
             # get the next batch
             for _ in range(eval_step):
-                result = self.get_eval_model_output(next(eval_data_iter))
-                if isinstance(result, dict):
-                    counts = counts or dict.fromkeys(result, 0)
-                    for key, value in result.items():
-                        counts[key] += value
-                else:
-                    correct += result
+                correct += self.get_eval_model_output(next(eval_data_iter))
                 eval_pbar.update(1)
 
-            if counts is not None:
-                counts = all_reduce_dict(counts, op=torch.distributed.ReduceOp.SUM)
-                return self.compute_eval_metrics(counts)
-            metrics = {"eval_accuracy": float(correct / max(1, total))}
-            return all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
+            metrics = {
+                "eval_accuracy": float(correct / max(1, total)),
+            }
+            metrics = all_reduce_dict(metrics, op=torch.distributed.ReduceOp.AVG)
+            return metrics
 
     def run_training(self):
         with self.worker_timer():

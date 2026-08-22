@@ -255,12 +255,17 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
    export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
    export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    RAW_DATA_ARGS=()
+   TEACHER_DATA_PATHS="["
    for step in 0 20 40 60 80 100 120 140 160 180 200; do
      RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
+     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
    done
+   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
-   python examples/reward/train_vlm_trend_auxiliary.py --stage teacher \
-     "${RAW_DATA_ARGS[@]}" --output-dir "$PIPELINE_ROOT/teacher"
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_reward_training auxiliary.stage=teacher \
+     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
+     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
      --mode terminal_success "${RAW_DATA_ARGS[@]}" \
@@ -300,7 +305,8 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
      for sample_type in potential progress; do
        for rank in 0 1 2 3; do
          CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/train_vlm_trend_auxiliary.py --stage extract \
+         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+           --mode features \
            --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
            --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
            --sample-type "$sample_type" --rank "$rank" --world-size 4 \
@@ -311,17 +317,16 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
      done
    done
 
-   python examples/reward/train_vlm_trend_auxiliary.py --stage scalar_head \
-     --train-pattern "$PIPELINE_ROOT/features/train_potential_*.pt" \
-     --eval-pattern "$PIPELINE_ROOT/features/eval_potential_*.pt" \
-     --train-progress-pattern "$PIPELINE_ROOT/features/train_progress_*.pt" \
-     --progress-pattern "$PIPELINE_ROOT/features/eval_progress_*.pt" \
-     --output-dir "$PIPELINE_ROOT/scalar_head"
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_reward_training auxiliary.stage=scalar_head \
+     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
+     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
+     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
+     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
+     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
 
-使用 Success SFT 的 ``eval/model_success`` 和
-``scalar_head/metrics.jsonl`` 中的 ``model_potential`` 作为越高越好的检查项。
-后者等于 1 减 potential MAE；同一文件还记录 potential/delta Spearman
-相关性和 progress direction accuracy。
+使用现有 ``eval/eval_accuracy`` 选择 Success adapter，并使用
+``scalar_head/metrics.jsonl`` 中的 ``model_potential`` 选择 scalar head。
 
 3. Reward Model 在 RL 中推理
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -497,8 +502,8 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
      env.eval.total_num_envs=1024
 
 然后使用选中的低成功率 checkpoint 和上述三个 reward 产物启动双输出分支。
-overlay 使用 1,024 个环境，每 5 个 PPO step 评估一次，关闭环境奖励，默认训练
-160 个 step：
+该配方基于现有 VLM Trend 配方，使用 1,024 个环境，每 5 个 PPO step 评估一次，
+关闭环境奖励，默认训练 160 个 step：
 
 .. code-block:: bash
 
@@ -510,8 +515,7 @@ overlay 使用 1,024 个环境，每 5 个 PPO step 评估一次，关闭环境�
    export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp_vlm_trend_reward \
-     +reward_mode=vlm_trend_success_potential
+     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
 
 现有 ``BufferedVLMRewardModel`` 分支计算
 ``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，

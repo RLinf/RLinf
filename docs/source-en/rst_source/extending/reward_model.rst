@@ -259,12 +259,17 @@ Set the shared paths, then build the teacher and both SFT datasets:
    export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
    export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
    RAW_DATA_ARGS=()
+   TEACHER_DATA_PATHS="["
    for step in 0 20 40 60 80 100 120 140 160 180 200; do
      RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
+     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
    done
+   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
-   python examples/reward/train_vlm_trend_auxiliary.py --stage teacher \
-     "${RAW_DATA_ARGS[@]}" --output-dir "$PIPELINE_ROOT/teacher"
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_reward_training auxiliary.stage=teacher \
+     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
+     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
      --mode terminal_success "${RAW_DATA_ARGS[@]}" \
@@ -305,7 +310,8 @@ directory. Extract frozen features on four GPUs, then train the scalar head:
      for sample_type in potential progress; do
        for rank in 0 1 2 3; do
          CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/train_vlm_trend_auxiliary.py --stage extract \
+         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+           --mode features \
            --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
            --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
            --sample-type "$sample_type" --rank "$rank" --world-size 4 \
@@ -316,17 +322,16 @@ directory. Extract frozen features on four GPUs, then train the scalar head:
      done
    done
 
-   python examples/reward/train_vlm_trend_auxiliary.py --stage scalar_head \
-     --train-pattern "$PIPELINE_ROOT/features/train_potential_*.pt" \
-     --eval-pattern "$PIPELINE_ROOT/features/eval_potential_*.pt" \
-     --train-progress-pattern "$PIPELINE_ROOT/features/train_progress_*.pt" \
-     --progress-pattern "$PIPELINE_ROOT/features/eval_progress_*.pt" \
-     --output-dir "$PIPELINE_ROOT/scalar_head"
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_reward_training auxiliary.stage=scalar_head \
+     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
+     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
+     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
+     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
+     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
 
-Use ``eval/model_success`` from Success SFT and ``model_potential`` from
-``scalar_head/metrics.jsonl`` as higher-is-better checks. The latter is one
-minus potential MAE; the same file also reports potential and delta Spearman
-correlations plus progress-direction accuracy.
+Use the existing ``eval/eval_accuracy`` to select the Success adapter and
+``model_potential`` from ``scalar_head/metrics.jsonl`` to select the scalar head.
 
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -502,8 +507,9 @@ PPO from a zero-success checkpoint:
      env.eval.total_num_envs=1024
 
 Then launch the dual-output branch with the selected checkpoint and the three
-reward artifacts. The overlay uses 1,024 environments, evaluates every 5 PPO
-steps, disables environment reward, and runs 160 steps by default:
+reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
+1,024 environments, evaluates every 5 PPO steps, disables environment reward,
+and runs 160 steps by default:
 
 .. code-block:: bash
 
@@ -515,8 +521,7 @@ steps, disables environment reward, and runs 160 steps by default:
    export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
      --config-path config \
-     --config-name maniskill_ppo_mlp_vlm_trend_reward \
-     +reward_mode=vlm_trend_success_potential
+     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
 
 The existing ``BufferedVLMRewardModel`` branch computes
 ``scale * (gamma * potential_t - potential_{t-1})`` and adds

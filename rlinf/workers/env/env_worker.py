@@ -801,11 +801,8 @@ class EnvWorker(Worker):
             )
 
         dones = env_output.dones
-        if dones is not None:
-            if getattr(dones, "ndim", 0) > 1:
-                # Reduce over the action-chunk axis so mid-chunk terminations
-                # are not dropped (consistent with eval / terminal-reward paths).
-                dones = dones.any(dim=-1)
+        if dones is not None and getattr(dones, "ndim", 0) > 1:
+            dones = dones[:, -1]
             reward_input.update({"dones": dones})
 
         if self.reward_mode == "history_buffer":

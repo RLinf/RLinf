@@ -22,9 +22,40 @@ from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
-from rlinf.models import apply_lora
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
+
+_QWEN_VL_LORA_TARGET_MODULES = (
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+    "qkv",
+    "fc1",
+    "fc2",
+    "out_proj",
+    "lm_head",
+)
+
+
+def _apply_vlm_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
+    """Attach trainable Qwen-VL LoRA without changing the global model loader."""
+    if not cfg.get("is_lora", False):
+        return model
+
+    from peft import LoraConfig, get_peft_model
+
+    lora_config = LoraConfig(
+        r=cfg.lora_rank,
+        lora_alpha=cfg.lora_rank,
+        lora_dropout=0.0,
+        target_modules=list(_QWEN_VL_LORA_TARGET_MODULES),
+        init_lora_weights="gaussian",
+    )
+    return get_peft_model(model, lora_config)
 
 
 class FSDPVlmSftWorker(FSDPSftWorker):
@@ -32,11 +63,8 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         super().__init__(cfg)
 
     def model_provider_func(self):
-        """Load HF VLMs through the existing LoRA path when requested."""
         model = super().model_provider_func()
-        if not hasattr(model, "peft_config"):
-            model = apply_lora(model, self.cfg.actor.model)
-        return model
+        return _apply_vlm_lora(model, self.cfg.actor.model)
 
     def _save_data_state(self, save_path: str):
         state = {
@@ -164,27 +192,29 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 f"not support such model type {self.cfg.actor.model.model_type} for SFT right now."
             )
 
-    def get_eval_model_output(self, batch: dict[str, Any]) -> dict[str, int]:
-        counts = {
-            "correct": 0,
-            "total": 0,
-            "binary_total": 0,
-            "positive_correct": 0,
-            "positive_total": 0,
-            "negative_correct": 0,
-            "negative_total": 0,
-        }
+    def get_eval_model_output(self, batch: dict[str, Any]):
+        # hundle the input batch
+        correct = 0
         input_ids = batch["prompt"].to(self.device)
         answers = batch["answer"]
         attention_mask = batch["attention_mask"].to(self.device)
         multi_modal_inputs = batch["multi_modal_inputs"]
-        for key, value in multi_modal_inputs.items():
-            if isinstance(value, list):
-                value = torch.cat(value, dim=0)
-            multi_modal_inputs[key] = value.to(device=self.device)
+        for k, v in multi_modal_inputs.items():
+            if isinstance(v, list):
+                multi_modal_inputs[k] = torch.cat(v, dim=0).to(device=self.device)
+            else:
+                multi_modal_inputs[k] = v.to(device=self.device)
+
         eos_token_id = self.tokenizer.eos_token_id
-        pad_token_id = self.tokenizer.pad_token_id or eos_token_id or 0
+        pad_token_id = (
+            self.tokenizer.pad_token_id
+            if self.tokenizer.pad_token_id is not None
+            else (eos_token_id if eos_token_id is not None else 0)
+        )
+
         with torch.no_grad():
+            # use kv cache to generate the text
+            # the generate_with_kv_cache() is more efficient than the generate() in utils.py
             generate_ids = generate_with_kv_cache(
                 model=self.model,
                 eos_token_id=eos_token_id,
@@ -194,37 +224,24 @@ class FSDPVlmSftWorker(FSDPSftWorker):
                 attention_mask=attention_mask,
                 multi_modal_inputs=multi_modal_inputs,
             )
-        for index, gold_text in enumerate(answers):
-            decoded = self.tokenizer.decode(
-                generate_ids[index, input_ids.shape[1] :].tolist(),
-                skip_special_tokens=False,
-            )
-            predicted = vlm_normalize_text(
-                vlm_extract_answer(decoded, self.cfg.actor.model.model_type)
-            )
-            gold = vlm_normalize_text(gold_text)
-            correct = predicted == gold
-            counts["total"] += 1
-            counts["correct"] += int(correct)
-            if gold in {"0", "1"}:
-                counts["binary_total"] += 1
-                name = "positive" if gold == "1" else "negative"
-                counts[f"{name}_total"] += 1
-                counts[f"{name}_correct"] += int(correct)
-        return counts
 
-    def compute_eval_metrics(self, counts: dict[str, float]) -> dict[str, float]:
-        metrics = super().compute_eval_metrics(counts)
-        if counts["binary_total"] != counts["total"]:
-            return metrics
-        positive = counts["positive_correct"] / max(1, counts["positive_total"])
-        negative = counts["negative_correct"] / max(1, counts["negative_total"])
-        metrics.update(
-            positive_recall=positive,
-            negative_accuracy=negative,
-            model_success=(positive + negative) / 2,
-        )
-        return metrics
+        # encode the generated text
+        for i in range(len(answers)):
+            new_token_ids = generate_ids[i, input_ids.shape[1] :]
+            full_pred_text = self.tokenizer.decode(
+                new_token_ids.tolist(), skip_special_tokens=False
+            )
+
+            pred_text = vlm_extract_answer(
+                full_pred_text, self.cfg.actor.model.model_type
+            )
+            gold_text = answers[i]
+
+            if vlm_normalize_text(pred_text) == vlm_normalize_text(gold_text):
+                correct += 1
+
+        # eval model return the correct number of answers
+        return correct
 
     def get_train_model_output(
         self, batch: dict[str, Any]

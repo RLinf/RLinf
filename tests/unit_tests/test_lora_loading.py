@@ -17,8 +17,8 @@ from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model
 from torch import nn
 
-from rlinf.models import apply_lora
 from rlinf.models.embodiment.reward.vlm_reward_model import _load_adapter
+from rlinf.workers.sft.fsdp_vlm_sft_worker import _apply_vlm_lora
 
 
 class TinyModel(nn.Module):
@@ -30,7 +30,7 @@ class TinyModel(nn.Module):
         return self.q_proj(inputs)
 
 
-def test_apply_lora_uses_qwen_safe_targets() -> None:
+def test_vlm_worker_uses_qwen_safe_lora_targets() -> None:
     cfg = OmegaConf.create(
         {
             "is_lora": True,
@@ -40,7 +40,7 @@ def test_apply_lora_uses_qwen_safe_targets() -> None:
         }
     )
 
-    model = apply_lora(TinyModel(), cfg)
+    model = _apply_vlm_lora(TinyModel(), cfg)
 
     targets = set(next(iter(model.peft_config.values())).target_modules)
     assert "q_proj" in targets

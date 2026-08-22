@@ -24,7 +24,5 @@ actor:
   global_batch_size: 256
   model:
     model_path: ${oc.env:VLM_MODEL_PATH}
-    sample_reweight:
-      enabled: false
   optim:
     lr_warmup_steps: 20
