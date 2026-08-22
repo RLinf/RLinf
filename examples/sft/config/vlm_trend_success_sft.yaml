@@ -8,7 +8,7 @@ runner:
   max_steps: 400
   val_check_interval: 100
   save_interval: 100
-  experiment_name: qwen3_vl_vlm_trend_success_sft
+  experiment_name: vlm_trend_success_sft
   output_dir: ${oc.env:OUTPUT_ROOT,logs/vlm_trend_success_sft}
 
 data:

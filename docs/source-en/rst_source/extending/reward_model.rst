@@ -267,7 +267,7 @@ Set the shared paths, then build the teacher and both SFT datasets:
    TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
    python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_reward_training auxiliary.stage=teacher \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
@@ -292,11 +292,11 @@ Train the two adapters with thin configs that inherit the existing Trend recipe:
 
    export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
    export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
 
    export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
    export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_potential
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
 Set ``POTENTIAL_CHECKPOINT`` to the selected Potential ``global_step_*``
 directory. Extract frozen features on four GPUs, then train the scalar head:
@@ -323,7 +323,7 @@ directory. Extract frozen features on four GPUs, then train the scalar head:
    done
 
    python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_reward_training auxiliary.stage=scalar_head \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
      "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
      "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
      "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \

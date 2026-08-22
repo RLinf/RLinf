@@ -263,7 +263,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
    TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
    python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_reward_training auxiliary.stage=teacher \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
@@ -287,11 +287,11 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
 
    export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
    export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_success
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
 
    export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
    export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
-   bash examples/sft/run_vlm_sft.sh qwen3vl_sft_vlm_trend_potential
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
 将 ``POTENTIAL_CHECKPOINT`` 指向选中的 Potential ``global_step_*`` 目录。
 在四张 GPU 上提取冻结 feature，再训练 scalar head：
@@ -318,7 +318,7 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
    done
 
    python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_reward_training auxiliary.stage=scalar_head \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
      "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
      "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
      "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
