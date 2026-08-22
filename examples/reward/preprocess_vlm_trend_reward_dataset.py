@@ -75,6 +75,17 @@ def first_success_transition(
     return None
 
 
+def _load_episode(path: str | Path, *, log_errors: bool = False) -> dict | None:
+    """Load one collected episode, optionally logging unreadable files."""
+    try:
+        with Path(path).open("rb") as stream:
+            return pickle.load(stream)
+    except (EOFError, pickle.UnpicklingError, OSError) as error:
+        if log_errors:
+            logger.warning("Skipping unreadable episode %s: %s", path, error)
+        return None
+
+
 def potential_prompt(task: str, window_size: int, num_bins: int = 10) -> str:
     """Build the potential prompt recorded in the SFT manifest."""
     return (
@@ -851,22 +862,6 @@ def write_manifest(
     return str(manifest)
 
 
-def write_sample_pickle(
-    payload: dict[str, Any],
-    pkl_dir: str | Path,
-    sample_id: str,
-    *,
-    overwrite: bool,
-) -> str:
-    """Write one dual-view sample in the existing Qwen dataset format."""
-    path = Path(pkl_dir) / f"{sample_id}.pkl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if overwrite or not (path.exists() and path.stat().st_size > 0):
-        with path.open("wb") as stream:
-            pickle.dump(payload, stream, protocol=pickle.HIGHEST_PROTOCOL)
-    return str(path.resolve())
-
-
 def build_terminal_success_rows(
     raw_data_paths: list[str],
     output_dir: str | Path,
@@ -889,10 +884,8 @@ def build_terminal_success_rows(
 
     def inspect(entry: tuple[Path, Path]) -> dict[str, Any] | None:
         root, path = entry
-        try:
-            with path.open("rb") as stream:
-                episode = pickle.load(stream)
-        except (EOFError, pickle.UnpicklingError, OSError):
+        episode = _load_episode(path)
+        if episode is None:
             return None
         observations, observation_offset = transition_observations(episode)
         if len(observations) < window_size:
@@ -937,76 +930,38 @@ def build_terminal_success_rows(
             int(hashlib.sha256(item["split_key"].encode()).hexdigest()[:8], 16) / 2**32
         )
         split = "eval" if fraction < val_split else "train"
-        with item["path"].open("rb") as stream:
-            observations = pickle.load(stream).get("observations", [])
         first = window_size - 1
         end_steps = list(range(first, item["end_step"] + 1, interval))
         success_steps = {step for step in item["success_steps"] if step >= first}
         end_steps.extend(success_steps - set(end_steps))
+        source_cache: dict[str, dict[str, Any]] = {}
         for end_step in sorted(end_steps):
-            source_end = end_step + item["observation_offset"]
-            source_start = source_end - window_size + 1
-            frames = _extract_dual_view_frames(observations, source_start, source_end)
-            if frames is None:
-                continue
             answer = "1" if end_step in success_steps else "0"
-            prompt = (
-                "Estimate task-conditioned success potential for this robot "
-                f"manipulation state. Task: {item['task']}. The two synchronized "
-                f"videos show the same {window_size}-frame history from two camera views."
+            source_end = end_step + item["observation_offset"]
+            candidate = Candidate(
+                source_path=str(item["path"]),
+                source_run=item["source_run"],
+                split=split,
+                sample_type="potential",
+                task=item["task"],
+                episode_success=answer == "1",
+                start_idx=source_end - window_size + 1,
+                end_idx=source_end,
+                teacher_value=float(answer),
+                teacher_delta=0.0,
+                answer=answer,
+                terminal_success=True,
+                is_complete=item["is_complete"],
             )
-            sample_id = (
-                f"terminal_success_{item['source_run']}_{item['path'].stem}_"
-                f"{source_start:04d}_{source_end:04d}"
+            row = _write_sample(
+                candidate,
+                output_dir,
+                source_cache,
+                num_bins=10,
+                window_size=window_size,
             )
-            sample_path = write_sample_pickle(
-                {
-                    "main_frames": [_to_uint8_rgb(frame) for frame in frames[0]],
-                    "extra_view_frames": [_to_uint8_rgb(frame) for frame in frames[1]],
-                    "label": answer,
-                    "sample_type": "potential",
-                    "teacher_value": float(answer),
-                    "teacher_delta": 0.0,
-                    "source_episode_path": str(item["path"]),
-                    "start_idx": source_start,
-                    "end_idx": source_end,
-                    "progress_gap_steps": None,
-                },
-                output_dir / split / "pkl",
-                sample_id,
-                overwrite=True,
-            )
-            rows_by_split[split].append(
-                {
-                    "task": item["task"],
-                    "prompt": prompt,
-                    "question": prompt,
-                    "answer": answer,
-                    "pkl_path": sample_path,
-                    "source_episode_path": str(item["path"]),
-                    "source_run": item["source_run"],
-                    "messages": _build_messages(prompt, answer),
-                    "segment_metadata": {
-                        "start_step": source_start,
-                        "end_step": source_end,
-                        "window_size": window_size,
-                        "progress_gap_steps": None,
-                        "success": answer == "1",
-                        "sample_type": "potential",
-                        "target_name": "terminal_success",
-                        "is_complete": item["is_complete"],
-                        "target_type": (
-                            "success_observed" if answer == "1" else "online_negative"
-                        ),
-                        "source_run": item["source_run"],
-                    },
-                    "supervision": {
-                        "score_name": "terminal_success",
-                        "teacher_value": float(answer),
-                        "teacher_delta": 0.0,
-                    },
-                }
-            )
+            if row is not None:
+                rows_by_split[split].append(row)
     for split, rows in rows_by_split.items():
         random.Random(seed + (split == "eval")).shuffle(rows)
         positives = sum(row["answer"] == "1" for row in rows)
@@ -1132,6 +1087,8 @@ class Candidate:
     teacher_delta: float
     answer: str
     progress_gap_steps: int | None = None
+    terminal_success: bool = False
+    is_complete: bool = False
 
 
 def potential_bin(value: float, num_bins: int) -> int:
@@ -1169,13 +1126,8 @@ def _write_sample(
 ) -> dict[str, Any] | None:
     episode = source_cache.get(candidate.source_path)
     if episode is None:
-        try:
-            with open(candidate.source_path, "rb") as handle:
-                episode = pickle.load(handle)
-        except (EOFError, pickle.UnpicklingError, OSError) as error:
-            logger.warning(
-                "Skipping unreadable episode %s: %s", candidate.source_path, error
-            )
+        episode = _load_episode(candidate.source_path, log_errors=True)
+        if episode is None:
             return None
         source_cache.clear()
         source_cache[candidate.source_path] = episode
@@ -1211,62 +1163,91 @@ def _write_sample(
         if candidate.progress_gap_steps is not None
         else ""
     )
+    prefix = "terminal_success" if candidate.terminal_success else candidate.sample_type
     sample_id = (
-        f"{candidate.sample_type}_{source_run}_{stem}_{candidate.start_idx:04d}_"
+        f"{prefix}_{source_run}_{stem}_{candidate.start_idx:04d}_"
         f"{candidate.end_idx:04d}{gap_suffix}"
     )
-    sample_pkl = write_sample_pickle(
-        {
-            "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
-            "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
-            "label": candidate.answer,
-            "sample_type": candidate.sample_type,
-            "teacher_value": candidate.teacher_value,
-            "teacher_delta": candidate.teacher_delta,
-            "source_episode_path": candidate.source_path,
-            "start_idx": candidate.start_idx,
-            "end_idx": candidate.end_idx,
-            "progress_gap_steps": candidate.progress_gap_steps,
-        },
-        output_dir / candidate.split / "pkl",
-        sample_id,
-        overwrite=True,
-    )
+    sample_pkl = output_dir / candidate.split / "pkl" / f"{sample_id}.pkl"
+    sample_pkl.parent.mkdir(parents=True, exist_ok=True)
+    with sample_pkl.open("wb") as stream:
+        pickle.dump(
+            {
+                "main_frames": [_to_uint8_rgb(frame) for frame in main_frames],
+                "extra_view_frames": [_to_uint8_rgb(frame) for frame in extra_frames],
+                "label": candidate.answer,
+                "sample_type": candidate.sample_type,
+                "teacher_value": candidate.teacher_value,
+                "teacher_delta": candidate.teacher_delta,
+                "source_episode_path": candidate.source_path,
+                "start_idx": candidate.start_idx,
+                "end_idx": candidate.end_idx,
+                "progress_gap_steps": candidate.progress_gap_steps,
+            },
+            stream,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
 
-    if candidate.sample_type == "potential":
+    if candidate.terminal_success:
+        prompt = (
+            "Estimate task-conditioned success potential for this robot "
+            f"manipulation state. Task: {candidate.task}. The two synchronized "
+            f"videos show the same {window_size}-frame history from two camera views."
+        )
+    elif candidate.sample_type == "potential":
         prompt = potential_prompt(candidate.task, window_size, num_bins)
     else:
         prompt = progress_prompt(
             candidate.task, window_size, candidate.progress_gap_steps
+        )
+    segment_metadata = {
+        "start_step": candidate.start_idx,
+        "end_step": candidate.end_idx,
+        "window_size": window_size,
+        "progress_gap_steps": candidate.progress_gap_steps,
+        "success": candidate.episode_success,
+        "sample_type": candidate.sample_type,
+    }
+    supervision = {
+        "score_name": (
+            "terminal_success"
+            if candidate.terminal_success
+            else "state_success_value_potential"
+        ),
+        "teacher_value": candidate.teacher_value,
+        "teacher_delta": candidate.teacher_delta,
+    }
+    if candidate.terminal_success:
+        segment_metadata.update(
+            target_name="terminal_success",
+            is_complete=candidate.is_complete,
+            target_type=(
+                "success_observed" if candidate.answer == "1" else "online_negative"
+            ),
+            source_run=source_run,
+        )
+    else:
+        segment_metadata.update(
+            source_run=source_run,
+            views=["main_images", "extra_view_images[0]"],
+        )
+        supervision.update(
+            potential_bin=potential_bin(candidate.teacher_value, num_bins),
+            progress_label=(
+                candidate.answer if candidate.sample_type == "progress" else None
+            ),
         )
     return {
         "task": candidate.task,
         "prompt": prompt,
         "question": prompt,
         "answer": candidate.answer,
-        "pkl_path": sample_pkl,
+        "pkl_path": str(sample_pkl.resolve()),
         "messages": _build_messages(prompt, candidate.answer),
         "source_episode_path": candidate.source_path,
         "source_run": source_run,
-        "segment_metadata": {
-            "start_step": candidate.start_idx,
-            "end_step": candidate.end_idx,
-            "window_size": window_size,
-            "progress_gap_steps": candidate.progress_gap_steps,
-            "source_run": source_run,
-            "success": candidate.episode_success,
-            "sample_type": candidate.sample_type,
-            "views": ["main_images", "extra_view_images[0]"],
-        },
-        "supervision": {
-            "score_name": "state_success_value_potential",
-            "teacher_value": candidate.teacher_value,
-            "teacher_delta": candidate.teacher_delta,
-            "potential_bin": potential_bin(candidate.teacher_value, num_bins),
-            "progress_label": (
-                candidate.answer if candidate.sample_type == "progress" else None
-            ),
-        },
+        "segment_metadata": segment_metadata,
+        "supervision": supervision,
     }
 
 
@@ -1344,11 +1325,8 @@ def run_potential(args: argparse.Namespace) -> dict[str, Any]:
     skipped: Counter[str] = Counter()
     first_end = args.window_size - 1
     for pkl_path in tqdm(pkl_files, desc="Scoring episodes", unit="episode"):
-        try:
-            with open(pkl_path, "rb") as handle:
-                episode = pickle.load(handle)
-        except (EOFError, pickle.UnpicklingError, OSError) as error:
-            logger.warning("Skipping unreadable episode %s: %s", pkl_path, error)
+        episode = _load_episode(pkl_path, log_errors=True)
+        if episode is None:
             skipped["unreadable_episode"] += 1
             continue
         observations, observation_offset = transition_observations(episode)
