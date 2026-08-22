@@ -111,6 +111,8 @@ SupportedModel.RECAP_VALUE_MODEL = SupportedModel.register(
 SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
     "steam_value_model", force=True
 )
+SupportedModel.SD3 = SupportedModel.register("sd3", force=True)
+SupportedModel.WAN22_TI2V_5B = SupportedModel.register("wan22_ti2v_5b", force=True)
 
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
@@ -119,6 +121,8 @@ SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+
+DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
 EMBODIED_MODEL = set(
     {
@@ -906,9 +910,10 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
-    assert model_type in EMBODIED_MODEL, (
-        f"Model type: '{model_cfg.model_type}' is not an embodied model. "
-        f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
+    assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
+        f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
+        f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
+        f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
