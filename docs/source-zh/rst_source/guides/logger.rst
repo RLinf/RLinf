@@ -94,3 +94,10 @@ SwanLab
 .. tip::
 
    三个 logger 可以 **并行运行**；你可以自由组合使用。
+
+.. note::
+
+   ``runner.per_worker_log`` 可以为各个 worker 创建独立的 TensorBoard 日志和
+   W&B run。在同一进程中并行使用多个 run 需要 W&B 0.19.10 或更高版本。
+   SwanLab 在单个进程中只支持一个 active run，因此不能与
+   ``runner.per_worker_log`` 同时启用。

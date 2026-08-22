@@ -308,6 +308,8 @@ class AsyncEmbodiedRunner(EmbodiedRunner):
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
 
+        self._finish_run()
+
         self.env.stop().wait()
         self.rollout.stop().wait()
         self.actor.stop().wait()
