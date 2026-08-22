@@ -16,8 +16,43 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
+
+
+def to_numpy_float32(value: Any) -> np.ndarray:
+    """Convert tensor/array metadata to float32 NumPy."""
+    if torch.is_tensor(value):
+        value = value.detach().cpu().numpy()
+    return np.asarray(value, dtype=np.float32)
+
+
+def transition_observations(
+    episode: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    """Return action-aligned observations and their source offset."""
+    observations = episode.get("observations", [])
+    actions = episode.get("actions", [])
+    offset = int(len(observations) == len(actions) + 1)
+    count = min(len(actions), len(observations) - offset)
+    return observations[offset : offset + count], offset
+
+
+def first_success_transition(
+    episode: dict[str, Any], transition_count: int
+) -> int | None:
+    """Return the first action-aligned success index, if present."""
+    infos = episode.get("infos", [])
+    actions = episode.get("actions", [])
+    offset = int(len(infos) == len(actions) + 1)
+    for index, info in enumerate(infos[offset : offset + transition_count]):
+        value = info.get("success") if isinstance(info, dict) else None
+        if bool(value.item() if hasattr(value, "item") else value):
+            return index
+    if bool(episode.get("success", False)) and transition_count:
+        return transition_count - 1
+    return None
 
 
 @dataclass

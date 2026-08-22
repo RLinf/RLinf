@@ -31,7 +31,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from rlinf.config import validate_cfg
-from rlinf.data.datasets.vlm.vlm_trend_reward import (
+from rlinf.data.datasets.reward_model import (
     first_success_transition,
     to_numpy_float32,
     transition_observations,

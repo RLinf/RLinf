@@ -17,6 +17,7 @@ data:
   video_root: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}"
   data_root: "${oc.env:VLM_TREND_POTENTIAL_DATA_ROOT}"
   video_do_sample_frames: true
+  video_fps: 2.0
 
 actor:
   micro_batch_size: 4

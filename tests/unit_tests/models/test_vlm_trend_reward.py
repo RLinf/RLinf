@@ -12,7 +12,9 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from rlinf.data.datasets.vlm.vlm_trend_reward import build_terminal_success_rows
+from examples.reward.preprocess_vlm_trend_reward_dataset import (
+    build_terminal_success_rows,
+)
 from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.reward.vlm_reward_model import (
     BufferedVLMRewardModel,
@@ -69,7 +71,14 @@ def test_terminal_success_rows_use_online_windows_without_balancing(tmp_path) ->
         pickle.dump(episode, stream)
 
     rows, stats = build_terminal_success_rows(
-        [str(tmp_path)], window_size=5, interval=3, val_split=0, workers=1, seed=0
+        [str(tmp_path)],
+        tmp_path / "output",
+        window_size=5,
+        interval=3,
+        val_split=0,
+        workers=1,
+        seed=0,
+        task_description="test task",
     )
 
     samples = sorted(

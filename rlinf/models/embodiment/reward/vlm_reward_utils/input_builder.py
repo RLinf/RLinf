@@ -268,6 +268,7 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
     prompt_template: str | None = None
     include_task: bool = True
     num_bins: int = 10
+    video_fps: float = 24.0
 
     DEFAULT_PROMPT = (
         "You are currently performing the task: {task}. "
@@ -325,5 +326,6 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
             prompt_texts=prompt_texts_list,
             videos=videos_list,
             answer_text=None,
+            video_fps=self.video_fps,
         )
         return processed_inputs
