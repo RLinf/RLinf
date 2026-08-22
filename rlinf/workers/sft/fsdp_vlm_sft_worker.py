@@ -25,46 +25,10 @@ from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
-_QWEN_VL_LORA_TARGET_MODULES = (
-    "q_proj",
-    "k_proj",
-    "v_proj",
-    "o_proj",
-    "gate_proj",
-    "up_proj",
-    "down_proj",
-    "qkv",
-    "fc1",
-    "fc2",
-    "out_proj",
-    "lm_head",
-)
-
-
-def _apply_vlm_lora(model: torch.nn.Module, cfg: DictConfig) -> torch.nn.Module:
-    """Attach trainable Qwen-VL LoRA without changing the global model loader."""
-    if not cfg.get("is_lora", False):
-        return model
-
-    from peft import LoraConfig, get_peft_model
-
-    lora_config = LoraConfig(
-        r=cfg.lora_rank,
-        lora_alpha=cfg.lora_rank,
-        lora_dropout=0.0,
-        target_modules=list(_QWEN_VL_LORA_TARGET_MODULES),
-        init_lora_weights="gaussian",
-    )
-    return get_peft_model(model, lora_config)
-
 
 class FSDPVlmSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
-
-    def model_provider_func(self):
-        model = super().model_provider_func()
-        return _apply_vlm_lora(model, self.cfg.actor.model)
 
     def _save_data_state(self, save_path: str):
         state = {

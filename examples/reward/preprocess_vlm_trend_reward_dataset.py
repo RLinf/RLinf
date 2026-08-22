@@ -42,15 +42,37 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from rlinf.data.datasets.reward_model import (
-    first_success_transition,
-    to_numpy_float32,
-    transition_observations,
-)
 from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
+
+
+def transition_observations(
+    episode: dict[str, Any],
+) -> tuple[list[dict[str, Any]], int]:
+    """Return action-aligned observations and their source offset."""
+    observations = episode.get("observations", [])
+    actions = episode.get("actions", [])
+    offset = int(len(observations) == len(actions) + 1)
+    count = min(len(actions), len(observations) - offset)
+    return observations[offset : offset + count], offset
+
+
+def first_success_transition(
+    episode: dict[str, Any], transition_count: int
+) -> int | None:
+    """Return the first action-aligned success index, if present."""
+    infos = episode.get("infos", [])
+    actions = episode.get("actions", [])
+    offset = int(len(infos) == len(actions) + 1)
+    for index, info in enumerate(infos[offset : offset + transition_count]):
+        value = info.get("success") if isinstance(info, dict) else None
+        if bool(value.item() if hasattr(value, "item") else value):
+            return index
+    if bool(episode.get("success", False)) and transition_count:
+        return transition_count - 1
+    return None
 
 
 def potential_prompt(task: str, window_size: int, num_bins: int = 10) -> str:
@@ -1337,7 +1359,12 @@ def run_potential(args: argparse.Namespace) -> dict[str, Any]:
             skipped["short_episode"] += 1
             continue
         states = [
-            to_numpy_float32(observation["states"]).reshape(-1)
+            np.asarray(
+                observation["states"].detach().cpu().numpy()
+                if torch.is_tensor(observation["states"])
+                else observation["states"],
+                dtype=np.float32,
+            ).reshape(-1)
             for observation in observations
             if "states" in observation
         ]

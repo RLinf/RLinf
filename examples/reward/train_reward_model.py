@@ -30,12 +30,11 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rlinf.config import validate_cfg
-from rlinf.data.datasets.reward_model import (
+from examples.reward.preprocess_vlm_trend_reward_dataset import (
     first_success_transition,
-    to_numpy_float32,
     transition_observations,
 )
+from rlinf.config import validate_cfg
 from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.reward.vlm_reward_model import ScalarPotentialHead
 from rlinf.runners.sft_runner import SFTRunner
@@ -191,7 +190,12 @@ def train_state_teacher(cfg: DictConfig) -> None:
         if first_success is not None:
             observations = observations[: first_success + 1]
         states = [
-            to_numpy_float32(observation["states"]).reshape(-1)
+            np.asarray(
+                observation["states"].detach().cpu().numpy()
+                if torch.is_tensor(observation["states"])
+                else observation["states"],
+                dtype=np.float32,
+            ).reshape(-1)
             for observation in observations
             if "states" in observation
         ]

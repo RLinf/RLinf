@@ -13,12 +13,10 @@
 # limitations under the License.
 
 import torch
-from omegaconf import OmegaConf
 from peft import LoraConfig, get_peft_model
 from torch import nn
 
 from rlinf.models.embodiment.reward.vlm_reward_model import _load_adapter
-from rlinf.workers.sft.fsdp_vlm_sft_worker import _apply_vlm_lora
 
 
 class TinyModel(nn.Module):
@@ -28,23 +26,6 @@ class TinyModel(nn.Module):
 
     def forward(self, inputs):
         return self.q_proj(inputs)
-
-
-def test_vlm_worker_uses_qwen_safe_lora_targets() -> None:
-    cfg = OmegaConf.create(
-        {
-            "is_lora": True,
-            "model_type": "qwen3_vl",
-            "lora_rank": 2,
-            "lora_path": None,
-        }
-    )
-
-    model = _apply_vlm_lora(TinyModel(), cfg)
-
-    targets = set(next(iter(model.peft_config.values())).target_modules)
-    assert "q_proj" in targets
-    assert "proj" not in targets
 
 
 def test_load_adapter_resolves_checkpoint_root(tmp_path) -> None:
