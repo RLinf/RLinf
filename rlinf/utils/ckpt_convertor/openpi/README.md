@@ -9,7 +9,7 @@ wrapper/FSDP prefix strip, and the single `copy_norm_stats` helper.
 Unified entry point:
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch,sft2deploy} ...
+python -m rlinf.utils.ckpt_convertor.openpi.convert --mode {jax_to_openpi_rlinf,openpi_pytorch_to_openpi_rlinf,sft_to_openpi_rlinf,openpi_rlinf_to_openpi_pytorch} ...
 ```
 
 Two named checkpoint layouts are referenced throughout:
@@ -163,7 +163,8 @@ carry and cannot be reconstructed. Therefore:
   or a torch `model.pt`. `--reference-model` is an OpenPI PyTorch model dir.
 - **Output**: `<output-model>/model.safetensors` (+ `config.json` from the
   reference); norm-stats copied to `--output-norm-stats`.
-- **Dtype policy**: with a reference model, all output tensors are cast to bf16.
+- **Dtype policy**: use ``--dtype bf16`` (default) or ``--dtype fp32`` to select
+  the floating-point output dtype for safetensors output.
 - **Norm-stats**: input copied verbatim to the output path.
 
 ```bash
@@ -177,25 +178,36 @@ python -m rlinf.utils.ckpt_convertor.openpi.convert --mode openpi_rlinf_to_openp
 
 ---
 
-## `sft2deploy`
+### FP32 `full_weights.pt` output
 
-RLinf SFT-trained checkpoint -> OpenPI PyTorch deploy `full_weights.pt` only.
-This mode does not copy norm-stats or other assets.
+RLinf SFT-trained Pi0 or Pi0.5 checkpoint -> FP32 real-world OpenPI PyTorch
+`full_weights.pt`. The conversion is a direct PT-to-PT path and never creates a
+BF16 intermediate. This mode does not copy norm-stats or other assets.
 
 - **Input**: `--ckpt` accepts a saved SFT checkpoint directory or its
   `full_weights.pt`.
+- **Input precision**: every floating-point tensor in the SFT checkpoint must be
+  FP32. The converter fails instead of presenting BF16/FP16 weights expanded to
+  FP32 as a full-precision conversion.
 - **Output**: `--output` accepts a direct `.pt` path or a deploy directory. For a
-  directory, the converter writes `actor/model_state_dict/full_weights.pt`.
+  directory, the converter writes `actor/model_state_dict/full_weights.pt` and
+  a neighboring `full_weights.pt.report.json`. Existing output weights are not
+  overwritten.
 - **Reference model**: `--reference-model` is the OpenPI PyTorch model used to
-  supply the action-expert `lm_head`, which OpenPI_RLinf cannot reconstruct.
-- **Dtype reference**: `--dtype-reference` is an existing deploy
-  `full_weights.pt` or its checkpoint directory. Its key set, shapes, and
-  per-key dtypes define the output checkpoint.
+  identify the Pi0/Pi0.5 expert layout, supply the action-expert `lm_head`, and
+  validate the converted keys and shapes.
+- **Deploy dtype**: every floating-point output tensor is FP32. Key and tensor
+  layout conversion is performed directly without a lossy BF16 intermediate.
+- **Variant handling**: Pi0 uses the reference's standard RMSNorm layout and
+  Pi0.5 uses its adaptive RMSNorm layout. The source variant, reference variant,
+  and normalization layout must agree.
 
 ```bash
-python -m rlinf.utils.ckpt_convertor.openpi.convert --mode sft2deploy \
-    --ckpt            /path/to/checkpoints/global_step_20000 \
-    --output          /path/to/checkpoints/global_step_20000_openpi_deploy \
-    --reference-model /path/to/pi05_base_pytorch \
-    --dtype-reference /path/to/existing_deploy/actor/model_state_dict/full_weights.pt
+python -m rlinf.utils.ckpt_convertor.openpi.convert \
+    --mode openpi_rlinf_to_openpi_pytorch \
+    --input-model    /path/to/checkpoints/global_step_20000 \
+    --output-model   /path/to/checkpoints/global_step_20000_openpi_deploy \
+    --reference-model /path/to/pi0_or_pi05_base_pytorch \
+    --output-format pt \
+    --dtype fp32
 ```

@@ -12,14 +12,16 @@
 
 本指南介绍如何在双 Franka TCP-rot6d 环境中使用 PICO 进行示教数据采集，并以
 PICO 人工接管运行在线 Human-Gated DAgger。双臂硬件、实时内核和相机检查请先参考
-:doc:`dual_franka`；PICO / XRoboToolkit 数据发布链路请先参考 :doc:`franka_vr`；
+:doc:`dual_franka_openpi_rlinf`；PICO / XRoboToolkit 数据发布链路请先参考
+:doc:`franka_vr`；
 HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
 
 概览
 ----------------------------------------
 
 用 PICO 左右手柄分别控制双臂 Franka，先采集 tcp_rot6d 格式 LeRobot 数据，
-再参考 :doc:`dual_franka` 准备 OpenPI π₀.₅ student checkpoint，最后在真机上启动在线 HG-DAgger。
+再参考 :doc:`dual_franka_openpi_rlinf` 准备 OpenPI π₀.₅ student checkpoint，
+最后在真机上启动在线 HG-DAgger。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -45,7 +47,7 @@ HG-DAgger 的单臂流程可参考 :doc:`hg-dagger`。
       2× Franka · PICO · 3 cameras
 
 | **你将完成:** 启动 PICO publisher → 采集双臂 tcp_rot6d 示教 → 复用双臂 SFT checkpoint 流程 → 运行在线 HG-DAgger.
-| **前置条件:** :doc:`dual_franka` · :doc:`franka_vr` · OpenPI π₀.₅ checkpoint · Ray cluster.
+| **前置条件:** :doc:`dual_franka_openpi_rlinf` · :doc:`franka_vr` · OpenPI π₀.₅ checkpoint · Ray cluster.
 
 任务
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -401,7 +403,7 @@ tcp_rot6d；因此不需要执行 GELLO 流程中的 ``backfill_tcp_rot6d.py``�
 ----------------------------------------
 
 在线 DAgger 需要一个可部署的 OpenPI checkpoint。数据整理、norm stats、SFT
-和 checkpoint 目录准备请直接参考 :doc:`dual_franka` 中的 SFT 与部署 checkpoint
+和 checkpoint 目录准备请直接参考 :doc:`dual_franka_openpi_rlinf` 中的 SFT 与部署 checkpoint
 流程。
 
 使用本页 PICO 采集的数据时，数据已经来自 ``realworld_dual_franka_tcp_rot6d`` 环境，

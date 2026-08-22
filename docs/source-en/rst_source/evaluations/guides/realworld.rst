@@ -348,7 +348,7 @@ Set ``rollout.model.model_path`` to the staged checkpoint directory and
        env.eval.override_cfg.task_description="handover the object"
 
 For the full collection, SFT, checkpoint staging, and pedal-control workflow,
-see :doc:`../../examples/embodied/dual_franka`.
+see :doc:`../../examples/embodied/dual_franka_openpi_rlinf`.
 
 Viewing Results
 ---------------

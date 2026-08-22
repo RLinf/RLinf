@@ -1,19 +1,24 @@
-Using Dual Franka
-=================
+Training and Deploying OpenPI_RLinf Pi0 and Pi0.5 on Dual Franka
+================================================================
 
-.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy.jpg
+.. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
    :width: 80%
-   :alt: Dual-Franka deployment
+   :alt: OpenPI_RLinf dual-Franka deployment
 
-   Dual-Franka data collection, fine-tuning, and deployment workflow.
+   Fine-tune and deploy Pi0 and Pi0.5 policies with OpenPI_RLinf.
 
-Run the supported dual-Franka workflow: collect joint-space demonstrations with GELLO, convert them to tcp_rot6d data, fine-tune OpenPI π₀.₅, and deploy the checkpoint back to the robot nodes.
+This guide covers the unified OpenPI_RLinf Pi0 and Pi0.5 training and
+deployment workflow for Dual Franka. Both variants use the same data format,
+tcp_rot6d action representation, SFT entry point, checkpoint layout,
+conversion tools, real-world environment, and evaluation entry point. This
+also makes the pipeline suitable for Pi0/Pi0.5 comparison experiments.
 
 Overview
 --------
 
-Build a dual-arm dataset, train π₀.₅, and deploy on a two-node Franka rig.
+Build one dual-arm dataset, train Pi0 or Pi0.5, and deploy either model through
+the legacy real-world PT backend or the OpenPI_RLinf safetensors backend.
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -21,7 +26,7 @@ Build a dual-arm dataset, train π₀.₅, and deploy on a two-node Franka rig.
    .. grid-item-card:: Models
       :text-align: center
 
-      OpenPI π₀.₅
+      OpenPI_RLinf Pi0 · Pi0.5
 
    .. grid-item-card:: Algorithms
       :text-align: center
@@ -55,11 +60,14 @@ Tasks
      - ``realworld_collect_data_gello_joint_dual_franka``
      - Collect dual-arm joint trajectories.
    * - SFT
-     - ``realworld_sft_openpi_dual_franka_tcp_rot6d``
-     - Fine-tune π₀.₅ on tcp_rot6d actions.
-   * - Deployment
-     - ``realworld_eval_dual_franka``
-     - Run eval-only deployment on the robot nodes.
+     - ``realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d`` / ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
+     - Fine-tune Pi0 or Pi0.5 with the matching tcp_rot6d config.
+   * - Deployment (OpenPI PyTorch)
+     - ``realworld_eval_dual_franka_openpi_pi0`` / ``realworld_eval_dual_franka_openpi_pi05``
+     - Deploy the legacy FP32 ``full_weights.pt`` checkpoint.
+   * - Deployment (OpenPI_RLinf)
+     - ``realworld_eval_dual_franka_openpi_pi0_rlinf`` / ``realworld_eval_dual_franka_openpi_pi05_rlinf``
+     - Deploy the new-format FP32 ``model.safetensors`` checkpoint.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -78,6 +86,31 @@ Observation and Action
      - Evaluation success signal or operator-gated deployment outcome.
    * - Prompt
      - Task text in the OpenPI data/config metadata.
+
+Pi0 and Pi0.5 share the three camera views, prompt, 20D tcp_rot6d action, and
+20-step action horizon. Pi0 additionally conditions the model core on the
+normalized current TCP pose/gripper state through ``state_proj``. Pi0.5 does
+not inject this continuous state into the model core.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 33 33
+
+   * - Item
+     - Pi0
+     - Pi0.5
+   * - Continuous state in model core
+     - Yes
+     - No
+   * - SFT entry and checkpoint layout
+     - Shared
+     - Shared
+   * - Legacy PT converter
+     - ``openpi_rlinf_to_openpi_pytorch``
+     - ``openpi_rlinf_to_openpi_pytorch``
+   * - OpenPI_RLinf converter
+     - ``sft_to_openpi_rlinf``
+     - ``sft_to_openpi_rlinf``
 
 Installation
 ------------
@@ -166,10 +199,18 @@ Use the repository-provided configs and replace the required parameters:
      - Purpose
    * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
      - GELLO joint-space collection
-   * - ``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
      - π₀.₅ SFT on converted tcp_rot6d data
-   * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
-     - Real-world policy deployment
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+     - π₀ SFT on converted tcp_rot6d data
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0.yaml``
+     - Legacy OpenPI PyTorch Pi0 deployment in FP32
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0_rlinf.yaml``
+     - OpenPI_RLinf Pi0 deployment in FP32
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05.yaml``
+     - Legacy OpenPI PyTorch Pi0.5 deployment in FP32
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05_rlinf.yaml``
+     - OpenPI_RLinf Pi0.5 deployment in FP32
    * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
      - Shared joint-space hardware defaults
    * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
@@ -350,6 +391,28 @@ Set ``data_collection.resume: true`` and keep the same
 ``data_collection.save_dir`` to append new ``id_*`` shards to an existing
 dataset.
 
+Process the dataset
+~~~~~~~~~~~~~~~~~~~
+
+Collected datasets may contain multiple ``id_*`` shards or unwanted samples.
+Before SFT, clean the data and merge the retained shards into a single ID.
+Use ``toolkits/dual_franka/delete_lerobot.py`` to delete selected episodes from
+one or more IDs, and use ``toolkits/dual_franka/merge_lerobot.py`` to merge
+multiple IDs. Usage details are documented in the scripts.
+
+.. code-block:: bash
+
+   python toolkits/dual_franka/delete_lerobot.py \
+       --data-dir /path/to/dataset/rank_0 \
+       --delete "id_0:3,5" \
+       --dry-run
+
+   python toolkits/dual_franka/merge_lerobot.py \
+       --rank-dir /path/to/dataset \
+       --out-dir /path/to/dataset \
+       --log-file /path/to/log \
+       --dry-run
+
 Backfill tcp_rot6d
 ~~~~~~~~~~~~~~~~~~
 
@@ -390,25 +453,124 @@ On the training node:
    source .venv/bin/activate
    export PYTHONPATH=$PWD:${PYTHONPATH:-}
    export HF_LEROBOT_HOME=/path/to/lerobot_root
-   export DUAL_FRANKA_DATA_ROOT=/path/to/lerobot_root
-   export PI05_BASE_CKPT=/path/to/pi05/torch
    export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
 
+   # Pi0.5
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID
 
-   mkdir -p $PI05_BASE_CKPT/$SFT_REPO_ID
-   cp <openpi_assets_dirs>/pi05_dualfranka_tcp_rot6d/$SFT_REPO_ID/norm_stats.json \
-      $PI05_BASE_CKPT/$SFT_REPO_ID/norm_stats.json
+   # Pi0
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_dualfranka_tcp_rot6d \
+       --repo-id $SFT_REPO_ID
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_dual_franka_tcp_rot6d
+Pi0 and Pi0.5 use the same SFT launcher with their respective experiment
+config:
 
-Update ``SFT_DATASET_REPO_ID``, ``PI05_BASE_CKPT``, logger settings, and
-cluster placement in
-``examples/sft/config/realworld_sft_openpi_dual_franka_tcp_rot6d.yaml``.
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh SFT_CONFIG_NAME
+
+Update ``train_data_paths``, ``model_path``, ``assets_dir``, ``asset_id``,
+logger settings, and cluster placement in the matching
+``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+or ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``.
 Checkpoints are saved under
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``.
+
+``assets_dir`` is the directory containing ``norm_stats.json``; ``asset_id``
+is the ``repo_id`` under which ``norm_stats.json`` is stored; and ``model_path``
+is the model path selected for training. The base model used in this guide must
+first be converted from the ``openpi-jax`` format. See
+``rlinf/utils/ckpt_convertor/openpi/README.md`` for the conversion interface.
+The JAX conversion implementation is located at:
+
+.. code-block:: text
+
+   rlinf/utils/ckpt_convertor/openpi/jax_to_openpi_rlinf.py
+
+Convert SFT Checkpoints for Deployment
+--------------------------------------
+
+Both Pi0 and Pi0.5 SFT checkpoints support two deployment formats. For legacy
+real-world PT deployment, use ``openpi_rlinf_to_openpi_pytorch`` with PT output.
+The reference model must
+match the SFT variant: use the corresponding original OpenPI PyTorch Pi0 or
+Pi0.5 base weights. This converter requires an FP32 SFT checkpoint and preserves
+FP32 throughout the direct PT-to-PT conversion. It automatically selects Pi0's
+standard RMSNorm mapping or Pi0.5's adaptive RMSNorm mapping from the matching
+reference; no additional variant argument is required.
+Deployment precision is controlled by ``rollout.model.precision`` in the YAML.
+Its behavior depends on the backend:
+
+Deployment Precision by Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Backend
+     - ``fp32``
+     - ``bf16``
+     - ``null``
+   * - Legacy OpenPI
+     - Pure FP32
+     - Pure BF16
+     - Existing OpenPI mixed precision
+   * - OpenPI_RLinf
+     - Pure FP32
+     - Pure BF16
+     - Keeps the BF16 dtype created by ``Pi0Config``; not a separate mode
+
+For legacy OpenPI PyTorch deployment, use
+``openpi_rlinf_to_openpi_pytorch``. Set ``INPUT_CHECKPOINT`` to the RLinf SFT
+checkpoint, set ``OPENPI_PYTORCH_REFERENCE`` to the original OpenPI PyTorch Pi0
+or Pi0.5 base model matching the SFT variant, and use ``OUTPUT_DIRECTORY`` for
+the converted output.
+
+.. code-block:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert \
+     --mode            openpi_rlinf_to_openpi_pytorch \
+     --input-model     INPUT_CHECKPOINT \
+     --reference-model OPENPI_PYTORCH_REFERENCE \
+     --output-model    OUTPUT_DIRECTORY \
+     --output-format   pt \
+     --dtype           fp32
+
+The legacy output directory is:
+
+.. code-block:: text
+
+   OUTPUT_DIRECTORY/
+   ├── actor/model_state_dict/full_weights.pt
+   ├── actor/model_state_dict/full_weights.pt.report.json
+   └── DATASET_REPO_ID/norm_stats.json  # copy separately
+
+For OpenPI_RLinf deployment, use ``sft_to_openpi_rlinf``. Set
+``CONFIG_NAME`` to ``pi0_dualfranka_tcp_rot6d`` for Pi0 or
+``pi05_dualfranka_tcp_rot6d`` for Pi0.5.
+
+.. code-block:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert \
+     --mode sft_to_openpi_rlinf \
+     --ckpt INPUT_CHECKPOINT \
+     --input-norm-stats NORM_STATS_JSON \
+     --output-model OUTPUT_MODEL \
+     --output-norm-stats OUTPUT_MODEL/DATASET_REPO_ID/norm_stats.json \
+     --config-name CONFIG_NAME \
+     --dtype fp32
+
+The OpenPI_RLinf output directory is:
+
+.. code-block:: text
+
+   OUTPUT_MODEL/
+   ├── model.safetensors
+   ├── config.json
+   └── DATASET_REPO_ID/norm_stats.json
 
 
 Evaluation and Deployment
@@ -417,15 +579,12 @@ Evaluation and Deployment
 Prepare checkpoint files
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The deployment checkpoint directory on ``node 0`` must contain:
+The deployment checkpoint directory on ``node 0`` must follow one of the two
+layouts documented above. Set ``rollout.model.model_path`` to the corresponding
+``OUTPUT_DIRECTORY`` or ``OUTPUT_MODEL``.
 
-.. code-block:: text
-
-   <model_path>/
-   ├── actor/model_state_dict/full_weights.pt
-   └── <repo_id>/tcp_rot6d_v1/norm_stats.json
-
-Synchronize the SFT checkpoint and matching normalization stats back to ``node 0``:
+Synchronize the converted checkpoint and matching normalization stats back to
+``node 0``:
 
 .. code-block:: bash
 
@@ -444,14 +603,24 @@ Synchronize the SFT checkpoint and matching normalization stats back to ``node 0
 
 Set ``rollout.model.model_path`` to ``$DEPLOY_CKPT`` and
 ``actor.model.openpi_data.repo_id`` to ``<repo_id>/tcp_rot6d_v1`` in
-``examples/embodiment/config/realworld_eval_dual_franka.yaml``.
+the selected config under ``evaluations/realworld``.
 
 Launch deployment
 ~~~~~~~~~~~~~~~~~
 
 Reuse the Ray cluster from collection, or restart it with the same environment
 variables. Launch the policy through the :doc:`real-world evaluation guide
-<../../evaluations/guides/realworld>` with ``realworld_eval_dual_franka``.
+<../../evaluations/guides/realworld>` with the configuration matching the model
+variant and deployment format.
+Set ``rollout.model.precision`` according to the backend-specific table above.
+For OpenPI_RLinf, use ``fp32`` or ``bf16`` when an explicit precision is desired.
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0_rlinf
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05_rlinf
 
 Deployment pedal controls:
 

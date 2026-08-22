@@ -12,7 +12,7 @@ prior. This page also describes use of the same JAX-aligned implementation for
 **Pi0 + RoboTwin**.
 
 For SFT and eval-only deployment of PyTorch OpenPI Pi0.5 on a real dual-Franka
-setup, see :doc:`the Dual-Franka PyTorch OpenPI guide <dual_franka_openpi_pytorch>`.
+setup, see :doc:`the Dual-Franka OpenPI_RLinf guide <dual_franka_openpi_rlinf>`.
 
 
 Contents

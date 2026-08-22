@@ -4,7 +4,6 @@ model_type: "openpi_rlinf"
 # eval experiment config (behavior_openpi_pi05_rlinf_eval.yaml); the values here
 # are placeholders so this template stays path-free and reusable.
 
-# Weight dtype for eval: bf16. (SFT keeps an fp32 master; see the SFT template.)
 precision: bf16
 
 # LoRA is not used for eval, but the shared model factory reads these keys.
