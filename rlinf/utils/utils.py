@@ -196,13 +196,33 @@ def seed_everything(seed: int) -> int:
     return normalized_seed
 
 
-def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
-    """get a copy of the model states in CPU"""
+def retrieve_model_state_dict_in_cpu(
+    resident_model, offloaded_buffer=None, is_fsdp: bool = False
+):
+    """Return a pinned CPU copy of regular-module or FSDP local model states.
+
+    Args:
+        resident_model: A regular ``torch.nn.Module`` or an FSDP actor when
+            ``is_fsdp`` is set.
+        offloaded_buffer: Optional buffer to reuse for the CPU state dict.
+        is_fsdp: Whether to retrieve local FSDP/FSDP2 state through its strategy.
+    """
     if offloaded_buffer is None:
         offloaded_buffer = {}
 
-    for name, item in model.state_dict().items():
+    if is_fsdp:
+        # FSDP/FSDP2 local state dicts contain DTensors. Keep them intact so
+        # ``load_model_with_state_dict`` can reconstruct the local shards.
+        return resident_model.get_model_state_dict(
+            cpu_offload=True,
+            full_state_dict=False,
+        )
+
+    state_dict = resident_model.state_dict()
+    for name, item in state_dict.items():
         if isinstance(item, torch.Tensor):
+            if isinstance(item, DTensor):
+                item = item.to_local()
             if name in offloaded_buffer:
                 offloaded_buffer[name].copy_(item.detach(), non_blocking=True)
             else:
@@ -214,43 +234,62 @@ def retrieve_model_state_dict_in_cpu(model, offloaded_buffer=None):
                 offloaded_buffer[name] = item
         else:
             offloaded_buffer[name] = item
-    from rlinf.scheduler.worker.worker import Worker
-
     Worker.torch_platform.synchronize()
     return offloaded_buffer
 
 
 @torch.no_grad()
 def swap_dict(
-    resident_model, cpu_weights, offload_onto_cpu=True, offloaded_buffer=None
+    resident_model,
+    cpu_weights,
+    offload_onto_cpu: bool = True,
+    offloaded_buffer=None,
+    is_fsdp: bool = False,
 ):
-    """swap the state dict with a specified state dict, and offload the current state dict onto CPU
-    if needed
-    """
+    """Swap model weights and optionally retain the replaced weights on CPU."""
     if offloaded_buffer is None:
         offloaded_buffer = {}
 
     if offload_onto_cpu:
         offloaded_buffer = retrieve_model_state_dict_in_cpu(
-            resident_model, offloaded_buffer
+            resident_model,
+            offloaded_buffer,
+            is_fsdp=is_fsdp,
         )
 
-    resident_model.load_state_dict(cpu_weights)
+    if is_fsdp:
+        resident_model._strategy.load_model_with_state_dict(
+            resident_model.model,
+            cpu_weights,
+            cpu_offload=False,
+            full_state_dict=False,
+        )
+    else:
+        resident_model.load_state_dict(cpu_weights)
     return offloaded_buffer
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights, offloaded_buffer=None):
-    """swap the weights into GPU, and then swap it out once return"""
+def cpu_weight_swap(
+    resident_model, cpu_weights, offloaded_buffer=None, is_fsdp: bool = False
+):
+    """Temporarily swap regular-module or FSDP/FSDP2 weights from CPU."""
     offloaded_buffer = swap_dict(
-        resident_model, cpu_weights, offloaded_buffer=offloaded_buffer
+        resident_model,
+        cpu_weights,
+        offloaded_buffer=offloaded_buffer,
+        is_fsdp=is_fsdp,
     )
 
     try:
         yield
-
     finally:
-        swap_dict(resident_model, offloaded_buffer, offload_onto_cpu=False)
+        swap_dict(
+            resident_model,
+            offloaded_buffer,
+            offload_onto_cpu=False,
+            is_fsdp=is_fsdp,
+        )
 
 
 def _get_nvtx_module():
