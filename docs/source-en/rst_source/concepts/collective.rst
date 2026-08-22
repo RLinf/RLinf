@@ -48,6 +48,66 @@ With the process groups in place, ``CollectiveGroup`` can perform communications
    ``send_tensor`` **must** be paired with ``recv_tensor`` (and vice versa). Do not mix them with the generic ``send``/``recv`` for the same message.
 
 
+Tensor Compression
+---------------------------------
+
+For bandwidth-bound CPU tensor transfers, enable compression once in the job's
+``cluster`` configuration. The scheduler validates this configuration on the
+driver and propagates the same settings to every Worker, so ordinary
+``Worker.send``/``Worker.recv`` and channel transfers use it automatically.
+
+.. code-block:: yaml
+
+   cluster:
+     collective:
+       tensor_compression:
+         enabled: true
+         codec: lz4
+         level: 1
+         min_bytes: 65536
+         max_inflight: 2
+
+``tensor_compression`` is disabled when this block is absent or when
+``enabled: false``. Its fields are:
+
+- ``codec``: ``lz4`` or ``zstd``.
+- ``level``: positive codec parameter. For ``lz4``, this is LZ4's
+  ``acceleration`` (higher values prioritize speed); for ``zstd``, it is the
+  Zstandard compression level.
+- ``min_bytes``: only CPU tensors at least this large are candidates.
+- ``max_inflight``: maximum codec slots per direction in each
+  ``CollectiveGroup``: compression slots own reusable workspaces, while
+  decompression slots own only decoder codecs.
+
+For each generic object transfer, a CPU tensor is compressed only when
+compression is enabled, it meets ``min_bytes``, and a workspace slot is
+immediately available. A saturated pool never queues or blocks the sender: the
+transfer proceeds uncompressed. A transfer also falls back to its original
+tensor when the encoded payload is not smaller. When a slot is released, it is
+prioritized over never-used slots, which greedily reuses its workspace buffers.
+The slot is released after its synchronous payload transfer finishes. Received
+compressed payloads borrow a decoder slot only while they are restored; decoder
+slots have no workspace buffers.
+
+Each ``CollectiveGroup`` owns one ``TensorCodecPool`` and therefore uses one
+codec and parameter for the lifetime of the group. The wire metadata identifies
+the compressed payload and validates that its codec settings match the job-wide
+configuration propagated to the receiving Worker. Compression currently applies
+only to CPU tensors in generic ``send``/``recv`` object, list, dictionary, and
+dataclass paths. GPU/NCCL transfers, broadcasts, and direct
+``send_tensor``/``recv_tensor`` calls remain uncompressed.
+
+YAML is the public control plane because it is versioned with the job and is
+propagated consistently across nodes. RLinf uses an internal environment
+variable to carry the validated setting to Worker processes; users should not
+set that variable directly. Individual Workers and individual transfers cannot
+override the job-wide setting.
+
+The common dependency installation installs the LZ4 and Zstandard system
+libraries required by these codecs. Ensure the same RLinf version and its
+compression dependencies are available on all worker nodes.
+
+
 Asynchronous API 
 ---------------------------------
 
@@ -91,4 +151,3 @@ Summary
 
 In summary, the **collective** component provides the engine for P2P data transfer between workers. It abstracts away the details of using PyTorch's distributed backends, managing multiple process groups to simulate send/receive, and optimizing for GPU transfers. 
 Users of the framework typically invoke these via the `Worker.send/recv` or channel operations, rather than calling `CollectiveGroup` directly.
-

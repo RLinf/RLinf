@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import atexit
+import json
 import logging
 import os
 import re
@@ -107,6 +108,9 @@ class ClusterEnvVar(str, Enum):
     Set explicitly when workers do not share a filesystem with the launch node.
     """
 
+    COLLECTIVE_TENSOR_COMPRESSION = "COLLECTIVE_TENSOR_COMPRESSION"
+    """Serialized ``cluster.collective.tensor_compression`` configuration."""
+
 
 class PathEnvMergeMode(str, Enum):
     """Merge mode for path-like worker env vars."""
@@ -136,6 +140,7 @@ class Cluster:
         ClusterEnvVar.NET_EMULATION: "0",
         ClusterEnvVar.PATH_ENV_MERGE_MODE: PathEnvMergeMode.APPEND.value,
         ClusterEnvVar.CODE_WORKING_DIR: "0",
+        ClusterEnvVar.COLLECTIVE_TENSOR_COMPRESSION: None,
     }
     PATH_LIKE_ENV_VARS = {
         "PYTHONPATH",
@@ -145,6 +150,9 @@ class Cluster:
         "CMAKE_PREFIX_PATH",
         "PKG_CONFIG_PATH",
         "CPATH",
+    }
+    SCHEDULER_OWNED_ENV_VARS = {
+        ClusterEnvVar.COLLECTIVE_TENSOR_COMPRESSION,
     }
 
     class NamespaceConflictError(Exception):
@@ -407,6 +415,8 @@ class Cluster:
         else:
             net_emu_cfg = None
 
+        self._configure_tensor_compression_env(cluster_cfg)
+
         # Set environment variables
         self._set_scheduler_env_vars()
 
@@ -533,12 +543,56 @@ class Cluster:
         """Get the full environment variable name with system prefix."""
         return f"{Cluster.SYS_NAME.upper()}_{var.value}"
 
+    @classmethod
+    def _configure_tensor_compression_env(
+        cls, cluster_cfg: Optional[DictConfig]
+    ) -> None:
+        """Validate and serialize public compression config for Worker processes."""
+        env_var_name = cls.get_full_env_var_name(
+            ClusterEnvVar.COLLECTIVE_TENSOR_COMPRESSION
+        )
+        os.environ.pop(env_var_name, None)
+
+        collective_cfg = cluster_cfg.get("collective", None) if cluster_cfg else None
+        if collective_cfg is None:
+            return
+        if not isinstance(collective_cfg, (dict, DictConfig)):
+            raise ValueError("cluster.collective must be a mapping.")
+
+        compression_cfg = collective_cfg.get("tensor_compression", None)
+        if compression_cfg is None:
+            return
+        if isinstance(compression_cfg, DictConfig):
+            compression_cfg = OmegaConf.to_container(compression_cfg, resolve=True)
+        if not isinstance(compression_cfg, dict):
+            raise ValueError("cluster.collective.tensor_compression must be a mapping.")
+
+        from ..collective.tensor_compression import TensorCompressionOptions
+
+        compression_options = TensorCompressionOptions.from_dict(compression_cfg)
+        os.environ[env_var_name] = json.dumps(
+            {
+                "enabled": compression_options.enabled,
+                "codec": compression_options.codec,
+                "level": compression_options.level,
+                "min_bytes": compression_options.min_bytes,
+                "max_inflight": compression_options.max_inflight,
+            },
+            sort_keys=True,
+        )
+
     def _set_scheduler_env_vars(self):
         """Set default environment variables for the system."""
         env_var_list = list(ClusterEnvVar._value2member_map_.values())
         for node in self._nodes:
             for env_var in env_var_list:
                 env_var_name = Cluster.get_full_env_var_name(env_var)
+                if env_var == ClusterEnvVar.COLLECTIVE_TENSOR_COMPRESSION:
+                    if env_var_name in os.environ:
+                        node.env_vars[env_var_name] = os.environ[env_var_name]
+                    else:
+                        node.env_vars.pop(env_var_name, None)
+                    continue
                 if env_var_name in os.environ and env_var_name not in node.env_vars:
                     node.env_vars[env_var_name] = os.environ[env_var_name]
                 elif (
@@ -779,6 +833,10 @@ class Cluster:
             env_vars,
             path_env_merge_mode,
         )
+        merged_env_vars = self._enforce_scheduler_owned_env_vars(
+            merged_env_vars,
+            node.env_vars,
+        )
 
         # Update Python interpreter path
         python_interpreter_path = node.python_interpreter_path
@@ -898,6 +956,22 @@ class Cluster:
                 )
             else:
                 merged[key] = value
+        return merged
+
+    @classmethod
+    def _enforce_scheduler_owned_env_vars(
+        cls,
+        worker_env_vars: dict[str, str],
+        scheduler_env_vars: dict[str, str],
+    ) -> dict[str, str]:
+        """Restore job-wide environment values after user environment merging."""
+        merged = worker_env_vars.copy()
+        for env_var in cls.SCHEDULER_OWNED_ENV_VARS:
+            env_var_name = cls.get_full_env_var_name(env_var)
+            if env_var_name in scheduler_env_vars:
+                merged[env_var_name] = scheduler_env_vars[env_var_name]
+            else:
+                merged.pop(env_var_name, None)
         return merged
 
     @staticmethod

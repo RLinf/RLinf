@@ -41,6 +41,12 @@ from ..manager import (
 )
 from ..worker import Worker, WorkerAddress
 from .async_work import AsyncFuncWork, AsyncWork
+from .tensor_compression import (
+    CompressionLease,
+    TensorCodecPool,
+    TensorCompressionOptions,
+    TensorCompressionWireMetadata,
+)
 
 if TYPE_CHECKING:
     from .collective import Collective
@@ -109,9 +115,14 @@ class CollectiveGroupOptions:
     rollout ranks)."""
 
     def is_empty_options(self) -> bool:
-        """Check if the options are empty."""
-        empty_options = CollectiveGroupOptions()
-        return self == empty_options
+        """Return whether accelerator process-group options are unset."""
+        return (
+            self.accel_cluster_size is None
+            and self.accel_max_ctas is None
+            and self.accel_min_ctas is None
+            and not self.is_high_priority_stream
+            and not self.use_ring_broadcast
+        )
 
 
 class CollectiveWorkQueue:
@@ -235,6 +246,9 @@ class CollectiveGroup:
         self._cur_worker_address = cur_worker_address
         self._mc_group = None
         self._worker = Worker.current_worker
+        self._tensor_compression: Optional[TensorCompressionOptions] = (
+            self._worker._tensor_compression
+        )
         self._coll_manager = CollectiveManager.get_proxy()
         # The net emulation manager is only launched when cluster.net_emulation is
         # enabled. The driver advertises that through the env var, so that a manager
@@ -249,6 +263,8 @@ class CollectiveGroup:
         )
         self._logger = logging.getLogger(cur_worker_address.get_name())
         self._lock = threading.Lock()
+        self._tensor_codec_pool: Optional[TensorCodecPool] = None
+        self._tensor_codec_pool_lock = threading.Lock()
         # Lazily populated sub-groups for the hybrid broadcast path.
         # IPC sub-groups: one per (src_rank, same_device_dst_rank) pair.
         self._ipc_sub_groups: dict[tuple[int, int], "CollectiveGroup"] = {}
@@ -360,7 +376,7 @@ class CollectiveGroup:
         tensor_data: TensorData,
         options: Optional[CollectiveGroupOptions] = None,
         piggyback_payload: Optional[Any] = None,
-    ) -> Optional[AsyncFuncWork]:
+    ) -> None:
         """Send an object to a specific address in the collective group in an out-of-place manner.
 
         It runs in an atomic way, i.e., communications of two calls of _atomic_send are guaranteed to be in the same ordered as the send API is called.
@@ -376,41 +392,50 @@ class CollectiveGroup:
 
         if object_type == CollectiveGroup.TENSOR:
             # Out-of-place tensor send/recv is done via tensor list send/recv with a list of one tensor
-            return self._send_tensor_list(
+            self._send_tensor_list(
                 [object],
                 comm_id,
                 piggyback_payload=piggyback_payload,
                 tensor_data=tensor_data,
                 work=work,
+                options=options,
             )
+            return
         elif object_type == CollectiveGroup.TENSOR_LIST:
-            return self._send_tensor_list(
+            self._send_tensor_list(
                 object,
                 comm_id,
                 piggyback_payload=piggyback_payload,
                 tensor_data=tensor_data,
                 work=work,
+                options=options,
             )
+            return
         elif object_type == CollectiveGroup.TENSOR_DICT:
-            return self._send_tensor_dict(
+            self._send_tensor_dict(
                 object,
                 comm_id,
                 tensor_data,
                 piggyback_payload=piggyback_payload,
                 work=work,
+                options=options,
             )
+            return
         elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
-            return self._send_tensor_dataclass(
+            self._send_tensor_dataclass(
                 object,
                 comm_id,
                 tensor_data=tensor_data,
                 piggyback_payload=piggyback_payload,
                 work=work,
+                options=options,
             )
+            return
         elif object_type == CollectiveGroup.OBJECT:
-            return self._send_object(
+            self._send_object(
                 object, comm_id, piggyback_payload=piggyback_payload, work=work
             )
+            return
         else:
             raise ValueError(f"Unsupported object type: {object_type}")
 
@@ -489,17 +514,21 @@ class CollectiveGroup:
             f"Receiving object type {object_type} from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
         if object_type == CollectiveGroup.TENSOR:
-            tensor, pb_data = self._recv_tensor_list(comm_id, work=work)
+            tensor, pb_data = self._recv_tensor_list(
+                comm_id, work=work, options=options
+            )
             assert len(tensor) == 1, (
                 f"Expected to receive one tensor but got {len(tensor)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
             )
             data = tensor[0]
         elif object_type == CollectiveGroup.TENSOR_LIST:
-            data, pb_data = self._recv_tensor_list(comm_id, work=work)
+            data, pb_data = self._recv_tensor_list(comm_id, work=work, options=options)
         elif object_type == CollectiveGroup.TENSOR_DICT:
-            data, pb_data = self._recv_tensor_dict(comm_id, work=work)
+            data, pb_data = self._recv_tensor_dict(comm_id, work=work, options=options)
         elif object_type == CollectiveGroup.DATACLASS_WITH_TENSORS:
-            data, pb_data = self._recv_tensor_dataclass(comm_id, work=work)
+            data, pb_data = self._recv_tensor_dataclass(
+                comm_id, work=work, options=options
+            )
         elif object_type == CollectiveGroup.OBJECT:
             data, pb_data = self._recv_object(comm_id, work=work)
         else:
@@ -1365,6 +1394,130 @@ class CollectiveGroup:
                 accel_tensors.append(t)
         return cpu_tensor_mask, cpu_tensors, accel_tensors
 
+    def _get_tensor_codec_pool(
+        self, options: TensorCompressionOptions
+    ) -> TensorCodecPool:
+        """Return this group's codec pool for its single codec configuration."""
+        with self._tensor_codec_pool_lock:
+            if self._tensor_codec_pool is None:
+                self._tensor_codec_pool = TensorCodecPool(options)
+            pool_options = self._tensor_codec_pool.options
+            if (
+                pool_options.codec,
+                pool_options.level,
+                pool_options.max_inflight,
+            ) != (options.codec, options.level, options.max_inflight):
+                raise ValueError(
+                    "A CollectiveGroup cannot use multiple tensor codec configurations."
+                )
+            return self._tensor_codec_pool
+
+    def _compress_cpu_tensors(
+        self,
+        tensors: list[torch.Tensor],
+        cpu_tensors: list[torch.Tensor],
+    ) -> tuple[
+        list[torch.Tensor],
+        Optional[TensorCompressionWireMetadata],
+        Optional[CompressionLease],
+    ]:
+        """Compress eligible CPU tensors into a non-blocking workspace lease.
+
+        A missing compression option, no eligible tensor, or a saturated pool all
+        preserve the original CPU tensors. The returned compressor remains owned
+        by the caller only when at least one wire tensor was compressed.
+        """
+        compression_options = self._tensor_compression
+        if (
+            compression_options is None
+            or not compression_options.enabled
+            or not any(
+                tensor.is_cpu
+                and tensor.numel() * tensor.element_size()
+                >= compression_options.min_bytes
+                for tensor in tensors
+            )
+        ):
+            return cpu_tensors, None, None
+
+        compressor = self._get_tensor_codec_pool(
+            compression_options
+        ).try_acquire_compressor()
+        if compressor is None:
+            return cpu_tensors, None, None
+
+        try:
+            compressed_numel: list[Optional[int]] = [None] * len(tensors)
+            wire_cpu_tensors: list[torch.Tensor] = []
+            has_compressed_tensor = False
+            for tensor_index, tensor in enumerate(tensors):
+                if not tensor.is_cpu:
+                    continue
+                wire_tensor = tensor
+                tensor_bytes = tensor.numel() * tensor.element_size()
+                if tensor_bytes >= compression_options.min_bytes:
+                    capacity = compressor.slot.codec.compress_bound(tensor_bytes)
+                    if capacity is not None:
+                        destination = compressor.slot.acquire_buffer(capacity)
+                        compressed_bytes = compressor.slot.codec.compress_into(
+                            tensor, destination
+                        )
+                        if compressed_bytes < tensor_bytes:
+                            wire_tensor = destination[:compressed_bytes]
+                            compressed_numel[tensor_index] = compressed_bytes
+                            has_compressed_tensor = True
+                wire_cpu_tensors.append(wire_tensor)
+        except BaseException:
+            compressor.release()
+            raise
+
+        if not has_compressed_tensor:
+            compressor.release()
+            return cpu_tensors, None, None
+        return (
+            wire_cpu_tensors,
+            TensorCompressionWireMetadata(
+                codec=compression_options.codec,
+                level=compression_options.level,
+                compressed_numel=tuple(compressed_numel),
+            ),
+            compressor,
+        )
+
+    def _recv_cpu_tensor_payloads(
+        self,
+        cpu_entries: list[tuple[torch.Tensor, Optional[int]]],
+        compression_metadata: Optional[TensorCompressionWireMetadata],
+        comm_id: int,
+    ) -> None:
+        """Receive raw CPU tensors and restore compressed CPU wire tensors."""
+        if compression_metadata is None:
+            for tensor, _ in cpu_entries:
+                self._recv(tensor, CollectiveGroup.CPU, comm_id)
+            return
+
+        compression_options = self._tensor_compression
+        if compression_options is None:
+            raise ValueError(
+                "Compressed tensor payloads require tensor compression options on recv."
+            )
+        decompressor = self._get_tensor_codec_pool(
+            compression_options
+        ).acquire_decompressor(compression_metadata)
+        try:
+            for tensor, wire_numel in cpu_entries:
+                if wire_numel is None:
+                    self._recv(tensor, CollectiveGroup.CPU, comm_id)
+                    continue
+                tensor_bytes = tensor.numel() * tensor.element_size()
+                if type(wire_numel) is not int or not 0 < wire_numel < tensor_bytes:
+                    raise ValueError("Invalid compressed tensor size in metadata.")
+                wire_tensor = torch.empty(wire_numel, dtype=torch.uint8, device="cpu")
+                self._recv(wire_tensor, CollectiveGroup.CPU, comm_id)
+                decompressor.codec.decompress_into(wire_tensor, wire_numel, tensor)
+        finally:
+            decompressor.release()
+
     def _get_object_info(self, object: torch.Tensor | Any) -> tuple[int, TensorData]:
         """Classify the object and build precomputed tensor metadata.
 
@@ -2136,23 +2289,21 @@ class CollectiveGroup:
         tensors: list[torch.Tensor],
         comm_id: int,
         tensor_data: TensorData,
-        async_op: bool = False,
         piggyback_payload: Optional[Any] = None,
         work: Optional[AsyncFuncWork] = None,
-    ) -> Optional[AsyncWork]:
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> None:
         """Send a list of tensors to the specified destination address in the collective group.
 
         Args:
             tensors (List[torch.Tensor]): The list of tensors to send.
             comm_id (int): The ID for the send operation.
             tensor_data (TensorData): Pre-computed metadata from `_get_object_device_type`.
-            async_op (bool): Whether to perform the operation asynchronously.
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work via :meth:`_track_payload_time`.
-
-        Returns:
-            Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
+            options (Optional[CollectiveGroupOptions]): Accelerator communication
+                options.
 
         """
         cpu_tensor_mask = tensor_data.cpu_tensor_mask
@@ -2160,7 +2311,11 @@ class CollectiveGroup:
         accel_tensors = tensor_data.accel_tensors
 
         dst_rank_in_group = self._peer_rank
-        last_work: Optional[dist.Work] = None
+        (
+            cpu_tensors,
+            compression_metadata,
+            compressor,
+        ) = self._compress_cpu_tensors(tensors, cpu_tensors)
 
         # First send tensor size list
         tensor_shape_dtype = [(tensor.shape, tensor.dtype) for tensor in tensors]
@@ -2172,63 +2327,70 @@ class CollectiveGroup:
             "pb": piggyback_payload,
             "cpu_tensor_mask": cpu_tensor_mask,
         }
+        if compression_metadata is not None:
+            metadata["compression"] = compression_metadata
         self._logger.debug(
             f"Sending tensor metadata {metadata} to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
         )
         metadata_tensor, metadata_tensor_size = self._object_to_tensor(metadata, "cpu")
 
-        self._send(
-            metadata_tensor_size,
-            device=CollectiveGroup.CPU,
-            comm_id=comm_id,
-            async_op=False,
-        )
-        self._send(
-            metadata_tensor,
-            device=CollectiveGroup.CPU,
-            comm_id=comm_id,
-            async_op=False,
-        )
+        try:
+            self._send(
+                metadata_tensor_size,
+                device=CollectiveGroup.CPU,
+                comm_id=comm_id,
+                async_op=False,
+            )
+            self._send(
+                metadata_tensor,
+                device=CollectiveGroup.CPU,
+                comm_id=comm_id,
+                async_op=False,
+            )
+        except BaseException:
+            if compressor is not None:
+                compressor.release()
+            raise
 
         self._logger.debug(
             f"Sending list of {len(tensors)} tensors to Rank {dst_rank_in_group} in group {self._group_info.group_name}"
         )
 
-        with self._track_payload_time(work=work):
-            for tensor in cpu_tensors:
-                last_work = self._send(
-                    tensor,
-                    device=CollectiveGroup.CPU,
-                    comm_id=comm_id,
-                    async_op=async_op,
-                )
-            if accel_tensors:
-                # Handle CUDA tensor sending with IPC if the peer worker is on the same device
-                check_cuda_device_result = self._check_same_device_with_peer()
-                if check_cuda_device_result == 0:
-                    last_work = self._send_tensor_list_to_uncertain_peer(
-                        accel_tensors, comm_id, async_op
+        try:
+            with self._track_payload_time(work=work):
+                for tensor in cpu_tensors:
+                    self._send(
+                        tensor,
+                        device=CollectiveGroup.CPU,
+                        comm_id=comm_id,
                     )
-                elif check_cuda_device_result == 1:
-                    last_work = self._send_tensor_list_via_ipc(
-                        accel_tensors, comm_id, async_op
-                    )
-                else:
-                    for tensor in accel_tensors:
-                        last_work = self._send(
-                            tensor,
-                            device=CollectiveGroup.ACCEL,
-                            comm_id=comm_id,
-                            async_op=async_op,
-                        )
+                if accel_tensors:
+                    # Handle CUDA tensor sending with IPC if the peer worker is on the same device
+                    check_cuda_device_result = self._check_same_device_with_peer()
+                    if check_cuda_device_result == 0:
+                        self._send_tensor_list_to_uncertain_peer(accel_tensors, comm_id)
+                    elif check_cuda_device_result == 1:
+                        self._send_tensor_list_via_ipc(accel_tensors, comm_id)
+                    else:
+                        for tensor in accel_tensors:
+                            self._send(
+                                tensor,
+                                device=CollectiveGroup.ACCEL,
+                                comm_id=comm_id,
+                            )
+        except BaseException:
+            if compressor is not None:
+                compressor.release()
+            raise
 
-        if async_op:
-            return last_work
+        if compressor is not None:
+            compressor.release()
 
     def _recv_tensor_list(
         self,
         comm_id: int,
         work: Optional[AsyncFuncWork] = None,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> tuple[list[torch.Tensor], Any]:
         """Receive a list of tensors from the specified source address in the collective group.
 
@@ -2236,6 +2398,8 @@ class CollectiveGroup:
             comm_id (int): The ID for the recv operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work.
+            options (Optional[CollectiveGroupOptions]): Accelerator communication
+                options.
 
         Returns:
             tuple[List[torch.Tensor], Any]: A tuple of the received list of tensors and the piggyback payload.
@@ -2260,6 +2424,18 @@ class CollectiveGroup:
         tensor_shapes = metadata["meta"]
         pb_data = metadata["pb"]
         cpu_tensor_mask = metadata["cpu_tensor_mask"]
+        compression_metadata = metadata.get("compression")
+        if compression_metadata is not None and not isinstance(
+            compression_metadata, TensorCompressionWireMetadata
+        ):
+            raise ValueError("Invalid collective tensor compression metadata.")
+        compressed_numel = (
+            compression_metadata.compressed_numel
+            if compression_metadata is not None
+            else (None,) * len(tensor_shapes)
+        )
+        if len(compressed_numel) != len(tensor_shapes):
+            raise ValueError("Compression metadata does not match the tensor list.")
         has_accel_tensor = any(not m for m in cpu_tensor_mask)
 
         tensors = [
@@ -2281,7 +2457,7 @@ class CollectiveGroup:
         self._logger.debug(
             f"Receiving {len(tensors)} tensors from Rank {self._peer_rank} in group {self._group_info.group_name}"
         )
-        cpu_tensors: list[torch.Tensor] = []
+        cpu_entries: list[tuple[torch.Tensor, Optional[int]]] = []
         accel_entries: list[
             tuple[int, torch.Tensor, tuple[torch.Size, torch.dtype]]
         ] = []
@@ -2289,13 +2465,16 @@ class CollectiveGroup:
             zip(tensors, cpu_tensor_mask, tensor_shapes)
         ):
             if is_cpu:
-                cpu_tensors.append(tensor)
+                cpu_entries.append((tensor, compressed_numel[idx]))
             else:
                 accel_entries.append((idx, tensor, shape_dtype))
 
         with self._track_payload_time(work=work):
-            for tensor in cpu_tensors:
-                self._recv(tensor, CollectiveGroup.CPU, comm_id)
+            self._recv_cpu_tensor_payloads(
+                cpu_entries,
+                compression_metadata,
+                comm_id,
+            )
             if has_accel_tensor:
                 check_cuda_device_result = self._check_same_device_with_peer()
                 if check_cuda_device_result == 0:
@@ -2323,23 +2502,21 @@ class CollectiveGroup:
         tensor_dict: dict[str, torch.Tensor],
         comm_id: int,
         tensor_data: TensorData,
-        async_op: bool = False,
         piggyback_payload: Optional[Any] = None,
         work: Optional[AsyncFuncWork] = None,
-    ) -> Optional[AsyncWork]:
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> None:
         """Send a dictionary of tensors to the specified destination address in the collective group.
 
         Args:
             tensor_dict (Dict[str, torch.Tensor]): The dictionary of tensors to send.
             comm_id (int): The ID for the send operation.
             tensor_data (TensorData): Pre-computed metadata from `_get_object_device_type`.
-            async_op (bool): Whether to perform the operation asynchronously.
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work.
-
-        Returns:
-            Optional[AsyncWork]: If async_op is True, returns an AsyncWork object for the asynchronous operation. If async_op is False, returns None.
+            options (Optional[CollectiveGroupOptions]): Accelerator communication
+                options.
 
         """
         # Send keys
@@ -2354,31 +2531,27 @@ class CollectiveGroup:
             key_tensor_size,
             device=CollectiveGroup.CPU,
             comm_id=comm_id,
-            async_op=async_op,
         )
         self._send(
             keys_tensor,
             device=CollectiveGroup.CPU,
             comm_id=comm_id,
-            async_op=async_op,
         )
 
         # Send values
-        value_work = self._send_tensor_list(
+        self._send_tensor_list(
             values,
             comm_id,
             tensor_data=tensor_data,
-            async_op=async_op,
             work=work,
+            options=options,
         )
-
-        if async_op:
-            return value_work
 
     def _recv_tensor_dict(
         self,
         comm_id: int,
         work: Optional[AsyncFuncWork] = None,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> tuple[dict[str, torch.Tensor], Any]:
         """Receive a dictionary of tensors from the specified source address in the collective group.
 
@@ -2386,6 +2559,8 @@ class CollectiveGroup:
             comm_id (int): The ID for the recv operation.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work.
+            options (Optional[CollectiveGroupOptions]): Accelerator communication
+                options.
 
         Returns:
             tuple[Dict[str, torch.Tensor], Any]: A tuple of the received dictionary of tensors and the piggyback payload.
@@ -2406,7 +2581,7 @@ class CollectiveGroup:
         )
 
         # Recv values
-        values, _ = self._recv_tensor_list(comm_id, work=work)
+        values, _ = self._recv_tensor_list(comm_id, work=work, options=options)
         assert len(keys) == len(values), (
             f"Received {len(values)} values but expected {len(keys)} keys from Rank {src_rank_in_group} in group {self._group_info.group_name}"
         )
@@ -2417,23 +2592,22 @@ class CollectiveGroup:
         tensor_dataclass: Any,
         comm_id: int,
         tensor_data: TensorData,
-        async_op: bool = False,
         piggyback_payload: Optional[Any] = None,
         work: Optional[AsyncFuncWork] = None,
-    ):
+        options: Optional[CollectiveGroupOptions] = None,
+    ) -> None:
         """Send a dataclass with tensor fields (tensor, list of tensors, or dict of tensors) to the destination.
 
         Args:
             tensor_dataclass (Any): The dataclass with tensor fields to send.
             comm_id (int): The ID for the send operation.
             tensor_data (TensorData): Pre-computed metadata from `_get_object_device_type` (must have tensor_fields, metadata, tensors_list set).
-            async_op (bool): Whether to perform the operation asynchronously.
             piggyback_payload (Optional[Any]): Payload to piggyback with the skeleton.
             work (Optional[AsyncFuncWork]): If provided, payload-transfer time is
                 attributed to this work.
+            options (Optional[CollectiveGroupOptions]): Accelerator communication
+                options.
 
-        Returns:
-            Optional[AsyncWork]: If async_op is True, returns an AsyncWork; otherwise None.
         """
         assert tensor_data.tensor_fields is not None
         assert tensor_data.metadata is not None
@@ -2447,17 +2621,16 @@ class CollectiveGroup:
             flat_tensors,
             comm_id,
             tensor_data=tensor_data,
-            async_op=async_op,
             piggyback_payload=metadata,
             work=work,
+            options=options,
         )
         tensor_field_names = set(tensor_fields.keys())
         overwrite_kwargs = dict.fromkeys(tensor_field_names, None)
         skeleton = replace(tensor_dataclass, **overwrite_kwargs)
-        return self._send_object(
+        self._send_object(
             skeleton,
             comm_id=comm_id,
-            async_op=async_op,
             piggyback_payload=piggyback_payload,
             work=work,
         )
@@ -2466,6 +2639,7 @@ class CollectiveGroup:
         self,
         comm_id: int,
         work: Optional[AsyncFuncWork] = None,
+        options: Optional[CollectiveGroupOptions] = None,
     ) -> tuple[Any, Any]:
         r"""Receive a dataclass with tensor fields (tensor, list, or dict of tensors).
 
@@ -2473,7 +2647,9 @@ class CollectiveGroup:
         1) Receive flat tensor list (metadata comes as piggyback_payload).
         2) Receive skeleton dataclass and reconstruct by refilling tensor fields.
         """
-        flat_tensors, metadata = self._recv_tensor_list(comm_id, work=work)
+        flat_tensors, metadata = self._recv_tensor_list(
+            comm_id, work=work, options=options
+        )
         tensor_dict = unflatten_dataclass_tensor_fields(metadata, flat_tensors)
         skeleton, pb_data = self._recv_object(comm_id, work=work)
         dataclass_obj = replace(skeleton, **tensor_dict)

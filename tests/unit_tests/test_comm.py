@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.distributed as dist
+from omegaconf import OmegaConf
 from torch.distributed import distributed_c10d
 
 from rlinf.scheduler import (
@@ -200,6 +201,23 @@ class SenderWorker(Worker):
         device = "cpu" if on_cpu else get_device()
         tensor_list = [torch.ones(2, 2, device=device) * i for i in range(4)]
         return self._send_data(tensor_list, async_op)
+
+    def test_send_compressed_tensor_list(self, async_op=False):
+        """Send a CPU tensor list through the collective compression path."""
+        tensor_list = [
+            torch.zeros(256 * 1024, dtype=torch.uint8),
+            torch.arange(64, dtype=torch.int64),
+        ]
+        peer_rank = get_send_peer_rank(self._rank, self._world_size)
+        work = self.send(
+            tensor_list,
+            RECEIVER_GROUP_NAME,
+            peer_rank,
+            async_op=async_op,
+        )
+        if async_op:
+            work.wait()
+        return True
 
     def test_send_tensor_dict(self, on_cpu, async_op=False):
         device = "cpu" if on_cpu else get_device()
@@ -603,6 +621,16 @@ class ReceiverWorker(Worker):
     def test_recv_tensor_list(self, async_op=False):
         return self._recv_data(async_op)
 
+    def test_recv_compressed_tensor_list(self, async_op=False):
+        """Receive a CPU tensor list using the collective compression config."""
+        peer_rank = get_recv_peer_rank(self._rank, self._world_size)
+        work = self.recv(
+            SENDER_GROUP_NAME,
+            peer_rank,
+            async_op=async_op,
+        )
+        return work.wait() if async_op else work
+
     def test_recv_tensor_dict(self, async_op=False):
         return self._recv_data(async_op)
 
@@ -962,7 +990,23 @@ class CommCollectiveWorker(Worker):
 @pytest.fixture(scope="module")
 def cluster():
     """Provides a ClusterResource instance for the tests."""
-    return Cluster(num_nodes=1)
+    return Cluster(
+        cluster_cfg=OmegaConf.create(
+            {
+                "num_nodes": 1,
+                "component_placement": [],
+                "collective": {
+                    "tensor_compression": {
+                        "enabled": True,
+                        "codec": "lz4",
+                        "level": 1,
+                        "min_bytes": 1024,
+                        "max_inflight": 1,
+                    }
+                },
+            }
+        )
+    )
 
 
 @pytest.fixture(scope="class")
@@ -1152,6 +1196,22 @@ class TestCommunication:
             for i, tensor in enumerate(res_list):
                 expected = torch.ones(2, 2) * i
                 assert torch.equal(tensor.cpu(), expected)
+
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_compressed_cpu_tensor_list_communication(self, worker_groups, async_op):
+        """Compressed CPU tensor lists preserve raw payload values."""
+        results = self._run_test(
+            worker_groups,
+            "test_send_compressed_tensor_list",
+            "test_recv_compressed_tensor_list",
+            (async_op,),
+            (async_op,),
+        )
+        for tensor_list in results:
+            assert torch.equal(
+                tensor_list[0], torch.zeros(256 * 1024, dtype=torch.uint8)
+            )
+            assert torch.equal(tensor_list[1], torch.arange(64, dtype=torch.int64))
 
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_mixed_tensor_list_communication(self, worker_groups, async_op):

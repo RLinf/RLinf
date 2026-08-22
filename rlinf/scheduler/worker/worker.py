@@ -15,6 +15,7 @@
 import ctypes
 import functools
 import inspect
+import json
 import logging
 import os
 import signal
@@ -475,6 +476,7 @@ class Worker(metaclass=WorkerMeta):
         # Init ray and managers
         self._manager_proxy = None
         self._collective = None
+        self._tensor_compression = self._load_tensor_compression_options()
         self._setup_managers()
 
         # Setup MASTER_ADDR and MASTER_PORT
@@ -557,6 +559,28 @@ class Worker(metaclass=WorkerMeta):
 
         return WorkerGroup(cls, args, kwargs)
 
+    def _load_tensor_compression_options(self):
+        """Load the job-wide tensor-compression configuration propagated by Cluster."""
+        raw_config = Cluster.get_sys_env_var(
+            ClusterEnvVar.COLLECTIVE_TENSOR_COMPRESSION
+        )
+        if raw_config is None:
+            return None
+        try:
+            config = json.loads(raw_config)
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                "Invalid collective tensor compression configuration."
+            ) from error
+        if not isinstance(config, dict):
+            raise ValueError(
+                "Collective tensor compression configuration must be a mapping."
+            )
+
+        from ..collective.tensor_compression import TensorCompressionOptions
+
+        return TensorCompressionOptions.from_dict(config)
+
     def send(
         self,
         object: torch.Tensor | list[torch.Tensor] | dict[str, torch.Tensor] | Any,
@@ -590,7 +614,7 @@ class Worker(metaclass=WorkerMeta):
             dst_group_name (str): The name of the destination worker group.
             dst_rank (int | List[int]): The rank or list of ranks in the destination worker group to send the object to. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
             async_op (bool): Whether to perform the operation asynchronously.
-            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the recv side.
+            options (Optional[CollectiveGroupOptions]): Process-group options. They take effect only when two workers first communicate and must match the recv side.
             piggyback_payload (Optional[Any]): The payload to piggyback on the send operation. This payload will be sent to the recv side and can be used to pass additional information to the recv side without disrupting the object's data structure, e.g., list/dict of tensors that are optimized for sending.
 
         Returns:
@@ -628,7 +652,7 @@ class Worker(metaclass=WorkerMeta):
             async_op (bool): Whether to perform the operation asynchronously.
             src_group_name (str): The name of the source worker group.
             src_rank (int | List[int]): The rank or list of ranks in the source worker group to receive the object from. For SPMD-like workers, this should be a single rank. For SPSD-like workers forked by parent workers, this can be a list of ranks that forms a path from the root worker to the target worker.
-            options (Optional[CollectiveGroupOptions]): The options for the collective group. The options will only take effect when two workers first communicate with each other, and will be ignored for subsequent communications. This option must match the options of the send side.
+            options (Optional[CollectiveGroupOptions]): Process-group options. They take effect only when two workers first communicate and must match the send side.
 
         Returns:
             AsyncWork | torch.Tensor | List[torch.Tensor] | Dict[str, torch.Tensor] | Any: An AsyncWork object if async_op is True, otherwise the received object. If the send side sends a piggyback payload, the received object will be a tuple of the received object and the piggyback payload.

@@ -53,6 +53,54 @@
    不要在同一消息中将它们与通用的 ``send``/``recv`` 混用。  
 
 
+Tensor 压缩
+---------------------------------
+
+对于带宽受限的 CPU 张量传输，请在作业的 ``cluster`` 配置中一次性开启压缩。
+调度器会在 driver 端校验该配置，并将同一份配置下发到所有 Worker；因此普通的
+``Worker.send``/``Worker.recv`` 以及 channel 传输会自动使用它。
+
+.. code-block:: yaml
+
+   cluster:
+     collective:
+       tensor_compression:
+         enabled: true
+         codec: lz4
+         level: 1
+         min_bytes: 65536
+         max_inflight: 2
+
+未配置 ``tensor_compression`` 段，或设置 ``enabled: false`` 时，压缩关闭。各字段含义如下：
+
+- ``codec``：``lz4`` 或 ``zstd``。
+- ``level``：大于 0 的 codec 参数。对于 ``lz4``，它传给 LZ4 的
+  ``acceleration``\ （值越大越优先速度）；对于 ``zstd``，它是 Zstandard 的压缩等级。
+- ``min_bytes``：只有不小于此大小的 CPU 张量才会成为压缩候选。
+- ``max_inflight``：每个 ``CollectiveGroup`` 两个方向的 codec slot 上限：压缩
+  slot 持有可复用 workspace，解压 slot 只持有 decoder codec。
+
+每次通用对象传输中，只有压缩已开启、CPU 张量达到 ``min_bytes``，并且能立即获取到
+空闲 workspace slot 时，才会尝试压缩。pool 饱和时不会排队或阻塞发送端，而是直接
+原样发送；若编码结果并未变小，也会回退为原始张量。slot 释放后会优先于从未使用过的
+slot 被获取，从而贪心复用其中的 workspace buffer。payload 的同步传输完成后，slot 会
+立即释放。接收到压缩 payload 时，仅在恢复数据期间借用 decoder slot；decoder slot
+不持有 workspace buffer。
+
+每个 ``CollectiveGroup`` 只持有一个 ``TensorCodecPool``，因此其整个生命周期只会使用
+一种 codec 及其参数。wire metadata 标记压缩 payload，并校验其 codec 设置与接收 Worker
+从作业级配置得到的设置一致。当前压缩仅适用于通用 ``send``/``recv`` 的对象、列表、
+字典和 dataclass 路径中的 CPU 张量；GPU/NCCL 传输、broadcast，以及直接调用
+``send_tensor``/``recv_tensor`` 的路径仍不会压缩。
+
+YAML 是公开的控制面：它会随作业一同版本化，并能保证跨节点下发一致。RLinf 仅使用
+内部环境变量把已校验的配置传递给 Worker 进程；用户不应直接设置该环境变量。单个 Worker
+或单次传输都不能覆盖这份作业级配置。
+
+公共依赖安装会安装这两种 codec 所需的 LZ4 和 Zstandard 系统库。请确保所有 Worker 节点
+使用相同版本的 RLinf，并安装相应的 compression 依赖。
+
+
 异步 API
 ---------------------------------
 
