@@ -265,6 +265,29 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
         default_factory=lambda: ["main_images", "extra_view_images"]
     )
     default_task_description: str = ""
+    prompt_template: str | None = None
+    include_task: bool = True
+    num_bins: int = 10
+    video_fps: float = 24.0
+
+    DEFAULT_PROMPT = (
+        "You are currently performing the task: {task}. "
+        "You are given two synchronized 5-frame videos from different camera "
+        "views (main view and third-person view) of the same robot action "
+        "window. Judge whether the action trend is positive, negative, or "
+        "unclear. Answer with exactly one word: positive, negative, or unclear."
+    )
+
+    def _render_prompt(self, task: str) -> str:
+        task = str(task or self.default_task_description).strip()
+        template = self.prompt_template or self.DEFAULT_PROMPT
+        task_text = f" Task: {task}." if self.include_task and task else ""
+        return template.format(
+            task=task,
+            task_text=task_text,
+            num_bins=self.num_bins,
+            num_bins_max=self.num_bins - 1,
+        )
 
     def prepare_inputs(
         self,
@@ -282,15 +305,7 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
 
         prompt_texts_list: list[list[str]] = []
         for env_id in valid_input_ids:
-            prompt_texts_list.append(
-                [
-                    f"You are currently performing the task: {task_descriptions[env_id]}. "
-                    "You are given two synchronized 5-frame videos from different camera "
-                    "views (main view and third-person view) of the same robot action "
-                    "window. Judge whether the action trend is positive, negative, or "
-                    "unclear. Answer with exactly one word: positive, negative, or unclear."
-                ]
-            )
+            prompt_texts_list.append([self._render_prompt(task_descriptions[env_id])])
 
         return {
             "images_list": None,
@@ -311,5 +326,6 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
             prompt_texts=prompt_texts_list,
             videos=videos_list,
             answer_text=None,
+            video_fps=self.video_fps,
         )
         return processed_inputs

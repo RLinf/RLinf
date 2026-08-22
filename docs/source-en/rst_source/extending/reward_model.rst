@@ -240,6 +240,99 @@ The corresponding config reads the JSONL manifests and per-sample pickle files:
 The trained LoRA checkpoint can then be passed to the online reward config through
 ``reward.model.lora_path``.
 
+2.3.1 Train the Success + Potential Branch
+.............................................
+
+Train this branch when you need a sparse terminal bonus and dense progress
+shaping from the same VLM. Keep the four stages in order:
+
+#. Train a state-success teacher from rollout states.
+#. Train separate Success and Potential LoRA adapters.
+#. Freeze the Potential adapter, extract its prompt features, and train a scalar head.
+#. Combine one-shot Success bonus with potential-difference shaping online.
+
+Set the shared paths, then build the teacher and both SFT datasets:
+
+.. code-block:: bash
+
+   export RAW_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   RAW_DATA_ARGS=()
+   TEACHER_DATA_PATHS="["
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
+     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
+   done
+   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
+
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
+     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
+     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
+
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+     --mode terminal_success "${RAW_DATA_ARGS[@]}" \
+     --output-dir "$PIPELINE_ROOT/success_data"
+
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+     --mode potential "${RAW_DATA_ARGS[@]}" \
+     --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
+     --output-dir "$PIPELINE_ROOT/potential_data"
+
+What this does: terminal-success keeps online-matched ``0``/``1`` windows without
+balanced sampling. Both branches stop at the first successful transition, matching
+the online environment termination boundary. Potential preprocessing uses the
+teacher to emit absolute
+potential digits and ``up``/``same``/``down`` progress pairs.
+
+Train the two adapters with thin configs that inherit the existing Trend recipe:
+
+.. code-block:: bash
+
+   export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
+   export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
+
+   export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
+   export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
+
+Set ``POTENTIAL_CHECKPOINT`` to the selected Potential ``global_step_*``
+directory. Extract frozen features on four GPUs, then train the scalar head:
+
+.. code-block:: bash
+
+   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   mkdir -p "$PIPELINE_ROOT/features"
+
+   for split in train eval; do
+     for sample_type in potential progress; do
+       for rank in 0 1 2 3; do
+         CUDA_VISIBLE_DEVICES=$rank \
+         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+           --mode features \
+           --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
+           --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
+           --sample-type "$sample_type" --rank "$rank" --world-size 4 \
+           --device cuda:0 \
+           --output "$PIPELINE_ROOT/features/${split}_${sample_type}_${rank}.pt" &
+       done
+       wait
+     done
+   done
+
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
+     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
+     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
+     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
+     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
+     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
+
+Use the existing ``eval/eval_accuracy`` to select the Success adapter and
+``model_potential`` from ``scalar_head/metrics.jsonl`` to select the scalar head.
+
 3. Reward Model Inference in RL
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -397,6 +490,43 @@ Launch:
 .. code-block:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
+
+Warm up the MLP policy with the existing dense ManiSkill reward. This reuses
+``maniskill_ppo_mlp`` unchanged; do not enable the reward overlay during warmup.
+Evaluate saved checkpoints on the same 1,024 fixed reset states and select one
+with a non-zero ``success_once`` near 5% (roughly 3--7%). Do not start formal
+PPO from a zero-success checkpoint:
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+Then launch the dual-output branch with the selected checkpoint and the three
+reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
+1,024 environments, evaluates every 5 PPO steps, disables environment reward,
+and runs 160 steps by default:
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
+
+The existing ``BufferedVLMRewardModel`` branch computes
+``scale * (gamma * potential_t - potential_{t-1})`` and adds
+``success_bonus`` once per episode after the configured confirmation windows.
+Both state machines reset on ``done``.
 
 3.4.2 SGLang API Inference
 ............................

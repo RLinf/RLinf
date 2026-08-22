@@ -236,6 +236,98 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 
 训练得到的 LoRA checkpoint 后续可通过 ``reward.model.lora_path`` 传给在线 reward 配置。
 
+2.3.1 训练 Success + Potential 分支
+........................................
+
+当你需要同一个 VLM 同时提供稀疏终止奖励和稠密进度 shaping 时，按以下
+四个阶段训练：
+
+#. 从 rollout state 训练 state-success teacher。
+#. 分别训练 Success LoRA 和 Potential LoRA。
+#. 冻结 Potential LoRA，提取 prompt feature，再训练 scalar head。
+#. 在线组合 one-shot Success bonus 与 potential-difference shaping。
+
+先设置公共路径，再生成 teacher 和两套 SFT 数据：
+
+.. code-block:: bash
+
+   export RAW_DATA_ROOT=/path/to/vlm_trend_uniform_collection
+   export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   RAW_DATA_ARGS=()
+   TEACHER_DATA_PATHS="["
+   for step in 0 20 40 60 80 100 120 140 160 180 200; do
+     RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
+     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
+   done
+   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
+
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
+     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
+     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
+
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+     --mode terminal_success "${RAW_DATA_ARGS[@]}" \
+     --output-dir "$PIPELINE_ROOT/success_data"
+
+   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+     --mode potential "${RAW_DATA_ARGS[@]}" \
+     --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
+     --output-dir "$PIPELINE_ROOT/potential_data"
+
+这些命令会保留与在线采样一致的 ``0``/``1`` terminal-success 窗口，不执行
+balanced sampling。两条分支都在首次成功 transition 截断，与在线环境的终止边界一致。
+Potential 预处理使用 teacher 生成绝对 potential 数字，
+以及 ``up``/``same``/``down`` progress pair。
+
+使用继承现有 Trend 配方的两个薄配置训练 adapter：
+
+.. code-block:: bash
+
+   export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
+   export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
+   bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
+
+   export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
+   export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
+   bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
+
+将 ``POTENTIAL_CHECKPOINT`` 指向选中的 Potential ``global_step_*`` 目录。
+在四张 GPU 上提取冻结 feature，再训练 scalar head：
+
+.. code-block:: bash
+
+   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   mkdir -p "$PIPELINE_ROOT/features"
+
+   for split in train eval; do
+     for sample_type in potential progress; do
+       for rank in 0 1 2 3; do
+         CUDA_VISIBLE_DEVICES=$rank \
+         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+           --mode features \
+           --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
+           --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
+           --sample-type "$sample_type" --rank "$rank" --world-size 4 \
+           --device cuda:0 \
+           --output "$PIPELINE_ROOT/features/${split}_${sample_type}_${rank}.pt" &
+       done
+       wait
+     done
+   done
+
+   python examples/reward/train_reward_model.py \
+     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
+     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
+     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
+     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
+     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
+     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
+
+使用现有 ``eval/eval_accuracy`` 选择 Success adapter，并使用
+``scalar_head/metrics.jsonl`` 中的 ``model_potential`` 选择 scalar head。
+
 3. Reward Model 在 RL 中推理
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -347,7 +439,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.1 本地 Hugging Face 推理
 ............................
 
-不设置 ``reward.worker_type``（默认 ``model``，使用 ``EmbodiedRewardWorker``）。
+不设置 ``reward.worker_type``\ （默认 ``model``，使用 ``EmbodiedRewardWorker``）。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward.yaml``：
 
 .. code-block:: yaml
@@ -395,10 +487,44 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 
    bash examples/embodiment/run_embodiment.sh maniskill_ppo_mlp_vlm_trend_reward
 
+先使用 ManiSkill 原有的稠密环境奖励预热 MLP policy。这里直接复用未修改的
+``maniskill_ppo_mlp``，预热阶段不要启用 reward overlay。使用同一组 1,024 个
+固定 reset state 评估保存的 checkpoint，并选择 ``success_once`` 非零且接近
+5%（约 3--7%）的一个；正式 PPO 不要从零成功率 checkpoint 开始：
+
+.. code-block:: bash
+
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp \
+     runner.max_steps=60 runner.save_interval=5 runner.val_check_interval=5 \
+     env.eval.total_num_envs=1024
+
+然后使用选中的低成功率 checkpoint 和上述三个 reward 产物启动双输出分支。
+该配方基于现有 VLM Trend 配方，使用 1,024 个环境，每 5 个 PPO step 评估一次，
+关闭环境奖励，默认训练 160 个 step：
+
+.. code-block:: bash
+
+   export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
+   export EMBODIED_PATH="$(pwd)/examples/embodiment"
+   python examples/embodiment/train_embodied_agent.py \
+     --config-path config \
+     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
+
+现有 ``BufferedVLMRewardModel`` 分支计算
+``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
+每个 episode 仅添加一次 ``success_bonus``。两组状态都会在 ``done`` 时重置。
+
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``（``EmbodiedAPIRewardWorker``）。可指向外部
+设置 ``reward.worker_type: api``\ （``EmbodiedAPIRewardWorker``）。可指向外部
 OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 :doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：

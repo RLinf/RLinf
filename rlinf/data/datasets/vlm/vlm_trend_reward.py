@@ -20,10 +20,22 @@ from typing import Any, Optional, Union
 import torch
 from omegaconf import DictConfig
 from transformers import AutoProcessor, AutoTokenizer
+from transformers.video_utils import VideoMetadata
 
 from rlinf.data.datasets.common.item import SftDatasetItem
 from rlinf.data.datasets.vlm.base import VLMBaseDataset
 from rlinf.data.datasets.vlm.registry import VLMDatasetRegistry
+
+
+def _video_metadata(video: Any, fps: float) -> VideoMetadata:
+    """Describe an in-memory video without resampling its frames."""
+    frame_count = len(video)
+    return VideoMetadata(
+        total_num_frames=frame_count,
+        fps=fps,
+        duration=frame_count / fps,
+        frames_indices=list(range(frame_count)),
+    )
 
 
 def _resolve_video_path(path: str, data_root: Optional[str]) -> str:
@@ -70,6 +82,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         self._data_root = config.data.get("data_root") or os.environ.get(
             "RLINF_DATA_ROOT"
         )
+        self._video_fps = float(config.data.get("video_fps") or 24.0)
 
     @classmethod
     def _build_video_user_content(
@@ -87,6 +100,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         prompt_texts: list[str] | list[list[str]],
         videos: list[Any] | list[list[Any]],
         answer_text: Optional[str] | list[Optional[str]] = None,
+        video_fps: float = 24.0,
     ) -> tuple[str | list[str], dict[str, Any], dict[str, Any]]:
         """
         Build Qwen3-VL processor inputs for VLM Trend reward SFT.
@@ -154,11 +168,8 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
                 )
                 rendered_prompts.append(rendered_prompt_i)
                 rendered_labels.append(rendered_label_i)
-                videos_kwargs["video_metadata"].append(
-                    [
-                        {"total_num_frames": len(video), "fps": 24.0}
-                        for video in videos_i
-                    ]
+                videos_kwargs["video_metadata"].extend(
+                    _video_metadata(video, video_fps) for video in videos_i
                 )
 
             full_inputs = processor(
@@ -185,9 +196,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
         prompt_text = prompt_texts[0]
         rendered_prompt, rendered_label = _render_prompt_text(prompt_text, answer_text)
         videos_kwargs = {
-            "video_metadata": [
-                {"total_num_frames": len(video), "fps": 24.0} for video in videos
-            ],
+            "video_metadata": [_video_metadata(video, video_fps) for video in videos],
         }
 
         full_inputs = processor(
@@ -233,6 +242,11 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
             self._processor = AutoProcessor.from_pretrained(
                 self.cfg.actor.model.model_path
             )
+            do_sample_frames = self.cfg.data.get("video_do_sample_frames")
+            if do_sample_frames is not None:
+                self._processor.video_processor.do_sample_frames = bool(
+                    do_sample_frames
+                )
 
         _, full_inputs, label_inputs = self.process_inputs(
             processor=self._processor,
@@ -241,6 +255,7 @@ class VLMTrendRewardSFTDataset(VLMBaseDataset):
             prompt_texts=[prompt_text],
             videos=videos,
             answer_text=answer_text,
+            video_fps=self._video_fps,
         )
 
         input_ids = full_inputs.pop("input_ids")
