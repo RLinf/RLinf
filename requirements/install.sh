@@ -2373,6 +2373,9 @@ retry_cmd() {
 
 install_libero_env() {
     uv pip install rlinf-libero
+    # rlinf-libero caps mujoco only from above (<3.9.0); >=3.4.0 desyncs
+    # LIBERO's saved init states, so pin the era-faithful version explicitly.
+    uv pip install --no-deps mujoco==3.3.0
     materialize_package_files rlinf-libero
     retry_cmd libero-download-assets --skip-existing
     reset_libero_config
@@ -2450,6 +2453,7 @@ install_d4rl_env() {
 
 install_liberopro_env() {
     uv pip install rlinf-libero rlinf-liberopro
+    uv pip install --no-deps mujoco==3.3.0
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberopro
     retry_cmd libero-download-assets --skip-existing
@@ -2459,6 +2463,7 @@ install_liberopro_env() {
 
 install_liberoplus_env() {
     uv pip install rlinf-libero "rlinf-liberoplus>=0.1.3"
+    uv pip install --no-deps mujoco==3.3.0
     materialize_package_files rlinf-libero
     materialize_package_files rlinf-liberoplus
     retry_cmd libero-download-assets --skip-existing
