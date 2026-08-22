@@ -1,6 +1,6 @@
 defaults:
-  - env/realworld_peg_insertion@env.train
-  - env/realworld_peg_insertion@env.eval
+  - env/realworld_block_peg_insertion@env.train
+  - env/realworld_block_peg_insertion@env.eval
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -50,17 +50,23 @@ runner:
 
   only_eval: False
   val_check_interval: -1
-  save_interval: -1
+  save_interval: 5000
+  # Console / metrics.log Metric Table interval (TensorBoard is still every step).
+  log_interval: 10
 
   # Resume a saved Stage2 training run from a full RLinf checkpoint directory.
   # Do not point this to the Stage1 OpenPI checkpoint.
+  # Leave null to start Stage2 heads from scratch. Do not point this at a
+  # previous Stage2 run if you only want the old replay buffer.
   resume_dir: null
   # Optional single Stage2 weight file, e.g. actor/model_state_dict/full_weights.pt.
   # For normal Stage2 training from scratch, keep this null.
   ckpt_path: null
 
 algorithm:
-  update_epoch: 8
+  # Paper UTD G≈5. Each critical phase adds ~20–30 transitions, so one ingest
+  # schedules ~100–150 updates (25×5), not 8000 on the loaded buffer.
+  update_epoch: 5
   group_size: 1
   agg_q: min
   actor_agg_q: q1
@@ -71,9 +77,38 @@ algorithm:
   loss_type: rlt_ac
   loss_agg_func: "token-mean"
 
-  # RLT Stage2 actor loss: -q_weight * Q + bc_weight * BC.
+  # Realworld critical phase ≈ 20–30 transitions / press-'b' segment.
+  # Do NOT catch-up thousands of updates on load_path (335). Last two runs
+  # overfit that tiny set, |π−ref|→0.02, arm froze, gripper still moved.
+  rlt_transition_replay: True
+  rlt_schedule:
+    enable: True
+    # load_path has 335. Wait for ~3 extra critical phases (~75–90 new rows)
+    # of VLA+human before any gradient. skip_reason=1 until then.
+    warmup_min_size: 150
+    # After buffer is ready: 150 BC-only updates, then MLP may take over.
+    # max_updates=2 → ~75 Global Steps, not 8000 burned in 5 minutes.
+    warmup_post_collect_updates: 150
+    train_every_transitions: 1
+    train_every_episodes: 0
+    # Cap burst: 25 new rows → pending=125, drained 2/step while the next
+    # episode runs. Effective UTD ≈ 5.
+    max_updates_per_train_step: 5
+
+  # RLT Stage2 actor loss: -q_weight * Q + bc_weight * BC (paper Eq.5, β=bc).
   q_weight: 0.1
   bc_weight: 5
+
+  actor_weight_schedule:
+    enable: True
+    # Keep Q at 0 until takeover. Even q_weight=0.1 overpowered BC once
+    # critic_loss collapsed to 1e-3 on 350 rows (weighted_q > weighted_bc by GS50).
+    warmup_updates: 150
+    ramp_updates: 1000
+    warmup_bc_weight: 5.0
+    warmup_q_weight: 0.02
+    online_bc_weight: 1.5
+    online_q_weight: 0.05
 
   # Reference-action dropout on the actor input, as in RLT Stage2.
   reference_dropout_prob: 0.5
@@ -93,10 +128,14 @@ algorithm:
 
   replay_buffer:
     enable_cache: True
-    cache_size: 200
+    cache_size: 2000
     min_buffer_size: 2
-    sample_window_size: 200
+    sample_window_size: 2000
     auto_save: False
+    # Preload previous online transitions without loading old MLP weights.
+    # Point at rank_0/ or its parent replay_buffer/ directory.
+    # Must keep runner.resume_dir null.
+    # load_path: /path/to/replay_buffer
 
   target_update_freq: 1
   target_update_type: all
@@ -114,19 +153,20 @@ env:
     auto_reset: True
     ignore_terminations: False
     keyboard_reward_wrapper: rlt_policy_switch
-    max_episode_steps: 300
-    max_steps_per_rollout_epoch: 300
+    max_episode_steps: 720
+    max_steps_per_rollout_epoch: 720
     use_spacemouse: True
     use_gello: False
     use_pico: False
-    no_gripper: False
+    no_gripper: True
     override_cfg:
       is_dummy: False
       use_dense_reward: False
       reward_scale: 1.0
-      max_num_steps: 300
+      max_num_steps: 720
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
+      enable_camera_player: False
 
   eval:
     rollout_epoch: 1
@@ -134,14 +174,14 @@ env:
     auto_reset: True
     ignore_terminations: False
     keyboard_reward_wrapper: rlt_policy_switch
-    max_episode_steps: 100
-    max_steps_per_rollout_epoch: 100
+    max_episode_steps: 720
+    max_steps_per_rollout_epoch: 720
     use_fixed_reset_state_ids: False
     group_size: 1
     use_spacemouse: True
     use_gello: False
     use_pico: False
-    no_gripper: False
+    no_gripper: True
     override_cfg:
       is_dummy: False
       use_dense_reward: False
@@ -149,8 +189,9 @@ env:
       max_num_steps: 300
       target_ee_pose: TARGET_EE_POSE
       success_hold_steps: 1
+      enable_camera_player: False
     video_cfg:
-      save_video: True
+      save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
 
 rollout:
@@ -181,7 +222,7 @@ rollout:
     model_type: "openpi_rlinf"
     precision: bf16
     is_lora: False
-    num_action_chunks: 20
+    num_action_chunks: 10
     action_dim: 7
     num_steps: 4
     add_value_head: False
@@ -189,11 +230,13 @@ rollout:
     model_path: "/path/to/stage1/checkpoint"
     openpi_data:
       # Must match the repo_id/config_name used to compute Stage1 OpenPI norm stats.
-      repo_id: "realworld_peg_insertion_rlt_stage1"
+      repo_id: "realworld_franka_pni"
+      # Optional override; defaults to assets under the OpenPI checkpoint.
+      # norm_stats_path: "/path/to/norm_stats"
     openpi:
       task: eval
-      config_name: "pi05_franka_state"
-      num_images_in_input: 1
+      config_name: "pi05_realworld"
+      num_images_in_input: 2
       action_chunk: ${actor.model.ref_num_action_chunks}
       action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
       action_env_dim: ${rollout.rlt_feature_model.action_dim}
@@ -220,8 +263,9 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
 
-  micro_batch_size: 256
-  global_batch_size: 256
+  # Buffer grows ~25/episode; 256 would resample most of the set every step.
+  micro_batch_size: 64
+  global_batch_size: 64
   seed: 1234
   enable_offload: False
 
@@ -243,7 +287,7 @@ actor:
     proprio_dim: 19
     action_dim: 7
     num_action_chunks: 10
-    ref_num_action_chunks: 20
+    ref_num_action_chunks: 10
 
   optim:
     clip_grad: 10.0

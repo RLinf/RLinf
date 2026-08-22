@@ -96,6 +96,9 @@ class FrankaRobotConfig:
     binary_gripper_threshold: float = 0.5
     enable_gripper_penalty: bool = True
     gripper_penalty: float = 0.1
+    # When True: reset/init must not open/close the gripper; runtime actions
+    # keep it closed via GripperCloseEnv (action dim still 7D with force -1).
+    no_gripper: bool = False
     save_video_path: Optional[str] = None
     joint_reset_cycle: int = 20000  # Number of resets before resetting joints
     task_description: str = ""
@@ -805,7 +808,11 @@ class FrankaEnv(gym.Env):
         self._controller.clear_errors().wait()
 
     def _binary_gripper_action(self, position: float) -> bool:
-        """Execute a scaled binary gripper command."""
+        """Execute a scaled binary gripper command.
+
+        With ``no_gripper=True``, never open; only close if currently open so
+        the jaw stays shut during the episode without a reset open/close cycle.
+        """
         if (
             position <= -self.config.binary_gripper_threshold
             and self._franka_state.gripper_open
@@ -813,6 +820,8 @@ class FrankaEnv(gym.Env):
             self._controller.close_gripper().wait()
             time.sleep(0.6)
             return True
+        if self.config.no_gripper:
+            return False
         if (
             position >= self.config.binary_gripper_threshold
             and not self._franka_state.gripper_open

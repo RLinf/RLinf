@@ -129,6 +129,22 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi05_base",
     ),
     TrainConfig(
+        name="pi05_realworld",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=False
+        ),
+        data=LeRobotRealworldDataConfig(
+            repo_id="realworld_franka_pni",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+            extra_delta_transform=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
         name="pi0_maniskill",
         model=pi0_config.Pi0Config(),
         data=LeRobotManiSkillDataConfig(

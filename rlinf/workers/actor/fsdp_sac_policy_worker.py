@@ -60,6 +60,39 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.update_step = 0
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
+    def _load_replay_buffer_from_path(self, load_path: str) -> None:
+        """Load online replay without restoring actor/critic weights.
+
+        ``load_path`` may be either:
+          - the per-rank directory (contains ``metadata.json``), or
+          - the parent ``replay_buffer/`` directory that contains ``rank_{n}/``.
+        """
+        rank_dir = os.path.join(load_path, f"rank_{self._rank}")
+        if os.path.isfile(os.path.join(rank_dir, "metadata.json")):
+            resolved = rank_dir
+            distributed = False
+        elif os.path.isfile(os.path.join(load_path, "metadata.json")):
+            resolved = load_path
+            distributed = self._world_size > 1
+        else:
+            raise FileNotFoundError(
+                "algorithm.replay_buffer.load_path must point to a saved buffer "
+                f"directory with metadata.json, got {load_path!r} "
+                f"(also checked {rank_dir!r})"
+            )
+        self.replay_buffer.load_checkpoint(
+            resolved,
+            is_distributed=distributed,
+            local_rank=self._rank,
+            world_size=self._world_size,
+        )
+        self.logger.info(
+            "Loaded replay buffer from %s (size=%s, total_samples=%s)",
+            resolved,
+            len(self.replay_buffer),
+            self.replay_buffer.total_samples,
+        )
+
     def init_worker(self):
         self.setup_model_and_optimizer(initialize_target=True)
         self.setup_sac_components()
@@ -190,6 +223,9 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 "trajectory_format", "pt"
             ),
         )
+        replay_load_path = self.cfg.algorithm.replay_buffer.get("load_path", None)
+        if replay_load_path:
+            self._load_replay_buffer_from_path(replay_load_path)
 
         min_demo_buffer_size = 0
         if self.cfg.algorithm.get("demo_buffer", None) is not None:
