@@ -347,7 +347,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.1 本地 Hugging Face 推理
 ............................
 
-不设置 ``reward.worker_type``（默认 ``model``，使用 ``EmbodiedRewardWorker``）。
+不设置 ``reward.worker_type`` （默认 ``model``，使用 ``EmbodiedRewardWorker``）。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward.yaml``：
 
 .. code-block:: yaml
@@ -398,7 +398,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
 3.4.2 SGLang API 推理
 .....................
 
-设置 ``reward.worker_type: api``（``EmbodiedAPIRewardWorker``）。可指向外部
+设置 ``reward.worker_type: api`` （``EmbodiedAPIRewardWorker``）。可指向外部
 OpenAI-compatible endpoint，或留空 ``reward.api.api_base`` 并由 RLinf 按
 :doc:`../guides/sglang_server` 拉起 Ray 托管的 SGLang server/router。
 参考 ``maniskill_ppo_mlp_vlm_trend_reward_sglang.yaml``：
@@ -569,7 +569,7 @@ SGLang 路径额外说明：
 - ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数。两个阈值均达到时停止采集。
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
-- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage`` （或任务对应的 ``stage``）以启用键盘标注界面。
 - ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 
@@ -899,3 +899,27 @@ SpaceMouse 控制说明：
 
 与 :doc:`../examples/embodied/franka_reward_model` 中的完整 RL 流程相比，
 遥操作脚本不运行策略、actor 或 rollout worker——它纯粹是人在回路的 reward model 评估。
+
+
+Franka + Qwen VLM Reward Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+在 Franka 真机平台上，也可以使用 Qwen3-VL 作为 VLM reward model，通过**动作趋势判断**
+来引导机械臂学习。与仿真场景一次性判断整段视频不同，真机场景下 VLM 每 5 帧构成一个
+历史窗口，判断窗口内机械臂的运动趋势是 ``positive`` （靠近目标）、``negative`` （远离目标）
+还是 ``unclear`` （无法判断），并将趋势标签转换为标量 reward：
+
+.. code-block:: text
+
+   VLM 输出          Reward 值        含义
+   ─────────────────────────────────────────
+   positive          1.0              动作趋势正确，正向奖励
+   negative          -0.2             动作趋势错误，轻微惩罚
+   unclear           0.0              趋势不明确，不给信号
+
+同时通过 ``gt_success_bonus`` 在机械臂到达目标时追加 +20.0 的巨大奖励，
+帮助 Agent 明确认知"成功状态"。
+
+完整流程包括三个阶段：真机数据采集 → VLM trend 数据预处理 + Qwen3-VL LoRA 微调 →
+RLPD 训练中接入 VLM reward model 在线推理。配置示例与详细步骤请参见
+:doc:`../examples/embodied/franka_reward_model`。

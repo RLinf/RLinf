@@ -923,3 +923,29 @@ Inside ``TeleopWorker``:
 Compared with the full RL pipeline in :doc:`../examples/embodied/franka_reward_model`,
 the teleop script runs no policy, no actor, and no rollout worker — it is purely
 human-in-the-loop evaluation of the reward model.
+
+Franka + Qwen VLM Reward Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+On the Franka real-world platform, Qwen3-VL can also serve as a VLM reward model
+that guides the robot arm through **action trend judgment**. Unlike simulation
+where the VLM evaluates an entire video clip as success/failure, the real-world
+VLM uses 5-frame sliding history windows to judge whether the robot's motion trend
+is ``positive`` (moving toward the target), ``negative`` (moving away), or
+``unclear`` (indeterminate), then converts the trend label into a scalar reward:
+
+.. code-block:: text
+
+   VLM Output         Reward Value    Meaning
+   ─────────────────────────────────────────────
+   positive           1.0             Correct trend, positive signal
+   negative           -0.2            Wrong trend, mild penalty
+   unclear            0.0             Ambiguous trend, no signal
+
+A ``gt_success_bonus`` of +20.0 is added when the robot reaches the target,
+helping the RL agent strongly associate the success state with high reward.
+
+The full pipeline has three stages: real-world data collection → VLM trend
+preprocessing + Qwen3-VL LoRA fine-tuning → RLPD training with online VLM reward
+inference. See :doc:`../examples/embodied/franka_reward_model` for detailed
+configuration and step-by-step instructions.
