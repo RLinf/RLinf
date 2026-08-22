@@ -256,16 +256,21 @@ def train_state_teacher(cfg: DictConfig) -> None:
         "mean": mean.astype(float).tolist(),
         "std": std.astype(float).tolist(),
     }
-    model = nn.Sequential(
-        *make_mlp(
-            state_dim * history_size,
-            [int(cfg.hidden_dim)] * int(cfg.num_layers) + [1],
-            act_builder=nn.SiLU,
-            last_act=False,
-            use_layer_norm=True,
-            dropout=float(cfg.dropout),
-        )
+    model_layers = make_mlp(
+        state_dim * history_size,
+        [int(cfg.hidden_dim)] * int(cfg.num_layers) + [1],
+        act_builder=nn.SiLU,
+        last_act=False,
+        use_layer_norm=True,
     )
+    if cfg.dropout > 0:
+        layers_with_dropout = []
+        for layer in model_layers:
+            layers_with_dropout.append(layer)
+            if isinstance(layer, nn.SiLU):
+                layers_with_dropout.append(nn.Dropout(float(cfg.dropout)))
+        model_layers = layers_with_dropout
+    model = nn.Sequential(*model_layers)
     device = torch.device(str(cfg.device) if torch.cuda.is_available() else "cpu")
     model.to(device)
     loader = DataLoader(

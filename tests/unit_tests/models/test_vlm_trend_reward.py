@@ -15,7 +15,6 @@ import torch
 from examples.reward.preprocess_vlm_trend_reward_dataset import (
     build_terminal_success_rows,
 )
-from rlinf.models.embodiment.modules.utils import make_mlp
 from rlinf.models.embodiment.reward.vlm_reward_model import (
     BufferedVLMRewardModel,
     ScalarPotentialHead,
@@ -38,15 +37,6 @@ class _HiddenModel:
 class _IdentityHead:
     def __call__(self, features: torch.Tensor) -> torch.Tensor:
         return features.squeeze(-1)
-
-
-def test_make_mlp_dropout_is_opt_in() -> None:
-    layers = make_mlp(2, [3, 1], last_act=False, dropout=0.1)
-    assert sum(isinstance(layer, torch.nn.Dropout) for layer in layers) == 1
-    assert not any(
-        isinstance(layer, torch.nn.Dropout)
-        for layer in make_mlp(2, [3, 1], last_act=False)
-    )
 
 
 def test_terminal_success_rows_use_online_windows_without_balancing(tmp_path) -> None:

@@ -1005,16 +1005,22 @@ def load_value_model(
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint["config"]
     channels = [int(config["hidden_dim"])] * int(config["num_layers"]) + [1]
-    model = nn.Sequential(
-        *make_mlp(
-            int(config["state_dim"]) * int(config["history_size"]),
-            channels,
-            act_builder=nn.SiLU,
-            last_act=False,
-            use_layer_norm=True,
-            dropout=float(config.get("dropout", 0.0)),
-        )
-    ).to(device)
+    model_layers = make_mlp(
+        int(config["state_dim"]) * int(config["history_size"]),
+        channels,
+        act_builder=nn.SiLU,
+        last_act=False,
+        use_layer_norm=True,
+    )
+    dropout = float(config.get("dropout", 0.0))
+    if dropout > 0:
+        layers_with_dropout = []
+        for layer in model_layers:
+            layers_with_dropout.append(layer)
+            if isinstance(layer, nn.SiLU):
+                layers_with_dropout.append(nn.Dropout(dropout))
+        model_layers = layers_with_dropout
+    model = nn.Sequential(*model_layers).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return (
