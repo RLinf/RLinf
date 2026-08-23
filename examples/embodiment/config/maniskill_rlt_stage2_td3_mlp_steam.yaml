@@ -300,11 +300,12 @@ rollout:
       enable: True
       mode: active
     chunk_size: 10
-    # Short history removes fixed entry latency; the stricter score threshold
-    # limits broad low-progress triggers until trace-based calibration is rerun.
+    # Experimental base-to-actor threshold selected by the latest geometry
+    # calibration run. The run was marked infeasible, so validate this profile
+    # with the gate metrics before using it as a production setting.
     lookback_chunks: 2
     patience_chunks: 1
-    enter_threshold: -0.1
+    enter_threshold: -0.789205
     latch_until_done: True
     main_image_key: image
     wrist_image_key: wrist_image
