@@ -18,6 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from rlinf.algorithms.rlt.gate_calibration import RLTGateTraceWriter
+from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -516,8 +517,13 @@ class RLTACReplayMixin:
                 for field_name in dict_fields:
                     value = flat.get(field_name)
                     if isinstance(value, dict):
+                        row_value = self._row_tensor_dict(value, idx)
+                        if field_name == "forward_inputs":
+                            row_value.pop(RLT_PHASE_FEATURE_KEY, None)
                         setattr(
-                            transition, field_name, self._row_tensor_dict(value, idx)
+                            transition,
+                            field_name,
+                            row_value,
                         )
 
                 curr_obs = self._rlt_obs_from_flat_dict(flat, "curr_obs", idx)

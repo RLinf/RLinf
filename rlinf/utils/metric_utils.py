@@ -119,6 +119,22 @@ def collect_trajectory_replay_metrics(
             "geometry_critical_active_count",
         ),
         (
+            "replay/steam_phase_probability_mean",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "rlt_gate_phase_probability"
+            ),
+            "steam_phase_probability_sum",
+            "steam_phase_probability_count",
+        ),
+        (
+            "replay/steam_phase_variance_mean",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "rlt_gate_phase_prediction_variance"
+            ),
+            "steam_phase_variance_sum",
+            "steam_phase_variance_count",
+        ),
+        (
             "replay/actual_base_action_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "actual_base_action"

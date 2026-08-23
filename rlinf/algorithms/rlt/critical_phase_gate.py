@@ -21,6 +21,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
+from rlinf.algorithms.rlt.phase_head import SteamPhaseHead
 from rlinf.data.datasets.steam import BinaryPairDataCollator
 from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
 
@@ -31,6 +32,8 @@ RLT_GATE_INFO_KEYS = (
     "rlt_gate_score_min",
     "rlt_gate_score_mean",
     "rlt_gate_prediction_variance",
+    "rlt_gate_phase_probability",
+    "rlt_gate_phase_prediction_variance",
     "rlt_gate_steam_critical_active",
     "rlt_gate_actor_active",
     "rlt_route_base_active",
@@ -57,6 +60,7 @@ class GateDecision:
     actor_switch: torch.Tensor
     expert_requested: torch.Tensor
     diagnostics: dict[str, torch.Tensor]
+    phase_features: torch.Tensor | None = None
 
 
 @dataclass
@@ -85,6 +89,9 @@ class _GatePrediction:
     score_min: torch.Tensor
     score_mean: torch.Tensor
     prediction_variance: torch.Tensor
+    phase_probability: torch.Tensor
+    phase_prediction_variance: torch.Tensor
+    phase_features: torch.Tensor | None
 
 
 class SteamCriticalPhaseGate:
@@ -106,11 +113,69 @@ class SteamCriticalPhaseGate:
             )
         # Keep the legacy attribute for callers inspecting an old-style config.
         self.mode = self.actor_mode
+        self.actor_source = str(
+            (actor_cfg or {}).get("source", "progress")
+            if actor_cfg is not None
+            else "progress"
+        )
+        if self.actor_source not in ("progress", "phase_head"):
+            raise ValueError(
+                "critical phase gate actor_switch.source must be "
+                "'progress' or 'phase_head'"
+            )
         self.chunk_size = int(cfg.get("chunk_size", 10))
         self.lookback_chunks = int(cfg.get("lookback_chunks", 3))
-        self.patience_chunks = int(cfg.get("patience_chunks", 2))
-        self.enter_threshold = float(cfg.get("enter_threshold", 0.0))
+        configured_patience = (actor_cfg or {}).get(
+            "patience_chunks",
+            cfg.get("patience_chunks", None),
+        )
+        configured_threshold = (actor_cfg or {}).get(
+            "enter_threshold",
+            cfg.get("enter_threshold", None),
+        )
+        self.patience_chunks = int(
+            2 if configured_patience is None else configured_patience
+        )
+        self.enter_threshold = float(
+            0.0 if configured_threshold is None else configured_threshold
+        )
         self.latch_until_done = bool(cfg.get("latch_until_done", True))
+        self.emit_phase_features = bool(
+            (actor_cfg or {}).get("collect_phase_features", False)
+        )
+        self.phase_head = None
+        self.phase_head_metadata: dict[str, Any] = {}
+        phase_head_path = (actor_cfg or {}).get("phase_head_path", None)
+        if phase_head_path:
+            if not os.path.exists(os.fspath(phase_head_path)):
+                raise FileNotFoundError(
+                    f"STEAM phase-head checkpoint not found: {phase_head_path}"
+                )
+            self.phase_head, self.phase_head_metadata = SteamPhaseHead.from_checkpoint(
+                phase_head_path,
+                device=self.device,
+            )
+            self.phase_head.eval()
+            self.phase_head.requires_grad_(False)
+        if self.actor_source == "phase_head" and self.phase_head is None:
+            raise ValueError(
+                "actor_switch.source=phase_head requires actor_switch.phase_head_path"
+            )
+        if self.actor_source == "phase_head":
+            if configured_threshold is None:
+                self.enter_threshold = float(
+                    self.phase_head_metadata.get(
+                        "recommended_enter_threshold",
+                        0.5,
+                    )
+                )
+            if configured_patience is None:
+                self.patience_chunks = int(
+                    self.phase_head_metadata.get(
+                        "recommended_patience_chunks",
+                        1,
+                    )
+                )
         self.camera_mapping = {
             str(cfg.get("main_image_key", "image")): "main_images",
             str(cfg.get("wrist_image_key", "wrist_image")): "wrist_images",
@@ -179,13 +244,19 @@ class SteamCriticalPhaseGate:
 
     def eval(self) -> None:
         self.model.eval()
+        if self.phase_head is not None:
+            self.phase_head.eval()
 
     def requires_grad_(self, requires_grad: bool):
         self.model.requires_grad_(requires_grad)
+        if self.phase_head is not None:
+            self.phase_head.requires_grad_(requires_grad)
         return self
 
     def to(self, device):
         self.model.to(device)
+        if self.phase_head is not None:
+            self.phase_head.to(device)
         self._states.clear()
         return self
 
@@ -400,22 +471,60 @@ class SteamCriticalPhaseGate:
             )
         observation = self._collator.collate_observations(samples)
         observation = self._to_device(observation, self.device)
-        output = self.model.predict(observation)
-        score_min = output.predicted_values.to(dtype=torch.float32)
-        score_mean = getattr(output, "prediction_mean", None)
-        if score_mean is None:
-            score_mean = score_min
+        need_phase_features = self.emit_phase_features or self.phase_head is not None
+        members = getattr(self.model, "members", None)
+        phase_features = None
+        if need_phase_features and members is not None:
+            member_outputs = [member.predict(observation) for member in members]
+            member_scores = torch.stack(
+                [output.predicted_values for output in member_outputs],
+                dim=0,
+            ).to(dtype=torch.float32)
+            score_min = member_scores.min(dim=0).values
+            score_mean = member_scores.mean(dim=0)
+            prediction_variance = member_scores.var(dim=0, unbiased=False)
+            phase_features = torch.stack(
+                [output.hidden_states for output in member_outputs],
+                dim=0,
+            )
         else:
-            score_mean = score_mean.to(dtype=torch.float32)
-        prediction_variance = getattr(output, "prediction_variance", None)
-        if prediction_variance is None:
-            prediction_variance = torch.zeros_like(score_min)
-        else:
-            prediction_variance = prediction_variance.to(dtype=torch.float32)
+            output = self.model.predict(observation)
+            score_min = output.predicted_values.to(dtype=torch.float32)
+            score_mean = getattr(output, "prediction_mean", None)
+            if score_mean is None:
+                score_mean = score_min
+            else:
+                score_mean = score_mean.to(dtype=torch.float32)
+            prediction_variance = getattr(output, "prediction_variance", None)
+            if prediction_variance is None:
+                prediction_variance = torch.zeros_like(score_min)
+            else:
+                prediction_variance = prediction_variance.to(dtype=torch.float32)
+            if need_phase_features:
+                hidden_states = getattr(output, "hidden_states", None)
+                if hidden_states is None:
+                    raise RuntimeError(
+                        "STEAM phase-head collection requires fused hidden_states"
+                    )
+                phase_features = hidden_states.unsqueeze(0)
+
+        phase_probability = torch.zeros_like(score_min)
+        phase_prediction_variance = torch.zeros_like(score_min)
+        if self.phase_head is not None:
+            if phase_features is None:
+                raise RuntimeError("STEAM phase head requires fused features")
+            phase_prediction = self.phase_head.predict(phase_features)
+            phase_probability = phase_prediction.probability.to(torch.float32)
+            phase_prediction_variance = phase_prediction.prediction_variance.to(
+                torch.float32
+            )
         return _GatePrediction(
             score_min=score_min,
             score_mean=score_mean,
             prediction_variance=prediction_variance,
+            phase_probability=phase_probability,
+            phase_prediction_variance=phase_prediction_variance,
+            phase_features=phase_features,
         )
 
     @torch.no_grad()
@@ -495,14 +604,31 @@ class SteamCriticalPhaseGate:
                 prediction.prediction_variance,
                 torch.zeros_like(prediction.prediction_variance),
             )
+            phase_probability = torch.where(
+                ready,
+                prediction.phase_probability,
+                torch.zeros_like(prediction.phase_probability),
+            )
+            phase_prediction_variance = torch.where(
+                ready,
+                prediction.phase_prediction_variance,
+                torch.zeros_like(prediction.phase_prediction_variance),
+            )
+            phase_features = prediction.phase_features
         else:
             score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
             score_mean = torch.zeros_like(score)
             prediction_variance = torch.zeros_like(score)
+            phase_probability = torch.zeros_like(score)
+            phase_prediction_variance = torch.zeros_like(score)
+            phase_features = None
 
-        low_progress = ready & (score <= self.enter_threshold)
+        if self.actor_source == "phase_head":
+            actor_candidate = ready & (phase_probability >= self.enter_threshold)
+        else:
+            actor_candidate = ready & (score <= self.enter_threshold)
         state.low_progress_count = torch.where(
-            low_progress,
+            actor_candidate,
             state.low_progress_count + 1,
             torch.zeros_like(state.low_progress_count),
         )
@@ -519,7 +645,7 @@ class SteamCriticalPhaseGate:
         if self.latch_until_done:
             state.latched = state.latched | enter_now
         else:
-            state.latched = (state.latched | enter_now) & low_progress
+            state.latched = (state.latched | enter_now) & actor_candidate
 
         steam_critical_active = state.latched
         if self.controls_actor_routing:
@@ -601,6 +727,8 @@ class SteamCriticalPhaseGate:
             "rlt_gate_score_min": score[:, None],
             "rlt_gate_score_mean": score_mean[:, None],
             "rlt_gate_prediction_variance": prediction_variance[:, None],
+            "rlt_gate_phase_probability": phase_probability[:, None],
+            "rlt_gate_phase_prediction_variance": phase_prediction_variance[:, None],
             "rlt_gate_steam_critical_active": steam_critical_active[:, None],
             "rlt_gate_actor_active": actor_active[:, None],
             "rlt_route_base_active": (~(route_actor_active | route_expert_active))[
@@ -621,10 +749,27 @@ class SteamCriticalPhaseGate:
             "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
         }
         state.chunk_index = state.chunk_index + 1
+        emitted_phase_features = None
+        if self.emit_phase_features:
+            if phase_features is None:
+                model_config = getattr(self.model, "config", None)
+                feature_dim = int(getattr(model_config, "fusion_hidden_dim", 512)) * (
+                    int(getattr(model_config, "num_frames_per_pair", 2)) + 1
+                )
+                ensemble_size = int(getattr(model_config, "ensemble_size", 1))
+                phase_features = torch.zeros(
+                    ensemble_size,
+                    batch_size,
+                    feature_dim,
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+            emitted_phase_features = phase_features.permute(1, 0, 2).detach()
         return GateDecision(
             actor_switch=route_flags[:, None],
             expert_requested=route_expert_flags[:, None],
             diagnostics=diagnostics,
+            phase_features=emitted_phase_features,
         )
 
 

@@ -300,6 +300,10 @@ rollout:
     actor_switch:
       enable: False
       mode: active
+      source: progress
+      # Save frozen ensemble features for offline phase-head training. These
+      # temporary features are excluded from the TD3 replay buffer.
+      collect_phase_features: True
     chunk_size: 10
     # Short history removes fixed entry latency; the stricter score threshold
     # limits broad low-progress triggers until trace-based calibration is rerun.

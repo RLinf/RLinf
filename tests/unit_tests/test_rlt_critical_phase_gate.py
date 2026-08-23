@@ -25,6 +25,7 @@ def _make_hybrid_gate() -> SteamCriticalPhaseGate:
     gate.model = torch.nn.Linear(1, 1)
     gate.actor_switch_enabled = False
     gate.actor_mode = "active"
+    gate.actor_source = "progress"
     gate.mode = "active"
     gate.chunk_size = 10
     gate.lookback_chunks = 1
@@ -37,6 +38,8 @@ def _make_hybrid_gate() -> SteamCriticalPhaseGate:
     gate.expert_warmup_chunks = 1
     gate.expert_patience_chunks = 1
     gate.expert_latch_until_done = True
+    gate.emit_phase_features = False
+    gate.phase_head = None
     gate._states = {}
     gate._extract_images = lambda _: {"image": np.zeros((2, 2, 2, 3), dtype=np.uint8)}
     gate._extract_prompts = lambda _obs, batch_size: ["task"] * batch_size
@@ -44,6 +47,9 @@ def _make_hybrid_gate() -> SteamCriticalPhaseGate:
         score_min=torch.full((2,), -0.5),
         score_mean=torch.full((2,), -0.5),
         prediction_variance=torch.zeros(2),
+        phase_probability=torch.zeros(2),
+        phase_prediction_variance=torch.zeros(2),
+        phase_features=None,
     )
     return gate
 
@@ -135,4 +141,31 @@ def test_steam_critical_phase_remains_recordable_during_actor_warmup():
     assert torch.equal(
         decision.expert_requested,
         torch.zeros((2, 1), dtype=torch.bool),
+    )
+
+
+def test_phase_head_probability_controls_actor_switch():
+    gate = _make_hybrid_gate()
+    gate.actor_switch_enabled = True
+    gate.actor_source = "phase_head"
+    gate.enter_threshold = 0.7
+    gate._predict_pair = lambda _state, _prompts: SimpleNamespace(
+        score_min=torch.ones(2),
+        score_mean=torch.ones(2),
+        prediction_variance=torch.zeros(2),
+        phase_probability=torch.tensor([0.8, 0.6]),
+        phase_prediction_variance=torch.zeros(2),
+        phase_features=None,
+    )
+
+    gate.step({}, mode="train", stage_id=0)
+    decision = gate.step({}, mode="train", stage_id=0)
+
+    assert torch.equal(
+        decision.actor_switch,
+        torch.tensor([[True], [False]]),
+    )
+    assert torch.equal(
+        decision.diagnostics["rlt_gate_phase_probability"],
+        torch.tensor([[0.8], [0.6]]),
     )

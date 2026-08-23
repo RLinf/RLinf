@@ -21,6 +21,7 @@ from typing import Any
 
 import torch
 
+from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.data.schema.embodied_types import Trajectory
 
 RLT_GATE_TRACE_KEYS = (
@@ -33,6 +34,8 @@ RLT_GATE_TRACE_KEYS = (
     "rlt_gate_score_min",
     "rlt_gate_score_mean",
     "rlt_gate_prediction_variance",
+    "rlt_gate_phase_probability",
+    "rlt_gate_phase_prediction_variance",
     "rlt_gate_steam_critical_active",
     "rlt_gate_actor_active",
     "actual_base_action",
@@ -134,6 +137,19 @@ class RLTGateTraceWriter:
             value = forward_inputs.get(key)
             if isinstance(value, torch.Tensor):
                 trace[key] = self._step_tensor(value, steps=steps, batch=batch)
+        phase_features = forward_inputs.get(RLT_PHASE_FEATURE_KEY)
+        if isinstance(phase_features, torch.Tensor):
+            if phase_features.ndim != 4 or phase_features.shape[:2] != (
+                steps,
+                batch,
+            ):
+                raise ValueError(
+                    "STEAM phase features must have shape [T, B, E, D], got "
+                    f"{tuple(phase_features.shape)}"
+                )
+            trace[RLT_PHASE_FEATURE_KEY] = (
+                phase_features.detach().cpu().to(torch.float16).contiguous()
+            )
 
         if isinstance(trajectory.rewards, torch.Tensor):
             rewards = trajectory.rewards.detach().cpu()
