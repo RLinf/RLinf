@@ -26,11 +26,72 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
+        self._is_streamingvla = (
+            SupportedModel(cfg.actor.model.model_type) == SupportedModel.STREAMINGVLA
+        )
+        self._streamingvla_step_inputs: Any | None = None
+        if self._is_streamingvla:
+            from rlinf.models.embodiment.streamingvla.training import (
+                seed_streamingvla_training,
+            )
+
+            rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+            seed_streamingvla_training(cfg.actor.seed, rank)
         super().__init__(cfg)
+        if self._is_streamingvla:
+            from rlinf.models.embodiment.streamingvla.training import (
+                StreamingVLAStepInputBuffer,
+            )
+
+            self._configure_streamingvla_grad_norm_group()
+            self._streamingvla_step_inputs = StreamingVLAStepInputBuffer(
+                seed=cfg.actor.seed,
+                rank=self._rank,
+                local_batch_size=self.global_batch_size // self._world_size,
+                action_dim=int(cfg.actor.model.streamingvla.model_action_dim),
+                device=self.device,
+            )
+
+    def _configure_streamingvla_grad_norm_group(
+        self, process_group: Any | None = None
+    ) -> None:
+        """Use the full FSDP world group for StreamingVLA gradient clipping."""
+        if not self._is_streamingvla:
+            return
+        if self._strategy._dp_group is not None:
+            return
+        if process_group is None:
+            if not torch.distributed.is_initialized():
+                raise RuntimeError(
+                    "StreamingVLA FSDP gradient clipping requires an initialized "
+                    "distributed process group."
+                )
+            process_group = torch.distributed.group.WORLD
+        self._strategy._dp_group = process_group
+
+    def set_global_step(self, global_step: int) -> None:
+        """Set the step and prepare partition-invariant StreamingVLA RNG inputs."""
+        super().set_global_step(global_step)
+        if not self._is_streamingvla:
+            return
+
+        if self._streamingvla_step_inputs is None:
+            raise RuntimeError("StreamingVLA step-input buffer was not initialized.")
+        self._streamingvla_step_inputs.set_step(global_step)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
-        if model_type == SupportedModel.OPENPI_RLINF:
+        if model_type == SupportedModel.STREAMINGVLA:
+            from rlinf.models.embodiment.streamingvla.data import (
+                build_streamingvla_dataloader,
+            )
+
+            if eval_dataset:
+                raise NotImplementedError(
+                    "StreamingVLA validation is not implemented in the SFT-only integration."
+                )
+            return build_streamingvla_dataloader(self.cfg, self._world_size)
+        elif model_type == SupportedModel.OPENPI_RLINF:
             from rlinf.data.datasets.openpi_rlinf import (
                 build_openpi_rlinf_sft_dataloader,
             )
@@ -86,8 +147,25 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
+        model_kwargs: dict[str, Any] = {}
+        if self._is_streamingvla:
+            if self._streamingvla_step_inputs is None:
+                raise RuntimeError(
+                    "StreamingVLA step-input buffer was not initialized."
+                )
+            actions = batch[1] if isinstance(batch, (tuple, list)) else batch["actions"]
+            time, noise = self._streamingvla_step_inputs.next_micro_batch(
+                int(actions.shape[0])
+            )
+            model_kwargs = {
+                "time": time,
+                "noise": noise,
+            }
+
         with self.amp_context:
-            output = self.model(forward_type=ForwardType.SFT, data=batch)
+            output = self.model(
+                forward_type=ForwardType.SFT, data=batch, **model_kwargs
+            )
 
         if isinstance(output, torch.Tensor):
             loss = output
@@ -130,6 +208,18 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
+
+        if self._is_streamingvla:
+            checkpoint_dir = os.path.basename(os.path.dirname(load_path))
+            prefix = "global_step_"
+            if checkpoint_dir.startswith(prefix):
+                if self._streamingvla_step_inputs is None:
+                    raise RuntimeError(
+                        "StreamingVLA step-input buffer was not initialized."
+                    )
+                self._streamingvla_step_inputs.set_step(
+                    int(checkpoint_dir.removeprefix(prefix))
+                )
 
         if isinstance(self.data_loader, StatefulDataLoader):
             all_states = torch.load(

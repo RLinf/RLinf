@@ -101,7 +101,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "streamingvla" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1957,15 +1957,19 @@ install_openpi_model() {
     # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
     uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
 
-    # Replace transformers models with OpenPI's modified versions
-    local py_major_minor
-    py_major_minor=$(python - <<'EOF'
+    # The legacy OpenPI model still needs its source-tree Transformers overlay.
+    # StreamingVLA uses RLinf's self-contained Gemma/SigLIP implementation and
+    # must not overwrite the installed Transformers package.
+    if [ "$MODEL" = "openpi" ]; then
+        local py_major_minor
+        py_major_minor=$(python - <<'EOF'
 import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")
 EOF
-)
-    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
-        "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
+        )
+        cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
+            "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
+    fi
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     # rlinf-openpi pulls rlinf-transformer-openpi (a transformers 4.53 fork) into
@@ -1975,6 +1979,18 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+}
+
+install_streamingvla_model() {
+    case "$ENV_NAME" in
+        libero)
+            install_openpi_model
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for StreamingVLA model. Only libero is supported." >&2
+            exit 1
+            ;;
+    esac
 }
 
 install_molmoact2_model() {
@@ -3185,6 +3201,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                streamingvla)
+                    install_streamingvla_model
                     ;;
                 molmoact2)
                     install_molmoact2_model
