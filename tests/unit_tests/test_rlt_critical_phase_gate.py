@@ -105,3 +105,34 @@ def test_enabled_steam_actor_switch_owns_critical_phase():
         decision.actor_switch,
         torch.ones((2, 1), dtype=torch.bool),
     )
+
+
+def test_steam_critical_phase_remains_recordable_during_actor_warmup():
+    gate = _make_hybrid_gate()
+    gate.actor_switch_enabled = True
+
+    gate.step(
+        {},
+        mode="train",
+        stage_id=0,
+        actor_routing_enabled=False,
+    )
+    decision = gate.step(
+        {},
+        mode="train",
+        stage_id=0,
+        actor_routing_enabled=False,
+    )
+
+    assert torch.equal(
+        decision.actor_switch,
+        torch.ones((2, 1), dtype=torch.bool),
+    )
+    assert torch.equal(
+        decision.diagnostics["rlt_gate_actor_active"],
+        torch.zeros((2, 1), dtype=torch.bool),
+    )
+    assert torch.equal(
+        decision.expert_requested,
+        torch.zeros((2, 1), dtype=torch.bool),
+    )

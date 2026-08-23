@@ -523,14 +523,14 @@ class SteamCriticalPhaseGate:
 
         steam_critical_active = state.latched
         if self.controls_actor_routing:
-            actor_active = steam_critical_active
+            critical_phase_active = steam_critical_active
         else:
-            actor_active = self._normalize_actor_switch(
+            critical_phase_active = self._normalize_actor_switch(
                 external_actor_switch,
                 batch_size=batch_size,
                 device=self.device,
             )
-        actor_active = actor_active & bool(actor_routing_enabled)
+        actor_active = critical_phase_active & bool(actor_routing_enabled)
         actor_started_now = actor_active & (~state.actor_active)
         state.actor_active = actor_active
         state.critical_chunk_count = torch.where(
@@ -569,7 +569,10 @@ class SteamCriticalPhaseGate:
             state.expert_latched = (
                 state.expert_latched | expert_enter_now
             ) & expert_low_progress
-        route_flags = actor_active
+        # Preserve the critical-phase signal during learner warmup so those
+        # chunks enter replay. SimulatorRLTRoute independently prevents actor
+        # execution until the warmup updates are complete.
+        route_flags = critical_phase_active
         route_expert_flags = state.expert_latched & actor_active
         if self.expert_mode == "shadow":
             route_expert_flags = torch.zeros_like(route_expert_flags)

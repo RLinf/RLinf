@@ -102,6 +102,37 @@ def test_simulator_route_records_mutually_exclusive_action_sources():
     )
 
 
+def test_simulator_route_records_critical_transition_during_warmup():
+    student_actions = torch.ones((2, 2, 2))
+    base_actions = torch.zeros((2, 2, 2))
+    result = {
+        "forward_inputs": {"ref_chunk": base_actions.reshape(2, -1)},
+    }
+    route = SimulatorRLTRoute(use_schedule=True, warmup_updates=30_000)
+
+    output = route.route(
+        RLTRouteContext(
+            env_obs={},
+            rlt_obs={"ref_chunk": base_actions.reshape(2, -1)},
+            student_actions=student_actions,
+            result=result,
+            mode="train",
+            rlt_switch_flags=torch.tensor([[False], [True]]),
+            version=0,
+        )
+    )
+
+    assert torch.equal(output.actions, base_actions)
+    assert torch.equal(
+        output.result["forward_inputs"]["record_transition"],
+        torch.tensor([[False], [True]]),
+    )
+    assert torch.equal(
+        output.result["forward_inputs"]["actual_base_action"],
+        torch.ones((2, 1), dtype=torch.bool),
+    )
+
+
 def test_rollout_preserves_geometry_actor_switch_with_steam_expert_gate():
     geometry_actor = torch.tensor([[False], [True]])
 
