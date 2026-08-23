@@ -28,6 +28,32 @@ from .collective_group import (
 )
 
 
+def _empty_pinned(
+    shape: torch.Size, dtype: torch.dtype, device_type: str
+) -> torch.Tensor:
+    """Allocate contiguous page-locked host memory for an accelerator tensor.
+
+    ``pin_memory=True`` pins against the default accelerator, which some
+    out-of-tree backends (torch_musa) do not register until something has
+    pinned for them by name. They return ordinary pageable memory instead of
+    failing, silently costing the DMA the caller asked for, so pin by device
+    name when that happens.
+
+    Args:
+        shape (torch.Size): The shape of the buffer.
+        dtype (torch.dtype): The dtype of the buffer.
+        device_type (str): The accelerator device type to pin for.
+
+    Returns:
+        torch.Tensor: A contiguous pinned host buffer.
+
+    """
+    buffer = torch.empty(shape, dtype=dtype, pin_memory=True)
+    if buffer.is_pinned():
+        return buffer
+    return torch.empty(shape, dtype=dtype).pin_memory(device_type)
+
+
 class MultiChannelProcessGroup:
     """A wrapper class for multiple dist.ProcessGroup that supports multi-channel communication.
 
@@ -351,7 +377,7 @@ class MultiChannelProcessGroup:
             # available. Not empty_like: it keeps the destination's strides,
             # while GLOO fills the buffer's storage linearly, which scrambles
             # a dense but non-contiguous destination.
-            recv_tensor = torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
+            recv_tensor = _empty_pinned(tensor.shape, tensor.dtype, tensor.device.type)
         group = (
             self._recv_accel_ccl_process_groups[channel_id]
             if device == CollectiveGroup.ACCEL and not self._no_accel_ccl
@@ -395,8 +421,8 @@ class MultiChannelProcessGroup:
                 # Not empty_like: it keeps the destination's strides, while
                 # GLOO fills the buffer's storage linearly, which scrambles a
                 # dense but non-contiguous destination.
-                broadcast_tensor = torch.empty(
-                    tensor.shape, dtype=tensor.dtype, pin_memory=True
+                broadcast_tensor = _empty_pinned(
+                    tensor.shape, tensor.dtype, tensor.device.type
                 )
 
         group = (
@@ -437,7 +463,7 @@ class MultiChannelProcessGroup:
         """
         if tensor.device.type == "cpu":
             return tensor.contiguous()
-        pinned = torch.empty(tensor.shape, dtype=tensor.dtype, pin_memory=True)
+        pinned = _empty_pinned(tensor.shape, tensor.dtype, tensor.device.type)
         pinned.copy_(tensor)
         return pinned
 

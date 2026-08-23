@@ -113,6 +113,7 @@ class MultiStepRolloutWorker(Worker):
                 // self.model_cfg.num_action_chunks
             )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.version = 0
         self.finished_episodes = None
 
@@ -721,6 +722,24 @@ class MultiStepRolloutWorker(Worker):
                 merge_fn=self._merge_obs_batches,
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
+            if not self.collect_final_values:
+                policy_output = PolicyOutput(
+                    versions=torch.zeros_like(
+                        result["prev_logprobs"], dtype=torch.float32
+                    ),
+                )
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=policy_output,
+                    tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
+                    batch_size=self.train_batch_size,
+                    split_fn=self._split_policy_output,
+                )
+                continue
+
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
