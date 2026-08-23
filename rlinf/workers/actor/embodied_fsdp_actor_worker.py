@@ -661,24 +661,11 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             "critic_warmup": self.optimizer_steps < self.critic_warmup_steps,
         }
 
-        model_type = SupportedModel(self.cfg.actor.model.model_type)
-        dual_clip_default = (
-            3.0
-            if model_type
-            in [
-                SupportedModel.GR00T_N1D6,
-                SupportedModel.GR00T_N1D7,
-            ]
-            else None
-        )
-        clip_ratio_c = self.cfg.algorithm.get("clip_ratio_c", dual_clip_default)
-        if clip_ratio_c is not None:
-            loss_kwargs["clip_ratio_c"] = clip_ratio_c
-
-        if model_type in [
+        if SupportedModel(self.cfg.actor.model.model_type) in [
             SupportedModel.GR00T_N1D6,
             SupportedModel.GR00T_N1D7,
         ]:
+            loss_kwargs["clip_ratio_c"] = self.cfg.algorithm.get("clip_ratio_c", 3.0)
             if self.cfg.algorithm.get("clip_log_ratio_min") is not None:
                 loss_kwargs["clip_log_ratio_min"] = (
                     self.cfg.algorithm.clip_log_ratio_min

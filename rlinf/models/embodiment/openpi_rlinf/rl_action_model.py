@@ -42,8 +42,10 @@ class OpenPiPytorchRLConfig:
     ignore_last: bool = False
     value_after_vlm: bool = False
     value_vlm_mode: str = "mean_token"
-    value_mask_mode: str = "valid"
-    num_images_in_input: int = 3
+    # ``None`` preserves the upstream BEHAVIOR path exactly. LIBERO can opt
+    # into the fixed image/language prefix mask explicitly in its model template.
+    value_mask_mode: str | None = None
+    num_images_in_input: int | None = None
     detach_critic_input: bool = False
     train_expert_only: bool = False
     config_name: str = ""
@@ -168,6 +170,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         # Mirror Pi0.sample_actions' invariant: every prefix / suffix pass sees
         # the preprocessed observation (image resize/pad + default masks).
         observation = pi0_model_module.preprocess_observation(observation, train=False)
+        observation = self._canonicalize_libero_observation(observation)
         B = observation.state.shape[0]
         num_steps = self.num_steps
 
@@ -185,15 +188,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
 
         # VLM-pooled Pi0.5 value: one value per sample, reused as the
         # rollout ``prev_values`` independent of the chosen denoise index.
-        vlm_value = rl_sampler.value_from_prefix(
-            self.value_head,
-            prefix_out,
-            prefix_mask,
-            mode=rl_cfg.value_vlm_mode,
-            mask_mode=rl_cfg.value_mask_mode,
-            num_images_in_input=rl_cfg.num_images_in_input,
-            max_token_len=self.model.max_token_len,
-        )
+        vlm_value = self._value_from_prefix(prefix_out, prefix_mask)
 
         # Single stochastic denoise step picked uniformly; the remaining steps
         # are deterministic flow_ode. ``denoise_inds[:, 0]`` is the read site
@@ -317,6 +312,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
             tokenized_prompt=forward_inputs["tokenized_prompt"],
             tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
         )
+        observation = self._canonicalize_libero_observation(observation)
 
         # Grad-enabled prefix pass — the VLM value head reads ``prefix_out``
         # so gradients must flow through paligemma here.
@@ -361,15 +357,7 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
         )
 
         if compute_values and rl_cfg.add_value_head and rl_cfg.value_after_vlm:
-            values = rl_sampler.value_from_prefix(
-                self.value_head,
-                prefix_out,
-                prefix_mask,
-                mode=rl_cfg.value_vlm_mode,
-                mask_mode=rl_cfg.value_mask_mode,
-                num_images_in_input=rl_cfg.num_images_in_input,
-                max_token_len=self.model.max_token_len,
-            )
+            values = self._value_from_prefix(prefix_out, prefix_mask)
         else:
             values = torch.zeros(B, device=device, dtype=torch.float32)
 
@@ -379,6 +367,54 @@ class OpenPiPytorchRLActionModel(OpenPiPytorchEvalActionModel):
             "values": values.float(),
             "entropy": entropy,
         }
+
+    def _value_from_prefix(
+        self, prefix_out: torch.Tensor, prefix_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute the critic value without changing the upstream default path."""
+        if self.rl_cfg.value_mask_mode is None:
+            return rl_sampler.value_from_prefix(
+                self.value_head,
+                prefix_out,
+                prefix_mask,
+                mode=self.rl_cfg.value_vlm_mode,
+            )
+        return rl_sampler.value_from_prefix(
+            self.value_head,
+            prefix_out,
+            prefix_mask,
+            mode=self.rl_cfg.value_vlm_mode,
+            mask_mode=self.rl_cfg.value_mask_mode,
+            num_images_in_input=self.rl_cfg.num_images_in_input,
+            max_token_len=self.model.max_token_len,
+        )
+
+    def _canonicalize_libero_observation(self, observation: Observation) -> Observation:
+        """Keep LIBERO image token order local to the LIBERO PPO wrapper."""
+        if "libero" not in self.config_name.lower():
+            return observation
+        missing_images = [
+            key for key in pi0_model_module.IMAGE_KEYS if key not in observation.images
+        ]
+        missing_masks = [
+            key
+            for key in pi0_model_module.IMAGE_KEYS
+            if key not in observation.image_masks
+        ]
+        if missing_images or missing_masks:
+            raise ValueError(
+                "LIBERO OpenPI PPO inputs are missing canonical images: "
+                f"images={missing_images}, masks={missing_masks}."
+            )
+        return dataclasses.replace(
+            observation,
+            images={
+                key: observation.images[key] for key in pi0_model_module.IMAGE_KEYS
+            },
+            image_masks={
+                key: observation.image_masks[key] for key in pi0_model_module.IMAGE_KEYS
+            },
+        )
 
     def freeze_vlm(self) -> int:
         """Freeze the PaliGemma VLM (vision + expert-0 of the LLM) for PPO.

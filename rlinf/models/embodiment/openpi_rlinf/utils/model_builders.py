@@ -159,6 +159,12 @@ def _build_rl_model(
         cfg.model_path, config_name, data_kwargs=_resolve_data_kwargs(cfg)
     )
 
+    value_mask_mode = OmegaConf.select(model_cfg, "value_mask_mode", default=None)
+    num_images_in_input = (
+        int(OmegaConf.select(model_cfg, "num_images_in_input", default=3))
+        if value_mask_mode is not None
+        else None
+    )
     rl_cfg = OpenPiPytorchRLConfig(
         add_value_head=bool(OmegaConf.select(cfg, "add_value_head", default=False)),
         noise_method=str(
@@ -173,12 +179,8 @@ def _build_rl_model(
         value_vlm_mode=str(
             OmegaConf.select(model_cfg, "value_vlm_mode", default="mean_token")
         ),
-        value_mask_mode=str(
-            OmegaConf.select(model_cfg, "value_mask_mode", default="valid")
-        ),
-        num_images_in_input=int(
-            OmegaConf.select(model_cfg, "num_images_in_input", default=3)
-        ),
+        value_mask_mode=(str(value_mask_mode) if value_mask_mode is not None else None),
+        num_images_in_input=num_images_in_input,
         detach_critic_input=bool(
             OmegaConf.select(model_cfg, "detach_critic_input", default=False)
         ),

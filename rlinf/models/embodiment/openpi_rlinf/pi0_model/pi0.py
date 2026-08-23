@@ -180,8 +180,8 @@ class Pi0(model.BaseModel):
         input_mask = []
         ar_mask = []
 
-        # Image position is part of the Pi0 prefix contract.
-        for name in model.IMAGE_KEYS:
+        # Embed images through SigLIP
+        for name in obs.images:
             image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
             tokens.append(image_tokens)
 

@@ -130,10 +130,10 @@ def value_from_prefix(
     """Pool ``prefix_out`` with ``prefix_mask`` and run ``value_head`` → ``[B]``.
 
     ``mask_mode="valid"`` averages over the observation's actual prefix mask.
-    ``mask_mode="legacy_openpi"`` reproduces the legacy PPO wrapper, which
-    selects the first ``num_images_in_input`` image blocks and the complete
-    fixed-width language block. Other value pooling modes raise loudly rather
-    than silently producing a different critic input.
+    ``mask_mode="configured_images"`` selects the first
+    ``num_images_in_input`` image blocks and the complete fixed-width language
+    block. Other value pooling modes raise loudly rather than silently
+    producing a different critic input.
     """
     if mode != "mean_token":
         raise NotImplementedError(
@@ -142,10 +142,10 @@ def value_from_prefix(
         )
     if mask_mode == "valid":
         value_mask = prefix_mask
-    elif mask_mode == "legacy_openpi":
+    elif mask_mode == "configured_images":
         if num_images_in_input is None or max_token_len is None:
             raise ValueError(
-                "legacy_openpi value pooling requires num_images_in_input and "
+                "configured_images value pooling requires num_images_in_input and "
                 "max_token_len."
             )
         num_image_slots = 3
@@ -178,7 +178,7 @@ def value_from_prefix(
     else:
         raise ValueError(
             f"Unknown OpenPI value mask mode {mask_mode!r}; supported modes are "
-            "'valid' and 'legacy_openpi'."
+            "'valid' and 'configured_images'."
         )
 
     mask_f = value_mask.to(prefix_out.dtype).unsqueeze(-1)
