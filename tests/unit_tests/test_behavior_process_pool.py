@@ -301,7 +301,10 @@ def _build_reset_process(num_envs=4):
         )
 
     vector_env.reset = reset
-    process = BehaviorProcess.__new__(BehaviorProcess)
+    # ``BehaviorProcess`` is a ``@ray.remote`` ActorClass, so ``__new__`` must go
+    # through the underlying plain class it wraps (CPU-only tests, no cluster).
+    process_cls = BehaviorProcess.__ray_metadata__.modified_class
+    process = process_cls.__new__(process_cls)
     process.env = vector_env
     process.instance_loader = _ResetFakeLoader()
     process.group_size = 4
@@ -327,7 +330,12 @@ def test_behavior_process_reset_paths_apply_metadata_and_selected_prepare():
     assert process.instance_loader.calls[-1] == ([1, 3], None, 1)
     assert children[0].reset_calls == []
     assert children[2].reset_calls == []
-    assert process._first_chunk_action_override_pending.tolist() == [False, True, False, True]
+    assert process._first_chunk_action_override_pending.tolist() == [
+        False,
+        True,
+        False,
+        True,
+    ]
 
     process._first_chunk_action_override_pending[:] = False
     raw_obs, infos = process.reset([0, 2])
@@ -352,7 +360,27 @@ def test_behavior_process_reset_without_obs_restores_stage_and_does_not_arm_on_f
     process, children = _build_reset_process()
 
     assert process.reset([False, True, False, True], get_obs=False) == (None, None)
-    assert all(child.task.task_reward.current_stage_idx == 2 for child in children[1::2])
+    assert all(
+        child.task.task_reward.current_stage_idx == 2 for child in children[1::2]
+    )
+    assert process._first_chunk_action_override_pending.tolist() == [
+        False,
+        True,
+        False,
+        True,
+    ]
+
+    process, children = _build_reset_process()
+    explicit_payload = [
+        {"reset": False},
+        {"reset": True, "instance_id": 41},
+        {"reset": False},
+        {"reset": True, "instance_id": 43},
+    ]
+    assert process.reset(explicit_payload, get_obs=False) == (None, None)
+    assert all(
+        child.task.task_reward.current_stage_idx == 2 for child in children[1::2]
+    )
     assert process._first_chunk_action_override_pending.tolist() == [False, True, False, True]
 
     process, children = _build_reset_process()

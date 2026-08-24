@@ -20,6 +20,7 @@ for the PR3 reset-path crash (KeyError: 'done').
 """
 
 import pytest
+import torch
 
 
 def _extract_info_done(info):
@@ -120,3 +121,23 @@ class TestExtractInfoDone:
             }
         }
         assert _extract_info_done(info) is False
+
+
+def test_replay_metrics_keep_metadata_rows_aligned(monkeypatch):
+    from rlinf.envs.behavior.behavior_env import BehaviorEnv
+
+    monkeypatch.setattr(BehaviorEnv, "device", property(lambda _self: "cpu"))
+    env = BehaviorEnv.__new__(BehaviorEnv)
+    env.record_metrics = True
+    env.success_stage_idx = None
+    env.returns = torch.zeros(2)
+    env.success_once = torch.zeros(2, dtype=torch.bool)
+    env.prev_step_reward = torch.zeros(2)
+
+    infos = [
+        {"replay_init": {"source_instance_id": 7}},
+        {},
+    ]
+    result = env._record_metrics(torch.zeros(2), infos)
+
+    assert result["replay_init"]["source_instance_id"].tolist() == [7, 0]

@@ -103,3 +103,33 @@ def test_task_descriptions_from_infos_uses_override_first():
     )
 
     assert descriptions == ["press radio", "press radio"]
+
+
+def test_task_descriptions_from_infos_updates_global_rows_on_partial_reset():
+    stage_prompt_lists = [None, None, None, None]
+    infos = [
+        {
+            "reward": {"task_specific": {"current_stage_idx": 0}},
+            "replay_init": {"replay_stage_prompts": ["row one"]},
+        },
+        {
+            "reward": {"task_specific": {"current_stage_idx": 1}},
+            "replay_init": {"replay_stage_prompts": ["first", "row three"]},
+        },
+    ]
+
+    descriptions = task_descriptions_from_infos(
+        num_envs=4,
+        prompt_override=None,
+        use_subtask_prompt=True,
+        task_description="turn on radio",
+        stage_prompt_lists=stage_prompt_lists,
+        infos=infos,
+        env_indices=[1, 3],
+    )
+
+    assert descriptions == ["turn on radio\nrow one", "turn on radio\nrow three"]
+    assert stage_prompt_lists[0] is None
+    assert stage_prompt_lists[1] == ["row one"]
+    assert stage_prompt_lists[2] is None
+    assert stage_prompt_lists[3] == ["first", "row three"]
