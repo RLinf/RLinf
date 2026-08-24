@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Preprocess VLM trend reward data into split train/eval pkl datasets.
+"""Preprocess VLM Trend reward data into split train/eval pkl datasets.
 
 Example:
     python examples/reward/preprocess_vlm_trend_reward_dataset.py \
@@ -163,36 +163,34 @@ def _build_reversed_negative_sample(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compute_tcp_distance_scores(
-    observations: list[dict[str, Any]],
-    target_ee_pose: list[float],
+def _scores_have_signal(values: Any) -> bool:
+    """Return whether a score sequence contains a non-zero value."""
+    if values is None or len(values) == 0:
+        return False
+    return any(_to_scalar(value) != 0.0 for value in values)
+
+
+def _compute_tcp_distance_scores(
+    observations: list[dict[str, Any]], target_ee_pose: list[float]
 ) -> list[float]:
-    """Compute progress scores from TCP-to-target distance.
+    """Return negative TCP-to-target distances in centimeters."""
+    if len(target_ee_pose) < 3:
+        raise ValueError("target_ee_pose must contain at least x, y, and z.")
 
-    Returns negative distances so that *higher* values mean *closer* to the
-    target.  The per-window delta ``end_score - start_score`` is then positive
-    when the robot is moving towards the hole and negative when moving away,
-    which matches the label expectations of ``load_episodes_with_labels``.
-
-    The *observations* are real-world env outputs where ``"states"`` is a
-    19-dim vector whose indices 4–6 hold the TCP (x, y, z) position.
-    """
     target_xyz = np.asarray(target_ee_pose[:3], dtype=np.float64)
     scores = []
-    for obs in observations:
-        states = obs.get("states")
+    for index, observation in enumerate(observations):
+        states = observation.get("states")
         if states is None:
-            scores.append(0.0)
-            continue
-        if hasattr(states, "detach"):
+            raise ValueError(f"Observation {index} is missing 'states'.")
+        if torch.is_tensor(states):
             states = states.detach().cpu().numpy()
         states = np.asarray(states, dtype=np.float64).reshape(-1)
-        if len(states) < 7:
-            scores.append(0.0)
-            continue
-        tcp_xyz = states[4:7]
-        dist_cm = float(np.linalg.norm(tcp_xyz - target_xyz)) * 100.0
-        scores.append(-dist_cm)  # negative cm so delta > 0 when moving closer
+        if states.size < 7:
+            raise ValueError(
+                f"Observation {index} has {states.size} state values; expected at least 7."
+            )
+        scores.append(-float(np.linalg.norm(states[4:7] - target_xyz)) * 100.0)
     return scores
 
 
@@ -221,18 +219,26 @@ def load_episodes_with_labels(
                 episode = pickle.load(f)
 
             observations = episode.get("observations", [])
-            score_values = episode.get("gae", None)
+            score_values = episode.get("gae")
             score_source = "gae"
-            if score_values is None or len(score_values) == 0:
-                # Fallback: when no GAE, prefer TCP distance if target is known
-                if target_ee_pose is not None and observations:
-                    score_values = compute_tcp_distance_scores(
-                        observations, target_ee_pose
-                    )
-                    score_source = "tcp_distance"
-                else:
-                    score_values = episode.get("rewards", [])
-                    score_source = "rewards"
+            if (
+                score_values is None
+                or len(score_values) == 0
+                or (
+                    target_ee_pose is not None and not _scores_have_signal(score_values)
+                )
+            ):
+                score_values = episode.get("rewards", [])
+                score_source = "rewards"
+            if (
+                target_ee_pose is not None
+                and observations
+                and not _scores_have_signal(score_values)
+            ):
+                score_values = _compute_tcp_distance_scores(
+                    observations, target_ee_pose
+                )
+                score_source = "tcp_distance"
             seq_len = min(len(observations), len(score_values))
             if seq_len < window_size:
                 return None
@@ -476,7 +482,7 @@ def preprocess_and_save_reward_datasets(
     load_workers: int = 256,
     write_workers: int = 512,
 ) -> dict:
-    """Build train/eval VLM trend reward datasets from raw data."""
+    """Build train/eval VLM Trend reward datasets from raw data."""
     episodes = load_episodes_with_labels(
         raw_data_path,
         window_size=window_size,
@@ -554,7 +560,7 @@ def preprocess_and_save_reward_datasets(
                 "supervision": {
                     "label": sample["label"],
                     "score": sample["score"],
-                    "score_name": "gae_delta_window",
+                    "score_name": f"{sample['score_source']}_delta_window",
                     "score_source": sample["score_source"],
                     "delta_threshold": delta_threshold,
                     "start_gae": sample["start_gae"],
@@ -593,7 +599,7 @@ def preprocess_and_save_reward_datasets(
 
         label_counts = dict(Counter(row["answer"] for row in rows))
         logger.info(
-            f"Saved processed VLM trend reward {split_name} split to "
+            f"Saved processed VLM Trend reward {split_name} split to "
             f"{manifest_path}: {len(rows)}"
         )
         return manifest_path, label_counts
@@ -617,6 +623,7 @@ def preprocess_and_save_reward_datasets(
         "reverse_positive_as_negative": reverse_positive_as_negative,
         "fps": fps,
         "task_description": task_description,
+        "target_ee_pose": target_ee_pose,
         "random_seed": random_seed,
         "load_workers": load_workers,
         "write_workers": write_workers,
@@ -636,9 +643,24 @@ def preprocess_and_save_reward_datasets(
     return metadata
 
 
+def _parse_target_ee_pose(value: str) -> list[float]:
+    """Parse an XYZ or XYZ-plus-Euler target pose."""
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) not in (3, 6):
+        raise argparse.ArgumentTypeError(
+            "--target-ee-pose expects 3 or 6 comma-separated floats."
+        )
+    try:
+        return [float(part) for part in parts]
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            f"--target-ee-pose contains an invalid float: {error}"
+        ) from error
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Preprocess VLM trend reward dataset from raw episode .pkl files."
+        description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
     )
     parser.add_argument(
         "--raw-data-path",
@@ -767,38 +789,21 @@ def parse_args() -> argparse.Namespace:
         help="Fallback task description when raw episodes do not provide one.",
     )
     parser.add_argument(
+        "--target-ee-pose",
+        type=_parse_target_ee_pose,
+        default=None,
+        help=(
+            "Target pose as x,y,z or x,y,z,rx,ry,rz. When GAE and reward "
+            "signals are absent or all zero, TCP distance labels progress."
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
         help="Random seed for deterministic split and sampling.",
     )
-    parser.add_argument(
-        "--target-ee-pose",
-        type=str,
-        default=None,
-        help=(
-            "Target end-effector pose as comma-separated floats: either 3 values "
-            '"x,y,z" for position only, or 6 values "x,y,z,rx,ry,rz" with '
-            "orientation (which is ignored by the TCP-distance scorer). "
-            "When GAE and rewards are both absent or all-zero (common with "
-            "real-world sparse-reward collection), TCP-to-target distance is "
-            "used as the progress signal."
-        ),
-    )
-    args = parser.parse_args()
-    # Accepts 3 values (position only) or 6 values (position + orientation).
-    if args.target_ee_pose is not None:
-        parts = [x.strip() for x in args.target_ee_pose.split(",")]
-        if len(parts) not in (3, 6):
-            parser.error(
-                "--target-ee-pose expects 3 (x,y,z) or 6 (x,y,z,rx,ry,rz) "
-                "comma-separated floats, got %d: %s" % (len(parts), parts)
-            )
-        try:
-            args.target_ee_pose = [float(x) for x in parts]
-        except ValueError as e:
-            parser.error(f"Invalid float in --target-ee-pose: {e}")
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:
@@ -828,7 +833,7 @@ def main() -> None:
     )
 
     print("=" * 80)
-    print("VLM trend reward dataset preprocessing complete")
+    print("Dual-view trend reward dataset preprocessing complete")
     print(
         f"Train split: {metadata['train_manifest']} "
         f"({metadata['num_train_samples']} samples)"

@@ -162,30 +162,23 @@ def launch_sglang_router_and_server(
             placement_strategy=router_ps,
         )
 
-    try:
-        router_handle = router_group.init_router() if router_group is not None else None
-        server_handle = server_group.init_server() if server_group is not None else None
+    router_handle = router_group.init_router() if router_group is not None else None
+    server_handle = server_group.init_server() if server_group is not None else None
 
-        if server_handle is not None:
-            server_handle.wait()
-        if router_handle is not None:
-            router_handle.wait()
+    if server_handle is not None:
+        server_handle.wait()
+    if router_handle is not None:
+        router_handle.wait()
 
-        # Register every server with the running router. Done from the
-        # driver (serialized) so the order of attached workers is stable —
-        # if you want concurrent registration, call from N workers instead.
-        if server_group is not None and router_group is not None:
-            server_urls = server_group.get_server_url().wait()
-            for url in server_urls:
-                router_group.register_server(url).wait()
+    # Register every server with the running router. Done from the
+    # driver (serialized) so the order of attached workers is stable —
+    # if you want concurrent registration, call from N workers instead.
+    if server_group is not None and router_group is not None:
+        server_urls = server_group.get_server_url().wait()
+        for url in server_urls:
+            router_group.register_server(url).wait()
 
-        return server_group, router_group
-    except Exception:
-        if router_group is not None:
-            router_group.shutdown().wait()
-        if server_group is not None:
-            server_group.shutdown().wait()
-        raise
+    return server_group, router_group
 
 
 def get_sglang_api_url(server_group, router_group) -> str:

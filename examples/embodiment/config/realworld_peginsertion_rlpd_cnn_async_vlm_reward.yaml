@@ -80,7 +80,6 @@ algorithm:
 
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -116,19 +115,6 @@ algorithm:
 
   target_update_freq: 1
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 7
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
@@ -140,7 +126,7 @@ env:
       use_dense_reward: False
       reward_scale: 1.0
       max_num_steps: 50
-      target_ee_pose:  TARGET_EE_POSE # Replace with your target end-effector pose
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       camera_names:
         "SERIAL1": global
         "SERIAL2": wrist_1
@@ -150,7 +136,7 @@ env:
     total_num_envs: 1
     override_cfg:
       is_dummy: False
-      target_ee_pose:  TARGET_EE_POSE # Replace with your target end-effector pose
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
       camera_names:
         "SERIAL1": global
         "SERIAL2": wrist_1
@@ -219,7 +205,7 @@ reward:
   reward_threshold: 0.5
 
   model:
-    model_path: "/path/to/Qwen3-VL-4B-Instruct"
+    model_path: "/path/to/Qwen3-VL-4B-Instruct" # https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
     model_type: "buffered_vlm"
     lora_path: "/path/to/qwen3-vl-lora-checkpoint"
     gt_success_bonus: 20.0

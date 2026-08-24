@@ -284,9 +284,9 @@ for RL training.
    invalid            0.0             Unparseable output, no signal
 
 When the robot arm reaches the target pose and holds it (``terminated=True``),
-the environment writes a ``success`` flag into ``infos``, and ``gt_success_bonus``
-(default +20.0) adds a large bonus on top, helping the RL agent strongly
-associate the success state with high reward.
+``RealWorldEnv`` records ``success_once`` in the episode metrics passed to the
+reward model. ``gt_success_bonus`` (default +20.0) adds a large bonus on top,
+helping the RL agent strongly associate the success state with high reward.
 
 Overview
 --------
@@ -357,8 +357,8 @@ Collection Tips
      train:
        override_cfg:
          camera_names:
-           "CAMERA_SERIAL_1": "wrist_1"   # Replace with your wrist camera serial
-           "CAMERA_SERIAL_2": "global"     # Replace with your global camera serial
+           "SERIAL1": "global"    # Replace with your global camera serial
+           "SERIAL2": "wrist_1"   # Replace with your wrist camera serial
 
 Why two cameras:
 
@@ -393,7 +393,7 @@ set ``PYTHONPATH`` before running:
    export PYTHONPATH=${REPO_PATH}:$PYTHONPATH
 
 This script slices episodes into 5-frame windows, extracts dual-view images,
-and auto-labels based on GAE or TCP distance changes:
+and auto-labels based on GAE, reward, or TCP-distance changes:
 
 .. code-block:: bash
 
@@ -413,18 +413,6 @@ TCP-to-target distance as the trend signal:
        --output-dir /path/to/processed_vlm_trend_reward_data \
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ"
-
-A concrete example (using ``demo_data/collected_data`` and target pose
-``0.490,0.0,0.076,3.131,0.019,-0.063``):
-
-.. code-block:: bash
-
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-       --raw-data-path /data/reward_qwen_data/demo_data/collected_data \
-       --output-dir /data/reward_qwen_data/processed_vlm_trend_reward_data \
-       --window-size 5 \
-       --seed 42 \
-       --target-ee-pose "0.490,0.0,0.076,3.131,0.019,-0.063"
 
 Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose. To obtain it:
 
@@ -464,7 +452,7 @@ Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_vlm_trend_rewar
    actor:
      model:
        model_type: qwen3_vl
-       model_path: /data/reward_qwen_data/Qwen3-VL-4B-Instruct
+       model_path: /path/to/Qwen3-VL-4B-Instruct
        is_lora: true
        lora_rank: 16
        attn_implementation: flash_attention_2
@@ -507,7 +495,7 @@ as the RL training config. The core reward section:
      reward_threshold: 0.5
 
      model:
-       model_path: "/data/reward_qwen_data/Qwen3-VL-4B-Instruct"
+       model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "buffered_vlm"
        lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
        gt_success_bonus: 20.0
@@ -564,13 +552,13 @@ as the RL training config. The core reward section:
    * - ``env_reward_weight: 0.0``
      - The Franka native reward is sparse (1.0 only at target). Training relies primarily on VLM trend judgment. Success is rewarded via ``gt_success_bonus``.
    * - ``gt_success_bonus: 20.0``
-     - When the environment reports success (``infos["success"] = True``), adds +20.0 on top of the current step's VLM reward.
+     - Adds +20.0 when ``env_infos["episode"]["success_once"]`` reports success.
    * - ``history_buffers.history_window.history_keys``
      - ``[main_images, extra_view_images]`` — the history window caches frames from both camera views for VLM inference.
    * - ``history_buffers.history_window``
      - Caches the last 5 frames of ``main_images`` and ``extra_view_images``, triggers inference only after at least 5 frames.
    * - ``worker_type: model``
-     - Loads the model directly in the reward worker for local HuggingFace inference. Change to ``api`` for SGLang API inference.
+     - Loads the model directly in the reward worker for local HuggingFace inference.
 
 3.3 Reward Computation Flow
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -580,65 +568,37 @@ At each RL training step, the final reward is composed through the following pip
 .. code-block:: text
 
    FrankaEnv.step()
-     │
-     ├─ Native env reward (sparse: 0.0 or 1.0)
-     │
-     └─ infos = {"success": True}   ← written when target reached
-          │
+     -> native reward and termination
+          |
+          v
+   RealWorldEnv.step()
+     -> env_infos["episode"]["success_once"]
+          |
           v
    EnvWorker.get_reward_model_output()
-     │
-     ├─ HistoryManager accumulates frames, builds history_input
-     ├─ Sends reward_input to Reward worker
-     │
-     v
+     -> HistoryManager builds history_input
+     -> reward worker receives reward_input
+          |
+          v
    EmbodiedRewardWorker.compute_image_rewards()
-     │
-     ├─ HistoryVLMRewardModel.compute_reward()
-     │    ├─ min_history_size not met → returns 0.0
-     │    └─ Met → Qwen3-VL inference → parsed to ±1.0 / -0.2 / 0.0
-     │
-     └─ apply_gt_success_bonus()
-          └─ infos["success"] == True → +20.0
-          │
+     -> BufferedVLMRewardModel.compute_reward()
+        -> incomplete history: 0.0
+        -> complete history: Qwen3-VL parses to 1.0 / -0.2 / 0.0
+     -> apply_gt_success_bonus(): success_once adds 20.0
+          |
           v
    final_reward = env_reward_weight * env_reward
                 + reward_weight * vlm_reward_with_bonus
 
-3.4 Reward Timeline Example
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+3.4 Success Signal
+~~~~~~~~~~~~~~~~~~
 
-Assuming the robot arm starts far from the target, gradually approaches, and eventually reaches it (100 steps total):
+``FrankaEnv`` returns a sparse reward of 1.0 when the target is reached.
+``RealWorldEnv`` converts that reward into the sticky episode metric
+``success_once``. The env worker forwards the episode metrics to the reward
+model, where ``apply_gt_success_bonus`` reads ``success_once``.
 
-.. code-block:: text
-
-   Steps   VLM Trend      VLM Reward    gt_success_bonus    Final Reward
-   ─────────────────────────────────────────────────────────────────────
-   1-4     N/A (< min)     0.0             0                  0.0
-   5-20    unclear          0.0             0                  0.0
-   21-40   positive         1.0             0                  1.0
-   41-80   positive         1.0             0                  1.0
-   81-95   unclear          0.0             0                  0.0
-   96-100  positive         1.0             0                  1.0
-   100     positive         1.0            +20.0               21.0  ← Success!
-
-Because ``history_reward_assign: true``, each VLM inference result is back-assigned
-to every step in that history window.
-
-3.5 Franka Env Success Info
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-RLinf writes ``infos["success"]=True`` in ``franka_env.py`` when an episode
-terminates successfully. This lets ``gt_success_bonus`` work on the real robot
-without any extra env-side changes.
-
-.. note::
-
-   Configs that do not use ``gt_success_bonus`` (for example pure ResNet reward
-   scenarios) are unaffected because ``apply_gt_success_bonus`` skips when no
-   success flag is present.
-
-3.6 Starting Training
+3.5 Starting Training
 ~~~~~~~~~~~~~~~~~~~~~
 
 Once hardware deployment and configuration are verified, run on the Ray head node:
@@ -650,35 +610,3 @@ Once hardware deployment and configuration are verified, run on the Ray head nod
 
 After training starts, the logs will show VLM inference outputs, reward
 distributions, and success signals.
-
-3.7 Differences from Simulation (ManiSkill)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. list-table::
-   :header-rows: 1
-
-   * -
-     - Simulation (ManiSkill)
-     - Real-World (Franka)
-   * - **Reward source**
-     - VLM trend + gt_success_bonus (simulator provides automatically)
-     - VLM trend + gt_success_bonus (env writes ``infos["success"]`` on terminate)
-   * - **Parallel envs**
-     - 32 (many samples, high exploration)
-     - 1 (single robot, limited samples)
-   * - **env_reward_weight**
-     - 0.0 (VLM-only)
-     - 0.0 (VLM-only)
-   * - **VLM inference**
-     - SGLang API (``worker_type: api``)
-     - Local HuggingFace (``worker_type: model``)
-   * - **Task**
-     - PickCube
-     - Peg Insertion
-
-.. tip::
-
-   If the robot arm struggles to reach the success state early in training,
-   temporarily set ``env_reward_weight`` to a small value (e.g., 0.5) to let
-   the native sparse success signal help guide exploration. Revert to ``0.0``
-   once the policy achieves some success rate.
