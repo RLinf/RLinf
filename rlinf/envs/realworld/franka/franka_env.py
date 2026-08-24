@@ -367,11 +367,7 @@ class FrankaEnv(gym.Env):
 
         truncated = self._num_steps >= self.config.max_num_steps
         reward *= self.config.reward_scale
-        infos: dict = {}
-        if terminated:
-            infos["success"] = True
-
-        return observation, reward, terminated, truncated, infos
+        return observation, reward, terminated, truncated, {}
 
     @property
     def num_steps(self):

@@ -340,10 +340,7 @@ class EmbodiedRewardWorker(Worker):
         may override this method; they should return through
         :meth:`_format_reward_output` so env-side broadcasting stays consistent.
         """
-        result = self._format_reward_output(self.model.compute_reward(observations))
-        if result is not None:
-            self.log_debug(f"VLM reward: parsed={float(result.mean().item()):.3f}")
-        return result
+        return self._format_reward_output(self.model.compute_reward(observations))
 
     async def compute_rewards_async(
         self, input_channel: Channel, output_channel: Channel
