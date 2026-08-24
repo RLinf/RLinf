@@ -242,9 +242,28 @@ def dump_replay_tro_states(process, payload: dict) -> list[dict]:
     skipped_grasped = 0
 
     while pending_jobs:
-        batch_jobs = pending_jobs[: len(child_envs)]
-        pending_jobs = pending_jobs[len(child_envs) :]
-        env_indices = list(range(len(batch_jobs)))
+        if all("env_slot" in job for job in pending_jobs):
+            batch_jobs = []
+            env_indices = []
+            remaining_jobs = []
+            used_env_indices = set()
+            for job in pending_jobs:
+                env_idx = int(job["env_slot"])
+                if env_idx in used_env_indices:
+                    remaining_jobs.append(job)
+                    continue
+                if env_idx < 0 or env_idx >= len(child_envs):
+                    raise ValueError(
+                        f"Replay dump env_slot={env_idx} is outside process env range."
+                    )
+                batch_jobs.append(job)
+                env_indices.append(env_idx)
+                used_env_indices.add(env_idx)
+            pending_jobs = remaining_jobs
+        else:
+            batch_jobs = pending_jobs[: len(child_envs)]
+            pending_jobs = pending_jobs[len(child_envs) :]
+            env_indices = list(range(len(batch_jobs)))
         source_instance_ids = []
         attempt_jobs = []
         for job in batch_jobs:
@@ -269,13 +288,15 @@ def dump_replay_tro_states(process, payload: dict) -> list[dict]:
             reject_grasped_tro_states=reject_grasped,
         )
 
-        for env_idx, job, plan, info, rejection_reason in zip(
-            env_indices,
-            attempt_jobs,
-            plans,
-            final_infos,
-            rejection_reasons,
-            strict=True,
+        for batch_idx, (env_idx, job, plan, info, rejection_reason) in enumerate(
+            zip(
+                env_indices,
+                attempt_jobs,
+                plans,
+                final_infos,
+                rejection_reasons,
+                strict=True,
+            )
         ):
             output_instance_id = int(job["output_instance_id"])
             if rejection_reason is not None:
@@ -289,7 +310,7 @@ def dump_replay_tro_states(process, payload: dict) -> list[dict]:
                         f"{job['source_instance_id']}; last_rejection="
                         f"{rejection_reason}."
                     )
-                pending_jobs.append(batch_jobs[env_idx])
+                pending_jobs.append(batch_jobs[batch_idx])
                 continue
 
             child_env = unwrap_behavior_env(child_envs[env_idx])

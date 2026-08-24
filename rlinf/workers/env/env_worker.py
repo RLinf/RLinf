@@ -671,6 +671,7 @@ class EnvWorker(Worker):
                             "candidate_source_instance_ids": source_instance_ids,
                             "candidate_start_offset": state_idx,
                             "output_instance_id": output_start_instance_id + state_idx,
+                            "env_slot": local_slot,
                         }
                     )
 

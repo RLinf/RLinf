@@ -288,7 +288,7 @@ class BehaviorProcess:
                 actions[:, 0] = self._apply_first_chunk_action_override(
                     actions[:, 0], pending_mask
                 )
-            self._first_chunk_action_override_pending[:] = False
+            self._first_chunk_action_override_pending[pending_mask] = False
 
         child_envs = getattr(self.env, "envs", [])
         self.joint_tracer.log_all(child_envs, "pre_chunk", env_indices=env_indices)
@@ -326,9 +326,20 @@ class BehaviorProcess:
             # Full reset of all envs — use the fast vectorized path.
             self.instance_loader.prepare_reset(self.env)
             result = self._call_reset(get_obs=get_obs)
+            child_envs = getattr(self.env, "envs", [])
+            if isinstance(result, tuple) and len(result) == 2:
+                raw_obs, infos = result
+                infos = list(infos) if infos is not None else [{} for _ in child_envs]
+            else:
+                raw_obs, infos = None, [{} for _ in child_envs]
+            for env_idx, child_env in enumerate(child_envs):
+                infos[env_idx] = self._apply_replay_tro_metadata(
+                    child_env, infos[env_idx]
+                )
+            if self.first_chunk_action_override_enabled:
+                self._first_chunk_action_override_pending[:] = True
             if not get_obs:
                 return None, None
-            raw_obs, infos = result
             return list(raw_obs), list(infos)
 
         if reset_indices_or_payload and (
@@ -341,30 +352,23 @@ class BehaviorProcess:
             )
             if not reset_indices:
                 return [], []
-            if instance_ids is not None:
-                raw_obs, infos = self._reset_env_indices(
-                    reset_indices, instance_ids=instance_ids
-                )
-                return raw_obs, infos
-            self.instance_loader.prepare_reset(self.env)
-            result = self._call_reset(
-                reset_indices=reset_indices,
-                get_obs=get_obs,
+            if instance_ids is None and reset_indices == list(
+                range(len(getattr(self.env, "envs", [])))
+            ):
+                return self.reset(None, get_obs=get_obs)
+            return self._reset_env_indices(
+                reset_indices, instance_ids=instance_ids, get_obs=get_obs
             )
-            if not get_obs:
-                return None, None
-            raw_obs, infos = result
-            return list(raw_obs), list(infos)
 
         # Legacy format: list[int] — partial reset of selected env indices
         # (used by env_reset_slice which passes local_rows).
         reset_indices = reset_indices_or_payload
-        self.instance_loader.prepare_reset(self.env)
-        result = self._call_reset(reset_indices=reset_indices, get_obs=get_obs)
-        if not get_obs:
-            return None, None
-        raw_obs, infos = result
-        return list(raw_obs), list(infos)
+        child_envs = getattr(self.env, "envs", [])
+        if list(reset_indices) == list(range(len(child_envs))):
+            return self.reset(None, get_obs=get_obs)
+        return self._reset_env_indices(
+            list(reset_indices), instance_ids=None, get_obs=get_obs
+        )
 
     def _apply_replay_tro_metadata(self, child_env, info: dict | None) -> dict:
         """Inject RLinf replay metadata from tro_state into the env info dict.
@@ -378,7 +382,10 @@ class BehaviorProcess:
         return apply_replay_tro_metadata(unwrap_behavior_env(child_env), info)
 
     def _reset_env_indices(
-        self, reset_indices: list[int], instance_ids: list[int] | None = None
+        self,
+        reset_indices: list[int],
+        instance_ids: list[int] | None = None,
+        get_obs: bool = True,
     ):
         """Reset specific env slots, optionally to specific instance IDs.
 
@@ -389,17 +396,26 @@ class BehaviorProcess:
 
         child_envs = getattr(self.env, "envs", [])
         selected_env = SimpleNamespace(envs=[child_envs[i] for i in reset_indices])
-        reset_group_size = 1 if instance_ids is not None else self.group_size
+        # Partial auto-reset uses group_size=1 so unfinished episodes are never
+        # reloaded merely to satisfy grouped sampling.
         self.instance_loader.prepare_reset(
-            selected_env, instance_ids=instance_ids, group_size=reset_group_size
+            selected_env, instance_ids=instance_ids, group_size=1
         )
 
         raw_obs, infos = [], []
         for env_idx in reset_indices:
-            obs, info = child_envs[env_idx].reset(get_obs=True)
+            result = child_envs[env_idx].reset(get_obs=get_obs)
+            if isinstance(result, tuple) and len(result) == 2:
+                obs, info = result
+            else:
+                obs, info = None, result
             info = self._apply_replay_tro_metadata(child_envs[env_idx], info)
             raw_obs.append(obs)
             infos.append(info)
+        if self.first_chunk_action_override_enabled:
+            self._first_chunk_action_override_pending[reset_indices] = True
+        if not get_obs:
+            return None, None
         return raw_obs, infos
 
     def dump_replay_tro_states(self, payload: dict) -> list[dict]:
@@ -637,6 +653,64 @@ class BehaviorProcessPool:
                 all_raw_obs[pos] = obs
                 all_infos[pos] = info
         return all_raw_obs, all_infos
+
+    def dump_replay_tro_states_slice(
+        self, global_start: int, num_envs: int, payload: dict
+    ) -> list[dict]:
+        """Dispatch replay dump jobs to their mapped subprocess and local row."""
+        jobs = list(payload.get("jobs", []))
+        if not jobs:
+            return []
+        if num_envs <= 0:
+            raise ValueError("num_envs must be positive when dumping replay states.")
+
+        slot_map = {}
+        for sp, positions, local_rows in self._slice_plan(global_start, num_envs):
+            for position, local_row in zip(positions, local_rows, strict=True):
+                slot_map[position] = (sp, local_row)
+
+        jobs_by_process = [[] for _ in self.env_processes]
+        expected_ids = []
+        for job_idx, job in enumerate(jobs):
+            job_copy = copy.deepcopy(job)
+            env_slot = int(job_copy.get("env_slot", job_idx % num_envs))
+            if env_slot not in slot_map:
+                raise ValueError(
+                    f"Replay dump env_slot={env_slot} is outside slice "
+                    f"[0, {num_envs})."
+                )
+            process_idx, local_row = slot_map[env_slot]
+            job_copy["env_slot"] = local_row
+            jobs_by_process[process_idx].append(job_copy)
+            expected_ids.append(int(job_copy["output_instance_id"]))
+
+        if len(set(expected_ids)) != len(expected_ids):
+            raise ValueError("Replay dump jobs contain duplicate output_instance_id values.")
+
+        refs = []
+        for process_idx, process_jobs in enumerate(jobs_by_process):
+            if not process_jobs:
+                continue
+            process_payload = dict(payload)
+            process_payload["jobs"] = process_jobs
+            refs.append(
+                self.env_processes[process_idx].dump_replay_tro_states.remote(
+                    process_payload
+                )
+            )
+
+        merged = []
+        for sub_results in ray.get(refs):
+            merged.extend(sub_results)
+        result_ids = [int(result["output_instance_id"]) for result in merged]
+        if len(result_ids) != len(expected_ids) or set(result_ids) != set(expected_ids):
+            raise RuntimeError(
+                "Replay dump returned a different output_instance_id set than requested."
+            )
+        if len(set(result_ids)) != len(result_ids):
+            raise RuntimeError("Replay dump returned duplicate output_instance_id values.")
+        order = {output_id: index for index, output_id in enumerate(expected_ids)}
+        return sorted(merged, key=lambda result: order[int(result["output_instance_id"])])
 
     def env_chunk_step_slice(
         self,
@@ -1308,18 +1382,11 @@ class BehaviorEnv(gym.Env):
         ]
 
     def dump_replay_tro_states(self, payload: dict) -> list[dict]:
-        """Dispatch ``dump_replay_tro_states`` to every Ray actor in the pool."""
+        """Dispatch replay dump jobs according to the shared pool mapping."""
         self._ensure_pool()
-        results = ray.get(
-            [
-                proc.dump_replay_tro_states.remote(payload)
-                for proc in self.pool.env_processes
-            ]
+        return self.pool.dump_replay_tro_states_slice(
+            self.pool_offset, self.num_envs, payload
         )
-        merged = []
-        for sub_results in results:
-            merged.extend(sub_results)
-        return merged
 
     def offload(self):
         self.close()
