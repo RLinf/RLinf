@@ -97,6 +97,10 @@ def predict_rlt_actions(
             result["forward_inputs"].update(
                 critical_phase_gate.empty_diagnostics(actions.shape[0])
             )
+            if bool(getattr(critical_phase_gate, "emit_phase_features", False)):
+                result["forward_inputs"][RLT_PHASE_FEATURE_KEY] = (
+                    critical_phase_gate.empty_phase_features(actions.shape[0])
+                )
 
         route_output = rlt_route.route(
             RLTRouteContext(

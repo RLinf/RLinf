@@ -14,9 +14,11 @@
 
 import torch
 
+from rlinf.algorithms.rlt.critical_phase_gate import SteamCriticalPhaseGate
 from rlinf.algorithms.rlt.gate_calibration import RLTGateTraceWriter
 from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY, SteamPhaseHead
 from rlinf.data.schema.embodied_types import Trajectory
+from rlinf.utils.nested_dict_process import stack_list_of_dict_tensor
 from toolkits.rlt.train_steam_phase_head import (
     PhaseEpisode,
     calibrate_probability_gate,
@@ -80,6 +82,33 @@ def test_trace_writer_preserves_fp16_phase_features(tmp_path):
         features,
         atol=1.0e-3,
     )
+
+
+def test_empty_phase_features_are_stack_compatible_with_collected_features():
+    gate = SteamCriticalPhaseGate.__new__(SteamCriticalPhaseGate)
+    gate.model = torch.nn.Linear(1, 1)
+    gate.model.config = type(
+        "Config",
+        (),
+        {
+            "ensemble_size": 2,
+            "fusion_hidden_dim": 3,
+            "num_frames_per_pair": 2,
+        },
+    )()
+    collected = torch.randn(4, 2, 9, dtype=torch.float16)
+    bootstrap = gate.empty_phase_features(4)
+
+    stacked = stack_list_of_dict_tensor(
+        [
+            {RLT_PHASE_FEATURE_KEY: collected},
+            {RLT_PHASE_FEATURE_KEY: bootstrap},
+        ]
+    )
+
+    assert stacked[RLT_PHASE_FEATURE_KEY].shape == (2, 4, 2, 9)
+    assert stacked[RLT_PHASE_FEATURE_KEY].dtype == torch.float16
+    assert torch.count_nonzero(stacked[RLT_PHASE_FEATURE_KEY][1]) == 0
 
 
 def test_phase_gate_calibration_prioritizes_active_timing_match():

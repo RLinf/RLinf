@@ -299,6 +299,21 @@ class SteamCriticalPhaseGate:
             )
         return diagnostics
 
+    def empty_phase_features(self, batch_size: int) -> torch.Tensor:
+        """Return a stack-compatible placeholder for non-decision rows."""
+        model_config = getattr(self.model, "config", None)
+        feature_dim = int(getattr(model_config, "fusion_hidden_dim", 512)) * (
+            int(getattr(model_config, "num_frames_per_pair", 2)) + 1
+        )
+        ensemble_size = int(getattr(model_config, "ensemble_size", 1))
+        return torch.zeros(
+            int(batch_size),
+            ensemble_size,
+            feature_dim,
+            device=self.device,
+            dtype=torch.float16,
+        )
+
     def reset(
         self,
         *,
@@ -752,19 +767,11 @@ class SteamCriticalPhaseGate:
         emitted_phase_features = None
         if self.emit_phase_features:
             if phase_features is None:
-                model_config = getattr(self.model, "config", None)
-                feature_dim = int(getattr(model_config, "fusion_hidden_dim", 512)) * (
-                    int(getattr(model_config, "num_frames_per_pair", 2)) + 1
+                emitted_phase_features = self.empty_phase_features(batch_size)
+            else:
+                emitted_phase_features = (
+                    phase_features.permute(1, 0, 2).detach().to(torch.float16)
                 )
-                ensemble_size = int(getattr(model_config, "ensemble_size", 1))
-                phase_features = torch.zeros(
-                    ensemble_size,
-                    batch_size,
-                    feature_dim,
-                    device=self.device,
-                    dtype=torch.float32,
-                )
-            emitted_phase_features = phase_features.permute(1, 0, 2).detach()
         return GateDecision(
             actor_switch=route_flags[:, None],
             expert_requested=route_expert_flags[:, None],
