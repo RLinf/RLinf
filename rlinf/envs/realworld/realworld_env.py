@@ -264,6 +264,19 @@ class RealWorldEnv(gym.Env):
         if raw_images:
             obs["extra_view_images"] = np.stack(list(raw_images.values()), axis=1)
 
+        raw_depths = raw_obs.get("depths")
+        if raw_depths:
+            if self.main_image_key not in raw_depths:
+                raise KeyError(
+                    f"main_image_key {self.main_image_key!r} not in depth keys "
+                    f"{list(raw_depths)}"
+                )
+            obs["main_depths"] = raw_depths[self.main_image_key]
+            extra_depths = OrderedDict(sorted(raw_depths.items()))
+            extra_depths.pop(self.main_image_key)
+            if extra_depths:
+                obs["extra_view_depths"] = np.stack(list(extra_depths.values()), axis=1)
+
         obs = to_tensor(obs)
         obs["task_descriptions"] = self.task_descriptions
         return obs

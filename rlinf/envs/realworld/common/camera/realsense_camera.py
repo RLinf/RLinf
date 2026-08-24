@@ -62,9 +62,33 @@ class RealSenseCamera(BaseCamera):
                 camera_info.fps,
             )
         self.profile = self._pipeline.start(self._config)
+        self.color_intrinsics = self._get_stream_intrinsics(rs.stream.color)
+        self.depth_scale = 1.0
+        if self._enable_depth:
+            self.depth_scale = float(
+                self.profile.get_device().first_depth_sensor().get_depth_scale()
+            )
 
         # rs.align allows us to perform alignment of depth frames to color frames
         self._align = rs.align(rs.stream.color)
+
+    def _get_stream_intrinsics(self, stream) -> dict:
+        profile = self.profile.get_stream(stream).as_video_stream_profile()
+        intrinsics = profile.get_intrinsics()
+        return {
+            "width": int(intrinsics.width),
+            "height": int(intrinsics.height),
+            "fx": float(intrinsics.fx),
+            "fy": float(intrinsics.fy),
+            "ppx": float(intrinsics.ppx),
+            "ppy": float(intrinsics.ppy),
+            "distortion_model": str(intrinsics.model),
+            "coeffs": [float(value) for value in intrinsics.coeffs],
+        }
+
+    def get_color_intrinsics(self) -> dict:
+        """Return color-stream intrinsics for the active profile."""
+        return dict(self.color_intrinsics)
 
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
         frames = self._pipeline.wait_for_frames()
