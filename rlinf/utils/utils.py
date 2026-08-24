@@ -204,19 +204,25 @@ def retrieve_model_state_dict_in_cpu(
     Args:
         resident_model: A regular ``torch.nn.Module`` or an FSDP actor when
             ``is_fsdp`` is set.
-        offloaded_buffer: Optional buffer to reuse for the CPU state dict.
+        offloaded_buffer: Optional buffer to reuse for a regular-module CPU
+            state dict. FSDP state dicts do not support this buffer.
         is_fsdp: Whether to retrieve local FSDP/FSDP2 state through its strategy.
     """
-    if offloaded_buffer is None:
-        offloaded_buffer = {}
-
     if is_fsdp:
         # FSDP/FSDP2 local state dicts contain DTensors. Keep them intact so
         # ``load_model_with_state_dict`` can reconstruct the local shards.
+        if offloaded_buffer is not None:
+            raise ValueError(
+                "offloaded_buffer is unsupported for FSDP state dicts; "
+                "pass None so the strategy can preserve DTensor metadata."
+            )
         return resident_model.get_model_state_dict(
             cpu_offload=True,
             full_state_dict=False,
         )
+
+    if offloaded_buffer is None:
+        offloaded_buffer = {}
 
     state_dict = resident_model.state_dict()
     for name, item in state_dict.items():
@@ -247,19 +253,20 @@ def swap_dict(
     is_fsdp: bool = False,
 ):
     """Swap model weights and optionally retain the replaced weights on CPU."""
-    if offloaded_buffer is None:
-        offloaded_buffer = {}
-
     if offload_onto_cpu:
+        if is_fsdp and offloaded_buffer is not None:
+            raise ValueError(
+                "offloaded_buffer is unsupported for FSDP weight swapping; "
+                "pass None so the strategy can preserve DTensor metadata."
+            )
         offloaded_buffer = retrieve_model_state_dict_in_cpu(
             resident_model,
-            offloaded_buffer,
+            None if is_fsdp else offloaded_buffer,
             is_fsdp=is_fsdp,
         )
 
     if is_fsdp:
-        resident_model._strategy.load_model_with_state_dict(
-            resident_model.model,
+        resident_model.load_model_with_state_dict(
             cpu_weights,
             cpu_offload=False,
             full_state_dict=False,

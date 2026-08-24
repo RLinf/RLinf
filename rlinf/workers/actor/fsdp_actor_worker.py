@@ -653,6 +653,10 @@ class FSDPActor(FSDPModelManager, Worker):
             f"Expected {total_result_len_per_dp} sequences from channel, but got {total_result_len}"
         )
 
+    def get_response_loss_mask(self, m_batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return the response-token mask used by FSDP losses and metrics."""
+        return m_batch["response_mask"][:, -self.response_len :]
+
     def forward_backward_batch(
         self,
         idx: int,
@@ -682,7 +686,7 @@ class FSDPActor(FSDPModelManager, Worker):
         if "ref_logprobs" in m_batch:
             ref_logprobs = m_batch["ref_logprobs"]
 
-        loss_mask = m_batch["response_mask"][:, -self.response_len :]
+        loss_mask = self.get_response_loss_mask(m_batch)
 
         clip_ratio = self.cfg.algorithm.ratio_clip_eps
         clip_ratio_low = self.cfg.algorithm.get("clip_ratio_low", None)
@@ -730,7 +734,7 @@ class FSDPActor(FSDPModelManager, Worker):
 
         kl_loss = torch.tensor(0.0, device=Worker.torch_platform.current_device())
         if self.kl_beta > 0 and ref_logprobs is not None:
-            kld = kl_penalty(ref_logprobs, logprobs, self.kl_penalty_type)
+            kld = kl_penalty(logprobs, ref_logprobs, self.kl_penalty_type)
             kl_loss = self.loss_agg_func(kld, loss_mask)
             loss = loss + kl_loss * self.kl_beta
 
@@ -793,7 +797,7 @@ class FSDPActor(FSDPModelManager, Worker):
             self.lr_scheduler.step()
 
         # display the degree of mismatch between training and rollout
-        loss_mask = m_batch["response_mask"][:, -self.response_len :]
+        loss_mask = self.get_response_loss_mask(m_batch)
         rollout_train_kl = compute_rollout_train_kl(m_batch, loss_mask)
 
         # aggregate metrics across micro-batches

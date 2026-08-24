@@ -48,6 +48,27 @@ def get_ma_actor_worker(cfg):
     )
 
 
+def validate_searchr1_runtime_cfg(
+    cfg, component_placement: ModelParallelComponentPlacement
+) -> None:
+    """Validate SearchR1 requirements before worker groups are launched."""
+    if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
+        raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
+    if not cfg.actor.get("enable_dp_load_balance", False):
+        raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
+    if not component_placement.is_collocated:
+        raise ValueError(
+            "SearchR1 multi-agent actors support only collocated component placement."
+        )
+    if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
+        "importance_sampling_fix", False
+    ):
+        raise ValueError(
+            "SearchR1 with the FSDP multi-agent actor does not support "
+            "algorithm.importance_sampling_fix=True."
+        )
+
+
 @hydra.main(version_base="1.1")
 @output_redirector
 def main(cfg) -> None:
@@ -56,6 +77,7 @@ def main(cfg) -> None:
 
     cluster = Cluster(cluster_cfg=cfg.cluster)
     component_placement = ModelParallelComponentPlacement(cfg, cluster)
+    validate_searchr1_runtime_cfg(cfg, component_placement)
 
     # Generator group
     rollout_worker_cls = get_rollout_backend_worker(cfg)
