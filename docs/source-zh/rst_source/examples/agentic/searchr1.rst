@@ -188,10 +188,26 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
 
 运行 `bash examples/agent/searchr1/run_train.sh` 启动训练。
 
-评测
+MA-FSDP 训练
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 同时提供基于 FSDP2 的 Search-R1 多智能体 Actor 实现。使用
+`examples/agent/searchr1/config/train_qwen2.5_fsdp.yaml`，按上文设置相同的模型和数据集路径，然后运行：
+
+.. code-block:: bash
+
+   bash examples/agent/searchr1/run_train.sh train_qwen2.5_fsdp
+
+当 `agentloop.is_dynamic_rollout_batch: True` 时，入口会在
+`actor.training_backend: fsdp` 下选择 `MAFSDPActor`。该配置设置了
+`actor.pack_traj: True`，会在 FSDP 训练前打包同一轨迹中可兼容的多轮样本，避免重复计算共享前缀。对于提供的 Search-R1 FSDP 配置，应保持该选项开启。
+
+Checkpoint 导出与评测
 ----------------------------------------
 
-运行以下命令将 Megatron checkpoint 转换为 HuggingFace model
+checkpoint 的导出方式取决于训练后端。
+
+对于 Megatron，运行以下命令将 checkpoint 转换为 HuggingFace model：
 
 .. code-block:: bash
 
@@ -219,8 +235,18 @@ Qdrant 默认使用 HNSW 图索引算法。关于 HNSW 图索引的优化,请参
    shopt -s extglob
    cp "${CKPT_PATH_ORIGINAL_HF}"/!(*model.safetensors.index.json) "${CKPT_PATH_HF}"
 
-将转换得到的huggingface
-model路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
+对于 FSDP，请使用内置的 FSDP 转换器，而不是上面的 Megatron 转换命令。将保存的 FSDP checkpoint 与对应训练运行生成的解析后配置文件传入转换器，并指定 HuggingFace 模型输出目录：
+
+.. code-block:: bash
+
+   python -m rlinf.utils.ckpt_convertor.fsdp_convertor.convert_pt_to_hf \
+       convertor.train_config_path=/path/to/config.yaml \
+       convertor.ckpt_path=/path/to/checkpoints/global_step_xxx/actor/model_state_dict/full_weights.pt \
+       convertor.save_path=/path/to/hf_model
+
+`config.yaml` 会随训练运行写出；当它位于 `convertor.ckpt_path` 附近时，转换器也可以自动查找。将导出的 HuggingFace 模型用于独立评测。
+
+将转换得到的 HuggingFace model 路径填入 `examples/agent/searchr1/config/eval_qwen2.5.yaml`
 
 .. code-block:: yaml
 
