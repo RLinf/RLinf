@@ -43,7 +43,7 @@ def test_success_potential_input_builder_preserves_standard_prompt() -> None:
     )
     assert standard._video_fps() == 24.0
     assert specialized._render_prompt("PickCube") == "Task:PickCube; bins:9"
-    assert specialized._video_fps() == 2.0
+    assert specialized._video_fps() == 24.0
 
 
 def test_success_potential_model_has_dedicated_registry_entry() -> None:

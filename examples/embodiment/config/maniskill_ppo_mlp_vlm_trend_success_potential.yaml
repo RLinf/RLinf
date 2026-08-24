@@ -197,7 +197,7 @@ reward:
       default_task_description: "Pick up the red cube and place it on the green spot on the table."
       include_task: true
       num_bins: 10
-      video_fps: 2.0
+      video_fps: 24.0
       prompt_template: >-
         You are estimating task-conditioned success potential for a robot
         manipulation state.{task_text} The two synchronized videos show the same
@@ -208,7 +208,7 @@ reward:
     success_input_builder_params:
       default_task_description: "Pick up the red cube and place it on the green spot on the table."
       include_task: true
-      video_fps: 2.0
+      video_fps: 24.0
       prompt_template: >-
         Estimate task-conditioned success potential for this robot manipulation
         state.{task_text} The two synchronized videos show the same 5-frame

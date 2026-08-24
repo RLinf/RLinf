@@ -17,7 +17,7 @@ data:
   video_root: "${oc.env:VLM_TREND_SUCCESS_DATA_ROOT}"
   data_root: "${oc.env:VLM_TREND_SUCCESS_DATA_ROOT}"
   video_do_sample_frames: true
-  video_fps: 2.0
+  video_fps: 24.0
   num_workers: 16
 
 actor:

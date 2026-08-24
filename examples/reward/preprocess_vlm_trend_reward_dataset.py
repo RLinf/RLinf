@@ -1694,7 +1694,7 @@ def _add_features_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--history-size", type=int, default=5)
     parser.add_argument("--num-bins", type=int, default=10)
-    parser.add_argument("--video-fps", type=float, default=2.0)
+    parser.add_argument("--video-fps", type=float, default=24.0)
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--world-size", type=int, default=1)
     parser.add_argument("--max-samples", type=int, default=None)

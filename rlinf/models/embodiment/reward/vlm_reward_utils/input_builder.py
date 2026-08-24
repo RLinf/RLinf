@@ -330,7 +330,7 @@ class VLMTrendSuccessPotentialInputBuilder(VLMTrendRewardInputBuilder):
     prompt_template: str = "{task_text}"
     include_task: bool = True
     num_bins: int = 10
-    video_fps: float = 2.0
+    video_fps: float = 24.0
 
     def _render_prompt(self, task: str) -> str:
         task = str(task or self.default_task_description).strip()
