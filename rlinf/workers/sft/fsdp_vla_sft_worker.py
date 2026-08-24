@@ -24,6 +24,11 @@ from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
+def _get_streamingvla_seed_rank() -> int:
+    """Return a globally unique rank for StreamingVLA training RNG seeding."""
+    return int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+
+
 class FSDPVlaSftWorker(FSDPSftWorker):
     def __init__(self, cfg: DictConfig):
         self._is_streamingvla = (
@@ -35,8 +40,7 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 seed_streamingvla_training,
             )
 
-            rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
-            seed_streamingvla_training(cfg.actor.seed, rank)
+            seed_streamingvla_training(cfg.actor.seed, _get_streamingvla_seed_rank())
         super().__init__(cfg)
         if self._is_streamingvla:
             from rlinf.models.embodiment.streamingvla.training import (

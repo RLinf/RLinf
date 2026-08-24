@@ -39,6 +39,21 @@ def test_converter_computes_start_of_step_cumulative_action_states():
     assert actual.dtype == np.float32
 
 
+def test_norm_stats_remove_strings_preserves_non_string_fields():
+    """The filter removes strings without changing compatible object fields."""
+    from toolkits.lerobot.calculate_streamingvla_norm_stats import RemoveStrings
+
+    numeric = np.array([1.0, 2.0], dtype=np.float32)
+    metadata = np.array([{"episode": 1}], dtype=object)
+    output = RemoveStrings()(
+        {"actions": numeric, "prompt": "move forward", "metadata": metadata}
+    )
+
+    assert set(output) == {"actions", "metadata"}
+    assert output["actions"] is numeric
+    assert output["metadata"] is metadata
+
+
 def test_norm_stats_reuse_the_exact_actions_statistics_object():
     """Action states intentionally share all normalization values with actions."""
     from toolkits.lerobot.calculate_streamingvla_norm_stats import (

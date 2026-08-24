@@ -34,10 +34,10 @@ from rlinf.utils.logging import get_logger
 
 
 class RemoveStrings(transforms.DataTransformFn):
-    """Remove non-numeric fields that are irrelevant to norm statistics."""
+    """Remove string fields that are irrelevant to norm statistics."""
 
     def __call__(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Return only fields that can be converted to numeric arrays."""
+        """Return all non-string fields."""
         return {
             key: value
             for key, value in data.items()

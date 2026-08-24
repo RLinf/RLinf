@@ -24,7 +24,10 @@ from rlinf.models.embodiment.streamingvla.training import (
     StreamingVLAStepInputBuffer,
     sample_streamingvla_step_inputs,
 )
-from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+from rlinf.workers.sft.fsdp_vla_sft_worker import (
+    FSDPVlaSftWorker,
+    _get_streamingvla_seed_rank,
+)
 
 
 class _RecordingModel:
@@ -45,6 +48,22 @@ class _UnchangedModel:
     def __call__(self, **kwargs: Any) -> torch.Tensor:
         self.kwargs = kwargs
         return torch.tensor(1.0)
+
+
+def test_streamingvla_seed_uses_global_rank_across_nodes(monkeypatch):
+    """Global rank prevents duplicated RNG streams on different nodes."""
+    monkeypatch.setenv("RANK", "9")
+    monkeypatch.setenv("LOCAL_RANK", "1")
+
+    assert _get_streamingvla_seed_rank() == 9
+
+
+def test_streamingvla_seed_falls_back_to_local_rank(monkeypatch):
+    """Local rank remains a fallback outside a distributed launcher."""
+    monkeypatch.delenv("RANK", raising=False)
+    monkeypatch.setenv("LOCAL_RANK", "3")
+
+    assert _get_streamingvla_seed_rank() == 3
 
 
 def test_streamingvla_worker_lazily_slices_one_rank_local_random_batch():
