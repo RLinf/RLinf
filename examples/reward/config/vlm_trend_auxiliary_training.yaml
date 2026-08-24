@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-defaults:
-  - reward_training
-  - _self_
-
 auxiliary:
   stage: teacher  # teacher or scalar_head
 
@@ -64,4 +60,3 @@ auxiliary:
     local_rank_min_gap: 0.01
     device: cuda:0
     seed: 42
-

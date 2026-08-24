@@ -148,6 +148,7 @@ The embodied reward worker selects an implementation via ``reward.model.model_ty
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
+       "vlm_trend_success_potential": VLMTrendSuccessPotentialRewardModel,
    }
 
 Where:
@@ -156,7 +157,10 @@ Where:
 - ``vlm``: runs a VLM on the current observation (step/terminal timing depends on ``reward_mode``).
 - ``buffered_vlm``: runs a VLM on history windows from the env worker; prompt, video
   layout, and scalar mapping come from ``input_builder_name`` / ``reward_parser_name``.
-  VLM Trend reward is ``buffered_vlm`` plus the ``vlm_trend_reward_*`` plugins.
+  Standard VLM Trend reward is ``buffered_vlm`` plus the
+  ``vlm_trend_reward_*`` plugins.
+- ``vlm_trend_success_potential``: loads separate Potential and Success LoRA
+  adapters, applies the scalar potential head, and keeps episode-local shaping state.
 
 2.2 Fine-Tune the ResNet Reward Model
 """""""""""""""""""""""""""""""""""""
@@ -266,8 +270,8 @@ Set the shared paths, then build the teacher and both SFT datasets:
    done
    TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
-   python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
+   python examples/reward/train_vlm_trend_auxiliary.py \
+     auxiliary.stage=teacher \
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
@@ -322,8 +326,8 @@ directory. Extract frozen features on four GPUs, then train the scalar head:
      done
    done
 
-   python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
+   python examples/reward/train_vlm_trend_auxiliary.py \
+     auxiliary.stage=scalar_head \
      "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
      "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
      "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
@@ -422,12 +426,12 @@ For VLM reward inference, install embodied dependencies with VLM reward support:
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-VLM Trend reward uses the buffered VLM interface (``model_type: buffered_vlm``) with
-``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. Local inference
-instantiates ``BufferedVLMRewardModel``; API inference uses
-``EmbodiedAPIRewardWorker`` with the same input-builder and reward-parser contract.
+Standard VLM Trend reward uses ``model_type: buffered_vlm`` with
+``vlm_trend_reward_input_builder`` and ``vlm_trend_reward_parser``. The Success +
+Potential recipe uses the dedicated ``model_type: vlm_trend_success_potential`` for
+local inference. API inference continues to support only ``buffered_vlm``.
 
-VLM Trend reward online inference shares these core fields (``model_type`` is always ``buffered_vlm``):
+Both local VLM Trend paths use history-window reward inputs. The standard path uses:
 
 - ``input_builder_name: vlm_trend_reward_input_builder``
 - ``reward_parser_name: vlm_trend_reward_parser``
@@ -523,7 +527,7 @@ and runs 160 steps by default:
      --config-path config \
      --config-name maniskill_ppo_mlp_vlm_trend_success_potential
 
-The existing ``BufferedVLMRewardModel`` branch computes
+The dedicated ``VLMTrendSuccessPotentialRewardModel`` computes
 ``scale * (gamma * potential_t - potential_{t-1})`` and adds
 ``success_bonus`` once per episode after the configured confirmation windows.
 Both state machines reset on ``done``.

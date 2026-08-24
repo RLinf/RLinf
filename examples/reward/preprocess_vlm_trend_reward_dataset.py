@@ -1528,6 +1528,9 @@ def _encode_feature_batch(
 ) -> torch.Tensor:
     """Pool Qwen features using the same processor path as VLM Trend SFT."""
     from rlinf.data.datasets.vlm import VLMTrendRewardSFTDataset
+    from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+        extract_prompt_features,
+    )
 
     _, inputs, _ = VLMTrendRewardSFTDataset.process_inputs(
         processor=model._processor,
@@ -1542,7 +1545,7 @@ def _encode_feature_batch(
         key: value.to(model._model.device) if torch.is_tensor(value) else value
         for key, value in inputs.items()
     }
-    return model.extract_prompt_features(inputs).cpu()
+    return extract_prompt_features(model._model, inputs).cpu()
 
 
 def _feature_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -1640,6 +1643,9 @@ def _run_features(args: argparse.Namespace) -> None:
     from omegaconf import OmegaConf
 
     from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
+    from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+        load_lora_adapter,
+    )
 
     rows = _feature_rows(args)
     if not rows:
@@ -1647,23 +1653,16 @@ def _run_features(args: argparse.Namespace) -> None:
     cfg = OmegaConf.create(
         {
             "model_path": args.model_path,
-            "lora_path": args.checkpoint,
             "precision": "bf16",
-            "inference_mode": "generate",
             "subprocessor_kwargs": {"video_processor": {"do_sample_frames": True}},
-            "input_builder_name": "vlm_trend_reward_input_builder",
-            "input_builder_params": {
-                "history_buffer_names": ["history_window"],
-                "prompt_template": (
-                    "You are currently performing the task: {task}. "
-                    "Given the current state, predict the success potential."
-                ),
-            },
+            "input_builder_name": "base_vlm_input_builder",
+            "input_builder_params": {},
             "reward_parser_name": "base_reward_parser",
             "reward_parser_params": {},
         }
     )
     model = VLMRewardModel(cfg)
+    model._model = load_lora_adapter(model._model, args.checkpoint)
     model._model.to(args.device).eval()
     payload = _extract_features(model, rows, args)
     payload["metadata"] = {

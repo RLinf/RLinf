@@ -20,18 +20,23 @@ from rlinf.models.embodiment.reward.vlm_reward_model import (
     BufferedVLMRewardModel,
     VLMRewardModel,
 )
+from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+    VLMTrendSuccessPotentialRewardModel,
+)
 
 __all__ = [
     "BaseRewardModel",
     "ResNetRewardModel",
     "VLMRewardModel",
     "BufferedVLMRewardModel",
+    "VLMTrendSuccessPotentialRewardModel",
 ]
 
 reward_model_registry = {
     "resnet": ResNetRewardModel,
     "vlm": VLMRewardModel,
     "buffered_vlm": BufferedVLMRewardModel,
+    "vlm_trend_success_potential": VLMTrendSuccessPotentialRewardModel,
 }
 
 

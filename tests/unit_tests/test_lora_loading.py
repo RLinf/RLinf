@@ -16,7 +16,9 @@ import torch
 from peft import LoraConfig, get_peft_model
 from torch import nn
 
-from rlinf.models.embodiment.reward.vlm_reward_model import _load_adapter
+from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+    load_lora_adapter,
+)
 
 
 class TinyModel(nn.Module):
@@ -36,9 +38,9 @@ def test_load_adapter_resolves_checkpoint_root(tmp_path) -> None:
         source.base_model.model.q_proj.lora_A.default.weight.fill_(0.5)
     source.save_pretrained(tmp_path / "actor" / "lora_adapter")
 
-    loaded = _load_adapter(TinyModel(), str(tmp_path))
+    loaded = load_lora_adapter(TinyModel(), str(tmp_path))
     source.save_pretrained(tmp_path / "success")
-    loaded = _load_adapter(loaded, str(tmp_path / "success"), "success")
+    loaded = load_lora_adapter(loaded, str(tmp_path / "success"), "success")
 
     weight = loaded.base_model.model.q_proj.lora_A.default.weight
     assert torch.allclose(weight, torch.full_like(weight, 0.5))
@@ -56,7 +58,7 @@ def test_load_adapter_normalizes_rlinf_default_keys(tmp_path) -> None:
         tmp_path / "full_weights.pt",
     )
 
-    loaded = _load_adapter(TinyModel(), str(tmp_path))
+    loaded = load_lora_adapter(TinyModel(), str(tmp_path))
 
     weight = loaded.base_model.model.q_proj.lora_B.default.weight
     assert torch.allclose(weight, torch.full_like(weight, 0.25))

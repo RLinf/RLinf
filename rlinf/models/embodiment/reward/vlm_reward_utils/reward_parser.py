@@ -153,12 +153,7 @@ class VLMTrendBinaryDigitRewardParser(BaseRewardParser):
         positive_reward: float = 1.0,
         negative_reward: float = 0.0,
         invalid_reward: float = 0.0,
-        **ignored_params: object,
     ) -> None:
-        # Configs share one ``reward_parser_params`` shape across parsers, so
-        # tolerate (and ignore) keys such as ``unclear_reward`` that only apply
-        # to the trend parser.
-        del ignored_params
         self.positive_reward = float(positive_reward)
         self.negative_reward = float(negative_reward)
         self.invalid_reward = float(invalid_reward)

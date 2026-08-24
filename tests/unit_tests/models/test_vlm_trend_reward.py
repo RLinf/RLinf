@@ -15,14 +15,43 @@ import torch
 from examples.reward.preprocess_vlm_trend_reward_dataset import (
     build_terminal_success_rows,
 )
-from rlinf.models.embodiment.reward.vlm_reward_model import (
-    BufferedVLMRewardModel,
-    ScalarPotentialHead,
-    VLMRewardModel,
+from rlinf.models.embodiment.reward import get_reward_model_class
+from rlinf.models.embodiment.reward.vlm_reward_model import BufferedVLMRewardModel
+from rlinf.models.embodiment.reward.vlm_reward_utils.input_builder import (
+    VLMTrendRewardInputBuilder,
+    VLMTrendSuccessPotentialInputBuilder,
 )
 from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     VLMTrendBinaryDigitRewardParser,
 )
+from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
+    ScalarPotentialHead,
+    VLMTrendSuccessPotentialRewardModel,
+)
+
+
+def test_success_potential_input_builder_preserves_standard_prompt() -> None:
+    standard = VLMTrendRewardInputBuilder(history_buffer_names=["history_window"])
+    specialized = VLMTrendSuccessPotentialInputBuilder(
+        history_buffer_names=["history_window"],
+        prompt_template="Task:{task}; bins:{num_bins_max}",
+        num_bins=10,
+    )
+
+    assert "Judge whether the action trend is positive" in standard._render_prompt(
+        "PickCube"
+    )
+    assert standard._video_fps() == 24.0
+    assert specialized._render_prompt("PickCube") == "Task:PickCube; bins:9"
+    assert specialized._video_fps() == 2.0
+
+
+def test_success_potential_model_has_dedicated_registry_entry() -> None:
+    assert (
+        get_reward_model_class("vlm_trend_success_potential")
+        is VLMTrendSuccessPotentialRewardModel
+    )
+    assert get_reward_model_class("buffered_vlm") is BufferedVLMRewardModel
 
 
 class _HiddenModel:
@@ -83,7 +112,7 @@ def test_terminal_success_rows_use_online_windows_without_balancing(tmp_path) ->
 
 
 def test_scalar_head_uses_last_attended_prompt_token() -> None:
-    model = object.__new__(VLMRewardModel)
+    model = object.__new__(VLMTrendSuccessPotentialRewardModel)
     torch.nn.Module.__init__(model)
     hidden = torch.zeros(2, 4, 1)
     hidden[0, 1, 0], hidden[1, 3, 0] = -2.0, 2.0
@@ -110,9 +139,8 @@ def test_scalar_head_loads_auxiliary_checkpoint(tmp_path) -> None:
         },
         checkpoint,
     )
-    model = object.__new__(VLMRewardModel)
+    model = object.__new__(VLMTrendSuccessPotentialRewardModel)
     torch.nn.Module.__init__(model)
-    model.inference_mode = "scalar_head"
     model.scalar_head_path = str(checkpoint)
     model._model = SimpleNamespace(device=torch.device("cpu"))
 
@@ -127,7 +155,7 @@ def test_scalar_head_loads_auxiliary_checkpoint(tmp_path) -> None:
 
 
 def test_potential_and_success_state_reset_at_episode_end() -> None:
-    model = object.__new__(BufferedVLMRewardModel)
+    model = object.__new__(VLMTrendSuccessPotentialRewardModel)
     model.potential_scale = 1.0
     model.potential_gamma = 1.0
     model.potential_ema_alpha = 1.0

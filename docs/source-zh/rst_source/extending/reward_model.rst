@@ -144,6 +144,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
        "resnet": ResNetRewardModel,
        "vlm": VLMRewardModel,
        "buffered_vlm": BufferedVLMRewardModel,
+       "vlm_trend_success_potential": VLMTrendSuccessPotentialRewardModel,
    }
 
 其中：
@@ -152,7 +153,9 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 - ``vlm``：对当前观测运行 VLM（单步/终止帧等，由 ``reward_mode`` 决定）。
 - ``buffered_vlm``：对 env worker 维护的历史窗口运行 VLM；具体 prompt、视频格式与
   标量映射由 ``input_builder_name`` / ``reward_parser_name`` 决定。
-  VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
+  标准 VLM Trend reward 即 ``buffered_vlm`` + ``vlm_trend_reward_*`` 插件组合。
+- ``vlm_trend_success_potential``：加载独立的 Potential 和 Success LoRA adapter，
+  执行 scalar potential head，并维护 episode 内的 shaping 状态。
 
 2.2 微调 ResNet Reward Model
 """"""""""""""""""""""""""""
@@ -262,8 +265,8 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
    done
    TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
 
-   python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_auxiliary_training auxiliary.stage=teacher \
+   python examples/reward/train_vlm_trend_auxiliary.py \
+     auxiliary.stage=teacher \
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
@@ -317,8 +320,8 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
      done
    done
 
-   python examples/reward/train_reward_model.py \
-     --config-name vlm_trend_auxiliary_training auxiliary.stage=scalar_head \
+   python examples/reward/train_vlm_trend_auxiliary.py \
+     auxiliary.stage=scalar_head \
      "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
      "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
      "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
@@ -418,12 +421,12 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
    bash requirements/install.sh embodied --env maniskill_libero --model qwen3_vl \
      --torch 2.8.0 --sglang 0.5.4 --transformers 4.57.1
 
-VLM Trend reward 使用 buffered VLM 接口（ ``model_type: buffered_vlm`` ），并通过
+标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
-本地推理会实例化 ``BufferedVLMRewardModel`` ；API 推理则使用
-``EmbodiedAPIRewardWorker`` ，并遵循相同的 input builder 和 reward parser 约定。
+Success + Potential 配方的本地推理使用专用
+``model_type: vlm_trend_success_potential``。API 推理仍只支持 ``buffered_vlm``。
 
-VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终为 ``buffered_vlm`` ）：
+两条本地 VLM Trend 路径都使用历史窗口输入。标准路径使用：
 
 - ``input_builder_name: vlm_trend_reward_input_builder``
 - ``reward_parser_name: vlm_trend_reward_parser``
@@ -517,7 +520,7 @@ VLM Trend reward 在线推理共用以下核心字段（ ``model_type`` 始终�
      --config-path config \
      --config-name maniskill_ppo_mlp_vlm_trend_success_potential
 
-现有 ``BufferedVLMRewardModel`` 分支计算
+专用 ``VLMTrendSuccessPotentialRewardModel`` 计算
 ``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
 每个 episode 仅添加一次 ``success_bonus``。两组状态都会在 ``done`` 时重置。
 
