@@ -176,7 +176,9 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
-        self.skip_intermediate_renders = getattr(cfg, "skip_intermediate_renders", False)
+        self.skip_intermediate_renders = bool(
+            OmegaConf.select(cfg, "skip_intermediate_renders", default=False)
+        )
 
     def _log_evaluation_mode(self):
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
@@ -921,7 +923,6 @@ class LiberoEnv(gym.Env):
             infos,
         )
 
-
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
@@ -932,17 +933,28 @@ class LiberoEnv(gym.Env):
 
         raw_chunk_terminations = []
         raw_chunk_truncations = []
+        rendering_disabled = False
         try:
             for i in range(chunk_size):
-                should_render = True
-                if self.skip_intermediate_renders:
-                    should_render = i == chunk_size - 1
-                    if i == 0 or i == chunk_size - 1:
-                        self.env.set_camera_rendering(should_render)
+                should_render = (not self.skip_intermediate_renders) or (
+                    i == chunk_size - 1
+                )
+                if self.skip_intermediate_renders and i == 0 and chunk_size > 1:
+                    self.env.set_camera_rendering(False)
+                    rendering_disabled = True
+                elif (
+                    self.skip_intermediate_renders
+                    and i == chunk_size - 1
+                    and rendering_disabled
+                ):
+                    self.env.set_camera_rendering(True)
+                    rendering_disabled = False
 
                 actions = chunk_actions[:, i]
-                extracted_obs, step_reward, terminations, truncations, infos = self.step(
-                    actions, auto_reset=False, _skip_obs_wrap=not should_render
+                extracted_obs, step_reward, terminations, truncations, infos = (
+                    self.step(
+                        actions, auto_reset=False, _skip_obs_wrap=not should_render
+                    )
                 )
                 obs_list.append(extracted_obs)
                 infos_list.append(infos)
@@ -951,7 +963,7 @@ class LiberoEnv(gym.Env):
                 raw_chunk_terminations.append(terminations)
                 raw_chunk_truncations.append(truncations)
         finally:
-            if self.skip_intermediate_renders and not should_render:
+            if rendering_disabled:
                 self.env.set_camera_rendering(True)
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
