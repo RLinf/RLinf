@@ -141,16 +141,23 @@ def task_descriptions_from_infos(
     task_description: str,
     stage_prompt_lists: list[list[str] | None],
     infos=None,
+    env_indices=None,
 ) -> list[str]:
+    """Build task descriptions while updating prompt state by global env row."""
     if prompt_override is not None:
-        return [prompt_override for _ in range(num_envs)]
+        output_size = num_envs if env_indices is None else len(env_indices)
+        return [prompt_override for _ in range(output_size)]
     if not use_subtask_prompt or infos is None:
-        return [task_description for _ in range(num_envs)]
+        output_size = num_envs if env_indices is None else len(env_indices)
+        return [task_description for _ in range(output_size)]
+    output_env_indices = list(range(num_envs)) if env_indices is None else [
+        int(index) for index in env_indices
+    ]
     return [
         compose_task_description(
             prompt_override,
             task_description,
             update_stage_prompts_from_info(stage_prompt_lists, env_idx, info),
         )
-        for env_idx, info in enumerate(infos)
+        for env_idx, info in zip(output_env_indices, infos, strict=True)
     ]

@@ -1051,6 +1051,7 @@ class BehaviorEnv(gym.Env):
                 task_description=self.task_description,
                 stage_prompt_lists=self._stage_prompt_lists,
                 infos=infos,
+                env_indices=env_indices,
             ),
             "states": states,
         }
@@ -1279,19 +1280,29 @@ class BehaviorEnv(gym.Env):
             ).to(self.device)
 
             info_lists.append(episode_info)
-            if "replay_init" in info:
-                replay_info_lists.append(
-                    {
-                        key: value
-                        for key, value in info["replay_init"].items()
-                        if isinstance(value, (bool, int, float))
-                    }
-                )
+            replay_info = info.get("replay_init") if isinstance(info, dict) else None
+            if not isinstance(replay_info, dict):
+                replay_info = {}
+            replay_info_lists.append(
+                {
+                    key: value
+                    for key, value in (replay_info or {}).items()
+                    if isinstance(value, (bool, int, float))
+                }
+            )
 
         infos = {"episode": to_tensor(list_of_dict_to_dict_of_list(info_lists))}
-        if replay_info_lists:
+        replay_keys = sorted(
+            {key for replay_info in replay_info_lists for key in replay_info}
+        )
+        if replay_keys:
+            # Keep replay metadata row-aligned when only some envs carry it.
+            aligned_replay_info = [
+                {key: replay_info.get(key, 0) for key in replay_keys}
+                for replay_info in replay_info_lists
+            ]
             infos["replay_init"] = to_tensor(
-                list_of_dict_to_dict_of_list(replay_info_lists)
+                list_of_dict_to_dict_of_list(aligned_replay_info)
             )
         return infos
 

@@ -654,6 +654,7 @@ class EnvWorker(Worker):
         total_slots = self._world_size * slots_per_worker
         worker_slot_base = self._rank * slots_per_worker
         results = []
+        expected_output_ids = []
 
         for stage_id, env in enumerate(self.env_list):
             stage_slot_base = worker_slot_base + stage_id * local_env_count
@@ -674,6 +675,7 @@ class EnvWorker(Worker):
                             "env_slot": local_slot,
                         }
                     )
+                    expected_output_ids.append(output_start_instance_id + state_idx)
 
             if jobs:
                 payload = {
@@ -686,7 +688,29 @@ class EnvWorker(Worker):
                     get_env_attr(env, "dump_replay_tro_states")(payload)
                 )
 
-        return results
+        result_ids = [int(result["output_instance_id"]) for result in results]
+        if len(result_ids) != len(expected_output_ids):
+            raise RuntimeError(
+                "Replay TRO dumper returned an incomplete result set: "
+                f"expected {len(expected_output_ids)}, got {len(result_ids)}."
+            )
+        if len(set(result_ids)) != len(result_ids):
+            raise RuntimeError(
+                "Replay TRO dumper returned duplicate output_instance_id values."
+            )
+        if set(result_ids) != set(expected_output_ids):
+            raise RuntimeError(
+                "Replay TRO dumper returned output_instance_id values that do not "
+                "match the requested jobs."
+            )
+        result_order = {
+            output_id: index
+            for index, output_id in enumerate(expected_output_ids)
+        }
+        return sorted(
+            results,
+            key=lambda result: result_order[int(result["output_instance_id"])],
+        )
 
     def _build_chunk_final_obs(self, obs_list, infos_list):
         """Build per-env terminal observations for a whole chunk.
