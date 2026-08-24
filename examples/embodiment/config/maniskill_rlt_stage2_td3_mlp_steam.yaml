@@ -300,7 +300,7 @@ rollout:
       enable: True
       mode: active
       source: phase_head
-      phase_head_path: ${oc.env:RLT_STEAM_PHASE_HEAD_PATH}
+      phase_head_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/steam_phase_head.pt"
       # By default the gate reads the calibrated threshold and patience from
       # this checkpoint. Set these fields explicitly only for an ablation.
     chunk_size: 10
