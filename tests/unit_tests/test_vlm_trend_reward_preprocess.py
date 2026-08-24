@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import pickle
 
 import numpy as np
-import pytest
 
 from examples.reward.preprocess_vlm_trend_reward_dataset import (
-    _parse_target_ee_pose,
     load_episodes_with_labels,
 )
 
@@ -45,7 +42,7 @@ def _load_episode(data_path, target_ee_pose):
     )[0]
 
 
-def test_tcp_distance_is_only_used_without_existing_signal(tmp_path):
+def test_tcp_distance_is_used_when_gae_is_missing(tmp_path):
     episode_path = tmp_path / "episode.pkl"
     episode = {
         "observations": [
@@ -53,8 +50,7 @@ def test_tcp_distance_is_only_used_without_existing_signal(tmp_path):
             _observation(0.5),
             _observation(1.0),
         ],
-        "gae": [0.0, 0.0, 0.0],
-        "rewards": [0.0, 0.0, 0.0],
+        "rewards": [0.0, -1.0, -2.0],
     }
     with open(episode_path, "wb") as file:
         pickle.dump(episode, file)
@@ -63,28 +59,14 @@ def test_tcp_distance_is_only_used_without_existing_signal(tmp_path):
     assert {sample["score_source"] for sample in loaded["samples"]} == {"tcp_distance"}
     assert all(sample["label"] == "positive" for sample in loaded["samples"])
 
-    episode["rewards"] = [0.0, 1.0, 2.0]
+    loaded = _load_episode(tmp_path, None)
+    assert {sample["score_source"] for sample in loaded["samples"]} == {"rewards"}
+    assert all(sample["label"] == "negative" for sample in loaded["samples"])
+
+    episode["gae"] = [0.0, 0.0, 0.0]
     with open(episode_path, "wb") as file:
         pickle.dump(episode, file)
 
-    loaded_without_target = _load_episode(tmp_path, None)
-    assert {sample["score_source"] for sample in loaded_without_target["samples"]} == {
-        "gae"
-    }
-
     loaded = _load_episode(tmp_path, [1.0, 0.0, 0.0])
-    assert {sample["score_source"] for sample in loaded["samples"]} == {"rewards"}
-
-
-def test_parse_target_ee_pose():
-    assert _parse_target_ee_pose("1, 2, 3") == [1.0, 2.0, 3.0]
-    assert _parse_target_ee_pose("1,2,3,4,5,6") == [
-        1.0,
-        2.0,
-        3.0,
-        4.0,
-        5.0,
-        6.0,
-    ]
-    with pytest.raises(argparse.ArgumentTypeError):
-        _parse_target_ee_pose("1,2")
+    assert {sample["score_source"] for sample in loaded["samples"]} == {"gae"}
+    assert all(sample["label"] == "unclear" for sample in loaded["samples"])

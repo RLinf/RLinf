@@ -403,8 +403,8 @@ and auto-labels based on GAE, reward, or TCP-distance changes:
        --window-size 5 \
        --task-description "Pick up the peg and insert it into the hole."
 
-When collected data has no GAE/reward signals, use ``--target-ee-pose`` to rely on
-TCP-to-target distance as the trend signal:
+When collected data has no GAE signal, use ``--target-ee-pose`` to rely on
+TCP-to-target distance instead of rewards as the trend signal:
 
 .. code-block:: bash
 

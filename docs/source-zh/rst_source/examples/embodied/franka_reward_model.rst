@@ -382,7 +382,7 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
        --window-size 5 \
        --task-description "Pick up the peg and insert it into the hole."
 
-当采集数据没有 GAE/reward 信号时，通过 ``--target-ee-pose`` 使用 TCP 距离作为趋势信号：
+当采集数据没有 GAE 信号时，通过 ``--target-ee-pose`` 使用 TCP 距离代替 reward 作为趋势信号：
 
 .. code-block:: bash
 
