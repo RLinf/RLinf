@@ -306,19 +306,33 @@ def configure_batch_sizes(rank, mbs, gbs, dp=1):
     )
 
 
+def _reduce_mean(values: torch.Tensor, axis=None):
+    # Not every torch backend accepts `axis=None` for a full reduction
+    # (torch-musa raises "bad optional access"), so spell it out.
+    if axis is None:
+        return values.mean()
+    return values.mean(dim=axis)
+
+
+def _reduce_sum(values: torch.Tensor, axis=None):
+    if axis is None:
+        return values.sum()
+    return values.sum(dim=axis)
+
+
 def masked_mean(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute mean of tensor with a masked values."""
     if mask is None:
-        return values.mean(axis=axis)
+        return _reduce_mean(values, axis)
     elif (~mask).all():
-        return (values * mask).sum(axis=axis)
+        return _reduce_sum(values * mask, axis)
     else:
-        return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
+        return _reduce_sum(values * mask, axis) / _reduce_sum(mask, axis)
 
 
 def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     """Compute sum of tensor with a masked values."""
-    return (values * mask).sum(axis=axis)
+    return _reduce_sum(values * mask, axis)
 
 
 def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):

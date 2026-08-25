@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Optional, TypeVar
 
 import yaml
+from omegaconf import OmegaConf
 
 HardwareType = TypeVar("HardwareType")
 
@@ -84,14 +85,18 @@ class NodeHardwareConfig:
                 error_suffix="in cluster node_group hardware yaml config",
             )
 
-        # Ensure all configs are unique
-        config_strs = [
-            yaml.dump(dict(config), sort_keys=True) for config in self.configs
+        # Ensure all configs are unique. Resolve to plain containers first:
+        # dict() leaves nested values as OmegaConf nodes, which yaml cannot
+        # represent under Python 3.10.
+        plain_configs = [
+            OmegaConf.to_container(OmegaConf.create(config), resolve=True)
+            for config in self.configs
         ]
+        config_strs = [yaml.dump(config, sort_keys=True) for config in plain_configs]
         assert len(config_strs) == len(set(config_strs)), (
             "Duplicate hardware configs found in node hardware config: \n"
             + "\n".join(
-                [yaml.dump(dict(config), sort_keys=False) for config in self.configs]
+                [yaml.dump(config, sort_keys=False) for config in plain_configs]
             )
         )
 
