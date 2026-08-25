@@ -28,8 +28,12 @@ def _str_to_dtype(dtype_str: str) -> torch.dtype:
     #     assert False
     mapping = {
         "float32": torch.float32,
+        "float": torch.float32,
+        "fp32": torch.float32,
         "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
         "mp_bfloat16": torch.bfloat16,
         "float16": torch.float16,
+        "fp16": torch.float16,
     }
     return mapping[dtype_str]
