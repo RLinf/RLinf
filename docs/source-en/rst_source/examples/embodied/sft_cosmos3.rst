@@ -46,24 +46,20 @@ Install Cosmos3 (add ``--env libero`` if you also need simulation eval):
    bash requirements/install.sh embodied --model cosmos3 --env libero
    source .venv/bin/activate
 
-Cosmos3's data transforms and normalization stats depend on cosmos-framework; set it before training:
+Cosmos3's data transforms and normalization stats depend on cosmos-framework; clone it and set the path before training:
 
 .. code-block:: bash
 
-   # git clone git@github.com:NVIDIA/cosmos-framework.git
+   git clone https://github.com/NVIDIA/cosmos-framework.git /path/to/cosmos-framework
    export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
 
 Offline Cache: Qwen3-VL-8B-Instruct and Wan2.2 Models
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-SFT and base checkpoint conversion will pull three model files from Hugging Face. On offline machines, download them into the HF cache in advance:
+SFT and base checkpoint conversion pull three model files from Hugging Face. On offline machines, pre-download them into the HF cache and enable offline mode (``HF_HUB_OFFLINE=1``) so ``from_pretrained`` / ``hf download`` read directly from cache, otherwise workers hang on network retries:
 
-- **Qwen3-VL-8B-Instruct** (tokenizer / VLM config): pulled via ``AutoConfig`` / ``from_pretrained`` at SFT startup; also used when ``convert_model_to_dcp`` rebuilds the model.
-- **Wan2.2-TI2V-5B and Wan2.2-TI2V-5B-Diffusers**: downloaded only when ``convert_model_to_dcp`` rebuilds the model.
-
-Without internet or a cache, workers will hang on network retries. Pre-download into the HF cache and enable offline mode so ``from_pretrained`` / ``hf download`` read directly from cache.
-
-**Download Qwen3-VL-8B-Instruct, Wan2.2-TI2V-5B, Wan2.2-TI2V-5B-Diffusers**
+- **Qwen3-VL-8B-Instruct** (tokenizer / VLM config): used at SFT startup and when ``convert_model_to_dcp`` rebuilds the model.
+- **Wan2.2-TI2V-5B** and **Wan2.2-TI2V-5B-Diffusers**: downloaded only when ``convert_model_to_dcp`` rebuilds the model.
 
 Download directly into the HF cache (recommended; cache layout is automatically correct):
 
@@ -110,18 +106,11 @@ Download ``nvidia/Cosmos3-Nano`` from Hugging Face. It is in **diffusers/safeten
 
 **Step 2: Convert to DCP**
 
-SFT cannot load the base from a diffusers directory directly: the cosmos3 base loader ``_load_base_weights`` uses ``_is_safetensors_checkpoint`` to detect format — it only checks whether ``*.safetensors`` files exist at the **top level** of the path (non-recursive). The diffusers directory places shards in subdirectories like ``transformer/`` with nothing at the top level, so the check returns ``False``, falling through to the DCP loading branch (``_load_model`` + ``CustomLoadPlanner``), but the diffusers directory is not DCP, so loading fails.
-
-Therefore you must first convert the diffusers weights to DCP before using them as ``model_path``. Use cosmos-framework's ``convert_model_to_dcp.py``: it reads ``nvidia/Cosmos3-Nano`` (diffusers), rebuilds the model, and saves it as a sharded DCP via ``torch.distributed.checkpoint``.
+SFT cannot load the base from a diffusers directory directly: the cosmos3 base loader ``_load_base_weights`` uses ``_is_safetensors_checkpoint`` to detect format — it only checks whether ``*.safetensors`` files exist at the **top level** of the path (non-recursive). The diffusers directory places shards in ``transformer/`` subdirectories with nothing at the top level, so the check returns ``False``, falling through to the DCP loading branch, but the diffusers directory is not DCP, so loading fails. Therefore you must first convert the diffusers weights to DCP via cosmos-framework's ``convert_model_to_dcp.py`` before using them as ``model_path``.
 
 .. note::
 
-   This step **rebuilds the entire OmniMoTModel** and downloads **two** assets via cosmos's ``hf_cli`` (unlike SFT training, which only downloads Qwen3-VL — SFT uses RLinf's ``wan_vae_path`` local override; this step uses the cosmos config's relative vae_path, which is not overridden):
-
-   - ``Qwen/Qwen3-VL-8B-Instruct`` (tokenizer, cosmos-specified revision)
-   - ``Wan-AI/Wan2.2-TI2V-5B``'s ``Wan2.2_VAE.pth`` (VAE, cosmos-specified revision)
-
-   On offline machines, pre-download both into the HF cache (see the download commands in "Offline Cache" above), then run with ``HF_HUB_OFFLINE=1``; otherwise it will hang on ``hf download`` network retries. With internet/mirror you can also leave offline off and let this step download and cache them.
+   This step rebuilds the entire OmniMoTModel and downloads ``Qwen3-VL-8B-Instruct`` (tokenizer) and ``Wan2.2-TI2V-5B``'s ``Wan2.2_VAE.pth`` (VAE) via cosmos's ``hf_cli`` — on offline machines, pre-download both into the HF cache (see above), then run with ``HF_HUB_OFFLINE=1``.
 
 .. code-block:: bash
 
@@ -134,22 +123,17 @@ Therefore you must first convert the diffusers weights to DCP before using them 
      --no-use-ema-weights \
      -o /path/to/Cosmos3-Nano-DCP
 
-**What this command does:** reads ``nvidia/Cosmos3-Nano`` (diffusers/safetensors) → rebuilds via ``Cosmos3OmniModel.from_pretrained_dcp`` (during which it downloads the Qwen3-VL tokenizer + Wan2.2 VAE) → saves as a sharded DCP (``model/__0_*.distcp`` + ``.metadata`` + ``checkpoint.json``) via ``torch.distributed.checkpoint``. The output is the directory pointed to by ``actor.model.model_path`` above.
-
 .. note::
 
-   - ``--checkpoint-path`` accepts either a model name (``Cosmos3-Nano``, triggers HF download) or a local path (a pre-downloaded diffusers directory). On offline machines, download the diffusers first and point to the local path to avoid network.
-   - The DCP ``.metadata`` is pickle-serialized and **tied to the Python version it was saved with** — so ``convert_model_to_dcp`` must be run in the **same Python / venv** as training so the DCP can be loaded at training time (the local directory name with a ``-py311`` suffix means exactly this: a DCP re-saved under py3.11).
-   - This is separate from the Qwen3-VL HF cache: this step converts the base model weights; Qwen3-VL / Wan2.2 VAE are the tokenizer / VAE loaded when rebuilding the model (see "Offline Cache" above).
+   - ``--checkpoint-path`` accepts either a model name (triggers HF download) or a local diffusers directory; on offline machines, download first and point to the local path.
+   - The DCP ``.metadata`` is pickle and **tied to the Python version it was saved with**, so ``convert_model_to_dcp`` must run in the **same venv** as training for the DCP to load (the ``-py311`` directory suffix means exactly this).
 
 Prepare Data
 ----------------------------------------
 
-Training data can be the **original** LeRobot v3 layout (containing ``meta/``, ``data/``) of LIBERO, specified via ``data.train_data_paths`` as a local directory.
+Training data can be the **original** LeRobot v3 layout (containing ``meta/``, ``data/``) of LIBERO, specified via ``data.train_data_paths``.
 
-The ``frame_wise_relative`` + ``rot6d`` + ``quantile_rot`` action transform **does not require pre-processing the dataset** — it is done online at load time by cosmos's ``PackingDataLoader``: ``rlinf/data/datasets/cosmos3/dataloader.py`` calls cosmos-framework's ``make_config()`` + experiment ``action_policy_libero_all_nano``, whose dataset config includes ``action_space="frame_wise_relative"`` / ``rotation_space="6d"`` / ``action_normalization="quantile_rot"``; the cosmos3 dataset converts the original 7-D actions to 10-D rot6d at load time and applies quantile normalization.
-
-The quantile normalization **stats file** ``libero_native_frame_wise_relative_rot6d.json`` (computed once by the cosmos-framework data generator) is referenced by ``action_stats_path`` on the eval side. Training and eval must use the same recipe (same ``rotation_space`` / ``action_normalization`` + the same stats file), otherwise de-normalization will be misaligned.
+The ``frame_wise_relative`` + ``rot6d`` + ``quantile_rot`` action transform **does not require pre-processing the dataset**: ``rlinf/data/datasets/cosmos3/dataloader.py`` calls cosmos-framework's experiment ``action_policy_libero_all_nano``, which converts the original 7-D actions to 10-D rot6d at load time and applies quantile normalization. The normalization stats file ``libero_native_frame_wise_relative_rot6d.json`` is computed once by cosmos-framework and referenced via ``action_stats_path`` on the eval side. **Training and eval must use the same recipe + the same stats file**, otherwise de-normalization will be misaligned.
 
 .. code-block:: yaml
 

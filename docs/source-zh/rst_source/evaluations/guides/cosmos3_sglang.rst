@@ -1,14 +1,12 @@
 Cosmos3 SGLang 评测
 =====================
 
-用 SGLang 后端在 LIBERO 仿真器上评测 Cosmos3：把模型放进独立的 SGLang server 进程，rollout worker 作为客户端发送观测数据、接受动作指令并送入仿真环境。适用于只做推理评测的场景。
+用 SGLang 后端在 LIBERO 仿真器上评测 Cosmos3：模型放进独立的 SGLang server 进程，rollout worker 作为客户端发观测、收动作、送入仿真。适用于只做推理评测的场景。
 
 工作原理
 ----------------------------------------
 
-每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成同步 HTTP 端点 ``POST /v1/actions/generations``。
-
-eval driver 拉起 server group 并把各 server URL 下发给对应 rollout worker；worker 发送批量观测，收到归一化的 rot6d 动作后，由 ``sglang_adapter`` 去归一化并转成环境可执行的 7 维 axis-angle，送入 LIBERO。
+每张 GPU 起一个 SGLang server（``server_type: embodied``），运行 ``Cosmos3OmniDiffusersPipeline``，把动作策略暴露成 HTTP 端点 ``POST /v1/actions/generations``。eval driver 把 server URL 下发给 rollout worker；worker 一次发送全部 N 个环境的观测，server 单次批量前向返回 ``[N, horizon, 10]`` 归一化 rot6d，由 ``sglang_adapter`` 去归一化并转成 7 维 axis-angle 送入 LIBERO。
 
 .. code:: text
 
@@ -31,26 +29,27 @@ eval driver 拉起 server group 并把各 server URL 下发给对应 rollout wor
    bash requirements/install.sh embodied --env libero --model cosmos3
    source .venv/bin/activate
 
-Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang：
+Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（需用带 batch action 支持的分支）：
 
 .. code-block:: bash
 
+   git clone -b support_batch_cosmos3_action https://github.com/FxxxxU/sglang.git /path/to/sglang
    cd /path/to/sglang
    pip install -e "python[diffusion]"
 
 准备 Checkpoint
 ----------------------------------------
 
-评测的输入是 diffusers 组件目录 ``model_diffusers``，由 SFT checkpoint 经 cosmos_framework 转换得到。完整四步转换见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
+评测输入是 diffusers 组件目录 ``model_diffusers``，由 SFT checkpoint 经 cosmos-framework 转换得到，完整四步见 :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>` 的「转换 Checkpoint」一节。
 
 .. note::
 
-   - 评测时**不需要** HuggingFace 联网或 Qwen3-VL-8B-Instruct 缓存：转换时 tokenizer 文件已拷进 ``model_diffusers/text_tokenizer/``，SGLang server 直接从该目录读。
+   评测**不需要**联网拉 HuggingFace 或 Qwen3-VL 缓存：转换时 tokenizer 已拷进 ``model_diffusers/text_tokenizer/``，server 直接从该目录读。
 
 运行 LIBERO-Spatial
 ----------------------------------------
 
-默认配置为 ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``。开跑前修改 YAML 脚本（使用本地 ``model_diffusers`` 路径）：
+默认配置 ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``。开跑前改 YAML 指向本地 ``model_diffusers``：
 
 .. code-block:: yaml
 
@@ -69,7 +68,7 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang：
 
    bash evaluations/run_eval.sh libero libero_spatial_cosmos3_eval_sglang
 
-**这条命令做什么：** 每张 GPU 起一个 Cosmos3 SGLang server，起 LIBERO 环境跑评测，逐 episode 打印成功与否，最后汇总成功率。日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
+每张 GPU 起一个 Cosmos3 SGLang server，逐 episode 打印成功与否，最后汇总成功率；日志写到 ``logs/<时间戳>-<config>/eval_embodiment.log``。
 
 关键配置
 ----------------------------------------

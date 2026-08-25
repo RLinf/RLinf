@@ -2241,8 +2241,6 @@ PYEOF
         echo "[install.sh] Wrote py3.11 typing.override backfill to $_sp/sitecustomize.py" >&2
     fi
 
-    python -m pip install --no-deps 'nvidia-cudnn-cu13>=9.22'
-
     local natten_wheel natten_url
     natten_wheel="natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl"
     natten_url="https://github.com/SHI-Labs/NATTEN/releases/download/v0.21.6/${natten_wheel}"

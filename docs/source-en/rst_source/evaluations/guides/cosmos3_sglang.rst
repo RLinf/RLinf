@@ -6,9 +6,7 @@ Evaluate Cosmos3 on the LIBERO simulator using the SGLang backend: the model run
 How It Works
 ----------------------------------------
 
-Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3OmniDiffusersPipeline``, exposing the action policy as a synchronous HTTP endpoint ``POST /v1/actions/generations``.
-
-The eval driver launches the server group and assigns each server URL to its corresponding rollout worker; the worker sends batched observations, receives normalized rot6d actions, and the ``sglang_adapter`` de-normalizes them and converts to 7-D axis-angle for the environment, feeding them into LIBERO.
+Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3OmniDiffusersPipeline``, exposing the action policy as the HTTP endpoint ``POST /v1/actions/generations``. The eval driver hands each server URL to a rollout worker; the worker sends all N environments' observations at once, the server runs a single batched forward returning ``[N, horizon, 10]`` normalized rot6d, and ``sglang_adapter`` de-normalizes and converts to 7-D axis-angle for LIBERO.
 
 .. code:: text
 
@@ -31,26 +29,27 @@ Install embodied + LIBERO + Cosmos3 dependencies:
    bash requirements/install.sh embodied --env libero --model cosmos3
    source .venv/bin/activate
 
-Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra:
+Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra (use the branch with batched action support):
 
 .. code-block:: bash
 
+   git clone -b support_batch_cosmos3_action https://github.com/FxxxxU/sglang.git /path/to/sglang
    cd /path/to/sglang
    pip install -e "python[diffusion]"
 
 Prepare Checkpoint
 ----------------------------------------
 
-The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos_framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
+The eval input is a diffusers component directory ``model_diffusers``, produced by converting the SFT checkpoint via cosmos-framework. The full four-step conversion is described in the "Checkpoint Conversion" section of :doc:`Cosmos3 SFT <../../examples/embodied/sft_cosmos3>`.
 
 .. note::
 
-   - Evaluation **does not** require HuggingFace network access or the Qwen3-VL-8B-Instruct cache: tokenizer files are copied into ``model_diffusers/text_tokenizer/`` during conversion, and the SGLang server reads them directly from that directory.
+   Evaluation **does not** require network access to HuggingFace or the Qwen3-VL cache: the tokenizer is copied into ``model_diffusers/text_tokenizer/`` during conversion, and the server reads it directly from there.
 
 Run LIBERO-Spatial
 ----------------------------------------
 
-The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``. Before running, modify the YAML (use your local ``model_diffusers`` path):
+The default config is ``evaluations/libero/libero_spatial_cosmos3_eval_sglang.yaml``. Before running, point the YAML at your local ``model_diffusers``:
 
 .. code-block:: yaml
 
