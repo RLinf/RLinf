@@ -56,8 +56,7 @@ def step1_strip_omni_prefix(src: str, out: str) -> str:
     print(f"Loaded {len(sd)} keys")
 
     stripped = {
-        (k[5:] if k.startswith("omni.") else k): v.contiguous()
-        for k, v in sd.items()
+        (k[5:] if k.startswith("omni.") else k): v.contiguous() for k, v in sd.items()
     }
     print(f"Stripped to {len(stripped)} keys (e.g. {list(stripped)[:3]})")
 
@@ -71,10 +70,9 @@ def step2_save_dcp(safetensors_path: str, out: str) -> str:
     """model.safetensors -> model_dcp (export_model only reads DCP format)."""
     import torch
     import torch.distributed.checkpoint as dcp
+    from cosmos_framework.checkpoint.dcp import CustomSavePlanner
     from safetensors.torch import load_file
     from torch.distributed.checkpoint.filesystem import FileSystemWriter
-
-    from cosmos_framework.checkpoint.dcp import CustomSavePlanner
 
     out_dir = os.path.join(out, "model_dcp", "model")
     os.makedirs(out_dir, exist_ok=True)
@@ -160,7 +158,9 @@ def main() -> None:
     parser.add_argument("--config-file", default=DEFAULT_CONFIG)
     parser.add_argument("--experiment", default=DEFAULT_EXPERIMENT)
     parser.add_argument(
-        "--use-ema-weights", action="store_true", help="Keep the EMA weights (default drops them)."
+        "--use-ema-weights",
+        action="store_true",
+        help="Keep the EMA weights (default drops them).",
     )
     args = parser.parse_args()
 
@@ -169,7 +169,9 @@ def main() -> None:
 
     safetensors = step1_strip_omni_prefix(args.src, args.out)
     dcp_dir = step2_save_dcp(safetensors, args.out)
-    hf_dir = step3_export_to_hf(dcp_dir, args.out, args.config_file, args.experiment, no_ema)
+    hf_dir = step3_export_to_hf(
+        dcp_dir, args.out, args.config_file, args.experiment, no_ema
+    )
     diffusers = step4_convert_to_diffusers(hf_dir, args.out)
 
     print(f"Done. model_diffusers -> {diffusers}")
