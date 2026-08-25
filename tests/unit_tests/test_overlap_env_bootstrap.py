@@ -32,6 +32,7 @@ if "rlinf.envs.wrappers" not in sys.modules:
     sys.modules["rlinf.envs.wrappers"] = MagicMock()
 
 from rlinf.scheduler.hardware.accelerators.accelerator import AcceleratorType
+from rlinf.utils.env_helpers import SmoothInterveneController  # noqa: E402
 from rlinf.workers.env.env_worker import EnvWorker  # noqa: E402
 
 
@@ -106,6 +107,9 @@ class TestOverlapEnvBootstrap(unittest.TestCase):
         )
         self.worker._accelerator_type = AcceleratorType.NO_ACCEL
         self.worker._prefetched_train_bootstrap = None
+        self.worker.smooth_intervene = SmoothInterveneController(
+            stage_num=self.worker.stage_num, enabled=False
+        )
 
         # Mock env_list
         mock_env = MagicMock(

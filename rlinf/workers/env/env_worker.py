@@ -41,6 +41,7 @@ from rlinf.envs.wrappers import InsertDelay, RecordVideo
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
+from rlinf.utils.env_helpers import HistoryManager, SmoothInterveneController
 from rlinf.utils.metric_utils import compute_split_num
 from rlinf.utils.nested_dict_process import (
     clone_nested_to_cpu,
@@ -48,16 +49,23 @@ from rlinf.utils.nested_dict_process import (
     split_dict_to_chunk,
     update_nested_cfg,
 )
+from rlinf.utils.obs_compression import compress_obs, is_compression_enabled
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.utils.utils import (
     flatten_embodied_batch,
     pack_batch,
     preprocess_embodied_batch,
 )
-from rlinf.workers.env.history_manager import HistoryManager
 
 
 class EnvWorker(Worker):
+    # Class-level default so the observation send path is safe even when the
+    # instance is built without running ``__init__`` (e.g. ``object.__new__`` in
+    # unit tests). ``None`` means "use the scheduler's default split"; when
+    # ``env.obs_compression`` is enabled, ``__init__`` installs the compressing
+    # ``split_fn`` (see ``_split_and_compress_obs``).
+    _obs_split_fn = None
+
     def __init__(self, cfg: DictConfig):
         Worker.__init__(self)
 
@@ -77,8 +85,22 @@ class EnvWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_rlt = (
-            OmegaConf.select(self.cfg, "algorithm.loss_type", default="") == "rlt_ac"
+        self.enable_rlt = OmegaConf.select(
+            self.cfg, "algorithm.loss_type", default=""
+        ) in {"rlt_ac", "rlt_td3"}
+        # Optional lossless compression of image observations before they are
+        # sent to the rollout workers. Disabled unless `env.obs_compression`
+        # is present and `enable: true`. Compression runs inside a custom
+        # `split_fn` (see `_split_and_compress_obs`) so it happens *after* the
+        # channel splits the batch across ranks, keeping the scheduler's
+        # batch-size inference and splitting operating on plain tensors.
+        self.obs_compression_cfg = OmegaConf.select(
+            self.cfg, "env.obs_compression", default=None
+        )
+        self._obs_split_fn = (
+            self._split_and_compress_obs
+            if is_compression_enabled(self.obs_compression_cfg)
+            else None
         )
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
@@ -174,6 +196,15 @@ class EnvWorker(Worker):
                 for _ in range(self.stage_num)
             ]
         self.env_decoupled_mode = self.cfg.runner.get("enable_decoupled_mode", False)
+
+        self.smooth_intervene = SmoothInterveneController.from_cfg(
+            self.cfg,
+            stage_num=self.stage_num,
+            enable_train=self.enable_train,
+            train_num_envs_per_stage=(
+                self.train_num_envs_per_stage if self.enable_train else 0
+            ),
+        )
 
         if self.env_decoupled_mode:
             # Init the batch_router for env decoupled mode
@@ -453,7 +484,9 @@ class EnvWorker(Worker):
 
     @Worker.timer("env_interact_step")
     def env_interact_step(
-        self, chunk_actions: torch.Tensor, stage_id: int
+        self,
+        chunk_actions: torch.Tensor,
+        stage_id: int,
     ) -> tuple[EnvOutput, dict[str, Any], dict[str, Any]]:
         """
         This function is used to interact with the environment.
@@ -950,25 +983,59 @@ class EnvWorker(Worker):
             data["intervene_flags"] = env_batch.get("intervene_flags", None)
         return data
 
+    def _split_and_compress_obs(
+        self, data: dict[str, Any], split_sizes: list[int]
+    ) -> list[dict[str, Any]]:
+        """Split a rollout-input payload by batch, then compress each shard.
+
+        Used as the ``split_fn`` for observation ``send_to`` calls when
+        ``env.obs_compression`` is enabled. Splitting first keeps the
+        scheduler's ``infer_batch_size`` / ``split_batch`` operating on plain
+        tensors; compression is applied per shard so the rollout worker can
+        reconstruct it after receiving. When compression is disabled this
+        function is not installed and the default ``split_batch`` is used.
+        """
+        from rlinf.scheduler.worker.routing import split_batch
+
+        return [
+            compress_obs(shard, self.obs_compression_cfg)
+            for shard in split_batch(data, split_sizes)
+        ]
+
     def _send_train_bootstrap(
-        self, rollout_channel: Channel, env_outputs: list[EnvOutput]
+        self,
+        rollout_channel: Channel,
+        env_outputs: list[EnvOutput],
+        skip_stage_ids: set[int] | None = None,
     ) -> None:
+        skip_stage_ids = skip_stage_ids or set()
         for stage_id in range(self.stage_num):
+            if stage_id in skip_stage_ids:
+                continue
             env_output: EnvOutput = env_outputs[stage_id]
             env_batch = env_output.to_dict()
             self.send_to(
                 group_name=self.cfg.rollout.group_name,
                 channel=rollout_channel,
                 data=self._build_rollout_input_data(env_batch),
+                split_fn=self._obs_split_fn,
                 mode="train",
                 tag="rollout_results",
                 route_key=stage_id if not self.env_decoupled_mode else None,
                 decoupled_mode=self.env_decoupled_mode,
             )
 
-    def _bootstrap_and_send_train(self, rollout_channel: Channel) -> list[EnvOutput]:
+    def _bootstrap_and_send_train(
+        self,
+        rollout_channel: Channel,
+        skip_stage_ids: set[int] | None = None,
+    ) -> list[EnvOutput]:
         env_outputs = self.bootstrap_step()
-        self._send_train_bootstrap(rollout_channel, env_outputs)
+        self._send_train_bootstrap(
+            rollout_channel,
+            env_outputs,
+            skip_stage_ids=skip_stage_ids,
+        )
         return env_outputs
 
     def prefetch_train_bootstrap(self, rollout_channel: Channel) -> None:
@@ -979,7 +1046,8 @@ class EnvWorker(Worker):
                 "Call interact() to consume it before prefetching again."
             )
         self._prefetched_train_bootstrap = self._bootstrap_and_send_train(
-            rollout_channel
+            rollout_channel,
+            skip_stage_ids=self.smooth_intervene.active_stage_ids(),
         )
 
     def record_env_metrics(
@@ -1050,7 +1118,10 @@ class EnvWorker(Worker):
                 env_outputs = self._prefetched_train_bootstrap
                 self._prefetched_train_bootstrap = None
             else:
-                env_outputs = self._bootstrap_and_send_train(rollout_channel)
+                env_outputs = self._bootstrap_and_send_train(
+                    rollout_channel,
+                    skip_stage_ids=self.smooth_intervene.active_stage_ids(),
+                )
 
             for stage_id in range(self.stage_num):
                 await self._maybe_wait_env_delay(stage_id)
@@ -1081,16 +1152,26 @@ class EnvWorker(Worker):
                                 reward_model_output.detach().float().reshape(-1).cpu()
                             )
 
-                    policy_output = self.recv_from(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=input_channel,
-                        tag="train_rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        batch_size=self.train_batch_size,
-                        merge_fn=PolicyOutput.merge,
-                        infer_batch_size_fn=self._infer_rollout_batch_size,
-                        decoupled_mode=self.env_decoupled_mode,
-                    )
+                    if self.smooth_intervene.is_active(stage_id):
+                        policy_output = self.smooth_intervene.build_dummy_policy_output(
+                            stage_id,
+                            env=self.env_list[stage_id],
+                            curr_obs=env_output.obs,
+                        )
+                    else:
+                        policy_output = self.recv_from(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=input_channel,
+                            tag="train_rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            batch_size=self.train_batch_size,
+                            merge_fn=PolicyOutput.merge,
+                            infer_batch_size_fn=self._infer_rollout_batch_size,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
+                        self.smooth_intervene.remember_policy_output(
+                            stage_id, policy_output
+                        )
                     rewards = self.compute_bootstrap_rewards(
                         env_output, policy_output.bootstrap_values, reward_model_output
                     )
@@ -1141,7 +1222,8 @@ class EnvWorker(Worker):
                         )
 
                     env_output, env_info, chunk_step_payload = self.env_interact_step(
-                        policy_output.actions, stage_id
+                        policy_output.actions,
+                        stage_id,
                     )
                     # Emulated observation latency: wait before the obs goes out,
                     # without blocking the other coroutines in this worker.
@@ -1153,15 +1235,22 @@ class EnvWorker(Worker):
                             **chunk_step_payload,
                         )
                     env_batch = env_output.to_dict()
-                    self.send_to(
-                        group_name=self.cfg.rollout.group_name,
-                        channel=rollout_channel,
-                        data=self._build_rollout_input_data(env_batch),
-                        mode="train",
-                        tag="rollout_results",
-                        route_key=stage_id if not self.env_decoupled_mode else None,
-                        decoupled_mode=self.env_decoupled_mode,
+                    skip_rollout_send = self.smooth_intervene.on_chunk_done(
+                        stage_id,
+                        env_output.intervene_flags,
+                        env_output.dones,
                     )
+                    if not skip_rollout_send:
+                        self.send_to(
+                            group_name=self.cfg.rollout.group_name,
+                            channel=rollout_channel,
+                            data=self._build_rollout_input_data(env_batch),
+                            split_fn=self._obs_split_fn,
+                            mode="train",
+                            tag="rollout_results",
+                            route_key=stage_id if not self.env_decoupled_mode else None,
+                            decoupled_mode=self.env_decoupled_mode,
+                        )
                     if (
                         get_env_attr(self.env_list[stage_id], "insert_delay_metrics")
                         is not None
@@ -1210,16 +1299,26 @@ class EnvWorker(Worker):
                         env_metrics["reward_model_output"].append(
                             reward_model_output.detach().float().reshape(-1).cpu()
                         )
-                policy_output = self.recv_from(
-                    group_name=self.cfg.rollout.group_name,
-                    channel=input_channel,
-                    tag="train_rollout_results",
-                    route_key=stage_id if not self.env_decoupled_mode else None,
-                    batch_size=self.train_batch_size,
-                    merge_fn=PolicyOutput.merge,
-                    infer_batch_size_fn=self._infer_rollout_batch_size,
-                    decoupled_mode=self.env_decoupled_mode,
-                )
+                if self.smooth_intervene.is_active(stage_id):
+                    policy_output = self.smooth_intervene.build_dummy_policy_output(
+                        stage_id,
+                        env=self.env_list[stage_id],
+                        curr_obs=env_output.obs,
+                    )
+                else:
+                    policy_output = self.recv_from(
+                        group_name=self.cfg.rollout.group_name,
+                        channel=input_channel,
+                        tag="train_rollout_results",
+                        route_key=stage_id if not self.env_decoupled_mode else None,
+                        batch_size=self.train_batch_size,
+                        merge_fn=PolicyOutput.merge,
+                        infer_batch_size_fn=self._infer_rollout_batch_size,
+                        decoupled_mode=self.env_decoupled_mode,
+                    )
+                    self.smooth_intervene.remember_policy_output(
+                        stage_id, policy_output
+                    )
                 rewards = self.compute_bootstrap_rewards(
                     env_output, policy_output.bootstrap_values, reward_model_output
                 )
@@ -1339,6 +1438,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
                         data=self._build_rollout_input_data(env_batch),
+                        split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
@@ -1388,6 +1488,7 @@ class EnvWorker(Worker):
                         group_name=self.cfg.rollout.group_name,
                         channel=rollout_channel,
                         data=self._build_rollout_input_data(env_batch),
+                        split_fn=self._obs_split_fn,
                         mode="eval",
                         tag="rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,

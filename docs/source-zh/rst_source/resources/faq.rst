@@ -92,6 +92,18 @@
 渲染问题
 --------
 
+EGL 渲染使用哪块 GPU？
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+RLinf 会为每个 worker 指定渲染设备：向驱动查询该 worker 所分配 GPU 对应的 EGL 索引，并将其
+导出为 ``MUJOCO_EGL_DEVICE_ID``\ （MuJoCo、robosuite）和 ``EGL_DEVICE_ID``\ （其他 EGL 渲染器，
+如 pyrender）。这一步是必要的，因为 EGL 设备索引与 CUDA 设备号属于两套不同的命名空间：EGL 会
+列出驱动可见的所有设备，因此当容器只分配到节点上的部分 GPU 时，CUDA 设备 0 通常\ **并不是**
+EGL 设备 0。
+
+仅当需要覆盖该选择时才手动设置 ``MUJOCO_EGL_DEVICE_ID``，显式设置的值始终优先。若将其设为
+CUDA 序号，在两套命名空间不一致时会渲染到错误的 GPU 上。
+
 RuntimeError: The MUJOCO_EGL_DEVICE_ID environment variable must be an integer between 0 and 0 (inclusive), got 1.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

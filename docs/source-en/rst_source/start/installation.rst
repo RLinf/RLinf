@@ -36,8 +36,9 @@ environment list.
   Python 3.11.14; some environments such as ``behavior`` and ``d4rl`` require
   Python 3.10.
 - Use ``--torch <version>`` only when you need a different PyTorch wheel.
-- Use ``--platform amd`` or ``--platform ascend`` for experimental non-NVIDIA
-  installs. See :doc:`../guides/amd_rocm` and :doc:`../guides/ascend_cann`.
+- Use ``--platform amd``, ``--platform ascend``, or ``--platform musa`` for
+  experimental non-NVIDIA installs. See :doc:`../guides/amd_rocm`,
+  :doc:`../guides/ascend_cann`, and :doc:`../guides/moore_threads_musa`.
 
 Option 2: Docker
 ----------------

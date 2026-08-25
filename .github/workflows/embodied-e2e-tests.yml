@@ -375,6 +375,46 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-openpi-maniskill-libero-musa-test:
+    runs-on: musa
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create MUSA embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh --platform musa embodied --model openpi --env maniskill_libero
+
+      - name: LIBERO-10 PPO OpenPI Pi05 test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=LIBERO
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: ManiSkill PPO OpenPI Pi05 test
+        timeout-minutes: 60
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export ROBOT_PLATFORM=BRIDGE
+          source .venv/bin/activate
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          bash tests/e2e_tests/embodied/run.sh maniskill_async_ppo_openpi_pi05_musa osmesa
+          ray stop
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvlaoft-libero-ascend-test:
     runs-on: ascend
     steps:
