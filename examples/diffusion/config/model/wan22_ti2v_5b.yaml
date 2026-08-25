@@ -1,0 +1,31 @@
+model_type: "wan22_ti2v_5b"
+# Download from https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers.
+model_path: /path/to/Wan2.2-TI2V-5B-Diffusers
+precision: "bf16"
+load_to_device: True
+num_action_chunks: 1
+action_dim: 1
+
+is_lora: False
+lora_rank: 32
+
+wan22_ti2v_5b:
+  condition_mode: "t2v"
+  rl_mode: nft
+  resolution: [512, 512]
+  num_frames: 1
+  num_steps: 10
+  eval_num_steps: 20
+  timestep_fraction: 0.99
+  guidance_scale: 1.0
+  eval_guidance_scale: 1.0
+  cfg: False
+  max_sequence_length: 256
+  output_type: "pt"
+  weight_format: "diffusers"
+  vidar_path: null
+  use_lora: True
+  lora_rank: 32
+  lora_alpha: 64
+  lora_path: null
+  offload_auxiliary_modules: True

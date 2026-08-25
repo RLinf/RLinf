@@ -18,8 +18,8 @@ Each `BUILD_TARGET` maps to a build stage in [`Dockerfile`](Dockerfile). To see 
 
 ### Additional build arguments
 
-- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), or `ascend` (CANN). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
-- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, or `ASCEND_BASE_IMAGE` directly.
+- `PLATFORM` (default `nvidia`) — hardware platform: `nvidia` (CUDA), `amd` (ROCm), `ascend` (CANN), or `musa` (Moore Threads). Selects the base image and is also recorded as `RLINF_PLATFORM` in the final image. The `embodied-franka` target ignores `PLATFORM` and always uses a plain `ubuntu:20.04` base.
+- Per-platform runtime versions: `CUDA_VER`, `ROCM_VER`, `ROCM_ARCHS`, `CANN_VER`, `MUSA_VER`, `UBUNTU_VER`. Override any of these to bump versions without changing the rest of the build. For a fully custom base, set `NVIDIA_BASE_IMAGE`, `AMD_BASE_IMAGE`, `ASCEND_BASE_IMAGE`, or `MUSA_BASE_IMAGE` directly.
 - `NO_MIRROR` — set to `1` to skip the USTC apt/pypi mirror rewrites (recommended outside of mainland China).
 
 Example with non-default args:
@@ -31,6 +31,32 @@ docker build -f docker/Dockerfile \
     --build-arg CUDA_VER=12.4.1 \
     --build-arg NO_MIRROR=1 \
     -t rlinf:embodied-metaworld .
+```
+
+### Building for Moore Threads (MUSA)
+
+`PLATFORM=musa` builds on top of the Moore Threads training suite image
+(`registry.mthreads.com/mcctest/ai/training-suite:$MUSA_VER`), which already
+carries a MUSA-built torch plus `torch-musa`. `install.sh` therefore installs no
+torch of its own — it creates the venv with `--system-site-packages` on the
+image's interpreter and skips every CUDA-only package (flash-attn, apex, and the
+vLLM/SGLang kernels). The `embodied-maniskill_libero` target builds the subset of
+models that need none of them (`openpi` and `gr00t`) when `PLATFORM=musa`. Build
+and run it with the `mthreads` container runtime:
+
+Build with BuildKit — the legacy builder resolves every `FROM` in the
+Dockerfile, including the CUDA and ROCm bases on Docker Hub that a MUSA host
+often cannot reach.
+
+```shell
+DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile \
+    --build-arg BUILD_TARGET=embodied-maniskill_libero \
+    --build-arg PLATFORM=musa \
+    -t rlinf:embodied-maniskill_libero .
+
+docker run -it --runtime=mthreads --ipc=host --shm-size=100g \
+    -e MTHREADS_VISIBLE_DEVICES=all \
+    rlinf:embodied-maniskill_libero bash
 ```
 
 # Using the Docker Image

@@ -66,6 +66,9 @@ RLT 将表示学习和在线 RL 控制拆开。
    * - ManiSkill Stage 2
      - ``examples/embodiment/config/maniskill_rlt_stage2_ac_mlp.yaml``
      - 使用自动 ``rlt_policy_switch`` 和 transition replay 训练仿真 RLT actor-critic。
+   * - ManiSkill Stage 2（TD3）
+     - ``examples/embodiment/config/maniskill_rlt_stage2_td3_mlp.yaml``
+     - 使用相同的冻结 Stage 1 特征模型和 replay 路径运行仿真 TD3-MLP 变体。
 
 安装
 ----
@@ -589,6 +592,16 @@ Stage 1 checkpoint：
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_ac_mlp
+
+如需运行 TD3-MLP 变体，在 ``maniskill_rlt_stage2_td3_mlp.yaml`` 中配置相同的
+Stage 1 checkpoint，然后执行：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh maniskill_rlt_stage2_td3_mlp
+
+目前该变体只提供 ManiSkill 仿真配置。它保留冻结的 Stage 1 特征和 transition
+replay 路径，仅将 Stage 2 策略和更新目标替换为直接 TD3 actor 与 twin-Q critic。
 
 这个配置会启动 actor、rollout 和 ManiSkill env。rollout 侧冻结
 ``rollout.rlt_feature_model``，只同步和执行 Stage 2 MLP actor。ManiSkill route
