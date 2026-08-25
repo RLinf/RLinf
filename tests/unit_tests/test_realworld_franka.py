@@ -21,9 +21,6 @@ import rlinf.envs.realworld.franka.tasks  # noqa: F401
 from rlinf.envs.realworld.common.camera import CameraInfo
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv
 from rlinf.envs.realworld.franka.tasks.dual_franka_tcp_env import DualFrankaTCPEnv
-from rlinf.envs.realworld.franka.tasks.physical_agent_env import (
-    PhysicalAgentFrankaConfig,
-)
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
 
 
@@ -180,32 +177,7 @@ def test_realworld_wrap_obs_preserves_depth_camera_order():
     np.testing.assert_allclose(obs["extra_view_depths"].cpu().numpy(), 1.5)
 
 
-def test_physical_agent_config_derives_reset_and_safety_bounds():
-    target = np.array([0.5, 0.1, 0.2, 3.0, 0.0, 0.25])
-    config = PhysicalAgentFrankaConfig(
-        target_ee_pose=target,
-        clip_x_range=0.2,
-        clip_y_range=0.3,
-        clip_z_range_low=0.04,
-        clip_z_range_high=0.1,
-        clip_roll_pitch_range=0.05,
-        clip_rz_range=0.4,
-        compliance_param={"translational_clip_x": 0.005},
-    )
-
-    np.testing.assert_allclose(config.reset_ee_pose, target + [0, 0, 0.1, 0, 0, 0])
-    np.testing.assert_allclose(
-        config.ee_pose_limit_min,
-        [0.3, -0.2, 0.16, 2.95, -0.05, -0.15],
-    )
-    np.testing.assert_allclose(
-        config.ee_pose_limit_max,
-        [0.7, 0.4, 0.3, 3.05, 0.05, 0.65],
-    )
-    assert config.compliance_param["translational_clip_x"] == 0.005
-
-
-def test_rpent_franka_registrations_exist():
-    assert gym.spec("PhysicalAgentFrankaEnv-v1") is not None
+def test_generic_franka_registrations_exist():
+    assert gym.spec("FrankaEnv-v1") is not None
     assert gym.spec("DualFrankaTcpEnv-v1") is not None
     assert gym.spec("DualFrankaTCPEnv-v1") is not None
