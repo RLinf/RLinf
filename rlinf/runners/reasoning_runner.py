@@ -27,6 +27,7 @@ from tqdm import tqdm
 from rlinf.data.schema.reasoning_requests import build_rollout_requests_from_batch
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
+from rlinf.utils.checkpoint import parse_global_step_from_checkpoint_path
 from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.runner_utils import check_progress, local_mkdir_safe
@@ -264,7 +265,9 @@ class ReasoningRunner:
         # Resume from checkpoint
         logging.info(f"Load from checkpoint folder: {self.cfg.runner.resume_dir}")
         # set global step
-        self.global_steps = int(self.cfg.runner.resume_dir.split("global_step_")[-1])
+        self.global_steps = parse_global_step_from_checkpoint_path(
+            self.cfg.runner.resume_dir
+        )
         logging.info(f"Setting global step to {self.global_steps}")
 
         actor_checkpoint_path = os.path.join(self.cfg.runner.resume_dir, "actor")
@@ -298,7 +301,7 @@ class ReasoningRunner:
                 self.cfg.runner.resume_dir = None
             else:
                 checkpoint_steps = [
-                    int(d.split("global_step_")[-1])
+                    parse_global_step_from_checkpoint_path(d)
                     for d in os.listdir(checkpoints_dir)
                     if d.startswith("global_step_")
                     and os.path.isdir(os.path.join(checkpoints_dir, d))
