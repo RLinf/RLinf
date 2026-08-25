@@ -8,6 +8,11 @@
 # This node only serves the compute/rollout roles (actor / rollout / reward).
 # The control node (Franka) is started via setup_franka_node.sh and joins this
 # head as rank 1.
+#
+# Required environment variables:
+#   RLINF_NODE_IP  Reachable IP address for this Ray head (required with `start`).
+# Optional environment variables:
+#   RLINF_VENV, RLINF_COMM_NET_DEVICES, RAY_TEMP_DIR
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export REPO_PATH="$(dirname "$(dirname "$_SCRIPT_DIR")")"
@@ -23,10 +28,16 @@ export RLINF_COMM_NET_DEVICES="${RLINF_COMM_NET_DEVICES:-eth0}"
 # --temp-dir) is recognized as a separate node. Use a short path under /tmp to
 # stay within the 107-byte AF_UNIX socket length limit.
 export RAY_TEMP_DIR="${RAY_TEMP_DIR:-/tmp/rlinf_compute}"
-# IP address of this head node that other nodes can reach.
-export RLINF_NODE_IP="${RLINF_NODE_IP:-<head_node_ip_address>}"
-# Robot IP (usually not needed on the compute node, kept for scripts that read it).
-export FRANKA_ROBOT_IP="${FRANKA_ROBOT_IP:-<robot_ip_address>}"
+
+if [ "${1:-}" = "start" ] && [ -z "${RLINF_NODE_IP:-}" ]; then
+  echo "[setup_compute_node.sh] ERROR: RLINF_NODE_IP is required with 'start'." >&2
+  echo "  export RLINF_NODE_IP=<this_node_reachable_ip>" >&2
+  unset _SCRIPT_DIR
+  return 1 2>/dev/null || exit 1
+fi
+if [ -n "${RLINF_NODE_IP:-}" ]; then
+  export RLINF_NODE_IP
+fi
 
 # Avoid interference from conda / PYTHONHOME.
 if [ -n "${CONDA_PREFIX:-}" ] && type conda >/dev/null 2>&1; then

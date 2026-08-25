@@ -1,15 +1,16 @@
 #!/bin/bash
 # cleanup.sh - Clean up leftover processes from RLinf real-world eval/training.
 # This includes: Ray clusters, Franka ROS controllers, roslaunch/roscore/rosmaster, FrankaController.
+# Required environment variables: none. The `ray` executable must be on PATH.
 set -u
 
-echo "==== 1. Stop the Ray cluster (head + control, single-machine) ===="
-# Prefer the ray in the current environment; fall back to a user-specified ray binary.
-if command -v ray >/dev/null 2>&1; then
-    ray stop 2>/dev/null || true
-else
-    (/path/to/your/venv/bin/ray stop 2>/dev/null || true)
+if ! command -v ray >/dev/null 2>&1; then
+    echo "[cleanup.sh] ERROR: ray is not on PATH. Activate an RLinf environment before running this script." >&2
+    exit 1
 fi
+
+echo "==== 1. Stop the Ray cluster (head + control, single-machine) ===="
+ray stop 2>/dev/null || true
 sleep 2
 
 echo "==== 2. Kill leftover Ray core processes (safety net) ===="

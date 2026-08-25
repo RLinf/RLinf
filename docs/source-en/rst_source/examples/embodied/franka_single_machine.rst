@@ -135,7 +135,7 @@ Please take a note of the firmware version for later use when setting ``LIBFRANK
 .. raw:: html
 
   <div style="flex: 1; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
+      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware_single_machine.png" style="width: 60%;"/>
   </div>
 
 .. note::
@@ -247,8 +247,8 @@ Then, before running, activate the **control environment (RLinf-franka)** and se
 .. code-block:: bash
 
    cd RLinf-franka
-   source ray_utils/realworld/setup_franka_node.sh   # Only activate the control env, do not start Ray
    export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   source ray_utils/realworld/setup_franka_node.sh   # Only activate the control env, do not start Ray
 
 Next, run the script:
 
@@ -269,7 +269,9 @@ The data collection only needs to run on the **control node (RLinf-franka)** as 
 .. code-block:: bash
 
    cd RLinf-franka
-   # Set as needed: RLINF_COMM_NET_DEVICES=<network device>, FRANKA_ROBOT_IP=<robot IP>
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   export RLINF_HEAD_IP=<this_host_ip_address>
+   # Optional: export RLINF_COMM_NET_DEVICES=<network_device>  # defaults to eth0
    source ray_utils/realworld/setup_franka_collect.sh start
 
 .. note::
@@ -384,12 +386,23 @@ The repository provides the following startup scripts (under ``ray_utils/realwor
 
 The first three scripts support ``source <script>`` / ``source <script> start`` / ``source <script> stop`` and verify that key dependencies can be imported before startup.
 
+Set the required environment variables **before** sourcing each script:
+
+- ``setup_compute_node.sh start`` requires ``RLINF_NODE_IP`` (the compute head's reachable IP).
+- ``setup_franka_node.sh start`` requires ``FRANKA_ROBOT_IP`` and ``RLINF_HEAD_IP`` (the compute head's IP).
+- ``setup_franka_collect.sh start`` requires ``FRANKA_ROBOT_IP`` and ``RLINF_HEAD_IP`` (this host's IP for the collection-only Ray head).
+- ``cleanup.sh`` requires no environment variables, but ``ray`` must be available on ``PATH`` (activate either RLinf environment first).
+
+The optional variables ``RLINF_VENV``, ``RLINF_COMM_NET_DEVICES``, and
+``RAY_TEMP_DIR`` retain the defaults documented in the script headers.
+
 **Terminal 1: compute environment (rank 0, head)**
 
 .. code-block:: bash
 
    cd RLinf-compute
-   # Set as needed: RLINF_NODE_IP=<this node's reachable IP>, RLINF_COMM_NET_DEVICES=<network device>
+   export RLINF_NODE_IP=<this_node_reachable_ip>
+   # Optional: export RLINF_COMM_NET_DEVICES=<network_device>  # defaults to eth0
    source ray_utils/realworld/setup_compute_node.sh start
 
 **Terminal 2: control environment (rank 1, worker)**
@@ -397,7 +410,8 @@ The first three scripts support ``source <script>`` / ``source <script> start`` 
 .. code-block:: bash
 
    cd RLinf-franka
-   # Set as needed: RLINF_HEAD_IP=<compute head's IP>, FRANKA_ROBOT_IP=<robot IP>
+   export RLINF_HEAD_IP=<compute_head_ip_address>
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
    source ray_utils/realworld/setup_franka_node.sh start
 
 .. note::
@@ -506,29 +520,29 @@ An example configuration for two Franka robots is shown in ``examples/embodiment
 .. code-block:: yaml
 
   cluster:
-  num_nodes: 3 # One training/rollout node + two robot controller nodes
-  component_placement:
-    actor:
-      node_group: "4090"
-      placement: 0 # Run on the first GPU of the training/rollout node
-    env:
-      node_group: franka
-      placement: 0-1 # Two robots assigned to two envs, rank 0 and rank 1
-    rollout:
-      node_group: "4090"
-      placement: 0:0-1 # Two rollout processes on the first GPU of the training/rollout node
-  node_groups:
-    - label: "4090"
-      node_ranks: 0 # Node rank 0 is the training/rollout node
-    - label: franka
-      node_ranks: 1-2 # Node ranks 1 and 2 are the two robot controller nodes
-      hardware:
-        type: Franka
-        configs:
-          - robot_ip: ROBOT_IP_FOR_RANK1
-            node_rank: 1 # The node rank of the first robot controller node
-          - robot_ip: ROBOT_IP_FOR_RANK2
-            node_rank: 2 # The node rank of the second robot controller node
+    num_nodes: 3 # One training/rollout node + two robot controller nodes
+    component_placement:
+      actor:
+        node_group: "4090"
+        placement: 0 # Run on the first GPU of the training/rollout node
+      env:
+        node_group: franka
+        placement: 0-1 # Two robots assigned to two envs, rank 0 and rank 1
+      rollout:
+        node_group: "4090"
+        placement: 0:0-1 # Two rollout processes on the first GPU of the training/rollout node
+    node_groups:
+      - label: "4090"
+        node_ranks: 0 # Node rank 0 is the training/rollout node
+      - label: franka
+        node_ranks: 1-2 # Node ranks 1 and 2 are the two robot controller nodes
+        hardware:
+          type: Franka
+          configs:
+            - robot_ip: ROBOT_IP_FOR_RANK1
+              node_rank: 1 # The node rank of the first robot controller node
+            - robot_ip: ROBOT_IP_FOR_RANK2
+              node_rank: 2 # The node rank of the second robot controller node
 
 In the single-machine setup, each robot control role joins the same cluster as an
 independent Ray node (with its own ``--temp-dir``), corresponding to different ``node_ranks`` in the config.

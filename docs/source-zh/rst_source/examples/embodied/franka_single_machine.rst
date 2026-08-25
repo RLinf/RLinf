@@ -131,7 +131,7 @@ Single-Machine Franka
 .. raw:: html
 
   <div style="flex: 1; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
+      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware_single_machine.png" style="width: 60%;"/>
   </div>
 
 .. note::
@@ -236,8 +236,8 @@ C. 安装计算环境（RLinf-compute）
 .. code-block:: bash
 
    cd RLinf-franka
-   source ray_utils/realworld/setup_franka_node.sh   # 仅激活控制环境，不启动 Ray
    export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   source ray_utils/realworld/setup_franka_node.sh   # 仅激活控制环境，不启动 Ray
 
 然后运行脚本：
 
@@ -258,7 +258,9 @@ C. 安装计算环境（RLinf-compute）
 .. code-block:: bash
 
    cd RLinf-franka
-   # 按需设置：RLINF_COMM_NET_DEVICES=<网卡>、FRANKA_ROBOT_IP=<机器人 IP>
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   export RLINF_HEAD_IP=<this_host_ip_address>
+   # 可选：export RLINF_COMM_NET_DEVICES=<network_device>  # 默认为 eth0
    source ray_utils/realworld/setup_franka_collect.sh start
 
 .. note::
@@ -378,12 +380,23 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 前三个脚本均支持 ``source <script>`` / ``source <script> start`` / ``source <script> stop`` 三种用法，
 并在启动前校验关键依赖是否可导入。
 
+请在 source 相应脚本 **之前** 设置必需的环境变量：
+
+- ``setup_compute_node.sh start`` 需要 ``RLINF_NODE_IP``（计算 head 可被访问的 IP）。
+- ``setup_franka_node.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``（计算 head 的 IP）。
+- ``setup_franka_collect.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``（数据采集 Ray head 所在主机的 IP）。
+- ``cleanup.sh`` 不需要环境变量，但 ``ray`` 必须位于 ``PATH`` 中（请先激活任一 RLinf 环境）。
+
+可选变量 ``RLINF_VENV``、``RLINF_COMM_NET_DEVICES`` 和 ``RAY_TEMP_DIR``
+保留脚本头部说明的默认值。
+
 **终端 1：计算环境（rank 0，head）**
 
 .. code-block:: bash
 
    cd RLinf-compute
-   # 按需设置：RLINF_NODE_IP=<本机可被访问的 IP>、RLINF_COMM_NET_DEVICES=<网卡>
+   export RLINF_NODE_IP=<this_node_reachable_ip>
+   # 可选：export RLINF_COMM_NET_DEVICES=<network_device>  # 默认为 eth0
    source ray_utils/realworld/setup_compute_node.sh start
 
 **终端 2：控制环境（rank 1，worker）**
@@ -391,7 +404,8 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 .. code-block:: bash
 
    cd RLinf-franka
-   # 按需设置：RLINF_HEAD_IP=<计算 head 的 IP>、FRANKA_ROBOT_IP=<机器人 IP>
+   export RLINF_HEAD_IP=<compute_head_ip_address>
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
    source ray_utils/realworld/setup_franka_node.sh start
 
 .. note::
@@ -500,29 +514,29 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 .. code-block:: yaml
 
   cluster:
-  num_nodes: 3 # 1 个训练 / rollout 节点 + 2 个机器人控制节点
-  component_placement:
-    actor:
-      node_group: "4090"
-      placement: 0 # 运行在训练 / rollout 节点的第一个 GPU 上
-    env:
-      node_group: franka
-      placement: 0-1 # 两个 env 分别绑定两个机器人，rank 0 和 rank 1
-    rollout:
-      node_group: "4090"
-      placement: 0:0-1 # 在训练 / rollout 节点第一个 GPU 上运行两个 rollout 进程
-  node_groups:
-    - label: "4090"
-      node_ranks: 0 # 节点 rank 0 为训练 / rollout 节点
-    - label: franka
-      node_ranks: 1-2 # 节点 rank 1 和 2 为两个机器人控制节点
-      hardware:
-        type: Franka
-        configs:
-          - robot_ip: ROBOT_IP_FOR_RANK1
-            node_rank: 1 # 第一个机器人控制节点的 rank
-          - robot_ip: ROBOT_IP_FOR_RANK2
-            node_rank: 2 # 第二个机器人控制节点的 rank
+    num_nodes: 3 # 1 个训练 / rollout 节点 + 2 个机器人控制节点
+    component_placement:
+      actor:
+        node_group: "4090"
+        placement: 0 # 运行在训练 / rollout 节点的第一个 GPU 上
+      env:
+        node_group: franka
+        placement: 0-1 # 两个 env 分别绑定两个机器人，rank 0 和 rank 1
+      rollout:
+        node_group: "4090"
+        placement: 0:0-1 # 在训练 / rollout 节点第一个 GPU 上运行两个 rollout 进程
+    node_groups:
+      - label: "4090"
+        node_ranks: 0 # 节点 rank 0 为训练 / rollout 节点
+      - label: franka
+        node_ranks: 1-2 # 节点 rank 1 和 2 为两个机器人控制节点
+        hardware:
+          type: Franka
+          configs:
+            - robot_ip: ROBOT_IP_FOR_RANK1
+              node_rank: 1 # 第一个机器人控制节点的 rank
+            - robot_ip: ROBOT_IP_FOR_RANK2
+              node_rank: 2 # 第二个机器人控制节点的 rank
 
 在单机方案中，每个机器人控制角色同样作为独立的 Ray 节点（独立 ``--temp-dir``）加入同一集群，
 对应配置中不同的 ``node_ranks``。

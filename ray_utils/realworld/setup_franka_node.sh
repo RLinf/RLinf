@@ -8,6 +8,12 @@
 # This node only serves the Franka control role (env / controller worker) and
 # joins the Ray head as rank 1. Start the compute node (rank 0) via
 # setup_compute_node.sh before joining it.
+#
+# Required environment variables:
+#   FRANKA_ROBOT_IP  Robot IP (required with `start`).
+#   RLINF_HEAD_IP    Compute Ray head IP (required with `start`).
+# Optional environment variables:
+#   RLINF_VENV, RLINF_COMM_NET_DEVICES, RAY_TEMP_DIR, RAY_ADDRESS
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export REPO_PATH="$(dirname "$(dirname "$_SCRIPT_DIR")")"
@@ -19,15 +25,31 @@ export RLINF_VENV="${RLINF_VENV:-${REPO_PATH}/.venv}"
 export RLINF_NODE_RANK=1
 # Set RLINF_COMM_NET_DEVICES to the network interface that other nodes can reach.
 export RLINF_COMM_NET_DEVICES="${RLINF_COMM_NET_DEVICES:-eth0}"
-export FRANKA_ROBOT_IP="${FRANKA_ROBOT_IP:-<robot_ip_address>}"
 
 # Ray uses an independent temp dir - it must differ from the compute head's so
 # that this node is recognized as a separate node. Use a short path under /tmp
 # to stay within the 107-byte AF_UNIX socket length limit.
 export RAY_TEMP_DIR="${RAY_TEMP_DIR:-/tmp/rlinf_control}"
-# Address of the compute head (determined by setup_compute_node.sh's RLINF_NODE_IP).
-export RLINF_HEAD_IP="${RLINF_HEAD_IP:-<head_node_ip_address>}"
-export RAY_ADDRESS="${RAY_ADDRESS:-${RLINF_HEAD_IP}:6379}"
+
+if [ "${1:-}" = "start" ] && [ -z "${FRANKA_ROBOT_IP:-}" ]; then
+  echo "[setup_franka_node.sh] ERROR: FRANKA_ROBOT_IP is required with 'start'." >&2
+  echo "  export FRANKA_ROBOT_IP=<robot_ip_address>" >&2
+  unset _SCRIPT_DIR
+  return 1 2>/dev/null || exit 1
+fi
+if [ "${1:-}" = "start" ] && [ -z "${RLINF_HEAD_IP:-}" ]; then
+  echo "[setup_franka_node.sh] ERROR: RLINF_HEAD_IP is required with 'start'." >&2
+  echo "  export RLINF_HEAD_IP=<compute_head_ip_address>" >&2
+  unset _SCRIPT_DIR
+  return 1 2>/dev/null || exit 1
+fi
+if [ -n "${FRANKA_ROBOT_IP:-}" ]; then
+  export FRANKA_ROBOT_IP
+fi
+if [ -n "${RLINF_HEAD_IP:-}" ]; then
+  export RLINF_HEAD_IP
+  export RAY_ADDRESS="${RAY_ADDRESS:-${RLINF_HEAD_IP}:6379}"
+fi
 
 # Clean up environment variables that may interfere with Python.
 unset PYTHONHOME
