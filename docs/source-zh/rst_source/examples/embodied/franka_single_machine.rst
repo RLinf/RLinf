@@ -382,9 +382,9 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
 请在 source 相应脚本 **之前** 设置必需的环境变量：
 
-- ``setup_compute_node.sh start`` 需要 ``RLINF_NODE_IP``（计算 head 可被访问的 IP）。
-- ``setup_franka_node.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``（计算 head 的 IP）。
-- ``setup_franka_collect.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``（数据采集 Ray head 所在主机的 IP）。
+- ``setup_compute_node.sh start`` 需要 ``RLINF_NODE_IP``\ （计算 head 可被访问的 IP）。
+- ``setup_franka_node.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``\ （计算 head 的 IP）。
+- ``setup_franka_collect.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``\ （数据采集 Ray head 所在主机的 IP）。
 - ``cleanup.sh`` 不需要环境变量，但 ``ray`` 必须位于 ``PATH`` 中（请先激活任一 RLinf 环境）。
 
 可选变量 ``RLINF_VENV``、``RLINF_COMM_NET_DEVICES`` 和 ``RAY_TEMP_DIR``
