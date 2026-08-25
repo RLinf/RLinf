@@ -176,6 +176,7 @@ class LiberoEnv(gym.Env):
 
         self.video_cfg = cfg.video_cfg
         self.current_raw_obs = None
+        self.skip_intermediate_renders = getattr(cfg, "skip_intermediate_renders", False)
 
     def _log_evaluation_mode(self):
         """Log the LIBERO evaluation mode banner (rank 0 env worker only)."""
@@ -889,7 +890,7 @@ class LiberoEnv(gym.Env):
             depth=depth,
         )
 
-    def step(self, actions=None, auto_reset=True):
+    def step(self, actions=None, auto_reset=True, _skip_obs_wrap=False):
         """Step the environment with the given actions."""
         if isinstance(actions, torch.Tensor):
             actions = actions.detach().cpu().numpy()
@@ -899,7 +900,7 @@ class LiberoEnv(gym.Env):
         self.current_raw_obs = raw_obs
         infos = list_of_dict_to_dict_of_list(info_lists)
         truncations = self.elapsed_steps >= self.cfg.max_episode_steps
-        obs = self._wrap_obs(raw_obs)
+        obs = None if _skip_obs_wrap else self._wrap_obs(raw_obs)
 
         step_reward = self._calc_step_reward(terminations)
 
@@ -920,6 +921,7 @@ class LiberoEnv(gym.Env):
             infos,
         )
 
+
     def chunk_step(self, chunk_actions):
         # chunk_actions: [num_envs, chunk_step, action_dim]
         chunk_size = chunk_actions.shape[1]
@@ -930,17 +932,27 @@ class LiberoEnv(gym.Env):
 
         raw_chunk_terminations = []
         raw_chunk_truncations = []
-        for i in range(chunk_size):
-            actions = chunk_actions[:, i]
-            extracted_obs, step_reward, terminations, truncations, infos = self.step(
-                actions, auto_reset=False
-            )
-            obs_list.append(extracted_obs)
-            infos_list.append(infos)
+        try:
+            for i in range(chunk_size):
+                should_render = True
+                if self.skip_intermediate_renders:
+                    should_render = i == chunk_size - 1
+                    if i == 0 or i == chunk_size - 1:
+                        self.env.set_camera_rendering(should_render)
 
-            chunk_rewards.append(step_reward)
-            raw_chunk_terminations.append(terminations)
-            raw_chunk_truncations.append(truncations)
+                actions = chunk_actions[:, i]
+                extracted_obs, step_reward, terminations, truncations, infos = self.step(
+                    actions, auto_reset=False, _skip_obs_wrap=not should_render
+                )
+                obs_list.append(extracted_obs)
+                infos_list.append(infos)
+
+                chunk_rewards.append(step_reward)
+                raw_chunk_terminations.append(terminations)
+                raw_chunk_truncations.append(truncations)
+        finally:
+            if self.skip_intermediate_renders and not should_render:
+                self.env.set_camera_rendering(True)
 
         chunk_rewards = torch.stack(chunk_rewards, dim=1)  # [num_envs, chunk_steps]
         raw_chunk_terminations = torch.stack(
