@@ -215,118 +215,21 @@ At training time, the cosmos data loader converts LIBERO's 7-D actions to 10-D r
 Checkpoint Conversion
 ----------------------------------------
 
-The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` is in FSDP2 sharded format and **cannot be used for eval directly**. Cosmos3 eval uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). Converting from ``full_weights.pt`` to ``model_diffusers`` takes four steps (requires cosmos-framework):
-
-.. code-block:: text
-
-   1) full_weights.pt  --strip omni. prefix-->  model.safetensors
-   2) model.safetensors  --to DCP directory-->   model_dcp
-   3) model_dcp  --cosmos_framework.scripts.export_model + cosmos config-->  model_hf
-   4) model_hf   --cosmos_framework.scripts.convert_model_to_diffusers-->  model_diffusers
-      and change model_index.json _class_name to Cosmos3OmniDiffusersPipeline
-
-Set the path variables first (used by all four steps below):
+The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` is in FSDP2 sharded format and **cannot be used for eval directly**. Cosmos3 eval uses a diffusers component directory ``model_diffusers`` (containing ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``). The four-step conversion — strip the ``omni.`` prefix, save as DCP, export to HF, split into diffusers components and fix ``_class_name`` — is handled by ``toolkits/cosmos3/convert_checkpoint.py`` (requires cosmos-framework):
 
 .. code-block:: bash
 
-   # RLinf checkpoint produced by SFT (omni.net.* prefix)
+   # RLinf SFT checkpoint (omni.net.* prefix)
    export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
-   # Conversion working directory (all four step outputs go here)
+   # Conversion working directory (steps write model_safetensors/model_dcp/model_hf/model_diffusers)
    export OUT="/path/to/converted"
-   # cosmos_framework checkpoint conversion needs the LIBERO_ROOT env var
+   # cosmos_framework export_model reads LIBERO_ROOT
    export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
    mkdir -p "$OUT"
 
-**Step 1:** ``full_weights.pt`` → ``model.safetensors`` (strip the ``omni.`` prefix so cosmos recognizes ``net.*`` / ``net_ema.*``).
+   python toolkits/cosmos3/convert_checkpoint.py --src "$SRC" --out "$OUT"
 
-.. code-block:: bash
-
-   python - <<'PY'
-   import torch, os
-   from safetensors.torch import save_file
-
-   SRC  = os.environ["SRC"]
-   OUTD = os.path.join(os.environ["OUT"], "model_safetensors")
-   os.makedirs(OUTD, exist_ok=True)
-
-   print("Loading full_weights.pt (~91GB)...")
-   sd = torch.load(SRC, map_location="cpu", weights_only=False)
-   print(f"Loaded {len(sd)} keys")
-
-   # Strip "omni." prefix: omni.net.* -> net.*, omni.net_ema.* -> net_ema.*
-   stripped = {(k[5:] if k.startswith("omni.") else k): v.contiguous() for k, v in sd.items()}
-   print(f"Stripped to {len(stripped)} keys (e.g. {list(stripped.keys())[:3]})")
-
-   dst = os.path.join(OUTD, "model.safetensors")
-   save_file(stripped, dst)
-   print(f"Saved {os.path.getsize(dst)/1e9:.1f} GB -> {dst}")
-   PY
-
-.. note::
-
-   ``export SRC=... OUT=...`` before running (the code block reads these two env vars). ``weights_only=False`` because RLinf stores the state dict with metadata.
-
-**Step 2:** ``model.safetensors`` → ``model_dcp`` (convert to a DCP directory; ``export_model`` only accepts DCP format).
-
-.. code-block:: bash
-
-   python - <<'PY'
-   import os, math, torch
-   from safetensors.torch import load_file
-   import torch.distributed.checkpoint as dcp
-   from torch.distributed.checkpoint.filesystem import FileSystemWriter
-   from cosmos_framework.checkpoint.dcp import CustomSavePlanner
-
-   SRC = os.path.join(os.environ["OUT"], "model_safetensors", "model.safetensors")
-   OUT = os.path.join(os.environ["OUT"], "model_dcp", "model")
-   os.makedirs(OUT, exist_ok=True)
-
-   state_dict = load_file(SRC)
-   print(f"Loaded {len(state_dict)} keys")
-
-   # ~5GB per shard (aligned with transformers default max_shard_size)
-   nbytes  = sum(v.numel() * v.element_size() for v in state_dict.values() if isinstance(v, torch.Tensor))
-   nshards = max(1, math.ceil(nbytes / (5 * 1024**3)))
-   writer  = FileSystemWriter(OUT, thread_count=nshards)
-   dcp.save(state_dict=state_dict, storage_writer=writer, planner=CustomSavePlanner())
-   print(f"Saved DCP -> {OUT}")
-   PY
-
-.. note::
-
-   This step depends on ``cosmos_framework.checkpoint.dcp.CustomSavePlanner``, so it must be run in the cosmos-framework environment (same env as steps 3 and 4 below). The output ``$OUT/model_dcp/`` is the input to ``export_model --checkpoint-path`` in the next step.
-
-**Steps 3 & 4:** DCP → HF → diffusers (cosmos-framework's built-in scripts).
-
-.. code-block:: bash
-
-   python -m cosmos_framework.scripts.export_model \
-     --checkpoint-path "$OUT/model_dcp" \
-     --config-file cosmos_framework/configs/base/config.py \
-     --experiment action_policy_libero_all_nano \
-     --no-use-ema-weights \
-     -o "$OUT/model_hf"
-
-   python -m cosmos_framework.scripts.convert_model_to_diffusers \
-     --checkpoint-path "$OUT/model_hf" \
-     -o "$OUT/model_diffusers"
-
-   # convert_model_to_diffusers writes a _class_name that is not the standard diffusers format; change it to Cosmos3OmniDiffusersPipeline
-   python -c "
-   import json
-   p = '$OUT/model_diffusers/model_index.json'
-   d = json.load(open(p))
-   if d.get('_class_name') != 'Cosmos3OmniDiffusersPipeline':
-       d['_class_name'] = 'Cosmos3OmniDiffusersPipeline'
-       json.dump(d, open(p, 'w'), indent=2)"
-
-.. note::
-
-   ``--config-file`` is cosmos-framework's model structure config; just use the relative path ``cosmos_framework/configs/base/config.py``.
-
-Step 3 exports the DCP weights to HF format ``model_hf`` using the cosmos training config;
-
-Step 4 splits the HF weights into a diffusers component directory ``model_diffusers``, and immediately changes ``model_index.json``'s ``_class_name`` to ``Cosmos3OmniDiffusersPipeline`` (standard diffusers checkpoint format).
+The script runs all four steps in order (``--use-ema-weights`` keeps the EMA weights, default drops them); see ``python toolkits/cosmos3/convert_checkpoint.py --help``.
 
 .. warning::
 

@@ -215,118 +215,21 @@ Cosmos3 内部用 **10 维 rot6d** 表示动作，LIBERO 环境用 **7 维 axis-
 转换 Checkpoint
 ----------------------------------------
 
-SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 FSDP2 分片格式，**不能直接评测**。Cosmos3 评测默认使用 diffusers 组件目录 ``model_diffusers``（含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer/`` / ``scheduler/``）。从 ``full_weights.pt`` 到 ``model_diffusers`` 分四步（依赖 cosmos-framework）：
-
-.. code-block:: text
-
-   1) full_weights.pt  --去掉 omni. 前缀-->  model.safetensors
-   2) model.safetensors  --转 DCP 目录-->     model_dcp
-   3) model_dcp  --cosmos_framework.scripts.export_model + cosmos config-->  model_hf
-   4) model_hf   --cosmos_framework.scripts.convert_model_to_diffusers-->    model_diffusers
-      并将 model_index.json 的 _class_name 改为 Cosmos3OmniDiffusersPipeline
-
-先设好路径变量（下面四步都引用）：
+SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt`` 是 FSDP2 分片格式，**不能直接评测**。Cosmos3 评测默认使用 diffusers 组件目录 ``model_diffusers``（含 ``model_index.json`` / ``transformer/`` / ``vae/`` / ``text_tokenizer`` / ``scheduler/``）。四步转换 —— 去掉 ``omni.`` 前缀、存成 DCP、导出 HF、拆成 diffusers 组件并修 ``_class_name`` —— 由 ``toolkits/cosmos3/convert_checkpoint.py`` 完成（依赖 cosmos-framework）：
 
 .. code-block:: bash
 
    # SFT 产出的 RLinf checkpoint（omni.net.* 前缀）
    export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
-   # 转换工作目录（四步产物都放这里）
+   # 转换工作目录
    export OUT="/path/to/converted"
-   # cosmos_framework 转换 ckpt 需要 LIBERO_ROOT 环境变量
+   # cosmos_framework export_model 需要 LIBERO 数据集路径
    export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
    mkdir -p "$OUT"
 
-**第 1 步：** ``full_weights.pt`` → ``model.safetensors``（去掉 ``omni.`` 前缀，让 cosmos 能识别 ``net.*`` / ``net_ema.*``）。
+   python toolkits/cosmos3/convert_checkpoint.py --src "$SRC" --out "$OUT"
 
-.. code-block:: bash
-
-   python - <<'PY'
-   import torch, os
-   from safetensors.torch import save_file
-
-   SRC  = os.environ["SRC"]
-   OUTD = os.path.join(os.environ["OUT"], "model_safetensors")
-   os.makedirs(OUTD, exist_ok=True)
-
-   print("Loading full_weights.pt (~91GB)...")
-   sd = torch.load(SRC, map_location="cpu", weights_only=False)
-   print(f"Loaded {len(sd)} keys")
-
-   # Strip "omni." prefix: omni.net.* -> net.*, omni.net_ema.* -> net_ema.*
-   stripped = {(k[5:] if k.startswith("omni.") else k): v.contiguous() for k, v in sd.items()}
-   print(f"Stripped to {len(stripped)} keys (e.g. {list(stripped.keys())[:3]})")
-
-   dst = os.path.join(OUTD, "model.safetensors")
-   save_file(stripped, dst)
-   print(f"Saved {os.path.getsize(dst)/1e9:.1f} GB -> {dst}")
-   PY
-
-.. note::
-
-   ``export`` 命令前先 ``export SRC=... OUT=...``（上面代码块读这两个环境变量）。``weights_only=False`` 因为 RLinf 存的是带元信息的 state dict。
-
-**第 2 步：** ``model.safetensors`` → ``model_dcp``（转成 DCP 目录，``export_model`` 只认 DCP 格式）。
-
-.. code-block:: bash
-
-   python - <<'PY'
-   import os, math, torch
-   from safetensors.torch import load_file
-   import torch.distributed.checkpoint as dcp
-   from torch.distributed.checkpoint.filesystem import FileSystemWriter
-   from cosmos_framework.checkpoint.dcp import CustomSavePlanner
-
-   SRC = os.path.join(os.environ["OUT"], "model_safetensors", "model.safetensors")
-   OUT = os.path.join(os.environ["OUT"], "model_dcp", "model")
-   os.makedirs(OUT, exist_ok=True)
-
-   state_dict = load_file(SRC)
-   print(f"Loaded {len(state_dict)} keys")
-
-   # ~5GB per shard（与 transformers 默认 max_shard_size 对齐）
-   nbytes  = sum(v.numel() * v.element_size() for v in state_dict.values() if isinstance(v, torch.Tensor))
-   nshards = max(1, math.ceil(nbytes / (5 * 1024**3)))
-   writer  = FileSystemWriter(OUT, thread_count=nshards)
-   dcp.save(state_dict=state_dict, storage_writer=writer, planner=CustomSavePlanner())
-   print(f"Saved DCP -> {OUT}")
-   PY
-
-.. note::
-
-   这一步依赖 ``cosmos_framework.checkpoint.dcp.CustomSavePlanner``，所以须在 cosmos-framework 环境里跑（与下面 3、4 步同环境）。产物 ``$OUT/model_dcp/`` 即下一步 ``export_model --checkpoint-path`` 的输入。
-
-**第 3、4 步：** DCP → HF → diffusers（cosmos-framework 自带脚本）。
-
-.. code-block:: bash
-
-   python -m cosmos_framework.scripts.export_model \
-     --checkpoint-path "$OUT/model_dcp" \
-     --config-file cosmos_framework/configs/base/config.py \
-     --experiment action_policy_libero_all_nano \
-     --no-use-ema-weights \
-     -o "$OUT/model_hf"
-
-   python -m cosmos_framework.scripts.convert_model_to_diffusers \
-     --checkpoint-path "$OUT/model_hf" \
-     -o "$OUT/model_diffusers"
-
-   # convert_model_to_diffusers 默认写的 _class_name 不是 diffusers 的标准格式，改成 Cosmos3OmniDiffusersPipeline
-   python -c "
-   import json
-   p = '$OUT/model_diffusers/model_index.json'
-   d = json.load(open(p))
-   if d.get('_class_name') != 'Cosmos3OmniDiffusersPipeline':
-       d['_class_name'] = 'Cosmos3OmniDiffusersPipeline'
-       json.dump(d, open(p, 'w'), indent=2)"
-
-.. note::
-
-   ``--config-file`` 是 cosmos-framework 的模型结构配置，直接使用 ``cosmos_framework/configs/base/config.py`` 相对路径即可。
-
-第 3 步把 DCP 权重按 cosmos 训练配置导出成 HF 格式 ``model_hf``；
-
-第 4 步把 HF 权重拆成 diffusers 组件目录 ``model_diffusers``，并紧接着把 ``model_index.json`` 的 ``_class_name`` 改为 ``Cosmos3OmniDiffusersPipeline`` （diffuser checkpoint 标准格式）。
+脚本完成 checkpoint 转换过程（``--use-ema-weights`` 保留 EMA 权重，默认丢弃）；使用见 ``python toolkits/cosmos3/convert_checkpoint.py --help``。
 
 .. warning::
 
