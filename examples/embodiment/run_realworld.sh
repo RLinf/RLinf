@@ -2,6 +2,7 @@
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
+export PYTHONPATH=$REOI_PATH:$PYTHONPATH
 export SRC_FILE="${EMBODIED_PATH}/train_embodied_agent.py"
 
 if [ -z "$1" ]; then

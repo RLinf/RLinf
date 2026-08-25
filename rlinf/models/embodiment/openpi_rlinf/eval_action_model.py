@@ -357,7 +357,8 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
     @torch.no_grad()
     def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
         """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
-        self._require_rlt()
+        if self.rlt_cfg.stage2_z_source == "rlt_token":
+            self._require_rlt()
         repacked = self._repack_env_obs(env_obs)
         processed = self.input_transform(repacked, transpose=False)
         observation = self._observation_dict_to_device(processed)
@@ -368,12 +369,11 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         prefix_output, prefix_mask, kv_cache = self.model.build_prefix_cache(
             prepared_observation
         )
-        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
-            prefix_output, prefix_mask, prepared_observation.tokenized_prompt
-        )
-        z_rl = self._encode_rlt_flat(rlt_prefix_output, rlt_prefix_mask).to(
-            dtype=torch.float32
-        )
+        z_rl = self._encode_stage2_z(
+            prefix_output,
+            prefix_mask,
+            prepared_observation.tokenized_prompt,
+        ).to(dtype=torch.float32)
 
         model_actions = self._sample_actions_from_prefix_cache(
             prepared_observation,

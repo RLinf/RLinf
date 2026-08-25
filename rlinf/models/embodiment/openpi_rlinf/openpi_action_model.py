@@ -139,3 +139,36 @@ class OpenPiPytorchActionModel(nn.Module):
         prefix_output = prefix_output.to(device=rlt_param.device, dtype=rlt_param.dtype)
         rlt_mask = prefix_mask if self.rlt_cfg.rlt_use_mask else None
         return self.rlt_module.encode_flat(prefix_output, rlt_mask)
+
+    def _encode_vlm_prefix_flat(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Mean-pool pi0.5 VLM prefix hidden states for the Stage2 MLP z slot."""
+        prefix_output = prefix_output.to(dtype=torch.float32)
+        if self.rlt_cfg.rlt_use_mask:
+            mask = prefix_mask.to(device=prefix_output.device, dtype=prefix_output.dtype)[
+                ..., None
+            ]
+            denom = mask.sum(dim=1).clamp(min=1.0)
+            return (prefix_output * mask).sum(dim=1) / denom
+        return prefix_output.mean(dim=1)
+
+    def _encode_stage2_z(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+        lang_tokens: torch.Tensor | None,
+    ) -> torch.Tensor:
+        selected_prefix, selected_mask = self._select_rlt_prefix_embeddings(
+            prefix_output, prefix_mask, lang_tokens
+        )
+        if self.rlt_cfg.stage2_z_source == "vlm_prefix":
+            return self._encode_vlm_prefix_flat(selected_prefix, selected_mask)
+        if self.rlt_cfg.stage2_z_source != "rlt_token":
+            raise ValueError(
+                "openpi.stage2_z_source must be 'rlt_token' or 'vlm_prefix', "
+                f"got {self.rlt_cfg.stage2_z_source!r}."
+            )
+        return self._encode_rlt_flat(selected_prefix, selected_mask)

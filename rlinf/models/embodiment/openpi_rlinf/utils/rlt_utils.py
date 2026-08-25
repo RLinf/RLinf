@@ -52,6 +52,9 @@ _BARE_PI0_PREFIXES = (
 _OLD_OPENPI_PREFIX = "paligemma_with_expert."
 
 
+Stage2ZSource = str  # "rlt_token" | "vlm_prefix"
+
+
 @dataclasses.dataclass(frozen=True)
 class OpenPiPytorchRLTConfig:
     """RLT-token knobs shared by the SFT and eval wrappers."""
@@ -66,6 +69,8 @@ class OpenPiPytorchRLTConfig:
     rlt_mlp_ratio: float = 4.0
     rlt_image_only: bool = True
     rlt_use_mask: bool = False
+    # Stage2 MLP z slot: ``rlt_token`` (default) or mean-pooled pi0.5 VLM prefix.
+    stage2_z_source: Stage2ZSource = "rlt_token"
 
 
 def build_rlt_config(model_cfg: Any) -> OpenPiPytorchRLTConfig:
@@ -87,6 +92,9 @@ def build_rlt_config(model_cfg: Any) -> OpenPiPytorchRLTConfig:
             OmegaConf.select(model_cfg, "rlt_image_only", default=True)
         ),
         rlt_use_mask=bool(OmegaConf.select(model_cfg, "rlt_use_mask", default=False)),
+        stage2_z_source=str(
+            OmegaConf.select(model_cfg, "stage2_z_source", default="rlt_token")
+        ),
     )
 
 
