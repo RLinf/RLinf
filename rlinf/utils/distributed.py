@@ -154,7 +154,9 @@ def compute_rollout_metrics_dynamic(
     adv_min = -neg_adv_min
 
     # All-reduce max lengths. Empty local batches contribute zero.
-    if num_seq > 0:
+    # ``num_seq`` holds the reduced global count by this point, so the guard
+    # must use the local tensor size instead.
+    if prompt_lengths.numel() > 0:
         local_max_prompt = prompt_lengths.max().item()
         local_max_response = response_lengths.max().item()
         local_max_total = (prompt_lengths + response_lengths).max().item()
