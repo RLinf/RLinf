@@ -105,16 +105,20 @@ class Cosmos3Policy(nn.Module, BasePolicy):
             )
 
         from cosmos_framework.utils.misc import to as _cosmos_to
+
         data = _cosmos_to(data, "cuda")
 
         if not getattr(self, "_vae_patch_applied", False):
             self._vae_patch_applied = True
             _orig_fn = type(self.omni)._encode_vision_item
+
             def _patched(omni_self, state, *args, **kwargs):
                 if hasattr(state, "device") and state.device.type == "cpu":
                     state = state.to("cuda")
                 return _orig_fn(omni_self, state, *args, **kwargs)
+
             import functools
+
             self.omni._encode_vision_item = functools.partial(_patched, self.omni)
         output_batch, loss = self.omni.training_step(data, self._global_step)
 

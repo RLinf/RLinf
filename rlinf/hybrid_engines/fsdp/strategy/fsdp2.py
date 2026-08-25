@@ -52,7 +52,7 @@ class FSDP2Strategy(FSDPStrategyBase):
         mixed_precision_config = self.cfg.fsdp_config.mixed_precision
         param_dtype = torch_dtype_from_precision(mixed_precision_config.param_dtype)
         reduce_dtype = torch_dtype_from_precision(mixed_precision_config.reduce_dtype)
-        cast_forward_inputs=mixed_precision_config.get("cast_forward_inputs", True)
+        cast_forward_inputs = mixed_precision_config.get("cast_forward_inputs", True)
 
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype,

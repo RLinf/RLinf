@@ -30,7 +30,7 @@ logger = get_logger()
 
 # Now the cosmos3 model just support libero in RLinf.
 _DATA_TYPE_TO_EXPERIMENT = {
-    "libero_10": "action_policy_libero_nano",       # libero_10 task, Default Settings
+    "libero_10": "action_policy_libero_nano",  # libero_10 task, Default Settings
     "libero_all": "action_policy_libero_all_nano",  # libero_all task
 }
 
@@ -40,6 +40,7 @@ _VALID_DATA_TYPES = frozenset(_DATA_TYPE_TO_EXPERIMENT.keys())
 def _detect_data_type(data_paths: str) -> str:
     """Auto-detect data_type from the dataset directory structure."""
     import os as _os
+
     _LIBERO_SUITES = ("libero_spatial", "libero_object", "libero_goal", "libero_10")
     if all(_os.path.isdir(_os.path.join(data_paths, s)) for s in _LIBERO_SUITES):
         return "libero_all"
@@ -51,8 +52,7 @@ def build_cosmos3_sft_dataloader(
     data_paths,
     eval_dataset: bool = False,
 ):
-    """Build the Cosmos3 action-policy SFT dataloader.
-    """
+    """Build the Cosmos3 action-policy SFT dataloader."""
     from cosmos_framework.configs.base.config import make_config
     from cosmos_framework.utils.config_helper import override
     from cosmos_framework.utils.lazy_config import instantiate
@@ -60,9 +60,7 @@ def build_cosmos3_sft_dataloader(
     from rlinf.models.embodiment.cosmos3 import _cosmos_framework_root
 
     if eval_dataset:
-        raise NotImplementedError(
-            "Cosmos3 SFT eval dataloader is not supported yet."
-        )
+        raise NotImplementedError("Cosmos3 SFT eval dataloader is not supported yet.")
 
     model_cfg = cfg.actor.model
     data_cfg = cfg.data
@@ -72,13 +70,11 @@ def build_cosmos3_sft_dataloader(
         # Auto-detect the data type from the dataset directory structure.
         data_type = _detect_data_type(str(data_paths))
         logger.info(
-            f"Auto-detected data_type='{data_type}' from "
-            f"dataset at {data_paths}"
+            f"Auto-detected data_type='{data_type}' from dataset at {data_paths}"
         )
 
     assert data_type in _VALID_DATA_TYPES, (
-        f"Invalid data_type='{data_type}'. "
-        f"Valid: {sorted(_VALID_DATA_TYPES)}"
+        f"Invalid data_type='{data_type}'. Valid: {sorted(_VALID_DATA_TYPES)}"
     )
 
     experiment_name = _DATA_TYPE_TO_EXPERIMENT[data_type]
@@ -91,7 +87,9 @@ def build_cosmos3_sft_dataloader(
 
     with contextlib.chdir(_cosmos_framework_root()):
         cosmos_data_cfg = make_config()
-        cosmos_data_cfg = override(cosmos_data_cfg, ["--", f"experiment={experiment_name}"])
+        cosmos_data_cfg = override(
+            cosmos_data_cfg, ["--", f"experiment={experiment_name}"]
+        )
 
         dl_cfg = cosmos_data_cfg.dataloader_train
         # Optional smoke/memory knob: shrink the packed batch (recipe default 128).

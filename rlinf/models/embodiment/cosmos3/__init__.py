@@ -60,7 +60,8 @@ def _promote_scalar_params_to_1d(model: nn.Module) -> None:
             module = model.get_submodule(module_name)
         old_p = getattr(module, param_name)
         setattr(
-            module, param_name,
+            module,
+            param_name,
             nn.Parameter(old_p.detach().reshape(1), requires_grad=old_p.requires_grad),
         )
 
@@ -84,11 +85,15 @@ def _apply_freeze(cosmos3_model: nn.Module, keys_to_select: list[str]) -> None:
             frozen += p.numel()
     logger.info(
         "Cosmos3: froze understanding tower -- trainable=%.2fM frozen=%.2fM (keys_to_select=%s)",
-        trainable / 1e6, frozen / 1e6, keys_to_select,
+        trainable / 1e6,
+        frozen / 1e6,
+        keys_to_select,
     )
 
 
-def _load_base_weights(cosmos3_model: nn.Module, model_path: str, keys_to_skip: list[str]) -> None:
+def _load_base_weights(
+    cosmos3_model: nn.Module, model_path: str, keys_to_skip: list[str]
+) -> None:
     """Warm-start ``cosmos3_model`` from a base checkpoint, skipping action heads + net_ema.
 
     Reuses cosmos's loaders so the AC prefix and DTensor resharding are handled:
@@ -101,16 +106,21 @@ def _load_base_weights(cosmos3_model: nn.Module, model_path: str, keys_to_skip: 
     )
 
     if _is_safetensors_checkpoint(model_path, None):
-        from cosmos_framework.model.generator.utils.safetensors_loader import load_vfm_model
+        from cosmos_framework.model.generator.utils.safetensors_loader import (
+            load_vfm_model,
+        )
 
         skip_patterns = [f".*{re.escape(s)}.*" for s in keys_to_skip]
         vfm = getattr(cosmos3_model, "net", cosmos3_model)
         logger.info(
             "Cosmos3: loading safetensors base into cosmos3_model.net from %s (skip=%s)",
-            model_path, skip_patterns,
+            model_path,
+            skip_patterns,
         )
         load_vfm_model(
-            vfm, model_path, credential_path=None,
+            vfm,
+            model_path,
+            credential_path=None,
             parallel_dims=getattr(cosmos3_model, "parallel_dims", None),
             skip_patterns=skip_patterns or None,
         )
@@ -122,8 +132,17 @@ def _load_base_weights(cosmos3_model: nn.Module, model_path: str, keys_to_skip: 
         if os.path.isdir(os.path.join(model_path, "model"))
         else model_path
     )
-    logger.info("Cosmos3: loading DCP base into cosmos3_model from %s (skip=%s)", dcp_dir, keys_to_skip)
-    _load_model(cosmos3_model, dcp_dir, credential_path=None, keys_to_skip_loading=keys_to_skip or None)
+    logger.info(
+        "Cosmos3: loading DCP base into cosmos3_model from %s (skip=%s)",
+        dcp_dir,
+        keys_to_skip,
+    )
+    _load_model(
+        cosmos3_model,
+        dcp_dir,
+        credential_path=None,
+        keys_to_skip_loading=keys_to_skip or None,
+    )
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
@@ -135,11 +154,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
     Returns a ``Cosmos3Policy`` wrapping a cosmos-FSDP-disabled ``OmniMoTModel``
     with AC + EMA on, ready for RLinf ``FSDPModelManager`` to ``fully_shard``.
     """
+    import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
     from cosmos_framework.configs.base.config import make_config
     from cosmos_framework.utils.config_helper import override
-    from cosmos_framework.utils.lazy_config import instantiate
     from cosmos_framework.utils.flags import Device as _CosmosDevice
-    import cosmos_framework.model.generator.omni_mot_model as omni_mot_model
+    from cosmos_framework.utils.lazy_config import instantiate
+
     model_path = cfg.get("model_path")
 
     # Build + instantiate under cosmos-framework root (its configs use paths
@@ -160,7 +180,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             p.cfg_parallel_shard_degree = 1
         if not bool(cfg.get("ema_enabled", True)):
             cosmos3_cfg.model.config.ema.enabled = False
-        cosmos3_cfg.model.config.compile.enabled = bool(cfg.get("compile_enabled", False))
+        cosmos3_cfg.model.config.compile.enabled = bool(
+            cfg.get("compile_enabled", False)
+        )
 
         # Wan2.2 VAE: the cookbook injects via ${oc.env:WAN_VAE_PATH}; we build the
         # config directly, so set the local file path here instead.
@@ -169,7 +191,9 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             try:
                 cosmos3_cfg.model.config.tokenizer.vae_path = str(wan_vae_path)
             except Exception:  # noqa: BLE001
-                logger.warning("Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path)
+                logger.warning(
+                    "Cosmos3: could not set tokenizer.vae_path=%s", wan_vae_path
+                )
 
         cosmos3_cfg.validate()
         cosmos3_cfg.freeze()
@@ -185,16 +209,24 @@ def get_model(cfg: DictConfig, torch_dtype=None):
 
         # tensor_kwargs were captured as CPU during the CPU build; restore to CUDA
         # (cosmos builds condition_mask/noise from them in training_step).
-        cosmos3_model.tensor_kwargs = {"device": _orig_device, "dtype": cosmos3_model.precision}
-        cosmos3_model.tensor_kwargs_fp32 = {"device": _orig_device, "dtype": torch.float32}
+        cosmos3_model.tensor_kwargs = {
+            "device": _orig_device,
+            "dtype": cosmos3_model.precision,
+        }
+        cosmos3_model.tensor_kwargs_fp32 = {
+            "device": _orig_device,
+            "dtype": torch.float32,
+        }
         # Qwen3-VL asserts rotary inv_freq is fp32; bf16 build cast it to bf16.
         for _mod in cosmos3_model.modules():
             if getattr(_mod, "inv_freq", None) is not None:
                 _mod.inv_freq = _mod.inv_freq.float()
         cosmos3_model.net.init_weights(buffer_device=_CosmosDevice.CPU)
-        
+
     # Warm-start from the non-action base, skipping the fresh action heads + EMA.
-    _load_base_weights(cosmos3_model, model_path, list(cfg.get("keys_to_skip_loading", [])))
+    _load_base_weights(
+        cosmos3_model, model_path, list(cfg.get("keys_to_skip_loading", []))
+    )
     # Freeze the understanding tower (only keys_to_select train).
     _apply_freeze(cosmos3_model, list(cfg.get("keys_to_select", [])))
     # FSDP2 cannot shard 0-d params.

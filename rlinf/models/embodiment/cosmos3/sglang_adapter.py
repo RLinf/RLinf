@@ -49,8 +49,9 @@ import torch
 
 class Cosmos3SGLangAdapter:
     """Cosmos3 env-obs <-> action-chunks adapter for the ``/v1/actions/generations`` path."""
+
     action_path = "/v1/actions/generations"
-    
+
     def __init__(self, cfg: Any, rank: int):
         self.cfg_rollout = cfg.rollout
         self.model_cfg = cfg.rollout.model
@@ -73,7 +74,9 @@ class Cosmos3SGLangAdapter:
         self._raw_action_dim = int(c.get("raw_action_dim", 10))
         self._action_normalization = str(c.get("action_normalization", "quantile"))
         self._action_stats_path = c.get("action_stats_path", None)
-        self._stats = self._load_stats(self._action_stats_path, self._action_normalization)
+        self._stats = self._load_stats(
+            self._action_stats_path, self._action_normalization
+        )
 
         eval_env_cfg = cfg.env.get("eval", None) or {}
         env_type = eval_env_cfg.get("env_type", None)
@@ -102,9 +105,7 @@ class Cosmos3SGLangAdapter:
         if isinstance(raw, dict) and key in raw:
             raw = raw[key]
         return {
-            k: np.asarray(v, dtype=np.float32)
-            for k, v in raw.items()
-            if k in stat_keys
+            k: np.asarray(v, dtype=np.float32) for k, v in raw.items() if k in stat_keys
         }
 
     def _denormalize(self, action: np.ndarray) -> np.ndarray:
@@ -191,7 +192,6 @@ class Cosmos3SGLangAdapter:
         }
         return payload, {}
 
-
     @staticmethod
     def _augment_prompt(task: str, n_cam: int) -> str:
         """Append the concat-view viewpoint+layout sentences the SFT recipe used."""
@@ -201,8 +201,7 @@ class Cosmos3SGLangAdapter:
         if not p.endswith("."):
             p += "."
         p += (
-            " This video contains concatenated views from multiple camera"
-            " perspectives."
+            " This video contains concatenated views from multiple camera perspectives."
         )
         p += (
             " The left half shows the third-person view; the right half shows"
@@ -227,9 +226,12 @@ class Cosmos3SGLangAdapter:
         chunks = [self._action_to_env(arr[i]) for i in range(arr.shape[0])]
         if not chunks:
             raise ValueError("Cosmos3 returned no action chunks to parse.")
-        actions = torch.tensor(
-            np.stack(chunks, axis=0), dtype=torch.float32
-        ).detach().cpu().contiguous()  # [N, num_action_chunks, 7]
+        actions = (
+            torch.tensor(np.stack(chunks, axis=0), dtype=torch.float32)
+            .detach()
+            .cpu()
+            .contiguous()
+        )  # [N, num_action_chunks, 7]
         flat = actions.reshape(actions.shape[0], -1)
         info = {
             "prev_logprobs": torch.zeros_like(flat),
@@ -265,7 +267,8 @@ class Cosmos3SGLangAdapter:
 
         def _to_uint8_hwc(x: Any) -> np.ndarray:
             arr = torch.as_tensor(
-                x if not isinstance(x, list)
+                x
+                if not isinstance(x, list)
                 else torch.stack([torch.as_tensor(a) for a in x])
             )
             if arr.ndim == 5:  # [N, 1, H, W, 3] -> [N, H, W, 3]
@@ -297,7 +300,9 @@ class Cosmos3SGLangAdapter:
         return uris
 
     @staticmethod
-    def _resize_reflect_pad(img_hwc: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    def _resize_reflect_pad(
+        img_hwc: np.ndarray, target_w: int, target_h: int
+    ) -> np.ndarray:
         """Aspect-preserving resize (no upscale) + reflection/edge pad bottom+right."""
         from PIL import Image
 
@@ -308,9 +313,7 @@ class Cosmos3SGLangAdapter:
         nh = max(1, min(nh, target_h))
         nw = max(1, min(nw, target_w))
         if nh != h or nw != w:
-            pil = Image.fromarray(img_hwc).resize(
-                (nw, nh), resample=Image.BICUBIC
-            )
+            pil = Image.fromarray(img_hwc).resize((nw, nh), resample=Image.BICUBIC)
             arr = np.asarray(pil, dtype=np.uint8)
         else:
             arr = img_hwc
@@ -332,9 +335,7 @@ class Cosmos3SGLangAdapter:
     def _action_data(resp: dict) -> Any:
         """Read action values from a ``/v1/actions/generations`` response."""
         data = resp.get("data") or []
-        action = (
-            data[0].get("action") if data and isinstance(data[0], dict) else None
-        )
+        action = data[0].get("action") if data and isinstance(data[0], dict) else None
         values = action.get("values") if isinstance(action, dict) else None
         if values is None:
             raise RuntimeError(
@@ -372,11 +373,13 @@ class Cosmos3SGLangAdapter:
         if not getattr(self, "_dbg_printed", False):
             self._dbg_printed = True
             import sys
+
             print(
                 f"[C3DBG] raw_norm shape={raw_norm.shape} "
                 f"min={raw_norm.min():.4f} max={raw_norm.max():.4f} "
                 f"mean={raw_norm.mean():.4f}",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
             print(
                 f"[C3DBG] denorm shape={arr.shape} min={arr.min():.4f} "
@@ -384,22 +387,23 @@ class Cosmos3SGLangAdapter:
                 f"{trans.max():.4f} rot6d[min/max]={rot6d.min():.4f}/"
                 f"{rot6d.max():.4f} gripper[min/max]={gripper.min():.4f}/"
                 f"{gripper.max():.4f}",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
             print(
                 f"[C3DBG] axisangle min/max={axisangle.min():.4f}/"
                 f"{axisangle.max():.4f}",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
             print(
                 f"[C3DBG] env chunk0={env[0].tolist()}",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
 
         if env.shape[0] < self._num_action_chunks:
-            pad = np.repeat(
-                env[-1:], self._num_action_chunks - env.shape[0], axis=0
-            )
+            pad = np.repeat(env[-1:], self._num_action_chunks - env.shape[0], axis=0)
             env = np.concatenate([env, pad], axis=0)
         elif env.shape[0] > self._num_action_chunks:
             env = env[: self._num_action_chunks]

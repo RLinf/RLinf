@@ -556,9 +556,7 @@ class FSDPModelManager:
                         break
                 grouped.setdefault(base_lr * mult, []).append(param)
             for lr_value, params in sorted(grouped.items()):
-                param_groups.append(
-                    {"params": params, "lr": lr_value, "betas": betas}
-                )
+                param_groups.append({"params": params, "lr": lr_value, "betas": betas})
             self._logger.info(
                 f"[FSDP] Applied lr_multipliers={dict(lr_multipliers)} -> "
                 f"{len(param_groups)} actor param group(s): "
