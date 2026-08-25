@@ -53,7 +53,7 @@ rollout:
   group_name: "RolloutGroup"
   rollout_backend: "sglang"
   enable_offload: False
-  pipeline_stage_num: 1
+  pipeline_stage_num: 2
   return_logprobs: false
   sampling_params:
     do_sample: false

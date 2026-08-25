@@ -54,7 +54,7 @@ Cosmos3's data transforms and normalization stats depend on cosmos-framework; cl
    export COSMOS_FRAMEWORK_PATH=/path/to/cosmos-framework
 
 Offline Cache: Qwen3-VL-8B-Instruct and Wan2.2 Models
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 SFT and base checkpoint conversion pull three model files from Hugging Face. On offline machines, pre-download them into the HF cache and enable offline mode (``HF_HUB_OFFLINE=1``) so ``from_pretrained`` / ``hf download`` read directly from cache, otherwise workers hang on network retries:
 
@@ -97,7 +97,7 @@ Download ``nvidia/Cosmos3-Nano`` from Hugging Face. It is in **diffusers/safeten
 .. code-block:: bash
 
    # Use a mirror in China: export HF_ENDPOINT=https://hf-mirror.com
-   huggingface-cli download nvidia/Cosmos3-Nano \
+   hf download nvidia/Cosmos3-Nano \
      --local-dir /path/to/Cosmos3-Nano
 
 .. note::
@@ -189,7 +189,7 @@ Most fields can be copied from ``libero_sft_cosmos3.yaml``. The ones that really
 
 
 Special Note: Action Representation — rot6d 10-D vs axis-angle 7-D
----------------------------------------------------------
+------------------------------------------------------------------------
 
 Cosmos3 internally represents actions as **10-D rot6d**; the LIBERO environment uses **7-D axis-angle**. This is key to understanding the whole pipeline:
 

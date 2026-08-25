@@ -86,7 +86,7 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（需用带 b
    * - ``rollout.model.action_normalization``
      - ``quantile_rot``，须与训练一致。
    * - ``rollout.model.raw_action_dim`` / ``action_dim``
-     - 模型侧 10（rot6d）/ 环境侧 7（axis-angle）；**两者都必填**（见常见问题）。
+     - 模型侧 10（rot6d）/ 环境侧 7（axis-angle）；**两者都必填** （见常见问题）。
    * - ``rollout.model.num_action_chunks``
      - 每次请求返回的动作步数（示例 16）；``env.eval.max_steps_per_rollout_epoch`` 须能被其整除。
    * - ``rollout.model.num_inference_steps`` / ``num_frames`` / ``size``
@@ -104,7 +104,7 @@ Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（需用带 b
 看 ``eval_embodiment.log``，确认这几个节点依次出现：
 
 1. 起 server：``Launching sglang server (server_type=embodied) ...``
-2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>``（本地盘通常数十秒内；**缺这行**说明加载卡住，见常见问题）
+2. 权重加载完成：``[RunAI Streamer] Overall time to stream 28.3 GiB ... to cpu: <秒数>`` （本地盘通常数十秒内；**缺这行** 说明加载卡住，见常见问题）
 3. server 就绪：``sglang server assigned: rank=i -> http://...``
 4. 逐 episode 结果：``[libero eval] task_id=.., trial_id=.., success=..``
 5. 汇总：``success_once`` / ``success_at_end`` / ``num_trajectories``

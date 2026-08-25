@@ -58,7 +58,7 @@ Cosmos3 的数据变换与归一化统计依赖 cosmos-framework，训练前下�
 
 SFT 与基座转换会从 Hugging Face 拉取三个模型文件，离线机器要先下好放进 HF 本地缓存，再开离线模式（``HF_HUB_OFFLINE=1``）让 ``from_pretrained`` / ``hf download`` 直接读缓存，否则 worker 会在网络重试处卡死：
 
-- **Qwen3-VL-8B-Instruct**（tokenizer / VLM 配置）：SFT 启动与 ``convert_model_to_dcp`` 重建模型时都用。
+- **Qwen3-VL-8B-Instruct** （tokenizer / VLM 配置）：SFT 启动与 ``convert_model_to_dcp`` 重建模型时都用。
 - **Wan2.2-TI2V-5B** 与 **Wan2.2-TI2V-5B-Diffusers**：仅 ``convert_model_to_dcp`` 重建模型时下载。
 
 直接下载进 HF 缓存（推荐，缓存布局自动正确）：
@@ -74,7 +74,7 @@ SFT 与基座转换会从 Hugging Face 拉取三个模型文件，离线机器�
 准备基座模型
 ----------------------------------------
 
-Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头**。``actor.model.model_path`` 必须指向一个 **DCP 格式**的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
+Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头** 。``actor.model.model_path`` 必须指向一个 **DCP 格式** 的基座权重目录，``wan_vae_path`` 指向 Wan2.2 VAE：
 
 .. code-block:: yaml
 
@@ -97,7 +97,7 @@ Cosmos3 SFT **从基座模型 Cosmos3-Nano 热启动，只训练动作头**。``
 .. code-block:: bash
 
    # 国内可用镜像加速：export HF_ENDPOINT=https://hf-mirror.com
-   huggingface-cli download nvidia/Cosmos3-Nano \
+   hf download nvidia/Cosmos3-Nano \
      --local-dir /path/to/Cosmos3-Nano
 
 .. note::
@@ -177,7 +177,7 @@ SFT 不能直接从 diffusers 目录加载基座：cosmos3 的基座加载器 ``
    * - ``actor.model.wan_vae_path``
      - Wan2.2 VAE 权重（``Wan2.2_VAE.pth``）。
    * - ``actor.model.load_to_device``
-     - **必须 ``false``**（见上方 warning）。
+     - **必须** ``false`` （见上方 warning）。
    * - ``actor.model.ema_enabled``
      - Cosmos3 power-EMA（rate=0.1），每个优化步更新 ``net_ema``；占一份 fp32 网络显存，若仍 OOM 可临时设 ``false``。
    * - ``actor.micro_batch_size`` / ``global_batch_size``
@@ -200,10 +200,10 @@ Cosmos3 内部用 **10 维 rot6d** 表示动作，LIBERO 环境用 **7 维 axis-
    * - 表示
      - 维度
      - 组成
-   * - ``raw_action_dim``（模型侧）
+   * - ``raw_action_dim`` （模型侧）
      - 10
      - 3 平移 + 6 rot6d + 1 夹爪
-   * - ``action_dim``（环境侧）
+   * - ``action_dim`` （环境侧）
      - 7
      - 3 平移 + 3 axis-angle + 1 夹爪
 
@@ -326,7 +326,7 @@ SFT 产出的 ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_weig
 
 第 3 步把 DCP 权重按 cosmos 训练配置导出成 HF 格式 ``model_hf``；
 
-第 4 步把 HF 权重拆成 diffusers 组件目录 ``model_diffusers``，并紧接着把 ``model_index.json`` 的 ``_class_name`` 改为 ``Cosmos3OmniDiffusersPipeline``（diffuser checkpoint 标准格式）。
+第 4 步把 HF 权重拆成 diffusers 组件目录 ``model_diffusers``，并紧接着把 ``model_index.json`` 的 ``_class_name`` 改为 ``Cosmos3OmniDiffusersPipeline`` （diffuser checkpoint 标准格式）。
 
 .. warning::
 

@@ -52,6 +52,8 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 DISABLE_FLASH_ATTN=0
 # User-level opt-out for apex, set by --no-apex. Wins over the platform default.
 DISABLE_APEX=0
+# User-level opt-out for natten, set by --no-natten. 
+DISABLE_NATTEN=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
@@ -154,6 +156,9 @@ Common options:
                            (Ascend/MUSA).
     --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
                            CUDA toolchain mismatch prevents download apex of the right version.
+    --no-natten            Skip natten install. Useful when no SHI-Labs wheel matches the
+                           installed torch x cuda x python combo; install manually from
+                           https://whl.natten.org instead.
     --install-rlinf        Install RLinf itself into the python.
 EOF
 }
@@ -277,6 +282,10 @@ parse_args() {
                 ;;
             --no-apex)
                 DISABLE_APEX=1
+                shift
+                ;;
+            --no-natten)
+                DISABLE_NATTEN=1
                 shift
                 ;;
             --*)
@@ -1507,6 +1516,61 @@ EOF
     fi
 }
 
+install_natten() {
+    if [ "$DISABLE_NATTEN" -eq 1 ]; then
+        echo "[install.sh] --no-natten was specified; skipping natten install."
+        return 0
+    fi
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "[install.sh] Skipping natten install on platform=${PLATFORM} (CUDA-only)."
+        return 0
+    fi
+
+    # NATTEN ships no generic wheel — each release is tagged for a specific
+    # torch x cuda x python combo. Build the wheel name from the installed
+    # torch / cuda / python, like install_apex / install_flash_attn.
+    # Example: natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl
+    local natten_version="0.21.6"
+    local py_major py_minor
+    py_major=$(python - <<'EOF'
+import sys
+print(sys.version_info.major)
+EOF
+)
+    py_minor=$(python - <<'EOF'
+import sys
+print(sys.version_info.minor)
+EOF
+)
+    local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
+    local abi_tag="${py_tag}"                 # cpXY-cpXY ABI
+    local platform_tag="linux_x86_64"
+    local torch_full cu_full
+    torch_full=$(python - <<'EOF'
+import torch
+print(torch.__version__.split("+")[0].replace(".", ""))
+EOF
+)
+    cu_full=$(python - <<'EOF'
+import torch
+v = (torch.version.cuda or "").split(".")
+print("".join(v[:2]))
+EOF
+)
+    local torch_tag="torch${torch_full}"
+    local cu_tag="cu${cu_full}"
+    local natten_wheel="natten-${natten_version}+${torch_tag}${cu_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
+    local base_url="${GITHUB_PREFIX}https://github.com/SHI-Labs/NATTEN/releases/download/v${natten_version}"
+    uv pip uninstall natten || true
+    if uv pip install "${base_url}/${natten_wheel}"; then
+        :
+    else
+        echo "[install.sh] WARNING: natten wheel ${natten_wheel} unavailable" \
+             "(GITHUB_PREFIX=${GITHUB_PREFIX:-<none>}). Training will fail without it." \
+             "Install manually from https://whl.natten.org." >&2
+    fi
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -2245,13 +2309,7 @@ PYEOF
         echo "[install.sh] Wrote py3.11 typing.override backfill to $_sp/sitecustomize.py" >&2
     fi
 
-    local natten_wheel natten_url
-    natten_wheel="natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl"
-    natten_url="https://github.com/SHI-Labs/NATTEN/releases/download/v0.21.6/${natten_wheel}"
-    python -m pip install --no-deps "${natten_url}" 2>/dev/null || \
-    python -m pip install --no-deps "https://ghfast.top/${natten_url}" 2>/dev/null || \
-    echo "[install.sh] WARNING: natten wheel unavailable (github + proxy both failed)." \
-         "Training will fail without it. Install manually from https://whl.natten.org." >&2
+    install_natten
 }
 
 install_cosmos3_model() {
