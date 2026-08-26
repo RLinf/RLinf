@@ -42,6 +42,7 @@ class SupportedEnvType(Enum):
     ROBOVERSE = "roboverse"
     D4RL = "d4rl"
     POLARIS = "polaris"
+    SIMPLE = "simple"
 
 
 def get_env_cls(env_type: str, env_cfg=None):
@@ -154,5 +155,9 @@ def get_env_cls(env_type: str, env_cfg=None):
         from rlinf.envs.polaris.polaris_env import PolarisEnv
 
         return PolarisEnv
+    elif env_type == SupportedEnvType.SIMPLE:
+        from rlinf.envs.simple.simple_env import SimpleEnv
+
+        return SimpleEnv
     else:
         raise NotImplementedError(f"Environment type {env_type} not implemented")

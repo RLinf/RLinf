@@ -318,6 +318,18 @@ def prepare_actions_for_roboverse(
     return chunk_actions
 
 
+def prepare_actions_for_simple(raw_chunk_actions) -> np.ndarray:
+    """Validate the fixed SIMPLE high-level action chunk without changing it."""
+    chunk_actions = np.asarray(raw_chunk_actions, dtype=np.float32)
+    if chunk_actions.ndim != 3 or chunk_actions.shape[1:] != (24, 36):
+        raise ValueError(
+            f"SIMPLE expects actions shaped [B, 24, 36], got {chunk_actions.shape}."
+        )
+    if not np.isfinite(chunk_actions).all():
+        raise ValueError("SIMPLE actions must contain only finite values.")
+    return np.ascontiguousarray(chunk_actions)
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -423,6 +435,8 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.SIMPLE:
+        chunk_actions = prepare_actions_for_simple(raw_chunk_actions)
     else:
         chunk_actions = raw_chunk_actions
 
