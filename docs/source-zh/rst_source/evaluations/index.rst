@@ -35,6 +35,9 @@ RLinf 提供统一的具身智能评测入口，支持在仿真或真机环境�
    * - RoboCasa365
      - ``robocasa365`` pretrain 任务切片
      - ``robocasa365/robocasa365_eval_openpi.yaml``
+   * - SIMPLE
+     - ``G1WholebodyCloseDoorTeleop-v0``
+     - ``simple/simple_closedoor_psi0_eval.yaml``
 
 **LIBERO 变体：** 标准 LIBERO、LIBERO-PRO、LIBERO-PLUS 均支持，通过环境变量切换（见 :doc:`guides/libero`）。
 
@@ -79,6 +82,8 @@ Benchmark 指南
      - PolaRiS 桌面操作。
    * - :doc:`RoboTwin <guides/robotwin>`
      - RoboTwin 双臂操作。
+   * - :doc:`SIMPLE <guides/simple>`
+     - Psi0 全身 CloseDoor 评测。
 
 参考
 ----
