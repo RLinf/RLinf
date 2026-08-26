@@ -275,12 +275,12 @@ Set the shared paths, then build the teacher and both SFT datasets:
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-     --mode terminal_success "${RAW_DATA_ARGS[@]}" \
+   python examples/reward/preprocess_vlm_trend_terminal_success.py \
+     "${RAW_DATA_ARGS[@]}" \
      --output-dir "$PIPELINE_ROOT/success_data"
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-     --mode potential "${RAW_DATA_ARGS[@]}" \
+   python examples/reward/preprocess_vlm_trend_potential.py \
+     "${RAW_DATA_ARGS[@]}" \
      --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
      --output-dir "$PIPELINE_ROOT/potential_data"
 
@@ -302,20 +302,22 @@ Train the two adapters with thin configs that inherit the existing Trend recipe:
    export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
-Set ``POTENTIAL_CHECKPOINT`` to the selected Potential ``global_step_*``
-directory. Extract frozen features on four GPUs, then train the scalar head:
+Set ``POTENTIAL_CHECKPOINT`` to the selected Potential VLM SFT weights file
+(typically ``.../global_step_*/actor/model_state_dict/full_weights.pt``).
+A PEFT adapter directory that contains ``adapter_config.json`` is also accepted
+if you exported one. Extract frozen features on four GPUs, then train the
+scalar head:
 
 .. code-block:: bash
 
-   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
    mkdir -p "$PIPELINE_ROOT/features"
 
    for split in train eval; do
      for sample_type in potential progress; do
        for rank in 0 1 2 3; do
          CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-           --mode features \
+         python examples/reward/extract_vlm_trend_potential_features.py \
            --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
            --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
            --sample-type "$sample_type" --rank "$rank" --world-size 4 \
@@ -519,8 +521,8 @@ and runs 160 steps by default:
 
    export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
    export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step
-   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
    export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
    export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
@@ -531,6 +533,14 @@ The dedicated ``VLMTrendSuccessPotentialRewardModel`` computes
 ``scale * (gamma * potential_t - potential_{t-1})`` and adds
 ``success_bonus`` once per episode after the configured confirmation windows.
 Both state machines reset on ``done``.
+
+.. warning::
+
+   ``reward.model.lora_path`` and ``reward.model.success_lora_path`` must be
+   the full path to ``full_weights.pt`` (typically
+   ``.../actor/model_state_dict/full_weights.pt`` from VLM SFT). A PEFT
+   adapter directory that contains ``adapter_config.json`` is also accepted
+   if you exported one. Do not pass a checkpoint root.
 
 3.4.2 SGLang API Inference
 ............................

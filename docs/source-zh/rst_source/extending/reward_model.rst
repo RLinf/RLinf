@@ -270,12 +270,12 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
      "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
      auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-     --mode terminal_success "${RAW_DATA_ARGS[@]}" \
+   python examples/reward/preprocess_vlm_trend_terminal_success.py \
+     "${RAW_DATA_ARGS[@]}" \
      --output-dir "$PIPELINE_ROOT/success_data"
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-     --mode potential "${RAW_DATA_ARGS[@]}" \
+   python examples/reward/preprocess_vlm_trend_potential.py \
+     "${RAW_DATA_ARGS[@]}" \
      --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
      --output-dir "$PIPELINE_ROOT/potential_data"
 
@@ -296,20 +296,21 @@ Potential 预处理使用 teacher 生成绝对 potential 数字，
    export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
-将 ``POTENTIAL_CHECKPOINT`` 指向选中的 Potential ``global_step_*`` 目录。
+将 ``POTENTIAL_CHECKPOINT`` 指向选中的 Potential VLM SFT 权重文件
+（通常是 ``.../global_step_*/actor/model_state_dict/full_weights.pt``）。
+如果你自行导出过 PEFT adapter，也可以传包含 ``adapter_config.json`` 的目录。
 在四张 GPU 上提取冻结 feature，再训练 scalar head：
 
 .. code-block:: bash
 
-   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
    mkdir -p "$PIPELINE_ROOT/features"
 
    for split in train eval; do
      for sample_type in potential progress; do
        for rank in 0 1 2 3; do
          CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/preprocess_vlm_trend_reward_dataset.py \
-           --mode features \
+         python examples/reward/extract_vlm_trend_potential_features.py \
            --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
            --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
            --sample-type "$sample_type" --rank "$rank" --world-size 4 \
@@ -512,8 +513,8 @@ Success + Potential 配方的本地推理使用专用
 
    export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
    export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step
-   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step
+   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
    export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
    export EMBODIED_PATH="$(pwd)/examples/embodiment"
    python examples/embodiment/train_embodied_agent.py \
@@ -523,6 +524,14 @@ Success + Potential 配方的本地推理使用专用
 专用 ``VLMTrendSuccessPotentialRewardModel`` 计算
 ``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
 每个 episode 仅添加一次 ``success_bonus``。两组状态都会在 ``done`` 时重置。
+
+.. warning::
+
+   ``reward.model.lora_path`` 和 ``reward.model.success_lora_path`` 必须是
+   ``full_weights.pt`` 的完整文件路径（VLM SFT 产物通常为
+   ``.../actor/model_state_dict/full_weights.pt``）。如果你自行导出过 PEFT
+   adapter，也可以传包含 ``adapter_config.json`` 的目录。不要只传
+   checkpoint 根目录。
 
 3.4.2 SGLang API 推理
 .....................

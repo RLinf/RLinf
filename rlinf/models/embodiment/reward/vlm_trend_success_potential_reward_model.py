@@ -33,30 +33,60 @@ from rlinf.models.embodiment.reward.vlm_reward_utils.reward_parser import (
     get_reward_parser,
 )
 
+ADAPTER_CONFIG_FILENAME = "adapter_config.json"
 
-def _rlinf_checkpoint_state(path: str) -> dict[str, torch.Tensor] | None:
-    """Load LoRA tensors from a PEFT directory or an RLinf checkpoint."""
-    candidates = [
-        Path(path),
-        Path(path) / "full_weights.pt",
-        Path(path) / "model_state_dict" / "full_weights.pt",
-        Path(path) / "actor" / "model_state_dict" / "full_weights.pt",
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            state = torch.load(candidate, map_location="cpu", weights_only=True)
-            return {
-                key.removeprefix("module."): value
-                for key, value in state.items()
-                if "lora_" in key
-            }
-    return None
+
+def _load_lora_state_from_full_weights(path: str) -> dict[str, torch.Tensor]:
+    """Load ``lora_*`` tensors from an explicit ``full_weights.pt`` file.
+
+    Args:
+        path: Full path to ``full_weights.pt``. Directories are rejected.
+
+    Returns:
+        Mapping of LoRA parameter names to tensors.
+
+    Raises:
+        FileNotFoundError: If ``path`` is not a file or contains no LoRA tensors.
+    """
+    weights_path = Path(path)
+    if not weights_path.is_file():
+        raise FileNotFoundError(
+            f"Expected the full path to full_weights.pt, got {path}. "
+            "Pass the file itself, for example "
+            ".../actor/model_state_dict/full_weights.pt."
+        )
+    state = torch.load(weights_path, map_location="cpu", weights_only=True)
+    lora_state = {
+        key.removeprefix("module."): value
+        for key, value in state.items()
+        if "lora_" in key
+    }
+    if not lora_state:
+        raise FileNotFoundError(f"{weights_path} contains no lora_* tensors")
+    return lora_state
 
 
 def load_lora_adapter(
     model: torch.nn.Module, path: str, adapter_name: str = "default"
 ) -> torch.nn.Module:
-    """Load one PEFT-native or RLinf full-weights LoRA adapter."""
+    """Load one PEFT adapter directory or an RLinf ``full_weights.pt`` LoRA dump.
+
+    Args:
+        model: Base model or an existing ``PeftModel``.
+        path: Full path to ``full_weights.pt`` (typically
+            ``.../actor/model_state_dict/full_weights.pt`` from VLM SFT), or a
+            PEFT adapter directory that contains ``adapter_config.json``.
+            Parent checkpoint directories are not searched.
+        adapter_name: PEFT adapter name to attach.
+
+    Returns:
+        The model with the named adapter loaded.
+
+    Raises:
+        FileNotFoundError: If ``path`` is neither a PEFT adapter directory nor
+            a ``full_weights.pt`` file.
+        RuntimeError: If the checkpoint contains unexpected LoRA keys.
+    """
     from peft import (
         LoraConfig,
         PeftModel,
@@ -64,19 +94,8 @@ def load_lora_adapter(
         set_peft_model_state_dict,
     )
 
-    adapter_dir = next(
-        (
-            candidate
-            for candidate in (
-                Path(path),
-                Path(path) / "lora_adapter",
-                Path(path) / "actor" / "lora_adapter",
-            )
-            if (candidate / "adapter_config.json").is_file()
-        ),
-        None,
-    )
-    if adapter_dir is not None:
+    adapter_dir = Path(path)
+    if (adapter_dir / ADAPTER_CONFIG_FILENAME).is_file():
         if isinstance(model, PeftModel):
             model.load_adapter(str(adapter_dir), adapter_name=adapter_name)
             if adapter_name != "default":
@@ -86,9 +105,15 @@ def load_lora_adapter(
             model, str(adapter_dir), adapter_name=adapter_name
         )
 
-    state = _rlinf_checkpoint_state(path)
-    if not state:
-        raise FileNotFoundError(f"No LoRA adapter found under {path}")
+    if not adapter_dir.is_file():
+        raise FileNotFoundError(
+            f"No LoRA adapter found at {path}. Pass the full path to "
+            "full_weights.pt (typically "
+            ".../actor/model_state_dict/full_weights.pt from VLM SFT) or a "
+            f"PEFT adapter directory that contains {ADAPTER_CONFIG_FILENAME}."
+        )
+
+    state = _load_lora_state_from_full_weights(path)
     rank = next(int(value.shape[0]) for key, value in state.items() if "lora_A" in key)
     targets = sorted(
         {key.split(".lora_")[0].split(".")[-1] for key in state if ".lora_" in key}

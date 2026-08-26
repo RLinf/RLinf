@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 
-from examples.reward.preprocess_vlm_trend_reward_dataset import (
+from examples.reward.preprocess_vlm_trend_terminal_success import (
     build_terminal_success_rows,
 )
 from rlinf.models.embodiment.reward import get_reward_model_class
@@ -41,9 +41,9 @@ def test_success_potential_input_builder_preserves_standard_prompt() -> None:
     assert "Judge whether the action trend is positive" in standard._render_prompt(
         "PickCube"
     )
-    assert standard._video_fps() == 24.0
+    assert standard.video_fps == 24.0
     assert specialized._render_prompt("PickCube") == "Task:PickCube; bins:9"
-    assert specialized._video_fps() == 24.0
+    assert specialized.video_fps == 24.0
 
 
 def test_success_potential_model_has_dedicated_registry_entry() -> None:

@@ -29,7 +29,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from examples.reward.preprocess_vlm_trend_reward_dataset import (
+from examples.reward.vlm_trend_data import (
     first_success_transition,
     transition_observations,
 )

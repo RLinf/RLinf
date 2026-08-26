@@ -227,6 +227,7 @@ class BufferedVLMInputBuilder(BaseVLMInputBuilder):
 @dataclass
 class VideoVLMInputBuilder(BufferedVLMInputBuilder):
     video_keys: list[str] = field(default_factory=lambda: ["main_images"])
+    video_fps: float = 24.0
 
     def extract_videos(
         self,
@@ -276,9 +277,6 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
             "unclear. Answer with exactly one word: positive, negative, or unclear."
         )
 
-    def _video_fps(self) -> float:
-        return 24.0
-
     def prepare_inputs(
         self,
         observations: dict[str, Any],
@@ -317,7 +315,7 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
             prompt_texts=prompt_texts_list,
             videos=videos_list,
             answer_text=None,
-            video_fps=self._video_fps(),
+            video_fps=self.video_fps,
         )
         return processed_inputs
 
@@ -330,7 +328,6 @@ class VLMTrendSuccessPotentialInputBuilder(VLMTrendRewardInputBuilder):
     prompt_template: str = "{task_text}"
     include_task: bool = True
     num_bins: int = 10
-    video_fps: float = 24.0
 
     def _render_prompt(self, task: str) -> str:
         task = str(task or self.default_task_description).strip()
@@ -341,6 +338,3 @@ class VLMTrendSuccessPotentialInputBuilder(VLMTrendRewardInputBuilder):
             num_bins=self.num_bins,
             num_bins_max=self.num_bins - 1,
         )
-
-    def _video_fps(self) -> float:
-        return self.video_fps
