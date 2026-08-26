@@ -14,23 +14,26 @@
 
 """Pi0 model for PyTorch, aligned with JAX models/pi0.py.
 
-Flow matching model for continuous action generation.
+Flow-matching VLA: assembles Gemma / SigLIP / action expert and exposes the
+RLinf SFT ``forward(ForwardType.SFT, data=...)`` entry point. Task
+subclasses (eval / RL / DAgger / DSRL) inherit this module.
 """
 
 from __future__ import annotations
 
-import logging
+from types import SimpleNamespace
+from typing import Any, Sequence
 
 import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from . import gemma, model, pointnet, siglip
-from .pi0_config import Pi0Config
-from .utils import _str_to_dtype
-
-logger = logging.getLogger("openpi")
+from rlinf.models.embodiment.base_policy import ForwardType
+from rlinf.models.embodiment.openpi_rlinf.modules import gemma, model, pointnet, siglip
+from rlinf.models.embodiment.openpi_rlinf.modules.utils import _str_to_dtype
+from rlinf.models.embodiment.openpi_rlinf.pi0_config import Pi0Config
+from rlinf.models.embodiment.openpi_rlinf.rlt_config import OpenPiPytorchRLTConfig
 
 
 def make_attn_mask(input_mask: torch.Tensor, mask_ar: torch.Tensor) -> torch.Tensor:
@@ -82,9 +85,19 @@ def posemb_sincos(
 
 
 class Pi0(model.BaseModel):
-    """Pi0 flow matching model for continuous action generation."""
+    """Pi0 flow-matching model: network assembly plus RLinf SFT forward."""
 
-    def __init__(self, config: Pi0Config):
+    def __init__(
+        self,
+        config: Pi0Config,
+        *,
+        num_steps: int = 10,
+        action_env_dim: int | None = None,
+        action_chunk: int | None = None,
+        config_name: str = "",
+        state_indices: Sequence[int] | None = None,
+        rlt_cfg: OpenPiPytorchRLTConfig | None = None,
+    ):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
         self.pcd = config.pcd
@@ -145,6 +158,14 @@ class Pi0(model.BaseModel):
             )
 
         self._init_weights()
+        self._init_rlinf_runtime(
+            num_steps=num_steps,
+            action_env_dim=action_env_dim,
+            action_chunk=action_chunk,
+            config_name=config_name,
+            state_indices=state_indices,
+            rlt_cfg=rlt_cfg,
+        )
 
     def _init_weights(self):
         """Initialize projection weights."""
@@ -328,7 +349,7 @@ class Pi0(model.BaseModel):
         """Compute flow matching loss.
 
         Returns:
-            loss: (B, action_horizon) per-timestep MSE loss
+            loss: (B, action_horizon, action_dim) per-element MSE
         """
         B = actions.shape[0]
         device = actions.device
@@ -384,7 +405,7 @@ class Pi0(model.BaseModel):
 
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        return torch.mean(torch.square(v_t - u_t), dim=-1)
+        return torch.square(v_t - u_t)
 
     def build_prefix_cache(
         self, observation: model.Observation
@@ -496,23 +517,335 @@ class Pi0(model.BaseModel):
 
         return x_t
 
-    def forward(
+    def _init_rlinf_runtime(
+        self,
+        *,
+        num_steps: int,
+        action_env_dim: int | None,
+        action_chunk: int | None,
+        config_name: str,
+        state_indices: Sequence[int] | None,
+        rlt_cfg: OpenPiPytorchRLTConfig | None,
+    ) -> None:
+        """Attach RLinf SFT knobs (num_steps, optional RLT) without a wrapper."""
+        self.num_steps = num_steps
+        self.action_env_dim = (
+            action_env_dim if action_env_dim is not None else self.action_dim
+        )
+        self.action_chunk = action_chunk
+        self.config_name = config_name
+        self.state_indices = list(state_indices) if state_indices else None
+        # Workers (NFT, FSDP wrap) read ``model.config.num_steps``.
+        self.config = SimpleNamespace(
+            num_steps=num_steps,
+            action_chunk=action_chunk,
+            action_horizon=self.action_horizon,
+            action_dim=self.action_dim,
+            action_env_dim=self.action_env_dim,
+            config_name=config_name,
+        )
+        self.rlt_cfg = rlt_cfg or OpenPiPytorchRLTConfig()
+        if self.rlt_cfg.use_rlt:
+            from rlinf.models.embodiment.modules.rlt_token_transformer import (
+                RLTTokenTransformer,
+            )
+
+            self.rlt_module = RLTTokenTransformer(
+                input_dim=self.rlt_cfg.rlt_input_dim,
+                embed_dim=self.rlt_cfg.rlt_embed_dim,
+                prefix_seq_len=self.rlt_cfg.rlt_prefix_seq_len,
+                num_layers=self.rlt_cfg.rlt_num_layers,
+                num_heads=self.rlt_cfg.rlt_num_heads,
+                mlp_ratio=self.rlt_cfg.rlt_mlp_ratio,
+            ).to(dtype=next(self.parameters()).dtype)
+        self._mark_fsdp_wrap_names()
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.parameters()).device
+
+    @property
+    def _no_split_modules(self) -> list[str] | None:
+        names = ["Block", "Encoder1DBlock"]
+        if self.rlt_cfg.use_rlt:
+            names.append("RLTSelfAttentionLayer")
+        return names
+
+    @property
+    def _no_split_names(self) -> list[str] | None:
+        return [
+            "action_in_proj",
+            "action_out_proj",
+            "state_proj",
+            "action_time_mlp_in",
+            "action_time_mlp_out",
+            "time_mlp_in",
+            "time_mlp_out",
+        ]
+
+    def _mark_fsdp_wrap_names(self) -> None:
+        """Mark modules so RLinf's FSDP lambda policy can find leaf projects."""
+        for name, module in self.named_modules():
+            path_parts = name.split(".")
+            setattr(module, "_fsdp_wrap_name", path_parts[-1] if path_parts else name)
+
+    def _require_rlt(self) -> None:
+        if not self.rlt_cfg.use_rlt or not hasattr(self, "rlt_module"):
+            raise ValueError("RLT operation requires actor.model.openpi.use_rlt=True.")
+
+    def _select_rlt_prefix_embeddings(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+        lang_tokens: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.rlt_cfg.rlt_image_only and lang_tokens is not None:
+            num_image_tokens = prefix_output.shape[1] - lang_tokens.shape[1]
+            prefix_output = prefix_output[:, :num_image_tokens]
+            prefix_mask = prefix_mask[:, :num_image_tokens]
+        return prefix_output, prefix_mask
+
+    def _rlt_forward(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        self._require_rlt()
+        rlt_param = next(self.rlt_module.parameters())
+        prefix_output = prefix_output.to(device=rlt_param.device, dtype=rlt_param.dtype)
+        rlt_mask = prefix_mask if self.rlt_cfg.rlt_use_mask else None
+        return self.rlt_module(prefix_output, rlt_mask)
+
+    def _encode_rlt_flat(
+        self,
+        prefix_output: torch.Tensor,
+        prefix_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        self._require_rlt()
+        rlt_param = next(self.rlt_module.parameters())
+        prefix_output = prefix_output.to(device=rlt_param.device, dtype=rlt_param.dtype)
+        rlt_mask = prefix_mask if self.rlt_cfg.rlt_use_mask else None
+        return self.rlt_module.encode_flat(prefix_output, rlt_mask)
+
+    @staticmethod
+    def _unpack_sft_batch(data: Any) -> tuple[Any, Any]:
+        if isinstance(data, (tuple, list)):
+            if len(data) != 2:
+                raise ValueError(
+                    "SFT batch tuple must be (observation, actions); "
+                    f"got length {len(data)}."
+                )
+            observation, actions = data
+        elif isinstance(data, dict):
+            if "observation" not in data or "actions" not in data:
+                raise ValueError(
+                    "SFT batch dict must contain 'observation' and 'actions'; "
+                    f"got keys {sorted(data)}."
+                )
+            observation, actions = data["observation"], data["actions"]
+        else:
+            raise TypeError(f"Unsupported SFT batch type: {type(data)!r}.")
+        if observation is None or actions is None:
+            raise ValueError("SFT batch is missing observation or actions.")
+        return observation, actions
+
+    def _observation_to_device(self, observation: Any) -> model.Observation:
+        observation = model.Observation.from_observation_like(observation)
+        device = self.device
+
+        def _move(x):
+            return x.to(device) if isinstance(x, torch.Tensor) else x
+
+        return model.Observation(
+            images={k: _move(v) for k, v in observation.images.items()},
+            image_masks={k: _move(v) for k, v in observation.image_masks.items()},
+            state=_move(observation.state),
+            tokenized_prompt=_move(observation.tokenized_prompt),
+            tokenized_prompt_mask=_move(observation.tokenized_prompt_mask),
+            token_ar_mask=_move(observation.token_ar_mask),
+            token_loss_mask=_move(observation.token_loss_mask),
+            pcd_xyz=_move(observation.pcd_xyz),
+        )
+
+    def _actions_to_device(self, actions: Any) -> torch.Tensor:
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.as_tensor(actions)
+        if actions.dim() != 3:
+            raise ValueError(
+                "SFT actions must have shape [B, action_horizon, D]; "
+                f"got {tuple(actions.shape)}."
+            )
+        if actions.shape[-1] == self.action_dim:
+            return actions.to(device=self.device, dtype=torch.float32)
+        raise ValueError(
+            "SFT actions must arrive normalized + padded to the model action "
+            f"dim {self.action_dim}; got last dim {actions.shape[-1]}."
+        )
+
+    def _reduce_sft_loss(
+        self, per_element_loss: torch.Tensor, use_action_chunk_loss: bool
+    ) -> torch.Tensor:
+        """Mean flow-matching MSE, optionally restricted to the env action chunk.
+
+        ``per_element_loss`` is ``[B, action_horizon, action_dim]``. DAgger
+        matches the old OpenPI wrapper by dropping padded action dims and
+        unexecuted horizon steps before the mean.
+        """
+        if use_action_chunk_loss:
+            horizon = (
+                self.action_chunk
+                if self.action_chunk is not None
+                else per_element_loss.shape[1]
+            )
+            env_dim = (
+                self.action_env_dim
+                if self.action_env_dim is not None
+                else per_element_loss.shape[-1]
+            )
+            per_element_loss = per_element_loss[:, :horizon, :env_dim]
+        return per_element_loss.mean()
+
+    def _sft_forward_with_rlt_prefix(
         self,
         observation: model.Observation,
         actions: torch.Tensor,
-        *,
-        train: bool = True,
-        rng: torch.Generator | None = None,
-        noise: torch.Tensor | None = None,
-        time: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Default forward computes loss."""
-        return self.compute_loss(
-            observation, actions, train=train, rng=rng, noise=noise, time=time
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute VLA loss while retaining the prefix hidden states for RLT."""
+        batch_size = actions.shape[0]
+        device = actions.device
+
+        observation = model.preprocess_observation(observation, train=True)
+        observation = model._observation_to_dtype(observation, self.embed_dtype)
+        actions = actions.to(dtype=self.embed_dtype)
+        dtype = actions.dtype
+
+        noise = torch.randn(actions.shape, device=device, dtype=dtype)
+        time = (
+            torch.distributions.Beta(torch.tensor(1.5), torch.tensor(1.0))
+            .sample((batch_size,))
+            .to(device=device, dtype=dtype)
+        )
+        time = time * 0.999 + 0.001
+        time_expanded = time[:, None, None]
+        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        u_t = noise - actions
+
+        prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
+            observation, x_t, time
         )
 
+        input_mask = torch.cat([prefix_mask, suffix_mask], dim=1)
+        ar_mask = torch.cat([prefix_ar_mask, suffix_ar_mask], dim=0)
+        attn_mask = make_attn_mask(input_mask, ar_mask)
+        positions = torch.cumsum(input_mask.int(), dim=1) - 1
+
+        prefix_out, suffix_out = self.llm(
+            [prefix_tokens, suffix_tokens],
+            positions=positions,
+            mask=attn_mask,
+            adarms_cond=[None, adarms_cond],
+        )[0]
+        v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
+        loss = torch.square(v_t - u_t)
+        prefix_out, prefix_mask = self._select_rlt_prefix_embeddings(
+            prefix_out.detach(), prefix_mask, observation.tokenized_prompt
+        )
+        return loss, prefix_out, prefix_mask
+
+    def sft_forward(
+        self, data: Any, use_action_chunk_loss: bool = False, **kwargs
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
+        del kwargs
+        if hasattr(self, "gradient_checkpointing_disable"):
+            self.gradient_checkpointing_disable()
+        observation, actions = self._unpack_sft_batch(data)
+        observation = self._observation_to_device(observation)
+        actions = self._actions_to_device(actions)
+        if not self.rlt_cfg.use_rlt:
+            per_element_loss = self.compute_loss(observation, actions, train=True)
+            return self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)
+
+        per_element_loss, prefix_output, prefix_mask = (
+            self._sft_forward_with_rlt_prefix(observation, actions)
+        )
+        vla_loss = self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)
+        rlt_loss, _ = self._rlt_forward(prefix_output, prefix_mask)
+        return {
+            "loss": rlt_loss + self.rlt_cfg.rlt_alpha * vla_loss,
+            "vla_loss": vla_loss,
+            "rlt_loss": rlt_loss,
+        }
+
+    def freeze_vlm(self, freeze_action_expert: bool = False) -> int:
+        """Freeze PaliGemma (vision + LLM expert-0). Optionally freeze expert-1."""
+        frozen = 0
+        for p in self.img.parameters():
+            if p.requires_grad:
+                p.requires_grad = False
+                frozen += 1
+        llm = self.llm
+        for p in llm.embedder.parameters():
+            if p.requires_grad:
+                p.requires_grad = False
+                frozen += 1
+        expert_ids = (0, 1) if freeze_action_expert else (0,)
+        for block in llm.layers:
+            for expert_id in expert_ids:
+                for sub in (
+                    block.pre_attention_norms[expert_id],
+                    block.pre_ffw_norms[expert_id],
+                    block.mlps[expert_id],
+                ):
+                    for p in sub.parameters():
+                        if p.requires_grad:
+                            p.requires_grad = False
+                            frozen += 1
+                attn = block.attn
+                for proj_list in (attn.q_proj, attn.k_proj, attn.v_proj, attn.o_proj):
+                    proj = proj_list[expert_id]
+                    if proj is None:
+                        continue
+                    for p in proj.parameters():
+                        if p.requires_grad:
+                            p.requires_grad = False
+                            frozen += 1
+        for expert_id in expert_ids:
+            if llm.final_norms[expert_id] is not None:
+                for p in llm.final_norms[expert_id].parameters():
+                    if p.requires_grad:
+                        p.requires_grad = False
+                        frozen += 1
+        if freeze_action_expert:
+            for name in (
+                "action_in_proj",
+                "action_out_proj",
+                "state_proj",
+                "action_time_mlp_in",
+                "action_time_mlp_out",
+                "time_mlp_in",
+                "time_mlp_out",
+            ):
+                module = getattr(self, name, None)
+                if module is None:
+                    continue
+                for p in module.parameters():
+                    if p.requires_grad:
+                        p.requires_grad = False
+                        frozen += 1
+        return frozen
+
+    def forward(self, forward_type: ForwardType = ForwardType.SFT, **kwargs):
+        if forward_type != ForwardType.SFT:
+            raise NotImplementedError(
+                f"{type(self).__name__} only supports ForwardType.SFT; "
+                f"got forward_type={forward_type!r}."
+            )
+        return self.sft_forward(**kwargs)
+
     def gradient_checkpointing_enable(
-        self, gradient_checkpointing_kwargs: dict | None = None
+        self, gradient_checkpointing_kwargs: dict | None = None, **kwargs
     ):
         """Enable gradient checkpointing for memory efficiency.
 
@@ -528,7 +861,7 @@ class Pi0(model.BaseModel):
         self.img.encoder.gradient_checkpointing = True
         self.img.encoder.gradient_checkpointing_use_reentrant = use_reentrant
 
-    def gradient_checkpointing_disable(self):
+    def gradient_checkpointing_disable(self, **kwargs):
         """Disable gradient checkpointing (used by the eval / no-recompute path)."""
         self.llm.gradient_checkpointing = False
         self.img.encoder.gradient_checkpointing = False

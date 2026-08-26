@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Checkpoint-conversion and image tooling for the self-contained OpenPI 0.5 package."""
+"""Task-specific Pi0 subclasses selected by ``actor.model.openpi.task``.
+
+Import from the submodule (``tasks.eval``, ``tasks.rl``, …) rather than this
+package init so eval/SFT paths do not pull RL/DSRL dependencies.
+"""

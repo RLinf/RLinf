@@ -106,7 +106,6 @@ actor:
   seed: 0
   enable_offload: False
   # Config for sim-real co-training
-  config_name: ${actor.model.openpi.config_name}
   sft_loss_weight: 0.2
   enable_sft_co_train: True
   sft_data_path: "/path/to/RLCo-Example-Real-Data" # https://huggingface.co/datasets/RLinf/RLCo-Example-Real-Data
