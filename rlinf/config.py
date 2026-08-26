@@ -88,6 +88,7 @@ SupportedModel.OPENVLA_OFT = SupportedModel.register("openvla_oft", force=True)
 SupportedModel.MOLMOACT2 = SupportedModel.register("molmoact2", force=True)
 SupportedModel.OPENPI = SupportedModel.register("openpi", force=True)
 SupportedModel.OPENPI_RLINF = SupportedModel.register("openpi_rlinf", force=True)
+SupportedModel.PSI0 = SupportedModel.register("psi0", force=True)
 SupportedModel.STARVLA = SupportedModel.register("starvla", force=True)
 SupportedModel.MLP_POLICY = SupportedModel.register("mlp_policy", force=True)
 SupportedModel.RLT_MLP_POLICY = SupportedModel.register("rlt_mlp_policy", force=True)
@@ -126,6 +127,7 @@ EMBODIED_MODEL = set(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.OPENPI,
         SupportedModel.OPENPI_RLINF,
+        SupportedModel.PSI0,
         SupportedModel.STARVLA,
         SupportedModel.MLP_POLICY,
         SupportedModel.RLT_MLP_POLICY,
@@ -898,6 +900,47 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate the eval-only Psi0 + SIMPLE contract shipped in P3."""
+    assert only_eval, "model_type='psi0' is eval-only in P3."
+    assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.generation_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 Eval does not support decoupled mode."
+    )
+    assert not (
+        cfg.rollout.get("recompute_logprobs", False)
+        or cfg.rollout.get("collect_prev_infos", False)
+    ), "Psi0 RL statistics and recompute are not implemented in P3."
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert execution_horizon == 24 and int(model_cfg.action_dim) == 36, (
+        "Psi0 SIMPLE Eval requires actions shaped [B, 24, 36]."
+    )
+    assert psi0_cfg.get("sampler", "deterministic_euler") == "deterministic_euler", (
+        "Psi0 Eval requires sampler='deterministic_euler'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE Eval requires psi0.rtc.enabled=true."
+    )
+
+    eval_cfg = cfg.env.get("eval", None)
+    assert eval_cfg is not None and eval_cfg.env_type == "simple", (
+        "Psi0 Eval requires env.eval.env_type='simple'."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -910,6 +953,8 @@ def validate_embodied_cfg(cfg):
         f"Model type: '{model_cfg.model_type}' is not an embodied model. "
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
+    if model_type == SupportedModel.PSI0:
+        _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval

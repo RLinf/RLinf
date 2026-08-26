@@ -1,0 +1,22 @@
+model_type: "psi0"
+
+# The extracted official run directory. It must contain run_config.json,
+# argv.txt, and checkpoints/ckpt_${checkpoint_step}/model.safetensors.
+model_path: "/path/to/Psi0-SIMPLE-CloseDoor"
+checkpoint_step: 40000
+precision: "bf16"
+load_to_device: true
+
+num_action_chunks: 24
+action_dim: 36
+is_lora: false
+lora_rank: 32
+add_value_head: false
+
+psi0:
+  sampler: "deterministic_euler"
+  num_inference_steps: 10
+  plan_horizon: 30
+  overlap_horizon: 6
+  rtc:
+    enabled: true
