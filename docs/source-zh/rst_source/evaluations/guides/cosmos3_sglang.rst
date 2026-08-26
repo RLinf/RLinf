@@ -22,12 +22,16 @@ Cosmos3 SGLang 评测
 安装
 ----------------------------------------
 
-安装 embodied + LIBERO + Cosmos3 依赖：
+安装 embodied + LIBERO 依赖：
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env libero --model cosmos3
+   bash requirements/install.sh embodied --env libero
    source .venv/bin/activate
+
+.. note::
+
+   这里不使用 ``--model cosmos3``：cosmos3 的模型依赖（natten、cuDNN pin 等）与下方 SGLang 栈冲突过多。只装 RLinf 本体 + LIBERO 环境依赖即可；SGLang 按下文步骤单独安装。
 
 Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（需用带 batch action 支持的分支）：
 

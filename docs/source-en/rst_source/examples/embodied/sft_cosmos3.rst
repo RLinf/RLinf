@@ -221,9 +221,9 @@ The SFT output ``.../checkpoints/global_step_<N>/actor/model_state_dict/full_wei
 
    # RLinf SFT checkpoint (omni.net.* prefix)
    export SRC="/path/to/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt"
-   # Conversion working directory (steps write model_safetensors/model_dcp/model_hf/model_diffusers)
+   # Conversion working directory
    export OUT="/path/to/converted"
-   # cosmos_framework export_model reads LIBERO_ROOT
+   # cosmos_framework export_model needs the LIBERO dataset path
    export LIBERO_ROOT=/path/to/LIBERO_LeRobot_v3
    mkdir -p "$OUT"
 

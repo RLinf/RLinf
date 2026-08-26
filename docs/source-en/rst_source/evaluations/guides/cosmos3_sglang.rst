@@ -22,12 +22,16 @@ Each GPU runs one SGLang server (``server_type: embodied``) executing ``Cosmos3O
 Installation
 ----------------------------------------
 
-Install embodied + LIBERO + Cosmos3 dependencies:
+Install embodied + LIBERO dependencies:
 
 .. code-block:: bash
 
-   bash requirements/install.sh embodied --env libero --model cosmos3
+   bash requirements/install.sh embodied --env libero
    source .venv/bin/activate
+
+.. note::
+
+   Do not use ``--model cosmos3`` here: The model dependencies for cosmos3 (such as natten and cuDNN pin) conflict too much with the SGLang stack described below. Simply install the RLinf core and the LIBERO environment dependencies; install SGLang separately following the steps below.
 
 Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra (use the branch with batched action support):
 
