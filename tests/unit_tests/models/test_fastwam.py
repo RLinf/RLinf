@@ -227,6 +227,9 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     sft_config = (repo_root / "examples/sft/config/libero_sft_fastwam.yaml").read_text(
         encoding="utf-8"
     )
+    sft_model_config = (repo_root / "examples/sft/config/model/fastwam.yaml").read_text(
+        encoding="utf-8"
+    )
     eval_config = (
         repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml"
     ).read_text(encoding="utf-8")
@@ -234,7 +237,13 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     assert "max_epochs: 10" in sft_config
     assert "max_steps: -1" in sft_config
     assert "total_training_steps: null" in sft_config
+    assert "FASTWAM_DATASET_ROOT" not in sft_config
+    assert "FASTWAM_TEXT_EMBEDDING_CACHE_DIR" not in sft_config
+    assert "FASTWAM_CHECKPOINT_DIR" not in sft_model_config
+    assert "FASTWAM_ACTION_DIT_BACKBONE_PATH" not in sft_model_config
+    assert "/your_path_to/LIBERO-fastwam" in sft_config
     assert "env,rollout: 0-3" in eval_config
+    assert "task_suite_name: libero_spatial" in eval_config
     assert "total_num_envs: 20" in eval_config
     assert "max_steps_per_rollout_epoch: 10000" in eval_config
 

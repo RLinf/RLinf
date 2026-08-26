@@ -9,11 +9,14 @@ precision: bf16
 is_lora: false
 
 # Fine-tuned FastWAM checkpoint (contains the trained `mot` + `proprio_encoder`).
-# Replace these placeholders with the local released or fine-tuned policy files.
-model_path: /path/to/FASTWAM_CHECKPOINT
+# Download both files with:
+# huggingface-cli download yuanty/fastwam \
+#   libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json \
+#   --local-dir /your_path_to/fastwam
+model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt
 # Action/state min-max stats shipped next to the checkpoint. If null, get_model
 # looks for `<ckpt_stem>_dataset_stats.json` and `dataset_stats.json` beside it.
-dataset_stats_path: /path/to/FASTWAM_DATASET_STATS
+dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 # Action chunking: FastWAM predicts `action_horizon` steps and we execute the
 # first `num_action_chunks` (== FastWAM replan_steps) before re-planning.

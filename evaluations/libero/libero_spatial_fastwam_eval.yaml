@@ -13,9 +13,8 @@ hydra:
 cluster:
   num_nodes: 1
   component_placement:
-    # Keep the documented smoke runnable on a multi-GPU host: the default four
-    # vectorized environments form one real FastWAM inference batch on one
-    # worker. Large evaluations can explicitly place env/rollout on all GPUs.
+    # The default four vectorized environments form one FastWAM inference batch
+    # on one worker. Use libero_fastwam_full_eval for benchmark evaluation.
     env,rollout: 0
 
 runner:
@@ -37,9 +36,8 @@ env:
   group_name: "EnvGroup"
 
   eval:
-    # Minimal eval: a handful of parallel envs, one rollout epoch. FastWAM runs a
-    # 5B+1B flow-matching inference every `num_action_chunks` sim steps, so keep
-    # the env count / horizon small for a quick real-world sanity number.
+    # Evaluate a small group from one LIBERO suite. FastWAM runs a 5B+1B
+    # flow-matching inference every `num_action_chunks` simulator steps.
     rollout_epoch: 1
     total_num_envs: 4
     auto_reset: True

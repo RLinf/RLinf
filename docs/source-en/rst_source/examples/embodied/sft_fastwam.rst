@@ -31,7 +31,7 @@ Overview
    .. grid-item-card:: Tasks
       :text-align: center
 
-      LIBERO Spatial
+      Spatial · Object · Goal · Long
 
    .. grid-item-card:: Hardware
       :text-align: center
@@ -53,9 +53,13 @@ Tasks
      - Config / Weights
      - Focus
    * - LIBERO
-     - LIBERO-Spatial
+     - One suite (Spatial by default)
      - ``libero_spatial_fastwam_eval``
-     - Batched action-only evaluation.
+     - Evaluate one configured group of environments.
+   * - LIBERO
+     - Full benchmark
+     - ``libero_fastwam_full_eval``
+     - Evaluate all 500 initial states in each suite.
    * - LIBERO-Plus
      - Spatial perturbations
      - Same config with ``LIBERO_TYPE=plus``
@@ -124,7 +128,7 @@ checkpoint and matching normalization statistics:
    huggingface-cli download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /workspace/checkpoints/fastwam
+     --local-dir /your_path_to/fastwam
 
 For the official base-model SFT recipe documented below, keep
 ``model_path: null``. The SFT config then loads the official Wan2.2 video DiT
@@ -135,20 +139,19 @@ Use ``dataset_stats_path`` for the released normalization statistics:
 
    model_type: fastwam
    model_path: null
-   dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 FastWAM and RLinf Configuration
 -------------------------------
 
-The smoke evaluation YAML inherits the shared
-``examples/embodiment/config/model/fastwam.yaml`` preset. Do not edit that
-preset: append the following two launch-time overrides to an evaluation
-command:
+The evaluation YAML inherits the shared
+``examples/embodiment/config/model/fastwam.yaml`` preset. Before launching an
+evaluation, edit the two paths in that preset:
 
-.. code-block:: text
+.. code-block:: yaml
 
-   rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT
-   rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # https://huggingface.co/yuanty/fastwam
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 RLinf composes FastWAM's upstream YAML with OmegaConf without changing Hydra's
 global state. The two configuration layers have separate responsibilities:
@@ -188,30 +191,26 @@ supported alias.
 Evaluate
 --------
 
-FastWAM provides separate smoke and full-suite configurations.
+FastWAM provides configurations for evaluating one LIBERO suite and for
+running the complete LIBERO benchmark.
 
-**Standard LIBERO smoke evaluation** uses
-``libero_spatial_fastwam_eval.yaml``. It is intended to validate a local
-checkpoint on a small Spatial batch; pass the two paths without editing the
-shared model preset:
-
-.. code-block:: bash
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
-
-**Full-suite evaluation** uses
-``evaluations/libero/libero_fastwam_full_eval.yaml``. Before running it,
-replace that file's ``rollout.model.model_path`` and
-``rollout.model.dataset_stats_path`` placeholders with local files; they are
-not environment variables and are not downloaded automatically. Then run:
+**Single-suite evaluation** uses ``libero_spatial_fastwam_eval.yaml``. The
+provided configuration runs a small group of Spatial environments; it does
+not claim a full 500-state benchmark result. After setting the checkpoint and
+statistics paths in the shared model YAML, launch it with the same concise
+command used by other model integrations:
 
 .. code-block:: bash
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+**Complete LIBERO evaluation** uses
+``evaluations/libero/libero_fastwam_full_eval.yaml``. Set its model paths, then
+run:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_fastwam_full_eval
 
 The full-suite config intentionally uses GPUs ``0-3`` and 20 environments
 (five per worker). Because ``ignore_terminations=True`` keeps every trajectory
@@ -227,200 +226,125 @@ Without padding or terminal-slot suppression, an eight-worker layout therefore
 either omits states or exhausts some slots early. The provided config uses four
 workers on both four- and eight-GPU hosts.
 
-Spatial is the default suite. Object and Goal use the same step limits; Long
-(``libero_10``) uses FastWAM's 700-step trajectory limit:
+One run covers all 500 initial states of the selected suite. To report the
+complete benchmark, run the same command once for each row below after changing
+the three fields in ``libero_fastwam_full_eval.yaml``:
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 24 28 24 24
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_object
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_goal
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_10 \
-     env.eval.max_episode_steps=700 \
-     env.eval.max_steps_per_rollout_epoch=17500
+   * - Suite
+     - ``task_suite_name``
+     - ``max_episode_steps``
+     - ``max_steps_per_rollout_epoch``
+   * - Spatial
+     - ``libero_spatial``
+     - ``400``
+     - ``10000``
+   * - Object
+     - ``libero_object``
+     - ``400``
+     - ``10000``
+   * - Goal
+     - ``libero_goal``
+     - ``400``
+     - ``10000``
+   * - Long
+     - ``libero_10``
+     - ``700``
+     - ``17500``
 
 **LIBERO-Plus:** select all perturbations or a single family with environment
 variables; the YAML stays unchanged:
 
 .. code-block:: bash
 
-   LIBERO_TYPE=plus LIBERO_SUFFIX=all MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   LIBERO_TYPE=plus LIBERO_SUFFIX=all \
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
 
-   LIBERO_TYPE=plus LIBERO_SUFFIX=language MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   LIBERO_TYPE=plus LIBERO_SUFFIX=language \
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
 
 **Future-video visualization:** action generation remains batched; optional
 future imagination is generated only for the first sample and capped by
 ``max_video_saves``.
 
-.. code-block:: bash
+Set the following fields in the evaluation YAML and launch it with the same
+single-suite command:
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=2 \
-     env.eval.video_cfg.save_video=false \
-     rollout.model.visualize_future_video=true \
-     rollout.model.future_video_dir=/workspace/future_video_demo \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+.. code-block:: yaml
+
+   env:
+     eval:
+       total_num_envs: 2
+       video_cfg:
+         save_video: false
+   rollout:
+     model:
+       visualize_future_video: true
+       future_video_dir: /your_path_to/future_video_demo
 
 Supervised Fine-Tuning
 ----------------------
 
-This page contains all commands required to prepare SFT, so no separate helper
-script is needed. The configuration starts from the official Wan2.2 base model
-and interpolated ActionDiT backbone rather than continuing from the released
-FastWAM checkpoint. The code below downloads required weights and dataset stats,
-prepares ActionDiT, downloads and extracts all four LIBERO suites, and
-precomputes T5 text embeddings. Activate the environment, then paste it into a
-terminal from the repository root; use tmux for long downloads and training:
+The RLinf recipe starts from the official Wan2.2 base model and interpolated
+ActionDiT backbone, rather than continuing from the released FastWAM policy.
+Asset preparation follows the same steps as the upstream FastWAM repository,
+but the paths are written directly in the RLinf YAML files.
+
+Download and extract the four LIBERO LeRobot suites:
 
 .. code-block:: bash
 
-   #!/usr/bin/env bash
-   set -euo pipefail
+   huggingface-cli download yuanty/LIBERO-fastwam \
+     --repo-type dataset \
+     --local-dir /your_path_to/LIBERO-fastwam
 
-   REPO_PATH="$(git rev-parse --show-toplevel)"
-   PYTHON_BIN="${REPO_PATH}/.venv/bin/python"
-   FASTWAM_PATH="${FASTWAM_PATH:-${REPO_PATH}/.venv/FastWAM}"
-   CHECKPOINT_DIR="${FASTWAM_CHECKPOINT_DIR:-${REPO_PATH}/checkpoints/fastwam_release}"
-   MODEL_BASE_PATH="${DIFFSYNTH_MODEL_BASE_PATH:-${REPO_PATH}/checkpoints}"
-   DATASET_ROOT="${FASTWAM_DATASET_ROOT:-${REPO_PATH}/data/libero_mujoco3.3.2}"
-   if [[ -n "${FASTWAM_DATASET_DIR:-}" ]]; then
-       # Keep a one-suite override for smoke/debug runs.
-       DATASET_DIRS=("${FASTWAM_DATASET_DIR}")
-   else
-       # Match the official task/libero_uncond_2cam224_1e-4.yaml.
-       DATASET_DIRS=(
-           "${DATASET_ROOT}/libero_spatial_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_object_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_goal_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_10_no_noops_lerobot"
-       )
-   fi
-   DATASET_DIR="${DATASET_DIRS[0]}"
-   TEXT_CACHE_DIR="${FASTWAM_TEXT_EMBEDDING_CACHE_DIR:-${DATASET_ROOT}/text_embeds_cache/libero}"
-   DATASET_DIRS_HYDRA=$(IFS=,; echo "${DATASET_DIRS[*]}")
-   ACTION_DIT_BACKBONE_PATH="${FASTWAM_ACTION_DIT_BACKBONE_PATH:-${MODEL_BASE_PATH}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
-   DOWNLOAD_DATA="${FASTWAM_DOWNLOAD_DATA:-1}"
-
-   export DIFFSYNTH_MODEL_BASE_PATH="${MODEL_BASE_PATH}"
-
-   if command -v hf >/dev/null 2>&1; then
-       HF_BIN=hf
-   elif command -v huggingface-cli >/dev/null 2>&1; then
-       HF_BIN=huggingface-cli
-   else
-       echo "The Hugging Face CLI is required. Activate .venv first." >&2
-       exit 1
-   fi
-   if [ ! -x "${PYTHON_BIN}" ]; then
-       echo "RLinf venv not found at ${PYTHON_BIN}; run requirements/install.sh first." >&2
-       exit 1
-   fi
-
-   mkdir -p "${CHECKPOINT_DIR}" "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B" \
-       "${MODEL_BASE_PATH}/Wan-AI/Wan2.1-T2V-1.3B" "${DATASET_ROOT}"
-
-   echo "[FastWAM] Downloading the released LIBERO checkpoint and stats..."
-   "${HF_BIN}" download yuanty/fastwam \
-       libero_uncond_2cam224.pt \
-       libero_uncond_2cam224_dataset_stats.json \
-       --local-dir "${CHECKPOINT_DIR}"
-
-   echo "[FastWAM] Downloading the VAE and T5 weights used by RLinf..."
-   "${HF_BIN}" download Wan-AI/Wan2.2-TI2V-5B \
-       Wan2.2_VAE.pth \
-       models_t5_umt5-xxl-enc-bf16.pth \
-       --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B"
-   "${HF_BIN}" download Wan-AI/Wan2.1-T2V-1.3B \
-       --include "google/umt5-xxl/*" \
-       --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.1-T2V-1.3B"
-
-   echo "[FastWAM] Downloading the official Wan2.2 video DiT for base-model SFT..."
-   if ! find "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B" -maxdepth 1 -type f \
-       -name 'diffusion_pytorch_model*.safetensors' -print -quit | grep -q .; then
-       "${HF_BIN}" download Wan-AI/Wan2.2-TI2V-5B \
-           --include "diffusion_pytorch_model*.safetensors" \
-           --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B"
-   fi
-
-   if [ ! -s "${ACTION_DIT_BACKBONE_PATH}" ]; then
-       echo "[FastWAM] Preprocessing the official ActionDiT backbone..."
-       mkdir -p "$(dirname -- "${ACTION_DIT_BACKBONE_PATH}")"
-       "${PYTHON_BIN}" "${FASTWAM_PATH}/scripts/preprocess_action_dit_backbone.py" \
-           --model-config "${FASTWAM_PATH}/configs/model/fastwam.yaml" \
-           --output "${ACTION_DIT_BACKBONE_PATH}" \
-           --device "${FASTWAM_ACTION_DIT_DEVICE:-cuda}" \
-           --dtype bfloat16
-   fi
-
-   if [ "${DOWNLOAD_DATA}" = "1" ]; then
-       echo "[FastWAM] Downloading the official LIBERO LeRobot archive set..."
-       "${HF_BIN}" download --repo-type dataset yuanty/LIBERO-fastwam \
-           --local-dir "${DATASET_ROOT}"
-       shopt -s nullglob
-       archives=("${DATASET_ROOT}"/*.tar.gz)
-       if [ "${#archives[@]}" -eq 0 ]; then
-           echo "No LIBERO tar.gz archives found in ${DATASET_ROOT}." >&2
-           exit 1
-       fi
-       for archive in "${archives[@]}"; do
-           echo "[FastWAM] Extracting ${archive}"
-           tar -xzf "${archive}" -C "${DATASET_ROOT}"
-       done
-   fi
-
-   for dataset_dir in "${DATASET_DIRS[@]}"; do
-       if [ ! -f "${dataset_dir}/meta/tasks.jsonl" ]; then
-           echo "Expected LIBERO dataset at ${dataset_dir} was not found." >&2
-           echo "Extract the official archive set or set FASTWAM_DATASET_DIR for a one-suite run." >&2
-           exit 1
-       fi
+   for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
+     tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
    done
 
-   mkdir -p "${TEXT_CACHE_DIR}"
-   export DIFFSYNTH_MODEL_BASE_PATH="${MODEL_BASE_PATH}"
-   echo "[FastWAM] Precomputing T5 text embeddings..."
-   "${PYTHON_BIN}" "${FASTWAM_PATH}/scripts/precompute_text_embeds.py" \
-       task=libero_uncond_2cam224_1e-4 \
-       "data.train.dataset_dirs=[${DATASET_DIRS_HYDRA}]" \
-       "data.train.text_embedding_cache_dir=${TEXT_CACHE_DIR}" \
-       +overwrite=false \
-       model.redirect_common_files=true
-
-   cat <<EOF
-   FastWAM SFT assets are ready.
-     FASTWAM_CHECKPOINT_DIR=${CHECKPOINT_DIR}
-     DIFFSYNTH_MODEL_BASE_PATH=${MODEL_BASE_PATH}
-     FASTWAM_DATASET_ROOT=${DATASET_ROOT}
-     FASTWAM_DATASET_DIRS=${DATASET_DIRS_HYDRA}
-     FASTWAM_DATASET_DIR=${DATASET_DIR}
-     FASTWAM_TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE_DIR}
-     FASTWAM_ACTION_DIT_BACKBONE_PATH=${ACTION_DIT_BACKBONE_PATH}
-   EOF
-
-After preparation, start training:
+Download the Wan components and generate the ActionDiT backbone:
 
 .. code-block:: bash
 
-   tmux new -s fastwam-sft
-   source .venv/bin/activate
+   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
+     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
+   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
+     --include "google/umt5-xxl/*" \
+     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
+
+   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
+   python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
+     --model-config .venv/FastWAM/configs/model/fastwam.yaml \
+     --output /your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
+     --device cuda \
+     --dtype bfloat16
+
+Precompute the T5 text cache for the same four dataset directories:
+
+.. code-block:: bash
+
+   python .venv/FastWAM/scripts/precompute_text_embeds.py \
+     task=libero_uncond_2cam224_1e-4 \
+     "data.train.dataset_dirs=[/your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot]" \
+     "data.train.text_embedding_cache_dir=/your_path_to/text_embeds_cache/libero" \
+     model.redirect_common_files=true
+
+Finally, update the placeholders in
+``examples/sft/config/libero_sft_fastwam.yaml`` and
+``examples/sft/config/model/fastwam.yaml``. Each path has a nearby comment
+linking to the corresponding Hugging Face repository or preparation command.
+
+Launch SFT from the repository root:
+
+.. code-block:: bash
+
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
-   # Detach with Ctrl-b d; reattach with: tmux attach -t fastwam-sft
+
+Use tmux or another session manager if the training process must survive a
+terminal disconnect.
 
 Official FastWAM versus RLinf
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

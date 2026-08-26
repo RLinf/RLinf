@@ -40,6 +40,7 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
+    task_suite_name: libero_spatial
     # Match FastWAM's released LIBERO evaluator base seed. RLinf's existing
     # per-rank seed offset remains unchanged.
     seed: 42
@@ -71,6 +72,8 @@ rollout:
     model_type: "fastwam"
     # Match FastWAM's released evaluator, which inherits the global seed 42.
     seed: 42
-    # Replace both placeholders with the checkpoint and dataset-stats files to evaluate.
-    model_path: /path/to/FASTWAM_SFT_CKPT
-    dataset_stats_path: /path/to/FASTWAM_DATASET_STATS
+    # huggingface-cli download yuanty/fastwam \
+    #   libero_uncond_2cam224.pt libero_uncond_2cam224_dataset_stats.json \
+    #   --local-dir /your_path_to/fastwam
+    model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt
+    dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json

@@ -36,7 +36,7 @@ runner:
 
   # The released LIBERO checkpoint is step_021700. Derive the training horizon
   # from the effective dataloader size and the official 10-epoch limit.
-  # Use runner.max_steps=1 for a smoke test without changing the real defaults.
+  # Use runner.max_steps=1 for a quick validation run without changing the defaults.
   max_epochs: 10
   max_steps: -1
   # Official eval_every=200 is not enabled here because RLinf's generic
@@ -48,15 +48,17 @@ runner:
 
 data:
   # Match the official task/libero_uncond_2cam224_1e-4.yaml dataset set.
-  # Set FASTWAM_DATASET_DIR for a one-suite smoke run, or override
-  # data.train_data_paths explicitly for a custom dataset list.
+  # Download all four suites with:
+  # huggingface-cli download yuanty/LIBERO-fastwam --repo-type dataset \
+  #   --local-dir /your_path_to/LIBERO-fastwam
   train_data_paths:
-    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_spatial_no_noops_lerobot
-    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_object_no_noops_lerobot
-    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_goal_no_noops_lerobot
-    - ${oc.env:FASTWAM_DATASET_ROOT,data/libero_mujoco3.3.2}/libero_10_no_noops_lerobot
+    - /your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
+    - /your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot
+    - /your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot
+    - /your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot
   # Pre-computed T5 text-embedding cache shared by all four suites.
-  text_embedding_cache_dir: ${oc.env:FASTWAM_TEXT_EMBEDDING_CACHE_DIR,data/libero_mujoco3.3.2/text_embeds_cache/libero}
+  # Generate it with FastWAM's scripts/precompute_text_embeds.py (see the docs).
+  text_embedding_cache_dir: /your_path_to/text_embeds_cache/libero
   num_workers: 8
 
 actor:

@@ -30,7 +30,7 @@ FSDP SFT 流水线监督微调其世界/动作专家。
    .. grid-item-card:: 任务
       :text-align: center
 
-      LIBERO Spatial
+      Spatial · Object · Goal · Long
 
    .. grid-item-card:: 硬件
       :text-align: center
@@ -52,9 +52,13 @@ FSDP SFT 流水线监督微调其世界/动作专家。
      - 配置 / 权重
      - 重点
    * - LIBERO
-     - LIBERO-Spatial
+     - 单个 suite（默认 Spatial）
      - ``libero_spatial_fastwam_eval``
-     - 批量、仅动作的评测。
+     - 评测一组已配置的并行环境。
+   * - LIBERO
+     - 完整 benchmark
+     - ``libero_fastwam_full_eval``
+     - 评测每个 suite 的全部 500 个初始状态。
    * - LIBERO-Plus
      - Spatial 扰动
      - 同一配置加 ``LIBERO_TYPE=plus``
@@ -121,7 +125,7 @@ LIBERO-Plus 请使用 ``--env liberoplus``。还需按
    huggingface-cli download yuanty/fastwam \
      libero_uncond_2cam224.pt \
      libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /workspace/checkpoints/fastwam
+     --local-dir /your_path_to/fastwam
 
 对于下面介绍的官方 base-model SFT，保持 ``model_path: null``。
 SFT 配置会加载官方 Wan2.2 video DiT，并使用官方插值后的 ActionDiT
@@ -132,18 +136,18 @@ backbone payload 初始化动作分支。归一化统计信息仍通过
 
    model_type: fastwam
    model_path: null
-   dataset_stats_path: /workspace/checkpoints/fastwam/libero_uncond_2cam224_dataset_stats.json
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 FastWAM 与 RLinf 配置
 ------------------------
 
-smoke 评测 YAML 会继承 ``examples/embodiment/config/model/fastwam.yaml``。
-不要修改这个共享 preset；在评测命令末尾追加以下两个路径参数：
+评测 YAML 会继承 ``examples/embodiment/config/model/fastwam.yaml``。
+启动评测前，直接修改这个共享 preset 中的两个路径：
 
-.. code-block:: text
+.. code-block:: yaml
 
-   rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT
-   rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # https://huggingface.co/yuanty/fastwam
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状态。
 两层配置的职责分工如下：
@@ -180,28 +184,22 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
 评测
 ----
 
-FastWAM 分别提供 smoke 和完整 suite 两套评测配置。
+FastWAM 分别提供单个 LIBERO suite 和完整 LIBERO benchmark 的评测方式。
 
-**标准 LIBERO smoke 评测** 使用 ``libero_spatial_fastwam_eval.yaml``，
-用于在少量 Spatial 环境上检查本地 checkpoint。通过命令行传入路径，
-无需修改共享模型 preset：
-
-.. code-block:: bash
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
-
-**完整 suite 评测** 使用 ``evaluations/libero/libero_fastwam_full_eval.yaml``。
-运行前，将该文件中 ``rollout.model.model_path`` 和
-``rollout.model.dataset_stats_path`` 的占位路径替换为本地文件；这些路径不是环境变量，
-也不会自动下载。然后运行：
+**单个 suite 评测** 使用 ``libero_spatial_fastwam_eval.yaml``。默认配置运行
+一小组 Spatial 环境，不代表完整的 500-state benchmark 结果。设置共享模型
+YAML 中的 checkpoint 和统计路径后，启动命令与其它模型接入保持一致：
 
 .. code-block:: bash
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+
+**完整 LIBERO 评测** 使用 ``evaluations/libero/libero_fastwam_full_eval.yaml``。
+设置该文件中的模型路径后运行：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_fastwam_full_eval
 
 完整配置固定使用 GPU ``0-3`` 和 20 个环境（每个 worker 5 个）。由于
 ``ignore_terminations=True`` 会让每条轨迹运行到 ``max_episode_steps``，每个环境
@@ -213,196 +211,118 @@ FastWAM 分别提供 smoke 和完整 suite 两套评测配置。
 padding 或终止槽位屏蔽，8-worker 布局会遗漏状态或让部分槽位提前耗尽。因此这里在
 4 卡和 8 卡机器上都使用 4 个 worker。
 
-默认 suite 是 Spatial。Object 和 Goal 使用相同的步数限制；Long（``libero_10``）
-使用 FastWAM 的 700-step 轨迹上限：
+每次运行会覆盖所选 suite 的全部 500 个初始状态。完整报告需要按照下表修改
+``libero_fastwam_full_eval.yaml`` 中的三个字段，并对四个 suite 分别执行同一条命令：
 
-.. code-block:: bash
+.. list-table::
+   :header-rows: 1
+   :widths: 24 28 24 24
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_object
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_goal
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_fastwam_full_eval \
-     env.eval.task_suite_name=libero_10 \
-     env.eval.max_episode_steps=700 \
-     env.eval.max_steps_per_rollout_epoch=17500
+   * - Suite
+     - ``task_suite_name``
+     - ``max_episode_steps``
+     - ``max_steps_per_rollout_epoch``
+   * - Spatial
+     - ``libero_spatial``
+     - ``400``
+     - ``10000``
+   * - Object
+     - ``libero_object``
+     - ``400``
+     - ``10000``
+   * - Goal
+     - ``libero_goal``
+     - ``400``
+     - ``10000``
+   * - Long
+     - ``libero_10``
+     - ``700``
+     - ``17500``
 
 **LIBERO-Plus：** 通过环境变量选择全部扰动或单一类型，YAML 保持不变：
 
 .. code-block:: bash
 
-   LIBERO_TYPE=plus LIBERO_SUFFIX=all MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   LIBERO_TYPE=plus LIBERO_SUFFIX=all \
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
 
-   LIBERO_TYPE=plus LIBERO_SUFFIX=language MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+   LIBERO_TYPE=plus LIBERO_SUFFIX=language \
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
 
 **未来视频可视化：** 动作生成仍为批量执行；可选的未来想象只针对第一个样本，
 并受 ``max_video_saves`` 限制。
 
-.. code-block:: bash
+在评测 YAML 中设置以下字段，然后仍使用上面的单 suite 启动命令：
 
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=2 \
-     env.eval.video_cfg.save_video=false \
-     rollout.model.visualize_future_video=true \
-     rollout.model.future_video_dir=/workspace/future_video_demo \
-     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
-     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+.. code-block:: yaml
+
+   env:
+     eval:
+       total_num_envs: 2
+       video_cfg:
+         save_video: false
+   rollout:
+     model:
+       visualize_future_video: true
+       future_video_dir: /your_path_to/future_video_demo
 
 监督微调
 --------
 
-本节包含准备 SFT 的全部命令，不需要额外的准备脚本。当前配置从官方 Wan2.2
-base model 和插值后的 ActionDiT backbone 开始训练，不会从发布的 FastWAM
-checkpoint 继续训练。下方代码会下载必需权重与 dataset stats、准备 ActionDiT、
-下载并解压四套 LIBERO 数据，并预计算 T5 text embedding。先激活环境，在仓库根目录
-将代码逐行粘贴到终端执行；长时间下载和训练建议在 tmux 中进行：
+RLinf 配置从官方 Wan2.2 base model 和插值后的 ActionDiT backbone 开始训练，
+不会从发布的 FastWAM 策略继续训练。资源准备步骤与 FastWAM 上游一致，但本接入
+直接在 RLinf YAML 中填写路径，不再使用一组额外的路径环境变量。
+
+下载并解压四套 LIBERO LeRobot 数据：
 
 .. code-block:: bash
 
-   #!/usr/bin/env bash
-   set -euo pipefail
+   huggingface-cli download yuanty/LIBERO-fastwam \
+     --repo-type dataset \
+     --local-dir /your_path_to/LIBERO-fastwam
 
-   REPO_PATH="$(git rev-parse --show-toplevel)"
-   PYTHON_BIN="${REPO_PATH}/.venv/bin/python"
-   FASTWAM_PATH="${FASTWAM_PATH:-${REPO_PATH}/.venv/FastWAM}"
-   CHECKPOINT_DIR="${FASTWAM_CHECKPOINT_DIR:-${REPO_PATH}/checkpoints/fastwam_release}"
-   MODEL_BASE_PATH="${DIFFSYNTH_MODEL_BASE_PATH:-${REPO_PATH}/checkpoints}"
-   DATASET_ROOT="${FASTWAM_DATASET_ROOT:-${REPO_PATH}/data/libero_mujoco3.3.2}"
-   if [[ -n "${FASTWAM_DATASET_DIR:-}" ]]; then
-       # Keep a one-suite override for smoke/debug runs.
-       DATASET_DIRS=("${FASTWAM_DATASET_DIR}")
-   else
-       # Match the official task/libero_uncond_2cam224_1e-4.yaml.
-       DATASET_DIRS=(
-           "${DATASET_ROOT}/libero_spatial_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_object_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_goal_no_noops_lerobot"
-           "${DATASET_ROOT}/libero_10_no_noops_lerobot"
-       )
-   fi
-   DATASET_DIR="${DATASET_DIRS[0]}"
-   TEXT_CACHE_DIR="${FASTWAM_TEXT_EMBEDDING_CACHE_DIR:-${DATASET_ROOT}/text_embeds_cache/libero}"
-   DATASET_DIRS_HYDRA=$(IFS=,; echo "${DATASET_DIRS[*]}")
-   ACTION_DIT_BACKBONE_PATH="${FASTWAM_ACTION_DIT_BACKBONE_PATH:-${MODEL_BASE_PATH}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt}"
-   DOWNLOAD_DATA="${FASTWAM_DOWNLOAD_DATA:-1}"
-
-   export DIFFSYNTH_MODEL_BASE_PATH="${MODEL_BASE_PATH}"
-
-   if command -v hf >/dev/null 2>&1; then
-       HF_BIN=hf
-   elif command -v huggingface-cli >/dev/null 2>&1; then
-       HF_BIN=huggingface-cli
-   else
-       echo "The Hugging Face CLI is required. Activate .venv first." >&2
-       exit 1
-   fi
-   if [ ! -x "${PYTHON_BIN}" ]; then
-       echo "RLinf venv not found at ${PYTHON_BIN}; run requirements/install.sh first." >&2
-       exit 1
-   fi
-
-   mkdir -p "${CHECKPOINT_DIR}" "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B" \
-       "${MODEL_BASE_PATH}/Wan-AI/Wan2.1-T2V-1.3B" "${DATASET_ROOT}"
-
-   echo "[FastWAM] Downloading the released LIBERO checkpoint and stats..."
-   "${HF_BIN}" download yuanty/fastwam \
-       libero_uncond_2cam224.pt \
-       libero_uncond_2cam224_dataset_stats.json \
-       --local-dir "${CHECKPOINT_DIR}"
-
-   echo "[FastWAM] Downloading the VAE and T5 weights used by RLinf..."
-   "${HF_BIN}" download Wan-AI/Wan2.2-TI2V-5B \
-       Wan2.2_VAE.pth \
-       models_t5_umt5-xxl-enc-bf16.pth \
-       --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B"
-   "${HF_BIN}" download Wan-AI/Wan2.1-T2V-1.3B \
-       --include "google/umt5-xxl/*" \
-       --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.1-T2V-1.3B"
-
-   echo "[FastWAM] Downloading the official Wan2.2 video DiT for base-model SFT..."
-   if ! find "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B" -maxdepth 1 -type f \
-       -name 'diffusion_pytorch_model*.safetensors' -print -quit | grep -q .; then
-       "${HF_BIN}" download Wan-AI/Wan2.2-TI2V-5B \
-           --include "diffusion_pytorch_model*.safetensors" \
-           --local-dir "${MODEL_BASE_PATH}/Wan-AI/Wan2.2-TI2V-5B"
-   fi
-
-   if [ ! -s "${ACTION_DIT_BACKBONE_PATH}" ]; then
-       echo "[FastWAM] Preprocessing the official ActionDiT backbone..."
-       mkdir -p "$(dirname -- "${ACTION_DIT_BACKBONE_PATH}")"
-       "${PYTHON_BIN}" "${FASTWAM_PATH}/scripts/preprocess_action_dit_backbone.py" \
-           --model-config "${FASTWAM_PATH}/configs/model/fastwam.yaml" \
-           --output "${ACTION_DIT_BACKBONE_PATH}" \
-           --device "${FASTWAM_ACTION_DIT_DEVICE:-cuda}" \
-           --dtype bfloat16
-   fi
-
-   if [ "${DOWNLOAD_DATA}" = "1" ]; then
-       echo "[FastWAM] Downloading the official LIBERO LeRobot archive set..."
-       "${HF_BIN}" download --repo-type dataset yuanty/LIBERO-fastwam \
-           --local-dir "${DATASET_ROOT}"
-       shopt -s nullglob
-       archives=("${DATASET_ROOT}"/*.tar.gz)
-       if [ "${#archives[@]}" -eq 0 ]; then
-           echo "No LIBERO tar.gz archives found in ${DATASET_ROOT}." >&2
-           exit 1
-       fi
-       for archive in "${archives[@]}"; do
-           echo "[FastWAM] Extracting ${archive}"
-           tar -xzf "${archive}" -C "${DATASET_ROOT}"
-       done
-   fi
-
-   for dataset_dir in "${DATASET_DIRS[@]}"; do
-       if [ ! -f "${dataset_dir}/meta/tasks.jsonl" ]; then
-           echo "Expected LIBERO dataset at ${dataset_dir} was not found." >&2
-           echo "Extract the official archive set or set FASTWAM_DATASET_DIR for a one-suite run." >&2
-           exit 1
-       fi
+   for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
+     tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
    done
 
-   mkdir -p "${TEXT_CACHE_DIR}"
-   export DIFFSYNTH_MODEL_BASE_PATH="${MODEL_BASE_PATH}"
-   echo "[FastWAM] Precomputing T5 text embeddings..."
-   "${PYTHON_BIN}" "${FASTWAM_PATH}/scripts/precompute_text_embeds.py" \
-       task=libero_uncond_2cam224_1e-4 \
-       "data.train.dataset_dirs=[${DATASET_DIRS_HYDRA}]" \
-       "data.train.text_embedding_cache_dir=${TEXT_CACHE_DIR}" \
-       +overwrite=false \
-       model.redirect_common_files=true
-
-   cat <<EOF
-   FastWAM SFT assets are ready.
-     FASTWAM_CHECKPOINT_DIR=${CHECKPOINT_DIR}
-     DIFFSYNTH_MODEL_BASE_PATH=${MODEL_BASE_PATH}
-     FASTWAM_DATASET_ROOT=${DATASET_ROOT}
-     FASTWAM_DATASET_DIRS=${DATASET_DIRS_HYDRA}
-     FASTWAM_DATASET_DIR=${DATASET_DIR}
-     FASTWAM_TEXT_EMBEDDING_CACHE_DIR=${TEXT_CACHE_DIR}
-     FASTWAM_ACTION_DIT_BACKBONE_PATH=${ACTION_DIT_BACKBONE_PATH}
-   EOF
-
-完成准备后，启动训练：
+下载 Wan 组件并生成 ActionDiT backbone：
 
 .. code-block:: bash
 
-   tmux new -s fastwam-sft
-   source .venv/bin/activate
+   huggingface-cli download Wan-AI/Wan2.2-TI2V-5B \
+     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.2-TI2V-5B
+   huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B \
+     --include "google/umt5-xxl/*" \
+     --local-dir /your_path_to/checkpoints/Wan-AI/Wan2.1-T2V-1.3B
+
+   export DIFFSYNTH_MODEL_BASE_PATH=/your_path_to/checkpoints
+   python .venv/FastWAM/scripts/preprocess_action_dit_backbone.py \
+     --model-config .venv/FastWAM/configs/model/fastwam.yaml \
+     --output /your_path_to/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt \
+     --device cuda \
+     --dtype bfloat16
+
+为同样的四个数据目录预计算 T5 text cache：
+
+.. code-block:: bash
+
+   python .venv/FastWAM/scripts/precompute_text_embeds.py \
+     task=libero_uncond_2cam224_1e-4 \
+     "data.train.dataset_dirs=[/your_path_to/LIBERO-fastwam/libero_spatial_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_object_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_goal_no_noops_lerobot,/your_path_to/LIBERO-fastwam/libero_10_no_noops_lerobot]" \
+     "data.train.text_embedding_cache_dir=/your_path_to/text_embeds_cache/libero" \
+     model.redirect_common_files=true
+
+最后，修改 ``examples/sft/config/libero_sft_fastwam.yaml`` 和
+``examples/sft/config/model/fastwam.yaml`` 中的占位路径。模型和数据路径旁
+已经给出相应的 Hugging Face 地址或准备命令说明。
+
+在仓库根目录启动 SFT：
+
+.. code-block:: bash
+
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
-   # Ctrl-b d 脱离；查看时执行：tmux attach -t fastwam-sft
+
+如果需要防止终端断开影响训练，可自行使用 tmux 等会话管理工具。
 
 官方 FastWAM 与 RLinf 的差异
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
