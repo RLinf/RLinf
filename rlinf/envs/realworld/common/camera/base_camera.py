@@ -39,6 +39,11 @@ class CameraInfo:
     crop_region: Optional[tuple[float, float, float, float]] = None
 
 
+def supports_depth(camera_type: str) -> bool:
+    """Return whether the backend for *camera_type* can produce depth frames."""
+    return str(camera_type).lower() in {"realsense", "rs", "zed"}
+
+
 class BaseCamera(ABC):
     """Abstract base class for threaded camera capture.
 

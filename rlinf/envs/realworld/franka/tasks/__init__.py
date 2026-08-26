@@ -171,11 +171,6 @@ register(
 )
 
 register(
-    id="DualFrankaTcpEnv-v1",
-    entry_point="rlinf.envs.realworld.franka.tasks:create_dual_franka_tcp_env",
-)
-
-register(
     id="PegInsertionEnv-v1",
     entry_point="rlinf.envs.realworld.franka.tasks:create_peg_insertion_env",
 )

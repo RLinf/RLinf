@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .base_camera import BaseCamera, CameraInfo
+from .base_camera import BaseCamera, CameraInfo, supports_depth
 from .realsense_camera import RealSenseCamera
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "CameraInfo",
     "RealSenseCamera",
     "create_camera",
+    "supports_depth",
 ]
 
 

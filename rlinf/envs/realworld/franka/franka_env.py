@@ -24,7 +24,12 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
+from rlinf.envs.realworld.common.camera import (
+    BaseCamera,
+    CameraInfo,
+    create_camera,
+    supports_depth,
+)
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import (
     FrankaHWInfo,
@@ -588,7 +593,7 @@ class FrankaEnv(gym.Env):
             ee_state_dim = 1
             ee_low, ee_high = -1.0, 1.0
 
-        if self.config.camera_resize and self.config.camera_observation_size <= 0:
+        if self.config.camera_observation_size <= 0:
             raise ValueError("camera_observation_size must be positive")
 
         observation_spaces = {
@@ -713,7 +718,10 @@ class FrankaEnv(gym.Env):
                     name=name,
                     serial_number=serial,
                     camera_type=default_camera_type,
-                    enable_depth=self.config.enable_camera_depth,
+                    enable_depth=(
+                        bool(self.config.enable_camera_depth)
+                        and supports_depth(default_camera_type)
+                    ),
                     crop_region=crop_region,
                 )
             )
@@ -803,7 +811,9 @@ class FrankaEnv(gym.Env):
                 reshape_size = self.observation_space["frames"][
                     camera._camera_info.name
                 ].shape[:2][::-1]
-                color_frame = frame[..., :3].astype(np.uint8, copy=False)
+                color_frame = np.asarray(frame[..., :3])
+                if color_frame.dtype != np.uint8:
+                    color_frame = np.clip(color_frame, 0, 255).astype(np.uint8)
                 cropped_frame, resized_frame = self._crop_frame(
                     color_frame,
                     reshape_size,

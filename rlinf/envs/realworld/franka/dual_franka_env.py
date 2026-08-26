@@ -27,7 +27,12 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
+from rlinf.envs.realworld.common.camera import (
+    BaseCamera,
+    CameraInfo,
+    create_camera,
+    supports_depth,
+)
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import DualFrankaHWInfo, WorkerInfo
 from rlinf.utils.logging import get_logger
@@ -223,10 +228,6 @@ class DualFrankaEnv(gym.Env):
     def _all_camera_serials(self) -> list[str]:
         return [serial for _, serial, _ in self._all_camera_specs()]
 
-    @staticmethod
-    def _supports_depth(camera_type: str) -> bool:
-        return str(camera_type).lower() in {"realsense", "rs", "zed"}
-
     def _camera_infos(self) -> list[CameraInfo]:
         return [
             CameraInfo(
@@ -235,7 +236,7 @@ class DualFrankaEnv(gym.Env):
                 camera_type=camera_type,
                 enable_depth=(
                     bool(self.config.enable_camera_depth)
-                    and self._supports_depth(camera_type)
+                    and supports_depth(camera_type)
                 ),
             )
             for name, serial, camera_type in self._all_camera_specs()
@@ -289,14 +290,18 @@ class DualFrankaEnv(gym.Env):
             )
         return color, depth
 
-    @staticmethod
-    def _camera_intrinsics(camera: BaseCamera) -> dict[str, object] | None:
+    def _camera_intrinsics(self, camera: BaseCamera) -> dict[str, object] | None:
         getter = getattr(camera, "get_color_intrinsics", None)
         if not callable(getter):
             return None
         try:
             return dict(getter())
-        except Exception:
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to read intrinsics from camera %s: %s",
+                camera._camera_info.name,
+                exc,
+            )
             return None
 
     def _read_camera_bundle(self) -> dict[str, dict[str, np.ndarray]]:
@@ -313,11 +318,14 @@ class DualFrankaEnv(gym.Env):
                 frame = camera.get_frame(timeout=_CAMERA_FRAME_TIMEOUT_S)
             except queue.Empty:
                 cached = self._last_camera_frame.get(name)
+                self._logger.error("Camera %s stalled; replacing.", name)
                 camera.close()
                 self._cameras[index] = create_camera(camera._camera_info)
                 self._cameras[index].open()
                 camera = self._cameras[index]
                 if cached is None:
+                    # No cached frame to fall back to; give the fresh camera
+                    # one blocking read before letting queue.Empty propagate.
                     frame = camera.get_frame(timeout=5.0)
                 else:
                     frame = cached
