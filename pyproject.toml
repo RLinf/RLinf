@@ -58,6 +58,9 @@ dependencies = [
     "pip",
     "huggingface_hub",
     "icmplib",
+    # Codecs for `env.obs_compression` (Env -> Rollout observation transfer)
+    "lz4",
+    "zstandard",
 
     # Logging
     "wandb<0.25.1",
