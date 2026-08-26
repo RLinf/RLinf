@@ -15,7 +15,6 @@
 from omegaconf import OmegaConf
 
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
-from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
 
 
 def test_sft_worker_keeps_legacy_floor_epoch_length() -> None:
@@ -34,18 +33,20 @@ def test_sft_worker_keeps_legacy_floor_epoch_length() -> None:
     assert worker.get_max_steps_per_epoch() == 2
 
 
-def _fastwam_worker(total_training_steps=None, max_steps=-1, model_type="fastwam"):
+def _sft_worker(total_training_steps=None, max_steps=-1, include_total=True):
     class DataLoader:
         def __len__(self) -> int:
             return 2170
 
-    worker = object.__new__(FSDPVlaSftWorker)
+    worker = object.__new__(FSDPSftWorker)
+    optim = {}
+    if include_total:
+        optim["total_training_steps"] = total_training_steps
     worker.cfg = OmegaConf.create(
         {
             "runner": {"max_epochs": 10, "max_steps": max_steps},
             "actor": {
-                "model": {"model_type": model_type},
-                "optim": {"total_training_steps": total_training_steps},
+                "optim": optim,
             },
         }
     )
@@ -55,33 +56,33 @@ def _fastwam_worker(total_training_steps=None, max_steps=-1, model_type="fastwam
     return worker
 
 
-def test_fastwam_derives_missing_total_training_steps() -> None:
-    worker = _fastwam_worker()
+def test_sft_worker_derives_missing_total_training_steps() -> None:
+    worker = _sft_worker()
 
-    worker._set_fastwam_total_training_steps_if_missing()
+    worker._set_total_training_steps_if_missing()
 
     assert worker.cfg.actor.optim.total_training_steps == 21700
 
 
-def test_fastwam_total_training_steps_honors_runner_cap() -> None:
-    worker = _fastwam_worker(max_steps=1)
+def test_sft_worker_total_training_steps_honors_runner_cap() -> None:
+    worker = _sft_worker(max_steps=1)
 
-    worker._set_fastwam_total_training_steps_if_missing()
+    worker._set_total_training_steps_if_missing()
 
     assert worker.cfg.actor.optim.total_training_steps == 1
 
 
-def test_fastwam_keeps_explicit_total_training_steps() -> None:
-    worker = _fastwam_worker(total_training_steps=123)
+def test_sft_worker_keeps_explicit_total_training_steps() -> None:
+    worker = _sft_worker(total_training_steps=123)
 
-    worker._set_fastwam_total_training_steps_if_missing()
+    worker._set_total_training_steps_if_missing()
 
     assert worker.cfg.actor.optim.total_training_steps == 123
 
 
-def test_fastwam_total_training_steps_does_not_change_other_models() -> None:
-    worker = _fastwam_worker(model_type="openpi")
+def test_sft_worker_does_not_inject_missing_total_training_steps() -> None:
+    worker = _sft_worker(include_total=False)
 
-    worker._set_fastwam_total_training_steps_if_missing()
+    worker._set_total_training_steps_if_missing()
 
-    assert worker.cfg.actor.optim.total_training_steps is None
+    assert "total_training_steps" not in worker.cfg.actor.optim

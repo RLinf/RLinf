@@ -192,7 +192,7 @@ def build_fastwam_sft_dataloader(
     from fastwam.utils import misc as _fw_misc
     from fastwam.utils.pytorch_utils import worker_init_function as _fw_worker_init_fn
 
-    work_dir = str(cfg.runner.logger.get("log_path", "/workspace/runs"))
+    work_dir = str(cfg.runner.logger.get("log_path", "../results"))
     _os.makedirs(work_dir, exist_ok=True)
     _fw_misc.register_work_dir(work_dir)
 

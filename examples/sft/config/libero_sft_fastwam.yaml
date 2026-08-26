@@ -83,7 +83,7 @@ actor:
     lr_scheduler: "fastwam_cosine"
     lr_warmup_steps: -1
     lr_warmup_steps_ratio: 0.05
-    # Filled by the FastWAM SFT worker from the effective dataloader size,
+    # Filled by the generic SFT worker from the effective dataloader size,
     # gradient accumulation, max_epochs, and an optional runner.max_steps cap.
     # Explicit values remain untouched.
     total_training_steps: null

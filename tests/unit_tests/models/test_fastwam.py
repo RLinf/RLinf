@@ -237,3 +237,19 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     assert "env,rollout: 0-3" in eval_config
     assert "total_num_envs: 20" in eval_config
     assert "max_steps_per_rollout_epoch: 10000" in eval_config
+
+
+def test_fastwam_reset_wait_preserves_shared_libero_default() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    libero_env = (repo_root / "rlinf/envs/libero/libero_env.py").read_text(
+        encoding="utf-8"
+    )
+    eval_configs = [
+        repo_root / "evaluations/libero/libero_spatial_fastwam_eval.yaml",
+        repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml",
+        repo_root / "tests/e2e_tests/embodied/libero_spatial_eval_fastwam.yaml",
+    ]
+
+    assert 'self.cfg.get("num_steps_wait", 15)' in libero_env
+    for config_path in eval_configs:
+        assert "num_steps_wait: 30" in config_path.read_text(encoding="utf-8")

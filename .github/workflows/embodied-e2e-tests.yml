@@ -316,6 +316,8 @@ jobs:
           export REPO_PATH=$(pwd)
           export LIBERO_TYPE=standard
           export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/FastWAM/models
+          export FASTWAM_CHECKPOINT_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
+          export FASTWAM_DATASET_STATS_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
           test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
           test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
           test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.2-TI2V-5B

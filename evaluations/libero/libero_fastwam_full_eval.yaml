@@ -72,5 +72,5 @@ rollout:
     # Match FastWAM's released evaluator, which inherits the global seed 42.
     seed: 42
     # Replace both placeholders with the checkpoint and dataset-stats files to evaluate.
-    model_path: your_path_to/FASTWAM_SFT_CKPT
-    dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+    model_path: /path/to/FASTWAM_SFT_CKPT
+    dataset_stats_path: /path/to/FASTWAM_DATASET_STATS

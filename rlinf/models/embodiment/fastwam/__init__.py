@@ -189,7 +189,7 @@ def get_model(cfg: DictConfig, torch_dtype=None) -> nn.Module:
     os.environ.setdefault("DIFFSYNTH_DOWNLOAD_SOURCE", "huggingface")
     os.environ.setdefault(
         "DIFFSYNTH_MODEL_BASE_PATH",
-        os.environ.get("DIFFSYNTH_MODEL_BASE_PATH", "/workspace/checkpoints"),
+        str(Path.cwd() / "checkpoints"),
     )
 
     fw = cfg.get("fastwam", {}) or {}

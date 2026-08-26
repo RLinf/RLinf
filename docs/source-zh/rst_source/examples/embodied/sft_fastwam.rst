@@ -137,13 +137,13 @@ backbone payload 初始化动作分支。归一化统计信息仍通过
 FastWAM 与 RLinf 配置
 ------------------------
 
-标准评测 YAML 会读取 examples/embodiment/config/model/fastwam.yaml。
-使用前将该文件中的 model_path 与 dataset_stats_path 占位路径替换为本机模型文件：
+smoke 评测 YAML 会继承 ``examples/embodiment/config/model/fastwam.yaml``。
+不要修改这个共享 preset；在评测命令末尾追加以下两个路径参数：
 
-.. code-block:: yaml
+.. code-block:: text
 
-   model_path: your_path_to/FASTWAM_CHECKPOINT
-   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
+   rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT
+   rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 RLinf 通过 OmegaConf 组合 FastWAM 上游 YAML，不会修改 Hydra 全局状态。
 两层配置的职责分工如下：
@@ -180,45 +180,72 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
 评测
 ----
 
-完整 SFT checkpoint 的评测使用 evaluations/libero/libero_fastwam_full_eval.yaml。
-启动前直接将其中的两个占位路径替换为本机文件路径；它们不是环境变量，也不会自动下载
-或解析。请保留已有 checkpoint、dataset stats 与数据集文件。
+FastWAM 分别提供 smoke 和完整 suite 两套评测配置。
 
-.. code-block:: yaml
-
-   model_path: your_path_to/FASTWAM_SFT_CKPT
-   dataset_stats_path: your_path_to/FASTWAM_DATASET_STATS
-
-单一的 ``libero_spatial_fastwam_eval.yaml`` 取代了原先分开的小规模、
-大规模、LIBERO-Plus、仅语言扰动和未来视频 YAML。
-
-**标准 LIBERO smoke 评测：**
-
-.. code-block:: bash
-
-   MUJOCO_GL=egl bash evaluations/run_eval.sh \
-     libero libero_spatial_fastwam_eval
-
-**更大规模评测：** 将单个 rollout worker 的并行环境槽位增至 8，运行 80 条轨迹，并关闭录像：
+**标准 LIBERO smoke 评测** 使用 ``libero_spatial_fastwam_eval.yaml``，
+用于在少量 Spatial 环境上检查本地 checkpoint。通过命令行传入路径，
+无需修改共享模型 preset：
 
 .. code-block:: bash
 
    MUJOCO_GL=egl bash evaluations/run_eval.sh \
      libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 \
-     env.eval.max_steps_per_rollout_epoch=2400 \
-     env.eval.video_cfg.save_video=false
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
+
+**完整 suite 评测** 使用 ``evaluations/libero/libero_fastwam_full_eval.yaml``。
+运行前，将该文件中 ``rollout.model.model_path`` 和
+``rollout.model.dataset_stats_path`` 的占位路径替换为本地文件；这些路径不是环境变量，
+也不会自动下载。然后运行：
+
+.. code-block:: bash
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval
+
+完整配置固定使用 GPU ``0-3`` 和 20 个环境（每个 worker 5 个）。由于
+``ignore_terminations=True`` 会让每条轨迹运行到 ``max_episode_steps``，每个环境
+恰好执行 25 个 episode，即 ``20 * 25 = 500`` 个 LIBERO 固定初始状态。这样既避免
+启动 500 个 simulator/EGL context，又保留 FastWAM 的批量推理。
+
+不要在 8 卡机器上把 placement 改成 ``env,rollout: all``。非解耦 channel 要求
+``total_num_envs`` 能整除 rollout world size，但 500 条轨迹不能被 8 整除；如果没有
+padding 或终止槽位屏蔽，8-worker 布局会遗漏状态或让部分槽位提前耗尽。因此这里在
+4 卡和 8 卡机器上都使用 4 个 worker。
+
+默认 suite 是 Spatial。Object 和 Goal 使用相同的步数限制；Long（``libero_10``）
+使用 FastWAM 的 700-step 轨迹上限：
+
+.. code-block:: bash
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_object
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_goal
+
+   MUJOCO_GL=egl bash evaluations/run_eval.sh \
+     libero libero_fastwam_full_eval \
+     env.eval.task_suite_name=libero_10 \
+     env.eval.max_episode_steps=700 \
+     env.eval.max_steps_per_rollout_epoch=17500
 
 **LIBERO-Plus：** 通过环境变量选择全部扰动或单一类型，YAML 保持不变：
 
 .. code-block:: bash
 
    LIBERO_TYPE=plus LIBERO_SUFFIX=all MUJOCO_GL=egl \
-     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+     bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
    LIBERO_TYPE=plus LIBERO_SUFFIX=language MUJOCO_GL=egl \
      bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
-     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false
+     env.eval.total_num_envs=8 env.eval.video_cfg.save_video=false \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 **未来视频可视化：** 动作生成仍为批量执行；可选的未来想象只针对第一个样本，
 并受 ``max_video_saves`` 限制。
@@ -230,7 +257,9 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
      env.eval.total_num_envs=2 \
      env.eval.video_cfg.save_video=false \
      rollout.model.visualize_future_video=true \
-     rollout.model.future_video_dir=/workspace/future_video_demo
+     rollout.model.future_video_dir=/workspace/future_video_demo \
+     rollout.model.model_path=/path/to/FASTWAM_CHECKPOINT \
+     rollout.model.dataset_stats_path=/path/to/FASTWAM_DATASET_STATS
 
 监督微调
 --------
@@ -246,8 +275,7 @@ checkpoint 继续训练。下方代码会下载必需权重与 dataset stats、�
    #!/usr/bin/env bash
    set -euo pipefail
 
-   SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-   REPO_PATH="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+   REPO_PATH="$(git rev-parse --show-toplevel)"
    PYTHON_BIN="${REPO_PATH}/.venv/bin/python"
    FASTWAM_PATH="${FASTWAM_PATH:-${REPO_PATH}/.venv/FastWAM}"
    CHECKPOINT_DIR="${FASTWAM_CHECKPOINT_DIR:-${REPO_PATH}/checkpoints/fastwam_release}"

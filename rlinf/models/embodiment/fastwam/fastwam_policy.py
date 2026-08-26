@@ -115,7 +115,6 @@ class FastWAMPolicy(FastWAM, BasePolicy):
         save_mp4(frames, path, fps=8)
         self._video_saves += 1
 
-    # ------------------------------------------------------------------ utils
     @staticmethod
     def _center_crop_resize_batch(
         images: torch.Tensor,
@@ -384,7 +383,6 @@ class FastWAMPolicy(FastWAM, BasePolicy):
             )
         }
 
-    # ------------------------------------------------------------------ rollout
     @torch.no_grad()
     def predict_action_batch(self, env_obs: dict, mode: str = "eval", **kwargs):
         """Predict an action chunk for a batch of LIBERO observations.
@@ -461,7 +459,6 @@ class FastWAMPolicy(FastWAM, BasePolicy):
         actions = actions[:, : cfg.num_action_chunks].astype(np.float32)
         return actions, {}
 
-    # ------------------------------------------------------------------ SFT
     def forward(self, forward_type=ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.SFT:
             return self.sft_forward(**kwargs)
