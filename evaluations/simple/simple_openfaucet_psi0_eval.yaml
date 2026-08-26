@@ -1,0 +1,79 @@
+defaults:
+  - model/psi0@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  val_check_interval: -1
+  max_epochs: 1
+  max_steps: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+  rtc:
+    enabled: false
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "simple_openfaucet_psi0_eval"
+    logger_backends: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    env_type: "simple"
+    total_num_envs: 1
+    auto_reset: false
+    ignore_terminations: false
+    use_rel_reward: false
+    seed: 0
+    group_size: 1
+
+    max_episode_steps: 1000
+    max_steps_per_rollout_epoch: 1008
+    rollout_epoch: 1
+    use_fixed_reset_state_ids: true
+    is_eval: true
+
+    reset_dataset:
+      path: "/path/to/G1WholebodyOpenFaucetTeleop-v0-reset-states"
+      format: "lerobot"
+      dr_level: 0
+      episode_start: 0
+      num_episodes: 1
+
+    init_params:
+      task_id: "simple/G1WholebodyOpenFaucetTeleop-v0"
+      controller_mode: "decoupled_wbc"
+      sim_mode: "mujoco_isaac"
+      headless: true
+      render_hz: 50
+      stabilization_steps: 300
+
+    video_cfg:
+      save_video: true
+      info_on_video: true
+      fps: 3
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: false
+  collect_prev_infos: false
+  enable_offload: false
+  pipeline_stage_num: 1

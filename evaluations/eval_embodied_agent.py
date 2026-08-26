@@ -48,6 +48,10 @@ def main(cfg) -> None:
     rollout_backend = cfg.rollout.get("rollout_backend", "huggingface")
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
+    if cfg.env.eval.env_type == "simple":
+        from rlinf.workers.env.simple_eval_env_worker import SimpleEvalEnvWorker
+
+        env_worker_cls = SimpleEvalEnvWorker
     if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 

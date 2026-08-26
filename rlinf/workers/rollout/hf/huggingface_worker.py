@@ -488,6 +488,7 @@ class MultiStepRolloutWorker(Worker):
             SupportedModel.CNN_POLICY,
             SupportedModel.CFG_MODEL,
             SupportedModel.MOLMOACT2,
+            SupportedModel.PSI0,
         ]:
             if self.enable_dagger:
                 kwargs = {"mode": "eval"}
@@ -821,6 +822,7 @@ class MultiStepRolloutWorker(Worker):
                 desc="Evaluating Rollout Epochs",
                 disable=(self._rank != 0),
             ):
+                simple_eval_finished = False
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
                         env_output = await self.recv_from(
@@ -833,6 +835,11 @@ class MultiStepRolloutWorker(Worker):
                             merge_fn=self._merge_obs_batches,
                             infer_batch_size_fn=self._infer_env_batch_size,
                         ).async_wait()
+                        if self.cfg.env.eval.env_type == "simple":
+                            eval_finished = env_output["obs"].pop("eval_finished", None)
+                            if eval_finished is not None and all(eval_finished):
+                                simple_eval_finished = True
+                                break
                         actions, _ = self._predict_rollout_actions(
                             env_output["obs"],
                             mode="eval",
@@ -851,6 +858,9 @@ class MultiStepRolloutWorker(Worker):
                             async_op=True,
                             batch_size=self.eval_batch_size,
                         )
+
+                    if simple_eval_finished:
+                        break
 
             if self.enable_offload:
                 self.offload_model()
