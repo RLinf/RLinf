@@ -369,7 +369,7 @@ class DualFrankaEnv(gym.Env):
         """Return metadata for the latest uncropped camera frames."""
         return getattr(self, "_raw_camera_meta", {}).copy()
 
-    def get_raw_camera_snapshot(self) -> dict[str, dict[str, np.ndarray]]:
+    def get_raw_camera_snapshot(self) -> dict[str, Any]:
         """Return uncropped RGB and metric depth for the latest camera frames."""
         if not self._raw_camera_frames:
             self._read_camera_bundle()
