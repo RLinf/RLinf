@@ -828,7 +828,7 @@ class FrankaEnv(gym.Env):
                 display_frames[f"{camera._camera_info.name}_full"] = (
                     cropped_frame  # Non-resized version
                 )
-                if self.config.enable_camera_depth:
+                if camera._camera_info.enable_depth:
                     if frame.shape[-1] <= 3:
                         raise RuntimeError(
                             f"Camera {camera._camera_info.name!r} did not return depth"
