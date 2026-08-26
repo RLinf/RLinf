@@ -97,8 +97,8 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "psi0" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris" "simple")
 
 #=======================Utility Functions=======================
 
@@ -780,6 +780,7 @@ apply_env_default_torch() {
     local env_torch=""
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
+        simple) env_torch="2.7.0" ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1549,6 +1550,32 @@ clone_or_reuse_repo() {
     printf '%s\n' "$(realpath "$target_dir")"
 }
 
+ensure_psi0_simple_repo_revision() {
+    # Integration-private revision guard. Do not route unrelated model or env
+    # installers through this helper; their revision policies remain unchanged.
+    # Keep user-managed checkouts immutable; installer-owned venv checkouts may
+    # move to the exact integration revision.
+    local env_var_name="$1"
+    local repo_dir="$2"
+    local revision="$3"
+    local actual
+    actual=$(git -C "$repo_dir" rev-parse HEAD)
+    if [ "$actual" = "$revision" ]; then
+        return 0
+    fi
+    if [ -n "$(printenv "$env_var_name" 2>/dev/null || true)" ]; then
+        echo "$env_var_name=$repo_dir is at $actual; expected pinned revision $revision." >&2
+        echo "Use a checkout at the pinned revision or unset $env_var_name." >&2
+        exit 1
+    fi
+    if [ -n "$(git -C "$repo_dir" status --porcelain)" ]; then
+        echo "Installer-owned checkout $repo_dir has local changes; refusing to switch revisions." >&2
+        exit 1
+    fi
+    git -C "$repo_dir" fetch origin "$revision"
+    git -C "$repo_dir" checkout --detach "$revision"
+}
+
 #=======================EMBODIED INSTALLERS=======================
 assert_transformers_version() {
     local expected="$1"
@@ -1887,6 +1914,28 @@ EOF
     # past 0.22 and transformers refuses to import.
     uv pip install "tokenizers>=0.21,<0.22"
     uv pip uninstall pynvml || true
+}
+
+install_psi0_model() {
+    case "$ENV_NAME" in
+        simple)
+            PYTHON_VERSION="3.10"
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_simple_env
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Psi0 model." >&2
+            exit 1
+            ;;
+    esac
+
+    local psi0_dir
+    psi0_dir=$(clone_or_reuse_repo PSI0_PATH "$VENV_DIR/Psi0" https://github.com/physical-superintelligence-lab/Psi0.git)
+    ensure_psi0_simple_repo_revision PSI0_PATH "$psi0_dir" a32e57a3fabb8590c80677f9cd3d1fc3db60eb06
+    uv pip install -r "$SCRIPT_DIR/embodied/models/psi0.txt"
+    uv pip install -e "$psi0_dir" --no-deps
+    install_flash_attn
 }
 
 install_molmoact2_model() {
@@ -2229,7 +2278,7 @@ install_franka_realworld_env() {
 }
 
 install_env_only() {
-    if [ "$ENV_NAME" = "d4rl" ]; then
+    if [ "$ENV_NAME" = "d4rl" ] || [ "$ENV_NAME" = "simple" ]; then
         PYTHON_VERSION="3.10"
     fi
     create_and_sync_venv
@@ -2279,6 +2328,10 @@ install_env_only() {
             ;;
         polaris)
             install_polaris_env
+            ;;
+        simple)
+            install_common_embodied_deps
+            install_simple_env
             ;;
         libero|maniskill_libero)
             install_common_embodied_deps
@@ -2490,6 +2543,29 @@ install_polaris_env() {
     python - <<'EOF'
 import isaacsim
 EOF
+}
+
+install_simple_env() {
+    local simple_dir
+    # Checkout the fixed parent revision before initializing its gitlink-pinned
+    # submodules; this avoids ever resolving submodules from a moving default branch.
+    simple_dir=$(clone_or_reuse_repo SIMPLE_PATH "$VENV_DIR/SIMPLE" https://github.com/physical-superintelligence-lab/SIMPLE.git)
+    ensure_psi0_simple_repo_revision SIMPLE_PATH "$simple_dir" 5e3d6f84e85343e34e9bca8d157f0d7813231185
+    git -C "$simple_dir" submodule update --init --recursive
+
+    uv pip install -r "$SCRIPT_DIR/embodied/envs/simple.txt"
+    uv pip install -e "$simple_dir/third_party/unitree_sdk2_python"
+    uv pip install -e "$simple_dir/third_party/gear_sonic[sim]"
+    uv pip install -e "$simple_dir/third_party/decoupled_wbc[full]"
+    uv pip install -e "$simple_dir" --no-deps
+
+    # cuRobo derives its version from Git metadata. On a repeated install, uv
+    # can otherwise reuse the wheel built before the submodule metadata was
+    # fully available (0.0.0) after resolving the source as a different version
+    # (for example, 0.0.post1.dev63), then rejects its own cached wheel.
+    UV_NO_CACHE=1 \
+        UV_PROJECT_ENVIRONMENT="$(realpath "$VENV_DIR")" \
+        bash "$simple_dir/scripts/install_curobo.sh"
 }
 
 install_isaaclab_env() {
@@ -3026,6 +3102,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                psi0)
+                    install_psi0_model
                     ;;
                 molmoact2)
                     install_molmoact2_model

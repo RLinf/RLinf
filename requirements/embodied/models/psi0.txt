@@ -1,0 +1,13 @@
+# Fixed Psi0 Eval runtime from upstream revision
+# a32e57a3fabb8590c80677f9cd3d1fc3db60eb06.
+diffusers==0.37.0
+transformers==4.57.0
+qwen-vl-utils==0.0.14
+accelerate==1.7.0
+peft==0.17.1
+sentencepiece==0.2.1
+tyro==0.9.32
+datasets==3.6.0
+numpy==1.26.4
+protobuf==6.33.6
+lerobot @ git+https://github.com/songlin/lerobot.git@09929d8057b044b53aecaf5c6d7eb71f99e8beb9

@@ -1,0 +1,11 @@
+# Fixed SIMPLE Eval runtime constraints. Native controllers are installed from
+# SIMPLE's pinned git submodules by requirements/install.sh.
+dm-control==1.0.21
+isaacsim[all,extscache]==4.5.0
+mujoco==3.3.6
+numpy==1.26.4
+gymnasium==1.2.3
+python-fcl==0.7.0.10
+transforms3d==0.4.2
+trimesh==4.11.4
+warp-lang==1.7.0
