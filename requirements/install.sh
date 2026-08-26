@@ -18,6 +18,8 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
+# googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
+RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -1796,7 +1798,7 @@ install_openpi_model() {
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install protobuf==6.33.0
+            uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -2549,7 +2551,7 @@ install_robocasa_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
     python -m robocasa.scripts.setup_macros
 }
 
@@ -2583,7 +2585,7 @@ install_robocasa365_env() {
     uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
         rm -rf "$assets_path"
@@ -3120,6 +3122,9 @@ main() {
     esac
 
     install_platform_extras
+    # Last step: env/model pip installs may have downgraded protobuf.
+    echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 }
 
 main "$@"
