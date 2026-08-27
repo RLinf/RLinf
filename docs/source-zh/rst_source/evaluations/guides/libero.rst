@@ -42,7 +42,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - Spatial
      - DreamZero（SGLang backend）
    * - ``libero_spatial_fastwam_eval.yaml``
-     - Spatial / LIBERO-Plus
+     - Spatial
      - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial

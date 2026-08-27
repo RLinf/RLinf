@@ -42,7 +42,7 @@ Available under ``evaluations/libero/``:
      - Spatial
      - DreamZero (SGLang backend)
    * - ``libero_spatial_fastwam_eval.yaml``
-     - Spatial / LIBERO-Plus
+     - Spatial
      - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
