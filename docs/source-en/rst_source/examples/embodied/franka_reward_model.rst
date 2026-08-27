@@ -1,5 +1,5 @@
-Using Reward Model with Franka
-==============================
+Using Reward Models with Franka
+===============================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -10,9 +10,29 @@ Using Reward Model with Franka
    :align: center
    :width: 80%
 
-   Franka reward-model workflow for collecting labeled frames and training a visual success detector.
+   Franka reward-model loop: collect labeled real-robot data, train a reward model, then let it produce the reward during real-world RL.
 
-Add a learned visual reward model to the Franka real-world pipeline. You'll collect labeled frames, train a ResNet reward model, and let the environment use model predictions to decide success and resets.
+Replace the hand-coded success signal on a Franka arm with a learned reward model.
+This page documents **two** reward-model types. They differ in what the model looks at,
+what signal it produces, and how that signal reaches the RL loop — pick one before you
+start collecting data, because the label format differs too.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 30 18 36
+
+   * - Type
+     - Reward signal
+     - Reward model
+     - Pick this when
+   * - :ref:`ResNet <franka-resnet-reward-model>`
+     - Per-frame success/failure probability that also drives environment resets.
+     - ResNet image classifier
+     - The task has a visually unambiguous success state and you can label frames for it.
+   * - :ref:`Qwen VLM <franka-vlm-reward-model>`
+     - Motion-trend judgment over a 5-frame sliding window, plus a success bonus.
+     - Qwen3-VL-4B with LoRA
+     - Success alone is too sparse and you want dense shaping toward the goal.
 
 Overview
 --------
@@ -25,22 +45,22 @@ Use a trained reward model as the real-world success signal for Franka tasks.
    .. grid-item-card:: Models
       :text-align: center
 
-      CNN policy · ResNet reward model
+      CNN policy · ResNet reward model · Qwen3-VL-4B (LoRA)
 
    .. grid-item-card:: Algorithms
       :text-align: center
 
-      SAC/RLPD · reward-model inference
+      SAC/RLPD · reward-model inference · VLM trend judgment
 
    .. grid-item-card:: Tasks
       :text-align: center
 
-      Charger · fixed-pose manipulation
+      Charger · Peg Insertion
 
    .. grid-item-card:: Hardware
       :text-align: center
 
-      Franka · cameras · keyboard labels
+      Franka · cameras · keyboard labels · dual RealSense
 
 | **You'll do:** collect expert demos → collect reward labels → preprocess data → train reward model → launch real-world RL.
 | **Prerequisites:** :doc:`franka` through data collection · :doc:`Reward model tutorial <../../extending/reward_model>`.
@@ -83,19 +103,33 @@ Observation and Action
    * - Prompt
      - Task-specific env text or fixed target pose, depending on config.
 
+.. _franka-resnet-reward-model:
+
+ResNet Reward Model (Frame-Level Success)
+-----------------------------------------
+
+Train a ResNet classifier on labeled frames, then use its prediction as the real-world
+success signal for Franka tasks.
+
 Installation
-------------
+~~~~~~~~~~~~
 
 Follow all steps in the :doc:`franka` document up to and including **Data Collection** (i.e., everything before the "Running the Experiment" section).
 
 Data Collection
------------------------
+~~~~~~~~~~~~~~~
 
 Two types of data need to be collected: (1) expert trajectories for the demo buffer, and
 (2) reward model training/evaluation data.
 
+For the reward model dataset, two approaches are supported. For full details, see the
+**Data Collection** section in :doc:`../../extending/reward_model`.
+The core difference lies in the labeling method: Approach 1 uses manual keyboard labeling
+and is task-agnostic; Approach 2 uses pose-based automatic labeling and is designed for
+tasks with a fixed target pose.
+
 Expert Trajectory Data Collection
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Expert trajectory data is collected first and stored in the demo buffer during training.
 Follow the steps in the **Data Collection** section under **Running the Experiment** in
@@ -110,16 +144,6 @@ Follow the steps in the **Data Collection** section under **Running the Experime
        save_dir: ${runner.logger.log_path}/collected_data
        export_format: "pickle"
        only_success: True
-
-Reward Model Dataset Collection
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Collecting reward model training and evaluation data supports two approaches.
-For full details, see the **Data Collection** section in
-:doc:`../../extending/reward_model`.
-The core difference lies in the labeling method: Approach 1 uses manual keyboard labeling
-and is task-agnostic; Approach 2 uses pose-based automatic labeling and is designed for
-tasks with a fixed target pose.
 
 Approach 1: Keyboard Labeling (General-Purpose)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -196,7 +220,7 @@ The resulting ``.pt`` files follow the ``RewardDatasetPayload`` schema, containi
 See **Approach 2** in :doc:`../../extending/reward_model` for the full example.
 
 Reward Model Training
------------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 This step is identical to **Section 2 — Reward Model Training** in :doc:`../../extending/reward_model`.
 
@@ -212,12 +236,12 @@ For real-world teleoperation with live reward model inference (SpaceMouse + GPU 
 see **Real-World Teleoperation with Live Reward Inference** in :doc:`../../extending/reward_model`.
 
 Cluster Setup
--------------
+~~~~~~~~~~~~~
 
 This step is identical to the **Cluster Configuration** section under **Running the Experiment** in :doc:`franka`.
 
 Configuration File
-------------------
+~~~~~~~~~~~~~~~~~~
 
 This step is identical to the **Configuration File** section under **Running the Experiment** in :doc:`franka`, applied to ``examples/embodiment/config/realworld_charger_sac_cnn_async_standalone_reward.yaml``.
 In addition, enable the reward model parameters under the ``reward`` section:
@@ -243,13 +267,13 @@ Where:
 - ``model_path`` points to the reward model checkpoint used for online inference.
 
 Run It
-------
+~~~~~~
 
 Once training begins, the reward model directly judges task success/failure based on image observations and drives environment resets.
 The remaining steps follow the **Running the Experiment** section of :doc:`franka`.
 
 Worker Interaction During Rollout
-----------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Unlike **Section 3.2 — Worker Interaction During Rollout** and **Section 3.3 — Final Reward Computation** in :doc:`../../extending/reward_model`:
 in real-world systems with ``standalone_realworld`` enabled, the reward model does **not** combine env rewards with reward model outputs.
@@ -262,11 +286,12 @@ The final reward is generated directly by FrankaEnv based on the reward model's 
 From a system perspective, the actual behavior in the real-world system can be understood as:
 directly replacing the ``env_reward`` inside the env worker, re-using the original ``env_reward`` logic to assign rewards and trigger environment resets, thereby fundamentally integrating the reward model.
 
+.. _franka-vlm-reward-model:
 
-Franka + Qwen VLM Reward Model (Action Trend Judgment)
-=====================================================================
+Qwen VLM Reward Model (Action Trend Judgment)
+---------------------------------------------
 
-Unlike the ResNet reward model described above, which classifies single frames as
+Unlike the ResNet reward model above, which classifies single frames as
 "success" or "failure," the Qwen VLM reward model guides learning through
 **action trend judgment**. Every 5 frames form a sliding history window, and the
 Qwen3-VL model judges whether the robot's motion trend within the window is
@@ -288,37 +313,8 @@ When the robot arm reaches the target pose and holds it (``terminated=True``),
 reward model. ``gt_success_bonus`` (default +20.0) adds a large bonus on top,
 helping the RL agent strongly associate the success state with high reward.
 
-Overview
---------
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: Models
-      :text-align: center
-
-      CNN policy · Qwen3-VL reward model (LoRA)
-
-   .. grid-item-card:: Algorithms
-      :text-align: center
-
-      RLPD · VLM trend-judgment inference
-
-   .. grid-item-card:: Tasks
-      :text-align: center
-
-      Peg Insertion · dual-view manipulation
-
-   .. grid-item-card:: Hardware
-      :text-align: center
-
-      Franka · dual RealSense cameras
-
-| **You'll do:** collect dual-view episodes → preprocess into VLM trend SFT dataset → fine-tune Qwen3-VL-4B → launch RLPD real-world training.
-| **Prerequisites:** :doc:`franka` through data collection · :doc:`../../extending/reward_model`.
-
 Workflow
---------
+~~~~~~~~
 
 The full pipeline has three stages:
 
@@ -326,9 +322,8 @@ The full pipeline has three stages:
 2. **Supervised Fine-Tuning (SFT)** — Preprocess collected data into VLM trend format and fine-tune Qwen3-VL-4B with LoRA.
 3. **Real-World RL Training** — Integrate the fine-tuned VLM reward model into RLPD training with ``history_buffer`` mode for online inference.
 
-
 Stage 1: Data Collection
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 Use the real-world pipeline described in :doc:`franka` to collect episode data.
 Enable ``data_collection`` to save each episode as a ``.pkl`` file:
@@ -344,12 +339,12 @@ Enable ``data_collection`` to save each episode as a ``.pkl`` file:
          only_success: False
 
 Collection Tips
-~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^
 
 - **Move the robot arm slowly** so the collected data contains rich intermediate states for VLM trend learning.
 - **Ensure both camera views are clear**: ``main_images`` (wrist camera) and ``extra_view_images`` (global camera) should clearly show the end-effector and the target hole.
 - **Collect enough episodes** (50+ recommended), covering both successful and failed outcomes.
-- **Correctly configure ``camera_names``**, matching serials to actual camera serial numbers:
+- **Correctly configure** ``camera_names``, matching ``SERIAL1`` / ``SERIAL2`` to the actual camera serial numbers:
 
 .. code-block:: yaml
 
@@ -376,12 +371,11 @@ Launch collection with the standard real-world entry script after updating
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-
 Stage 2: Supervised Fine-Tuning (SFT)
--------------------------------------
-
-2.1 Preprocess into VLM Trend Dataset
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Preprocess into VLM Trend Dataset
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The collected ``.pkl`` episodes must be converted to VLM trend SFT format using
 ``preprocess_vlm_trend_reward_dataset.py``. Activate the virtual environment and
@@ -435,8 +429,8 @@ Output directory structure:
        ├── segments.jsonl
        └── pkl/
 
-2.2 Fine-Tune Qwen3-VL-4B
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Fine-Tune Qwen3-VL-4B
+^^^^^^^^^^^^^^^^^^^^^
 
 Update paths in the SFT config ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml``:
 
@@ -471,12 +465,11 @@ Set the environment variable and start training:
 After training, note the LoRA checkpoint path (e.g., ``checkpoints/global_step_3000``)
 for use as ``reward.model.lora_path`` in the RL config.
 
-
 Stage 3: Real-World Reinforcement Learning
-------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-3.1 Configuration File
-~~~~~~~~~~~~~~~~~~~~~~
+Configuration File
+^^^^^^^^^^^^^^^^^^
 
 Use ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_vlm_reward.yaml``
 as the RL training config. The core reward section:
@@ -537,8 +530,8 @@ as the RL training config. The core reward section:
        reward:
          node_group: "4090"
 
-3.2 Key Configuration Fields
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Key Configuration Fields
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :header-rows: 1
@@ -560,8 +553,8 @@ as the RL training config. The core reward section:
    * - ``worker_type: model``
      - Loads the model directly in the reward worker for local HuggingFace inference.
 
-3.3 Reward Computation Flow
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Reward Computation Flow
+^^^^^^^^^^^^^^^^^^^^^^^
 
 At each RL training step, the final reward is composed through the following pipeline:
 
@@ -590,16 +583,16 @@ At each RL training step, the final reward is composed through the following pip
    final_reward = env_reward_weight * env_reward
                 + reward_weight * vlm_reward_with_bonus
 
-3.4 Success Signal
-~~~~~~~~~~~~~~~~~~
+Success Signal
+^^^^^^^^^^^^^^
 
 ``FrankaEnv`` returns a sparse reward of 1.0 when the target is reached.
 ``RealWorldEnv`` converts that reward into the sticky episode metric
 ``success_once``. The env worker forwards the episode metrics to the reward
 model, where ``apply_gt_success_bonus`` reads ``success_once``.
 
-3.5 Starting Training
-~~~~~~~~~~~~~~~~~~~~~
+Starting Training
+^^^^^^^^^^^^^^^^^
 
 Once hardware deployment and configuration are verified, run on the Ray head node:
 

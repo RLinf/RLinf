@@ -48,6 +48,7 @@ from rlinf.scheduler import (
     PackedPlacementStrategy,
 )
 from rlinf.scheduler.placement import PlacementStrategy
+from rlinf.utils.logging import get_logger
 
 from .router_worker import SGLangRouterWorker
 from .server_worker import SGLangServerWorker
@@ -162,6 +163,14 @@ def launch_sglang_router_and_server(
             placement_strategy=router_ps,
         )
 
+    # Roll the whole launch back when it does not complete, then let the
+    # error propagate untouched to the caller. A worker that fails its own
+    # ``init_*`` already reaps its own subprocess, but nothing else reaps the
+    # peers that did come up — the other servers of the group, a router that
+    # started before the servers failed, or both groups when registration is
+    # what failed. The caller cannot do it either: it only ever receives the
+    # group handles through this function's return value.
+    launched = False
     try:
         router_handle = router_group.init_router() if router_group is not None else None
         server_handle = server_group.init_server() if server_group is not None else None
@@ -179,13 +188,28 @@ def launch_sglang_router_and_server(
             for url in server_urls:
                 router_group.register_server(url).wait()
 
+        launched = True
         return server_group, router_group
+    finally:
+        if not launched:
+            _shutdown_quietly(router_group, "router")
+            _shutdown_quietly(server_group, "server")
+
+
+def _shutdown_quietly(group, kind: str) -> None:
+    # Best-effort: a failing shutdown must not replace the error that is
+    # already unwinding, nor skip the cleanup of the other group.
+    if group is None:
+        return
+    try:
+        group.shutdown().wait()
     except Exception:
-        if router_group is not None:
-            router_group.shutdown().wait()
-        if server_group is not None:
-            server_group.shutdown().wait()
-        raise
+        get_logger().warning(
+            f"Failed to shut down the sglang {kind} group while rolling back a "
+            f"failed launch; leftover {kind} processes may have to be killed "
+            f"manually.",
+            exc_info=True,
+        )
 
 
 def get_sglang_api_url(server_group, router_group) -> str:

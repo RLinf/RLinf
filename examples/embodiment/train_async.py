@@ -16,7 +16,6 @@ import json
 
 import hydra
 import torch.multiprocessing as mp
-from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.config import validate_cfg
@@ -29,8 +28,6 @@ from rlinf.workers.rollout.hf.async_huggingface_worker import (
 )
 
 mp.set_start_method("spawn", force=True)
-
-_REWARD_SERVER_COMPONENT_NAME = "reward_server"
 
 
 @hydra.main(
@@ -96,42 +93,24 @@ def main(cfg) -> None:
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 
-    server_group = None
-    router_group = None
     reward_group = None
     reward_cfg = cfg.get("reward", {})
-    api_base = str(reward_cfg.get("api", {}).get("api_base") or "").strip()
-    if (
-        reward_cfg.get("use_reward_model", False)
-        and str(reward_cfg.get("worker_type", "model")).lower() == "api"
-        and not api_base
-    ):
-        from rlinf.workers.rollout.sglang_server import launch_sglang_api
-
-        api_base, server_group, router_group = launch_sglang_api(
-            config=cfg,
-            cluster=cluster,
-            rollout_hardware_ranks=None,
-            router_server_args=cfg.router_server_args,
-            placement_strategy=component_placement.get_strategy(
-                _REWARD_SERVER_COMPONENT_NAME
-            ),
-        )
-        with open_dict(cfg.reward):
-            if "api" not in cfg.reward:
-                cfg.reward.api = {}
-            cfg.reward.api.api_base = api_base
-
     try:
         if reward_cfg.get("use_reward_model", False) and not reward_cfg.get(
             "standalone_realworld", False
         ):
             reward_placement = component_placement.get_strategy("reward")
-            reward_worker_cls = (
-                EmbodiedAPIRewardWorker
-                if str(cfg.reward.get("worker_type", "model")).lower() == "api"
-                else EmbodiedRewardWorker
-            )
+            if str(reward_cfg.get("worker_type", "model")).lower() == "api":
+                # The async entrypoint does not manage an SGLang deployment;
+                # the reward API must already be serving at reward.api.api_base.
+                assert str(reward_cfg.get("api", {}).get("api_base") or "").strip(), (
+                    "reward.worker_type='api' requires reward.api.api_base to point "
+                    "at an already-running OpenAI-compatible server. Ray-managed "
+                    "SGLang serving is only available in train_embodied_agent.py."
+                )
+                reward_worker_cls = EmbodiedAPIRewardWorker
+            else:
+                reward_worker_cls = EmbodiedRewardWorker
             reward_group = reward_worker_cls.create_group(cfg).launch(
                 cluster,
                 name=cfg.reward.group_name,
@@ -151,10 +130,6 @@ def main(cfg) -> None:
     finally:
         if reward_group is not None:
             reward_group.stop().wait()
-        if router_group is not None:
-            router_group.shutdown().wait()
-        if server_group is not None:
-            server_group.shutdown().wait()
 
 
 if __name__ == "__main__":

@@ -10,12 +10,31 @@
    :align: center
    :width: 80%
 
-   Franka reward-model 流程，用于采集标注帧并训练视觉成功判别器。
+   Franka reward-model 流程：采集带标注的真机数据，训练 reward model，并在真机 RL 中由它产生奖励。
 
-为 Franka 真机流程加入学习得到的视觉 reward model。你将采集标注帧，训练 ResNet reward model，并让环境用模型预测来判定成功与重置。
+用学习得到的 reward model 替换 Franka 真机上手写的成功信号。
+本页记录 **两种** reward model 类型：它们观察的对象、产生的信号、以及信号进入 RL 循环的方式都不同，
+数据标注格式也不一样，因此请在开始采集数据之前先确定用哪一种。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 30 18 36
+
+   * - 类型
+     - 奖励信号
+     - Reward Model
+     - 何时选它
+   * - :ref:`ResNet <franka-resnet-reward-model>`
+     - 逐帧的成功/失败概率，同时驱动环境重置。
+     - ResNet 图像分类器
+     - 任务的成功状态在视觉上明确，且你能为其标注帧。
+   * - :ref:`Qwen VLM <franka-vlm-reward-model>`
+     - 对 5 帧滑动窗口的运动趋势判断，外加成功奖励。
+     - Qwen3-VL-4B + LoRA
+     - 仅靠成功信号过于稀疏，需要朝目标的稠密引导。
 
 概览
-----------------------------------------
+--------------------------------------------------------
 
 将训练后的 reward model 用作 Franka 真机任务的成功信号。
 
@@ -25,22 +44,22 @@
    .. grid-item-card:: 模型
       :text-align: center
 
-      CNN policy · ResNet reward model
+      CNN policy · ResNet reward model · Qwen3-VL-4B (LoRA)
 
    .. grid-item-card:: 算法
       :text-align: center
 
-      SAC/RLPD · reward-model inference
+      SAC/RLPD · reward-model inference · VLM trend judgment
 
    .. grid-item-card:: 任务
       :text-align: center
 
-      Charger · fixed-pose manipulation
+      Charger · Peg Insertion
 
    .. grid-item-card:: 硬件
       :text-align: center
 
-      Franka · cameras · keyboard labels
+      Franka · cameras · keyboard labels · dual RealSense
 
 | **你将完成:** 采集专家示教 → 采集 reward 标注 → 预处理数据 → 训练 reward model → 启动真机 RL.
 | **前置条件:** :doc:`franka` 到数据采集步骤 · :doc:`Reward model 教程 <../../extending/reward_model>`.
@@ -83,17 +102,30 @@
    * - Prompt
      - 由配置决定，使用任务文本或固定目标位姿。
 
+.. _franka-resnet-reward-model:
+
+ResNet Reward Model（逐帧成功判别）
+--------------------------------------------------------
+
+用标注帧训练 ResNet 分类器，并将其预测结果用作 Franka 真机任务的成功信号。
+
 安装
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 请根据 :doc:`franka` 中 ``运行实验`` 的 ``数据采集`` 之前的章节，完成数据采集之前的全部工作。
 
 数据采集
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 需要采集两类数据：（1）用于 demo buffer 的专家轨迹数据；（2）用于 reward model 训练和评估的数据。
 
+采集 reward model 训练和评估数据支持两种方式，详细说明请参考
+:doc:`../../extending/reward_model` 中的 **数据采集** 部分。
+两种方式的核心区别在于标注方式：方式一为手动键盘标注，适用于任意操作任务；
+方式二为基于位姿的自动标注，专为固定目标位姿的任务设计。
+
 专家轨迹数据采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 首先需要采集专家轨迹数据，该数据会在训练中事先存储在样本缓冲区（demo buffer）中。
 具体步骤同 :doc:`franka` 中 ``运行实验`` 的 ``数据采集`` 小节。
@@ -109,16 +141,8 @@
        export_format: "pickle"
        only_success: True
 
-Reward Model 数据集采集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-采集 reward model 训练和评估数据支持两种方式，详细说明请参考
-:doc:`../../extending/reward_model` 中的 **数据采集** 部分。
-两种方式的核心区别在于标注方式：方式一为手动键盘标注，适用于任意操作任务；
-方式二为基于位姿的自动标注，专为固定目标位姿的任务设计。
-
 方式一：键盘标注（通用）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 此方式通过键盘在实时 episode 中手动标注每一帧，适用于任何操作任务。
 此方式将数据采集、标注和数据集生成整合为一次端到端运行，无需繁琐的离线预处理步骤。
@@ -147,7 +171,7 @@ Reward Model 数据集采集
 详细配置说明及完整示例请参见 :doc:`../../extending/reward_model` 中的方式一。
 
 方式二：固定位姿（目标驱动）
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 此方式专为固定目标位姿的任务设计，无需手动键盘标注，episode 会根据机器人是否到达
 配置的 ``target_ee_pose`` 自动驱动成功/失败判定。
@@ -188,7 +212,8 @@ Reward Model 数据集采集
 详细说明及完整示例请参见 :doc:`../../extending/reward_model` 中的方式二。
 
 Reward Model 训练
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 本步骤同 :doc:`../../extending/reward_model` 中的 ``2. Reward Model 训练`` 部分。
 
 特别的，在真实世界场景中，建议降低 ``early_stop`` 的 ``min_delta``，例如：
@@ -196,18 +221,20 @@ Reward Model 训练
 .. code-block:: yaml
 
   runner:
-    early_stop
+    early_stop:
       min_delta: 1e-6
 
 如需在真机遥操作中进行在线 reward model 推理（SpaceMouse + GPU 节点，无需 RL 训练循环），
 请参考 :doc:`../../extending/reward_model` 中的 **真机遥操作 + 在线 Reward Model 推理** 部分。
 
 集群设置
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 本步骤同 :doc:`franka` 中的 ``运行实验`` 下的 ``集群配置`` 部分。
 
 配置文件
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 本步骤同 :doc:`franka` 中的 ``配置文件`` 小节，对 ``examples/embodiment/config/realworld_charger_sac_cnn_async_standalone_reward.yaml`` 进行配置。
 特别的，还需要启用位于 ``reward`` 段的 reward model 相关参数：
 
@@ -232,12 +259,14 @@ Reward Model 训练
 - ``model_path`` 指向用于在线推理的 reward model 权重。
 
 运行
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 启动训练后，reward model 会直接基于图像观测判定任务成功/失败，并驱动环境重置。
 其余步骤请继续参照 :doc:`franka` 中 ``运行实验`` 章节执行。
 
 Rollout 阶段的 worker 交互
-----------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 与 :doc:`../../extending/reward_model` 中的 ``3.2 Rollout 阶段的 worker 交互`` 和 ``3.3 最终 reward 的计算`` 部分不同的是：
 在真机系统中，由于启动了 ``standalone_realworld``，reward model 将不再 `将 env reward 与 reward model output 组合`。
 
@@ -248,9 +277,10 @@ Rollout 阶段的 worker 交互
 从系统的角度看，真机系统中的实际行为可以看做：
 直接替换 env worker 中的 env_reward，通过沿用原本 env_reward 的功能来实现奖励赋值和控制系统重置等目的，从根本上进行了 reward model 接入。
 
+.. _franka-vlm-reward-model:
 
-Franka + Qwen VLM Reward Model（动作趋势判断）
-=====================================================
+Qwen VLM Reward Model（动作趋势判断）
+--------------------------------------------------------
 
 与上述 ResNet reward model 直接判断单帧图像"成功/失败"不同，Qwen VLM reward model
 通过\ **动作趋势判断**\ 来引导机械臂学习。每 5 帧构成一个滑动历史窗口，Qwen3-VL 模型
@@ -269,37 +299,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 ``RealWorldEnv`` 会在传给 reward model 的 episode 指标中记录 ``success_once``。
 ``gt_success_bonus`` （默认 +20.0）据此追加奖励，帮助 Agent 识别成功状态。
 
-概览
-----------------------------------------
-
-.. grid:: 2 4 4 4
-   :gutter: 2
-
-   .. grid-item-card:: 模型
-      :text-align: center
-
-      CNN policy · Qwen3-VL reward model (LoRA)
-
-   .. grid-item-card:: 算法
-      :text-align: center
-
-      RLPD · VLM trend-judgment inference
-
-   .. grid-item-card:: 任务
-      :text-align: center
-
-      Peg Insertion · dual-view manipulation
-
-   .. grid-item-card:: 硬件
-      :text-align: center
-
-      Franka · 双 RealSense 相机
-
-| **你将完成:** 采集双视角 episode 数据 → 预处理为 VLM trend SFT 数据集 → 微调 Qwen3-VL-4B → 启动 RLPD 真机训练。
-| **前置条件:** :doc:`franka` 到数据采集步骤 · :doc:`../../extending/reward_model`.
-
 工作流程
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 完整流程包含三个阶段：
 
@@ -307,9 +308,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 2. **监督微调（SFT）** — 将采集数据预处理为 VLM trend 格式，对 Qwen3-VL-4B 进行 LoRA 微调。
 3. **真机强化学习** — 在 RLPD 训练中接入微调后的 VLM reward model，通过 ``history_buffer`` 模式在线推理并引导策略学习。
 
-
 阶段一：数据采集
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 使用 :doc:`franka` 中的真机训练流程采集 episode 数据。建议开启 ``data_collection``，
 将每个 episode 保存为 ``.pkl`` 文件：
@@ -325,13 +325,13 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
          only_success: False
 
 采集技巧
-~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 - **缓慢移动机械臂**，使采集数据包含丰富的中间状态，便于 VLM 学习趋势判断。
 - **确保双相机视角清晰**：``main_images`` （腕部相机）和 ``extra_view_images`` （全局相机）
   都能清晰看到机械臂末端和目标孔位。
 - **采集足够 episode** （建议 50+），覆盖成功和失败两种结局。
-- **正确配置 ``camera_names``**，确保 Serial 与实际相机序列号一致：
+- **正确配置** ``camera_names``，确保 ``SERIAL1`` / ``SERIAL2`` 与实际相机序列号一致：
 
 .. code-block:: yaml
 
@@ -356,12 +356,11 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 
    bash examples/embodiment/collect_data.sh realworld_collect_data
 
-
 阶段二：监督微调（SFT）
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-2.1 预处理为 VLM Trend 数据集
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+预处理为 VLM Trend 数据集
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 采集到的 ``.pkl`` episode 需要通过 ``preprocess_vlm_trend_reward_dataset.py``
 转换为 VLM trend SFT 格式。运行前需要激活虚拟环境并设置 ``PYTHONPATH``：
@@ -413,8 +412,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
        ├── segments.jsonl
        └── pkl/
 
-2.2 微调 Qwen3-VL-4B
-~~~~~~~~~~~~~~~~~~~~~~~
+微调 Qwen3-VL-4B
+^^^^^^^^^^^^^^^^^^^^^^^
 
 修改 SFT 配置文件 ``examples/sft/config/qwen3vl_sft_vlm_trend_reward.yaml`` 中的路径：
 
@@ -449,12 +448,11 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
 训练完成后，LoRA checkpoint 路径（如 ``checkpoints/global_step_3000`` ）将通过
 ``reward.model.lora_path`` 在 RL 训练中引用。
 
-
 阶段三：真机强化学习
-----------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-3.1 配置文件
-~~~~~~~~~~~~~~
+配置文件
+^^^^^^^^^^^^^^
 
 使用 ``examples/embodiment/config/realworld_peginsertion_rlpd_cnn_async_vlm_reward.yaml``
 作为 RL 训练配置。该配置基于 RLPD CNN 异步训练模板，核心 reward 配置如下：
@@ -515,8 +513,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
        reward:
          node_group: "4090"
 
-3.2 关键配置字段说明
-~~~~~~~~~~~~~~~~~~~~~
+关键配置字段说明
+^^^^^^^^^^^^^^^^^^^^^
 
 .. list-table::
    :header-rows: 1
@@ -539,8 +537,8 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
    * - ``worker_type: model``
      - 在 reward worker 进程中直接加载模型进行本地推理。
 
-3.3 奖励计算流程
-~~~~~~~~~~~~~~~~~
+奖励计算流程
+^^^^^^^^^^^^^^^^^
 
 每一步 RL 训练中，最终奖励由以下流程合成：
 
@@ -569,15 +567,15 @@ Franka + Qwen VLM Reward Model（动作趋势判断）
    final_reward = env_reward_weight * env_reward
                 + reward_weight * vlm_reward_with_bonus
 
-3.4 成功信号
-~~~~~~~~~~~~
+成功信号
+^^^^^^^^^^^^
 
 ``FrankaEnv`` 在到达目标时返回稀疏 reward 1.0。``RealWorldEnv`` 将该信号
 转换为 episode 内持续有效的 ``success_once`` 指标。Env worker 把 episode 指标
 传给 reward model，``apply_gt_success_bonus`` 再读取 ``success_once``。
 
-3.5 启动训练
-~~~~~~~~~~~~~~
+启动训练
+^^^^^^^^^^^^^^
 
 确认硬件部署和配置无误后，在 Ray head 节点执行：
 
