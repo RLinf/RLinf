@@ -501,7 +501,7 @@ RLinf 具有全面的 CI 测试，涵盖核心组件（通过单元测试）和�
 
 **致谢**
 RLinf 的灵感来源并受益于更广泛开源社区的思想与工具。
-我们特别感谢 VeRL、AReaL、Megatron-LM、SGLang 和 PyTorch Fully Sharded Data Parallel (FSDP) 的团队与贡献者。
+我们特别感谢 veRL、vLLM、AReaL、Megatron-LM、SGLang 和 PyTorch Fully Sharded Data Parallel (FSDP) 的团队与贡献者。
 如果我们不慎遗漏了您的项目或贡献，请提交 issue 或 pull request，以便我们能够给予您应有的致谢。
 
 **联系方式：**

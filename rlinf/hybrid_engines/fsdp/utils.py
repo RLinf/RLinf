@@ -600,6 +600,31 @@ def get_lr_scheduler(
             T_max=num_training_steps,
             eta_min=1e-6,
         )
+    elif lr_scheduler == "lambda_linear":
+        # The cosmos-framework LambdaLinearScheduler used by the
+        # https://github.com/NVIDIA/cosmos-framework/blob/main/cosmos_framework/utils/functional/lr_scheduler.py
+        # Linear warmup from ``f_start`` to the peak ``f_max`` at
+        # ``num_warmup_steps``, then linear decay to ``f_min`` over the remaining
+        from torch.optim.lr_scheduler import LambdaLR
+
+        f_start, f_max = 1.0e-6, 1.0
+        if min_lr_rate is not None:
+            f_min = min_lr_rate
+        else:
+            f_min = 0.0
+
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return (f_max - f_start) * current_step / max(
+                    1, num_warmup_steps
+                ) + f_start
+            progress = (current_step - num_warmup_steps) / max(
+                1, num_training_steps - num_warmup_steps
+            )
+            progress = min(1.0, progress)
+            return f_min + (f_max - f_min) * (1.0 - progress)
+
+        return LambdaLR(optimizer, lr_lambda, last_epoch=last_epoch)
     else:
         raise NotImplementedError(f"Scheduler type {lr_scheduler} is not supported")
 
