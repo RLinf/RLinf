@@ -61,9 +61,10 @@ def get_env_attr(env, name: str, default: Any = None) -> Any:
 
     inner = env
     while inner is not None:
-        if hasattr(inner, name):
+        try:
             return getattr(inner, name)
-        inner = getattr(inner, "env", None)
+        except AttributeError:
+            inner = getattr(inner, "env", None)
     return default
 
 
