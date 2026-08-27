@@ -103,6 +103,28 @@ def collect_trajectory_replay_metrics(
             "record_transition_count",
         ),
         (
+            "replay/actor_switch_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "actor_switch"
+            ),
+            "actor_switch_sum",
+            "actor_switch_count",
+        ),
+        (
+            "replay/intervention_requested_rate",
+            lambda trajectory: trajectory_forward_input_tensor(
+                trajectory, "intervention_requested"
+            ),
+            "intervention_requested_sum",
+            "intervention_requested_count",
+        ),
+        (
+            "replay/intervention_rate",
+            lambda trajectory: trajectory.intervene_flags,
+            "intervention_sum",
+            "intervention_count",
+        ),
+        (
             "replay/steam_critical_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "rlt_gate_steam_critical_active"

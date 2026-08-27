@@ -628,7 +628,6 @@ class MultiStepRolloutWorker(Worker):
             bootstrap_values=self.get_bootstrap_values(final_obs),
             intervene_flags=intervene_flags,
             forward_inputs=result["forward_inputs"],
-            rollout_infos=result.get("rollout_infos", {}),
             versions=torch.full_like(
                 result["prev_logprobs"],
                 float(self.version),
@@ -805,7 +804,6 @@ class MultiStepRolloutWorker(Worker):
                         if self.rlt_feature_model is not None
                         else {}
                     ),
-                    rollout_infos=result.get("rollout_infos", {}),
                 )
             self.send_to(
                 group_name=self.cfg.env.group_name,
@@ -908,7 +906,7 @@ class MultiStepRolloutWorker(Worker):
                             eval_output = PolicyOutput(
                                 actions=actions,
                                 intervene_flags=result.get("intervene_flags"),
-                                rollout_infos=result.get("rollout_infos", {}),
+                                forward_inputs=result.get("forward_inputs", {}),
                             )
                         self.send_to(
                             group_name=self.cfg.env.group_name,
@@ -1063,19 +1061,6 @@ class MultiStepRolloutWorker(Worker):
                 for idx in range(len(sizes))
             ]
         )
-        split_rollout_infos = (
-            [{} for _ in sizes]
-            if not policy_output.rollout_infos
-            else [
-                {
-                    key: torch.split(value, sizes, dim=0)[idx]
-                    for key, value in policy_output.rollout_infos.items()
-                    if value is not None
-                }
-                for idx in range(len(sizes))
-            ]
-        )
-
         return [
             PolicyOutput(
                 actions=split_actions[idx],
@@ -1084,7 +1069,6 @@ class MultiStepRolloutWorker(Worker):
                 bootstrap_values=split_bootstrap_values[idx],
                 intervene_flags=split_intervene_flags[idx],
                 forward_inputs=split_forward_inputs[idx],
-                rollout_infos=split_rollout_infos[idx],
                 versions=split_versions[idx],
             )
             for idx in range(len(sizes))

@@ -82,7 +82,6 @@ def predict_rlt_actions(
             if bool(getattr(critical_phase_gate, "controls_actor_routing", True)):
                 route_switch_flags = gate_decision.actor_switch
             route_intervene_requested = gate_decision.expert_requested
-            result["rollout_infos"] = gate_decision.diagnostics
             result["forward_inputs"].update(
                 {
                     key: value.detach()

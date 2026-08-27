@@ -25,12 +25,10 @@ def _make_hybrid_gate() -> SteamCriticalPhaseGate:
     gate.model = torch.nn.Linear(1, 1)
     gate.actor_switch_enabled = False
     gate.actor_mode = "active"
-    gate.actor_source = "progress"
-    gate.mode = "active"
     gate.chunk_size = 10
     gate.lookback_chunks = 1
     gate.patience_chunks = 1
-    gate.enter_threshold = -0.1
+    gate.enter_threshold = 0.7
     gate.latch_until_done = True
     gate.expert_takeover_enabled = True
     gate.expert_mode = "active"
@@ -47,7 +45,7 @@ def _make_hybrid_gate() -> SteamCriticalPhaseGate:
         score_min=torch.full((2,), -0.5),
         score_mean=torch.full((2,), -0.5),
         prediction_variance=torch.zeros(2),
-        phase_probability=torch.zeros(2),
+        phase_probability=torch.ones(2),
         phase_prediction_variance=torch.zeros(2),
         phase_features=None,
     )
@@ -76,7 +74,7 @@ def test_geometry_actor_phase_drives_independent_steam_expert_gate():
     assert torch.equal(second.actor_switch, geometry_actor)
     assert torch.equal(
         second.diagnostics["rlt_gate_steam_critical_active"],
-        torch.tensor([[True], [True]]),
+        torch.tensor([[False], [False]]),
     )
     assert torch.equal(
         second.diagnostics["rlt_gate_actor_active"],
@@ -147,7 +145,6 @@ def test_steam_critical_phase_remains_recordable_during_actor_warmup():
 def test_phase_head_probability_controls_actor_switch():
     gate = _make_hybrid_gate()
     gate.actor_switch_enabled = True
-    gate.actor_source = "phase_head"
     gate.enter_threshold = 0.7
     gate._predict_pair = lambda _state, _prompts: SimpleNamespace(
         score_min=torch.ones(2),

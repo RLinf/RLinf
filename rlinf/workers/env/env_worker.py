@@ -737,12 +737,10 @@ class EnvWorker(Worker):
                 value = getattr(data, field_name, None)
                 if isinstance(value, torch.Tensor):
                     return int(value.shape[0])
-            for field_name in ("forward_inputs", "rollout_infos"):
-                tensor_dict = getattr(data, field_name, None)
-                if tensor_dict:
-                    first_tensor = next(iter(tensor_dict.values()))
-                    if isinstance(first_tensor, torch.Tensor):
-                        return int(first_tensor.shape[0])
+            if data.forward_inputs:
+                first_tensor = next(iter(data.forward_inputs.values()))
+                if isinstance(first_tensor, torch.Tensor):
+                    return int(first_tensor.shape[0])
             raise ValueError("Cannot infer batch size from rollout result.")
         from rlinf.scheduler import infer_batch_size
 
@@ -1009,8 +1007,11 @@ class EnvWorker(Worker):
 
     def _consume_rollout_infos(self, policy_output: Any, env: Any) -> None:
         """Forward rollout diagnostics to environments that consume them."""
-        rollout_infos = getattr(policy_output, "rollout_infos", None)
-        if not isinstance(rollout_infos, dict) or not rollout_infos:
+        forward_inputs = getattr(policy_output, "forward_inputs", None)
+        if (
+            not isinstance(forward_inputs, dict)
+            or "rlt_gate_entered" not in forward_inputs
+        ):
             return
         set_rollout_infos = get_env_attr(env, "set_rollout_infos")
         if not callable(set_rollout_infos):
@@ -1018,7 +1019,7 @@ class EnvWorker(Worker):
                 "Rollout diagnostics require the environment to implement "
                 "set_rollout_infos()."
             )
-        set_rollout_infos(rollout_infos)
+        set_rollout_infos(forward_inputs)
 
     @staticmethod
     def _append_rlt_oracle_trace_infos(

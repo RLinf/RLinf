@@ -292,7 +292,6 @@ class PolicyOutput:
     bootstrap_values: torch.Tensor = None  # [B, 1]
     intervene_flags: torch.Tensor = None  # [B, num_action_chunks]
     forward_inputs: dict[str, torch.Tensor] = field(default_factory=dict)
-    rollout_infos: dict[str, torch.Tensor] = field(default_factory=dict)
     versions: torch.Tensor = None  # [B, 1]
 
     def __post_init__(self):
@@ -308,8 +307,6 @@ class PolicyOutput:
             self.intervene_flags = self.intervene_flags.cpu().contiguous()
         if self.forward_inputs:
             self.forward_inputs = put_tensor_device(self.forward_inputs, "cpu")
-        if self.rollout_infos:
-            self.rollout_infos = put_tensor_device(self.rollout_infos, "cpu")
         if self.versions is not None:
             self.versions = self.versions.cpu().contiguous()
 
@@ -333,12 +330,6 @@ class PolicyOutput:
             if all(not forward_inputs for forward_inputs in forward_inputs_list)
             else cat_list_of_dict_tensor(forward_inputs_list)
         )
-        rollout_infos_list = [output.rollout_infos for output in outputs]
-        merged_rollout_infos = (
-            {}
-            if all(not rollout_infos for rollout_infos in rollout_infos_list)
-            else cat_list_of_dict_tensor(rollout_infos_list)
-        )
         return PolicyOutput(
             actions=_merge_optional_tensor("actions"),
             prev_logprobs=_merge_optional_tensor("prev_logprobs"),
@@ -346,7 +337,6 @@ class PolicyOutput:
             bootstrap_values=_merge_optional_tensor("bootstrap_values"),
             intervene_flags=_merge_optional_tensor("intervene_flags"),
             forward_inputs=merged_forward_inputs,
-            rollout_infos=merged_rollout_infos,
             versions=_merge_optional_tensor("versions"),
         )
 

@@ -99,40 +99,17 @@ class SteamCriticalPhaseGate:
 
     def __init__(self, model: Any, cfg: Any) -> None:
         self.model = model
-        actor_cfg = cfg.get("actor_switch", None)
-        if actor_cfg is None:
-            self.actor_switch_enabled = True
-            self.actor_mode = str(cfg.get("mode", "active"))
-        else:
-            actor_cfg = actor_cfg or {}
-            self.actor_switch_enabled = bool(actor_cfg.get("enable", True))
-            self.actor_mode = str(actor_cfg.get("mode", cfg.get("mode", "active")))
+        actor_cfg = cfg.get("actor_switch", {}) or {}
+        self.actor_switch_enabled = bool(actor_cfg.get("enable", False))
+        self.actor_mode = str(actor_cfg.get("mode", "active"))
         if self.actor_mode not in ("active", "shadow"):
             raise ValueError(
                 "critical phase gate actor_switch.mode must be 'active' or 'shadow'"
             )
-        # Keep the legacy attribute for callers inspecting an old-style config.
-        self.mode = self.actor_mode
-        self.actor_source = str(
-            (actor_cfg or {}).get("source", "progress")
-            if actor_cfg is not None
-            else "progress"
-        )
-        if self.actor_source not in ("progress", "phase_head"):
-            raise ValueError(
-                "critical phase gate actor_switch.source must be "
-                "'progress' or 'phase_head'"
-            )
         self.chunk_size = int(cfg.get("chunk_size", 10))
         self.lookback_chunks = int(cfg.get("lookback_chunks", 3))
-        configured_patience = (actor_cfg or {}).get(
-            "patience_chunks",
-            cfg.get("patience_chunks", None),
-        )
-        configured_threshold = (actor_cfg or {}).get(
-            "enter_threshold",
-            cfg.get("enter_threshold", None),
-        )
+        configured_patience = actor_cfg.get("patience_chunks", None)
+        configured_threshold = actor_cfg.get("enter_threshold", None)
         self.patience_chunks = int(
             2 if configured_patience is None else configured_patience
         )
@@ -141,11 +118,11 @@ class SteamCriticalPhaseGate:
         )
         self.latch_until_done = bool(cfg.get("latch_until_done", True))
         self.emit_phase_features = bool(
-            (actor_cfg or {}).get("collect_phase_features", False)
+            actor_cfg.get("collect_phase_features", False)
         )
         self.phase_head = None
         self.phase_head_metadata: dict[str, Any] = {}
-        phase_head_path = (actor_cfg or {}).get("phase_head_path", None)
+        phase_head_path = actor_cfg.get("phase_head_path", None)
         if phase_head_path:
             if not os.path.exists(os.fspath(phase_head_path)):
                 raise FileNotFoundError(
@@ -157,11 +134,11 @@ class SteamCriticalPhaseGate:
             )
             self.phase_head.eval()
             self.phase_head.requires_grad_(False)
-        if self.actor_source == "phase_head" and self.phase_head is None:
+        if self.actor_switch_enabled and self.phase_head is None:
             raise ValueError(
-                "actor_switch.source=phase_head requires actor_switch.phase_head_path"
+                "actor_switch.enable=True requires actor_switch.phase_head_path"
             )
-        if self.actor_source == "phase_head":
+        if self.phase_head is not None:
             if configured_threshold is None:
                 self.enter_threshold = float(
                     self.phase_head_metadata.get(
@@ -184,16 +161,12 @@ class SteamCriticalPhaseGate:
         expert_cfg = cfg.get("expert_takeover", {}) or {}
         self.expert_takeover_enabled = bool(expert_cfg.get("enable", False))
         expert_mode = expert_cfg.get("mode", "active")
-        if actor_cfg is None and self.actor_mode == "shadow":
-            expert_mode = "shadow"
         self.expert_mode = str(expert_mode)
         if self.expert_mode not in ("active", "shadow"):
             raise ValueError(
                 "critical phase gate expert_takeover.mode must be 'active' or 'shadow'"
             )
-        self.expert_enter_threshold = float(
-            expert_cfg.get("enter_threshold", self.enter_threshold)
-        )
+        self.expert_enter_threshold = float(expert_cfg.get("enter_threshold", 0.0))
         self.expert_warmup_chunks = int(
             expert_cfg.get("warmup_chunks", self.lookback_chunks)
         )
@@ -638,10 +611,11 @@ class SteamCriticalPhaseGate:
             phase_prediction_variance = torch.zeros_like(score)
             phase_features = None
 
-        if self.actor_source == "phase_head":
-            actor_candidate = ready & (phase_probability >= self.enter_threshold)
-        else:
-            actor_candidate = ready & (score <= self.enter_threshold)
+        actor_candidate = (
+            ready & (phase_probability >= self.enter_threshold)
+            if self.actor_switch_enabled
+            else torch.zeros_like(ready)
+        )
         state.low_progress_count = torch.where(
             actor_candidate,
             state.low_progress_count + 1,

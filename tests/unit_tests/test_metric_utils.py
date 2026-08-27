@@ -74,8 +74,10 @@ def test_compute_evaluate_metrics_reports_prefixed_interact_delay_stats():
 
 def test_collect_trajectory_replay_metrics_reports_explicit_route_sources():
     trajectory = Trajectory(
+        intervene_flags=torch.tensor([[[False]], [[False]], [[True]]]),
         forward_inputs={
             "record_transition": torch.tensor([[[False]], [[True]], [[True]]]),
+            "actor_switch": torch.tensor([[[False]], [[True]], [[False]]]),
             "rlt_gate_actor_active": torch.tensor([[[False]], [[True]], [[True]]]),
             "rlt_gate_steam_critical_active": torch.tensor(
                 [[[True]], [[False]], [[False]]]
@@ -101,5 +103,6 @@ def test_collect_trajectory_replay_metrics_reports_explicit_route_sources():
     assert metrics["replay/geometry_critical_active_rate"] == pytest.approx(1 / 3)
     assert metrics["replay/steam_phase_probability_mean"] == pytest.approx(0.5)
     assert metrics["replay/steam_phase_variance_mean"] == pytest.approx(0.02)
-    assert "replay/actor_switch_rate" not in metrics
-    assert "replay/intervention_rate" not in metrics
+    assert metrics["replay/actor_switch_rate"] == pytest.approx(1 / 3)
+    assert metrics["replay/intervention_requested_rate"] == pytest.approx(1 / 3)
+    assert metrics["replay/intervention_rate"] == pytest.approx(1 / 3)

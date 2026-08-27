@@ -690,105 +690,6 @@ ManiSkill expert takeover 默认关闭。需要在 critical phase 中用更强�
 joint-control SFT checkpoint。expert 的 OpenPI dataconfig 和 norm stats 需要和
 Stage 2 数据保持一致。expert 只用于 train rollout；eval rollout 不会执行 expert takeover，评测的是学到的 actor。
 
-STEAM Gate 路由归属
-~~~~~~~~~~~~~~~~~~~
-
-STEAM gate 为两段路由提供独立开关。``actor_switch.enable`` 控制 STEAM 是否负责
-base-to-actor 边界；``expert_takeover.enable`` 控制实际进入 actor phase 后，
-STEAM 是否可以请求 expert。旧的顶层 ``mode`` 仍然兼容，但新配置应显式设置
-``actor_switch.mode``。
-
-两段都由 STEAM 控制时，使用 ``maniskill_rlt_stage2_td3_mlp_steam.yaml``。该配置
-设置 ``routing_source: rollout`` 并打开两个学习门控。几何控制 base-to-actor、
-STEAM 控制 actor-to-expert 时，使用
-``maniskill_rlt_stage2_td3_mlp_geometry_steam_expert.yaml``，其关键配置等价于：
-
-.. code:: yaml
-
-   env:
-     train:
-       rlt_policy_switch:
-         routing_source: environment
-     eval:
-       rlt_policy_switch:
-         routing_source: environment
-
-   rollout:
-     rlt_critical_phase_gate:
-       enable: True
-       actor_switch:
-         enable: False
-         mode: active
-       expert_takeover:
-         enable: True
-         mode: active
-
-关闭 ``actor_switch.enable`` 后，STEAM 仍会计算自己的 critical-phase 预测用于对比，
-但实际 actor phase 及 STEAM expert warmup 的起点由几何门控决定。
-
-可以直接使用完成的 hybrid run trace 校准 STEAM base-to-actor 门控：
-
-.. code:: bash
-
-   python toolkits/rlt/calibrate_steam_critical_gate.py \
-     /path/to/maniskill_rlt_stage2_td3_mlp_geometry_steam_expert/gate_calibration
-
-该脚本不需要重新运行环境，而是离线尝试不同的 ``enter_threshold`` 和
-``patience_chunks``。它会保留几何门控从未进入 critical phase 的 episode 来统计误触，
-按时间顺序使用前 80% 的完整 episode 校准，再在后 20% 上原样验证选出的参数；
-存在多个 model version 时会优先在 version 边界划分。脚本会在 trace 目录中生成
-``steam_critical_gate_grid.csv`` 和
-``steam_critical_gate_profile.csv``，并打印两个 scalar-gate 参数。进行该基线实验时，
-将 ``actor_switch.source`` 设置为 ``progress``，并把输出写入
-``actor_switch.enter_threshold`` 和 ``actor_switch.patience_chunks``；同时应保持采集
-trace 时使用的 ``lookback_chunks`` 不变。
-
-上述脚本只校准已有 STEAM progress scalar 的阈值，可作为基线。要让第一道门直接学习
-几何 critical phase，而第二道门继续使用 progress 判断 actor 是否停滞，应训练独立的
-STEAM phase head。phase head 复用冻结的 STEAM ensemble fused feature；几何标签只在
-仿真采集和监督训练时使用，不参与最终双 STEAM 路由。
-
-首先使用 hybrid 配置采集带 phase feature 的 trace。该配置已设置
-``actor_switch.collect_phase_features: True``；feature 会以 fp16 写入
-``gate_calibration``，但不会进入 TD3 replay buffer：
-
-.. code:: bash
-
-   STEPS=20 bash examples/embodiment/run_embodiment.sh \
-     maniskill_rlt_stage2_td3_mlp_geometry_steam_expert
-
-从日志目录找到 trace 后训练小头：
-
-.. code:: bash
-
-   find logs -type d -path '*geometry_steam_expert*/gate_calibration'
-
-   python toolkits/rlt/train_steam_phase_head.py \
-     /path/to/gate_calibration \
-     --output /path/to/steam_phase_head.pt \
-     --device cuda
-
-脚本按 episode 划分 train/validation，重点采样几何入口附近的 chunk，只训练每个
-STEAM ensemble member 对应的小 MLP head。训练后会在 validation episode 上联合搜索
-probability threshold 和 ``patience_chunks``；校准目标同时惩罚进入 episode 不一致和
-phase head 与几何 latched active mask 的逐 chunk 分歧，然后比较 entry-rate gap 和
-进入时机。推荐参数会
-写入 ``steam_phase_head.pt``，完整搜索表写入
-``steam_phase_head.calibration.csv``。
-
-最后设置 phase-head 路径并启动原有双 STEAM 配置。该配置会自动读取 checkpoint 中的
-推荐 threshold 和 patience：
-
-.. code:: bash
-
-   export RLT_STEAM_PHASE_HEAD_PATH=/path/to/steam_phase_head.pt
-
-   bash examples/embodiment/run_embodiment.sh \
-     maniskill_rlt_stage2_td3_mlp_steam
-
-phase feature 必须由部署时同一个 STEAM value checkpoint 和同一个
-``lookback_chunks`` 生成。更换 STEAM checkpoint 后应重新采集并训练 phase head。
-
 Replay Buffer 逻辑
 ------------------
 
@@ -834,13 +735,9 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
   ManiSkill rollout / replay 诊断（由 actor 收到 trajectory 后统计）：
 
   - ``train/replay/record_transition_rate``：收集到的 step 中被保存为 RLT transition 的比例（来自 ``forward_inputs.record_transition``）。
-  - ``train/replay/steam_critical_active_rate`` 和 ``train/replay/geometry_critical_active_rate``：STEAM 与几何各自判断的 critical phase 覆盖比例。``routing_source: rollout`` 配合 ``actor_switch.enable: True`` 时由 STEAM 路由；``routing_source: environment`` 配合 ``actor_switch.enable: False`` 时由几何路由。
-  - ``train/replay/actual_base_action_rate``、``train/replay/actual_actor_action_rate`` 和 ``train/replay/actual_expert_action_rate``：实际由三个 policy 执行的互斥 chunk 比例，三者之和为 1。
-  - ``train/replay/steam_expert_request_rate``：学习门控请求 expert 接管的 chunk 比例；在 warmup、评估或 shadow 模式下，它可能和实际 expert action 比例不同。
-  - ``env/steam_critical_entered`` 和 ``env/steam_critical_entry_step``：STEAM 是否及何时检测到 critical phase，不受 schedule warmup 影响。
-  - ``train/replay/steam_phase_probability_mean`` 和 ``train/replay/steam_phase_variance_mean``：phase-head critical probability 的均值和 ensemble disagreement；逐 chunk 原始值同时保存在 gate calibration trace 的 ``rlt_gate_phase_probability`` 和 ``rlt_gate_phase_prediction_variance`` 字段中。
-  - ``env/actual_actor_entered`` 和 ``env/actual_actor_entry_step``：actor action 是否及何时第一次真正控制环境。
-  - ``env/geometry_critical_entered`` 和 ``env/geometry_critical_entry_step``：几何门控进入时机；在全 STEAM 配置中仅用于对比，在 hybrid 配置中控制 base-to-actor。
+  - ``train/replay/actor_switch_rate``：收集到的 step 中实际由 actor/student action 控制环境的比例（来自 ``forward_inputs.actor_switch``）。
+  - ``train/replay/intervention_requested_rate``：env 请求 expert 接管的比例（来自 ``forward_inputs.intervention_requested``）。
+  - ``train/replay/intervention_rate``：route 实际应用 expert action 的比例（来自 ``trajectory.intervene_flags``）。
   - ``train/replay/transition_count``、``train/replay/reward_mean``、``train/replay/reward_positive_rate``、``train/replay/done_rate``：当前 collect step 的 ManiSkill transition-replay 入库统计。
 
   RLT schedule / learner backlog（ManiSkill ``algorithm.rlt_schedule.enable``）：

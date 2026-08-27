@@ -727,113 +727,6 @@ joint-control SFT checkpoint. Keep the expert's OpenPI dataconfig and norm
 stats aligned with the Stage 2 dataset. The expert is only used for train
 rollout; eval rollout runs without expert takeover and measures the learned actor.
 
-STEAM Gate Routing Ownership
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The STEAM gate exposes independent switches for the two routing boundaries.
-``actor_switch.enable`` controls whether STEAM owns the base-to-actor boundary,
-while ``expert_takeover.enable`` controls STEAM expert requests after the actual
-actor phase has started. The legacy top-level ``mode`` remains supported, but
-new configurations should set ``actor_switch.mode`` explicitly.
-
-Use ``maniskill_rlt_stage2_td3_mlp_steam.yaml`` for STEAM on both boundaries.
-It sets ``routing_source: rollout`` and enables both learned switches. Use
-``maniskill_rlt_stage2_td3_mlp_geometry_steam_expert.yaml`` for geometry on the
-base-to-actor boundary and STEAM on the actor-to-expert boundary. The hybrid
-configuration is equivalent to:
-
-.. code:: yaml
-
-   env:
-     train:
-       rlt_policy_switch:
-         routing_source: environment
-     eval:
-       rlt_policy_switch:
-         routing_source: environment
-
-   rollout:
-     rlt_critical_phase_gate:
-       enable: True
-       actor_switch:
-         enable: False
-         mode: active
-       expert_takeover:
-         enable: True
-         mode: active
-
-STEAM still computes its critical-phase prediction when ``actor_switch.enable``
-is false. That prediction is logged for comparison, but geometry determines the
-actual actor phase and when the STEAM expert warmup begins.
-
-Calibrate the STEAM base-to-actor gate from the completed hybrid-run traces:
-
-.. code:: bash
-
-   python toolkits/rlt/calibrate_steam_critical_gate.py \
-     /path/to/maniskill_rlt_stage2_td3_mlp_geometry_steam_expert/gate_calibration
-
-The script replays candidate ``enter_threshold`` and ``patience_chunks`` values
-without running the environment again. It keeps geometry-negative episodes to
-measure false entries, uses the first 80% of complete episodes for calibration,
-and evaluates the selected parameters unchanged on a later 20% split. Model
-version boundaries are preferred when they are available. It writes
-``steam_critical_gate_grid.csv`` and ``steam_critical_gate_profile.csv`` under
-the trace directory, then prints two scalar-gate values. For this baseline, set
-``actor_switch.source: progress`` and apply the output as
-``actor_switch.enter_threshold`` and ``actor_switch.patience_chunks``. Keep the
-same ``lookback_chunks`` used to collect the traces.
-
-That script only calibrates the existing STEAM progress scalar and remains a
-useful baseline. To train the first gate directly against the geometry critical
-phase while retaining progress for actor-stall detection at the second gate,
-train a separate STEAM phase head. The phase head consumes frozen STEAM
-ensemble fused features. Geometry is used only to collect supervision in
-simulation and is not part of the final all-STEAM route.
-
-First collect phase-feature traces with the hybrid configuration. It already
-sets ``actor_switch.collect_phase_features: True``. Features are stored as fp16
-under ``gate_calibration`` and are excluded from the TD3 replay buffer:
-
-.. code:: bash
-
-   STEPS=20 bash examples/embodiment/run_embodiment.sh \
-     maniskill_rlt_stage2_td3_mlp_geometry_steam_expert
-
-Locate the trace directory and train the small head:
-
-.. code:: bash
-
-   find logs -type d -path '*geometry_steam_expert*/gate_calibration'
-
-   python toolkits/rlt/train_steam_phase_head.py \
-     /path/to/gate_calibration \
-     --output /path/to/steam_phase_head.pt \
-     --device cuda
-
-The trainer splits by episode, emphasizes chunks around the geometry boundary,
-and trains one small MLP for each STEAM ensemble member. It then jointly searches
-the probability threshold and ``patience_chunks`` on validation episodes. The
-calibration objective jointly penalizes mismatched entry episodes and
-disagreement between the latched phase-head and geometry active masks, followed
-by entry-rate gap and entry timing. The
-recommended parameters are embedded in ``steam_phase_head.pt`` and the complete
-search is written to ``steam_phase_head.calibration.csv``.
-
-Set the phase-head path and launch the existing all-STEAM configuration. It
-loads the calibrated threshold and patience directly from the checkpoint:
-
-.. code:: bash
-
-   export RLT_STEAM_PHASE_HEAD_PATH=/path/to/steam_phase_head.pt
-
-   bash examples/embodiment/run_embodiment.sh \
-     maniskill_rlt_stage2_td3_mlp_steam
-
-The collection and deployment runs must use the same STEAM value checkpoint and
-``lookback_chunks``. Recollect features and retrain the phase head after changing
-the STEAM checkpoint.
-
 Replay Buffer Behavior
 ----------------------
 
@@ -888,13 +781,9 @@ Useful RLT signals:
   ManiSkill rollout / replay diagnostics (logged from trajectories received by the actor):
 
   - ``train/replay/record_transition_rate``: fraction of collected steps saved as RLT transitions (from ``forward_inputs.record_transition``).
-  - ``train/replay/steam_critical_active_rate`` and ``train/replay/geometry_critical_active_rate``: independent STEAM and geometry critical-phase coverage. ``routing_source: rollout`` with ``actor_switch.enable: True`` uses STEAM for routing; ``routing_source: environment`` with ``actor_switch.enable: False`` uses geometry.
-  - ``train/replay/actual_base_action_rate``, ``train/replay/actual_actor_action_rate``, and ``train/replay/actual_expert_action_rate``: mutually exclusive fractions of chunks actually executed by each policy. The three rates sum to one.
-  - ``train/replay/steam_expert_request_rate``: fraction of chunks where the learned gate requested expert takeover; this can differ from the actual expert action rate during warmup, evaluation, or shadow mode.
-  - ``env/steam_critical_entered`` and ``env/steam_critical_entry_step``: whether and when STEAM detected a critical phase, independent of schedule warmup.
-  - ``train/replay/steam_phase_probability_mean`` and ``train/replay/steam_phase_variance_mean``: mean critical probability and ensemble disagreement from the phase head. Raw per-chunk values are also stored in gate calibration traces as ``rlt_gate_phase_probability`` and ``rlt_gate_phase_prediction_variance``.
-  - ``env/actual_actor_entered`` and ``env/actual_actor_entry_step``: whether and when actor actions first actually controlled the environment.
-  - ``env/geometry_critical_entered`` and ``env/geometry_critical_entry_step``: geometry entry timing. It is comparison-only in the all-STEAM configuration and controls base-to-actor routing in the hybrid configuration.
+  - ``train/replay/actor_switch_rate``: fraction of collected steps where the actor/student action actually controlled the env (from ``forward_inputs.actor_switch``).
+  - ``train/replay/intervention_requested_rate``: fraction of steps where the env requested expert takeover (from ``forward_inputs.intervention_requested``).
+  - ``train/replay/intervention_rate``: fraction of steps where the route actually applied expert actions (from ``trajectory.intervene_flags``).
   - ``train/replay/transition_count``, ``train/replay/reward_mean``, ``train/replay/reward_positive_rate``, ``train/replay/done_rate``: ManiSkill transition-replay ingest stats for the current collect step.
 
   RLT schedule / learner backlog (ManiSkill ``algorithm.rlt_schedule.enable``):
