@@ -41,15 +41,23 @@ from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 def flatten_rollout_batch_for_train(
-    nested_dict: dict, shuffle_id: Optional[torch.Tensor]
+    nested_dict: dict,
+    shuffle_id: Optional[torch.Tensor],
+    target_time_steps: int | None = None,
 ) -> dict:
     """Flatten [T, B, ...] rollout tensors to [T*B, ...] for actor training."""
+    if target_time_steps is None:
+        # GAE outputs and rewards describe the transitions that are actually
+        # trained.  Bootstrap/final-policy fields may carry one extra time
+        # entry, so deriving T from prev_logprobs can over-count samples.
+        for reference_key in ("advantages", "returns", "rewards", "prev_logprobs"):
+            reference = nested_dict.get(reference_key)
+            if isinstance(reference, torch.Tensor):
+                target_time_steps = int(reference.shape[0])
+                break
+
     ret_dict = {}
     for key, value in nested_dict.items():
-        if key in ["dones", "terminations", "truncations", "prev_values"]:
-            if isinstance(value, torch.Tensor):
-                value = value[:-1]
-
         if "env_info" in key:
             raise NotImplementedError("env_info nested dict is not supported here")
 
@@ -58,10 +66,24 @@ def flatten_rollout_batch_for_train(
             continue
 
         if isinstance(value, torch.Tensor):
+            if target_time_steps is not None:
+                if value.shape[0] == target_time_steps + 1:
+                    value = value[:target_time_steps]
+                elif value.shape[0] != target_time_steps:
+                    raise ValueError(
+                        f"Rollout field {key!r} has {value.shape[0]} time steps; "
+                        f"expected {target_time_steps} or {target_time_steps + 1}."
+                    )
+            elif key in ["dones", "terminations", "truncations", "prev_values"]:
+                value = value[:-1]
             flat = value.reshape(-1, *value.shape[2:])
             ret_dict[key] = flat[shuffle_id] if shuffle_id is not None else flat
         elif isinstance(value, dict):
-            ret_dict[key] = flatten_rollout_batch_for_train(value, shuffle_id)
+            ret_dict[key] = flatten_rollout_batch_for_train(
+                value,
+                shuffle_id,
+                target_time_steps=target_time_steps,
+            )
         else:
             raise NotImplementedError(
                 f"Unsupported value type in rollout batch: key={key}, type={type(value)}"
