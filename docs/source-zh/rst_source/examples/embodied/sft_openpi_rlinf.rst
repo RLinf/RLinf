@@ -19,6 +19,7 @@ OpenPI_RLinf 监督微调
 - BEHAVIOR 流式数据加载器的相关字段，以及归一化统计和 tokenizer 的处理方式
 - 如何启动训练，以及如何转换得到的 checkpoint 用于评估
 - Pi0 RoboTwin 的官方 OpenPI/LeRobot 数据加载、训练和评估流程
+- 网络 ``action_horizon`` 与环境 ``num_action_chunks``
 
 
 功能介绍
@@ -29,7 +30,24 @@ PyTorch 实现并未与其 JAX 参考实现对齐，而此处的移植版本在�
 对齐。与基于 JAX/LeRobot 的 OpenPI 路径（参见 :doc:`sft_openpi`）不同，它直接从一小组配置字段
 构建模型结构（构建阶段不读取 ``config.json``），并且开箱即用地适配 BEHAVIOR-1K。
 在 SFT 阶段，策略通过流匹配去噪目标，从 BEHAVIOR 示范中预测双臂 R1 Pro 机器人
-32 步、23 维的动作块（action chunk）。
+32 步、23 维的动作块\ （action chunk\ ）。
+
+网络 horizon 与环境 chunk
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``openpi_rlinf`` 实现不把 ``num_action_chunks`` 当作网络 horizon。
+``num_action_chunks`` / ``openpi.action_chunk`` 是 **环境实际执行**
+\ （以及 SFT 数据集窗口\ ）的长度。**网络** ``action_horizon`` 优先用 YAML
+里的 ``openpi.action_horizon``；未设置时用 ``openpi.config_name`` 对应官方
+OpenPI ``TrainConfig.model.action_horizon``。现有 ``model_type: openpi``
+实现同样从 ``TrainConfig.model`` 拷出 ``action_horizon``，只把
+``num_action_chunks`` 插值到 ``action_chunk``。
+
+BEHAVIOR ``pi05_behavior`` 官方 horizon 是 **32**，与
+``num_action_chunks: 32`` 一致。RoboTwin ``pi0_aloha_robotwin`` 官方 horizon
+是 **50**\ （``Pi0Config()`` 默认值\ ），与 ``num_action_chunks: 50`` 一致。
+只有 checkpoint 的 horizon 和该 ``TrainConfig`` 不一致时，才在实验 YAML 里覆写
+``openpi.action_horizon``。
 
 Pi0.5 + BEHAVIOR-1K
 ---------------------
@@ -57,7 +75,7 @@ Pi0.5 + BEHAVIOR-1K
 
 OpenPI_RLinf 的 SFT 配置刻意将 **加载 dtype** 与 **计算 dtype** 分开：
 
-- 模型模板将 ``actor.model.precision`` 设为 ``fp32``（位于 ``pi0_5_rlinf.yaml``）。
+- 模型模板将 ``actor.model.precision`` 设为 ``fp32``\ （位于 ``pi0_5_rlinf.yaml``\ ）。
   fp32 权重作为 **FSDP 优化器 master** 加载，从而保证 warmup 阶段较小的 LR 更新
   不会因 bf16 舍入而丢失。
 - FSDP ``MixedPrecision`` 在 bf16 下计算，同时让梯度 all-reduce 与 buffer 保持
@@ -190,6 +208,8 @@ RoboTwin 使用 14 维 ALOHA 动作和 3 路输入图像；动作在进入模型
 补齐为 32 维。``asset_id`` 应设置为当前任务的统计量目录，例如上例的
 ``adjust_bottle``。``openpi_data.norm_stats_path`` 显式传入该任务的
 ``norm_stats.json``，因此训练和 eval 会使用同一组归一化统计量。
+``num_action_chunks: 50`` 是环境 / 数据集窗口；网络 horizon 来自官方
+``pi0_aloha_robotwin`` ``TrainConfig`` 的 **50**，而不是这个字段本身。
 
 Pi0 RoboTwin 配方同样使用 fp32 master weights、bf16 FSDP 计算和 fp32
 梯度规约。实验 YAML 默认使用 ``actor.optim.lr_scheduler: openpi_cosine``，该调度器从

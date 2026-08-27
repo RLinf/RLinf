@@ -23,6 +23,7 @@ Contents
 - BEHAVIOR streaming-loader fields and norm-stat/tokenizer handling
 - Launching training and converting checkpoints for evaluation
 - The official OpenPI/LeRobot data path, training, and evaluation for Pi0 RoboTwin
+- Network ``action_horizon`` vs env ``num_action_chunks``
 
 
 What it is
@@ -38,6 +39,24 @@ config fields (no ``config.json`` is read at construction time) and is wired
 for BEHAVIOR-1K out of the box. During SFT, the policy predicts 32-step,
 23-dimensional action chunks for the dual-arm R1 Pro robot from BEHAVIOR
 demonstrations using the flow-matching denoising objective.
+
+Action horizon vs env chunk
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``openpi_rlinf`` implementation does not use ``num_action_chunks`` as the
+network horizon. ``num_action_chunks`` / ``openpi.action_chunk`` is the
+**env-executed** (and SFT dataset-window) length. The **network**
+``action_horizon`` is ``openpi.action_horizon`` when set; otherwise the
+official OpenPI ``TrainConfig.model.action_horizon`` for
+``openpi.config_name``. The existing ``model_type: openpi`` implementation does the
+same: it copies ``action_horizon`` from ``TrainConfig.model`` and only
+interpolates ``num_action_chunks`` into ``action_chunk``.
+
+BEHAVIOR ``pi05_behavior`` official horizon is **32**, matching
+``num_action_chunks: 32``. RoboTwin ``pi0_aloha_robotwin`` official horizon
+is **50** (``Pi0Config()`` default), matching ``num_action_chunks: 50``. Pin
+``openpi.action_horizon`` in the experiment YAML only when the checkpoint
+horizon differs from that ``TrainConfig``.
 
 
 Pi0.5 + BEHAVIOR-1K
@@ -210,6 +229,9 @@ actions to the 32-dimensional model action space. Set ``asset_id`` to the
 statistics directory for the selected task, such as ``adjust_bottle`` above.
 ``openpi_data.norm_stats_path`` explicitly selects that task's
 ``norm_stats.json``, ensuring SFT and evaluation use the same statistics.
+``num_action_chunks: 50`` is the env / dataset window; the network horizon is
+the official ``pi0_aloha_robotwin`` ``TrainConfig`` value of **50**, not this
+field by itself.
 
 The Pi0 RoboTwin recipe also uses fp32 master weights, bf16 FSDP computation,
 and fp32 gradient reduction. Its experiment YAML defaults to

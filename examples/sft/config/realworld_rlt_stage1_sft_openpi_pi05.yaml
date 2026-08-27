@@ -60,7 +60,10 @@ actor:
       noise_params: [0.16, 0.12, 200]
       joint_logprob: True
       detach_critic_input: True
-      action_horizon: ${actor.model.num_action_chunks}
+      # Network prediction horizon (Pi0Config.action_horizon). Matches official
+      # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+      # / num_action_chunks, which is the env-executed (RLT) window.
+      action_horizon: 20
       action_chunk: ${actor.model.num_action_chunks}
       action_env_dim: ${actor.model.action_dim}
       num_steps: ${actor.model.num_steps}

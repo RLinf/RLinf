@@ -9,6 +9,8 @@ is_lora: False
 lora_rank: 32
 
 # RoboTwin ALOHA uses 14-dimensional actions; the Pi0 backbone pads them to 32.
+# num_action_chunks is the env / SFT-window length. Network action_horizon comes
+# from official TrainConfig for config_name (pi0_aloha_robotwin = 50).
 num_action_chunks: 50
 action_dim: 14
 use_proprio: True
