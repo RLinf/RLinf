@@ -224,7 +224,7 @@ the new ``camera_type``, ``gripper_type``, ``gripper_connection``, and
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu
