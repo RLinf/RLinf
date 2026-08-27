@@ -30,26 +30,9 @@ RLT_GATE_INFO_KEYS = (
     "rlt_gate_entry_step",
     "rlt_gate_score_ready",
     "rlt_gate_score_min",
-    "rlt_gate_score_mean",
-    "rlt_gate_prediction_variance",
-    "rlt_gate_phase_probability",
-    "rlt_gate_phase_prediction_variance",
-    "rlt_gate_steam_critical_active",
     "rlt_gate_actor_active",
-    "rlt_route_base_active",
-    "rlt_route_actor_active",
-    "rlt_route_actor_entered",
-    "rlt_route_actor_entry_step",
-    "rlt_route_expert_active",
     "rlt_route_expert_entered",
     "rlt_route_expert_entry_step",
-    "rlt_gate_chunk_index",
-    "rlt_gate_critical_chunk_count",
-    "rlt_gate_expert_candidate",
-    "rlt_gate_expert_active",
-    "rlt_gate_expert_requested",
-    "rlt_gate_expert_entered",
-    "rlt_gate_expert_entry_step",
 )
 
 
@@ -72,13 +55,9 @@ class _GateState:
     entered: torch.Tensor
     entry_step: torch.Tensor
     actor_active: torch.Tensor
-    route_actor_entered: torch.Tensor
-    route_actor_entry_step: torch.Tensor
     critical_chunk_count: torch.Tensor
     expert_low_progress_count: torch.Tensor
     expert_latched: torch.Tensor
-    expert_entered: torch.Tensor
-    expert_entry_step: torch.Tensor
     route_expert_entered: torch.Tensor
     route_expert_entry_step: torch.Tensor
     chunk_index: torch.Tensor
@@ -87,10 +66,7 @@ class _GateState:
 @dataclass
 class _GatePrediction:
     score_min: torch.Tensor
-    score_mean: torch.Tensor
-    prediction_variance: torch.Tensor
     phase_probability: torch.Tensor
-    phase_prediction_variance: torch.Tensor
     phase_features: torch.Tensor | None
 
 
@@ -238,24 +214,11 @@ class SteamCriticalPhaseGate:
         bool_keys = {
             "rlt_gate_entered",
             "rlt_gate_score_ready",
-            "rlt_gate_steam_critical_active",
             "rlt_gate_actor_active",
-            "rlt_route_base_active",
-            "rlt_route_actor_active",
-            "rlt_route_actor_entered",
-            "rlt_route_expert_active",
             "rlt_route_expert_entered",
-            "rlt_gate_expert_candidate",
-            "rlt_gate_expert_active",
-            "rlt_gate_expert_requested",
-            "rlt_gate_expert_entered",
         }
         long_keys = {
             "rlt_gate_entry_step",
-            "rlt_route_actor_entry_step",
-            "rlt_gate_chunk_index",
-            "rlt_gate_critical_chunk_count",
-            "rlt_gate_expert_entry_step",
             "rlt_route_expert_entry_step",
         }
         diagnostics = {}
@@ -367,12 +330,6 @@ class SteamCriticalPhaseGate:
             entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
             entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
             actor_active=torch.zeros(batch_size, device=device, dtype=torch.bool),
-            route_actor_entered=torch.zeros(
-                batch_size, device=device, dtype=torch.bool
-            ),
-            route_actor_entry_step=torch.zeros(
-                batch_size, device=device, dtype=torch.long
-            ),
             critical_chunk_count=torch.zeros(
                 batch_size, device=device, dtype=torch.long
             ),
@@ -380,8 +337,6 @@ class SteamCriticalPhaseGate:
                 batch_size, device=device, dtype=torch.long
             ),
             expert_latched=torch.zeros(batch_size, device=device, dtype=torch.bool),
-            expert_entered=torch.zeros(batch_size, device=device, dtype=torch.bool),
-            expert_entry_step=torch.zeros(batch_size, device=device, dtype=torch.long),
             route_expert_entered=torch.zeros(
                 batch_size, device=device, dtype=torch.bool
             ),
@@ -469,8 +424,6 @@ class SteamCriticalPhaseGate:
                 dim=0,
             ).to(dtype=torch.float32)
             score_min = member_scores.min(dim=0).values
-            score_mean = member_scores.mean(dim=0)
-            prediction_variance = member_scores.var(dim=0, unbiased=False)
             phase_features = torch.stack(
                 [output.hidden_states for output in member_outputs],
                 dim=0,
@@ -478,16 +431,6 @@ class SteamCriticalPhaseGate:
         else:
             output = self.model.predict(observation)
             score_min = output.predicted_values.to(dtype=torch.float32)
-            score_mean = getattr(output, "prediction_mean", None)
-            if score_mean is None:
-                score_mean = score_min
-            else:
-                score_mean = score_mean.to(dtype=torch.float32)
-            prediction_variance = getattr(output, "prediction_variance", None)
-            if prediction_variance is None:
-                prediction_variance = torch.zeros_like(score_min)
-            else:
-                prediction_variance = prediction_variance.to(dtype=torch.float32)
             if need_phase_features:
                 hidden_states = getattr(output, "hidden_states", None)
                 if hidden_states is None:
@@ -497,21 +440,15 @@ class SteamCriticalPhaseGate:
                 phase_features = hidden_states.unsqueeze(0)
 
         phase_probability = torch.zeros_like(score_min)
-        phase_prediction_variance = torch.zeros_like(score_min)
         if self.phase_head is not None:
             if phase_features is None:
                 raise RuntimeError("STEAM phase head requires fused features")
-            phase_prediction = self.phase_head.predict(phase_features)
-            phase_probability = phase_prediction.probability.to(torch.float32)
-            phase_prediction_variance = phase_prediction.prediction_variance.to(
+            phase_probability = self.phase_head.predict(phase_features).to(
                 torch.float32
             )
         return _GatePrediction(
             score_min=score_min,
-            score_mean=score_mean,
-            prediction_variance=prediction_variance,
             phase_probability=phase_probability,
-            phase_prediction_variance=phase_prediction_variance,
             phase_features=phase_features,
         )
 
@@ -551,13 +488,9 @@ class SteamCriticalPhaseGate:
             state.entered[reset] = False
             state.entry_step[reset] = 0
             state.actor_active[reset] = False
-            state.route_actor_entered[reset] = False
-            state.route_actor_entry_step[reset] = 0
             state.critical_chunk_count[reset] = 0
             state.expert_low_progress_count[reset] = 0
             state.expert_latched[reset] = False
-            state.expert_entered[reset] = False
-            state.expert_entry_step[reset] = 0
             state.route_expert_entered[reset] = False
             state.route_expert_entry_step[reset] = 0
             state.chunk_index[reset] = 0
@@ -582,33 +515,15 @@ class SteamCriticalPhaseGate:
                 prediction.score_min,
                 torch.zeros_like(prediction.score_min),
             )
-            score_mean = torch.where(
-                ready,
-                prediction.score_mean,
-                torch.zeros_like(prediction.score_mean),
-            )
-            prediction_variance = torch.where(
-                ready,
-                prediction.prediction_variance,
-                torch.zeros_like(prediction.prediction_variance),
-            )
             phase_probability = torch.where(
                 ready,
                 prediction.phase_probability,
                 torch.zeros_like(prediction.phase_probability),
             )
-            phase_prediction_variance = torch.where(
-                ready,
-                prediction.phase_prediction_variance,
-                torch.zeros_like(prediction.phase_prediction_variance),
-            )
             phase_features = prediction.phase_features
         else:
             score = torch.zeros(batch_size, device=self.device, dtype=torch.float32)
-            score_mean = torch.zeros_like(score)
-            prediction_variance = torch.zeros_like(score)
             phase_probability = torch.zeros_like(score)
-            phase_prediction_variance = torch.zeros_like(score)
             phase_features = None
 
         actor_candidate = (
@@ -671,13 +586,6 @@ class SteamCriticalPhaseGate:
         expert_enter_now = (~state.expert_latched) & (
             state.expert_low_progress_count >= self.expert_patience_chunks
         )
-        first_expert_enter_now = expert_enter_now & (~state.expert_entered)
-        state.expert_entry_step = torch.where(
-            first_expert_enter_now,
-            state.chunk_index * self.chunk_size,
-            state.expert_entry_step,
-        )
-        state.expert_entered = state.expert_entered | expert_enter_now
         if self.expert_latch_until_done:
             state.expert_latched = state.expert_latched | expert_enter_now
         else:
@@ -693,14 +601,6 @@ class SteamCriticalPhaseGate:
             route_expert_flags = torch.zeros_like(route_expert_flags)
 
         route_expert_active = route_expert_flags & bool(expert_routing_enabled)
-        route_actor_active = actor_active & (~route_expert_active)
-        route_actor_started_now = route_actor_active & (~state.route_actor_entered)
-        state.route_actor_entry_step = torch.where(
-            route_actor_started_now,
-            state.chunk_index * self.chunk_size,
-            state.route_actor_entry_step,
-        )
-        state.route_actor_entered = state.route_actor_entered | route_actor_active
         route_expert_started_now = route_expert_active & (~state.route_expert_entered)
         state.route_expert_entry_step = torch.where(
             route_expert_started_now,
@@ -714,28 +614,9 @@ class SteamCriticalPhaseGate:
             "rlt_gate_entry_step": state.entry_step[:, None],
             "rlt_gate_score_ready": ready[:, None],
             "rlt_gate_score_min": score[:, None],
-            "rlt_gate_score_mean": score_mean[:, None],
-            "rlt_gate_prediction_variance": prediction_variance[:, None],
-            "rlt_gate_phase_probability": phase_probability[:, None],
-            "rlt_gate_phase_prediction_variance": phase_prediction_variance[:, None],
-            "rlt_gate_steam_critical_active": steam_critical_active[:, None],
             "rlt_gate_actor_active": actor_active[:, None],
-            "rlt_route_base_active": (~(route_actor_active | route_expert_active))[
-                :, None
-            ],
-            "rlt_route_actor_active": route_actor_active[:, None],
-            "rlt_route_actor_entered": state.route_actor_entered[:, None],
-            "rlt_route_actor_entry_step": state.route_actor_entry_step[:, None],
-            "rlt_route_expert_active": route_expert_active[:, None],
             "rlt_route_expert_entered": state.route_expert_entered[:, None],
             "rlt_route_expert_entry_step": state.route_expert_entry_step[:, None],
-            "rlt_gate_chunk_index": state.chunk_index[:, None],
-            "rlt_gate_critical_chunk_count": state.critical_chunk_count[:, None],
-            "rlt_gate_expert_candidate": expert_low_progress[:, None],
-            "rlt_gate_expert_active": state.expert_latched[:, None],
-            "rlt_gate_expert_requested": route_expert_flags[:, None],
-            "rlt_gate_expert_entered": state.expert_entered[:, None],
-            "rlt_gate_expert_entry_step": state.expert_entry_step[:, None],
         }
         state.chunk_index = state.chunk_index + 1
         emitted_phase_features = None

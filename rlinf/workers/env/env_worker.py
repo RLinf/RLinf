@@ -59,12 +59,7 @@ from rlinf.utils.utils import (
 
 _RLT_GEOMETRY_TRACE_DTYPES = {
     "geometry_critical_active": torch.bool,
-    "geometry_critical_entered": torch.bool,
-    "geometry_critical_entry_step": torch.float32,
-    "rlt_oracle_expert_candidate": torch.bool,
     "rlt_oracle_expert_active": torch.bool,
-    "geometry_expert_entered": torch.bool,
-    "geometry_expert_entry_step": torch.float32,
 }
 
 
@@ -1039,15 +1034,14 @@ class EnvWorker(Worker):
         for key, dtype in _RLT_GEOMETRY_TRACE_DTYPES.items():
             value = env_infos.get(key)
             if value is None:
-                normalized = torch.zeros((batch_size, 1), dtype=dtype)
-            else:
-                normalized = torch.as_tensor(value, dtype=dtype)
-                if normalized.numel() % batch_size != 0:
-                    raise ValueError(
-                        f"RLT oracle trace info {key!r} has "
-                        f"{normalized.numel()} values for batch size {batch_size}."
-                    )
-                normalized = normalized.reshape(batch_size, -1)[:, -1:]
+                continue
+            normalized = torch.as_tensor(value, dtype=dtype)
+            if normalized.numel() % batch_size != 0:
+                raise ValueError(
+                    f"RLT oracle trace info {key!r} has "
+                    f"{normalized.numel()} values for batch size {batch_size}."
+                )
+            normalized = normalized.reshape(batch_size, -1)[:, -1:]
             forward_inputs[key] = normalized.cpu().contiguous()
 
     def _split_and_compress_obs(

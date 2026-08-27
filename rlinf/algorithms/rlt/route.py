@@ -157,12 +157,6 @@ class RealworldRLTRoute(RLTRoute):
         result["forward_inputs"]["actor_switch"] = result["forward_inputs"][
             "record_transition"
         ]
-        actual_actor = result["forward_inputs"]["actor_switch"]
-        result["forward_inputs"]["actual_base_action"] = ~actual_actor
-        result["forward_inputs"]["actual_actor_action"] = actual_actor
-        result["forward_inputs"]["actual_expert_action"] = torch.zeros_like(
-            actual_actor
-        )
         return RLTRouteOutput(actions=routed_actions, result=result)
 
 
@@ -274,16 +268,10 @@ class SimulatorRLTRoute(RLTRoute):
             )
             forward_inputs["ref_chunk"] = ref_actions.reshape_as(ref_chunk)
 
-        actual_actor_action = actor_switch & (~expert_takeover)
-        actual_expert_action = expert_takeover
-        actual_base_action = ~(actual_actor_action | actual_expert_action)
         forward_inputs["action"] = _flatten_action_chunk(routed_actions).detach()
         forward_inputs["record_transition"] = critical_phase[:, None]
-        forward_inputs["actor_switch"] = actual_actor_action[:, None]
+        forward_inputs["actor_switch"] = (actor_switch & ~expert_takeover)[:, None]
         forward_inputs["intervention_requested"] = requested_expert_takeover[:, None]
-        forward_inputs["actual_base_action"] = actual_base_action[:, None]
-        forward_inputs["actual_actor_action"] = actual_actor_action[:, None]
-        forward_inputs["actual_expert_action"] = actual_expert_action[:, None]
         result["intervene_flags"] = intervene_flags
         return RLTRouteOutput(actions=routed_actions, result=result)
 

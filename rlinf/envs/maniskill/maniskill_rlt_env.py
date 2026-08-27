@@ -102,64 +102,32 @@ class ManiskillRLTEnv(ManiskillEnv):
     _RLT_GATE_METRIC_MAP = {
         "steam_critical_entered": "rlt_gate_entered",
         "steam_critical_entry_step": "rlt_gate_entry_step",
-        "actual_actor_entered": "rlt_route_actor_entered",
-        "actual_actor_entry_step": "rlt_route_actor_entry_step",
-        "steam_expert_entered": "rlt_gate_expert_entered",
-        "steam_expert_entry_step": "rlt_gate_expert_entry_step",
         "actual_expert_entered": "rlt_route_expert_entered",
         "actual_expert_entry_step": "rlt_route_expert_entry_step",
     }
     _RLT_GATE_INFO_KEYS = (
         *_RLT_GATE_METRIC_MAP.values(),
-        "rlt_gate_steam_critical_active",
         "rlt_gate_actor_active",
-        "rlt_route_base_active",
-        "rlt_route_actor_active",
-        "rlt_route_expert_active",
     )
     _RLT_REQUIRED_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
     _RLT_GATE_BOOL_INFO_KEYS = frozenset(
         {
             "rlt_gate_entered",
-            "rlt_gate_steam_critical_active",
             "rlt_gate_actor_active",
-            "rlt_gate_expert_entered",
-            "rlt_route_base_active",
-            "rlt_route_actor_active",
-            "rlt_route_actor_entered",
-            "rlt_route_expert_active",
             "rlt_route_expert_entered",
         }
-    )
-    _RLT_GEOMETRY_EXPERT_METRIC_MAP = {
-        "geometry_expert_entered": "rlt_oracle_expert_entered",
-        "geometry_expert_entry_step": "rlt_oracle_expert_entry_step",
-    }
-    _RLT_ORACLE_TRACE_INFO_KEYS = (
-        "rlt_oracle_expert_candidate",
-        "rlt_oracle_expert_active",
     )
     _RLT_ATTACHED_INFO_KEYS = (
         "geometry_critical_active",
         "geometry_critical_entered",
         "geometry_critical_entry_step",
         *_RLT_GATE_METRIC_MAP,
-        *_RLT_GEOMETRY_EXPERT_METRIC_MAP,
-        *_RLT_ORACLE_TRACE_INFO_KEYS,
+        "rlt_oracle_expert_active",
     )
     _RLT_EPISODE_METRIC_KEYS = (
         "geometry_critical_entered",
         "geometry_critical_entry_step",
-        "steam_critical_entered",
-        "steam_critical_entry_step",
-        "actual_actor_entered",
-        "actual_actor_entry_step",
-        "steam_expert_entered",
-        "steam_expert_entry_step",
-        "actual_expert_entered",
-        "actual_expert_entry_step",
-        "geometry_expert_entered",
-        "geometry_expert_entry_step",
+        *_RLT_GATE_METRIC_MAP,
     )
 
     def __init__(
@@ -289,11 +257,7 @@ class ManiskillRLTEnv(ManiskillEnv):
             "best_progress_yz": torch.zeros(batch_size, dtype=torch.float32),
             "best_progress_score": torch.zeros(batch_size, dtype=torch.float32),
             "stalled_progress_chunks": torch.zeros(batch_size, dtype=torch.float32),
-            "expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
             "oracle_expert_takeover_active": torch.zeros(batch_size, dtype=torch.bool),
-            "oracle_expert_candidate": torch.zeros(batch_size, dtype=torch.bool),
-            "oracle_expert_entered": torch.zeros(batch_size, dtype=torch.bool),
-            "oracle_expert_entry_step": torch.zeros(batch_size, dtype=torch.float32),
             "oracle_expert_progress_guard": torch.zeros(batch_size, dtype=torch.bool),
             "oracle_progress_initialized": torch.zeros(batch_size, dtype=torch.bool),
             "oracle_best_progress_x": torch.zeros(batch_size, dtype=torch.float32),
@@ -467,20 +431,12 @@ class ManiskillRLTEnv(ManiskillEnv):
                 for metric_key, rollout_key in self._RLT_GATE_METRIC_MAP.items()
             }
         )
-        switch_info.update(
-            {
-                "rlt_oracle_expert_candidate": state["oracle_expert_candidate"][
-                    :, None
-                ],
-                "rlt_oracle_expert_active": state["oracle_expert_takeover_active"][
-                    :, None
-                ],
-                "geometry_expert_entered": state["oracle_expert_entered"][:, None],
-                "geometry_expert_entry_step": state["oracle_expert_entry_step"][
-                    :, None
-                ],
-            }
-        )
+        expert_cfg = self._rlt_switch_cfg.get("expert_takeover", {}) or {}
+        oracle_cfg = expert_cfg.get("oracle_metrics", {}) or {}
+        if bool(oracle_cfg.get("enable", False)):
+            switch_info["rlt_oracle_expert_active"] = state[
+                "oracle_expert_takeover_active"
+            ][:, None]
         return switch_info
 
     def _rlt_expert_takeover_mask(
@@ -549,19 +505,14 @@ class ManiskillRLTEnv(ManiskillEnv):
         state: dict[str, torch.Tensor],
         *,
         prefix: str,
-        reset_history: bool = False,
     ) -> None:
         for suffix in (
             "expert_takeover_active",
-            "expert_candidate",
             "expert_progress_guard",
             "progress_initialized",
             "stalled_progress_chunks",
         ):
             state[f"{prefix}{suffix}"].zero_()
-        if reset_history:
-            state[f"{prefix}expert_entered"].zero_()
-            state[f"{prefix}expert_entry_step"].zero_()
 
     def _update_rlt_expert_oracle_state(
         self,
@@ -576,7 +527,6 @@ class ManiskillRLTEnv(ManiskillEnv):
             self._clear_rlt_stalled_progress_state(
                 state,
                 prefix="oracle_",
-                reset_history=True,
             )
             return
 
@@ -601,7 +551,6 @@ class ManiskillRLTEnv(ManiskillEnv):
             device=device,
             in_critical_phase=in_critical_phase,
             prefix="oracle_",
-            track_entry=True,
         )
 
     def _update_rlt_stalled_progress_expert_takeover(
@@ -618,7 +567,6 @@ class ManiskillRLTEnv(ManiskillEnv):
             device=device,
             in_critical_phase=state["rlt_switch_flags"],
             prefix="",
-            track_entry=False,
         )
 
     def _update_rlt_stalled_progress_state(
@@ -629,11 +577,9 @@ class ManiskillRLTEnv(ManiskillEnv):
         device: torch.device,
         in_critical_phase: torch.Tensor,
         prefix: str,
-        track_entry: bool,
     ) -> None:
         state = self._rlt_switch_state_to(device)
         active_key = f"{prefix}expert_takeover_active"
-        candidate_key = f"{prefix}expert_candidate"
         guard_key = f"{prefix}expert_progress_guard"
         initialized_key = f"{prefix}progress_initialized"
         best_x_key = f"{prefix}best_progress_x"
@@ -726,7 +672,6 @@ class ManiskillRLTEnv(ManiskillEnv):
             ),
         )
 
-        state[candidate_key] = trigger_now
         state[active_key] = active_before | trigger_now
         state[initialized_key] = torch.where(
             eligible & (~active_before),
@@ -738,16 +683,6 @@ class ManiskillRLTEnv(ManiskillEnv):
             state[stalled_key],
             stalled_chunks,
         )
-        if track_entry:
-            entered_key = f"{prefix}expert_entered"
-            entry_step_key = f"{prefix}expert_entry_step"
-            first_enter_now = trigger_now & (~state[entered_key])
-            state[entry_step_key] = torch.where(
-                first_enter_now,
-                self._rlt_elapsed_steps(infos, device),
-                state[entry_step_key],
-            )
-            state[entered_key] = state[entered_key] | trigger_now
 
     def _rlt_stalled_progress_guard(
         self,

@@ -15,7 +15,6 @@
 """Small critical-phase classifier over frozen STEAM fused features."""
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,16 +23,6 @@ import torch.nn as nn
 
 PHASE_HEAD_FORMAT_VERSION = 1
 RLT_PHASE_FEATURE_KEY = "rlt_gate_phase_features"
-
-
-@dataclass(frozen=True)
-class PhaseHeadPrediction:
-    """Ensemble phase-head prediction for one batch."""
-
-    probability: torch.Tensor
-    prediction_variance: torch.Tensor
-    member_probabilities: torch.Tensor
-    member_logits: torch.Tensor
 
 
 class SteamPhaseHead(nn.Module):
@@ -106,18 +95,9 @@ class SteamPhaseHead(nn.Module):
             logits.append(head(member_features).squeeze(-1))
         return torch.stack(logits, dim=0)
 
-    def predict(self, features: torch.Tensor) -> PhaseHeadPrediction:
-        """Return mean probability and ensemble disagreement."""
-        logits = self(features)
-        member_probabilities = torch.sigmoid(logits)
-        probability = member_probabilities.mean(dim=0)
-        prediction_variance = member_probabilities.var(dim=0, unbiased=False)
-        return PhaseHeadPrediction(
-            probability=probability,
-            prediction_variance=prediction_variance,
-            member_probabilities=member_probabilities,
-            member_logits=logits,
-        )
+    def predict(self, features: torch.Tensor) -> torch.Tensor:
+        """Return the mean critical-phase probability across ensemble heads."""
+        return torch.sigmoid(self(features)).mean(dim=0)
 
     def checkpoint_payload(self, *, metadata: dict[str, Any] | None = None) -> dict:
         """Build a portable checkpoint payload."""
@@ -177,7 +157,6 @@ class SteamPhaseHead(nn.Module):
 
 __all__ = [
     "PHASE_HEAD_FORMAT_VERSION",
-    "PhaseHeadPrediction",
     "RLT_PHASE_FEATURE_KEY",
     "SteamPhaseHead",
 ]

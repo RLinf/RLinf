@@ -125,84 +125,12 @@ def collect_trajectory_replay_metrics(
             "intervention_count",
         ),
         (
-            "replay/steam_critical_active_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_steam_critical_active"
-            ),
-            "steam_critical_active_sum",
-            "steam_critical_active_count",
-        ),
-        (
             "replay/geometry_critical_active_rate",
             lambda trajectory: trajectory_forward_input_tensor(
                 trajectory, "geometry_critical_active"
             ),
             "geometry_critical_active_sum",
             "geometry_critical_active_count",
-        ),
-        (
-            "replay/steam_phase_probability_mean",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_phase_probability"
-            ),
-            "steam_phase_probability_sum",
-            "steam_phase_probability_count",
-        ),
-        (
-            "replay/steam_phase_variance_mean",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_phase_prediction_variance"
-            ),
-            "steam_phase_variance_sum",
-            "steam_phase_variance_count",
-        ),
-        (
-            "replay/actual_base_action_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "actual_base_action"
-            ),
-            "actual_base_action_sum",
-            "actual_base_action_count",
-        ),
-        (
-            "replay/actual_actor_action_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "actual_actor_action"
-            ),
-            "actual_actor_action_sum",
-            "actual_actor_action_count",
-        ),
-        (
-            "replay/steam_expert_request_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "intervention_requested"
-            ),
-            "steam_expert_request_sum",
-            "steam_expert_request_count",
-        ),
-        (
-            "replay/actual_expert_action_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "actual_expert_action"
-            ),
-            "actual_expert_action_sum",
-            "actual_expert_action_count",
-        ),
-        (
-            "replay/steam_expert_candidate_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_expert_candidate"
-            ),
-            "expert_candidate_sum",
-            "expert_candidate_count",
-        ),
-        (
-            "replay/steam_expert_active_rate",
-            lambda trajectory: trajectory_forward_input_tensor(
-                trajectory, "rlt_gate_expert_active"
-            ),
-            "expert_gate_active_sum",
-            "expert_gate_active_count",
         ),
         (
             "replay/geometry_expert_active_rate",

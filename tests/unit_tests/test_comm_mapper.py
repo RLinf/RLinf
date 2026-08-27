@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import inspect
-from types import SimpleNamespace
-
 import torch
 
-from rlinf.algorithms.rlt.critical_phase_gate import RLT_GATE_INFO_KEYS
 from rlinf.data.schema.embodied_types import EnvOutput, PolicyOutput
 from rlinf.scheduler import (
     build_recv_plan,
@@ -27,8 +22,6 @@ from rlinf.scheduler import (
     merge_batches,
     split_batch,
 )
-from rlinf.scheduler.worker.routing import validate_batch_size
-from rlinf.workers.env.env_worker import EnvWorker
 from rlinf.workers.rollout.hf.huggingface_worker import MultiStepRolloutWorker
 
 
@@ -200,7 +193,6 @@ def test_policy_output_split_merge_invariant():
         forward_inputs={
             "action": torch.arange(12, dtype=torch.float32).view(6, 2),
             "states": torch.arange(18, dtype=torch.float32).view(6, 3),
-            "score": torch.arange(6, dtype=torch.float32).view(6, 1),
         },
         versions=torch.arange(6, dtype=torch.float32).view(6, 1),
     )
@@ -220,123 +212,7 @@ def test_policy_output_split_merge_invariant():
     assert torch.equal(
         merged.forward_inputs["states"], policy_output.forward_inputs["states"]
     )
-    assert torch.equal(
-        merged.forward_inputs["score"], policy_output.forward_inputs["score"]
-    )
     assert torch.equal(merged.versions, policy_output.versions)
-
-
-def test_evaluate_splits_gate_policy_output():
-    class _ImmediateWork:
-        async def async_wait(self):
-            return {
-                "obs": _make_obs(0, 6),
-                "final_obs": None,
-                "rlt_switch_flags": None,
-                "intervene_flags": None,
-                "dones": torch.zeros((6, 1), dtype=torch.bool),
-            }
-
-    worker = object.__new__(MultiStepRolloutWorker)
-    worker.enable_offload = False
-    worker.env_decoupled_mode = False
-    worker.eval_rollout_epoch = 1
-    worker.n_eval_chunk_steps = 1
-    worker.num_pipeline_stages = 1
-    worker.eval_batch_size = 6
-    worker._rank = 0
-    worker.cfg = SimpleNamespace(env=SimpleNamespace(group_name="env"))
-    worker.rlt_critical_phase_gate = SimpleNamespace(reset=lambda **_: None)
-    worker.recv_from = lambda **_: _ImmediateWork()
-
-    actions = torch.arange(12, dtype=torch.float32).view(6, 2)
-    gate_info = {
-        key: torch.arange(6, dtype=torch.float32).view(6, 1)
-        for key in RLT_GATE_INFO_KEYS
-    }
-    worker._predict_rollout_actions = lambda *_, **__: (
-        actions,
-        {
-            "forward_inputs": gate_info,
-            "intervene_flags": torch.zeros((6, 1), dtype=torch.bool),
-        },
-    )
-    sends = []
-    worker.send_to = lambda **kwargs: sends.append(kwargs)
-
-    asyncio.run(
-        inspect.unwrap(MultiStepRolloutWorker.evaluate)(
-            worker,
-            input_channel=None,
-            output_channel=None,
-        )
-    )
-
-    assert len(sends) == 1
-    assert isinstance(sends[0]["data"], PolicyOutput)
-    shards = sends[0]["split_fn"](sends[0]["data"], [4, 2])
-    assert [shard.actions.shape[0] for shard in shards] == [4, 2]
-    assert all(set(shard.forward_inputs) == set(RLT_GATE_INFO_KEYS) for shard in shards)
-
-
-def test_env_evaluate_accepts_gate_policy_output():
-    class _EvalEnv:
-        is_start = False
-        rollout_infos = None
-
-        def reset(self):
-            return _make_obs(0, 6), {}
-
-        def set_rollout_infos(self, rollout_infos):
-            self.rollout_infos = rollout_infos
-
-    worker = object.__new__(EnvWorker)
-    worker.eval_rollout_epoch = 1
-    worker.n_eval_chunk_steps = 1
-    worker.stage_num = 1
-    worker.eval_num_envs_per_stage = 6
-    worker.eval_batch_size = 6
-    worker.env_decoupled_mode = False
-    worker.enable_rlt = False
-    worker.eval_env_list = [_EvalEnv()]
-    worker.eval_prev_done = [None]
-    worker.eval_enable_offload = False
-    worker.cfg = SimpleNamespace(
-        env=SimpleNamespace(
-            eval=SimpleNamespace(auto_reset=False),
-        ),
-        rollout=SimpleNamespace(group_name="rollout"),
-    )
-    worker.send_to = lambda **_: None
-
-    policy_output = PolicyOutput(
-        actions=torch.arange(12, dtype=torch.float32).view(6, 2),
-        forward_inputs={
-            key: torch.arange(6, dtype=torch.float32).view(6, 1)
-            for key in RLT_GATE_INFO_KEYS
-        },
-    )
-
-    def _recv_from(**kwargs):
-        validate_batch_size(
-            policy_output,
-            kwargs["batch_size"],
-            kwargs.get("infer_batch_size_fn"),
-        )
-        return policy_output
-
-    worker.recv_from = _recv_from
-    worker.env_evaluate_step = lambda *_: (None, {})
-    worker.finish_rollout = lambda **_: None
-
-    result = inspect.unwrap(EnvWorker.evaluate)(
-        worker,
-        input_channel=None,
-        rollout_channel=None,
-    )
-
-    assert result == {}
-    assert set(worker.eval_env_list[0].rollout_infos) == set(RLT_GATE_INFO_KEYS)
 
 
 def test_merge_env_outputs_with_partial_optional_fields():
