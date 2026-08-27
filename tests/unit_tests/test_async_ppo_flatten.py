@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from rlinf.workers.actor.async_ppo_fsdp_worker import (
+    _get_rollout_training_shape,
     flatten_rollout_batch_for_train,
 )
 
@@ -55,3 +56,13 @@ def test_flatten_rejects_inconsistent_time_dimension() -> None:
 
     with pytest.raises(ValueError, match="expected 1 or 2"):
         flatten_rollout_batch_for_train(batch, shuffle_id=None)
+
+
+def test_training_shape_uses_transitions_instead_of_bootstrap_entries() -> None:
+    batch = {
+        "advantages": torch.zeros(1, 4, 50),
+        "prev_logprobs": torch.zeros(2, 4, 50, 6),
+        "forward_inputs": {"action": torch.zeros(2, 4, 300)},
+    }
+
+    assert _get_rollout_training_shape(batch) == (1, 4)

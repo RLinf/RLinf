@@ -40,6 +40,23 @@ from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
+def _get_rollout_training_shape(nested_dict: dict) -> tuple[int, int]:
+    """Return the transition time and batch dimensions used for PPO updates."""
+    for reference_key in ("advantages", "returns", "rewards", "prev_logprobs"):
+        reference = nested_dict.get(reference_key)
+        if isinstance(reference, torch.Tensor):
+            if reference.ndim < 2:
+                raise ValueError(
+                    f"Rollout field {reference_key!r} must have [T, B, ...] shape, "
+                    f"got {tuple(reference.shape)}."
+                )
+            return int(reference.shape[0]), int(reference.shape[1])
+    raise ValueError(
+        "Cannot infer PPO training shape: expected one of advantages, returns, "
+        "rewards, or prev_logprobs."
+    )
+
+
 def flatten_rollout_batch_for_train(
     nested_dict: dict,
     shuffle_id: Optional[torch.Tensor],
@@ -50,11 +67,7 @@ def flatten_rollout_batch_for_train(
         # GAE outputs and rewards describe the transitions that are actually
         # trained.  Bootstrap/final-policy fields may carry one extra time
         # entry, so deriving T from prev_logprobs can over-count samples.
-        for reference_key in ("advantages", "returns", "rewards", "prev_logprobs"):
-            reference = nested_dict.get(reference_key)
-            if isinstance(reference, torch.Tensor):
-                target_time_steps = int(reference.shape[0])
-                break
+        target_time_steps, _ = _get_rollout_training_shape(nested_dict)
 
     ret_dict = {}
     for key, value in nested_dict.items():
@@ -248,8 +261,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             "Weight offloading is not supported when recomputing proximal logprobs."
         )
 
-        t_dim = self.rollout_batch["prev_logprobs"].shape[0]
-        b_dim = self.rollout_batch["prev_logprobs"].shape[1]
+        t_dim, b_dim = _get_rollout_training_shape(self.rollout_batch)
 
         flat = flatten_rollout_batch_for_train(self.rollout_batch, shuffle_id=None)
         total = flat["prev_logprobs"].shape[0]
@@ -309,8 +321,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
-        t_dim = int(self.rollout_batch["prev_logprobs"].shape[0])
-        b_dim = int(self.rollout_batch["prev_logprobs"].shape[1])
+        t_dim, b_dim = _get_rollout_training_shape(self.rollout_batch)
         total_samples = t_dim * b_dim
 
         generator = torch.Generator(device="cpu")
