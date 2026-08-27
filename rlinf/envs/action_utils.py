@@ -319,6 +319,40 @@ def prepare_actions_for_roboverse(
     return chunk_actions
 
 
+def prepare_actions_for_realworld(
+    raw_chunk_actions,
+    model_type: str,
+    num_action_chunks: int,
+    action_dim: int,
+) -> np.ndarray:
+    """Restore flattened OpenPI actions to the RealWorld chunk contract."""
+    chunk_actions = np.asarray(raw_chunk_actions)
+    if SupportedModel(model_type) != SupportedModel.OPENPI:
+        return chunk_actions
+
+    expected_flat_dim = num_action_chunks * action_dim
+    if chunk_actions.ndim == 2:
+        if chunk_actions.shape[-1] != expected_flat_dim:
+            raise ValueError(
+                "Flattened OpenPI RealWorld actions must have trailing dimension "
+                f"{expected_flat_dim}, got {chunk_actions.shape}."
+            )
+        chunk_actions = chunk_actions.reshape(-1, num_action_chunks, action_dim)
+    elif chunk_actions.ndim == 3:
+        expected_shape = (num_action_chunks, action_dim)
+        if chunk_actions.shape[1:] != expected_shape:
+            raise ValueError(
+                "OpenPI RealWorld action chunks must have trailing shape "
+                f"{expected_shape}, got {chunk_actions.shape}."
+            )
+    else:
+        raise ValueError(
+            "OpenPI RealWorld actions must be a 2-D flattened batch or a 3-D "
+            f"chunk batch, got {chunk_actions.shape}."
+        )
+    return chunk_actions
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -397,7 +431,12 @@ def prepare_actions(
             action_space=policy,
         )
     elif env_type == SupportedEnvType.REALWORLD:
-        chunk_actions = raw_chunk_actions
+        chunk_actions = prepare_actions_for_realworld(
+            raw_chunk_actions=raw_chunk_actions,
+            model_type=model_type,
+            num_action_chunks=num_action_chunks,
+            action_dim=action_dim,
+        )
     elif env_type == SupportedEnvType.GENESIS:
         chunk_actions = prepare_actions_for_genesis(
             raw_chunk_actions=raw_chunk_actions,

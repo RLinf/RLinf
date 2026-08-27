@@ -26,6 +26,120 @@ ROUTING_KEY_PREFIX = "scheduler_route"
 ROUTING_DEFAULT_TAG = "default"
 
 
+def balanced_group_id(
+    env_rank: int,
+    env_world_size: int,
+    rollout_world_size: int,
+) -> int:
+    """Map one env rank to a non-empty, balanced rollout group.
+
+    The floor-based proportional mapping keeps group sizes within one member of
+    each other and, when ``env_world_size >= rollout_world_size``, assigns at
+    least one env rank to every rollout rank.
+
+    Args:
+        env_rank: Rank of the env worker to map.
+        env_world_size: Number of env workers.
+        rollout_world_size: Number of rollout workers/groups.
+
+    Returns:
+        The rollout group id in ``[0, rollout_world_size)``.
+
+    Raises:
+        ValueError: If the world sizes or env rank are invalid, or if there are
+            fewer env workers than rollout workers.
+    """
+    if env_world_size <= 0:
+        raise ValueError(f"env_world_size must be positive, got {env_world_size}.")
+    if rollout_world_size <= 0:
+        raise ValueError(
+            f"rollout_world_size must be positive, got {rollout_world_size}."
+        )
+    if env_world_size < rollout_world_size:
+        raise ValueError(
+            "Group-route binding requires env_world_size >= rollout_world_size, "
+            f"got {env_world_size} < {rollout_world_size}."
+        )
+    if not 0 <= env_rank < env_world_size:
+        raise ValueError(f"env_rank must be in [0, {env_world_size}), got {env_rank}.")
+    return env_rank * rollout_world_size // env_world_size
+
+
+@dataclass(frozen=True)
+class GroupRouteBinding:
+    """Logical queue binding shared by env and rollout workers."""
+
+    enabled: bool
+    group_id: int | None = None
+
+    @property
+    def route_key(self) -> str | None:
+        """Return the channel route key, or ``None`` for the global pool."""
+        if not self.enabled:
+            return None
+        if self.group_id is None:
+            raise RuntimeError("Enabled group-route binding has no group id.")
+        return f"grp{self.group_id}"
+
+    @classmethod
+    def for_env(
+        cls,
+        *,
+        enabled: bool,
+        decoupled_mode: bool,
+        env_rank: int,
+        env_world_size: int,
+        rollout_world_size: int,
+    ) -> "GroupRouteBinding":
+        """Build a binding for an env worker."""
+        if not enabled:
+            return cls(enabled=False)
+        cls._require_decoupled_mode(decoupled_mode)
+        return cls(
+            enabled=True,
+            group_id=balanced_group_id(
+                env_rank=env_rank,
+                env_world_size=env_world_size,
+                rollout_world_size=rollout_world_size,
+            ),
+        )
+
+    @classmethod
+    def for_rollout(
+        cls,
+        *,
+        enabled: bool,
+        decoupled_mode: bool,
+        rollout_rank: int,
+        env_world_size: int,
+        rollout_world_size: int,
+    ) -> "GroupRouteBinding":
+        """Build a binding for a rollout worker."""
+        if not enabled:
+            return cls(enabled=False)
+        cls._require_decoupled_mode(decoupled_mode)
+        # Validate that the balanced env mapping gives every rollout a group.
+        balanced_group_id(
+            env_rank=env_world_size - 1,
+            env_world_size=env_world_size,
+            rollout_world_size=rollout_world_size,
+        )
+        if not 0 <= rollout_rank < rollout_world_size:
+            raise ValueError(
+                "rollout_rank must be in "
+                f"[0, {rollout_world_size}), got {rollout_rank}."
+            )
+        return cls(enabled=True, group_id=rollout_rank)
+
+    @staticmethod
+    def _require_decoupled_mode(decoupled_mode: bool) -> None:
+        if not decoupled_mode:
+            raise ValueError(
+                "rollout.enable_group_route_binding=true requires "
+                "runner.enable_decoupled_mode=true."
+            )
+
+
 def _build_channel_message(
     send_rank: int,
     batch_idx: int,

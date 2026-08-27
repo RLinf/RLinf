@@ -16,6 +16,7 @@ import asyncio
 import os
 import queue
 import threading
+from contextlib import contextmanager
 from typing import Any, Optional
 
 import numpy as np
@@ -25,7 +26,7 @@ from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
 from rlinf.data.storage.replay import PriorityStore
-from rlinf.scheduler import Worker
+from rlinf.scheduler import AcceleratorUtil, Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
@@ -80,6 +81,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             "rollout_store_size_per_rank", 1
         )
         self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
+
+    @contextmanager
+    def _profiled_timer(self, tag: str):
+        """Record a worker metric and matching accelerator profiling range."""
+        with self.worker_timer(tag):
+            with AcceleratorUtil.profiling_range(self._accelerator_type, tag):
+                yield
 
     async def recv_rollout_trajectories(self, input_channel):
         # drain channel
@@ -181,6 +189,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
 
+    @Worker.timer("compute_advantages_and_returns")
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
         proximal_values = self.rollout_batch.get("proximal_values", None)
@@ -271,6 +280,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         )
         self.rollout_batch["proximal_logprobs"] = proximal_logprobs
 
+    @Worker.timer("run_training")
     def run_training(self) -> dict[str, Any]:
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
@@ -390,15 +400,16 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
 
-                    with self.amp_context:
-                        out = self.model(
-                            forward_inputs=forward_inputs,
-                            compute_logprobs=True,
-                            compute_entropy=(self.cfg.algorithm.entropy_bonus > 0),
-                            compute_values=compute_values,
-                            use_cache=False,
-                            **model_kwargs,
-                        )
+                    with self._profiled_timer("actor/forward"):
+                        with self.amp_context:
+                            out = self.model(
+                                forward_inputs=forward_inputs,
+                                compute_logprobs=True,
+                                compute_entropy=(self.cfg.algorithm.entropy_bonus > 0),
+                                compute_values=compute_values,
+                                use_cache=False,
+                                **model_kwargs,
+                            )
 
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
@@ -456,8 +467,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
                     loss = loss / self.gradient_accumulation
-                    with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
+                    with self._profiled_timer("actor/backward"):
+                        with backward_ctx:
+                            self.grad_scaler.scale(loss).backward()
 
                     metrics_data["actor/entropy_loss"] = float(
                         entropy_loss.detach().item()
@@ -467,7 +479,8 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                 torch.cuda.empty_cache()
 
-                grad_norm, lr_list = self.optimizer_step()
+                with self._profiled_timer("actor/optimizer_step"):
+                    grad_norm, lr_list = self.optimizer_step()
                 extra_metrics = {
                     "actor/grad_norm": grad_norm,
                     "actor/lr": lr_list[0],
