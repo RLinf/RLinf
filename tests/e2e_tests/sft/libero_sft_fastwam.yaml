@@ -1,5 +1,3 @@
-# One real FastWAM FSDP optimizer step: checkpoint load, dataset decode, forward,
-# backward, gradient reduction, and optimizer update.
 defaults:
   - hybrid_engines/fsdp@actor.fsdp_config
   - model/fastwam@actor.model
@@ -33,11 +31,7 @@ runner:
   resume_dir: null
 
 data:
-  # Download the LIBERO LeRobot data from:
-  # https://huggingface.co/datasets/yuanty/LIBERO-fastwam
   train_data_paths: ${oc.env:FASTWAM_E2E_DATA_PATH,/path/to/fastwam-libero}
-  # Generate this cache with FastWAM's scripts/precompute_text_embeds.py:
-  # https://github.com/yuantianyuan01/FastWAM
   text_embedding_cache_dir: ${oc.env:FASTWAM_TEXT_EMBEDDING_CACHE_DIR,/path/to/text_embeds_cache/libero}
   num_workers: 0
 
@@ -50,8 +44,6 @@ actor:
 
   model:
     model_type: "fastwam"
-    # Download the released checkpoint and stats from:
-    # https://huggingface.co/yuanty/fastwam
     model_path: ${oc.env:FASTWAM_CHECKPOINT_PATH,/path/to/libero_uncond_2cam224.pt}
     dataset_stats_path: ${oc.env:FASTWAM_DATASET_STATS_PATH,/path/to/libero_uncond_2cam224_dataset_stats.json}
 

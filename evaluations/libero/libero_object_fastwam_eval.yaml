@@ -1,4 +1,3 @@
-# Full FastWAM evaluation over all 500 LIBERO-Object initial states.
 defaults:
   - env/libero_object@env.eval
   - model/fastwam@rollout.model
@@ -36,11 +35,11 @@ env:
   eval:
     seed: 42
     rollout_epoch: 1
-    # Each of the 20 slots evaluates 25 episodes: 20 * 25 = 500 states.
+    # 20 slots x 25 episodes cover all 500 initial states.
     total_num_envs: 20
     auto_reset: true
     ignore_terminations: true
-    # Match FastWAM upstream: 30 reset no-ops, then 400 controller steps.
+    # Reset no-op steps before policy control.
     num_steps_wait: 30
     max_episode_steps: 400
     max_steps_per_rollout_epoch: 10000
