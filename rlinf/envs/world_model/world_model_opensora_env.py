@@ -17,9 +17,7 @@ This environment is used to evaluate the OpenSora  world model with the Video re
 """
 
 import io
-import json
 import os
-from collections import deque
 from typing import Optional, Union
 
 import numpy as np
@@ -27,15 +25,13 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from omegaconf import OmegaConf
-
-# OpenSora imports
-from opensora.registry import MODELS, SCHEDULERS, build_module
-from opensora.utils.inference_utils import prepare_multi_resolution_info
-from opensora.utils.misc import to_torch_dtype
+from opensora.registry import MODELS, build_module
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.envs.utils import recursive_to_device
+from rlinf.envs.world_model.backend import WorldModelBackend
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
+from rlinf.envs.world_model.opensora_backend import OpenSoraBackend
 
 __all__ = ["OpenSoraEnv"]
 
@@ -54,9 +50,6 @@ class OpenSoraEnv(BaseWorldEnv):
             cfg, num_envs, seed_offset, total_num_processes, worker_info, record_metrics
         )
         self.world_model_cfg = self.cfg.world_model_cfg
-        self.inference_dtype = to_torch_dtype(self.world_model_cfg.get("dtype", "bf16"))
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
 
         # Reset state management
         self.use_fixed_reset_state_ids = cfg.use_fixed_reset_state_ids
@@ -77,43 +70,19 @@ class OpenSoraEnv(BaseWorldEnv):
 
         self.image_size = tuple(self.world_model_cfg.image_size)
 
-        # Load models
-        self.vae = self._load_vae().eval().to(self.device, self.inference_dtype)
-        self.model = self._load_model().eval().to(self.device, self.inference_dtype)
-        self.scheduler = self._load_scheduler()
+        # Inference backend; it owns the latent condition window, the env owns episode semantics.
+        self.backend: WorldModelBackend = OpenSoraBackend(
+            cfg, self.device, self._get_runtime_device_str()
+        )
 
         # Load reward model if specified
         self.reward_model = self._load_reward_model().eval().to(self.device)
-
-        # Determine VAE type for frame calculations
-        vae_type = self.world_model_cfg.vae.get("type", "OpenSoraVAE_V1_2")
-        self.is_vae_v1_2 = vae_type == "OpenSoraVAE_V1_2"
-        self.z_mask_frame_num = int(self.chunk / 4 if self.is_vae_v1_2 else self.chunk)
-        self.z_condition_frame_length = int(
-            self.condition_frame_length / 4
-            if self.is_vae_v1_2
-            else self.condition_frame_length
-        )
 
         # Initialize state
         self.current_obs = None  # Will be a tensor [num_envs, 3, 1, t, h, w]
         self.task_descriptions = [""] * self.num_envs
         self.init_ee_poses = [None] * self.num_envs
 
-        # Image queue for condition frames (latent space)
-        self.image_queue = [
-            deque(maxlen=self.z_condition_frame_length) for _ in range(self.num_envs)
-        ]
-
-        # Action normalization stats
-        self.action_stats = self._load_action_stats()
-
-        # Initialize data preprocessing
-        self.trans_resize = transforms.Compose(
-            [
-                transforms.Resize(self.image_size),
-            ]
-        )
         self.trans_norm = transforms.Compose(
             [
                 transforms.Normalize(
@@ -122,72 +91,16 @@ class OpenSoraEnv(BaseWorldEnv):
             ]
         )
 
-        # Inference parameters
-        self.fps = self.world_model_cfg.get("fps", 3.0)
-        self.multi_resolution = self.world_model_cfg.get("multi_resolution", "STDiT2")
-
-        # Prepare multi-resolution info
-        self.model_args = prepare_multi_resolution_info(
-            self.multi_resolution,
-            1,
-            self.image_size,
-            self.num_frames,
-            self.fps,
-            self.device,
-            self.inference_dtype,
-        )
         self._is_offloaded = False
 
     def _build_dataset(self, cfg):
         return NpyTrajectoryDatasetWrapper(cfg.initial_image_path)
-
-    def _load_vae(self):
-        # Convert OmegaConf DictConfig to regular dict
-        vae_cfg = OmegaConf.to_container(self.world_model_cfg.vae, resolve=True)
-        vae = build_module(vae_cfg, MODELS)
-        return vae
-
-    def _load_model(self):
-        # Get latent size from VAE
-        input_size = (self.num_frames, *self.image_size)
-        latent_size = self.vae.get_latent_size(input_size)
-
-        # Convert OmegaConf DictConfig to regular dict
-        model_cfg = OmegaConf.to_container(self.world_model_cfg.model, resolve=True)
-        model = build_module(
-            model_cfg,
-            MODELS,
-            input_size=latent_size,
-            in_channels=self.vae.out_channels,
-            enable_sequence_parallelism=False,
-        )
-        return model
-
-    def _load_scheduler(self):
-        # Convert OmegaConf DictConfig to regular dict
-        scheduler_cfg = OmegaConf.to_container(
-            self.world_model_cfg.scheduler, resolve=True
-        )
-        scheduler = build_module(scheduler_cfg, SCHEDULERS)
-        return scheduler
 
     def _load_reward_model(self):
         rm_cfg = OmegaConf.to_container(self.world_model_cfg.reward_model, resolve=True)
         rew_model = build_module(rm_cfg, MODELS)
 
         return rew_model
-
-    def _load_action_stats(self):
-        """Load action normalization statistics"""
-        stats_path = self.world_model_cfg.get("stats_path", None)
-        if stats_path is not None and os.path.exists(stats_path):
-            with open(stats_path, "r") as f:
-                stats = json.load(f)
-                q01 = np.asarray(stats["action"]["q01"], np.float32)
-                q99 = np.asarray(stats["action"]["q99"], np.float32)
-            return {"q01": q01, "q99": q99}
-        else:
-            raise ValueError(f"Action stats path {stats_path} does not exist")
 
     def get_state(self) -> bytes:
         """Serialize runtime state to CPU bytes buffer for offload."""
@@ -211,54 +124,15 @@ class OpenSoraEnv(BaseWorldEnv):
                 }
             )
 
-        image_queue_state = []
-        for env_idx in range(self.num_envs):
-            queue_frames = []
-            for frame in self.image_queue[env_idx]:
-                queue_frames.append(recursive_to_device(frame, "cpu"))
-            image_queue_state.append(queue_frames)
-        env_state["image_queue"] = image_queue_state
-
         buffer = io.BytesIO()
         torch.save(env_state, buffer)
         return buffer.getvalue()
-
-    def load_state(self, state_buffer: bytes):
-        """Restore runtime state from CPU bytes buffer."""
-        buffer = io.BytesIO(state_buffer)
-        state = torch.load(buffer, map_location="cpu", weights_only=False)
-
-        self.current_obs = (
-            recursive_to_device(state["current_obs"], self.device)
-            if state["current_obs"] is not None
-            else None
-        )
-        self.task_descriptions = state["task_descriptions"]
-        self.init_ee_poses = state["init_ee_poses"]
-        self.elapsed_steps = state["elapsed_steps"]
-        self.prev_step_reward = state["prev_step_reward"].to(self.device)
-        self._is_start = state["_is_start"]
-        self.reset_state_ids = state["reset_state_ids"].to(self.device)
-        self._generator.set_state(state["generator_state"])
-
-        image_queue_state = state["image_queue"]
-        for env_idx in range(self.num_envs):
-            self.image_queue[env_idx].clear()
-            for frame in image_queue_state[env_idx]:
-                self.image_queue[env_idx].append(
-                    recursive_to_device(frame, self.device)
-                )
-
-        if self.record_metrics and "success_once" in state:
-            self.success_once = state["success_once"].to(self.device)
-            self.returns = state["returns"].to(self.device)
 
     def offload(self):
         """Move heavy models and runtime tensors to CPU."""
         if self._is_offloaded:
             return
-        self.vae = self.vae.to("cpu")
-        self.model = self.model.to("cpu")
+        self.backend.offload()
         self.reward_model = self.reward_model.to("cpu")
         self.current_obs = recursive_to_device(self.current_obs, "cpu")
         self.prev_step_reward = self.prev_step_reward.cpu()
@@ -266,23 +140,14 @@ class OpenSoraEnv(BaseWorldEnv):
         if self.record_metrics:
             self.success_once = self.success_once.cpu()
             self.returns = self.returns.cpu()
-        for env_idx in range(self.num_envs):
-            self.image_queue[env_idx] = deque(
-                [
-                    recursive_to_device(frame, "cpu")
-                    for frame in self.image_queue[env_idx]
-                ],
-                maxlen=self.z_condition_frame_length,
-            )
-        torch.cuda.empty_cache()
+        self._clear_accelerator_cache()
         self._is_offloaded = True
 
     def onload(self):
         """Move models and runtime tensors back to execution device."""
         if not self._is_offloaded:
             return
-        self.vae = self.vae.to(self.device, self.inference_dtype)
-        self.model = self.model.to(self.device, self.inference_dtype)
+        self.backend.onload()
         self.reward_model = self.reward_model.to(self.device)
         self.current_obs = recursive_to_device(self.current_obs, self.device)
         self.prev_step_reward = self.prev_step_reward.to(self.device)
@@ -290,23 +155,7 @@ class OpenSoraEnv(BaseWorldEnv):
         if self.record_metrics:
             self.success_once = self.success_once.to(self.device)
             self.returns = self.returns.to(self.device)
-        for env_idx in range(self.num_envs):
-            self.image_queue[env_idx] = deque(
-                [
-                    recursive_to_device(frame, self.device)
-                    for frame in self.image_queue[env_idx]
-                ],
-                maxlen=self.z_condition_frame_length,
-            )
         self._is_offloaded = False
-
-    def _normalize_action(self, actions):
-        """Normalize actions to [-1, 1] range"""
-        if self.action_stats is not None:
-            q01 = self.action_stats["q01"]
-            q99 = self.action_stats["q99"]
-            actions = 2 * ((actions - q01) / (q99 - q01)) - 1
-        return actions
 
     def _init_metrics(self):
         self.success_once = torch.zeros(
@@ -506,64 +355,32 @@ class OpenSoraEnv(BaseWorldEnv):
         self.current_obs = stacked_imgs.unsqueeze(2).to(self.device)
         # Shape: [num_envs, 3, 1, condition_frame_length, H, W]
 
-        # Encode condition frames to latent space and fill image_queue
-        images_for_encode = self.current_obs  # [num_envs, 3, 1, T, H, W]
-        num_envs, c, v, t, h, w = images_for_encode.shape
+        # The condition window, per env slot as [C, 1, H, W] frames; the backend encodes and keeps it
+        # from here on.
+        init_frames = [
+            [
+                self.current_obs[env_idx, :, 0, t_idx : t_idx + 1, :, :]
+                for t_idx in range(self.condition_frame_length)
+            ]
+            for env_idx in range(num_envs)
+        ]
 
-        # Reshape for VAE encoding: [num_envs, 3, 1, T, H, W] -> [num_envs * T, 3, H, W]
-        images_flat = images_for_encode.permute(0, 3, 1, 2, 4, 5).reshape(
-            num_envs * t, c, h, w
+        action_dim = getattr(self.cfg, "action_dim", 7)  # 7 for LIBERO
+
+        # Every reset restarts all env slots, so all sessions are replaced.
+        self.backend.close_session(range(num_envs))
+        self.backend.open_session(
+            env_ids=range(num_envs),
+            init_frames=init_frames,
+            init_actions=torch.zeros(
+                num_envs, self.condition_frame_length, action_dim, device=self.device
+            ),
+            task_ids=list(episode_indices),
+            seeds=[0] * num_envs,
         )
-        # Convert to the same dtype as VAE model (matching inference_rlinf_libero_yaml.py)
-        images_flat = images_flat.to(self.device).to(self.inference_dtype)
-        # Encode to latent
-        with torch.no_grad():
-            z_encoded = self.vae.encode(
-                images_flat.unsqueeze(2)
-            )  # [num_envs * T, C, 1, H', W']
-
-        # Reshape back and fill queues
-        z_encoded = z_encoded.squeeze(2)  # [num_envs * T, C, H', W']
-        z_encoded = z_encoded.reshape(
-            num_envs, t, *z_encoded.shape[1:]
-        )  # [num_envs, T, C, H', W']
-        z_encoded = z_encoded.permute(0, 2, 1, 3, 4)  # [num_envs, C, T, H', W']
-
-        # Fill image queues for each environment
-        for env_idx in range(num_envs):
-            self.image_queue[env_idx].clear()
-            for t_idx in range(t):
-                frame_latent = z_encoded[
-                    env_idx : env_idx + 1, :, t_idx : t_idx + 1, :, :
-                ]  # [1, C, 1, H', W']
-                self.image_queue[env_idx].append(frame_latent)
 
         self._is_start = False
         self._reset_metrics()
-
-        # Initialize action buffer (if needed)
-        # For OpenSora, we might not need action_buffer in the same way as EvacEnv
-        # But we'll keep it for compatibility
-        if hasattr(self.cfg, "action_dim"):
-            action_dim = self.cfg.action_dim
-        else:
-            action_dim = 7  # Default for LIBERO
-
-        # Initialize with zeros or from init_ee_pose
-        init_actions = []
-        for init_ee_pose in init_ee_poses:
-            if init_ee_pose is not None:
-                init_action = init_ee_pose.flatten()
-                # Pad or truncate to action_dim
-                if len(init_action) < action_dim:
-                    init_action = np.pad(
-                        init_action, (0, action_dim - len(init_action))
-                    )
-                elif len(init_action) > action_dim:
-                    init_action = init_action[:action_dim]
-            else:
-                init_action = np.zeros(action_dim, dtype=np.float32)
-            init_actions.append(init_action)
 
         # Store task descriptions and init_ee_poses
         self.task_descriptions = task_descriptions
@@ -621,118 +438,19 @@ class OpenSoraEnv(BaseWorldEnv):
             f"Actions shape {actions.shape} does not match num_envs {self.num_envs}"
         )
 
-        # Normalize actions
-        actions_np = (
-            actions if isinstance(actions, np.ndarray) else actions.cpu().numpy()
+        # pred_images: [num_envs, C, T, H, W] in [-1, 1]; T follows the VAE, not the chunk length
+        pred_images = self.backend.generate(
+            env_ids=range(num_envs),
+            actions=actions,
         )
-        actions_normalized = self._normalize_action(actions_np)
-        actions_tensor = (
-            torch.from_numpy(actions_normalized)
-            .to(self.device)
-            .to(self.inference_dtype)
-        )
-
-        # Get latent size
-        latent_size = self.vae.get_latent_size((self.num_frames, *self.image_size))
-
-        # Collect condition frames from all environments and stack them
-        # Each queue contains frames of shape [1, C, 1, H', W']
-        mask_images_list = []
-        for env_idx in range(num_envs):
-            # Concatenate frames from queue: [1, C, T_cond, H', W']
-            mask_images = torch.concat(list(self.image_queue[env_idx]), dim=2)
-            mask_images_list.append(
-                mask_images.squeeze(0)
-            )  # Remove batch dim: [C, T_cond, H', W']
-
-        # Stack all environments: [num_envs, C, T_cond, H', W']
-        mask_images_batch = torch.stack(mask_images_list, dim=0)
-
-        # Prepare actions for all environments: [num_envs, chunk, action_dim]
-        actions_batch = actions_tensor.reshape(num_envs, -1, actions_tensor.shape[-1])
-
-        # Create noise for masked frames for all environments: [num_envs, C, T_mask, H', W']
-        z = torch.randn(
-            num_envs,
-            self.vae.out_channels,
-            self.z_mask_frame_num,
-            *latent_size[1:],
-            device=self.device,
-            dtype=self.inference_dtype,
-        )
-
-        # Concatenate condition and mask frames: [num_envs, C, T_cond + T_mask, H', W']
-        z_full = torch.concat([mask_images_batch, z], dim=2)
-
-        # Create mask for all environments: [num_envs, T_cond + T_mask]
-        masks = torch.tensor(
-            [[0] * self.z_condition_frame_length + [1] * self.z_mask_frame_num]
-            * num_envs,
-            device=self.device,
-            dtype=self.inference_dtype,
-        )
-
-        # Prepare actions for model: [num_envs, chunk, action_dim]
-        y = actions_batch.to(self.device).to(self.inference_dtype)
-
-        # Sample using scheduler with batch processing
-        samples = self.scheduler.sample(
-            self.model,
-            z=z_full,
-            y=y,
-            device=self.device,
-            additional_args=self.model_args,
-            progress=False,
-            mask=masks,
-        )
-
-        # Extract only the generated frames (masked part): [num_envs, C, T_mask, H', W']
-        pred_latents = samples[:, :, -self.z_mask_frame_num :, :, :].to(
-            self.inference_dtype
-        )
-
-        # Update image queues before decoding (still need to process each environment separately)
-        if self.is_vae_v1_2:
-            # For VAE_V1_2, chunk into z_mask_frame_num parts
-            for env_idx in range(num_envs):
-                env_pred_latents = pred_latents[
-                    env_idx : env_idx + 1
-                ]  # [1, C, T_mask, H', W']
-                for frame in env_pred_latents.clone().chunk(
-                    self.z_mask_frame_num, dim=2
-                ):
-                    self.image_queue[env_idx].append(frame)
-
-            # Decode with num_frames parameter: [num_envs, C, T_mask, H', W'] -> [num_envs, C, T, H, W]
-            pred_images = self.vae.decode(pred_latents, num_frames=12)
-        else:
-            # For regular VAE, chunk into action_chunk_length parts
-            for env_idx in range(num_envs):
-                env_pred_latents = pred_latents[
-                    env_idx : env_idx + 1
-                ]  # [1, C, T_mask, H', W']
-                for frame in env_pred_latents.clone().chunk(self.chunk, dim=2):
-                    self.image_queue[env_idx].append(frame)
-
-            # Decode: [num_envs, C, T_mask, H', W'] -> [num_envs, C, T, H, W]
-            pred_images = self.vae.decode(pred_latents)
-
-        # pred_images shape: [num_envs, C, T, H, W] where T depends on VAE type
 
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
-        x_samples = pred_images.unsqueeze(2)
+        x_samples = pred_images.unsqueeze(2).to(
+            self.device, dtype=self.current_obs.dtype
+        )
 
-        # Update current observation
-        # For first chunk, we need to replace condition frames
-        # For subsequent chunks, we concatenate new frames
-        if self.current_obs.shape[3] == self.condition_frame_length:
-            # First chunk: keep condition frames and add new frames
-            # But we need to decode the condition frames back to image space first
-            # Actually, current_obs is already in image space, so we just concatenate
-            self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
-        else:
-            # Subsequent chunks: concatenate new frames
-            self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
+        # Update current observation: append new generated frames to the time dimension
+        self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
 
         # Keep only the last condition_frame_length + chunk frames
         # Note: chunk might be different from T in x_samples due to VAE decoding
@@ -810,9 +528,7 @@ class OpenSoraEnv(BaseWorldEnv):
         self.onload()
         # policy_output_action: [num_envs, chunk, action_dim]
 
-        with torch.amp.autocast(device_type="cuda", dtype=self.inference_dtype):
-            # Infer next chunk frames
-            self._infer_next_chunk_frames(policy_output_action)
+        self._infer_next_chunk_frames(policy_output_action)
 
         # Update elapsed steps
         self.elapsed_steps += self.chunk
