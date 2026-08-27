@@ -198,7 +198,9 @@ def test_potential_preprocess_writes_train_manifest(tmp_path) -> None:
 def test_load_dual_view_sample_from_manifest_pkl(tmp_path) -> None:
     pkl_path = tmp_path / "sample.pkl"
     _dual_view_pkl(pkl_path, frames=5)
-    row = _manifest_row(pkl_path, "potential", window_size=5, answer="3", teacher_value=0.4)
+    row = _manifest_row(
+        pkl_path, "potential", window_size=5, answer="3", teacher_value=0.4
+    )
 
     main_frames, extra_frames = load_dual_view_sample(row, 0)
 
@@ -257,7 +259,9 @@ def test_feature_rows_shards_by_source_hash(tmp_path) -> None:
 def test_extract_potential_features_without_vlm(tmp_path, monkeypatch) -> None:
     pkl_path = tmp_path / "sample.pkl"
     _dual_view_pkl(pkl_path, frames=5)
-    row = _manifest_row(pkl_path, "potential", window_size=5, answer="3", teacher_value=0.4)
+    row = _manifest_row(
+        pkl_path, "potential", window_size=5, answer="3", teacher_value=0.4
+    )
     manifest = tmp_path / "segments.jsonl"
     manifest.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
