@@ -70,17 +70,22 @@ class ReshardConfig:
     rollout_ep_size: int = 1
     """Rollout expert-model-parallel size >1 means the rollout engine shards MoE experts across its TP ranks via EP"""
 
+    rollout_moe_dense_tp_size: Optional[int] = None
+    """Rollout dense-MLP TP size (sglang moe_dense_tp_size); None = inherit reshard_tp_size."""
+
+    rollout_full_tp_size: int = 1
+    """Rollout engine full TP size (sglang tensor_parallel_size), used for shared_experts sharding."""
+
+    rollout_lm_head_tp_size: int = 1
+    """Rollout lm_head TP size; may differ from attn_tp when enable_dp_lm_head."""
+
+    enable_dp_attention: bool = False
+    """Whether sglang rollout uses DP-attention (attn TP != full engine TP)."""
+
     ep_reshard_fn: Callable = None
     """Resharding function to use for resharding the model parallelism from expert_parallel_size to reshard_ep_size."""
 
     def __post_init__(self):
-        if self.model_config.tensor_model_parallel_size < self.reshard_tp_size:
-            raise ValueError(
-                "Model tp size must be greater than or equal to resharding tp size."
-            )
-        if self.model_config.tensor_model_parallel_size % self.reshard_tp_size != 0:
-            raise ValueError("Model tp size must be divisible by resharding tp size.")
-
         if self.model_type is None:
             raise ValueError(
                 "Please specify the model_type, valid options are `qwen2.5` and `llama2`."

@@ -445,6 +445,9 @@ class ReasoningRunner:
         self.actor.sync_model_to_rollout()
         self.rollout.sync_model_from_actor().wait()
         self.actor.del_reshard_state_dict().wait()
+        # Resume KV cache + cuda graph after actor has offloaded its model
+        if self.component_placement.is_collocated:
+            self.rollout.onload_kv_cudagraph().wait()
 
     def run(self):
         epoch_iter = range(self.epoch, self.cfg.runner.max_epochs)

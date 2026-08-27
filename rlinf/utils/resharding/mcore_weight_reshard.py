@@ -18,56 +18,13 @@ from megatron.core import parallel_state
 from megatron.training.training import unwrap_model
 
 from .reshard_config import ReshardConfig
+from .utils import gather_and_reshard_tensor
 
 
 class MegatronCoreWeightReshard:
     def __init__(self, config: ReshardConfig):
         self.config = config
         self.bucket_capacity = self.config.bucket_capacity
-
-        assert (
-            self.config.model_config.tensor_model_parallel_size
-            >= self.config.reshard_tp_size
-            and self.config.model_config.tensor_model_parallel_size
-            % self.config.reshard_tp_size
-            == 0
-        ), (
-            f"Invalid tensor model parallel size {self.config.model_config.tensor_model_parallel_size} "
-            f"and reshard tp size {self.config.reshard_tp_size}. "
-        )
-        self.tp_subgroups = {}
-        self.merge_factor = (
-            self.config.model_config.tensor_model_parallel_size
-            // self.config.reshard_tp_size
-        )
-        self._create_tp_subgroups()
-
-    def _create_tp_subgroups(self):
-        self.world_size = torch.distributed.get_world_size()
-        num_groups = self.world_size // self.merge_factor
-        all_subgroups = [
-            list(range(i * self.merge_factor, (i + 1) * self.merge_factor))
-            for i in range(num_groups)
-        ]
-
-        for subgroup_ranks in all_subgroups:
-            key = tuple(subgroup_ranks)
-            if key not in self.tp_subgroups:
-                self.tp_subgroups[key] = parallel_state.create_group(
-                    subgroup_ranks, backend="nccl"
-                )
-
-    def _get_tp_subgroup(self, subgroup_ranks):
-        """
-        Retrieve an existing communication subgroup.
-        """
-        key = tuple(subgroup_ranks)
-        if key in self.tp_subgroups:
-            return self.tp_subgroups[key]
-
-        raise ValueError(
-            f"Subgroup {key} does not exist! Please call _create_tp_subgroups() to create this subgroup first."
-        )
 
     def divide_model_to_bucket(self, model):
         bucket_capacity = self.bucket_capacity
@@ -110,10 +67,23 @@ class MegatronCoreWeightReshard:
             model_bucket_list.append(model_bucket)
         return model_bucket_list
 
-    def gather_and_reshard_model(self, bucket_weight, dst_tp_rank):
+    def gather_and_reshard_model(
+        self,
+        bucket_weight,
+        dst_tp_rank,
+        dst_ep_rank=None,
+        dst_lm_head_rank=None,
+        dst_shared_rank=None,
+    ):
         """
         Accumulate all vp model chunks together, and reshard model (i.e) gather all pp ranks
         if required and return the final model state dict
+
+        Args:
+            dst_tp_rank: rollout attention tp rank (for attention/dense TP slice).
+            dst_ep_rank: rollout ep rank (for EP expert selection). None when no
+                MoE EP (rollout_ep_size==1 or non-MoE model); in that case the
+                tpe_reshard_fn path (TP-slice) is used instead of ep_reshard_fn.
         """
 
         def _get_layer_index(split_key):
@@ -229,8 +199,8 @@ class MegatronCoreWeightReshard:
                         model_level_params[key] = val
 
         # param split after routing: shared_experts must be in tl, not expert.
-        _n_shared_exp = sum(1 for _k in expert_params if "shared_experts" in _k)
-        assert _n_shared_exp == 0, (
+        n_shared_exp = sum(1 for key in expert_params if "shared_experts" in key)
+        assert n_shared_exp == 0, (
             "shared_experts leaked into expert_params; would crash EP gather"
         )
 
@@ -294,7 +264,7 @@ class MegatronCoreWeightReshard:
                     ep_gathered_params = self.config.ep_reshard_fn(
                         ep_gathered_params,
                         self.config.rollout_ep_size,
-                        dst_tp_rank,  # == rollout ep rank in collocated (ep=tp)
+                        dst_ep_rank,
                         self.config.model_config.num_moe_experts,
                     )
                 else:
@@ -347,18 +317,82 @@ class MegatronCoreWeightReshard:
             )
 
         if reshard_tp_model:
-            rank = torch.distributed.get_rank()
-            group_index = rank // self.merge_factor
-            subgroup_ranks = list(
-                range(
-                    group_index * self.merge_factor,
-                    (group_index + 1) * self.merge_factor,
+            full_tp_group = parallel_state.get_tensor_model_parallel_group()
+            rollout_full_tp = self.config.rollout_full_tp_size
+
+            if self.config.enable_dp_attention:
+                # DPA: attn TP (reshard_tp_size) != full engine TP
+                attn_dict = {}
+                dense_mlp_dict = {}
+                shared_experts_dict = {}
+                vocab_dict = {}
+                has_lm_head_dst = dst_lm_head_rank is not None
+                for key, val in model_state_dict.items():
+                    if has_lm_head_dst and (
+                        key.endswith("output_layer.weight")
+                        or key.endswith("eh_proj.weight")
+                    ):
+                        vocab_dict[key] = val
+                    elif "shared_experts" in key:
+                        shared_experts_dict[key] = val
+                    elif "mlp.linear_fc" in key:
+                        dense_mlp_dict[key] = val
+                    else:
+                        attn_dict[key] = val
+                # Attention: full TP all_gather + slice to 1/reshard_tp.
+                attn_dict = self.config.tp_reshard_fn(
+                    attn_dict,
+                    full_tp_group,
+                    dst_tp_rank,
+                    self.config.reshard_tp_size,
                 )
-            )
-            tp_sub_group = self._get_tp_subgroup(subgroup_ranks)
-            model_state_dict = self.config.tp_reshard_fn(
-                model_state_dict, self.merge_factor, tp_sub_group
-            )
+                # Dense MLP: full TP all_gather + slice to 1/effective_dense_tp.
+                effective_dense_tp = (
+                    self.config.rollout_moe_dense_tp_size or self.config.reshard_tp_size
+                )
+                dense_dst_rank = dst_tp_rank % effective_dense_tp
+                dense_mlp_dict = self.config.tp_reshard_fn(
+                    dense_mlp_dict,
+                    full_tp_group,
+                    dense_dst_rank,
+                    effective_dense_tp,
+                )
+                # Shared experts: full TP all_gather + slice to 1/rollout_full_tp.
+                shared_experts_dict = self.config.tp_reshard_fn(
+                    shared_experts_dict,
+                    full_tp_group,
+                    dst_shared_rank,
+                    rollout_full_tp,
+                )
+                # lm_head (output_layer) + MTP eh_proj: full TP all_gather + slice.
+                lm_head_tp = self.config.rollout_lm_head_tp_size
+                for key, val in vocab_dict.items():
+                    if key.endswith("eh_proj.weight"):
+                        vocab_dict[key] = gather_and_reshard_tensor(
+                            val, 0, full_tp_group, 0, 1
+                        )
+                    else:  # output_layer / lm_head
+                        vocab_dict[key] = gather_and_reshard_tensor(
+                            val,
+                            0,
+                            full_tp_group,
+                            dst_lm_head_rank,
+                            lm_head_tp,
+                        )
+                model_state_dict = {
+                    **attn_dict,
+                    **dense_mlp_dict,
+                    **shared_experts_dict,
+                    **vocab_dict,
+                }
+            else:
+                # Non-DPA: full TP all_gather + slice to 1/reshard_tp.
+                model_state_dict = self.config.tp_reshard_fn(
+                    model_state_dict,
+                    full_tp_group,
+                    dst_tp_rank,
+                    self.config.reshard_tp_size,
+                )
 
         if self.config.convert_fn is not None:
             model_state_dict = self.config.convert_fn(model_state_dict)

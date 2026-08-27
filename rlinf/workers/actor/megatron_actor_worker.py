@@ -59,10 +59,7 @@ class MegatronActor(MegatronWorker):
         """
         super().__init__(cfg, placement, role)
 
-        self.dst_tp_rank = self._rank % placement.rollout_tp_size
-        assert placement.rollout_tp_size <= placement.actor_tp_size, (
-            f" rollout tensor parallel size {placement.rollout_tp_size} must be less than or equal to actor tensor parallel size {placement.actor_tp_size}."
-        )
+        # dst_tp_rank / dst_ep_rank are derived in _setup_rollout_weight_dst_ranks
 
         # Algo configurations
         self.calculate_entropy = self.cfg.algorithm.calculate_entropy
@@ -98,23 +95,41 @@ class MegatronActor(MegatronWorker):
             self.offload_model_buffer = {}
 
         self.rollout_weights_reshard = None
-        _rollout_ep_size = (
-            self.cfg.rollout.tensor_parallel_size
-            if self.cfg.rollout.get("sglang", {}).get("enable_ep_moe", False)
-            else 1
-        )
-        rollout_reshard_config = ReshardConfig(
-            model_type=self.cfg.rollout.model.model_type,
-            model_config=self.transformer_config,
-            reshard_tp_size=self.cfg.rollout.tensor_parallel_size,
-            reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
-            mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
-            mg_tpe_size=self.role_cfg.model.expert_tensor_parallel_size,
-            moe_grouped_gemm=self.role_cfg.model.get("moe_grouped_gemm", None),
-            rollout_ep_size=_rollout_ep_size,
-        )
-        self.rollout_weights_reshard = MegatronCoreWeightReshard(rollout_reshard_config)
-        self._setup_rollout_weight_dst_ranks()
+        if self.cfg.rollout.get("weight_reload", "sync") == "sync":
+            _rollout_tp = self.cfg.rollout.tensor_parallel_size
+            _sglang = self.cfg.rollout.get("sglang", {})
+            # reshard_tp_size is the rollout attention tp (not engine world size)
+            if _sglang.get("enable_dp_attention", False):
+                _rollout_attn_tp = _rollout_tp // _sglang.get("dp_size", 1)
+            else:
+                _rollout_attn_tp = _rollout_tp
+            # rollout ep: sglang forces ep_size == tp_size when enable_ep_moe,
+            # else 1 (plain TP for MoE).
+            _rollout_ep = _rollout_tp if _sglang.get("enable_ep_moe", False) else 1
+            _rollout_moe_dense_tp = _sglang.get("moe_dense_tp_size", None)
+            # lm_head TP: sglang ParallelLMHead uses the full engine TP group when enable_dp_lm_head=False, else the attn_tp group
+            _enable_dp_lm_head = _sglang.get("enable_dp_lm_head", False)
+            _rollout_lm_head_tp = (
+                _rollout_attn_tp if _enable_dp_lm_head else _rollout_tp
+            )
+            rollout_reshard_config = ReshardConfig(
+                model_type=self.cfg.rollout.model.model_type,
+                model_config=self.transformer_config,
+                reshard_tp_size=_rollout_attn_tp,
+                reshard_pp_size=self.cfg.rollout.pipeline_parallel_size,
+                mg_ep_size=self.role_cfg.model.expert_model_parallel_size,
+                mg_tpe_size=self.role_cfg.model.expert_tensor_parallel_size,
+                moe_grouped_gemm=self.role_cfg.model.get("moe_grouped_gemm", None),
+                rollout_ep_size=_rollout_ep,
+                rollout_moe_dense_tp_size=_rollout_moe_dense_tp,
+                rollout_full_tp_size=_rollout_tp,
+                rollout_lm_head_tp_size=_rollout_lm_head_tp,
+                enable_dp_attention=_sglang.get("enable_dp_attention", False),
+            )
+            self.rollout_weights_reshard = MegatronCoreWeightReshard(
+                rollout_reshard_config
+            )
+            self._setup_rollout_weight_dst_ranks()
 
     def process_inference_output(self, rollout_result, infer_out):
         rollout_result.recomputed_logprobs = infer_out
@@ -312,20 +327,87 @@ class MegatronActor(MegatronWorker):
 
         return forward_output_and_loss_func
 
-    def _get_rollout_model_state_dict(self, bucket_weight):
-        """Get the state dictionary of the model for rollout."""
+    def _get_rollout_model_state_dict(
+        self,
+        bucket_weight,
+        dst_tp_rank,
+        dst_ep_rank,
+        dst_lm_head_rank,
+        dst_shared_rank,
+    ):
+        """Get the resharded state dictionary of the model for a rollout target.
+        All dst_* params are required: colocate callers pass self.dst_*
+        (scalars), disaggregate callers pass self.dst_*[target_idx]
+        (per-target values from the list).
+        """
         return self.rollout_weights_reshard.gather_and_reshard_model(
-            bucket_weight, self.dst_tp_rank
+            bucket_weight,
+            dst_tp_rank,
+            dst_ep_rank,
+            dst_lm_head_rank=dst_lm_head_rank,
+            dst_shared_rank=dst_shared_rank,
         )
 
     def _setup_rollout_weight_dst_ranks(self):
-        """Setup destination ranks for token and weight communication."""
+        """Setup destination ranks for token and weight communication.
+
+        Two independent coordinate systems:
+        - transmission (engine_id, rank_in_engine): where to send. From
+          RankMapper. Colocate returns a tuple (single target); disaggregate
+          returns a list of tuples (multiple targets).
+        - sharding (dst_tp_rank, dst_ep_rank, ...): how to slice the weight.
+          Scalar in colocate, list (per-target) in disaggregate.
+        """
         rank_map = RankMapper.get_actor_rank_to_rollout_rank_map(
             self.component_placement
         )
         self._weight_dst_rank_in_rollout = rank_map[self._rank]
+        placement = self.component_placement
+        enable_dp_lm_head = self.cfg.rollout.get("sglang", {}).get(
+            "enable_dp_lm_head", False
+        )
+
+        if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
+            # Single target: (engine_id, rank_in_engine) tuple.
+            _, rank_in_engine = self._weight_dst_rank_in_rollout
+            self.num_weight_targets = 1
+            self.dst_tp_rank = rank_in_engine % placement.rollout_attn_tp_size
+            self.dst_ep_rank = (
+                rank_in_engine % placement.rollout_ep_size
+                if placement.rollout_ep_size > 1
+                else None
+            )
+            self.dst_lm_head_rank = (
+                rank_in_engine if not enable_dp_lm_head else self.dst_tp_rank
+            )
+            self.dst_shared_rank = rank_in_engine
+        else:
+            # Multiple targets: list of (engine_id, rank_in_engine) tuples.
+            rank_in_engine_list = [rank for _, rank in self._weight_dst_rank_in_rollout]
+            self.num_weight_targets = len(rank_in_engine_list)
+            self.dst_tp_rank = [
+                rank % placement.rollout_attn_tp_size for rank in rank_in_engine_list
+            ]
+            self.dst_ep_rank = [
+                (
+                    rank % placement.rollout_ep_size
+                    if placement.rollout_ep_size > 1
+                    else None
+                )
+                for rank in rank_in_engine_list
+            ]
+            self.dst_lm_head_rank = [
+                (rank if not enable_dp_lm_head else tp_rank)
+                for rank, tp_rank in zip(rank_in_engine_list, self.dst_tp_rank)
+            ]
+            self.dst_shared_rank = list(rank_in_engine_list)
+
         self.log_info(
-            f"Actor rank {self._rank} will send weights to {self._weight_dst_rank_in_rollout}"
+            f"Actor rank {self._rank} will send weights to "
+            f"{self._weight_dst_rank_in_rollout} "
+            f"(dst_tp_rank={self.dst_tp_rank}, dst_ep_rank={self.dst_ep_rank}, "
+            f"dst_lm_head_rank={self.dst_lm_head_rank}, "
+            f"dst_shared_rank={self.dst_shared_rank})"
         )
 
     def divide_model_to_bucket(self):
@@ -361,21 +443,27 @@ class MegatronActor(MegatronWorker):
         self.model_state_offload_optimizer_and_grad()
 
         # send bucket size
-        if len(self._weight_dst_rank_in_rollout) > 0:
+        if self.num_weight_targets > 0:
             send_handles = []
             for bucket_idx, bucket_weight in enumerate(model_bucket_list):
-                buffer = self._get_rollout_model_state_dict(bucket_weight)
-                if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
-                    buffer = {k: reduce_tensor(v) for k, v in buffer.items()}
-                if bucket_idx == 0:
-                    # add the bucket_length message in bucket 0
-                    buffer["bucket_length"] = len(model_bucket_list)
-
                 for send_handle in send_handles:
                     send_handle.wait()
                 send_handles = []
 
                 if self.rollout_sync_mode == RolloutSyncMode.COLLOCATED:
+                    buffer = self._get_rollout_model_state_dict(
+                        bucket_weight,
+                        self.dst_tp_rank,
+                        self.dst_ep_rank,
+                        dst_lm_head_rank=self.dst_lm_head_rank,
+                        dst_shared_rank=self.dst_shared_rank,
+                    )
+                    buffer = {k: reduce_tensor(v) for k, v in buffer.items()}
+                    if bucket_idx == 0:
+                        buffer["bucket_length"] = torch.tensor(
+                            [len(model_bucket_list)],
+                            device=torch.cuda.current_device(),
+                        )
                     send_handle = self.send(
                         buffer,
                         self.rollout_group_name,
@@ -383,16 +471,30 @@ class MegatronActor(MegatronWorker):
                         async_op=True,
                     )
                     send_handles.append(send_handle)
+                    del buffer
                 else:
-                    for weight_dst_rank in self._weight_dst_rank_in_rollout:
+                    # Disaggregate: per-target reshard (each target may need a different weight slice) + send
+                    for target_idx in range(self.num_weight_targets):
+                        buffer = self._get_rollout_model_state_dict(
+                            bucket_weight,
+                            self.dst_tp_rank[target_idx],
+                            self.dst_ep_rank[target_idx],
+                            dst_lm_head_rank=self.dst_lm_head_rank[target_idx],
+                            dst_shared_rank=self.dst_shared_rank[target_idx],
+                        )
+                        if bucket_idx == 0:
+                            buffer["bucket_length"] = torch.tensor(
+                                [len(model_bucket_list)],
+                                device=torch.cuda.current_device(),
+                            )
                         send_handle = self.send(
                             buffer,
                             self.rollout_group_name,
-                            weight_dst_rank,
+                            self._weight_dst_rank_in_rollout[target_idx],
                             async_op=True,
                         )
                         send_handles.append(send_handle)
-                del buffer
+                        del buffer
 
             for send_handle in send_handles:
                 send_handle.wait()

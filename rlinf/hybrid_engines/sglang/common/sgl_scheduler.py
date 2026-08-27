@@ -19,6 +19,7 @@ from typing import Any, Callable, Literal
 import torch
 from omegaconf import DictConfig
 from packaging.version import parse
+from sglang.srt.constants import GPU_MEMORY_ALL_TYPES
 from sglang.srt.managers.io_struct import (
     ReleaseMemoryOccupationReqInput,
     ResumeMemoryOccupationReqInput,
@@ -76,6 +77,8 @@ class Scheduler(_Scheduler):
             self._request_dispatcher._mapping.extend(_extra_req_mapping)
 
         self.is_weight_offloaded = False
+        # Per-tag offload state: tag -> True if currently offloaded representing the partial state (weights onloaded, kv/cuda_graph)
+        self.offloaded_tags: dict = dict.fromkeys(GPU_MEMORY_ALL_TYPES, False)
         self.weight_norm_dict = None
 
         try:
@@ -98,14 +101,44 @@ class Scheduler(_Scheduler):
             f"{free_gpu_memory=:.2f} GiB, {total_gpu_memory=:.2f} GiB"
         )
 
+    def resolve_memory_tags(self, recv_req):
+        """Resolve a release/resume request's tags to a concrete set.
+
+        sglang treats tags=None/[] as "all GPU memory types".
+        """
+        if recv_req.tags is None or len(recv_req.tags) == 0:
+            return set(GPU_MEMORY_ALL_TYPES)
+        return set(recv_req.tags)
+
     def release_memory_occupation(self, recv_req: ReleaseMemoryOccupationReqInput):
-        assert self.is_weight_offloaded is False, "Weight has been offloaded!"
-        self.is_weight_offloaded = True
-        return super().release_memory_occupation(recv_req)
+        requested_tags = self.resolve_memory_tags(recv_req)
+        already_offloaded = {
+            tag for tag in requested_tags if self.offloaded_tags.get(tag, False)
+        }
+        assert not already_offloaded, (
+            f"Cannot offload tags {sorted(requested_tags)}: "
+            f"{sorted(already_offloaded)} already offloaded. "
+            f"offload_state={self.offloaded_tags}"
+        )
+        for tag in requested_tags:
+            self.offloaded_tags[tag] = True
+        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
+        result = super().release_memory_occupation(recv_req)
+        return result
 
     def resume_memory_occupation(self, recv_req: ResumeMemoryOccupationReqInput):
-        assert self.is_weight_offloaded is True, "Weight has been onloaded!"
-        self.is_weight_offloaded = False
+        requested_tags = self.resolve_memory_tags(recv_req)
+        not_offloaded = {
+            tag for tag in requested_tags if not self.offloaded_tags.get(tag, False)
+        }
+        assert not not_offloaded, (
+            f"Cannot onload tags {sorted(requested_tags)}: "
+            f"{sorted(not_offloaded)} are not offloaded (already onloaded). "
+            f"offload_state={self.offloaded_tags}"
+        )
+        for tag in requested_tags:
+            self.offloaded_tags[tag] = False
+        self.is_weight_offloaded = self.offloaded_tags.get("weights", False)
         result = super().resume_memory_occupation(recv_req)
         if self.weight_reload == "cpu":
             model = self.tp_worker.worker.model_runner.model
@@ -163,13 +196,10 @@ class Scheduler(_Scheduler):
             for name, handle in state_dict.items():
                 func, args = handle
                 list_args = list(args)
-                # NOTE: the key is to change device id to the current device id
-                # in case two processes have different CUDA_VISIBLE_DEVICES
                 list_args[6] = torch.cuda.current_device()
                 new_weight = func(*list_args)
                 batch_weight.append((rename(name), new_weight))
         else:
-            # disaggregate mode, recv tensor directly
             for name, tensor in state_dict.items():
                 batch_weight.append((rename(name), tensor))
 
@@ -200,10 +230,14 @@ class Scheduler(_Scheduler):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
+            bucket_length = bucket_length.item()
             assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:
-            self.resume_memory_occupation(ResumeMemoryOccupationReqInput())
+            # Only resume model weights here
+            self.resume_memory_occupation(
+                ResumeMemoryOccupationReqInput(tags=["weights"])
+            )
 
         self.batch_load_hf_weight(state_dict)
         if bucket_length > 1:
@@ -226,6 +260,7 @@ class Scheduler(_Scheduler):
             self.batch_load_hf_weight(state_dict)
         state_dict = None
 
+        self.flush_cache()
         if self.weight_norm_dict is not None:
             # validate the weight norm dict between load model and first sync.
             model = self.tp_worker.worker.model_runner.model
@@ -287,9 +322,15 @@ class Scheduler(_Scheduler):
             self._actor_group_name = self.cfg.actor.group_name
             self.placement_mode = placement.placement_mode
             self.rollout_sync_mode = placement._rollout_sync_mode
-            self.actor_weight_rank = RankMapper.get_rollout_rank_to_actor_rank_map(
-                placement
-            )[(self._rlinf_worker.get_parent_rank(), self._rlinf_worker._rank)]
+            rollout_rank_map = RankMapper.get_rollout_rank_to_actor_rank_map(placement)
+            # Rollout's transmission coordinates are (engine_id, rank_in_engine),
+            # engine_id = parent_rank (the SGLangWorker / engine index) and
+            # rank_in_engine = this tp worker's rank.
+            rollout_key = (
+                self._rlinf_worker.get_parent_rank(),
+                self._rlinf_worker._rank,
+            )
+            self.actor_weight_rank = rollout_rank_map[rollout_key]
 
             use_presharded_weights = (
                 False if self.cfg.actor.training_backend == "fsdp" else True
@@ -353,10 +394,13 @@ class Scheduler(_Scheduler):
         reqs,
         return_logprob: bool,
         skip_req=None,
+        is_idle_batch: bool = False,
     ):
         # for sglang 0.5.0 and later, we use the original _handle_batch_output
         if not self.patch_return_output_ids:
-            return super().stream_output_generation(reqs, return_logprob, skip_req)
+            return super().stream_output_generation(
+                reqs, return_logprob, skip_req, is_idle_batch=is_idle_batch
+            )
 
         from sglang.srt.managers.scheduler_output_processor_mixin import (
             DEFAULT_FORCE_STREAM_INTERVAL,

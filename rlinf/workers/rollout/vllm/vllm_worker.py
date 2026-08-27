@@ -14,7 +14,6 @@
 import asyncio
 import copy
 import os
-from dataclasses import fields
 from functools import partial
 from itertools import count
 from typing import AsyncGenerator, Optional, Union, cast
@@ -182,6 +181,10 @@ class VLLMWorker(Worker):
         await self._async_engine.collective_rpc("sync_hf_weight")
         await self._async_engine.reset_prefix_cache()
 
+    async def onload_kv_cudagraph(self) -> None:
+        """Onload KV cache + cuda graph deferred from sync_hf_weight (collocate)."""
+        await self._async_engine.collective_rpc("onload_kv_cudagraph")
+
     async def _get_output_from_async_generator(
         self, async_generator: AsyncGenerator[RequestOutput, None]
     ) -> RequestOutput:
@@ -334,25 +337,21 @@ class VLLMWorker(Worker):
         If mode is collocated, it will additionally offload model weights,
         ready to use parameters sent from actor.
         """
-        engine_kwargs = {
-            "model": self._cfg.rollout.model.model_path,
-            "tensor_parallel_size": self._cfg.rollout.tensor_parallel_size,
-            "dtype": torch_dtype_from_precision(self._cfg.rollout.model.precision),
-            "gpu_memory_utilization": self._cfg.rollout.gpu_memory_utilization,
-            "enforce_eager": self._cfg.rollout.enforce_eager,
-            "enable_chunked_prefill": self._cfg.rollout.vllm.enable_chunked_prefill,
-            "enable_prefix_caching": self._cfg.rollout.vllm.enable_prefix_caching,
-            "max_num_batched_tokens": self._cfg.rollout.vllm.max_num_batched_tokens,
-            "load_format": "dummy" if not self._cfg.rollout.validate_weight else "auto",
-            "trust_remote_code": self._cfg.rollout.model.trust_remote_code,
-            "max_model_len": self._cfg.runner.seq_length,
-            "max_num_seqs": self._cfg.rollout.max_running_requests,
-            "enable_sleep_mode": True,  # it enables offload weights
-        }
-        # `task` was dropped from EngineArgs after 0.8.5; generation is inferred.
-        if "task" in {field.name for field in fields(EngineArgs)}:
-            engine_kwargs["task"] = "generate"
-        engine_args: EngineArgs = EngineArgs(**engine_kwargs)
+        engine_args: EngineArgs = EngineArgs(
+            model=self._cfg.rollout.model.model_path,
+            tensor_parallel_size=self._cfg.rollout.tensor_parallel_size,
+            dtype=torch_dtype_from_precision(self._cfg.rollout.model.precision),
+            gpu_memory_utilization=self._cfg.rollout.gpu_memory_utilization,
+            enforce_eager=self._cfg.rollout.enforce_eager,
+            enable_chunked_prefill=self._cfg.rollout.vllm.enable_chunked_prefill,
+            enable_prefix_caching=self._cfg.rollout.vllm.enable_prefix_caching,
+            max_num_batched_tokens=self._cfg.rollout.vllm.max_num_batched_tokens,
+            load_format="dummy" if not self._cfg.rollout.validate_weight else "auto",
+            trust_remote_code=self._cfg.actor.tokenizer.trust_remote_code,
+            max_model_len=self._cfg.runner.seq_length,
+            max_num_seqs=self._cfg.rollout.max_running_requests,
+            enable_sleep_mode=True,  # it enables offload weights
+        )
         vllm_config: VllmConfig = engine_args.create_engine_config()
 
         # here to set the customed worker class for VLLM engine
