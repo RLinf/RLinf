@@ -490,13 +490,20 @@ class EmbodiedRunner:
     def _open_profiling_window(self, step_idx: int) -> None:
         """Open the capture window on selected, profiler-wrapped workers only."""
         self.logger.info(f"Opening profiling window at step {step_idx}")
-        for worker in self._profiling_targets():
-            worker.start_profile(step_idx).wait()
+        handles = [
+            worker.start_profile(step_idx) for worker in self._profiling_targets()
+        ]
+        for handle in handles:
+            handle.wait()
 
     def _close_profiling_window(self, step_idx: int) -> None:
         """Close the capture window on selected, profiler-wrapped workers only."""
-        for worker in self._profiling_targets():
-            worker.stop_profile().wait()
+        # Dispatch every stop before waiting. Nsight report finalization can take
+        # seconds; sequential dispatch would let later groups keep recording
+        # while the first report is being exported.
+        handles = [worker.stop_profile() for worker in self._profiling_targets()]
+        for handle in handles:
+            handle.wait()
         self.logger.info(f"Closed profiling window at step {step_idx}")
 
     def run(self):

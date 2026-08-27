@@ -56,3 +56,37 @@ def test_profile_window_only_touches_selected_worker_groups() -> None:
     runner.rollout.stop_profile.assert_called_once_with()
     runner.env.start_profile.assert_not_called()
     runner.env.stop_profile.assert_not_called()
+
+
+def test_profile_stop_is_dispatched_to_all_groups_before_waiting() -> None:
+    runner = EmbodiedRunner.__new__(EmbodiedRunner)
+    runner.actor = _worker()
+    runner.rollout = _worker()
+    runner.env = _worker()
+    runner.reward = None
+    runner.critic = None
+    runner.logger = Mock()
+    runner.cfg = SimpleNamespace(
+        actor=_GroupConfig(group_name="ActorGroup"),
+        rollout=_GroupConfig(group_name="RolloutGroup"),
+        env=_GroupConfig(group_name="EnvGroup"),
+        reward=_GroupConfig(),
+        critic=_GroupConfig(),
+    )
+    runner._profile_worker_groups = {"actorgroup", "rolloutgroup"}
+
+    events = []
+    actor_handle = Mock()
+    rollout_handle = Mock()
+    actor_handle.wait.side_effect = lambda: events.append("actor_wait")
+    rollout_handle.wait.side_effect = lambda: events.append("rollout_wait")
+    runner.actor.stop_profile.side_effect = lambda: (
+        events.append("actor_stop") or actor_handle
+    )
+    runner.rollout.stop_profile.side_effect = lambda: (
+        events.append("rollout_stop") or rollout_handle
+    )
+
+    runner._close_profiling_window(step_idx=3)
+
+    assert events == ["actor_stop", "rollout_stop", "actor_wait", "rollout_wait"]
