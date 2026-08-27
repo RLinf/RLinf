@@ -155,6 +155,11 @@ class WanBackend:
                 f"env_ids and actions must describe the same batch rows; got "
                 f"{batch_size}, {actions.shape[0]}"
             )
+        actions = (
+            torch.from_numpy(actions).to(self.device)
+            if isinstance(actions, np.ndarray)
+            else actions.to(self.device)
+        )
         with autocast(self.device, torch.bfloat16):
             output = self._pipe(**self._pipe_kwargs(env_ids, actions))
 

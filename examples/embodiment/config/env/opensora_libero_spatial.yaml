@@ -18,6 +18,9 @@ is_eval: False
 
 seed: 0
 group_size: 1
+# The OpenSora init dataset ships no KIR trajectories, and its condition window is seeded from the
+# first frame alone.
+enable_kir: False
 use_fixed_reset_state_ids: True
 use_ordered_reset_state_ids: False
 
