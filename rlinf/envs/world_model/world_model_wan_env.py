@@ -69,11 +69,9 @@ class WanEnv(BaseWorldEnv):
 
         self.image_size = tuple(cfg.image_size)
 
-        #
-        self.retain_action = cfg.get("retain_action", True)  # Default True
         self.enable_kir = cfg.get("enable_kir", True)
 
-        # Inference backend; the env keeps episode semantics and the condition window.
+        # Inference backend; it owns the condition window, the env owns episode semantics.
         self.backend: WorldModelBackend = WanBackend(
             cfg, self.device, self._get_runtime_device_str()
         )
@@ -87,26 +85,8 @@ class WanEnv(BaseWorldEnv):
         self.task_descriptions = [""] * self.num_envs
         self.init_ee_poses = [None] * self.num_envs
 
-        # Image queue for condition frames to generate video,
-        # keep length of condition_frame_length
-        self.image_queue = [
-            [None] * self.condition_frame_length for _ in range(self.num_envs)
-        ]
-
-        # Condition action to generate video,
-        # keep length of condition_frame_length
-        self.condition_action = torch.zeros(
-            self.num_envs,
-            self.condition_frame_length,
-            7,
-        )
-
         self.reset_gripper_open = cfg.get("reset_gripper_open", True)
         self.is_libero_env = cfg.get("wm_env_type", "libero") == "libero"
-
-        # If reset_gripper_open is True and the environment is Libero, set the gripper open action to -1
-        if self.reset_gripper_open and self.is_libero_env:
-            self.condition_action[:, :, -1] = -1
 
         self.trans_norm = transforms.Compose(
             [
@@ -372,27 +352,28 @@ class WanEnv(BaseWorldEnv):
         # Reshape to [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
         # [8, 3, 1, 5, 256, 256]
         self.current_obs = stacked_imgs.unsqueeze(2).to(self.device)
-        self.condition_action = torch.stack(condition_actions, dim=0).to(self.device)
 
         num_envs, c, v, t, h, w = self.current_obs.shape
         assert t == self.condition_frame_length, (
             f"Unexpected current_obs shape: {self.current_obs.shape}, expected {num_envs, c, v, self.condition_frame_length, h, w}"
         )
 
-        # Fill image queues for each environment with per-frame tensors [C, 1, H, W]
-        for env_idx in range(num_envs):
-            frames = [
+        # The condition window, per env slot as [C, 1, H, W] frames; the backend keeps it from here on.
+        init_frames = [
+            [
                 self.current_obs[env_idx, :, 0, t_idx : t_idx + 1, :, :]
                 for t_idx in range(self.condition_frame_length)
             ]
-            self.image_queue[env_idx] = frames
+            for env_idx in range(num_envs)
+        ]
 
         # Every reset restarts all env slots, so all sessions are replaced. Noise is drawn from a
         # single seed shared by the batch; per-trajectory seeds are future work.
         self.backend.close_session(range(num_envs))
         self.backend.open_session(
             env_ids=range(num_envs),
-            init_frames=self.image_queue,
+            init_frames=init_frames,
+            init_actions=torch.stack(condition_actions, dim=0).to(self.device),
             task_ids=list(episode_indices),
             seeds=[0] * num_envs,
         )
@@ -502,28 +483,11 @@ class WanEnv(BaseWorldEnv):
             if isinstance(actions, np.ndarray)
             else actions.to(self.device)
         )
-        self.condition_action = self.condition_action.to(
-            device=actions_tensor.device, dtype=actions_tensor.dtype
-        )
-
-        if self.retain_action:
-            actions_tensor = torch.cat([self.condition_action, actions_tensor], dim=1)
-
-        self.condition_action[:, 1 : self.condition_frame_length, :] = actions_tensor[
-            :, -(self.condition_frame_length - 1) :, :
-        ]
         # videos: [num_envs, C, T, H, W] in [-1, 1]
         videos = self.backend.generate(
             env_ids=range(num_envs),
             actions=actions_tensor,
-            condition=self.image_queue,
         )
-
-        for env_idx in range(num_envs):
-            video = videos[env_idx]
-            # Update image_queue
-            for t in range(video.shape[1] - 4, video.shape[1]):
-                self.image_queue[env_idx][t - 8] = video[:, t : t + 1]
 
         # Stack all environments: [num_envs, C, T, H, W]
         x_samples = videos[:, :, self.condition_frame_length :].to(
