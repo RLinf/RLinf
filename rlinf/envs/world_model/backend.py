@@ -16,7 +16,9 @@
 
 The env owns episode semantics — session lifetime, rewards, auto reset, metrics — and a backend only
 advances frames. It is session-shaped so a backend that pools per-trajectory state knows when a
-trajectory begins and ends. Implementations live next to this module, one file each.
+trajectory begins and ends: the condition window lives behind the session, so the env hands it over once
+at ``open_session`` and afterwards sends nothing but the new action chunk. Implementations live next to
+this module, one file each.
 """
 
 from __future__ import annotations
@@ -38,26 +40,35 @@ class WorldModelBackend(Protocol):
         self,
         env_ids: Sequence[int],
         init_frames: FrameQueue,
+        init_actions: torch.Tensor,
         task_ids: Sequence[Any],
         seeds: Sequence[int],
     ) -> None:
-        """Start a trajectory per env slot."""
+        """Start a trajectory per env slot from its initial condition window.
+
+        Args:
+            env_ids: Env slots to open.
+            init_frames: Per env slot, the initial condition frames as ``[C, 1, H, W]`` tensors in
+                ``[-1, 1]``. The first frame is the reference frame the backend must keep for the
+                whole trajectory.
+            init_actions: ``[B, window, action_dim]``, the actions that led to ``init_frames``.
+            task_ids: Per env slot, the task the trajectory runs.
+            seeds: Per env slot, the seed its noise is drawn from.
+        """
 
     def generate(
         self,
         env_ids: Sequence[int],
         actions: torch.Tensor,
-        condition: FrameQueue,
     ) -> torch.Tensor:
-        """Advance one action chunk.
+        """Advance one action chunk from the session's own condition window.
 
         Args:
             env_ids: Env slots the batch rows belong to, in row order.
-            actions: ``[B, T, action_dim]``.
-            condition: Per env slot, the condition frames as ``[C, 1, H, W]`` tensors.
+            actions: ``[B, chunk, action_dim]``.
 
         Returns:
-            Generated frames as ``[B, C, T, H, W]`` in ``[-1, 1]``.
+            Generated frames as ``[B, C, T, H, W]`` in ``[-1, 1]``, the whole window plus the chunk.
         """
 
     def close_session(self, env_ids: Sequence[int]) -> None:

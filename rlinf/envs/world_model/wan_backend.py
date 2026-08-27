@@ -27,13 +27,19 @@ __all__ = ["WanBackend"]
 
 
 class WanBackend:
-    """In-process backend holding diffsynth's action-conditioned ``WanVideoPipeline``."""
+    """In-process backend holding diffsynth's action-conditioned ``WanVideoPipeline``.
+
+    Each session owns its condition window: the reference frame the trajectory started from, the last
+    generated frames, and the actions that produced them. The env only sends new action chunks.
+    """
 
     def __init__(self, cfg, device: torch.device, device_str: str):
         self.cfg = cfg
         self.device = device
         self.num_inference_steps = cfg.num_inference_steps
         self.num_frames = cfg.num_frames
+        self.condition_frame_length = cfg.condition_frame_length
+        self.retain_action = cfg.get("retain_action", True)
         self._sessions: dict[int, dict[str, Any]] = {}
         self._pipe = self._build_pipeline(device_str)
 
@@ -50,17 +56,29 @@ class WanBackend:
         pipe.vae.to(self.device)
         return pipe
 
+    @staticmethod
+    def _to_pil(frame: torch.Tensor) -> Image.Image:
+        """``[C, 1, H, W]`` in ``[-1, 1]`` (or ``[0, 1]``) to the uint8 image the pipeline takes."""
+        img = np.transpose(frame[:, 0].cpu().numpy(), (1, 2, 0))
+        if img.max() <= 1.2:
+            img = ((img + 1.0) / 2.0 * 255.0).clip(0, 255)
+        return Image.fromarray(img.astype(np.uint8))
+
     def open_session(
         self,
         env_ids: Sequence[int],
         init_frames: FrameQueue,
+        init_actions: torch.Tensor,
         task_ids: Sequence[Any],
         seeds: Sequence[int],
     ) -> None:
-        # init_frames are not retained: the pipeline re-conditions from the window the env sends with
-        # every generate. A pooled backend would encode them here.
-        for env_id, task_id, seed in zip(env_ids, task_ids, seeds):
-            self._sessions[int(env_id)] = {"task_id": task_id, "seed": int(seed)}
+        for row, (env_id, task_id, seed) in enumerate(zip(env_ids, task_ids, seeds)):
+            self._sessions[int(env_id)] = {
+                "task_id": task_id,
+                "seed": int(seed),
+                "frames": [self._to_pil(f) for f in init_frames[row]],
+                "actions": init_actions[row].clone(),
+            }
 
     def close_session(self, env_ids: Sequence[int]) -> None:
         for env_id in env_ids:
@@ -80,56 +98,65 @@ class WanBackend:
             )
         return seeds.pop()
 
+    def _window_actions(
+        self, env_ids: Sequence[int], actions: torch.Tensor
+    ) -> torch.Tensor:
+        """Prepend each session's action history to its chunk, then roll the history forward."""
+        history = torch.stack(
+            [self._sessions[int(i)]["actions"] for i in env_ids], dim=0
+        ).to(device=actions.device, dtype=actions.dtype)
+
+        if self.retain_action:
+            actions = torch.cat([history, actions], dim=1)
+
+        tail = actions[:, -(self.condition_frame_length - 1) :, :]
+        for row, env_id in enumerate(env_ids):
+            session_actions = self._sessions[int(env_id)]["actions"]
+            session_actions[1 : self.condition_frame_length] = tail[row].to(
+                device=session_actions.device, dtype=session_actions.dtype
+            )
+        return actions
+
     def _pipe_kwargs(
-        self,
-        env_ids: Sequence[int],
-        actions: torch.Tensor,
-        condition: FrameQueue,
+        self, env_ids: Sequence[int], actions: torch.Tensor
     ) -> dict[str, Any]:
-        batch_input_image = []
-        batch_input_image4 = []
-        for frames in condition:
-            imgs = []
-            for frame in frames:
-                frame = frame[:, 0].cpu().numpy()  # [3, H, W]
-                img = np.transpose(frame, (1, 2, 0))
-                if img.max() <= 1.2:
-                    img = ((img + 1.0) / 2.0 * 255.0).clip(0, 255)
-                imgs.append(Image.fromarray(img.astype(np.uint8)))
-            batch_input_image.append(imgs[0])
-            batch_input_image4.append(imgs[-4:])
+        windows = [self._sessions[int(i)]["frames"] for i in env_ids]
 
         return {
             "seed": self._batch_seed(env_ids),
             "tiled": False,
-            "input_image": batch_input_image,
-            "input_image4": batch_input_image4,
-            "action": actions,
+            "input_image": [frames[0] for frames in windows],
+            "input_image4": [frames[-4:] for frames in windows],
+            "action": self._window_actions(env_ids, actions),
             "height": 256,
             "width": 256,
             "num_frames": self.num_frames,
             "num_inference_steps": self.num_inference_steps,
             "cfg_scale": 1.0,
             "progress_bar_cmd": lambda x: x,
-            "batch_size": len(batch_input_image),
+            "batch_size": len(windows),
         }
 
     def generate(
         self,
         env_ids: Sequence[int],
         actions: torch.Tensor,
-        condition: FrameQueue,
     ) -> torch.Tensor:
         batch_size = len(env_ids)
-        if len(condition) != batch_size or actions.shape[0] != batch_size:
+        if actions.shape[0] != batch_size:
             raise ValueError(
-                f"env_ids, condition and actions must describe the same batch rows; got "
-                f"{batch_size}, {len(condition)}, {actions.shape[0]}"
+                f"env_ids and actions must describe the same batch rows; got "
+                f"{batch_size}, {actions.shape[0]}"
             )
-        output = self._pipe(**self._pipe_kwargs(env_ids, actions, condition))
+        output = self._pipe(**self._pipe_kwargs(env_ids, actions))
 
         videos = []
-        for env_idx in range(batch_size):
+        for env_idx, env_id in enumerate(env_ids):
+            # The pipeline's own frames are what the next chunk conditions on, so they go into the
+            # window as they are: converting them to [-1, 1] and back would cost a gray level.
+            window = self._sessions[int(env_id)]["frames"]
+            window[1:] = output[env_idx][-(self.condition_frame_length - 1) :]
+
             frames = []
             for img in output[env_idx]:
                 # Keep frame tensors in fp32 to avoid silent fp64 promotion
