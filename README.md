@@ -30,6 +30,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 
 
 ## What's NEW!
+- [2026/08] 🎉 Isaac Lab v3.0.0 officially adopts RLinf as its reinforcement learning (RL) training infrastructure. Doc: [RLinf on Isaac Lab](https://isaac-sim.github.io/IsaacLab/v3.0.0-beta2/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf).
 - [2026/08] 🔥 RLinf integrates Diffusion-NFT for SD3 and Wan2.2 video generation models. Doc: [RL for Video Generation Models](docs/source-en/rst_source/examples/video_models.rst).
 - [2026/08] 🔥 RLinf officially supports three more accelerators: Moore Threads (MUSA), Huawei Ascend (CANN), and AMD (ROCm). Docs: [Moore Threads MUSA](https://rlinf.readthedocs.io/en/latest/rst_source/guides/moore_threads_musa.html), [Ascend CANN](https://rlinf.readthedocs.io/en/latest/rst_source/guides/ascend_cann.html), [AMD ROCm](https://rlinf.readthedocs.io/en/latest/rst_source/guides/amd_rocm.html).
 - [2026/08] 🔥 RLinf supports GRPO training for Moonlight-16B-A3B (DeepSeek-V3 MLA + MoE). Doc: [Moonlight-16B GRPO](https://rlinf.readthedocs.io/en/latest/rst_source/examples/agentic/math_reasoning/moonlight.html).
@@ -502,7 +503,7 @@ If you use FUSCO for MoE communication in RLinf, you can cite our paper:
 
 **Acknowledgements**
 RLinf has been inspired by, and benefits from, the ideas and tooling of the broader open-source community.
-In particular, we would like to thank the teams and contributors behind VeRL, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
+In particular, we would like to thank the teams and contributors behind veRL, vLLM, AReaL, Megatron-LM, SGLang, and PyTorch Fully Sharded Data Parallel (FSDP), and if we have inadvertently missed your project or contribution, please open an issue or a pull request so we can properly credit you.
 
 **Contact:**
 We welcome applications from Postdocs, PhD/Master's students, and interns. Join us in shaping the future of RL infrastructure and embodied AI!
