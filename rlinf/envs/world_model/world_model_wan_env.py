@@ -23,12 +23,12 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from diffsynth.models.reward_model import ResnetRewModel, TaskEmbedResnetRewModel
-from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
-from PIL import Image
 
 from rlinf.data.datasets.world_model import NpyTrajectoryDatasetWrapper
 from rlinf.envs.utils import recursive_to_device
+from rlinf.envs.world_model.backend import WorldModelBackend
 from rlinf.envs.world_model.base_world_env import BaseWorldEnv
+from rlinf.envs.world_model.wan_backend import WanBackend
 
 __all__ = ["WanEnv"]
 
@@ -73,8 +73,10 @@ class WanEnv(BaseWorldEnv):
         self.retain_action = cfg.get("retain_action", True)  # Default True
         self.enable_kir = cfg.get("enable_kir", True)
 
-        # load pipeline
-        self.pipe = self._build_pipeline()
+        # Inference backend; the env keeps episode semantics and the condition window.
+        self.backend: WorldModelBackend = WanBackend(
+            cfg, self.device, self._get_runtime_device_str()
+        )
 
         # Load reward model if specified
         self.reward_model = self._load_reward_model().eval().to(self.device)
@@ -120,21 +122,6 @@ class WanEnv(BaseWorldEnv):
         return NpyTrajectoryDatasetWrapper(
             cfg.initial_image_path, enable_kir=self.enable_kir
         )
-
-    def _build_pipeline(self):
-        pipe = WanVideoPipeline.from_pretrained(
-            torch_dtype=torch.bfloat16,
-            device=self._get_runtime_device_str(),
-            model_configs=[
-                # Paths are loaded from yaml
-                ModelConfig(path=self.cfg.model_path, offload_device="cpu"),
-                ModelConfig(path=self.cfg.VAE_path, offload_device="cpu"),
-            ],
-        )
-        # pipe.enable_vram_management()
-        pipe.dit.to(self.device)
-        pipe.vae.to(self.device)
-        return pipe
 
     def _load_reward_model(self):
         if self.cfg.reward_model.type == "ResnetRewModel":
@@ -400,6 +387,16 @@ class WanEnv(BaseWorldEnv):
             ]
             self.image_queue[env_idx] = frames
 
+        # Every reset restarts all env slots, so all sessions are replaced. Noise is drawn from a
+        # single seed shared by the batch; per-trajectory seeds are future work.
+        self.backend.close_session(range(num_envs))
+        self.backend.open_session(
+            env_ids=range(num_envs),
+            init_frames=self.image_queue,
+            task_ids=list(episode_indices),
+            seeds=[0] * num_envs,
+        )
+
         self._reset_metrics()
 
         # Initialize action buffer (if needed)
@@ -515,66 +512,21 @@ class WanEnv(BaseWorldEnv):
         self.condition_action[:, 1 : self.condition_frame_length, :] = actions_tensor[
             :, -(self.condition_frame_length - 1) :, :
         ]
-        # print(f'actions_tensor:{actions_tensor.shape}')
-        # Process each environment separately
-        all_samples = []
-
-        B = num_envs
-
-        batch_input_image = []
-        batch_input_image4 = []
+        # videos: [num_envs, C, T, H, W] in [-1, 1]
+        videos = self.backend.generate(
+            env_ids=range(num_envs),
+            actions=actions_tensor,
+            condition=self.image_queue,
+        )
 
         for env_idx in range(num_envs):
-            # image_queue: [8, 3, 1, H, W]
-            imgs = []
-            for frame in self.image_queue[env_idx]:
-                frame = frame[:, 0].cpu().numpy()  # [3, H, W]
-                img = np.transpose(frame, (1, 2, 0))
-                if img.max() <= 1.2:
-                    img = ((img + 1.0) / 2.0 * 255.0).clip(0, 255)
-                imgs.append(Image.fromarray(img.astype(np.uint8)))
-
-            batch_input_image.append(imgs[0])  # First frame
-            batch_input_image4.append(imgs[-4:])  # Last 4 frames
-
-        kwargs = {
-            "seed": 0,
-            "tiled": False,
-            "input_image": batch_input_image,  # List[PIL], len = B
-            "input_image4": batch_input_image4,  # List[List[PIL]], B×4
-            "action": actions_tensor,  # [B, T, A], T=13 or 8
-            "height": 256,
-            "width": 256,
-            "num_frames": self.num_frames,
-            "num_inference_steps": self.num_inference_steps,
-            "cfg_scale": 1.0,
-            "progress_bar_cmd": lambda x: x,
-            "batch_size": B,
-        }
-
-        output = self.pipe(**kwargs)
-        for env_idx in range(num_envs):
-            frames = []
-            for img in output[env_idx]:
-                # Keep frame tensors in fp32 to avoid silent fp64 promotion
-                # that can significantly increase GPU memory usage.
-                arr = np.asarray(img, dtype=np.float32) / 255.0
-                arr = arr * 2.0 - 1.0
-                frames.append(arr)
-
-            video = np.stack(frames, axis=0)  # [T, H, W, 3]
-            video = video.transpose(0, 3, 1, 2)  # [T, 3, H, W]
-            video = torch.from_numpy(video)
-            video = video.transpose(0, 1)  # [3, T, H, W]
-
+            video = videos[env_idx]
             # Update image_queue
             for t in range(video.shape[1] - 4, video.shape[1]):
                 self.image_queue[env_idx][t - 8] = video[:, t : t + 1]
 
-            all_samples.append(video[:, 5:])
-
         # Stack all environments: [num_envs, C, T, H, W]
-        x_samples = torch.stack(all_samples, dim=0).to(
+        x_samples = videos[:, :, self.condition_frame_length :].to(
             self.device, dtype=self.current_obs.dtype
         )
 
@@ -747,8 +699,7 @@ class WanEnv(BaseWorldEnv):
         """Move heavy models and runtime tensors to CPU."""
         if self._is_offloaded:
             return
-        self.pipe.vae = self.pipe.vae.to("cpu")
-        self.pipe.dit = self.pipe.dit.to("cpu")
+        self.backend.offload()
         self.reward_model = self.reward_model.to("cpu")
         self.current_obs = recursive_to_device(self.current_obs, "cpu")
         self.prev_step_reward = self.prev_step_reward.cpu()
@@ -763,8 +714,7 @@ class WanEnv(BaseWorldEnv):
         """Move models and runtime tensors back to execution device."""
         if not self._is_offloaded:
             return
-        self.pipe.dit = self.pipe.dit.to(self.device)
-        self.pipe.vae = self.pipe.vae.to(self.device)
+        self.backend.onload()
         self.reward_model = self.reward_model.to(self.device)
         self.current_obs = recursive_to_device(self.current_obs, self.device)
         self.prev_step_reward = self.prev_step_reward.to(self.device)
