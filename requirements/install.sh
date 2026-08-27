@@ -18,6 +18,8 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
+# googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
+RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -97,7 +99,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1796,7 +1798,7 @@ install_openpi_model() {
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install protobuf==6.33.0
+            uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -1818,9 +1820,13 @@ install_openpi_model() {
         calvin)
             create_and_sync_venv
             install_common_embodied_deps
-            uv pip install "rlinf-openpi==0.1.1"
             install_flash_attn
             install_calvin_env
+            # Stock transformers and rlinf-transformer-openpi share the
+            # transformers/ dir but are different packages; uninstall first so
+            # 4.57/5.x leftovers are not scanned as mistral-common backends.
+            uv pip uninstall -y transformers || true
+            uv pip install "rlinf-openpi==0.1.1"
             ;;
         robocasa)
             create_and_sync_venv
@@ -2210,6 +2216,16 @@ install_dreamzero_model() {
     esac
 }
 
+install_diffusion_model() {
+    # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
+    # Python 3.10 in the generation examples.
+    PYTHON_VERSION="3.10"
+    create_and_sync_venv
+    install_common_embodied_deps
+    uv pip install -r "$SCRIPT_DIR/embodied/models/diffusion.txt"
+    uv pip uninstall pynvml || true
+}
+
 install_qwen3_vl_model() {
     create_and_sync_venv
     install_common_embodied_deps
@@ -2488,6 +2504,11 @@ install_calvin_env() {
     uv pip install -e ${calvin_dir}/calvin_env/tacto
     uv pip install -e ${calvin_dir}/calvin_env
     uv pip install -e ${calvin_dir}/calvin_models
+    # calvin_models depends on sentence-transformers, which upgrades
+    # huggingface_hub to 1.x and transformers to 5.x. Restore the embodied
+    # pins so a calvin-only env still imports. OpenPI replaces this again
+    # after uninstalling stock transformers (different distribution name).
+    uv pip install "huggingface-hub>=0.34.0,<1.0" "transformers<=4.57.6"
     uv pip install --upgrade hydra-core==1.3.2
 }
 
@@ -2530,7 +2551,7 @@ install_robocasa_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
     python -m robocasa.scripts.setup_macros
 }
 
@@ -2564,7 +2585,7 @@ install_robocasa365_env() {
     uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
         rm -rf "$assets_path"
@@ -3029,7 +3050,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ]; then
+            elif [ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "diffusion" ]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
@@ -3074,6 +3095,9 @@ main() {
                 qwen3_vl)
                     install_qwen3_vl_model
                     ;;
+                diffusion)
+                    install_diffusion_model
+                    ;;
                 evo1)
                     install_evo1_model
                     ;;
@@ -3098,6 +3122,9 @@ main() {
     esac
 
     install_platform_extras
+    # Last step: env/model pip installs may have downgraded protobuf.
+    echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 }
 
 main "$@"
