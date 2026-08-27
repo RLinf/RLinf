@@ -106,6 +106,10 @@ actor/train 固定到 GPU 0，rollout 固定到 GPU 1，四个 CPU-only Env rank
 ``rollout_queue_size: 1`` 逐条服务。样例复用 ``RLinf-Pi05-LIBERO-SFT`` 及其
 normalization stats，仅用于 dummy bringup 与 profile；dummy 环境恒为零的奖励不能证明策略学到了任务。
 
+参考 RTX PRO 5000 主机的双卡 collective 需要 ``NCCL_P2P_DISABLE=1`` 才能可靠运行。
+样例已将它配置在 GPU node group 上，并在每个 global step 后使用 bucket 权重同步；迁移到
+其他机器时，应先验证 direct P2P，再决定是否删除该环境变量。
+
 在仓库根目录运行五步 smoke；若 checkpoint 没有挂载到 YAML 中的默认路径，同时覆盖 actor 和
 rollout 的模型路径：
 

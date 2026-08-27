@@ -126,6 +126,11 @@ all four Env ranks map to ``grp0`` and are served one at a time with
 normalization statistics only for dummy bringup and profiling; zero dummy
 rewards do not demonstrate policy learning.
 
+The reference RTX PRO 5000 host requires ``NCCL_P2P_DISABLE=1`` for reliable
+two-GPU collectives. The sample sets it on the GPU node group and uses bucket
+weight synchronization after every global step; remove that environment
+override only after validating direct P2P on a different host.
+
 Run the five-step smoke test from the repository root, overriding both model
 paths if the checkpoint is not mounted at the path in the YAML:
 

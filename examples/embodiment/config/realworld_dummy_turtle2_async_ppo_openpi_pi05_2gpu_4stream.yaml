@@ -5,7 +5,7 @@ defaults:
   - env/realworld_button@env.train
   - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
-  - weight_syncer/patch_syncer@weight_syncer
+  - weight_syncer/bucket_syncer@weight_syncer
   - _self_
   - override hydra/job_logging: stdout
 
@@ -31,6 +31,12 @@ cluster:
   node_groups:
     - label: gpu
       node_ranks: 0
+      env_configs:
+        - node_ranks: 0
+          # Required on the reference dual RTX PRO 5000 host: direct NCCL P2P
+          # hangs during actor-to-rollout weight synchronization.
+          env_vars:
+            - NCCL_P2P_DISABLE: "1"
     - label: cpu_env
       node_ranks: 0
       ignore_hardware: true
@@ -190,11 +196,3 @@ reward:
 
 critic:
   use_critic_model: false
-
-# Actor and rollout both load the same SFT checkpoint.  Only the PPO-only heads
-# are freshly initialized and need a full initial broadcast; subsequent updates
-# still use the regular patch sync for every trainable parameter.
-weight_syncer:
-  patch:
-    init_sync:
-      prefixes: [value_head, noise_head]
