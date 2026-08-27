@@ -190,3 +190,11 @@ reward:
 
 critic:
   use_critic_model: false
+
+# Actor and rollout both load the same SFT checkpoint.  Only the PPO-only heads
+# are freshly initialized and need a full initial broadcast; subsequent updates
+# still use the regular patch sync for every trainable parameter.
+weight_syncer:
+  patch:
+    init_sync:
+      prefixes: [value_head, noise_head]
