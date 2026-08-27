@@ -90,3 +90,17 @@ def test_profile_stop_is_dispatched_to_all_groups_before_waiting() -> None:
     runner._close_profiling_window(step_idx=3)
 
     assert events == ["actor_stop", "rollout_stop", "actor_wait", "rollout_wait"]
+
+
+def test_consecutive_profile_steps_form_one_contiguous_window() -> None:
+    runner = EmbodiedRunner.__new__(EmbodiedRunner)
+    runner._profile_worker_groups = {"actorgroup", "rolloutgroup"}
+    runner._profile_all_steps = False
+    runner._profile_steps = set(range(3, 13))
+
+    assert runner._starts_profiling_window(3)
+    assert not runner._starts_profiling_window(4)
+    assert not runner._ends_profiling_window(11)
+    assert runner._ends_profiling_window(12)
+    assert not runner._should_profile_step(2)
+    assert not runner._should_profile_step(13)

@@ -471,6 +471,18 @@ class EmbodiedRunner:
             or (self._profile_steps is not None and step_idx in self._profile_steps)
         )
 
+    def _starts_profiling_window(self, step_idx: int) -> bool:
+        """Return whether ``step_idx`` starts an explicit contiguous window."""
+        if not self._should_profile_step(step_idx):
+            return False
+        return self._profile_steps is None or step_idx - 1 not in self._profile_steps
+
+    def _ends_profiling_window(self, step_idx: int) -> bool:
+        """Return whether ``step_idx`` ends an explicit contiguous window."""
+        if not self._should_profile_step(step_idx):
+            return False
+        return self._profile_steps is None or step_idx + 1 not in self._profile_steps
+
     def _profiling_targets(self):
         """Yield only workers selected by ``cluster.profiling.worker_groups``."""
         candidates = (
@@ -522,7 +534,9 @@ class EmbodiedRunner:
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
 
             with self.timer("step", trace_args={"step_idx": _step}):
@@ -575,7 +589,9 @@ class EmbodiedRunner:
                 self.global_step += 1
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
             self._log_step_metrics(
@@ -606,7 +622,9 @@ class EmbodiedRunner:
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
 
             with self.timer("step", trace_args={"step_idx": _step}):
@@ -654,7 +672,9 @@ class EmbodiedRunner:
                 self.global_step += 1
                 eval_metrics = self._maybe_eval_and_checkpoint(_step)
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
             self._log_step_metrics(

@@ -146,7 +146,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
             with self.timer("step"):
                 with self.timer("construct_rollout_batch"):
@@ -299,7 +301,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             if save_model:
                 self._save_checkpoint()
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
         self.metric_logger.finish()
