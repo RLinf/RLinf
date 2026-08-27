@@ -52,13 +52,9 @@ FSDP SFT 流水线监督微调其世界/动作专家。
      - 配置 / 权重
      - 重点
    * - LIBERO
-     - 单个 suite（默认 Spatial）
-     - ``libero_spatial_fastwam_eval``
-     - 评测一组已配置的并行环境。
-   * - LIBERO
-     - 完整 benchmark
-     - ``libero_fastwam_full_eval``
-     - 评测每个 suite 的全部 500 个初始状态。
+     - Spatial / Object / Goal / Long
+     - 四个 ``libero_*_fastwam_eval`` 配置
+     - 每次运行评测一个 suite 的全部 500 个初始状态。
    * - LIBERO-Plus
      - Spatial 扰动
      - 同一配置加 ``LIBERO_TYPE=plus``
@@ -184,58 +180,51 @@ FastWAM 检查点只使用 ``model_path``，不支持 ``checkpoint_path`` 别名
 评测
 ----
 
-FastWAM 分别提供单个 LIBERO suite 和完整 LIBERO benchmark 的评测方式。
-
-**单个 suite 评测** 使用 ``libero_spatial_fastwam_eval.yaml``。默认配置运行
-一小组 Spatial 环境，不代表完整的 500-state benchmark 结果。设置共享模型
-YAML 中的 checkpoint 和统计路径后，启动命令与其它模型接入保持一致：
+FastWAM 为四个 LIBERO suite 分别提供配置。设置共享模型 YAML 中的 checkpoint
+和统计路径后，直接运行需要评测的 suite：
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
 
-**完整 LIBERO 评测** 使用 ``evaluations/libero/libero_fastwam_full_eval.yaml``。
-设置该文件中的模型路径后运行：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_fastwam_full_eval
-
-完整配置固定使用 GPU ``0-3`` 和 20 个环境（每个 worker 5 个）。由于
+每个配置覆盖对应 suite 的全部 500 个固定初始状态，并固定使用 GPU ``0-3``
+和 20 个环境（每个 worker 5 个）。由于
 ``ignore_terminations=True`` 会让每条轨迹运行到 ``max_episode_steps``，每个环境
 恰好执行 25 个 episode，即 ``20 * 25 = 500`` 个 LIBERO 固定初始状态。这样既避免
 启动 500 个 simulator/EGL context，又保留 FastWAM 的批量推理。
 
 不要在 8 卡机器上把 placement 改成 ``env,rollout: all``。非解耦 channel 要求
 ``total_num_envs`` 能整除 rollout world size，但 500 条轨迹不能被 8 整除；如果没有
-padding 或终止槽位屏蔽，8-worker 布局会遗漏状态或让部分槽位提前耗尽。因此这里在
+padding 或终止槽位屏蔽，8-worker 布局会遗漏状态或让部分槽位提前耗尽。因此这些配置在
 4 卡和 8 卡机器上都使用 4 个 worker。
 
-每次运行会覆盖所选 suite 的全部 500 个初始状态。完整报告需要按照下表修改
-``libero_fastwam_full_eval.yaml`` 中的三个字段，并对四个 suite 分别执行同一条命令：
+各 suite 的 YAML 已固定官方 FastWAM 使用的 controller 步数，无需再通过命令行覆盖：
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 28 24 24
+   :widths: 18 42 20 20
 
    * - Suite
-     - ``task_suite_name``
+     - 配置
      - ``max_episode_steps``
      - ``max_steps_per_rollout_epoch``
    * - Spatial
-     - ``libero_spatial``
+     - ``libero_spatial_fastwam_eval``
      - ``400``
      - ``10000``
    * - Object
-     - ``libero_object``
+     - ``libero_object_fastwam_eval``
      - ``400``
      - ``10000``
    * - Goal
-     - ``libero_goal``
+     - ``libero_goal_fastwam_eval``
      - ``400``
      - ``10000``
    * - Long
-     - ``libero_10``
+     - ``libero_10_fastwam_eval``
      - ``700``
      - ``17500``
 

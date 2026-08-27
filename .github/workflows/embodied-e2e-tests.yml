@@ -323,7 +323,13 @@ jobs:
           test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.2-TI2V-5B
           test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.1-T2V-1.3B
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run_eval.sh libero_spatial_eval_fastwam
+          bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+            'cluster.component_placement={env\,rollout:0}' \
+            env.eval.total_num_envs=2 \
+            env.eval.max_episode_steps=10 \
+            env.eval.max_steps_per_rollout_epoch=10 \
+            rollout.model.model_path=${FASTWAM_CHECKPOINT_PATH} \
+            rollout.model.dataset_stats_path=${FASTWAM_DATASET_STATS_PATH}
 
       - name: Clean up
         if: always()

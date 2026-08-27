@@ -1,6 +1,6 @@
-# Full FastWAM evaluation over all 500 LIBERO-Spatial initial states.
+# Full FastWAM evaluation over all 500 LIBERO-Long (LIBERO-10) initial states.
 defaults:
-  - env/libero_spatial@env.eval
+  - env/libero_10@env.eval
   - model/fastwam@rollout.model
   - _self_
   - override hydra/job_logging: stdout
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_fastwam_eval"
+    experiment_name: "libero_10_fastwam_eval"
     logger_backends: ["tensorboard"]
   max_epochs: 1
   only_eval: true
@@ -40,10 +40,10 @@ env:
     total_num_envs: 20
     auto_reset: true
     ignore_terminations: true
-    # Match FastWAM upstream: 30 reset no-ops, then 400 controller steps.
+    # Match FastWAM upstream: 30 reset no-ops, then 700 controller steps.
     num_steps_wait: 30
-    max_episode_steps: 400
-    max_steps_per_rollout_epoch: 10000
+    max_episode_steps: 700
+    max_steps_per_rollout_epoch: 17500
     group_size: 1
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true

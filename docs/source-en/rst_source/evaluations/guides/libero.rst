@@ -53,6 +53,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_fastwam_eval.yaml``
+     - Object
+     - FastWAM
    * - ``libero_object_molmoact2_eval.yaml``
      - Object
      - MolmoAct2
@@ -62,6 +65,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_fastwam_eval.yaml``
+     - Goal
+     - FastWAM
    * - ``libero_goal_molmoact2_eval.yaml``
      - Goal
      - MolmoAct2
@@ -71,6 +77,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+   * - ``libero_10_fastwam_eval.yaml``
+     - Long (libero_10)
+     - FastWAM
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2

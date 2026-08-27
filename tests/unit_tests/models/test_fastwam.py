@@ -230,9 +230,12 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     sft_model_config = (repo_root / "examples/sft/config/model/fastwam.yaml").read_text(
         encoding="utf-8"
     )
-    eval_config = (
-        repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml"
-    ).read_text(encoding="utf-8")
+    eval_recipes = {
+        "libero_spatial": (400, 10000),
+        "libero_object": (400, 10000),
+        "libero_goal": (400, 10000),
+        "libero_10": (700, 17500),
+    }
 
     assert "max_epochs: 10" in sft_config
     assert "max_steps: -1" in sft_config
@@ -242,10 +245,15 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     assert "FASTWAM_CHECKPOINT_DIR" not in sft_model_config
     assert "FASTWAM_ACTION_DIT_BACKBONE_PATH" not in sft_model_config
     assert "/your_path_to/LIBERO-fastwam" in sft_config
-    assert "env,rollout: 0-3" in eval_config
-    assert "task_suite_name: libero_spatial" in eval_config
-    assert "total_num_envs: 20" in eval_config
-    assert "max_steps_per_rollout_epoch: 10000" in eval_config
+    for suite, (max_episode_steps, max_epoch_steps) in eval_recipes.items():
+        eval_config = (
+            repo_root / f"evaluations/libero/{suite}_fastwam_eval.yaml"
+        ).read_text(encoding="utf-8")
+        assert f"- env/{suite}@env.eval" in eval_config
+        assert "env,rollout: 0-3" in eval_config
+        assert "total_num_envs: 20" in eval_config
+        assert f"max_episode_steps: {max_episode_steps}" in eval_config
+        assert f"max_steps_per_rollout_epoch: {max_epoch_steps}" in eval_config
 
 
 def test_fastwam_reset_wait_preserves_shared_libero_default() -> None:
@@ -254,9 +262,8 @@ def test_fastwam_reset_wait_preserves_shared_libero_default() -> None:
         encoding="utf-8"
     )
     eval_configs = [
-        repo_root / "evaluations/libero/libero_spatial_fastwam_eval.yaml",
-        repo_root / "evaluations/libero/libero_fastwam_full_eval.yaml",
-        repo_root / "tests/e2e_tests/embodied/libero_spatial_eval_fastwam.yaml",
+        repo_root / f"evaluations/libero/{suite}_fastwam_eval.yaml"
+        for suite in ("libero_spatial", "libero_object", "libero_goal", "libero_10")
     ]
 
     assert 'self.cfg.get("num_steps_wait", 15)' in libero_env

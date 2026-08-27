@@ -53,13 +53,9 @@ Tasks
      - Config / Weights
      - Focus
    * - LIBERO
-     - One suite (Spatial by default)
-     - ``libero_spatial_fastwam_eval``
-     - Evaluate one configured group of environments.
-   * - LIBERO
-     - Full benchmark
-     - ``libero_fastwam_full_eval``
-     - Evaluate all 500 initial states in each suite.
+     - Spatial / Object / Goal / Long
+     - Four ``libero_*_fastwam_eval`` configs
+     - Evaluate all 500 initial states of one suite per run.
    * - LIBERO-Plus
      - Spatial perturbations
      - Same config with ``LIBERO_TYPE=plus``
@@ -191,67 +187,56 @@ supported alias.
 Evaluate
 --------
 
-FastWAM provides configurations for evaluating one LIBERO suite and for
-running the complete LIBERO benchmark.
-
-**Single-suite evaluation** uses ``libero_spatial_fastwam_eval.yaml``. The
-provided configuration runs a small group of Spatial environments; it does
-not claim a full 500-state benchmark result. After setting the checkpoint and
-statistics paths in the shared model YAML, launch it with the same concise
-command used by other model integrations:
+FastWAM provides one configuration for each LIBERO suite. After setting the
+checkpoint and statistics paths in the shared model YAML, run the suite you
+want to evaluate:
 
 .. code-block:: bash
 
    bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
 
-**Complete LIBERO evaluation** uses
-``evaluations/libero/libero_fastwam_full_eval.yaml``. Set its model paths, then
-run:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_fastwam_full_eval
-
-The full-suite config intentionally uses GPUs ``0-3`` and 20 environments
-(five per worker). Because ``ignore_terminations=True`` keeps every trajectory
-running until ``max_episode_steps``, each environment runs exactly 25 episodes:
-``20 * 25 = 500`` fixed LIBERO initial states. This avoids the simulator and
-EGL-context cost of starting 500 environments while still using batched
-FastWAM inference.
+Each config covers all 500 fixed initial states of its suite. It uses GPUs
+``0-3`` and 20 environments (five per worker). Because
+``ignore_terminations=True`` keeps every trajectory running until
+``max_episode_steps``, each environment runs exactly 25 episodes:
+``20 * 25 = 500``. This avoids starting 500 simulator/EGL contexts while still
+using batched FastWAM inference.
 
 Do not change the placement to ``env,rollout: all`` on an eight-GPU host. The
 non-decoupled channel requires ``total_num_envs`` to be divisible by the
 rollout world size, but no multiple of eight divides LIBERO's 500 trajectories.
 Without padding or terminal-slot suppression, an eight-worker layout therefore
-either omits states or exhausts some slots early. The provided config uses four
+either omits states or exhausts some slots early. The provided configs use four
 workers on both four- and eight-GPU hosts.
 
-One run covers all 500 initial states of the selected suite. To report the
-complete benchmark, run the same command once for each row below after changing
-the three fields in ``libero_fastwam_full_eval.yaml``:
+The suite-specific configs also fix the official FastWAM controller limits, so
+no command-line horizon overrides are needed:
 
 .. list-table::
    :header-rows: 1
-   :widths: 24 28 24 24
+   :widths: 18 42 20 20
 
    * - Suite
-     - ``task_suite_name``
+     - Config
      - ``max_episode_steps``
      - ``max_steps_per_rollout_epoch``
    * - Spatial
-     - ``libero_spatial``
+     - ``libero_spatial_fastwam_eval``
      - ``400``
      - ``10000``
    * - Object
-     - ``libero_object``
+     - ``libero_object_fastwam_eval``
      - ``400``
      - ``10000``
    * - Goal
-     - ``libero_goal``
+     - ``libero_goal_fastwam_eval``
      - ``400``
      - ``10000``
    * - Long
-     - ``libero_10``
+     - ``libero_10_fastwam_eval``
      - ``700``
      - ``17500``
 

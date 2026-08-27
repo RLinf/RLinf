@@ -1,6 +1,6 @@
-# Full FastWAM evaluation over all 500 LIBERO-Spatial initial states.
+# Full FastWAM evaluation over all 500 LIBERO-Object initial states.
 defaults:
-  - env/libero_spatial@env.eval
+  - env/libero_object@env.eval
   - model/fastwam@rollout.model
   - _self_
   - override hydra/job_logging: stdout
@@ -22,7 +22,7 @@ runner:
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_fastwam_eval"
+    experiment_name: "libero_object_fastwam_eval"
     logger_backends: ["tensorboard"]
   max_epochs: 1
   only_eval: true

@@ -1,8 +1,8 @@
-# Real FastWAM smoke evaluation. Two environments share one rollout worker so
-# predict_action_batch executes a genuine GPU batch against the released model.
+# Full FastWAM evaluation over all 500 LIBERO-Goal initial states.
 defaults:
-  - env/libero_spatial@env.eval
+  - env/libero_goal@env.eval
   - model/fastwam@rollout.model
+  - _self_
   - override hydra/job_logging: stdout
 
 hydra:
@@ -10,21 +10,20 @@ hydra:
     dir: .
   output_subdir: null
   searchpath:
-    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+    - file://${oc.env:EMBODIED_PATH}/config/
 
 cluster:
   num_nodes: 1
   component_placement:
-    env,rollout: 0
+    env,rollout: 0-3
 
 runner:
   task_type: embodied_eval
   logger:
     log_path: "../results"
     project_name: rlinf
-    experiment_name: "libero_spatial_eval_fastwam"
+    experiment_name: "libero_goal_fastwam_eval"
     logger_backends: ["tensorboard"]
-
   max_epochs: 1
   only_eval: true
   val_check_interval: -1
@@ -35,14 +34,16 @@ runner:
 env:
   group_name: "EnvGroup"
   eval:
+    seed: 42
     rollout_epoch: 1
-    total_num_envs: 2
+    # Each of the 20 slots evaluates 25 episodes: 20 * 25 = 500 states.
+    total_num_envs: 20
     auto_reset: true
     ignore_terminations: true
+    # Match FastWAM upstream: 30 reset no-ops, then 400 controller steps.
     num_steps_wait: 30
-    max_episode_steps: 10
-    # One FastWAM re-planning step is enough to cover batched inference.
-    max_steps_per_rollout_epoch: 10
+    max_episode_steps: 400
+    max_steps_per_rollout_epoch: 10000
     group_size: 1
     use_fixed_reset_state_ids: true
     use_ordered_reset_state_ids: true
@@ -58,10 +59,6 @@ rollout:
   generation_backend: "huggingface"
   enable_offload: false
   pipeline_stage_num: 1
-
   model:
     model_type: "fastwam"
-    # Download the released checkpoint and stats from:
-    # https://huggingface.co/yuanty/fastwam
-    model_path: ${oc.env:FASTWAM_CHECKPOINT_PATH,/path/to/libero_uncond_2cam224.pt}
-    dataset_stats_path: ${oc.env:FASTWAM_DATASET_STATS_PATH,/path/to/libero_uncond_2cam224_dataset_stats.json}
+    seed: 42
