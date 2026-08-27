@@ -91,6 +91,13 @@ algorithm:
     min_buffer_size: 1000
     auto_save: False
 
+  # Save the STEAM decisions and geometry-only labels used by both calibrators.
+  rlt_gate_calibration:
+    enable: True
+    save_path: ${runner.logger.log_path}/${runner.logger.experiment_name}/gate_calibration
+    chunk_size: 10
+    max_trace_files: 0
+
   target_update_freq: 1
   target_update_type: all
   train_actor_steps: 1000
@@ -111,6 +118,7 @@ env:
     reward_mode: only_success
     rlt_policy_switch:
       enable: True
+      # STEAM owns routing; the geometry gate below is calibration-only.
       routing_source: rollout
       task_mode: full_task
       trigger_mode: auto
@@ -123,6 +131,20 @@ env:
         fallback_hole_radius: 0.03
       expert_takeover:
         enable: False
+        oracle_metrics:
+          enable: True
+          trigger_mode: stalled_progress
+          gate:
+            require_grasp: True
+            require_not_success: True
+            near_hole_x_min: -0.10
+            near_hole_yz_margin: 2.0
+            stuck_chunks_before_takeover: 3
+            min_x_progress: 0.003
+            min_yz_progress: 0.0015
+            min_score_progress: 0.002
+            progress_yz_weight: 1.0
+            fallback_hole_radius: 0.03
     max_episode_steps: 500
     max_steps_per_rollout_epoch: 500
     action_dim: 8
@@ -163,6 +185,20 @@ env:
         fallback_hole_radius: 0.03
       expert_takeover:
         enable: False
+        oracle_metrics:
+          enable: True
+          trigger_mode: stalled_progress
+          gate:
+            require_grasp: True
+            require_not_success: True
+            near_hole_x_min: -0.10
+            near_hole_yz_margin: 2.0
+            stuck_chunks_before_takeover: 3
+            min_x_progress: 0.003
+            min_yz_progress: 0.0015
+            min_score_progress: 0.002
+            progress_yz_weight: 1.0
+            fallback_hole_radius: 0.03
     max_episode_steps: 500
     max_steps_per_rollout_epoch: 500
     policy_mode: eval
@@ -262,6 +298,9 @@ rollout:
       enable: True
       mode: active
       phase_head_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/steam_phase_head.pt"
+      # Keep frozen STEAM features in calibration traces so the phase head can
+      # be recalibrated without changing the active routing path.
+      collect_phase_features: True
       # By default the gate reads the calibrated threshold and patience from
       # this checkpoint. Set these fields explicitly only for an ablation.
     chunk_size: 10
