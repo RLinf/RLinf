@@ -60,6 +60,7 @@ def _make_backend(module, retain_action=True):
     backend.num_frames = WINDOW + CHUNK
     backend.num_inference_steps = 5
     backend.condition_frame_length = WINDOW
+    backend.chunk = CHUNK
     backend.retain_action = retain_action
     backend._sessions = {}
     return backend
@@ -144,7 +145,10 @@ def test_generate_keeps_the_reference_frame_and_rolls_the_window(monkeypatch):
 
     videos = backend.generate(env_ids=[0], actions=torch.zeros(1, CHUNK, 7))
 
-    assert videos.shape == (1, 3, WINDOW + CHUNK, 8, 8)
+    # only the new frames come back; the ones the chunk conditioned on stay behind the session
+    assert videos.shape == (1, 3, CHUNK, 8, 8)
+    first_new = (100 + WINDOW) / 255.0 * 2.0 - 1.0
+    assert videos[0, 0, 0].max().item() == pytest.approx(first_new, abs=1e-6)
     window = backend._sessions[0]["frames"]
     assert np.asarray(window[0]).max() == 10
     # the pipeline's own frames go into the window untouched, not through a [-1, 1] round trip

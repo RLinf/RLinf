@@ -14,8 +14,6 @@
 
 import io
 import os
-from contextlib import nullcontext
-from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
@@ -483,19 +481,14 @@ class WanEnv(BaseWorldEnv):
             if isinstance(actions, np.ndarray)
             else actions.to(self.device)
         )
-        # videos: [num_envs, C, T, H, W] in [-1, 1]
+        # videos: the new frames only, [num_envs, C, T, H, W] in [-1, 1]
         videos = self.backend.generate(
             env_ids=range(num_envs),
             actions=actions_tensor,
         )
 
-        # Stack all environments: [num_envs, C, T, H, W]
-        x_samples = videos[:, :, self.condition_frame_length :].to(
-            self.device, dtype=self.current_obs.dtype
-        )
-
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
-        x_samples = x_samples.unsqueeze(2)
+        x_samples = videos.unsqueeze(2).to(self.device, dtype=self.current_obs.dtype)
 
         # Update current observation: append new generated frames to the time dimension
         self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
@@ -582,13 +575,7 @@ class WanEnv(BaseWorldEnv):
         """Execute a chunk of actions - optimized version that processes chunk actions together"""
         # chunk_actions: [num_envs, chunk_steps, action_dim=8]
         self.onload()
-        autocast_context = (
-            torch.amp.autocast(device_type=self.device.type, dtype=torch.bfloat16)
-            if self.device.type != "cpu"
-            else nullcontext()
-        )
-        with autocast_context:
-            self._infer_next_chunk_frames(policy_output_action)
+        self._infer_next_chunk_frames(policy_output_action)
 
         # Update elapsed steps (incremented after inference)
         # print(f'elapsed_steps:{self.elapsed_steps}')

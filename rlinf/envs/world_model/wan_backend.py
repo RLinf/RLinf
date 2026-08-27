@@ -21,7 +21,7 @@ import torch
 from diffsynth.pipelines.wan_video_new import ModelConfig, WanVideoPipeline
 from PIL import Image
 
-from rlinf.envs.world_model.backend import FrameQueue
+from rlinf.envs.world_model.backend import FrameQueue, autocast
 
 __all__ = ["WanBackend"]
 
@@ -39,7 +39,14 @@ class WanBackend:
         self.num_inference_steps = cfg.num_inference_steps
         self.num_frames = cfg.num_frames
         self.condition_frame_length = cfg.condition_frame_length
+        self.chunk = cfg.chunk
+        self.image_size = tuple(cfg.image_size)
         self.retain_action = cfg.get("retain_action", True)
+        if self.num_frames != self.condition_frame_length + self.chunk:
+            raise ValueError(
+                f"num_frames must be condition_frame_length + chunk; got {self.num_frames} != "
+                f"{self.condition_frame_length} + {self.chunk}"
+            )
         self._sessions: dict[int, dict[str, Any]] = {}
         self._pipe = self._build_pipeline(device_str)
 
@@ -148,7 +155,8 @@ class WanBackend:
                 f"env_ids and actions must describe the same batch rows; got "
                 f"{batch_size}, {actions.shape[0]}"
             )
-        output = self._pipe(**self._pipe_kwargs(env_ids, actions))
+        with autocast(self.device, torch.bfloat16):
+            output = self._pipe(**self._pipe_kwargs(env_ids, actions))
 
         videos = []
         for env_idx, env_id in enumerate(env_ids):
@@ -158,7 +166,8 @@ class WanBackend:
             window[1:] = output[env_idx][-(self.condition_frame_length - 1) :]
 
             frames = []
-            for img in output[env_idx]:
+            # The pipeline regenerates the frames it conditioned on; only the new ones leave here.
+            for img in output[env_idx][self.condition_frame_length :]:
                 # Keep frame tensors in fp32 to avoid silent fp64 promotion
                 # that can significantly increase GPU memory usage.
                 arr = np.asarray(img, dtype=np.float32) / 255.0

@@ -23,18 +23,35 @@ this module, one file each.
 
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence, runtime_checkable
+from contextlib import nullcontext
+from typing import Any, ContextManager, Protocol, Sequence, runtime_checkable
 
 import torch
 
-__all__ = ["WorldModelBackend", "FrameQueue"]
+__all__ = ["WorldModelBackend", "FrameQueue", "autocast"]
 
 FrameQueue = Sequence[Sequence[torch.Tensor]]
 
 
+def autocast(device: torch.device, dtype: torch.dtype) -> ContextManager:
+    """Autocast on an accelerator, a no-op on CPU."""
+    if device.type == "cpu":
+        return nullcontext()
+    return torch.amp.autocast(device_type=device.type, dtype=dtype)
+
+
 @runtime_checkable
 class WorldModelBackend(Protocol):
-    """Advances frames for a world-model environment."""
+    """Advances frames for a world-model environment.
+
+    A backend also owns the generation geometry, since that is a property of the model it holds: how
+    many frames one action chunk produces, how many frames it conditions on, and at what resolution.
+    The env reads them from here instead of from its own config.
+    """
+
+    chunk: int
+    condition_frame_length: int
+    image_size: tuple[int, int]
 
     def open_session(
         self,
@@ -68,7 +85,9 @@ class WorldModelBackend(Protocol):
             actions: ``[B, chunk, action_dim]``.
 
         Returns:
-            Generated frames as ``[B, C, T, H, W]`` in ``[-1, 1]``, the whole window plus the chunk.
+            The newly generated frames as ``[B, C, T, H, W]`` in ``[-1, 1]``. Only the new ones: the
+            frames the chunk was conditioned on stay behind the session. ``T`` need not equal
+            ``chunk`` — a latent-space backend decodes whatever its VAE produces.
         """
 
     def close_session(self, env_ids: Sequence[int]) -> None:
