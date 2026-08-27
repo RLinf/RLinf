@@ -98,6 +98,7 @@ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
@@ -138,6 +139,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
+        SupportedModel.COSMOS3,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
@@ -1310,6 +1312,13 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
             )
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
+
+        elif SupportedModel(model_type) == SupportedModel.COSMOS3:
+            from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+                validate_cosmos3_sft_model_cfg,
+            )
+
+            cfg.actor.model = validate_cosmos3_sft_model_cfg(cfg.actor.model)
 
         _validate_steam_ensemble_cfg(cfg.actor)
 

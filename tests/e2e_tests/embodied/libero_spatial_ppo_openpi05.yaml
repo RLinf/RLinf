@@ -70,6 +70,7 @@ env:
     total_num_envs: 16
     max_episode_steps: 10
     max_steps_per_rollout_epoch: 10
+    skip_intermediate_renders: True
   eval:
     rollout_epoch: 1 # set eval.rollout_epoch > 0 when enable runner.only_eval or runner.val_check_interval > 0
     total_num_envs: 8
