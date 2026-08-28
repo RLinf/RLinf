@@ -33,13 +33,11 @@ Cosmos3 SGLang 评测
 
    这里不使用 ``--model cosmos3``：cosmos3 的模型依赖（natten、cuDNN pin 等）与下方 SGLang 栈冲突过多。只装 RLinf 本体 + LIBERO 环境依赖即可；SGLang 按下文步骤单独安装。
 
-Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（需用带 batch action 支持的分支）：
+Cosmos3 SGLang serving 需使用带 ``diffusion`` extra 的 SGLang（batch action 支持已合并到 ``main``,commit ``924aeee59cb68ea99bf7c7c183512958ed3d6272``）：
 
 .. code-block:: bash
 
-   git clone -b support_batch_cosmos3_action https://github.com/FxxxxU/sglang.git /path/to/sglang
-   cd /path/to/sglang
-   pip install -e "python[diffusion]"
+   git clone https://github.com/FxxxxU/sglang.git /path/to/sglang && cd /path/to/sglang && git checkout 924aeee59cb68ea99bf7c7c183512958ed3d6272 && pip install -e "python[diffusion]"
 
 准备 Checkpoint
 ----------------------------------------
