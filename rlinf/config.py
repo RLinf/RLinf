@@ -941,6 +941,64 @@ def _validate_psi0_eval_cfg(cfg, model_cfg, only_eval: bool) -> None:
     )
 
 
+def _validate_psi0_train_cfg(cfg, model_cfg, only_eval: bool) -> None:
+    """Validate the narrow Psi0 + SIMPLE PPO training contract."""
+    assert not only_eval, "Psi0 training config cannot use an Eval runner."
+    assert cfg.rollout.get("generation_backend", "huggingface") == "huggingface", (
+        "Psi0 requires rollout.generation_backend='huggingface'."
+    )
+    assert not cfg.runner.get("rtc", {}).get("enabled", False), (
+        "Psi0 uses model-side RTC; runner.rtc.enabled must be false."
+    )
+    assert not cfg.runner.get("enable_decoupled_mode", False), (
+        "Psi0 SIMPLE training does not support decoupled mode."
+    )
+    assert cfg.rollout.get("collect_prev_infos", False), (
+        "Psi0 training requires rollout.collect_prev_infos=true."
+    )
+    assert not cfg.rollout.get("recompute_logprobs", False), (
+        "Psi0 recomputes logprobs in the actor; rollout.recompute_logprobs must be false."
+    )
+
+    psi0_cfg = model_cfg.get("psi0", {})
+    plan_horizon = int(psi0_cfg.get("plan_horizon", 30))
+    execution_horizon = int(model_cfg.num_action_chunks)
+    overlap_horizon = int(psi0_cfg.get("overlap_horizon", 6))
+    assert plan_horizon == execution_horizon + overlap_horizon, (
+        "Psi0 requires plan_horizon == num_action_chunks + overlap_horizon; "
+        f"got {plan_horizon} != {execution_horizon} + {overlap_horizon}."
+    )
+    assert execution_horizon == 24 and int(model_cfg.action_dim) == 36, (
+        "Psi0 SIMPLE training requires actions shaped [B, 24, 36]."
+    )
+    assert psi0_cfg.get("sampler") == "stochastic_transition", (
+        "Psi0 training requires sampler='stochastic_transition'."
+    )
+    assert psi0_cfg.get("rtc", {}).get("enabled", False), (
+        "Psi0 SIMPLE training requires psi0.rtc.enabled=true."
+    )
+    assert cfg.env.train.env_type == "simple", (
+        "Psi0 training requires env.train.env_type='simple'."
+    )
+    assert not cfg.env.train.auto_reset, (
+        "Psi0 SIMPLE training requires env.train.auto_reset=false."
+    )
+    assert cfg.algorithm.adv_type == "gae" and cfg.algorithm.loss_type == (
+        "actor_critic"
+    ), (
+        "Psi0 supports PPO with GAE and actor_critic loss only."
+    )
+    assert model_cfg.get("add_value_head", False), (
+        "Psi0 PPO requires actor.model.add_value_head=true."
+    )
+    assert not cfg.critic.get("use_critic_model", False), (
+        "Psi0 PPO uses its model-local value head, not a separate critic model."
+    )
+    assert cfg.actor.fsdp_config.get("use_orig_params", False), (
+        "Psi0 partial freezing requires actor.fsdp_config.use_orig_params=true."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -954,7 +1012,10 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
     )
     if model_type == SupportedModel.PSI0:
-        _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
+        if only_eval:
+            _validate_psi0_eval_cfg(cfg, model_cfg, only_eval)
+        else:
+            _validate_psi0_train_cfg(cfg, model_cfg, only_eval)
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
@@ -1064,6 +1125,11 @@ def validate_embodied_cfg(cfg):
     component_placement = HybridComponentPlacement(cfg, Cluster())
     stage_num = cfg.rollout.pipeline_stage_num
     env_world_size = component_placement.get_world_size("env")
+    if model_type == SupportedModel.PSI0:
+        psi0_env_cfg = cfg.env.eval if only_eval else cfg.env.train
+        assert (
+            int(psi0_env_cfg.total_num_envs) // env_world_size // stage_num == 1
+        ), "Psi0 SIMPLE requires exactly one environment per EnvWorker."
 
     use_reward_model = cfg.get("reward", {}).get("use_reward_model", False)
     standalone_realworld = cfg.get("reward", {}).get("standalone_realworld", False)
