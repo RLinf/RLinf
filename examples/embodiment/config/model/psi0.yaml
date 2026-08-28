@@ -15,6 +15,7 @@ add_value_head: false
 
 psi0:
   sampler: "deterministic_euler"
+  stochastic_noise_scale: 1.0
   num_inference_steps: 10
   plan_horizon: 30
   overlap_horizon: 6
