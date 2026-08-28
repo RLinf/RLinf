@@ -14,6 +14,8 @@ training efficiency becomes the bottleneck.
      - Hide policy inference latency by overlapping it with action-chunk execution, in simulation and on real robots.
    * - :doc:`Env Decoupled Mode <../env_decoupled_mode>`
      - Decouple Env Workers from Rollout Workers for dynamic embodied rollout scheduling.
+   * - :doc:`Observation Compression <../obs_compression>`
+     - Losslessly compress image observations on the Env to Rollout channel to save bandwidth.
    * - :doc:`LoRA <../lora>`
      - Train with LoRA adapters.
    * - :doc:`Auto Placement <../auto_placement>`
@@ -30,6 +32,7 @@ training efficiency becomes the bottleneck.
 
    RTC <../rtc>
    Env Decoupled Mode <../env_decoupled_mode>
+   Observation Compression <../obs_compression>
    LoRA <../lora>
    Auto Placement <../auto_placement>
    Dynamic Scheduling <../dynamic_scheduling>

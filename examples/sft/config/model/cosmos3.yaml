@@ -1,0 +1,38 @@
+# Cosmos3 (NVIDIA OmniMoTModel) action-policy model defaults for RLinf SFT.
+#
+# Pulled in via `defaults: - model/cosmos3@actor.model` in recipe yamls.
+# Only keys that rlinf actually consumes are listed here. The cosmos experiment
+model_type: "cosmos3"
+
+# Keep cosmos internal FSDP/CP/CFGP off so RLinf's FSDPModelManager owns the
+# single fully_shard. AC and EMA stay ON (applied inside build_net).
+disable_cosmos_parallelism: true
+
+compile_enabled: false
+
+# Warm-start from the non-action base Cosmos3-Nano: skip the action heads +
+# net_ema so they init fresh (public Cosmos3-Nano ships DROID 8-D heads; libero
+# is 10-D). Loaded by cosmos3._load_base_weights via CustomLoadPlanner.
+keys_to_skip_loading:
+  - "net_ema."
+  - "action2llm"
+  - "llm2action"
+  - "action_modality_embed"
+  - "action_pos_embed"
+
+# Trainable param selection (freeze the understanding tower). Applied by
+# cosmos3._apply_freeze as a substring match over omni.net.
+keys_to_select:
+  - "moe_gen"
+  - "time_embedder"
+  - "vae2llm"
+  - "llm2vae"
+  - "action2llm"
+  - "llm2action"
+  - "action_modality_embed"
+
+# Per-head LR multipliers (action heads learn faster than the frozen tower).
+lr_multipliers:
+  action2llm: 5.0
+  llm2action: 5.0
+  action_modality_embed: 5.0
