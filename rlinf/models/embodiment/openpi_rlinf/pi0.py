@@ -201,8 +201,10 @@ class Pi0(model.BaseModel):
         input_mask = []
         ar_mask = []
 
-        # Embed images through SigLIP
-        for name in obs.images:
+        # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration order).
+        image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
+        image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
+        for name in image_names:
             image_tokens, _ = self.img(obs.images[name])  # (B, num_patches, width)
             tokens.append(image_tokens)
 

@@ -18,6 +18,7 @@ import dataclasses
 import random
 from typing import Any, Literal, Sequence
 
+import numpy as np
 import torch
 
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -25,12 +26,14 @@ from rlinf.models.embodiment.modules.value_head import ValueHead
 from rlinf.models.embodiment.openpi_rlinf.env_io import EnvIO
 from rlinf.models.embodiment.openpi_rlinf.modules import gemma
 from rlinf.models.embodiment.openpi_rlinf.modules.model import (
+    IMAGE_KEYS,
     Observation,
     preprocess_observation,
 )
 from rlinf.models.embodiment.openpi_rlinf.pi0 import Pi0
 from rlinf.models.embodiment.openpi_rlinf.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi_rlinf.sampling import rl_sampler
+from rlinf.models.embodiment.openpi_rlinf.transforms.env import repack_env_obs
 
 
 @dataclasses.dataclass(frozen=True)
@@ -132,21 +135,29 @@ class Pi0RL(EnvIO, Pi0):
         self,
         env_obs: dict[str, Any],
         mode: Literal["train", "eval"] = "eval",
-        compute_values: bool = False,
+        compute_values: bool = True,
         *,
         noise: torch.Tensor | None = None,
         rng: torch.Generator | None = None,
         **kwargs,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         del kwargs
-        observation = self.env_obs_to_observation(env_obs)
+        repacked = repack_env_obs(
+            self.config_name,
+            env_obs,
+            select_state=self._select_configured_state,
+        )
+        observation = self._observation_dict_to_device(
+            self.input_transform(repacked, transpose=False)
+        )
         if mode == "eval":
             return self._predict_eval(observation, noise=noise, rng=rng)
-        if mode != "train":
-            raise ValueError(f"Unknown predict mode: {mode!r}")
-        return self._predict_train(
+        actions, result = self._predict_train(
             observation, noise=noise, rng=rng, compute_values=compute_values
         )
+        # Match OpenPI: stash raw env obs so the actor can re-transform.
+        result["forward_inputs"].update(_clone_replay_obs(repacked))
+        return actions, result
 
     def _predict_train(
         self,
@@ -275,16 +286,11 @@ class Pi0RL(EnvIO, Pi0):
         forward_inputs: dict[str, torch.Tensor] = {
             "chains": chains_tensor,
             "denoise_inds": denoise_inds,
-            "obs_state": observation.state.contiguous(),
             "tokenized_prompt": observation.tokenized_prompt.contiguous(),
             "tokenized_prompt_mask": observation.tokenized_prompt_mask.contiguous(),
             "action": actions.reshape(B, -1).contiguous(),
             "model_action": x_0.reshape(B, -1).contiguous(),
         }
-        for k, v in observation.images.items():
-            forward_inputs[f"obs_image__{k}"] = v.contiguous()
-        for k, v in observation.image_masks.items():
-            forward_inputs[f"obs_image_mask__{k}"] = v.contiguous()
         if nft_state is not None:
             forward_inputs.update(nft_state)
             forward_inputs["nft_x0"] = x_0.detach()
@@ -349,20 +355,42 @@ class Pi0RL(EnvIO, Pi0):
     def _observation_from_forward_inputs(
         self, forward_inputs: dict[str, torch.Tensor]
     ) -> Observation:
-        images: dict[str, torch.Tensor] = {}
-        image_masks: dict[str, torch.Tensor] = {}
-        for key, value in forward_inputs.items():
-            if key.startswith("obs_image__"):
-                images[key[len("obs_image__") :]] = value
-            elif key.startswith("obs_image_mask__"):
-                image_masks[key[len("obs_image_mask__") :]] = value
-        return Observation(
-            images=images,
-            image_masks=image_masks,
-            state=forward_inputs["obs_state"],
-            tokenized_prompt=forward_inputs["tokenized_prompt"],
-            tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
-        )
+        """Rebuild the rollout observation so actor logprobs match sampling.
+
+        Prefer raw ``observation/*`` tensors (OpenPI path): re-run
+        ``input_transform`` then ``preprocess_observation``. Fall back to the
+        older ``obs_image__*`` layout, assembling cameras in ``IMAGE_KEYS``
+        order rather than ``dict`` iteration order.
+        """
+        has_raw_obs = any(key.startswith("observation/") for key in forward_inputs)
+        if has_raw_obs:
+            processed = self.input_transform(forward_inputs, transpose=False)
+            observation = self._observation_dict_to_device(processed)
+        else:
+            images: dict[str, torch.Tensor] = {}
+            image_masks: dict[str, torch.Tensor] = {}
+            for name in IMAGE_KEYS:
+                image_key = f"obs_image__{name}"
+                if image_key in forward_inputs:
+                    images[name] = forward_inputs[image_key]
+                mask_key = f"obs_image_mask__{name}"
+                if mask_key in forward_inputs:
+                    image_masks[name] = forward_inputs[mask_key]
+            for key, value in forward_inputs.items():
+                if key.startswith("obs_image__"):
+                    name = key[len("obs_image__") :]
+                    images.setdefault(name, value)
+                elif key.startswith("obs_image_mask__"):
+                    name = key[len("obs_image_mask__") :]
+                    image_masks.setdefault(name, value)
+            observation = Observation(
+                images=images,
+                image_masks=image_masks,
+                state=forward_inputs["obs_state"],
+                tokenized_prompt=forward_inputs["tokenized_prompt"],
+                tokenized_prompt_mask=forward_inputs["tokenized_prompt_mask"],
+            )
+        return preprocess_observation(observation, train=False)
 
     def forward(self, forward_type: ForwardType = ForwardType.DEFAULT, **kwargs):
         if forward_type == ForwardType.DEFAULT:
@@ -505,3 +533,18 @@ class Pi0RL(EnvIO, Pi0):
                     self.value_head, suffix_act, action_chunk=self.action_chunk
                 )[:, None]
         return result
+
+
+def _clone_replay_obs(repacked: dict[str, Any]) -> dict[str, Any]:
+    """Clone env-repacked tensors for ``forward_inputs`` (skip the prompt)."""
+    cloned: dict[str, Any] = {}
+    for key, value in repacked.items():
+        if key == "prompt":
+            continue
+        if torch.is_tensor(value):
+            cloned[key] = value.detach().contiguous()
+        elif isinstance(value, np.ndarray):
+            cloned[key] = torch.from_numpy(np.ascontiguousarray(value))
+        else:
+            cloned[key] = value
+    return cloned

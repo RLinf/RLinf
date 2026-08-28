@@ -25,7 +25,13 @@ from torch.utils._pytree import tree_map
 
 
 def _to_numpy(x):
-    return np.asarray(x.detach().cpu()) if torch.is_tensor(x) else x
+    """Convert tensors to numpy. Cast bf16/fp16 first — numpy has no bfloat16."""
+    if not torch.is_tensor(x):
+        return x
+    x = x.detach().cpu()
+    if x.dtype in (torch.bfloat16, torch.float16):
+        x = x.to(torch.float32)
+    return np.asarray(x)
 
 
 def apply_input_transform(
