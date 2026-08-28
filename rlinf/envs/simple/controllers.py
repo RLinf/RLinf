@@ -20,6 +20,7 @@ import time
 from typing import Any, Protocol
 
 import numpy as np
+import torch
 
 _STATE_SLICES = (
     (29, 32),
@@ -78,6 +79,8 @@ class SimpleController(Protocol):
 
     def is_stabilized(self) -> bool: ...
 
+    def finish_stabilization(self) -> None: ...
+
     def action(
         self, observation: dict[str, Any], high_level_action: np.ndarray
     ) -> Any: ...
@@ -110,6 +113,12 @@ class SimpleTeleopController:
 
     def is_stabilized(self) -> bool:
         return bool(self.robot.stabilized)
+
+    def finish_stabilization(self) -> None:
+        """Match SIMPLE's policy-start gait phase."""
+        self._agent._wbc_policy.lower_body_policy.gait_indices = torch.zeros(
+            (1,), dtype=torch.float32
+        )
 
     def action(self, observation: dict[str, Any], high_level_action: np.ndarray) -> Any:
         """Convert one 36-D command to one frozen decoupled-WBC action."""
