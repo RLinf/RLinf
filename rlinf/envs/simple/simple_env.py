@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Single-process SIMPLE Teleop Eval environment for Psi0."""
+"""Single-process SIMPLE Teleop environment for Psi0."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ class SimpleEnv(gym.Env):
     def __init__(self, cfg, num_envs, seed_offset, total_num_processes, worker_info):
         del worker_info
         if num_envs != 1:
-            raise ValueError("The P3 SIMPLE Eval MVP requires one env per EnvWorker.")
+            raise ValueError("SIMPLE requires one env per EnvWorker.")
         if total_num_processes < 1:
             raise ValueError("total_num_processes must be positive.")
         task_id = str(cfg.init_params.task_id)
@@ -166,12 +166,10 @@ class SimpleEnv(gym.Env):
             raise ValueError(f"Unsupported Psi0 SIMPLE Teleop task: {task_id}.")
         if cfg.init_params.controller_mode != "decoupled_wbc":
             raise ValueError("Psi0 SIMPLE Teleop requires decoupled_wbc.")
-        if not cfg.is_eval:
-            raise ValueError("The SIMPLE adapter is eval-only in P3.")
         if cfg.auto_reset:
             raise ValueError(
-                "The P3 SIMPLE Eval MVP requires auto_reset=false to preserve "
-                "one official episode per rollout epoch."
+                "Psi0 SIMPLE requires auto_reset=false to preserve one episode "
+                "per rollout epoch."
             )
 
         self.cfg = cfg
@@ -180,10 +178,10 @@ class SimpleEnv(gym.Env):
         self.auto_reset = bool(cfg.auto_reset)
         self.ignore_terminations = bool(cfg.ignore_terminations)
         self.is_start = True
-        self._dataset_index = -1
         self._elapsed_steps = 0
         self._return = 0.0
         self._last_observation: dict[str, Any] | None = None
+        self._terminal_episode: dict[str, torch.Tensor] | None = None
         if cfg.reset_dataset.get("format", "lerobot") != "lerobot":
             raise ValueError("The fixed SIMPLE Eval reset dataset uses LeRobot format.")
         self._dataset = SimpleLeRobotResetDataset(
@@ -192,7 +190,9 @@ class SimpleEnv(gym.Env):
             episode_start=int(cfg.reset_dataset.episode_start),
             num_episodes=int(cfg.reset_dataset.num_episodes),
         )
-        initial_state, _ = self._dataset.load(0)
+        initial_dataset_index = int(seed_offset) % len(self._dataset)
+        self._dataset_index = initial_dataset_index - 1
+        initial_state, _ = self._dataset.load(initial_dataset_index)
         self._hssd_scene_dir = _resolve_hssd_scene_dir(initial_state)
         self._hssd_scene_layer = None
         self._raw_env, self._native_env, self._controller = self._create_runtime()
@@ -230,6 +230,11 @@ class SimpleEnv(gym.Env):
             dr_level=int(self.cfg.reset_dataset.dr_level),
         )
         native_env = raw_env.unwrapped
+        if sim_mode == "mujoco_isaac" and not native_env.task.metadata.get(
+            "debug", False
+        ):
+            # SIMPLE otherwise renders and discards the MuJoCo camera frames.
+            native_env._render_frame = native_env.isaac.render
         task_horizon = int(native_env.task.metadata["max_episode_steps"])
         configured_horizon = int(self.cfg.max_episode_steps)
         if configured_horizon != task_horizon:
@@ -270,6 +275,9 @@ class SimpleEnv(gym.Env):
         self._dataset_index = (self._dataset_index + 1) % len(self._dataset)
         return self._dataset_index
 
+    def update_reset_state_ids(self) -> None:
+        """Keep reset-state ownership local to the SIMPLE dataset cursor."""
+
     def reset(self, *, seed=None, options=None):
         del options
         if seed is not None:
@@ -298,9 +306,11 @@ class SimpleEnv(gym.Env):
             remaining = control_dt - (time.monotonic() - step_start)
             if remaining > 0:
                 time.sleep(remaining)
+        self._controller.finish_stabilization()
 
         self._elapsed_steps = 0
         self._return = 0.0
+        self._terminal_episode = None
         self.is_start = False
         self._last_observation = observation
         return self._wrap_observation(observation, reset=True), info
@@ -314,6 +324,23 @@ class SimpleEnv(gym.Env):
             )
         if self._last_observation is None:
             raise RuntimeError("SIMPLE environment must be reset before chunk_step().")
+
+        if self._terminal_episode is not None:
+            terminal_observation = self._wrap_observation(
+                self._last_observation, reset=False
+            )
+            infos_list = [{} for _ in range(24)]
+            infos_list[-1] = {
+                "episode": self._terminal_episode,
+                "executed_mask": torch.zeros((1, 24), dtype=torch.bool),
+            }
+            return (
+                [terminal_observation] * 24,
+                torch.zeros((1, 24), dtype=torch.float32),
+                torch.zeros((1, 24), dtype=torch.bool),
+                torch.zeros((1, 24), dtype=torch.bool),
+                infos_list,
+            )
 
         obs_list = []
         infos_list = []
@@ -351,6 +378,7 @@ class SimpleEnv(gym.Env):
                 "return": torch.tensor([self._return], dtype=torch.float32),
                 "episode_len": torch.tensor([self._elapsed_steps]),
             }
+            self._terminal_episode = episode
             terminal_info["episode"] = episode
             terminal_info["executed_mask"] = executed_mask
             while len(obs_list) < 24:
