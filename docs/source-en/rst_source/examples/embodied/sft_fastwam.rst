@@ -1,4 +1,4 @@
-FastWAM Evaluation and Supervised Fine-Tuning
+FastWAM Supervised Fine-Tuning and Evaluation
 ==============================================
 
 .. figure:: https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png
@@ -7,15 +7,23 @@ FastWAM Evaluation and Supervised Fine-Tuning
 
    Fast-WAM predicts robot actions with a video-diffusion world-action model.
 
-RLinf supports FastWAM evaluation on the four LIBERO suites and FSDP supervised
-fine-tuning on the corresponding LeRobot datasets. The policy uses main-camera
-and wrist-camera RGB images, the 8-dimensional robot state, and the language
-instruction. It predicts 32 action steps and executes 10 steps before replanning.
+RLinf supports FSDP supervised fine-tuning of FastWAM on the four LIBERO
+LeRobot datasets and evaluation on the corresponding suites. The policy uses
+main-camera and wrist-camera RGB images, the 8-dimensional robot state, and the
+language instruction. It predicts 32 action steps and executes 10 steps before
+replanning.
 
 Installation
 ------------
 
 .. include:: _setup_common.rst
+
+Install FastWAM for SFT:
+
+.. code-block:: bash
+
+   bash requirements/install.sh embodied --model fastwam
+   source .venv/bin/activate
 
 Install FastWAM with LIBERO for evaluation:
 
@@ -23,70 +31,6 @@ Install FastWAM with LIBERO for evaluation:
 
    bash requirements/install.sh embodied --model fastwam --env libero
    source .venv/bin/activate
-
-For SFT without the simulator:
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model fastwam
-   source .venv/bin/activate
-
-Evaluation
-----------
-
-Download the released checkpoint and normalization statistics:
-
-.. code-block:: bash
-
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224.pt \
-     libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /your_path_to/fastwam
-
-Set the paths in ``examples/embodiment/config/model/fastwam.yaml``:
-
-.. code-block:: yaml
-
-   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
-   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # Normalization statistics
-
-Run one command for each suite:
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
-
-The configs use four GPUs because the 20 environment slots divide evenly across
-four workers. Each slot runs 25 episodes, covering all ``20 * 25 = 500`` initial
-states; the same 20 slots cannot be divided evenly across eight workers.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 42 20 20
-
-   * - Suite
-     - Config
-     - ``max_episode_steps``
-     - ``max_steps_per_rollout_epoch``
-   * - Spatial
-     - ``libero_spatial_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Object
-     - ``libero_object_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Goal
-     - ``libero_goal_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Long
-     - ``libero_10_fastwam_eval``
-     - ``700``
-     - ``17500``
 
 Supervised Fine-Tuning
 ----------------------
@@ -102,6 +46,14 @@ Download and extract the four LIBERO LeRobot suites:
    for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
      tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
    done
+
+Download the normalization statistics:
+
+.. code-block:: bash
+
+   huggingface-cli download yuanty/fastwam \
+     libero_uncond_2cam224_dataset_stats.json \
+     --local-dir /your_path_to/fastwam
 
 Download the Wan components and generate the ActionDiT backbone:
 
@@ -159,3 +111,59 @@ Launch SFT:
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+Evaluation
+----------
+
+Download the released checkpoint:
+
+.. code-block:: bash
+
+   huggingface-cli download yuanty/fastwam \
+     libero_uncond_2cam224.pt \
+     --local-dir /your_path_to/fastwam
+
+Set the paths in ``examples/embodiment/config/model/fastwam.yaml``:
+
+.. code-block:: yaml
+
+   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # Normalization statistics
+
+Run one command for each suite:
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+
+The configs use four GPUs because the 20 environment slots divide evenly across
+four workers. Each slot runs 25 episodes, covering all ``20 * 25 = 500`` initial
+states; the same 20 slots cannot be divided evenly across eight workers.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 42 20 20
+
+   * - Suite
+     - Config
+     - ``max_episode_steps``
+     - ``max_steps_per_rollout_epoch``
+   * - Spatial
+     - ``libero_spatial_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Object
+     - ``libero_object_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Goal
+     - ``libero_goal_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Long
+     - ``libero_10_fastwam_eval``
+     - ``700``
+     - ``17500``

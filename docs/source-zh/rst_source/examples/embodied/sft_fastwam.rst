@@ -1,4 +1,4 @@
-FastWAM 评测与监督微调
+FastWAM 监督微调与评测
 ========================
 
 .. figure:: https://yuantianyuan01.github.io/FastWAM/static/images/teaser_main.png
@@ -7,85 +7,28 @@ FastWAM 评测与监督微调
 
    Fast-WAM 使用视频扩散世界-动作模型预测机器人动作。
 
-RLinf 支持在四个 LIBERO suite 上评测 FastWAM，并使用对应的 LeRobot 数据集执行
-FSDP 监督微调。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和语言指令，
-每次预测 32 步动作，执行 10 步后重新规划。
+RLinf 支持使用四个 LIBERO suite 的 LeRobot 数据对 FastWAM 进行 FSDP 监督微调，
+并在对应 suite 上完成评测。策略输入为主视角、腕部 RGB 图像、8 维机器人状态和
+语言指令，每次预测 32 步动作，执行 10 步后重新规划。
 
 安装
 ----
 
 .. include:: _setup_common.rst
 
-评测时安装 FastWAM 和 LIBERO：
-
-.. code-block:: bash
-
-   bash requirements/install.sh embodied --model fastwam --env libero
-   source .venv/bin/activate
-
-不使用仿真器、仅进行 SFT 时：
+进行 SFT 时安装 FastWAM：
 
 .. code-block:: bash
 
    bash requirements/install.sh embodied --model fastwam
    source .venv/bin/activate
 
-评测
-----
-
-下载发布的 checkpoint 和归一化统计文件：
+进行评测时安装 FastWAM 和 LIBERO：
 
 .. code-block:: bash
 
-   huggingface-cli download yuanty/fastwam \
-     libero_uncond_2cam224.pt \
-     libero_uncond_2cam224_dataset_stats.json \
-     --local-dir /your_path_to/fastwam
-
-在 ``examples/embodiment/config/model/fastwam.yaml`` 中设置路径：
-
-.. code-block:: yaml
-
-   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
-   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # 归一化统计文件
-
-分别运行四个 suite：
-
-.. code-block:: bash
-
-   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
-   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
-
-配置使用 4 张 GPU，因为 20 个环境槽位可以均匀分配给 4 个 worker。每个环境
-执行 25 个 episode，共覆盖 ``20 * 25 = 500`` 个初始状态；同样的 20 个环境
-槽位无法均匀分配给 8 个 worker。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 18 42 20 20
-
-   * - Suite
-     - 配置
-     - ``max_episode_steps``
-     - ``max_steps_per_rollout_epoch``
-   * - Spatial
-     - ``libero_spatial_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Object
-     - ``libero_object_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Goal
-     - ``libero_goal_fastwam_eval``
-     - ``400``
-     - ``10000``
-   * - Long
-     - ``libero_10_fastwam_eval``
-     - ``700``
-     - ``17500``
+   bash requirements/install.sh embodied --model fastwam --env libero
+   source .venv/bin/activate
 
 监督微调
 --------
@@ -101,6 +44,14 @@ FSDP 监督微调。策略输入为主视角、腕部 RGB 图像、8 维机器�
    for archive in /your_path_to/LIBERO-fastwam/*.tar.gz; do
      tar -xzf "$archive" -C /your_path_to/LIBERO-fastwam
    done
+
+下载归一化统计文件：
+
+.. code-block:: bash
+
+   huggingface-cli download yuanty/fastwam \
+     libero_uncond_2cam224_dataset_stats.json \
+     --local-dir /your_path_to/fastwam
 
 下载 Wan 组件并生成 ActionDiT backbone：
 
@@ -158,3 +109,59 @@ FSDP 监督微调。策略输入为主视角、腕部 RGB 图像、8 维机器�
 .. code-block:: bash
 
    bash examples/sft/run_vla_sft.sh libero_sft_fastwam
+
+评测
+----
+
+下载发布的 checkpoint：
+
+.. code-block:: bash
+
+   huggingface-cli download yuanty/fastwam \
+     libero_uncond_2cam224.pt \
+     --local-dir /your_path_to/fastwam
+
+在 ``examples/embodiment/config/model/fastwam.yaml`` 中设置路径：
+
+.. code-block:: yaml
+
+   model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt  # FastWAM checkpoint
+   dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json  # 归一化统计文件
+
+分别运行四个 suite：
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_object_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_goal_fastwam_eval
+   bash evaluations/run_eval.sh libero libero_10_fastwam_eval
+
+配置使用 4 张 GPU，因为 20 个环境槽位可以均匀分配给 4 个 worker。每个环境
+执行 25 个 episode，共覆盖 ``20 * 25 = 500`` 个初始状态；同样的 20 个环境
+槽位无法均匀分配给 8 个 worker。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 42 20 20
+
+   * - Suite
+     - 配置
+     - ``max_episode_steps``
+     - ``max_steps_per_rollout_epoch``
+   * - Spatial
+     - ``libero_spatial_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Object
+     - ``libero_object_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Goal
+     - ``libero_goal_fastwam_eval``
+     - ``400``
+     - ``10000``
+   * - Long
+     - ``libero_10_fastwam_eval``
+     - ``700``
+     - ``17500``
