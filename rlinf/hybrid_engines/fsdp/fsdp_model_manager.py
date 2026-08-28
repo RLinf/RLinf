@@ -101,11 +101,7 @@ class FSDPModelManager:
 
         sharding_strategy = str(self._cfg.fsdp_config.sharding_strategy)
         self._device_mesh = create_device_mesh(world_size, sharding_strategy)
-        self._dp_group = (
-            self._device_mesh["fsdp"].get_group()
-            if sharding_strategy.lower() == "hybrid_shard"
-            else None
-        )
+        self._dp_group = self._device_mesh["fsdp"].get_group()
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
