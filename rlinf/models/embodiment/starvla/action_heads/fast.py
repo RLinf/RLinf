@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 import torch
+
+from rlinf.scheduler import Worker
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import vlm_preprocess as vlm_input_utils
@@ -321,7 +324,13 @@ def run_rollout_fast(
         elif max_length is not None:
             gen_kwargs["max_length"] = int(max_length)
 
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        device_type = Worker.torch_device_type
+        bf16_ctx = (
+            torch.autocast(device_type, dtype=torch.bfloat16)
+            if device_type is not None
+            else nullcontext()
+        )
+        with bf16_ctx:
             gen_out = vlm_interface.model.generate(
                 **prompt_inputs,
                 **gen_kwargs,

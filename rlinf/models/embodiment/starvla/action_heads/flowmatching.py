@@ -24,11 +24,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.nn as nn
-from torch.distributions.normal import Normal
+
+from rlinf.scheduler import Worker
 
 from ..utils import data_pipeline as data_pipeline_utils
 from ..utils import state as state_utils
 from ..utils import vlm_preprocess as vlm_input_utils
+from ..utils.accelerator import build_gaussian
 from ..utils.backbone_pipeline import (
     compute_values_from_hidden,
     run_backbone_pipeline,
@@ -124,7 +126,13 @@ def _build_dual_dino_features(
         )
 
     dino_input = dino_encoder.prepare_dino_input(wrist_views)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
+    device_type = Worker.torch_device_type
+    bf16_ctx = (
+        torch.autocast(device_type, dtype=torch.bfloat16)
+        if device_type is not None
+        else nullcontext()
+    )
+    with bf16_ctx:
         dino_feats = dino_encoder(dino_input)
 
     bsz = len(examples)
@@ -489,9 +497,10 @@ def run_default_forward_flowmatching(
 
     # Match the rollout path which runs ODE integration under fp32 autocast
     # to avoid bf16 truncation errors accumulating over Euler steps.
+    device_type = Worker.torch_device_type
     fp32_ctx = (
-        torch.autocast("cuda", dtype=torch.float32)
-        if rollout_hidden.is_cuda
+        torch.autocast(device_type, dtype=torch.float32)
+        if device_type is not None
         else nullcontext()
     )
 
@@ -520,7 +529,7 @@ def run_default_forward_flowmatching(
                         raise RuntimeError(
                             "Internal error: missing step_std for flowmatching sampled transition."
                         )
-                    dist_step = Normal(
+                    dist_step = build_gaussian(
                         mean_next, resolved_step_std.expand_as(mean_next)
                     )
                     active_step_mask_3d = active_step_mask.view(-1, 1, 1)
@@ -657,9 +666,10 @@ def run_rollout_flowmatching(
     # model under torch.autocast("cuda", dtype=torch.float32).  Without this,
     # the ODE integration inherits bf16 from the backbone and accumulates
     # truncation errors over num_steps Euler steps.
+    device_type = Worker.torch_device_type
     fp32_ctx = (
-        torch.autocast("cuda", dtype=torch.float32)
-        if rollout_hidden.is_cuda
+        torch.autocast(device_type, dtype=torch.float32)
+        if device_type is not None
         else nullcontext()
     )
 
@@ -718,7 +728,7 @@ def run_rollout_flowmatching(
                     )
                 active_step_mask = denoise_inds[:, step].eq(step)
                 if bool(active_step_mask.any()):
-                    dist_step = Normal(mean_next, step_std.expand_as(mean_next))
+                    dist_step = build_gaussian(mean_next, step_std.expand_as(mean_next))
                     sampled_actions = dist_step.rsample()
                     active_step_mask_3d = active_step_mask.view(-1, 1, 1)
                     next_actions_preclip = torch.where(
