@@ -18,7 +18,7 @@ from omegaconf import DictConfig
 
 
 def get_model(cfg: DictConfig, torch_dtype=None):
-    """Build the eval-only Psi0 policy without importing SIMPLE."""
+    """Build the Psi0 policy without importing SIMPLE."""
     from rlinf.models.embodiment.psi0.policy import Psi0Policy
 
     return Psi0Policy.from_config(cfg, torch_dtype=torch_dtype)
