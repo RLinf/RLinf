@@ -32,7 +32,7 @@ Choose a Workflow
       :link: performance/index
       :link-type: doc
 
-      Tune placement, scheduling, parallelism, profiling, and adapters.
+      Tune embodied latency, memory, placement, profiling, and FSDP.
 
    .. grid-item-card:: Hardware Backends
       :link: hardware/index

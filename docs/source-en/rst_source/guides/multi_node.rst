@@ -166,28 +166,6 @@ The launch node must:
 * Reach config files, models, and data (shared storage or code sync);
 * If code sync is enabled, have ``export RLINF_CODE_WORKING_DIR=...`` in the **same terminal**.
 
-
-Configure FSDP Hybrid Sharding
-------------------------------
-
-Shard model state within each node and replicate it across nodes by enabling
-``hybrid_shard`` for classic FSDP:
-
-.. code-block:: yaml
-
-   actor:
-     fsdp_config:
-       strategy: fsdp
-       sharding_strategy: hybrid_shard
-
-RLinf uses the actor ranks on each node as the intra-node FSDP group. Keep the
-same number of actor ranks on every participating node.
-
-.. warning::
-
-   Use at least two actor ranks per node. With one actor rank per node, the
-   intra-node shard group has size one; use ``full_shard`` for that topology.
-
 .. note::
 
    For ``node_groups`` and cross-machine placement, see :doc:`../concepts/placement` and :doc:`hetero`.

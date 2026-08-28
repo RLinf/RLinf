@@ -1,7 +1,7 @@
 性能
 ====
 
-当延迟、吞吐、显存、placement 或大模型训练效率成为瓶颈时，使用这些指南。
+使用这些指南优化具身 RL 与 SFT 工作负载的延迟、吞吐、显存和 placement。
 
 .. list-table::
    :header-rows: 1
@@ -17,14 +17,12 @@
      - 在 Env 到 Rollout 通道上无损压缩图像观测，节省带宽。
    * - :doc:`LoRA <../lora>`
      - 使用 LoRA adapter 训练。
+   * - :doc:`FSDP 实用技巧 <../fsdp_tips>`
+     - 为多节点具身训练配置 hybrid sharding。
    * - :doc:`自动 Placement <../auto_placement>`
      - 为训练负载自动选择最优 placement。
-   * - :doc:`动态调度 <../dynamic_scheduling>`
-     - 训练过程中动态调度资源。
    * - :doc:`Profiling <../profile>`
      - 对 Ray worker 进程进行系统级 profiling。
-   * - :doc:`5D 并行 <../5D>`
-     - 为大模型配置 5D 并行。
 
 .. toctree::
    :hidden:
@@ -33,7 +31,6 @@
    Env Decoupled Mode <../env_decoupled_mode>
    观测压缩 <../obs_compression>
    LoRA <../lora>
+   FSDP 实用技巧 <../fsdp_tips>
    自动 Placement <../auto_placement>
-   动态调度 <../dynamic_scheduling>
    Profiling <../profile>
-   5D 并行 <../5D>

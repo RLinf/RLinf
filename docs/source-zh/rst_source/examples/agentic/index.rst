@@ -94,6 +94,22 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
 
    </div>
 
+扩展智能体强化学习
+------------------
+
+使用这些指南扩展智能体与推理工作负载背后的训练系统。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 32 68
+
+   * - 指南
+     - 内容
+   * - :doc:`动态调度 <dynamic_scheduling>`
+     - 在训练持续运行时重新分配 actor、rollout 与 inference 资源。
+   * - :doc:`5D 并行 <5D>`
+     - 组合 Megatron-LM 并行维度以训练大模型。
+
 .. toctree::
    :hidden:
    :maxdepth: 2
@@ -105,3 +121,5 @@ RLinf的worker抽象、灵活的通信组件、以及对不同类型加速器的
    rStar2 <rstar2>
    数学推理 <math_reasoning/index>
    Qwen3 VL GRPO <qwen3_vl_geo3k>
+   动态调度 <dynamic_scheduling>
+   5D 并行 <5D>
