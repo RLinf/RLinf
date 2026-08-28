@@ -3033,11 +3033,11 @@ EOF
 }
 
 install_mbridge() {
-    # megatron-bridge 0.4.2 requires python >= 3.12, so RLinf publishes a
+    # megatron-bridge 0.5.0 requires python >= 3.12, so RLinf publishes a
     # py3.10/3.11 fork. --no-deps avoids re-resolving torch and nemo-toolkit.
-    echo "[install.sh] Installing rlinf-megatron-bridge 0.4.2 (PyPI wheel)..."
-    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge==0.4.2"
-    echo "[install.sh] rlinf-megatron-bridge 0.4.2 installed (import: megatron.bridge)."
+    echo "[install.sh] Installing rlinf-megatron-bridge 0.5.0 (PyPI wheel)..."
+    uv pip install --no-deps --extra-index-url https://pypi.org/simple "rlinf-megatron-bridge==0.5.0"
+    echo "[install.sh] rlinf-megatron-bridge 0.5.0 installed (import: megatron.bridge)."
 }
 
 # FA4 backward is sm90+ only; on sm<9 drop it so TE falls back to FA2.
