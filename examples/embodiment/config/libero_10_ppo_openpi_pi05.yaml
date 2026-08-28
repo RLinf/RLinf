@@ -73,6 +73,7 @@ env:
     max_episode_steps: 480 # max episode steps for truncation
     max_steps_per_rollout_epoch: 480
     reward_coef: ${algorithm.reward_coef}
+    skip_intermediate_renders: True
   eval:
     rollout_epoch: 1
     total_num_envs: 500

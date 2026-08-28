@@ -70,7 +70,7 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
      - Long (libero_10)
      - MolmoAct2
 
-DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。
+DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend 见 :doc:`cosmos3_sglang`。
 
 如需通过与动作块执行重叠来隐藏推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
 
@@ -246,3 +246,4 @@ RLinf 的 ``evaluations/libero/`` 示例覆盖上述四个 ``task_suite_name``�
    :maxdepth: 1
 
    dreamzero_sglang
+   cosmos3_sglang

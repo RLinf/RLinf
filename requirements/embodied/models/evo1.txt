@@ -1,13 +1,18 @@
 # Evo-1 runtime dependencies, mirroring Evo_1/requirements.txt from the upstream
 # repo. torch, torchvision and transformers are left out: the embodied extra and
 # the pyproject torch override already install them.
+#
+# Keep these pins to avoid known compatibility breakages:
+# - transformers<=4.57.6 requires huggingface-hub>=0.34.0,<1.0
+# - unpinned diffusers>=0.40 requires huggingface-hub>=1.23 and upgrades hub to 1.x
 accelerate
 accelerator
 av
 deepspeed
-diffusers
+diffusers==0.39.0
 einop
 fvcore
+huggingface-hub==0.36.2
 matplotlib
 ninja
 opencv-python
