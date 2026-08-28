@@ -28,6 +28,7 @@
 
 import functools
 import math
+import os
 import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
@@ -62,7 +63,18 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size):
+def create_device_mesh(
+    world_size: int, sharding_strategy: str = "full_shard"
+) -> DeviceMesh:
+    """Create the device mesh for an FSDP sharding strategy."""
+    if sharding_strategy.lower() == "hybrid_shard":
+        shard_size = int(os.environ["NODE_LOCAL_WORLD_SIZE"])
+        return init_device_mesh(
+            Worker.torch_device_type,
+            mesh_shape=(world_size // shard_size, shard_size),
+            mesh_dim_names=("ddp", "fsdp"),
+        )
+
     return init_device_mesh(
         Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
     )

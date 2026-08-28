@@ -155,6 +155,27 @@
 * 能访问配置文件、模型与数据路径（或已配置共享存储 / code sync）；
 * 若启用代码同步，在 **同一终端** 已 ``export RLINF_CODE_WORKING_DIR=...``。
 
+
+配置 FSDP 混合分片
+------------------
+
+启用经典 FSDP 的 ``hybrid_shard``，即可在节点内分片模型状态，并在节点间复制：
+
+.. code-block:: yaml
+
+   actor:
+     fsdp_config:
+       strategy: fsdp
+       sharding_strategy: hybrid_shard
+
+RLinf 使用每个节点上的 actor rank 组成节点内 FSDP group。请确保所有参与节点
+具有相同数量的 actor rank。
+
+.. warning::
+
+   每个节点应至少使用两个 actor rank。若每个节点只有一个 actor rank，节点内
+   shard group 的大小为 1；此时请使用 ``full_shard``。
+
 .. note::
 
    使用 ``node_groups``、跨机型放置时，请参阅 :doc:`../concepts/placement` 与 :doc:`hetero`。
