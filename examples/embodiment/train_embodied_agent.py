@@ -113,8 +113,13 @@ def main(cfg) -> None:
     )
 
     # Create env worker group
+    env_worker_cls = EnvWorker
+    if cfg.env.train.env_type == "simple":
+        from rlinf.workers.env.simple_env_worker import SimpleEnvWorker
+
+        env_worker_cls = SimpleEnvWorker
     env_placement = component_placement.get_strategy("env")
-    env_group = EnvWorker.create_group(cfg).launch(
+    env_group = env_worker_cls.create_group(cfg).launch(
         cluster, name=cfg.env.group_name, placement_strategy=env_placement
     )
 

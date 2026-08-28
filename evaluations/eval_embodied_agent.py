@@ -49,9 +49,9 @@ def main(cfg) -> None:
     # Default env worker; RTC on the huggingface path overrides it below.
     env_worker_cls = EnvWorker
     if cfg.env.eval.env_type == "simple":
-        from rlinf.workers.env.simple_eval_env_worker import SimpleEvalEnvWorker
+        from rlinf.workers.env.simple_env_worker import SimpleEnvWorker
 
-        env_worker_cls = SimpleEvalEnvWorker
+        env_worker_cls = SimpleEnvWorker
     if rollout_backend == "sglang":
         from rlinf.workers.rollout.utils import get_rollout_backend_worker
 

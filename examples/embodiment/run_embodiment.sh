@@ -32,6 +32,14 @@ else
     CONFIG_NAME=$1
 fi
 
+if [[ "$CONFIG_NAME" == simple_* || "$CONFIG_NAME" == simple-* ]]; then
+    export ACCEPT_EULA="${ACCEPT_EULA:-Y}"
+    export OMNI_KIT_ACCEPT_EULA="${OMNI_KIT_ACCEPT_EULA:-YES}"
+    [ "$ISAAC_PATH" = "/path/to/isaac-sim" ] && unset ISAAC_PATH
+    [ "$EXP_PATH" = "/path/to/isaac-sim/apps" ] && unset EXP_PATH
+    [ "$CARB_APP_PATH" = "/path/to/isaac-sim/kit" ] && unset CARB_APP_PATH
+fi
+
 # NOTE: Set the active robot platform (required for correct action dimension and normalization), supported platforms are LIBERO, ALOHA, BRIDGE, default is LIBERO
 ROBOT_PLATFORM=${2:-${ROBOT_PLATFORM:-"LIBERO"}}
 
