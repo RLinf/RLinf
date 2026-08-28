@@ -1,6 +1,7 @@
 # Single-node system bringup/profile for 1 rollout : 4 dummy Turtle2 streams.
 # GPU 0 is actor/train only; GPU 1 is rollout only; four CPU env ranks share node 0.
 # RLinf-Pi05-LIBERO-SFT and its stats are reused only to validate the system path.
+# Guide: examples/embodiment/turtle2_async_ppo_4stream_guide.md
 defaults:
   - env/realworld_button@env.train
   - model/pi0_5@actor.model
