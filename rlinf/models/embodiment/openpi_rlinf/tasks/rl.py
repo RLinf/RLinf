@@ -80,7 +80,6 @@ class Pi0RL(EnvIO, Pi0):
         self.model_action_dim = self.action_dim
         self.rl_cfg = rl_cfg
         self.global_step = 0
-        model_dtype = next(self.parameters()).dtype
         paligemma_width = gemma.get_config(config.paligemma_variant).width
         action_expert_width = gemma.get_config(config.action_expert_variant).width
 
@@ -94,13 +93,15 @@ class Pi0RL(EnvIO, Pi0):
                 for name in ("pi05_maniskill", "pi05_libero", "pi05_droid_polaris")
             ):
                 hidden = (1024, 512, 256)
+            # Stay fp32 like OpenPI: action/value heads sit outside
+            # paligemma_with_expert and are never converted to bf16.
             self.value_head = ValueHead(
                 input_dim=input_dim,
                 hidden_sizes=hidden,
                 output_dim=1,
                 activation="relu",
                 bias_last=True,
-            ).to(model_dtype)
+            )
 
         if rl_cfg.noise_method == "flow_noise":
             from rlinf.models.embodiment.modules.explore_noise_net import (
@@ -114,7 +115,7 @@ class Pi0RL(EnvIO, Pi0):
                 activation_type="tanh",
                 noise_logvar_range=list(rl_cfg.noise_logvar_range),
                 noise_scheduler_type="learn",
-            ).to(model_dtype)
+            )
 
         self._mark_fsdp_wrap_names()
 
@@ -129,6 +130,21 @@ class Pi0RL(EnvIO, Pi0):
 
     def set_global_step(self, global_step: int) -> None:
         self.global_step = int(global_step)
+
+    def _build_prefix_cache_for_actor(self, observation: Observation):
+        """Prefix KV for actor recompute.
+
+        ``train_expert_only`` freezes the VLM, so prefix must not record
+        autograd. OpenPI gets this for free: paligemma is a separate module
+        with ``requires_grad=False``. Here expert-0/1 share an FSDP Block, so
+        a training prefix forward would keep 18 layers of fp32 attention
+        (~2.5GiB/layer at micro_batch=128) and OOM. When the VLM is trained,
+        prefix stays in the graph.
+        """
+        if self.rl_cfg.train_expert_only:
+            with torch.no_grad():
+                return self.build_prefix_cache(observation)
+        return self.build_prefix_cache(observation)
 
     @torch.no_grad()
     def predict_action_batch(
@@ -413,11 +429,9 @@ class Pi0RL(EnvIO, Pi0):
         device = chains.device
         observation = self._observation_from_forward_inputs(forward_inputs)
 
-        if rl_cfg.train_expert_only:
-            with torch.no_grad():
-                prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
-        else:
-            prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
+        prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
+            observation
+        )
 
         timesteps = rl_sampler.get_timesteps(self.num_steps, device)
         if rl_cfg.joint_logprob:
@@ -515,7 +529,9 @@ class Pi0RL(EnvIO, Pi0):
         t = nft_inputs["timesteps"].to(device)
         if t.dim() > 1:
             t = t.reshape(t.shape[0], -1)[:, 0]
-        prefix_out, prefix_mask, kv_cache = self.build_prefix_cache(observation)
+        prefix_out, prefix_mask, kv_cache = self._build_prefix_cache_for_actor(
+            observation
+        )
         suffix_act = self.run_suffix(observation, x_t, t, kv_cache, prefix_mask)
         v_theta = self.velocity_from_suffix(suffix_act)
         v_theta = v_theta[:, : self.action_chunk, :]

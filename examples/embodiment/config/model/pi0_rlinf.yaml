@@ -2,7 +2,7 @@ model_type: "openpi_rlinf"
 
 # Default Pi0 shape. Env-specific fields (config_name, action_dim,
 # num_action_chunks, task, …) are overridden in the experiment YAML.
-precision: bf16
+precision: null
 pi05: False
 
 is_lora: False

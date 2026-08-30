@@ -166,6 +166,9 @@ class Pi0(model.BaseModel):
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
         )
+        # PI0Pytorch.__init__ sets this globally so fp32 action/value heads
+        # use TF32. OpenPI RL keeps this even though it un-compiles sample_actions.
+        torch.set_float32_matmul_precision("high")
 
     def _init_weights(self):
         """Initialize projection weights."""
@@ -201,7 +204,9 @@ class Pi0(model.BaseModel):
         input_mask = []
         ar_mask = []
 
-        # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration order).
+        # Embed images through SigLIP in IMAGE_KEYS order (not dict iteration
+        # order). Official OpenPI preprocess rebuilds cameras this way, then
+        # concatenates ``list(observation.images.values())``.
         image_names = [name for name in model.IMAGE_KEYS if name in obs.images]
         image_names.extend(name for name in obs.images if name not in model.IMAGE_KEYS)
         for name in image_names:
@@ -271,17 +276,12 @@ class Pi0(model.BaseModel):
 
         B = noisy_actions.shape[0]
 
-        # Cast to embed_dtype to ensure consistency between training and inference
-        # (during training FSDP2 casts forward inputs, but inference may pass float32).
-        noisy_actions = noisy_actions.to(self.embed_dtype)
-        timestep = timestep.to(self.embed_dtype)
-
         if not self.pi05:
-            # Add a single state token
-            # Eval transforms keep state in fp32 after normalization, while
-            # the model is commonly loaded directly in bf16. Match the state
-            # projection input to its compute dtype just like actions/time.
-            state_token = self.state_proj(obs.state.to(self.embed_dtype))[:, None, :]
+            # Official PI0Pytorch: upcast state only when state_proj is fp32.
+            state = obs.state
+            if self.state_proj.weight.dtype == torch.float32:
+                state = state.to(torch.float32)
+            state_token = self.state_proj(state)[:, None, :]
             tokens.append(state_token)
             input_mask.append(
                 torch.ones(B, 1, dtype=torch.bool, device=state_token.device)
@@ -405,7 +405,7 @@ class Pi0(model.BaseModel):
             adarms_cond=[None, adarms_cond],
         )[0]
 
-        v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
+        v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
 
         return torch.square(v_t - u_t)
 
@@ -466,11 +466,59 @@ class Pi0(model.BaseModel):
             kv_cache=kv_cache,
             adarms_cond=[None, adarms_cond],
         )
-        return outputs[1][:, -self.action_horizon :]
+        # Official PI0Pytorch casts suffix hidden states to fp32 before
+        # ``action_out_proj`` / the value head.
+        return outputs[1][:, -self.action_horizon :].to(dtype=torch.float32)
 
     def velocity_from_suffix(self, suffix_out_act: torch.Tensor) -> torch.Tensor:
         """Project action-expert hidden states to a velocity prediction v_t."""
-        return self.action_out_proj(suffix_out_act)
+        return self.action_out_proj(suffix_out_act.to(dtype=torch.float32))
+
+    def to_bfloat16_for_selected_params(self, precision: str = "bfloat16") -> None:
+        """OpenPI ``PaliGemmaWithExpertModel.to_bfloat16_for_selected_params``.
+
+        OpenPI calls ``self.to(dtype)`` on ``paligemma_with_expert`` only
+        (SigLIP + PaliGemma Gemma + action-expert Gemma), then restores a
+        subset of those weights to fp32. Action / value heads live outside
+        that module and must not be converted — so this uses ``llm`` +
+        ``img``, never ``self.to()``.
+        """
+        # Same branch order as OpenPI: bf16 converts then falls through to
+        # the fp32 restore; float32 converts and returns.
+        if precision == "bfloat16":
+            self.llm.to(dtype=torch.bfloat16)
+            self.img.to(dtype=torch.bfloat16)
+        elif precision == "float32":
+            self.llm.to(dtype=torch.float32)
+            self.img.to(dtype=torch.float32)
+            return
+        else:
+            raise ValueError(f"Invalid precision: {precision}")
+
+        # 1:1 with OpenPI's substring list. Names come from
+        # ``openpi_pytorch_to_openpi_rlinf``:
+        #   patch_embedding.weight/bias  -> img.stem.weight/bias
+        #   position_embedding.weight    -> img.pos_embedding
+        #   input_layernorm              -> pre_attention_norms
+        #   post_attention_layernorm     -> pre_ffw_norms
+        #   model.norm                   -> final_norms
+        #     (language_model.norm + gemma_expert.model.norm)
+        params_to_keep_float32 = [
+            "img.stem.weight",
+            "img.stem.bias",
+            "img.pos_embedding",
+            "pre_attention_norms",
+            "pre_ffw_norms",
+            "final_norms",
+        ]
+
+        # OpenPI iterates paligemma_with_expert.named_parameters(); llm + img
+        # are that module. Do not scan action/value heads.
+        for name, param in self.named_parameters():
+            if not (name.startswith("llm.") or name.startswith("img.")):
+                continue
+            if any(selector in name for selector in params_to_keep_float32):
+                param.data = param.data.to(dtype=torch.float32)
 
     def sample_actions(
         self,
@@ -568,7 +616,25 @@ class Pi0(model.BaseModel):
 
     @property
     def _no_split_modules(self) -> list[str] | None:
-        names = ["Block", "Encoder1DBlock"]
+        # FSDP1 FlatParameter requires uniform dtype per wrap unit, even with
+        # use_orig_params=True. Dual-expert Block also mixes frozen/trainable
+        # params, so the experiment yaml must set use_orig_params=True.
+        # Mirror OpenPI: wrap GemmaRMSNorm / vision embeddings separately so
+        # fp32 islands are not flattened with bf16.
+        #   RMSNorm / Embedder     -- OpenPI GemmaRMSNorm
+        #   Block                  -- leftover attn+mlp is bf16 after RMSNorm
+        #   Encoder1DBlock         -- SigLIP layer, all bf16
+        #   Encoder                -- leftover post_layernorm is bf16
+        #   SigLIPViT              -- leftover pos_embedding is fp32 after
+        #                            stem / head wrap
+        names = [
+            "Block",
+            "Encoder1DBlock",
+            "Encoder",
+            "RMSNorm",
+            "Embedder",
+            "SigLIPViT",
+        ]
         if self.rlt_cfg.use_rlt:
             names.append("RLTSelfAttentionLayer")
         return names
@@ -583,6 +649,8 @@ class Pi0(model.BaseModel):
             "action_time_mlp_out",
             "time_mlp_in",
             "time_mlp_out",
+            "stem",  # fp32 patch embedding (OpenPI SiglipVisionEmbeddings)
+            "head",  # bf16 multi-modal projector
         ]
 
     def _mark_fsdp_wrap_names(self) -> None:
@@ -781,7 +849,11 @@ class Pi0(model.BaseModel):
         }
 
     def freeze_vlm(self, freeze_action_expert: bool = False) -> int:
-        """Freeze PaliGemma (vision + LLM expert-0). Optionally freeze expert-1."""
+        """Freeze PaliGemma (vision + LLM expert-0). Optionally freeze expert-1.
+
+        OpenPI also puts the frozen paligemma trunk in ``eval()``.
+        """
+        self.img.eval()
         frozen = 0
         for p in self.img.parameters():
             if p.requires_grad:

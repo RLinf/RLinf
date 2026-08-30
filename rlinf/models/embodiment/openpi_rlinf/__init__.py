@@ -240,9 +240,6 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
             "use 'eval', 'sft', 'rl', 'dagger', or 'dsrl'."
         )
 
-    if target_dtype is not None:
-        model = model.to(target_dtype)
-
     if full_weights_path is not None:
         load_full_weights(
             model,
@@ -254,6 +251,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         load_base_safetensors(model, safetensors_path)
 
     _freeze_after_load(model, task)
+    _apply_openpi_param_dtypes(model, target_dtype)
 
     n_params = sum(param.numel() for param in model.parameters())
     source = full_weights_path if full_weights_path is not None else safetensors_path
@@ -290,6 +288,39 @@ def _freeze_after_load(model, task: str) -> None:
             "load; SAC heads remain trainable",
             frozen,
         )
+
+
+def _apply_openpi_param_dtypes(model, target_dtype) -> None:
+    """Apply OpenPI's selective mixed precision after checkpoint load.
+
+    YAML ``precision: null`` (OpenPI default) and ``bf16`` both mean: Gemma /
+    SigLIP weights in bf16, RMSNorm + vision stem + action/value heads in fp32.
+    A global ``model.to(bf16)`` would also cast those fp32 islands and is the
+    source of higher PPO KL versus OpenPI. ``fp32`` keeps the whole net in
+    fp32 (SFT).
+    """
+    import torch
+
+    if target_dtype is None or target_dtype == torch.bfloat16:
+        model.to_bfloat16_for_selected_params("bfloat16")
+    elif target_dtype == torch.float32:
+        model.to_bfloat16_for_selected_params("float32")
+    else:
+        model.to(target_dtype)
+
+    sample_keys = (
+        "img.stem.weight",
+        "img.pos_embedding",
+        "llm.layers.0.pre_attention_norms.0.scale",
+        "llm.layers.0.attn.q_proj.0.weight",
+        "action_out_proj.weight",
+        "state_proj.weight",
+        "value_head.mlp.0.weight",
+    )
+    named = dict(model.named_parameters())
+    parts = [f"{key}={named[key].dtype}" for key in sample_keys if key in named]
+    if parts:
+        logger.info("openpi_rlinf param dtypes: %s", ", ".join(parts))
 
 
 def _pi0_dtype_name(target_dtype) -> str:

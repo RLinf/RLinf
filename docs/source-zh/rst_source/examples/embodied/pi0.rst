@@ -288,10 +288,10 @@ env** 之间的流水线重叠，从而提升 rollout 效率。
 
 ``openpi`` 实现从官方 ``TrainConfig.model`` 拷出 ``action_horizon``，再用
 ``cfg.openpi`` 整表覆盖。默认模板只把 ``num_action_chunks`` 插值到
-``action_chunk``，**不会**把 ``num_action_chunks`` 写成网络 horizon。
+``action_chunk``，**不会**\ 把 ``num_action_chunks`` 写成网络 horizon。
 
 LIBERO PPO 常见写法是 ``num_action_chunks: 5``，而 ``pi0_libero`` 官方 horizon
-仍是 **50**，``pi05_libero`` 官方 horizon 是 **10**。只有 checkpoint 的 horizon
+仍是 **50**\ ，``pi05_libero`` 官方 horizon 是 **10**\ 。只有 checkpoint 的 horizon
 和该 ``TrainConfig`` 不一致时，才在实验 YAML 里覆写 ``openpi.action_horizon``。
 
 .. code:: yaml
