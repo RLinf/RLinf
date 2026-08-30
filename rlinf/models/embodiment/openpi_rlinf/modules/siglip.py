@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .utils import _str_to_dtype
+from .utils import ComputeDtypeLinear, Float32Conv2d, _str_to_dtype
 
 
 def posemb_sincos_2d(
@@ -49,8 +49,8 @@ class MlpBlock(nn.Module):
     def __init__(self, dim: int, mlp_dim: int | None = None, dropout: float = 0.0):
         super().__init__()
         mlp_dim = mlp_dim or 4 * dim
-        self.fc1 = nn.Linear(dim, mlp_dim)
-        self.fc2 = nn.Linear(mlp_dim, dim)
+        self.fc1 = ComputeDtypeLinear(dim, mlp_dim)
+        self.fc2 = ComputeDtypeLinear(mlp_dim, dim)
         self.dropout = nn.Dropout(dropout)
 
         nn.init.xavier_uniform_(self.fc1.weight)
@@ -83,14 +83,16 @@ class Encoder1DBlock(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Cast to norm weight dtype for FSDP1 mixed precision compatibility
-        norm_dtype = self.norm1.weight.dtype
-        y = self.norm1(x.to(norm_dtype))
+        # Align the residual stream to the live compute dtype. Nested FSDP
+        # wrap does not cast_forward_inputs, so ``precision: fp32`` activations
+        # would otherwise add with bf16 LayerNorm / Linear outputs.
+        x = x.to(self.norm1.weight.dtype)
+        y = self.norm1(x)
         y, _ = self.attn(y, y, y)
         y = self.dropout1(y)
         x = x + y
 
-        y = self.norm2(x.to(norm_dtype))
+        y = self.norm2(x)
         y = self.mlp(y)
         y = self.dropout2(y)
         x = x + y
@@ -159,8 +161,9 @@ class SigLIPViT(nn.Module):
             _str_to_dtype(dtype_mm) if isinstance(dtype_mm, str) else dtype_mm
         )
 
-        # Patch embedding (Conv2d)
-        self.stem = nn.Conv2d(
+        # Patch embedding. Subclassed so FSDP unflattens weight inside
+        # ``stem.forward`` and the conv still runs in float32 (JAX).
+        self.stem = Float32Conv2d(
             3,
             self.width,
             kernel_size=self.patch_size,
@@ -187,7 +190,7 @@ class SigLIPViT(nn.Module):
 
         # Output head: projects width -> num_classes (used when num_classes matches PaliGemma width)
         if num_classes > 0:
-            self.head = nn.Linear(self.width, num_classes)
+            self.head = ComputeDtypeLinear(self.width, num_classes)
             nn.init.zeros_(self.head.weight)
             nn.init.zeros_(self.head.bias)
         else:
@@ -232,18 +235,23 @@ class SigLIPViT(nn.Module):
             _: placeholder for compatibility (None)
         """
         # --- Stem + pos_embed in float32 (matching JAX) ---
-        # image is (B, H, W, C) -> (B, C, H, W) for Conv2d
-        x = image.permute(0, 3, 1, 2).float()
-
-        # Patch extraction in float32 — use explicit F.conv2d because FSDP2 may
-        # cast stem parameters to bfloat16, but JAX stem always runs in float32.
-        x = F.conv2d(
-            x,
-            self.stem.weight.float(),
-            self.stem.bias.float() if self.stem.bias is not None else None,
-            stride=self.stem.stride,
-            padding=self.stem.padding,
-        )  # (B, width, h, w)
+        # image is (B, H, W, C) -> (B, C, H, W). Prefer the parent-side
+        # ``F.conv2d(stem.weight)`` path used by the working LIBERO PPO run:
+        # it never enters the FSDP-wrapped ``stem`` and keeps the original
+        # fp32 kernel. Under ``full_shard`` that weight is a 1-D
+        # FlatParameter, so fall back to ``self.stem()`` to unflatten.
+        x = image.permute(0, 3, 1, 2)
+        stem_weight = self.stem.weight
+        if stem_weight.dim() >= 3:
+            x = F.conv2d(
+                x.float(),
+                stem_weight.float(),
+                None if self.stem.bias is None else self.stem.bias.float(),
+                stride=self.stem.stride,
+                padding=self.stem.padding,
+            )
+        else:
+            x = self.stem(x)
         B, C, h, w = x.shape
         x = x.reshape(B, C, h * w).permute(0, 2, 1)  # (B, h*w, width)
 

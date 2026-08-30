@@ -31,7 +31,10 @@ import torch.nn.functional as F
 
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.openpi_rlinf.modules import gemma, model, pointnet, siglip
-from rlinf.models.embodiment.openpi_rlinf.modules.utils import _str_to_dtype
+from rlinf.models.embodiment.openpi_rlinf.modules.utils import (
+    ComputeDtypeLinear,
+    _str_to_dtype,
+)
 from rlinf.models.embodiment.openpi_rlinf.pi0_config import Pi0Config
 from rlinf.models.embodiment.openpi_rlinf.rlt_config import OpenPiPytorchRLTConfig
 
@@ -129,23 +132,31 @@ class Pi0(model.BaseModel):
         action_expert_width = action_expert_config.width
         self.action_dim = config.action_dim
 
-        # Action input projection
-        self.action_in_proj = nn.Linear(config.action_dim, action_expert_width)
+        # Action / time projections. Cast input to the FSDP compute dtype
+        # inside each module so ``precision: fp32`` (fp32 master) can still
+        # run the original ``param_dtype: bf16`` matmuls.
+        self.action_in_proj = ComputeDtypeLinear(config.action_dim, action_expert_width)
 
         if config.pi05:
-            self.time_mlp_in = nn.Linear(action_expert_width, action_expert_width)
-            self.time_mlp_out = nn.Linear(action_expert_width, action_expert_width)
+            self.time_mlp_in = ComputeDtypeLinear(
+                action_expert_width, action_expert_width
+            )
+            self.time_mlp_out = ComputeDtypeLinear(
+                action_expert_width, action_expert_width
+            )
         else:
-            self.state_proj = nn.Linear(config.action_dim, action_expert_width)
-            self.action_time_mlp_in = nn.Linear(
+            self.state_proj = ComputeDtypeLinear(config.action_dim, action_expert_width)
+            self.action_time_mlp_in = ComputeDtypeLinear(
                 2 * action_expert_width, action_expert_width
             )
-            self.action_time_mlp_out = nn.Linear(
+            self.action_time_mlp_out = ComputeDtypeLinear(
                 action_expert_width, action_expert_width
             )
 
         # Action output projection
-        self.action_out_proj = nn.Linear(action_expert_width, config.action_dim)
+        self.action_out_proj = ComputeDtypeLinear(
+            action_expert_width, config.action_dim
+        )
 
         # Optional PointNet
         if config.pcd:

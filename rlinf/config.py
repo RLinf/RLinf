@@ -924,7 +924,11 @@ def validate_only_eval_rollout_model(model_cfg) -> None:
     ):
         if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
             missing.append("rollout.model.openpi.config_name")
-        if OmegaConf.select(model_cfg, "openpi.task", default=None) in (None, ""):
+        # ``task`` selects Pi0Eval / Pi0RL / … only in openpi_rlinf.
+        # Official OpenPI get_model ignores it and must not require it.
+        if model_type == SupportedModel.OPENPI_RLINF.value and OmegaConf.select(
+            model_cfg, "openpi.task", default=None
+        ) in (None, ""):
             missing.append("rollout.model.openpi.task")
         has_num_steps = (
             OmegaConf.select(model_cfg, "num_steps", default=None) is not None

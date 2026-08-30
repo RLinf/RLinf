@@ -36,7 +36,7 @@ import torch.utils.checkpoint
 
 from . import lora
 from .lora import FeedForward as LoRAFeedForward
-from .utils import _str_to_dtype, gelu_glu
+from .utils import ComputeDtypeLinear, _str_to_dtype, gelu_glu
 
 PALIGEMMA_VOCAB_SIZE = 257_152
 
@@ -138,7 +138,7 @@ class RMSNorm(nn.Module):
         if not self.adaptive:
             self.scale = nn.Parameter(torch.zeros(dim))
         else:
-            self.ada_modulation = nn.Linear(dim, dim * 3)
+            self.ada_modulation = ComputeDtypeLinear(dim, dim * 3)
             nn.init.zeros_(self.ada_modulation.weight)
             nn.init.zeros_(self.ada_modulation.bias)
 
@@ -187,6 +187,15 @@ class Embedder(nn.Module):
         self.embedding = nn.Embedding(vocab_size, embed_dim)
         nn.init.normal_(self.embedding.weight)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Must go through ``nn.Module.__call__`` so FSDP can all-gather / unflatten.
+
+        ``encode()`` used to be the public entry. Nested FSDP ``full_shard``
+        then saw a 1-D ``FlatParameter`` and ``F.embedding`` raised
+        ``'weight' must be 2-D``.
+        """
+        return self.encode(x)
+
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         x = self.embedding(x)
         x = x * math.sqrt(self.embed_dim)
@@ -222,7 +231,7 @@ class Attention(nn.Module):
             if config.num_kv_heads == config.num_heads:
                 # Combined QKV projection
                 self.q_proj.append(
-                    nn.Linear(
+                    ComputeDtypeLinear(
                         config.width, 3 * config.num_heads * config.head_dim, bias=False
                     )
                 )
@@ -230,23 +239,25 @@ class Attention(nn.Module):
                 self.v_proj.append(None)
             else:
                 self.q_proj.append(
-                    nn.Linear(
+                    ComputeDtypeLinear(
                         config.width, config.num_heads * config.head_dim, bias=False
                     )
                 )
                 self.k_proj.append(
-                    nn.Linear(
+                    ComputeDtypeLinear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
                 self.v_proj.append(
-                    nn.Linear(
+                    ComputeDtypeLinear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
 
             self.o_proj.append(
-                nn.Linear(config.num_heads * config.head_dim, config.width, bias=False)
+                ComputeDtypeLinear(
+                    config.num_heads * config.head_dim, config.width, bias=False
+                )
             )
 
         # Initialize weights
@@ -552,7 +563,7 @@ class Module(nn.Module):
 
     def embed(self, tokens: torch.Tensor) -> torch.Tensor:
         """Embed token indices."""
-        return self.embedder.encode(tokens).to(self.embed_dtype)
+        return self.embedder(tokens).to(self.embed_dtype)
 
     def forward(
         self,

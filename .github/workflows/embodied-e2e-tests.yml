@@ -1044,13 +1044,13 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh libero_spatial_dagger_openpi
 
-      - name: Libero-Spatial PPO Pi05 OpenPI_RLinf torch compile test
+      - name: Libero-Spatial PPO Pi05 torch compile test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05_rlinf +rollout.enable_torch_compile=true +rollout.torch_compile_mode=max-autotune
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
 
       - name: ManiSkill Async PPO test
         timeout-minutes: 20

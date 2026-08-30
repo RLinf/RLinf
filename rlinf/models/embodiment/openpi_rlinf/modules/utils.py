@@ -13,7 +13,45 @@
 # limitations under the License.
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
+
+
+class ComputeDtypeLinear(nn.Linear):
+    """``nn.Linear`` that matches input dtype to the live compute weight.
+
+    FSDP mixed precision rewrites ``weight.dtype`` at the start of this
+    module's forward (bf16 compute, fp32 master). The parent still sees the
+    storage dtype, so casting before the call is too early. Aligning here
+    keeps ``precision: fp32`` + ``param_dtype: bf16`` on the original
+    mixed-precision path, and stays full fp32 when mixed precision is off.
+    """
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        weight = self.weight
+        if input.dtype != weight.dtype:
+            input = input.to(dtype=weight.dtype)
+        return F.linear(input, weight, self.bias)
+
+
+class Float32Conv2d(nn.Conv2d):
+    """Patch-embed conv that always runs in float32 (JAX SigLIP stem).
+
+    The op must live inside this module so FSDP can unflatten ``weight``
+    before we touch it. ``F.conv2d(self.stem.weight)`` from the parent sees
+    a 1-D ``FlatParameter`` under ``full_shard`` / ``shard_grad_op``.
+    """
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        return F.conv2d(
+            input.float(),
+            self.weight.float(),
+            None if self.bias is None else self.bias.float(),
+            self.stride,
+            self.padding,
+            self.dilation,
+            self.groups,
+        )
 
 
 @torch.compile

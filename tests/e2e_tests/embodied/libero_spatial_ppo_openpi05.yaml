@@ -1,7 +1,7 @@
 defaults:
   - env/libero_spatial@env.train
   - env/libero_spatial@env.eval
-  - model/pi0_5_rlinf@actor.model
+  - model/pi0_5@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
@@ -91,6 +91,8 @@ rollout:
   recompute_logprobs: False
   enable_offload: False
   pipeline_stage_num: 1
+  enable_torch_compile: True
+  torch_compile_mode: "max-autotune"
 
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-SFT"
@@ -104,15 +106,14 @@ actor:
   seed: 42
   enable_offload: False
 
-  # Override the default values in model/pi0_5_rlinf
+  # Override the default values in model/pi0_5
   model:
     model_path: "/workspace/dataset/RLinf-Pi05-SFT"
+    model_type: "openpi"
     num_action_chunks: 5 # interface for the env
     num_steps: 3
     add_value_head: True
     openpi:
-      task: rl
-      detach_critic_input: True
       value_after_vlm: True
 
   optim:
@@ -128,13 +129,12 @@ actor:
   # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "shard_grad_op"
-    use_orig_params: True
+    sharding_strategy: "no_shard"
     gradient_checkpointing: False # for openpi, gradient checkpointing is not supported, please do not change this value
     mixed_precision:
-      param_dtype: bf16
-      reduce_dtype: fp32
-      buffer_dtype: fp32
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
 
 reward:
   use_reward_model: False
