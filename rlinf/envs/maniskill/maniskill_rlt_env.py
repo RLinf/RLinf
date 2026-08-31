@@ -109,7 +109,6 @@ class ManiskillRLTEnv(ManiskillEnv):
         *_RLT_GATE_METRIC_MAP.values(),
         "rlt_gate_actor_active",
     )
-    _RLT_REQUIRED_GATE_INFO_KEYS = tuple(_RLT_GATE_METRIC_MAP.values())
     _RLT_GATE_BOOL_INFO_KEYS = frozenset(
         {
             "rlt_gate_entered",
@@ -285,17 +284,6 @@ class ManiskillRLTEnv(ManiskillEnv):
         """Store rollout-owned gate diagnostics for the next action chunk."""
         if self._rlt_switch_state is None:
             return
-        present_keys = set(self._RLT_GATE_INFO_KEYS) & set(rollout_infos)
-        if not present_keys:
-            return
-        missing_keys = sorted(
-            set(self._RLT_REQUIRED_GATE_INFO_KEYS) - set(rollout_infos)
-        )
-        if missing_keys:
-            raise ValueError(
-                "Incomplete RLT critical-phase gate diagnostics; missing "
-                f"{missing_keys}."
-            )
         normalized = self._empty_rlt_rollout_infos(self.num_envs)
         for key in self._RLT_GATE_INFO_KEYS:
             if key not in rollout_infos:

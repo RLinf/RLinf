@@ -60,6 +60,7 @@ from rlinf.utils.utils import (
 _RLT_GEOMETRY_TRACE_DTYPES = {
     "geometry_critical_active": torch.bool,
     "rlt_oracle_expert_active": torch.bool,
+    "success_current": torch.bool,
 }
 
 
@@ -642,6 +643,7 @@ class EnvWorker(Worker):
             obs=extracted_obs,
             final_obs=final_obs,
             env_infos=infos if isinstance(infos, dict) else None,
+            dones=chunk_dones,
             rlt_switch_flags=rlt_switch_flags,
         )
         return env_output, env_info
@@ -732,26 +734,15 @@ class EnvWorker(Worker):
                 value = getattr(data, field_name, None)
                 if isinstance(value, torch.Tensor):
                     return int(value.shape[0])
-            if data.forward_inputs:
-                first_tensor = next(iter(data.forward_inputs.values()))
+            forward_inputs = getattr(data, "forward_inputs", None)
+            if forward_inputs:
+                first_tensor = next(iter(forward_inputs.values()))
                 if isinstance(first_tensor, torch.Tensor):
                     return int(first_tensor.shape[0])
             raise ValueError("Cannot infer batch size from rollout result.")
         from rlinf.scheduler import infer_batch_size
 
         return infer_batch_size(data)
-
-    @staticmethod
-    def _merge_rollout_outputs(outputs: list[Any]) -> Any:
-        """Merge either structured policy outputs or legacy action arrays."""
-        if all(isinstance(output, PolicyOutput) for output in outputs):
-            return PolicyOutput.merge(outputs)
-        if all(isinstance(output, torch.Tensor) for output in outputs):
-            return torch.cat(outputs, dim=0)
-        if all(isinstance(output, np.ndarray) for output in outputs):
-            return np.concatenate(outputs, axis=0)
-        output_types = sorted({type(output).__name__ for output in outputs})
-        raise ValueError(f"Cannot merge mixed rollout output types: {output_types}.")
 
     @Worker.timer("compute_bootstrap_rewards")
     def compute_bootstrap_rewards(
@@ -1033,6 +1024,10 @@ class EnvWorker(Worker):
             env_infos = {}
         for key, dtype in _RLT_GEOMETRY_TRACE_DTYPES.items():
             value = env_infos.get(key)
+            if value is None:
+                final_info = env_infos.get("final_info")
+                if isinstance(final_info, dict):
+                    value = final_info.get(key)
             if value is None:
                 continue
             normalized = torch.as_tensor(value, dtype=dtype)
@@ -1514,14 +1509,25 @@ class EnvWorker(Worker):
 
             for eval_step in range(self.n_eval_chunk_steps):
                 for stage_id in range(self.stage_num):
+                    gate_enabled = bool(
+                        OmegaConf.select(
+                            self.cfg,
+                            "rollout.rlt_critical_phase_gate.enable",
+                            default=False,
+                        )
+                    )
                     policy_output = self.recv_from(
                         group_name=self.cfg.rollout.group_name,
                         channel=input_channel,
                         tag="eval_rollout_results",
                         route_key=stage_id if not self.env_decoupled_mode else None,
                         batch_size=self.eval_batch_size,
-                        merge_fn=self._merge_rollout_outputs,
-                        infer_batch_size_fn=self._infer_rollout_batch_size,
+                        merge_fn=PolicyOutput.merge if gate_enabled else None,
+                        infer_batch_size_fn=(
+                            self._infer_rollout_batch_size
+                            if self.env_decoupled_mode or gate_enabled
+                            else None
+                        ),
                         decoupled_mode=self.env_decoupled_mode,
                     )
                     self._consume_rollout_infos(

@@ -206,7 +206,23 @@ class SteamCriticalPhaseGate:
         self.model.to(device)
         if self.phase_head is not None:
             self.phase_head.to(device)
-        self._states.clear()
+        state_tensor_fields = (
+            "valid_count",
+            "low_progress_count",
+            "latched",
+            "entered",
+            "entry_step",
+            "actor_active",
+            "critical_chunk_count",
+            "expert_low_progress_count",
+            "expert_latched",
+            "route_expert_entered",
+            "route_expert_entry_step",
+            "chunk_index",
+        )
+        for state in self._states.values():
+            for field_name in state_tensor_fields:
+                setattr(state, field_name, getattr(state, field_name).to(device))
         return self
 
     def empty_diagnostics(self, batch_size: int) -> dict[str, torch.Tensor]:

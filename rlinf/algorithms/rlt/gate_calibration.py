@@ -30,6 +30,7 @@ RLT_GATE_TRACE_KEYS = (
     "rlt_gate_actor_active",
     "rlt_oracle_expert_active",
     "geometry_critical_active",
+    "success_current",
 )
 
 

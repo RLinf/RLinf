@@ -48,7 +48,7 @@ from typing import Any, Callable, Literal, Optional, Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, get_worker_info
+from torch.utils.data import Dataset
 
 from .binning import (
     _scaled_signed_stride_to_bin,
@@ -501,20 +501,15 @@ class _BasePairDataset(Dataset):
         """
         self._anchor_stride = int(anchor_stride)
         self._pair_stride = self.k if pair_stride is None else int(pair_stride)
-        if self._anchor_stride < 1 or minimum_future_stride < 1:
-            raise ValueError("anchor and future strides must be positive")
         pair_positions_per_episode = np.array(
             [
-                max(
-                    0,
-                    (
-                        self._source.episode_length(ep)
-                        - int(minimum_future_stride)
-                        + self._anchor_stride
-                        - 1
-                    )
-                    // self._anchor_stride,
+                (
+                    self._source.episode_length(ep)
+                    - int(minimum_future_stride)
+                    + self._anchor_stride
+                    - 1
                 )
+                // self._anchor_stride
                 for ep in self._eligible
             ],
             dtype=np.int64,
@@ -649,15 +644,18 @@ class PairDataset(_BasePairDataset):
             ``length_scale_enabled``, it is computed per-dataset from
             ``length_scale_percentile``; callers wanting one global ``L_max``
             across a mixture inject it via :meth:`set_length_scale_reference`.
-        temporal_stride: Number of raw trajectory frames represented by one
-            pair-stride unit. Defaults to one frame.
-        anchor_stride: Raw-frame distance between consecutive pair anchors.
-            Defaults to one frame.
-        boundary_mode: ``"clamp"`` preserves the legacy binary behavior near
-            episode boundaries. ``"drop"`` keeps only complete fixed-stride
-            binary pairs.
         prompt: Optional fallback instruction when the trajectory has no prompt.
     """
+
+    def _sampling_config(
+        self,
+    ) -> tuple[int, int, Literal["clamp", "drop"]]:
+        """Return native frame-wise sampling defaults.
+
+        RLT chunk sampling is provided by :class:`RLTChunkPairDataset`; keeping
+        these defaults here preserves the original PairDataset behavior.
+        """
+        return 1, 1, "clamp"
 
     def __init__(
         self,
@@ -676,9 +674,6 @@ class PairDataset(_BasePairDataset):
         length_scale_enabled: bool = False,
         length_scale_percentile: float = 90.0,
         length_scale_reference: Optional[float] = None,
-        temporal_stride: int = 1,
-        anchor_stride: int = 1,
-        boundary_mode: Literal["clamp", "drop"] = "clamp",
         prompt: Optional[str] = None,
     ) -> None:
         self.camera_keys: tuple[str, ...] = tuple(camera_keys)
@@ -687,6 +682,11 @@ class PairDataset(_BasePairDataset):
         self.k = int(k)
         if self.k < 1:
             raise ValueError(f"k must be >= 1, got {self.k}")
+        (
+            temporal_stride,
+            anchor_stride,
+            boundary_mode,
+        ) = self._sampling_config()
         self.temporal_stride = int(temporal_stride)
         self.anchor_stride = int(anchor_stride)
         if self.temporal_stride < 1 or self.anchor_stride < 1:
@@ -801,8 +801,7 @@ class PairDataset(_BasePairDataset):
 
         logger.info(
             "PairDataset: dataset_path=%s, episodes=%d eligible=%d, k=%d, "
-            "num_bins=%d (%s mode), temporal_stride=%d, anchor_stride=%d, "
-            "boundary_mode=%s, total_positions=%d, "
+            "num_bins=%d (%s mode), total_positions=%d, "
             "dataset_type=%s, only_success=%s, camera_keys=%s",
             self.source_name,
             total_eps,
@@ -810,9 +809,6 @@ class PairDataset(_BasePairDataset):
             self.k,
             self.num_bins,
             "binary" if self.num_bins == 2 else "multi-bin",
-            self.temporal_stride,
-            self.anchor_stride,
-            self.boundary_mode,
             self._num_pair_positions,
             self.dataset_type,
             self.only_success,
@@ -820,7 +816,7 @@ class PairDataset(_BasePairDataset):
         )
 
     def set_epoch(self, epoch: int) -> None:
-        del epoch  # DistributedSampler owns epoch-level index shuffling.
+        del epoch  # no RNG state, retained for DataLoader wrapper compat
 
     @property
     def length_scale_reference(self) -> Optional[float]:
@@ -898,9 +894,7 @@ class PairDataset(_BasePairDataset):
 
     def _rng_for_worker(self) -> np.random.Generator:
         if self._rng is None:
-            worker_info = get_worker_info()
-            seed = worker_info.seed if worker_info is not None else torch.initial_seed()
-            self._rng = np.random.default_rng(seed)
+            self._rng = np.random.default_rng()
         return self._rng
 
     def _build_sample(
@@ -1026,6 +1020,41 @@ class PairDataset(_BasePairDataset):
             label=label,
             raw_t=raw_t,
             raw_tk=raw_tk,
+        )
+
+
+class RLTChunkPairDataset(PairDataset):
+    """PairDataset variant whose temporal units are RLT action chunks.
+
+    The base :class:`PairDataset` remains frame-wise and keeps the native STEAM
+    sampling behavior. This subclass only supplies the RLT-specific temporal
+    configuration while reusing the same pair construction and collation code.
+    """
+
+    def __init__(
+        self,
+        dataset_path: str,
+        *,
+        temporal_stride: int = 1,
+        anchor_stride: int = 1,
+        boundary_mode: Literal["clamp", "drop"] = "clamp",
+        **kwargs: Any,
+    ) -> None:
+        self._rlt_sampling = (
+            int(temporal_stride),
+            int(anchor_stride),
+            boundary_mode,
+        )
+        super().__init__(dataset_path, **kwargs)
+
+    def _sampling_config(
+        self,
+    ) -> tuple[int, int, Literal["clamp", "drop"]]:
+        temporal_stride, anchor_stride, boundary_mode = self._rlt_sampling
+        return (
+            temporal_stride,
+            anchor_stride,
+            boundary_mode,
         )
 
 
@@ -1474,5 +1503,6 @@ __all__ = [
     "BinaryPairDataCollator",
     "BinaryPairInferenceDataset",
     "PairDataset",
+    "RLTChunkPairDataset",
     "TrajectorySource",
 ]

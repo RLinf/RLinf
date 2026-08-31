@@ -111,15 +111,7 @@ def _success_time_batch(
     like: torch.Tensor,
     trace_path: Path,
 ) -> tuple[torch.Tensor, str]:
-    """Recover success from ManiSkill termination, with reward fallback."""
-    if trace.get("terminations") is not None:
-        terminations = _as_time_batch(trace, "terminations", dtype=torch.bool)
-        if terminations.shape != like.shape:
-            raise ValueError(
-                f"Trace key 'terminations' in {trace_path} must have shape "
-                f"{tuple(like.shape)}, got {tuple(terminations.shape)}"
-            )
-        return terminations, "terminations"
+    """Recover success from action-aligned reward or explicit labels."""
     if trace.get("reward_sum") is not None:
         rewards = _as_time_batch(trace, "reward_sum", dtype=torch.float32)
         if rewards.shape != like.shape:
@@ -128,8 +120,25 @@ def _success_time_batch(
                 f"{tuple(like.shape)}, got {tuple(rewards.shape)}"
             )
         return rewards > 0, "reward_sum"
+    if trace.get("success_current") is not None:
+        success = _as_time_batch(trace, "success_current", dtype=torch.bool)
+        if success.shape != like.shape:
+            raise ValueError(
+                f"Trace key 'success_current' in {trace_path} must have shape "
+                f"{tuple(like.shape)}, got {tuple(success.shape)}"
+            )
+        return success, "success_current"
+    if trace.get("terminations") is not None:
+        terminations = _as_time_batch(trace, "terminations", dtype=torch.bool)
+        if terminations.shape != like.shape:
+            raise ValueError(
+                f"Trace key 'terminations' in {trace_path} must have shape "
+                f"{tuple(like.shape)}, got {tuple(terminations.shape)}"
+            )
+        return terminations, "terminations"
     raise ValueError(
-        f"Trace {trace_path} has neither 'terminations' nor 'reward_sum'; "
+        f"Trace {trace_path} has no 'success_current', 'terminations', or "
+        "'reward_sum'; "
         "success labels cannot be reconstructed"
     )
 

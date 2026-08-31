@@ -235,6 +235,7 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
         from rlinf.data.datasets.steam import (
             BinaryPairDataCollator,
             PairDataset,
+            RLTChunkPairDataset,
         )
         from rlinf.data.datasets.steam.mixture import PairMixtureDataset
         from rlinf.models.embodiment.value_model.recap.checkpoint_utils import (
@@ -392,22 +393,30 @@ class FSDPSteamSftWorker(FSDPModelManager, Worker):
                 "num_bins": num_bins,
                 "length_scale_enabled": length_scale_enabled,
                 "length_scale_percentile": length_scale_percentile,
-                "temporal_stride": int(
-                    entry.get("temporal_stride", data_cfg.get("temporal_stride", 1))
-                ),
-                "anchor_stride": int(
-                    entry.get("anchor_stride", data_cfg.get("anchor_stride", 1))
-                ),
-                "boundary_mode": str(
-                    entry.get("boundary_mode", data_cfg.get("boundary_mode", "clamp"))
-                ),
                 "prompt": entry.get(
                     "default_prompt", data_cfg.get("default_prompt", None)
                 ),
+                "min_episode_length": data_cfg.get("min_episode_length", None),
             }
-            return PairDataset(
+
+            rlt_keys = ("temporal_stride", "anchor_stride", "boundary_mode")
+            use_rlt_chunk_dataset = any(
+                key in entry or key in data_cfg for key in rlt_keys
+            )
+            if not use_rlt_chunk_dataset:
+                return PairDataset(**dataset_kwargs)
+
+            return RLTChunkPairDataset(
                 **dataset_kwargs,
-                min_episode_length=data_cfg.get("min_episode_length", None),
+                temporal_stride=int(
+                    entry.get("temporal_stride", data_cfg.get("temporal_stride", 1))
+                ),
+                anchor_stride=int(
+                    entry.get("anchor_stride", data_cfg.get("anchor_stride", 1))
+                ),
+                boundary_mode=str(
+                    entry.get("boundary_mode", data_cfg.get("boundary_mode", "clamp"))
+                ),
             )
 
         balance_dataset_weights = bool(

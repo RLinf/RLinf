@@ -706,7 +706,9 @@ class MultiStepRolloutWorker(Worker):
     @Worker.timer("generate_one_epoch")
     async def generate_one_epoch(self, input_channel: Channel, output_channel: Channel):
         self.update_dagger_beta()
-        if self.rlt_critical_phase_gate is not None:
+        if self.rlt_critical_phase_gate is not None and not bool(
+            self.cfg.env.train.get("auto_reset", False)
+        ):
             self.rlt_critical_phase_gate.reset(mode="train")
         for _ in range(self.n_train_chunk_steps):
             for stage_id in range(self.num_pipeline_stages):
@@ -876,7 +878,10 @@ class MultiStepRolloutWorker(Worker):
                 desc="Evaluating Rollout Epochs",
                 disable=(self._rank != 0),
             ):
-                if self.rlt_critical_phase_gate is not None:
+                if self.rlt_critical_phase_gate is not None and (
+                    not bool(self.cfg.env.eval.get("auto_reset", False))
+                    or _ == 0
+                ):
                     self.rlt_critical_phase_gate.reset(mode="eval")
                 for _ in range(self.n_eval_chunk_steps):
                     for stage_id in range(self.num_pipeline_stages):
@@ -1061,6 +1066,7 @@ class MultiStepRolloutWorker(Worker):
                 for idx in range(len(sizes))
             ]
         )
+
         return [
             PolicyOutput(
                 actions=split_actions[idx],
