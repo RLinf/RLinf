@@ -29,7 +29,7 @@ LATENT_HW = 4
 
 
 def _load_backend_module(monkeypatch):
-    """Load the OpenSora backend with opensora stubbed out, so it runs without the OpenSora deps."""
+    """Load the OpenSora backend with opensora stubbed out, so it needs no deps."""
     repo_root = Path(__file__).resolve().parents[2]
     module_path = repo_root / "rlinf" / "envs" / "world_model" / "opensora_backend.py"
 
@@ -67,7 +67,7 @@ def _load_backend_module(monkeypatch):
 
 
 class _FakeVae:
-    """Stands in for the OpenSora VAE: encode and decode are the identity on the frame axis."""
+    """Stands in for the VAE: encode and decode are identity on the frame axis."""
 
     out_channels = LATENT_CHANNELS
 
@@ -82,7 +82,7 @@ class _FakeVae:
 
 
 class _FakeScheduler:
-    """Returns fresh latents for the masked tail and records what it was asked to sample."""
+    """Returns fresh latents for the masked tail, recording what it was asked for."""
 
     def __init__(self):
         self.calls = []
@@ -120,7 +120,7 @@ def _make_backend(module):
 
 
 def _init_frames(env_values):
-    """One window per env slot; frame ``t`` of env ``e`` is filled with ``env_values[e] + t``."""
+    """One window per env slot; frame ``t`` of env ``e`` holds ``env_values[e] + t``."""
     return [
         [
             torch.full((LATENT_CHANNELS, 1, LATENT_HW, LATENT_HW), float(base + t_idx))

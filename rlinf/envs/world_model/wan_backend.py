@@ -29,8 +29,8 @@ __all__ = ["WanBackend"]
 class WanBackend:
     """In-process backend holding diffsynth's action-conditioned ``WanVideoPipeline``.
 
-    Each session owns its condition window: the reference frame the trajectory started from, the last
-    generated frames, and the actions that produced them. The env only sends new action chunks.
+    A session holds the trajectory's reference frame, its last generated frames and the
+    actions that produced them.
     """
 
     def __init__(self, cfg, device: torch.device, device_str: str):
@@ -65,7 +65,7 @@ class WanBackend:
 
     @staticmethod
     def _to_pil(frame: torch.Tensor) -> Image.Image:
-        """``[C, 1, H, W]`` in ``[-1, 1]`` (or ``[0, 1]``) to the uint8 image the pipeline takes."""
+        """``[C, 1, H, W]`` in ``[-1, 1]`` or ``[0, 1]`` to the pipeline's uint8 image."""
         img = np.transpose(frame[:, 0].cpu().numpy(), (1, 2, 0))
         if img.max() <= 1.2:
             img = ((img + 1.0) / 2.0 * 255.0).clip(0, 255)
@@ -108,7 +108,7 @@ class WanBackend:
     def _window_actions(
         self, env_ids: Sequence[int], actions: torch.Tensor
     ) -> torch.Tensor:
-        """Prepend each session's action history to its chunk, then roll the history forward."""
+        """Prepend each session's action history to its chunk, then roll it forward."""
         history = torch.stack(
             [self._sessions[int(i)]["actions"] for i in env_ids], dim=0
         ).to(device=actions.device, dtype=actions.dtype)
@@ -165,13 +165,12 @@ class WanBackend:
 
         videos = []
         for env_idx, env_id in enumerate(env_ids):
-            # The pipeline's own frames are what the next chunk conditions on, so they go into the
-            # window as they are: converting them to [-1, 1] and back would cost a gray level.
+            # Keep the pipeline's own frames as-is; a [-1, 1] round trip costs a gray level.
             window = self._sessions[int(env_id)]["frames"]
             window[1:] = output[env_idx][-(self.condition_frame_length - 1) :]
 
             frames = []
-            # The pipeline regenerates the frames it conditioned on; only the new ones leave here.
+            # The pipeline regenerates the conditioned frames; only the new ones leave here.
             for img in output[env_idx][self.condition_frame_length :]:
                 # Keep frame tensors in fp32 to avoid silent fp64 promotion
                 # that can significantly increase GPU memory usage.

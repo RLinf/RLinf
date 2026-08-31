@@ -33,11 +33,10 @@ __all__ = ["OpenSoraBackend"]
 
 
 class OpenSoraBackend:
-    """In-process backend holding the action-conditioned OpenSora STDiT model and its VAE.
+    """In-process backend holding the action-conditioned OpenSora STDiT and its VAE.
 
-    The condition window lives in latent space: ``open_session`` encodes the initial frames once and
-    each ``generate`` rolls the newly sampled latents into the session's queue, so pixels are only
-    ever decoded on the way out.
+    A session holds the trajectory's condition window as a queue of latents, so pixels are
+    only ever decoded on the way out.
     """
 
     def __init__(self, cfg, device: torch.device, device_str: str):
@@ -129,10 +128,8 @@ class OpenSoraBackend:
     ) -> None:
         """Encode the initial condition frames into each session's latent queue.
 
-        ``init_actions`` is unused: OpenSora conditions on the current action chunk only, so there is
-        no action history to carry.
+        ``init_actions`` is unused: OpenSora conditions on the action chunk only.
         """
-        # One encode for the whole batch, frames laid out env-major: [B * T, C, H, W]
         windows = torch.stack(
             [torch.cat(list(frames), dim=1) for frames in init_frames], dim=0
         )  # [B, C, T, H, W]
@@ -203,8 +200,7 @@ class OpenSoraBackend:
         condition = self._session_latents(env_ids)
 
         with autocast(self.device, self.inference_dtype):
-            # The scheduler draws its own noise from the global RNG; the session seeds are recorded
-            # but unused, unlike Wan's per-batch seed.
+            # The scheduler draws noise from the global RNG, so session seeds go unused.
             z = torch.randn(
                 batch_size,
                 self.vae.out_channels,
@@ -232,8 +228,7 @@ class OpenSoraBackend:
                 self.inference_dtype
             )
 
-            # Roll the sampled latents into the windows before decoding: the next chunk conditions on
-            # latents, so pixels never make it back into the window.
+            # Roll latents, not pixels, into the windows; the next chunk conditions on them.
             frames_per_env = self.z_mask_frame_num if self.is_vae_v1_2 else self.chunk
             for row, env_id in enumerate(env_ids):
                 queue = self._sessions[int(env_id)]["latents"]
