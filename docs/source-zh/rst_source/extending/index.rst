@@ -48,6 +48,12 @@
 
       把具身模型使用 sglang 后端适配到 RLinf 的 rollout worker 中，使用各式各样的仿真器来进行模型评测。
 
+   .. grid-item-card:: 新机械臂集成
+      :link: new_robot_arm
+      :link-type: doc
+
+      从硬件接口到任务注册，将新的真实世界机械臂集成到 RLinf。
+
 .. toctree::
    :hidden:
 
@@ -58,3 +64,4 @@
    新 SFT 模型 <new_model_sft>
    高级集成 <advanced-integrations/index>
    SGLang 具身模型 <sglang_embodied_model>
+   新机械臂集成 <new_robot_arm>

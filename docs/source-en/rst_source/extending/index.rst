@@ -49,6 +49,12 @@ to RLinf.
 
       Adapt the embodied model to the RLinf rollout worker using the sglang backend, and use various simulators to evaluate the model.
 
+   .. grid-item-card:: New Robot Arm
+      :link: new_robot_arm
+      :link-type: doc
+
+      Integrate a new real-world robot arm into RLinf, from hardware interface to task registration.
+
 .. toctree::
    :hidden:
 
@@ -59,3 +65,4 @@ to RLinf.
    New SFT Model <new_model_sft>
    Advanced Integrations <advanced-integrations/index>
    SGLang Embodied Model <sglang_embodied_model>
+   New Robot Arm <new_robot_arm>
