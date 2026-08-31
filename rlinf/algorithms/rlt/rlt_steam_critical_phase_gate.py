@@ -21,7 +21,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
-from rlinf.algorithms.rlt.phase_head import SteamPhaseHead
+from rlinf.algorithms.rlt.rlt_steam_phase_head import SteamPhaseHead
 from rlinf.data.datasets.steam import BinaryPairDataCollator
 from rlinf.data.datasets.steam.pair_dataset import _to_uint8_hwc
 
@@ -72,6 +72,21 @@ class _GatePrediction:
 
 class SteamCriticalPhaseGate:
     """Detect sustained low progress from raw, chunk-aligned frame pairs."""
+
+    _STATE_TENSOR_FIELDS = (
+        "valid_count",
+        "low_progress_count",
+        "latched",
+        "entered",
+        "entry_step",
+        "actor_active",
+        "critical_chunk_count",
+        "expert_low_progress_count",
+        "expert_latched",
+        "route_expert_entered",
+        "route_expert_entry_step",
+        "chunk_index",
+    )
 
     def __init__(self, model: Any, cfg: Any) -> None:
         self.model = model
@@ -206,22 +221,8 @@ class SteamCriticalPhaseGate:
         self.model.to(device)
         if self.phase_head is not None:
             self.phase_head.to(device)
-        state_tensor_fields = (
-            "valid_count",
-            "low_progress_count",
-            "latched",
-            "entered",
-            "entry_step",
-            "actor_active",
-            "critical_chunk_count",
-            "expert_low_progress_count",
-            "expert_latched",
-            "route_expert_entered",
-            "route_expert_entry_step",
-            "chunk_index",
-        )
         for state in self._states.values():
-            for field_name in state_tensor_fields:
+            for field_name in self._STATE_TENSOR_FIELDS:
                 setattr(state, field_name, getattr(state, field_name).to(device))
         return self
 
@@ -286,9 +287,7 @@ class SteamCriticalPhaseGate:
     def _batch_images(value: Any) -> np.ndarray:
         """Convert a batched ManiSkill image observation to uint8 BHWC."""
         if torch.is_tensor(value):
-            value = value.detach().cpu()
-            batch_size = int(value.shape[0])
-            return np.stack([_to_uint8_hwc(value[idx]) for idx in range(batch_size)])
+            value = value.detach().cpu().numpy()
         array = np.asarray(value)
         if array.ndim != 4:
             raise ValueError(f"expected a batched rank-4 image, got {array.shape}")
@@ -498,18 +497,8 @@ class SteamCriticalPhaseGate:
             reset_cpu = reset.detach().cpu().numpy()
             for history in state.image_history.values():
                 history[reset_cpu] = 0
-            state.valid_count[reset] = 0
-            state.low_progress_count[reset] = 0
-            state.latched[reset] = False
-            state.entered[reset] = False
-            state.entry_step[reset] = 0
-            state.actor_active[reset] = False
-            state.critical_chunk_count[reset] = 0
-            state.expert_low_progress_count[reset] = 0
-            state.expert_latched[reset] = False
-            state.route_expert_entered[reset] = False
-            state.route_expert_entry_step[reset] = 0
-            state.chunk_index[reset] = 0
+            for field_name in self._STATE_TENSOR_FIELDS:
+                getattr(state, field_name)[reset] = 0
 
         for image_key, current_images in images.items():
             state.image_history[image_key] = np.roll(
@@ -612,9 +601,11 @@ class SteamCriticalPhaseGate:
         # chunks enter replay. SimulatorRLTRoute independently prevents actor
         # execution until the warmup updates are complete.
         route_flags = critical_phase_active
-        route_expert_flags = state.expert_latched & actor_active
-        if self.expert_mode == "shadow":
-            route_expert_flags = torch.zeros_like(route_expert_flags)
+        route_expert_flags = (
+            state.expert_latched
+            & actor_active
+            & (self.expert_mode == "active")
+        )
 
         route_expert_active = route_expert_flags & bool(expert_routing_enabled)
         route_expert_started_now = route_expert_active & (~state.route_expert_entered)

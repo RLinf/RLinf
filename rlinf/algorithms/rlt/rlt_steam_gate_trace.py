@@ -21,7 +21,7 @@ from typing import Any
 
 import torch
 
-from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY
+from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.data.schema.embodied_types import Trajectory
 
 RLT_GATE_TRACE_KEYS = (

@@ -17,7 +17,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
-from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY
+from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.algorithms.rlt.route import RLTRoute, RLTRouteContext
 from rlinf.algorithms.rlt.transition import RLT_OBS_KEYS, RLT_TRANSITION_PREFIX
 

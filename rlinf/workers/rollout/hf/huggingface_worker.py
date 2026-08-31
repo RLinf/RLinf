@@ -28,7 +28,9 @@ from rlinf.algorithms.rlt import (
     build_rlt_route,
     predict_rlt_actions,
 )
-from rlinf.algorithms.rlt.critical_phase_gate import build_rlt_critical_phase_gate
+from rlinf.algorithms.rlt.rlt_steam_critical_phase_gate import (
+    build_rlt_critical_phase_gate,
+)
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import PolicyOutput
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer

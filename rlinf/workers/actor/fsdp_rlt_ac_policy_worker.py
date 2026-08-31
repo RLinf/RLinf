@@ -17,8 +17,8 @@ import queue
 import torch
 import torch.nn.functional as F
 
-from rlinf.algorithms.rlt.gate_calibration import RLTGateTraceWriter
-from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY
+from rlinf.algorithms.rlt.rlt_steam_gate_trace import RLTGateTraceWriter
+from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType

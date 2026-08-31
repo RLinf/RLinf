@@ -24,10 +24,8 @@ the collection run.
 """
 
 import argparse
-import csv
 import json
 import math
-import random
 import statistics
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -37,7 +35,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
-from rlinf.algorithms.rlt.phase_head import RLT_PHASE_FEATURE_KEY, SteamPhaseHead
+from rlinf.algorithms.rlt.rlt_steam_phase_head import (
+    RLT_PHASE_FEATURE_KEY,
+    SteamPhaseHead,
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,6 @@ class EpisodeData:
     chunk_size: int
     score: torch.Tensor
     score_ready: torch.Tensor
-    stored_actor_active: torch.Tensor
     actor_active: torch.Tensor
     geometry_active: torch.Tensor
     oracle_active: torch.Tensor
@@ -260,11 +260,13 @@ def discover_episode_refs(
     return refs
 
 
-def _load_episode_data(ref: EpisodeRef, *, include_features: bool = False):
+def _load_episode_data(
+    ref: EpisodeRef,
+) -> tuple[EpisodeData, torch.Tensor]:
     trace = torch.load(ref.trace_path, map_location="cpu", weights_only=False)
     score = _as_time_batch(trace, "rlt_gate_score_min", dtype=torch.float32)
     score_ready = _as_time_batch(trace, "rlt_gate_score_ready", dtype=torch.bool)
-    stored_actor_active = _as_time_batch(
+    actor_active = _as_time_batch(
         trace, "rlt_gate_actor_active", dtype=torch.bool
     )
     geometry_active = _as_time_batch(
@@ -284,15 +286,12 @@ def _load_episode_data(ref: EpisodeRef, *, include_features: bool = False):
         chunk_size=ref.chunk_size,
         score=score[sl, ref.env_idx].clone(),
         score_ready=score_ready[sl, ref.env_idx].clone(),
-        stored_actor_active=stored_actor_active[sl, ref.env_idx].clone(),
-        actor_active=stored_actor_active[sl, ref.env_idx].clone(),
+        actor_active=actor_active[sl, ref.env_idx].clone(),
         geometry_active=geometry_active[sl, ref.env_idx].clone(),
         oracle_active=oracle_active[sl, ref.env_idx].clone(),
         success_signal=success_signal[sl, ref.env_idx].clone(),
         success_label_source=success_label_source,
     )
-    if not include_features:
-        return data
     features = trace[RLT_PHASE_FEATURE_KEY][sl, ref.env_idx].to(torch.float16)
     return data, features
 
@@ -358,7 +357,7 @@ def build_training_tensors(
     features_list = []
     labels_list = []
     for ref in refs:
-        data, features = _load_episode_data(ref, include_features=True)
+        data, features = _load_episode_data(ref)
         indices = _sample_phase_indices(
             data.score_ready,
             data.geometry_active,
@@ -548,7 +547,7 @@ def predict_phase_records(
     """Predict phase probabilities while retaining only scalar episode data."""
     records = []
     for ref in refs:
-        data, features = _load_episode_data(ref, include_features=True)
+        data, features = _load_episode_data(ref)
         probabilities = _predict_features(
             model,
             features,
@@ -673,7 +672,7 @@ def select_phase_parameters(
     *,
     thresholds: list[float],
     patience_values: list[int],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> dict[str, Any]:
     rows = [
         evaluate_phase_parameters(
             records,
@@ -698,7 +697,7 @@ def select_phase_parameters(
 
     if not rows:
         raise RuntimeError("Phase calibration produced no parameter rows")
-    return dict(min(rows, key=key)), rows
+    return dict(min(rows, key=key))
 
 
 def apply_phase_gate(
@@ -917,7 +916,7 @@ def select_expert_parameters(
     patience_values: list[int],
     warmup_values: list[int],
     success_horizon_steps: int,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> dict[str, Any]:
     rows = [
         evaluate_expert_parameters(
             records,
@@ -962,22 +961,7 @@ def select_expert_parameters(
 
     selected = dict(min(rows, key=key))
     selected["profile"] = "recommended"
-    return selected, rows
-
-
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    if not rows:
-        raise ValueError(f"Cannot write an empty CSV: {path}")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(rows[0])
-    for row in rows[1:]:
-        for key in row:
-            if key not in fieldnames:
-                fieldnames.append(key)
-    with path.open("w", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    return selected
 
 
 def _write_recommendation(
@@ -1014,9 +998,6 @@ def main() -> None:
     )
     parser.add_argument("trace_dir", type=Path)
     parser.add_argument("--phase-head-output", type=Path, default=None)
-    parser.add_argument("--phase-grid-output", type=Path, default=None)
-    parser.add_argument("--expert-grid-output", type=Path, default=None)
-    parser.add_argument("--expert-profiles-output", type=Path, default=None)
     parser.add_argument("--yaml-output", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=256)
@@ -1058,7 +1039,6 @@ def main() -> None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
-    random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     phase_patience = _parse_number_list(args.phase_patience_chunks, int)
@@ -1142,7 +1122,7 @@ def main() -> None:
         phase_thresholds = _parse_number_list(args.phase_thresholds, float)
     if min(phase_thresholds) < 0.0 or max(phase_thresholds) > 1.0:
         parser.error("phase thresholds must be in [0, 1]")
-    phase_selected, phase_rows = select_phase_parameters(
+    phase_selected = select_phase_parameters(
         phase_train_records,
         thresholds=phase_thresholds,
         patience_values=phase_patience,
@@ -1164,7 +1144,7 @@ def main() -> None:
         )
     else:
         expert_thresholds = _parse_number_list(args.expert_thresholds, float)
-    expert_selected, expert_rows = select_expert_parameters(
+    expert_selected = select_expert_parameters(
         calibration_records,
         thresholds=expert_thresholds,
         patience_values=expert_patience,
@@ -1181,15 +1161,6 @@ def main() -> None:
     )
 
     phase_output = args.phase_head_output or (args.trace_dir / "steam_phase_head.pt")
-    phase_grid_output = args.phase_grid_output or phase_output.with_suffix(
-        ".calibration.csv"
-    )
-    expert_grid_output = args.expert_grid_output or (
-        args.trace_dir / "steam_expert_gate_grid.csv"
-    )
-    profiles_output = args.expert_profiles_output or (
-        args.trace_dir / "steam_expert_gate_profiles.csv"
-    )
     yaml_output = args.yaml_output or (
         args.trace_dir / "steam_gate_recommendation.yaml"
     )
@@ -1210,13 +1181,6 @@ def main() -> None:
         "seed": args.seed,
     }
     phase_head.save_checkpoint(phase_output, metadata=phase_metadata)
-    _write_csv(phase_grid_output, phase_rows)
-    _write_csv(expert_grid_output, expert_rows)
-    profile_rows = [
-        dict(expert_selected),
-        {**expert_validation, "profile": "recommended"},
-    ]
-    _write_csv(profiles_output, profile_rows)
     _write_recommendation(
         yaml_output,
         phase_head_path=phase_output,
@@ -1225,9 +1189,6 @@ def main() -> None:
     )
 
     print(f"Saved phase head to {phase_output}")
-    print(f"Saved phase calibration grid to {phase_grid_output}")
-    print(f"Saved expert calibration grid to {expert_grid_output}")
-    print(f"Saved expert profile and validation rows to {profiles_output}")
     print(f"Saved YAML recommendation to {yaml_output}")
     print("Recommended rollout.rlt_critical_phase_gate settings:")
     print(
