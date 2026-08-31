@@ -533,6 +533,7 @@ class FSDPModelManager:
 
         params_actor = []
         params_critic = []
+        actor_params_names = []
 
         if enable_critic_warmup:
             self._logger.info("[FSDP] Enable critic warmup for value head.")
@@ -553,9 +554,29 @@ class FSDPModelManager:
                         params_critic.append(param)
                     else:
                         params_actor.append(param)
+                        actor_params_names.append(name)
+
+        lr_multipliers = getattr(model, "lr_multipliers", None)
 
         param_groups = []
-        if len(params_actor) > 0:
+        if lr_multipliers:
+            base_lr = self._cfg.optim.lr
+            grouped: dict[float, list] = {}
+            for name, param in zip(actor_params_names, params_actor):
+                mult = 1.0
+                for pattern, value in lr_multipliers.items():
+                    if pattern in name:
+                        mult = float(value)
+                        break
+                grouped.setdefault(base_lr * mult, []).append(param)
+            for lr_value, params in sorted(grouped.items()):
+                param_groups.append({"params": params, "lr": lr_value, "betas": betas})
+            self._logger.info(
+                f"[FSDP] Applied lr_multipliers={dict(lr_multipliers)} -> "
+                f"{len(param_groups)} actor param group(s): "
+                f"{sorted(grouped.keys())}"
+            )
+        elif len(params_actor) > 0:
             param_groups.append(
                 {
                     "params": params_actor,

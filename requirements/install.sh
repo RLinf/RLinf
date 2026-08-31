@@ -18,6 +18,8 @@ TRANSFORMERS_VERSION=""
 XGRAMMAR_VERSION=""
 PLATFORM="nvidia"
 ROCM_VERSION=""
+# googleapis-common-protos 1.75.1+ (Ray dashboard/agent) is gencode 6.33.5.
+RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -52,6 +54,8 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 DISABLE_FLASH_ATTN=0
 # User-level opt-out for apex, set by --no-apex. Wins over the platform default.
 DISABLE_APEX=0
+# User-level opt-out for natten, set by --no-natten. 
+DISABLE_NATTEN=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
 PLATFORM_TORCHCODEC_SPEC=""
@@ -97,7 +101,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -154,6 +158,9 @@ Common options:
                            (Ascend/MUSA).
     --no-apex              Skip apex install. Useful when Megatron-LM is not needed and
                            CUDA toolchain mismatch prevents download apex of the right version.
+    --no-natten            Skip natten install. Useful when no SHI-Labs wheel matches the
+                           installed torch x cuda x python combo; install manually from
+                           https://whl.natten.org instead.
     --install-rlinf        Install RLinf itself into the python.
 EOF
 }
@@ -277,6 +284,10 @@ parse_args() {
                 ;;
             --no-apex)
                 DISABLE_APEX=1
+                shift
+                ;;
+            --no-natten)
+                DISABLE_NATTEN=1
                 shift
                 ;;
             --*)
@@ -846,7 +857,8 @@ EOF
         return 0
     fi
     echo "[install.sh] Installing triton==${triton_ver} to match pytorch-triton-rocm"
-    uv pip install "triton==${triton_ver}" amdsmi
+    # amdsmi binds libamd_smi.so symbols at import, so cap it at the ROCm version.
+    uv pip install "triton==${triton_ver}" "amdsmi<=${ROCM_VERSION}"
 }
 
 install_ascend_extras() {
@@ -1507,6 +1519,61 @@ EOF
     fi
 }
 
+install_natten() {
+    if [ "$DISABLE_NATTEN" -eq 1 ]; then
+        echo "[install.sh] --no-natten was specified; skipping natten install."
+        return 0
+    fi
+    if [ "$PLATFORM" != "nvidia" ]; then
+        echo "[install.sh] Skipping natten install on platform=${PLATFORM} (CUDA-only)."
+        return 0
+    fi
+
+    # NATTEN ships no generic wheel — each release is tagged for a specific
+    # torch x cuda x python combo. Build the wheel name from the installed
+    # torch / cuda / python, like install_apex / install_flash_attn.
+    # Example: natten-0.21.6+torch2110cu130-cp311-cp311-linux_x86_64.whl
+    local natten_version="0.21.6"
+    local py_major py_minor
+    py_major=$(python - <<'EOF'
+import sys
+print(sys.version_info.major)
+EOF
+)
+    py_minor=$(python - <<'EOF'
+import sys
+print(sys.version_info.minor)
+EOF
+)
+    local py_tag="cp${py_major}${py_minor}"   # e.g. cp311
+    local abi_tag="${py_tag}"                 # cpXY-cpXY ABI
+    local platform_tag="linux_x86_64"
+    local torch_full cu_full
+    torch_full=$(python - <<'EOF'
+import torch
+print(torch.__version__.split("+")[0].replace(".", ""))
+EOF
+)
+    cu_full=$(python - <<'EOF'
+import torch
+v = (torch.version.cuda or "").split(".")
+print("".join(v[:2]))
+EOF
+)
+    local torch_tag="torch${torch_full}"
+    local cu_tag="cu${cu_full}"
+    local natten_wheel="natten-${natten_version}+${torch_tag}${cu_tag}-${py_tag}-${abi_tag}-${platform_tag}.whl"
+    local base_url="${GITHUB_PREFIX}https://github.com/SHI-Labs/NATTEN/releases/download/v${natten_version}"
+    uv pip uninstall natten || true
+    if uv pip install "${base_url}/${natten_wheel}"; then
+        :
+    else
+        echo "[install.sh] WARNING: natten wheel ${natten_wheel} unavailable" \
+             "(GITHUB_PREFIX=${GITHUB_PREFIX:-<none>}). Training will fail without it." \
+             "Install manually from https://whl.natten.org." >&2
+    fi
+}
+
 clone_or_reuse_repo() {
     # Usage: clone_or_reuse_repo ENV_VAR_NAME DEFAULT_DIR GIT_URL [GIT_CLONE_ARGS...]
     # - If ENV_VAR_NAME is set, use it as the checkout location: reuse it when it
@@ -1796,7 +1863,7 @@ install_openpi_model() {
             install_common_embodied_deps
             uv pip install "rlinf-openpi==0.1.1"
             install_behavior_env
-            uv pip install protobuf==6.33.0
+            uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
             pushd ~ >/dev/null
             install_flash_attn
             popd >/dev/null
@@ -2214,6 +2281,62 @@ install_dreamzero_model() {
     esac
 }
 
+install_cosmos3_deps() {
+    local cosmos_path
+    cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
+    if [ -z "${COSMOS_FRAMEWORK_PATH:-}" ]; then
+        git -C "$cosmos_path" checkout "${COSMOS3_GIT_REF:-main}" >&2
+    fi
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/cosmos3.txt"
+    python -m pip install -e "$cosmos_path" --no-deps --ignore-requires-python
+
+    # Cosmos3 targets Python 3.12; on 3.11 `from typing import override` fails
+    # (override is 3.12+) and cosmos_framework won't import (convert_model_to_dcp,
+    # SFT, eval all hit it). Backfill typing.override site-wide via sitecustomize.py
+    # so any python invocation in this venv imports cleanly -- no manual PYTHONPATH.
+    local _sp
+    _sp=$(python -c 'import site;print(site.getsitepackages()[0])' 2>/dev/null || true)
+    if [ -n "$_sp" ] && [ ! -f "$_sp/sitecustomize.py" ]; then
+        cat > "$_sp/sitecustomize.py" <<'PYEOF'
+# Backfill Python 3.12 typing names on 3.11 so cosmos_framework (which targets
+# the 3.12 docker image) imports cleanly. `override` is a no-op decorator.
+import typing as _t
+if not hasattr(_t, "override"):
+    try:
+        from typing_extensions import override as _override
+        _t.override = _override
+    except Exception:
+        pass
+PYEOF
+        echo "[install.sh] Wrote py3.11 typing.override backfill to $_sp/sitecustomize.py" >&2
+    fi
+
+    install_natten
+}
+
+install_cosmos3_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_${ENV_NAME}_env
+            install_cosmos3_deps
+            install_flash_attn
+            ;;
+        "")
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_cosmos3_deps
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for Cosmos3 model." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_diffusion_model() {
     # PaddleOCR/PaddlePaddle 2.6 is used by the OCR reward and is tested with
     # Python 3.10 in the generation examples.
@@ -2549,7 +2672,7 @@ install_robocasa_env() {
     robocasa_dir=$(clone_or_reuse_repo ROBOCASA_PATH "$VENV_DIR/robocasa" https://github.com/RLinf/robocasa.git)
     
     uv pip install -e "$robocasa_dir"
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
     python -m robocasa.scripts.setup_macros
 }
 
@@ -2583,7 +2706,7 @@ install_robocasa365_env() {
     uv pip install --no-deps "lerobot @ git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
     uv pip install --no-deps "robosuite @ git+${GITHUB_PREFIX}https://github.com/ARISE-Initiative/robosuite.git@master"
     uv pip install --no-deps mujoco==3.3.1
-    uv pip install protobuf==6.33.0
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 
     if [[ -n "${ROBOCASA_ASSETS_PATH:-}" ]]; then
         rm -rf "$assets_path"
@@ -3090,6 +3213,9 @@ main() {
                 dreamzero)
                     install_dreamzero_model
                     ;;
+                cosmos3)
+                    install_cosmos3_model
+                    ;;
                 qwen3_vl)
                     install_qwen3_vl_model
                     ;;
@@ -3120,6 +3246,9 @@ main() {
     esac
 
     install_platform_extras
+    # Last step: env/model pip installs may have downgraded protobuf.
+    echo "[install.sh] Ensuring ${RAY_COMPAT_PROTOBUF_SPEC} for Ray dashboard/agent"
+    uv pip install "$RAY_COMPAT_PROTOBUF_SPEC"
 }
 
 main "$@"
