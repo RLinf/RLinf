@@ -27,7 +27,7 @@ CHUNK = 8
 
 
 def _load_backend_module(monkeypatch):
-    """Load the Wan backend with diffsynth stubbed out, so it runs without the Wan deps."""
+    """Load the Wan backend with diffsynth stubbed out, so it needs no Wan deps."""
     repo_root = Path(__file__).resolve().parents[2]
     module_path = repo_root / "rlinf" / "envs" / "world_model" / "wan_backend.py"
 
@@ -126,7 +126,7 @@ def test_pipe_kwargs_conditions_on_the_session_window(monkeypatch):
     assert kwargs["batch_size"] == 1
     assert np.asarray(kwargs["input_image"][0]).max() == 10
     assert [np.asarray(f).max() for f in kwargs["input_image4"][0]] == [20, 30, 40, 50]
-    # retain_action prepends the window's actions, and the window then keeps the last ones sent
+    # retain_action prepends the window's actions, then the window keeps the last sent
     assert kwargs["action"].shape == (1, WINDOW + CHUNK, 7)
     assert torch.equal(
         backend._sessions[0]["actions"][1:], kwargs["action"][0, -(WINDOW - 1) :]
@@ -145,12 +145,12 @@ def test_generate_keeps_the_reference_frame_and_rolls_the_window(monkeypatch):
 
     videos = backend.generate(env_ids=[0], actions=torch.zeros(1, CHUNK, 7))
 
-    # only the new frames come back; the ones the chunk conditioned on stay behind the session
+    # only the new frames come back; the conditioned ones stay behind the session
     assert videos.shape == (1, 3, CHUNK, 8, 8)
     first_new = (100 + WINDOW) / 255.0 * 2.0 - 1.0
     assert videos[0, 0, 0].max().item() == pytest.approx(first_new, abs=1e-6)
     window = backend._sessions[0]["frames"]
     assert np.asarray(window[0]).max() == 10
-    # the pipeline's own frames go into the window untouched, not through a [-1, 1] round trip
+    # the pipeline's own frames enter the window untouched, not via a [-1, 1] round trip
     assert [np.asarray(f).max() for f in window[1:]] == [109, 110, 111, 112]
     assert all(a is b for a, b in zip(window[1:], generated[-(WINDOW - 1) :]))

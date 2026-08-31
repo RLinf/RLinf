@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Wan world model as an environment: :class:`WorldModelEnv` plus :class:`WanBackend`."""
+"""The Wan world model as an env: :class:`WorldModelEnv` plus :class:`WanBackend`."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class WanEnv(WorldModelEnv):
     def _reward_instructions(self) -> Optional[list[str]]:
         if self.cfg.reward_model.type != "TaskEmbedResnetRewModel":
             return None
-        # One instruction per scored frame, so each env's description repeats over its chunk
+        # One instruction per scored frame, so each description repeats over its chunk
         instructions = []
         for env_idx in range(self.num_envs):
             instructions.extend([self.task_descriptions[env_idx]] * self.chunk)

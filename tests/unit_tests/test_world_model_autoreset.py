@@ -14,9 +14,7 @@
 
 """Auto-reset of a world-model env restarts only the slots whose episode ended.
 
-The episode loop is shared by every backend, so one fixture covers both models. What a restarted
-slot must replace is its session: the backend is handed a new condition window and refills whatever
-it keeps behind it, which is where Wan's frame queue and OpenSora's latent queue differ.
+The episode loop is shared by every backend, so one fake backend covers both models.
 """
 
 import importlib.util
@@ -40,8 +38,8 @@ def _load_env_module(monkeypatch):
     repo_root = Path(__file__).resolve().parents[2]
     module_path = repo_root / "rlinf" / "envs" / "world_model" / "world_model_env.py"
 
-    # The dataset lives behind rlinf.data, whose package import pulls in the replay buffer; these
-    # tests drive the env off a fake dataset instead.
+    # The dataset lives behind rlinf.data, whose package import pulls in the replay
+    # buffer; these tests drive the env off a fake dataset instead.
     fake_dataset = types.ModuleType("rlinf.data.datasets.world_model")
     fake_dataset.NpyTrajectoryDatasetWrapper = object
     monkeypatch.setitem(sys.modules, "rlinf.data.datasets.world_model", fake_dataset)
@@ -120,7 +118,7 @@ class _FakeBackend:
 
 
 def _make_env(module, num_envs=NUM_ENVS):
-    """Build the env without __init__, which would load a world model and a reward model."""
+    """Build the env without __init__, which would load a world and a reward model."""
 
     class _Env(module.WorldModelEnv):
         def _build_backend(self):
@@ -234,7 +232,7 @@ def test_subset_reset_reopens_only_those_sessions(env):
 
     env.reset(env_idx=[2], episode_indices=[11])
 
-    # A backend pools per-trajectory state, so it has to be told which trajectories ended.
+    # A backend pools per-trajectory state, so it must be told which ones ended.
     assert env.backend.closed == [[2]]
     assert sorted(env.backend.sessions) == list(range(NUM_ENVS))
 

@@ -14,9 +14,8 @@
 
 """Episode semantics for a world-model environment, shared by every backend.
 
-A subclass says which :class:`~rlinf.envs.world_model.backend.WorldModelBackend` generates the frames
-and which reward model scores them; everything else — sampling reset states, the condition window the
-session starts from, rewards, terminations, auto reset, metrics, offload — lives here.
+A subclass only says which :class:`~rlinf.envs.world_model.backend.WorldModelBackend`
+generates the frames and which reward model scores them.
 """
 
 from __future__ import annotations
@@ -67,8 +66,7 @@ class WorldModelEnv(BaseWorldEnv):
         # Update reset state ids
         self.update_reset_state_ids()
 
-        # Inference backend; it owns generation and the condition window, the env owns episode
-        # semantics. Generation geometry comes from the model, so it is read back from the backend.
+        # Generation geometry is a property of the model, so it comes from the backend.
         self.backend: WorldModelBackend = self._build_backend()
         self.chunk = self.backend.chunk  # Ta
         self.condition_frame_length = self.backend.condition_frame_length  # To
@@ -152,7 +150,7 @@ class WorldModelEnv(BaseWorldEnv):
     def _estimate_success_from_rewards(self, chunk_rewards):
         """Estimate success (terminations) from the reward the world model predicts.
 
-        Success is estimated when a reward in the chunk exceeds a threshold (default: 0.9).
+        Success is estimated when a chunk reward exceeds a threshold (default: 0.9).
         """
         success_threshold = getattr(self.cfg, "success_reward_threshold", 0.9)
 
@@ -181,8 +179,10 @@ class WorldModelEnv(BaseWorldEnv):
     def _build_condition_window(self, episode_idx):
         """The initial condition window of one episode.
 
-        Returns the condition frames as ``[3, condition_frame_length, H, W]`` in ``[-1, 1]``, the
-        actions that led to them, the task description and the initial end-effector pose.
+        Returns:
+            The condition frames as ``[3, condition_frame_length, H, W]`` in ``[-1, 1]``,
+            the actions that led to them, the task description and the initial
+            end-effector pose.
         """
         episode_data = self.dataset[episode_idx]
 
@@ -243,10 +243,9 @@ class WorldModelEnv(BaseWorldEnv):
     def _restart_slots(self, env_idx, condition_windows):
         """Restart a subset of episodes in place, leaving the other slots running.
 
-        The time axis of ``current_obs`` is a dimension of the whole tensor, so a restarted slot
-        cannot be shorter than the others. It keeps the current length: the condition window goes
-        to the tail, where ``_wrap_obs`` and the reward model read, and the reference frame fills
-        the rest.
+        A restarted slot keeps the shared time axis at its current length: the condition
+        window goes to the tail, where ``_wrap_obs`` and the reward model read, and the
+        reference frame fills the rest.
         """
         cfl = self.condition_frame_length
         num_frames = self.current_obs.shape[3]
@@ -276,6 +275,16 @@ class WorldModelEnv(BaseWorldEnv):
         episode_indices: Optional[Union[np.ndarray, torch.Tensor]] = None,
         env_idx: Optional[Union[list[int], np.ndarray, torch.Tensor]] = None,
     ):
+        """Start new episodes on every env slot, or on a subset.
+
+        Args:
+            seed: Seed for the sampled episodes.
+            options: Unused, kept for the gym signature.
+            episode_indices: Episodes to start, one per target slot. Sampled when omitted.
+            env_idx: Slots to restart. ``None`` restarts every slot and rebuilds the
+                observation tensor; a subset restarts those slots in place and leaves the
+                other episodes running.
+        """
         self.onload()
 
         # Handle first reset with fixed reset state ids
@@ -284,8 +293,6 @@ class WorldModelEnv(BaseWorldEnv):
                 episode_indices = self.reset_state_ids
             self._is_start = False
 
-        # ``env_idx=None`` restarts every slot and rebuilds the observation tensor; a subset
-        # restarts those slots in place and leaves the other episodes running.
         target_slots = (
             list(range(self.num_envs))
             if env_idx is None
@@ -324,8 +331,8 @@ class WorldModelEnv(BaseWorldEnv):
         ]
 
         if env_idx is None:
-            # Stack all environments: [num_envs, 3, condition_frame_length, H, W], then reshape to
-            # [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
+            # Stack all environments: [num_envs, 3, condition_frame_length, H, W], then
+            # reshape to [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
             stacked_imgs = torch.stack(
                 [window[0] for window in condition_windows], dim=0
             ).to(self.device)
@@ -341,8 +348,7 @@ class WorldModelEnv(BaseWorldEnv):
         else:
             self._restart_slots(target_slots, condition_windows)
 
-        # The condition window of each restarted slot, as [C, 1, H, W] frames; the backend keeps it
-        # from here on. It sits at the tail of the time axis, which a subset restart does not shorten.
+        # Each restarted slot's condition window as [C, 1, H, W] frames, from the axis tail.
         num_frames = self.current_obs.shape[3]
         init_frames = [
             [
@@ -352,7 +358,7 @@ class WorldModelEnv(BaseWorldEnv):
             for slot in target_slots
         ]
 
-        # Noise is drawn from a single seed shared by the batch; per-trajectory seeds are future work.
+        # One seed is shared by the batch; per-trajectory seeds are future work.
         self.backend.close_session(target_slots)
         self.backend.open_session(
             env_ids=target_slots,
@@ -373,7 +379,7 @@ class WorldModelEnv(BaseWorldEnv):
         return extracted_obs, infos
 
     def _to_condition_frame(self, img_tensor: torch.Tensor) -> torch.Tensor:
-        """A dataset frame as a ``[3, H, W]`` tensor in ``[-1, 1]`` at the model's resolution."""
+        """A dataset frame as ``[3, H, W]`` in ``[-1, 1]`` at the model's resolution."""
         if img_tensor.shape[1:] != self.image_size:
             img_tensor = img_tensor.unsqueeze(0)  # [1, 3, H, W]
             img_tensor = F.interpolate(
@@ -420,8 +426,7 @@ class WorldModelEnv(BaseWorldEnv):
             f"Actions shape {actions.shape} does not match num_envs {self.num_envs}"
         )
 
-        # The new frames only, [num_envs, C, T, H, W] in [-1, 1]. T follows the model, not the chunk
-        # length: a latent-space backend decodes whatever its VAE produces.
+        # The new frames only, [num_envs, C, T, H, W] in [-1, 1]; T follows the model.
         videos = self.backend.generate(env_ids=range(num_envs), actions=actions)
 
         # Reshape to match current_obs format: [num_envs, C, 1, T, H, W]
@@ -430,8 +435,7 @@ class WorldModelEnv(BaseWorldEnv):
         # Update current observation: append new generated frames to the time dimension
         self.current_obs = torch.cat([self.current_obs, x_samples], dim=3)
 
-        # Keep a sliding window of the frames anything still reads: the reward model scores the last
-        # chunk and the observation is the last frame.
+        # Trim to what is still read: the last chunk is scored, the last frame observed.
         max_frames = self.condition_frame_length + self.chunk
         if self.current_obs.shape[3] > max_frames:
             self.current_obs = self.current_obs[:, :, :, -max_frames:, :, :]
