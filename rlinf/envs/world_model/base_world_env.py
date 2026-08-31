@@ -54,7 +54,10 @@ class BaseWorldEnv(ABC):
         self.use_rel_reward = getattr(cfg, "use_rel_reward", False)
 
         self._is_start = True
-        self.elapsed_steps = 0
+        # Step count per env slot, so a subset of episodes can restart on its own
+        self._elapsed_steps = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
 
         self.video_cfg = cfg.video_cfg
 
@@ -83,9 +86,7 @@ class BaseWorldEnv(ABC):
         self._is_start = value
 
     @property
-    def elapsed_steps(self):
-        if not hasattr(self, "_elapsed_steps"):
-            self._elapsed_steps = 0
+    def elapsed_steps(self) -> torch.Tensor:
         return self._elapsed_steps
 
     @elapsed_steps.setter
@@ -133,15 +134,16 @@ class BaseWorldEnv(ABC):
             mask = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
             mask[env_idx] = True
             self.prev_step_reward[mask] = 0.0
+            self._elapsed_steps[mask] = 0
             if self.record_metrics:
                 self.success_once[mask] = False
                 self.returns[mask] = 0
         else:
             self.prev_step_reward[:] = 0
+            self._elapsed_steps[:] = 0
             if self.record_metrics:
                 self.success_once[:] = False
                 self.returns[:] = 0.0
-        self.elapsed_steps = 0
 
     def _record_metrics(self, step_reward, terminations, infos):
         """Store episode metrics inside the info dict."""

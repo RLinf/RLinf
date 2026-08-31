@@ -112,29 +112,6 @@ class WorldModelEnv(BaseWorldEnv):
             cfg.initial_image_path, enable_kir=self.enable_kir
         )
 
-    def _init_metrics(self):
-        self.success_once = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.bool
-        )
-        self.returns = torch.zeros(
-            self.num_envs, device=self.device, dtype=torch.float32
-        )
-
-    def _reset_metrics(self, env_idx=None):
-        if env_idx is not None:
-            mask = torch.zeros(self.num_envs, dtype=bool, device=self.device)
-            mask[env_idx] = True
-            self.prev_step_reward[mask] = 0.0
-            if self.record_metrics:
-                self.success_once[mask] = False
-                self.returns[mask] = 0
-        else:
-            self.prev_step_reward[:] = 0
-            if self.record_metrics:
-                self.success_once[:] = False
-                self.returns[:] = 0.0
-            self._elapsed_steps = 0
-
     def _record_metrics(self, step_reward, terminations, infos):
         episode_info = {}
         self.returns += step_reward
@@ -148,13 +125,11 @@ class WorldModelEnv(BaseWorldEnv):
             self.success_once = self.success_once | terminations_tensor
         episode_info["success_once"] = self.success_once.clone()
         episode_info["return"] = self.returns.clone()
-        episode_info["episode_len"] = torch.full(
-            (self.num_envs,),
-            self.elapsed_steps,
-            dtype=torch.float32,
-            device=self.device,
-        )
-        episode_info["reward"] = episode_info["return"] / episode_info["episode_len"]
+        episode_info["episode_len"] = self.elapsed_steps.to(torch.float32)
+        # A slot restarted by auto reset sits at zero steps, so the divisor is clamped.
+        episode_info["reward"] = episode_info["return"] / episode_info[
+            "episode_len"
+        ].clamp(min=1)
         infos["episode"] = episode_info
         return infos
 
@@ -203,6 +178,95 @@ class WorldModelEnv(BaseWorldEnv):
             repeats=self.group_size
         ).to(self.device)
 
+    def _build_condition_window(self, episode_idx):
+        """The initial condition window of one episode.
+
+        Returns the condition frames as ``[3, condition_frame_length, H, W]`` in ``[-1, 1]``, the
+        actions that led to them, the task description and the initial end-effector pose.
+        """
+        episode_data = self.dataset[episode_idx]
+
+        # Get first frame from start_items
+        if len(episode_data["start_items"]) == 0:
+            raise ValueError(f"Empty start_items for episode {episode_idx}")
+
+        first_frame = episode_data["start_items"][0]
+        task_desc = str(episode_data.get("task", ""))
+
+        if "image" not in first_frame:
+            raise ValueError(f"No 'image' key in frame for episode {episode_idx}")
+
+        # Get init_ee_pose if available
+        if "observation.state" in first_frame:
+            init_ee_pose = first_frame["observation.state"].numpy()
+        else:
+            init_ee_pose = None
+
+        action_dim = getattr(self.cfg, "action_dim", DEFAULT_ACTION_DIM)
+
+        # Repeat to fill condition frames: [3, H, W] -> [3, condition_frame_length, H, W]
+        env_img_tensor = self._to_condition_frame(first_frame["image"]).unsqueeze(1)
+        env_img_tensor = env_img_tensor.repeat(1, self.condition_frame_length, 1, 1)
+
+        env_condition_action = np.zeros(
+            (self.condition_frame_length, action_dim), dtype=np.float32
+        )
+
+        if self.reset_gripper_open and self.is_libero_env:
+            env_condition_action[:, -1] = -1
+
+        # KIR trick: use the last four frames as condition frames, while
+        # keeping the reference frame unchanged as the first frame.
+        target_items = episode_data.get("target_items", [])
+
+        # first condition frame is the reference frame,
+        # so the length of target_items should be condition_frame_length - 1
+        if len(target_items) == self.condition_frame_length - 1:
+            for target_idx, target_frame in enumerate(target_items):
+                if "image" not in target_frame or "action" not in target_frame:
+                    raise ValueError(
+                        f"No 'image' or 'action' key in target frame for episode {episode_idx}"
+                    )
+                # keep first frame as reference frame, update the rest
+                env_img_tensor[:, target_idx + 1] = self._to_condition_frame(
+                    target_frame["image"]
+                )
+                env_condition_action[target_idx + 1] = target_frame["action"]
+
+        return (
+            env_img_tensor,
+            torch.from_numpy(env_condition_action),
+            task_desc,
+            init_ee_pose,
+        )
+
+    def _restart_slots(self, env_idx, condition_windows):
+        """Restart a subset of episodes in place, leaving the other slots running.
+
+        The time axis of ``current_obs`` is a dimension of the whole tensor, so a restarted slot
+        cannot be shorter than the others. It keeps the current length: the condition window goes
+        to the tail, where ``_wrap_obs`` and the reward model read, and the reference frame fills
+        the rest.
+        """
+        cfl = self.condition_frame_length
+        num_frames = self.current_obs.shape[3]
+        if num_frames < cfl:
+            raise ValueError(
+                f"current_obs has {num_frames} frames, fewer than the condition "
+                f"window length {cfl}; cannot restart a subset of slots"
+            )
+
+        for slot, (env_img_tensor, _, task_desc, init_ee_pose) in zip(
+            env_idx, condition_windows
+        ):
+            env_img_tensor = env_img_tensor.to(
+                device=self.current_obs.device, dtype=self.current_obs.dtype
+            )
+            self.current_obs[slot, :, 0, num_frames - cfl :] = env_img_tensor
+            self.current_obs[slot, :, 0, : num_frames - cfl] = env_img_tensor[:, :1]
+            self.task_descriptions[slot] = task_desc
+            self.init_ee_poses[slot] = init_ee_pose
+
     @torch.no_grad()
     def reset(
         self,
@@ -210,9 +274,9 @@ class WorldModelEnv(BaseWorldEnv):
         seed: Optional[Union[int, list[int]]] = None,
         options: Optional[dict] = {},
         episode_indices: Optional[Union[np.ndarray, torch.Tensor]] = None,
+        env_idx: Optional[Union[list[int], np.ndarray, torch.Tensor]] = None,
     ):
         self.onload()
-        self.elapsed_steps = 0
 
         # Handle first reset with fixed reset state ids
         if self.is_start:
@@ -220,10 +284,18 @@ class WorldModelEnv(BaseWorldEnv):
                 episode_indices = self.reset_state_ids
             self._is_start = False
 
-        num_envs = self.num_envs
-        if len(self.dataset) < num_envs:
+        # ``env_idx=None`` restarts every slot and rebuilds the observation tensor; a subset
+        # restarts those slots in place and leaves the other episodes running.
+        target_slots = (
+            list(range(self.num_envs))
+            if env_idx is None
+            else [int(slot) for slot in env_idx]
+        )
+        num_slots = len(target_slots)
+
+        if len(self.dataset) < self.num_envs:
             raise ValueError(
-                f"Not enough episodes in dataset. Found {len(self.dataset)}, need {num_envs}"
+                f"Not enough episodes in dataset. Found {len(self.dataset)}, need {self.num_envs}"
             )
 
         # If episode_indices not provided, randomly select
@@ -236,113 +308,63 @@ class WorldModelEnv(BaseWorldEnv):
                     np.random.seed(seed)
 
             episode_indices = np.random.choice(
-                len(self.dataset), size=num_envs, replace=False
+                len(self.dataset), size=num_slots, replace=False
             )
         else:
             # Convert to numpy if tensor
             if isinstance(episode_indices, torch.Tensor):
                 episode_indices = episode_indices.cpu().numpy()
+            if len(episode_indices) != num_slots:
+                raise ValueError(
+                    f"Got {len(episode_indices)} episode indices for {num_slots} env slots"
+                )
 
-        # Load first frame from each selected episode
-        img_tensors = []
-        task_descriptions = []
-        init_ee_poses = []
-        condition_actions = []
-
-        action_dim = getattr(self.cfg, "action_dim", DEFAULT_ACTION_DIM)
-
-        for episode_idx in episode_indices:
-            episode_data = self.dataset[episode_idx]
-
-            # Get first frame from start_items
-            if len(episode_data["start_items"]) == 0:
-                raise ValueError(f"Empty start_items for episode {episode_idx}")
-
-            first_frame = episode_data["start_items"][0]
-
-            task_desc = episode_data.get("task", "")
-            task_descriptions.append(str(task_desc))
-
-            if "image" not in first_frame:
-                raise ValueError(f"No 'image' key in frame for episode {episode_idx}")
-
-            # [3, H, W], float in [0, 1]
-            img_tensor = self._to_condition_frame(first_frame["image"])
-
-            # Get init_ee_pose if available
-            if "observation.state" in first_frame:
-                init_ee_poses.append(first_frame["observation.state"].numpy())
-            else:
-                init_ee_poses.append(None)
-
-            # Repeat to fill condition frames: [3, H, W] -> [3, condition_frame_length, H, W]
-            env_img_tensor = img_tensor.unsqueeze(1).repeat(
-                1, self.condition_frame_length, 1, 1
-            )
-
-            env_condition_action = np.zeros(
-                (self.condition_frame_length, action_dim), dtype=np.float32
-            )
-
-            if self.reset_gripper_open and self.is_libero_env:
-                env_condition_action[:, -1] = -1
-
-            # KIR trick: use the last four frames as condition frames, while
-            # keeping the reference frame unchanged as the first frame.
-            target_items = episode_data.get("target_items", [])
-
-            # first condition frame is the reference frame,
-            # so the length of target_items should be condition_frame_length - 1
-            if len(target_items) == self.condition_frame_length - 1:
-                for target_idx, target_frame in enumerate(target_items):
-                    if "image" not in target_frame or "action" not in target_frame:
-                        raise ValueError(
-                            f"No 'image' or 'action' key in target frame for episode {episode_idx}"
-                        )
-                    # keep first frame as reference frame, update the rest
-                    env_img_tensor[:, target_idx + 1] = self._to_condition_frame(
-                        target_frame["image"]
-                    )
-                    env_condition_action[target_idx + 1] = target_frame["action"]
-
-            img_tensors.append(env_img_tensor)
-            condition_actions.append(torch.from_numpy(env_condition_action))
-
-        # Stack all environments: [num_envs, 3, condition_frame_length, H, W]
-        stacked_imgs = torch.stack(img_tensors, dim=0).to(self.device)
-
-        # Reshape to [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
-        self.current_obs = stacked_imgs.unsqueeze(2).to(self.device)
-
-        num_envs, c, v, t, h, w = self.current_obs.shape
-        assert t == self.condition_frame_length, (
-            f"Unexpected current_obs shape: {self.current_obs.shape}, expected {num_envs, c, v, self.condition_frame_length, h, w}"
-        )
-
-        # The condition window, per env slot as [C, 1, H, W] frames; the backend keeps it from here on.
-        init_frames = [
-            [
-                self.current_obs[env_idx, :, 0, t_idx : t_idx + 1, :, :]
-                for t_idx in range(self.condition_frame_length)
-            ]
-            for env_idx in range(num_envs)
+        condition_windows = [
+            self._build_condition_window(episode_idx) for episode_idx in episode_indices
         ]
 
-        # Every reset restarts all env slots, so all sessions are replaced. Noise is drawn from a
-        # single seed shared by the batch; per-trajectory seeds are future work.
-        self.backend.close_session(range(num_envs))
+        if env_idx is None:
+            # Stack all environments: [num_envs, 3, condition_frame_length, H, W], then reshape to
+            # [num_envs, 3, 1, condition_frame_length, H, W] for compatibility
+            stacked_imgs = torch.stack(
+                [window[0] for window in condition_windows], dim=0
+            ).to(self.device)
+            self.current_obs = stacked_imgs.unsqueeze(2)
+
+            num_envs, c, v, t, h, w = self.current_obs.shape
+            assert t == self.condition_frame_length, (
+                f"Unexpected current_obs shape: {self.current_obs.shape}, expected {num_envs, c, v, self.condition_frame_length, h, w}"
+            )
+
+            self.task_descriptions = [window[2] for window in condition_windows]
+            self.init_ee_poses = [window[3] for window in condition_windows]
+        else:
+            self._restart_slots(target_slots, condition_windows)
+
+        # The condition window of each restarted slot, as [C, 1, H, W] frames; the backend keeps it
+        # from here on. It sits at the tail of the time axis, which a subset restart does not shorten.
+        num_frames = self.current_obs.shape[3]
+        init_frames = [
+            [
+                self.current_obs[slot, :, 0, t_idx : t_idx + 1, :, :]
+                for t_idx in range(num_frames - self.condition_frame_length, num_frames)
+            ]
+            for slot in target_slots
+        ]
+
+        # Noise is drawn from a single seed shared by the batch; per-trajectory seeds are future work.
+        self.backend.close_session(target_slots)
         self.backend.open_session(
-            env_ids=range(num_envs),
+            env_ids=target_slots,
             init_frames=init_frames,
-            init_actions=torch.stack(condition_actions, dim=0).to(self.device),
+            init_actions=torch.stack(
+                [window[1] for window in condition_windows], dim=0
+            ).to(self.device),
             task_ids=list(episode_indices),
-            seeds=[0] * num_envs,
+            seeds=[0] * num_slots,
         )
 
-        self._reset_metrics()
-
-        self.task_descriptions = task_descriptions
-        self.init_ee_poses = init_ee_poses
+        self._reset_metrics(env_idx=None if env_idx is None else target_slots)
 
         # Wrap observation to match libero_env format
         extracted_obs = self._wrap_obs()
@@ -457,11 +479,12 @@ class WorldModelEnv(BaseWorldEnv):
         return obs
 
     def _handle_auto_reset(self, dones, extracted_obs, infos):
-        """Handle automatic reset on episode termination"""
+        """Restart the episodes that ended, leaving the other slots running."""
         final_obs = extracted_obs
         final_info = infos
 
-        extracted_obs, infos = self.reset()
+        env_idx = torch.arange(0, self.num_envs, device=self.device)[dones]
+        extracted_obs, infos = self.reset(env_idx=env_idx.tolist())
 
         infos["final_observation"] = final_obs
         infos["final_info"] = final_info
@@ -478,7 +501,7 @@ class WorldModelEnv(BaseWorldEnv):
         self._infer_next_chunk_frames(policy_output_action)
 
         # Update elapsed steps (incremented after inference)
-        self.elapsed_steps += self.chunk
+        self._elapsed_steps += self.chunk
 
         # Read the last frame from self.current_obs
         extracted_obs = self._wrap_obs()
@@ -497,9 +520,7 @@ class WorldModelEnv(BaseWorldEnv):
         raw_chunk_truncations = torch.zeros(
             self.num_envs, self.chunk, dtype=torch.bool, device=self.device
         )
-        truncations = torch.tensor(self.elapsed_steps >= self.cfg.max_episode_steps).to(
-            self.device
-        )
+        truncations = self.elapsed_steps >= self.cfg.max_episode_steps
 
         if truncations.any():
             raw_chunk_truncations[:, -1] = truncations
@@ -541,6 +562,7 @@ class WorldModelEnv(BaseWorldEnv):
         self.reward_model = self.reward_model.to("cpu")
         self.current_obs = recursive_to_device(self.current_obs, "cpu")
         self.prev_step_reward = self.prev_step_reward.cpu()
+        self._elapsed_steps = self._elapsed_steps.cpu()
         self.reset_state_ids = self.reset_state_ids.cpu()
         if self.record_metrics:
             self.success_once = self.success_once.cpu()
@@ -556,6 +578,7 @@ class WorldModelEnv(BaseWorldEnv):
         self.reward_model = self.reward_model.to(self.device)
         self.current_obs = recursive_to_device(self.current_obs, self.device)
         self.prev_step_reward = self.prev_step_reward.to(self.device)
+        self._elapsed_steps = self._elapsed_steps.to(self.device)
         self.reset_state_ids = self.reset_state_ids.to(self.device)
         if self.record_metrics:
             self.success_once = self.success_once.to(self.device)
@@ -570,7 +593,7 @@ class WorldModelEnv(BaseWorldEnv):
             else None,
             "task_descriptions": self.task_descriptions,
             "init_ee_poses": self.init_ee_poses,
-            "elapsed_steps": self.elapsed_steps,
+            "elapsed_steps": self.elapsed_steps.cpu(),
             "prev_step_reward": self.prev_step_reward.cpu(),
             "_is_start": self._is_start,
             "reset_state_ids": self.reset_state_ids.cpu(),
