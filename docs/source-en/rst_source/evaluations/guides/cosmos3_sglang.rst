@@ -33,13 +33,11 @@ Install embodied + LIBERO dependencies:
 
    Do not use ``--model cosmos3`` here: The model dependencies for cosmos3 (such as natten and cuDNN pin) conflict too much with the SGLang stack described below. Simply install the RLinf core and the LIBERO environment dependencies; install SGLang separately following the steps below.
 
-Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra (use the branch with batched action support):
+Cosmos3 SGLang serving requires SGLang with the ``diffusion`` extra (batched Cosmos3 action support is merged to ``main`` at commit ``924aeee59cb68ea99bf7c7c183512958ed3d6272``):
 
 .. code-block:: bash
 
-   git clone -b support_batch_cosmos3_action https://github.com/FxxxxU/sglang.git /path/to/sglang
-   cd /path/to/sglang
-   pip install -e "python[diffusion]"
+   git clone https://github.com/FxxxxU/sglang.git /path/to/sglang && cd /path/to/sglang && git checkout 924aeee59cb68ea99bf7c7c183512958ed3d6272 && pip install -e "python[diffusion]"
 
 Prepare Checkpoint
 ----------------------------------------

@@ -857,7 +857,8 @@ EOF
         return 0
     fi
     echo "[install.sh] Installing triton==${triton_ver} to match pytorch-triton-rocm"
-    uv pip install "triton==${triton_ver}" amdsmi
+    # amdsmi binds libamd_smi.so symbols at import, so cap it at the ROCm version.
+    uv pip install "triton==${triton_ver}" "amdsmi<=${ROCM_VERSION}"
 }
 
 install_ascend_extras() {
