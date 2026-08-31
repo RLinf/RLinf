@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Extract frozen VLM prompt features for scalar-head training.
+"""Extract frozen VLM prompt features with RLinf-managed workers.
 
-Example:
-    python examples/reward/extract_vlm_trend_potential_features.py \\
-        --model-path /path/to/Qwen3-VL-4B-Instruct \\
-        --checkpoint /path/to/potential/global_step_N/actor/model_state_dict/full_weights.pt \\
-        --manifest logs/xxx/potential_data/train/segments.jsonl \\
-        --sample-type potential \\
-        --output logs/xxx/features/train_potential_0.pt
+Set paths and ``cluster.component_placement.feature_extractor`` in
+``config/pipeline.yaml``, then run this file once. Each worker loads the VLM
+once and writes its shards for both dataset splits and sample types.
 """
 
 from __future__ import annotations
@@ -30,14 +26,17 @@ import json
 from pathlib import Path
 from typing import Any
 
+import hydra
 import torch
+from omegaconf import DictConfig, OmegaConf
 from tqdm.auto import tqdm
 
-from examples.reward.vlm_trend_data import (
+from examples.reward.vlm_trend.data import (
     load_dual_view_sample,
     potential_prompt,
     sample_source_hash,
 )
+from rlinf.scheduler import Cluster, ComponentPlacement, Worker
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -162,51 +161,16 @@ def extract_features(
     return payload
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Extract frozen VLM Trend potential features."
-    )
-    parser.add_argument("--model-path", required=True)
-    parser.add_argument(
-        "--checkpoint",
-        required=True,
-        help=(
-            "Full path to Potential VLM SFT full_weights.pt "
-            "(typically .../actor/model_state_dict/full_weights.pt), or a "
-            "PEFT adapter directory that contains adapter_config.json."
-        ),
-    )
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument(
-        "--sample-type", choices=("potential", "progress"), required=True
-    )
-    parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--batch-size", type=int, default=4)
-    parser.add_argument("--history-size", type=int, default=5)
-    parser.add_argument("--num-bins", type=int, default=10)
-    parser.add_argument("--video-fps", type=float, default=24.0)
-    parser.add_argument("--rank", type=int, default=0)
-    parser.add_argument("--world-size", type=int, default=1)
-    parser.add_argument("--max-samples", type=int, default=None)
-    return parser.parse_args(argv)
-
-
-def main(argv: list[str] | None = None) -> None:
-    from omegaconf import OmegaConf
-
+def load_model(cfg: DictConfig) -> Any:
+    """Load the frozen VLM and selected Potential adapter on this worker."""
     from rlinf.models.embodiment.reward.vlm_reward_model import VLMRewardModel
     from rlinf.models.embodiment.reward.vlm_trend_success_potential_reward_model import (
         load_lora_adapter,
     )
 
-    args = parse_args(argv)
-    rows = feature_rows(args)
-    if not rows:
-        raise ValueError("No manifest rows selected for this feature shard")
-    cfg = OmegaConf.create(
+    model_cfg = OmegaConf.create(
         {
-            "model_path": args.model_path,
+            "model_path": cfg.model_path,
             "precision": "bf16",
             "subprocessor_kwargs": {"video_processor": {"do_sample_frames": True}},
             "input_builder_name": "base_vlm_input_builder",
@@ -215,9 +179,24 @@ def main(argv: list[str] | None = None) -> None:
             "reward_parser_params": {},
         }
     )
-    model = VLMRewardModel(cfg)
-    model._model = load_lora_adapter(model._model, args.checkpoint)
-    model._model.to(args.device).eval()
+    model = VLMRewardModel(model_cfg)
+    model._model = load_lora_adapter(model._model, str(cfg.checkpoint))
+    model._model.to(str(cfg.device)).eval()
+    return model
+
+
+def write_feature_shard(model: Any, args: argparse.Namespace) -> None:
+    """Extract and save one worker's shard, if the worker owns any rows."""
+    rows = feature_rows(args)
+    if not rows:
+        logger.info(
+            "No %s rows assigned to rank %d/%d for %s",
+            args.sample_type,
+            args.rank,
+            args.world_size,
+            args.manifest,
+        )
+        return
     payload = extract_features(model, rows, args)
     payload["metadata"] = {
         "manifest": args.manifest,
@@ -234,6 +213,51 @@ def main(argv: list[str] | None = None) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, output)
     logger.info("%s", json.dumps(payload["metadata"], indent=2))
+
+
+class FeatureExtractorWorker(Worker):
+    """Extract all configured feature shards assigned to one RLinf worker."""
+
+    def __init__(self, cfg: DictConfig):
+        super().__init__()
+        self.cfg = cfg.feature_extraction
+
+    def run(self) -> None:
+        """Load the model once and process every split/sample-type combination."""
+        model = load_model(self.cfg)
+        output_dir = Path(str(self.cfg.output_dir))
+        for split in self.cfg.splits:
+            manifest = Path(str(self.cfg.data_root)) / str(split) / "segments.jsonl"
+            for sample_type in self.cfg.sample_types:
+                args = argparse.Namespace(
+                    model_path=str(self.cfg.model_path),
+                    checkpoint=str(self.cfg.checkpoint),
+                    manifest=str(manifest),
+                    output=str(output_dir / f"{split}_{sample_type}_{self._rank}.pt"),
+                    sample_type=str(sample_type),
+                    device=str(self.cfg.device),
+                    batch_size=int(self.cfg.batch_size),
+                    history_size=int(self.cfg.history_size),
+                    num_bins=int(self.cfg.num_bins),
+                    video_fps=float(self.cfg.video_fps),
+                    rank=self._rank,
+                    world_size=self._world_size,
+                    max_samples=self.cfg.get("max_samples"),
+                )
+                write_feature_shard(model, args)
+
+
+@hydra.main(version_base="1.1", config_path="config", config_name="pipeline")
+def main(cfg: DictConfig) -> None:
+    """Launch feature extraction using the configured RLinf placement."""
+    cluster = Cluster(cluster_cfg=cfg.cluster)
+    placement = ComponentPlacement(cfg, cluster).get_strategy("feature_extractor")
+    workers = FeatureExtractorWorker.create_group(cfg).launch(
+        cluster,
+        name=cfg.feature_extraction.group_name,
+        placement_strategy=placement,
+    )
+    workers.run().wait()
 
 
 if __name__ == "__main__":

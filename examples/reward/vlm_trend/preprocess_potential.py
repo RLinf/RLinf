@@ -15,7 +15,7 @@
 """Build potential and progress labels for VLM Trend Potential SFT.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_potential.py \\
+    python examples/reward/vlm_trend/preprocess_potential.py \\
         --raw-data-path logs/xxx/step0 \\
         --value-checkpoint logs/xxx/teacher/best.pt \\
         --output-dir logs/xxx/potential_data
@@ -37,7 +37,7 @@ import torch
 from torch import nn
 from tqdm.auto import tqdm
 
-from examples.reward.vlm_trend_data import (
+from examples.reward.vlm_trend.data import (
     Candidate,
     first_success_transition,
     load_episode,

@@ -1,0 +1,108 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+defaults:
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    feature_extractor: all
+
+paths:
+  raw_data_root: /path/to/vlm_trend_uniform_collection
+  pipeline_root: /path/to/vlm_trend_success_potential
+  model_path: /path/to/Qwen3-VL-4B-Instruct
+  potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+
+feature_extraction:
+  group_name: VLMTrendFeatureExtractor
+  model_path: ${paths.model_path}
+  checkpoint: ${paths.potential_checkpoint}
+  data_root: ${paths.pipeline_root}/potential_data
+  output_dir: ${paths.pipeline_root}/features
+  splits: [train, eval]
+  sample_types: [potential, progress]
+  device: cuda:0
+  batch_size: 4
+  history_size: 5
+  num_bins: 10
+  video_fps: 24.0
+  max_samples: null
+
+auxiliary:
+  stage: teacher  # teacher or scalar_head
+
+  teacher:
+    raw_data_paths:
+      - ${paths.raw_data_root}/step0
+      - ${paths.raw_data_root}/step20
+      - ${paths.raw_data_root}/step40
+      - ${paths.raw_data_root}/step60
+      - ${paths.raw_data_root}/step80
+      - ${paths.raw_data_root}/step100
+      - ${paths.raw_data_root}/step120
+      - ${paths.raw_data_root}/step140
+      - ${paths.raw_data_root}/step160
+      - ${paths.raw_data_root}/step180
+      - ${paths.raw_data_root}/step200
+    output_dir: ${paths.pipeline_root}/teacher
+    history_size: 5
+    gamma: 0.97
+    target_mode: discounted_success
+    val_split: 0.1
+    max_episodes: null
+    hidden_dim: 256
+    num_layers: 3
+    dropout: 0.05
+    batch_size: 8192
+    epochs: 10
+    max_steps: 3000
+    eval_interval: 200
+    lr: 3.0e-4
+    weight_decay: 1.0e-4
+    clip_grad: 1.0
+    num_workers: 4
+    device: cuda
+    seed: 42
+
+  scalar_head:
+    train_pattern: ${feature_extraction.output_dir}/train_potential_*.pt
+    eval_pattern: ${feature_extraction.output_dir}/eval_potential_*.pt
+    train_progress_pattern: ${feature_extraction.output_dir}/train_progress_*.pt
+    progress_pattern: ${feature_extraction.output_dir}/eval_progress_*.pt
+    output_dir: ${paths.pipeline_root}/scalar_head
+    hidden_dim: 512
+    dropout: 0.1
+    batch_size: 256
+    eval_batch_size: 1024
+    epochs: 100
+    eval_interval: 5
+    lr: 3.0e-4
+    weight_decay: 1.0e-3
+    clip_grad: 1.0
+    rank_weight: 0.2
+    rank_min_gap: 0.1
+    delta_weight: 10.0
+    delta_beta: 0.03
+    local_rank_weight: 0.2
+    local_rank_min_gap: 0.01
+    device: cuda:0
+    seed: 42

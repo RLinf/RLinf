@@ -28,6 +28,13 @@ hydra:
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
 
+vlm_trend_paths:
+  policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+  model_path: /path/to/Qwen3-VL-4B-Instruct
+  success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+  potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+  scalar_head: /path/to/scalar_head/best.pt
+
 cluster:
   num_nodes: 1
   component_placement:
@@ -46,7 +53,7 @@ runner:
   val_check_interval: 5
   save_interval: 20
   resume_dir: null
-  ckpt_path: ${oc.env:POLICY_CHECKPOINT}
+  ckpt_path: ${vlm_trend_paths.policy_checkpoint}
   per_worker_log: false
   per_worker_log_path: null
   weight_sync_interval: 1
@@ -185,11 +192,11 @@ reward:
   reward_weight: 1.0
   env_reward_weight: 0.0
   model:
-    model_path: ${oc.env:VLM_MODEL_PATH,/path/to/Qwen3-VL-4B-Instruct}
+    model_path: ${vlm_trend_paths.model_path}
     model_type: "vlm_trend_success_potential"
-    lora_path: ${oc.env:VLM_TREND_POTENTIAL_CHECKPOINT}  # full_weights.pt from VLM SFT, or PEFT adapter dir
-    scalar_head_path: ${oc.env:VLM_TREND_SCALAR_HEAD}
-    success_lora_path: ${oc.env:VLM_TREND_SUCCESS_CHECKPOINT}  # full_weights.pt from VLM SFT, or PEFT adapter dir
+    lora_path: ${vlm_trend_paths.potential_checkpoint}  # full_weights.pt from VLM SFT, or PEFT adapter dir
+    scalar_head_path: ${vlm_trend_paths.scalar_head}
+    success_lora_path: ${vlm_trend_paths.success_checkpoint}  # full_weights.pt from VLM SFT, or PEFT adapter dir
     gt_success_bonus: 0.0
     precision: "bf16"
     input_builder_name: vlm_trend_success_potential_input_builder

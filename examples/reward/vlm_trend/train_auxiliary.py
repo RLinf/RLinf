@@ -29,7 +29,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from examples.reward.vlm_trend_data import (
+from examples.reward.vlm_trend.data import (
     first_success_transition,
     transition_observations,
 )
@@ -454,7 +454,7 @@ def train_scalar_head(cfg: DictConfig) -> None:
 @hydra.main(
     version_base="1.1",
     config_path="config",
-    config_name="vlm_trend_auxiliary_training",
+    config_name="pipeline",
 )
 def main(cfg: DictConfig) -> None:
     """Run the selected auxiliary training stage."""

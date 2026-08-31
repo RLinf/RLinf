@@ -96,7 +96,7 @@ reward model 的训练数据通常来自 episode 级数据采集。RLinf 提供�
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward 使用短时间双视角历史窗口，而不是单张图像。使用
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` 可以将采集到的
+``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 可以将采集到的
 episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，并给每个
 窗口标注 ``positive``、``negative`` 或 ``unclear``。
 
@@ -104,7 +104,7 @@ episode 切成 5 帧窗口，提取 ``main_images`` 和 ``extra_view_images``，
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -209,7 +209,7 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 2.3 微调 VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-使用 ``preprocess_vlm_trend_reward_dataset.py`` 转换数据后，将
+使用 ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 转换数据后，将
 ``VLM_TREND_REWARD_DATA_ROOT`` 指向处理后的数据根目录，然后启动 VLM SFT：
 
 .. code-block:: bash
@@ -250,84 +250,72 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 #. 冻结 Potential LoRA，提取 prompt feature，再训练 scalar head。
 #. 在线组合 one-shot Success bonus 与 potential-difference shaping。
 
-先设置公共路径，再生成 teacher 和两套 SFT 数据：
+运行各阶段前，先在 YAML 中配置路径：
+
+- 在 ``examples/reward/vlm_trend/config/pipeline.yaml`` 中设置
+  ``paths.raw_data_root``、``paths.pipeline_root``、``paths.model_path``，并在
+  Potential SFT 完成后设置 ``paths.potential_checkpoint``。teacher、feature
+  和 scalar-head 路径都通过 YAML 引用复用这些值。
+- 在 ``examples/sft/config/vlm_trend_success_sft.yaml`` 和
+  ``vlm_trend_potential_sft.yaml`` 中设置 ``paths.pipeline_root`` 与
+  ``paths.model_path``；数据和输出路径由 YAML 自动派生。
+
+使用 ``pipeline.yaml`` 中 ``auxiliary.teacher.raw_data_paths`` 列出的
+checkpoint 目录训练 teacher：
 
 .. code-block:: bash
 
-   export RAW_DATA_ROOT=/path/to/vlm_trend_uniform_collection
-   export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
-   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   RAW_DATA_ARGS=()
-   TEACHER_DATA_PATHS="["
-   for step in 0 20 40 60 80 100 120 140 160 180 200; do
-     RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
-     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
-   done
-   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=teacher
 
-   python examples/reward/train_vlm_trend_auxiliary.py \
-     auxiliary.stage=teacher \
-     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
-     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
+生成两套数据。每个采集 checkpoint 目录都重复传入一次
+``--raw-data-path``；下面的简化示例展示参数形式：
 
-   python examples/reward/preprocess_vlm_trend_terminal_success.py \
-     "${RAW_DATA_ARGS[@]}" \
-     --output-dir "$PIPELINE_ROOT/success_data"
+.. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_potential.py \
-     "${RAW_DATA_ARGS[@]}" \
-     --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
-     --output-dir "$PIPELINE_ROOT/potential_data"
+   python examples/reward/vlm_trend/preprocess_terminal_success.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --output-dir /path/to/vlm_trend_success_potential/success_data
+
+   python examples/reward/vlm_trend/preprocess_potential.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
+     --output-dir /path/to/vlm_trend_success_potential/potential_data
 
 这些命令会保留与在线采样一致的 ``0``/``1`` terminal-success 窗口，不执行
 balanced sampling。两条分支都在首次成功 transition 截断，与在线环境的终止边界一致。
-Potential 预处理使用 teacher 生成绝对 potential 数字，
-以及 ``up``/``same``/``down`` progress pair。
+Potential 预处理使用 teacher 生成绝对 potential 数字，以及
+``up``/``same``/``down`` progress pair。
 
-使用继承现有 Trend 配方的两个薄配置训练 adapter：
+两个薄配置继承现有 Trend 配方，路径已经在 YAML 中配置，无需再导出路径环境变量：
 
 .. code-block:: bash
 
-   export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
-   export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
-
-   export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
-   export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
-将 ``POTENTIAL_CHECKPOINT`` 指向选中的 Potential VLM SFT 权重文件
-（通常是 ``.../global_step_*/actor/model_state_dict/full_weights.pt``）。
-如果你自行导出过 PEFT adapter，也可以传包含 ``adapter_config.json`` 的目录。
-在四张 GPU 上提取冻结 feature，再训练 scalar head：
+将 ``pipeline.yaml`` 中的 ``paths.potential_checkpoint`` 指向选中的
+Potential VLM SFT 权重文件（通常是
+``.../global_step_*/actor/model_state_dict/full_weights.pt``）。如果自行导出过
+PEFT adapter，也可以填写包含 ``adapter_config.json`` 的目录。
+
+Feature 提取不要求必须使用四张 GPU。默认 RLinf placement 使用所有可用 accelerator；如果只使用一张 GPU，
+在 YAML 中改为：
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       feature_extractor: 0  # 使用全部可用 accelerator 时设为 all
+
+RLinf 会从 placement 自动得到每个 shard 的 rank 和 world size。Python 入口会
+处理两个 split 和两种 sample type，替代原来的嵌套 shell 循环：
 
 .. code-block:: bash
 
-   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
-   mkdir -p "$PIPELINE_ROOT/features"
-
-   for split in train eval; do
-     for sample_type in potential progress; do
-       for rank in 0 1 2 3; do
-         CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/extract_vlm_trend_potential_features.py \
-           --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
-           --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
-           --sample-type "$sample_type" --rank "$rank" --world-size 4 \
-           --device cuda:0 \
-           --output "$PIPELINE_ROOT/features/${split}_${sample_type}_${rank}.pt" &
-       done
-       wait
-     done
-   done
-
-   python examples/reward/train_vlm_trend_auxiliary.py \
-     auxiliary.stage=scalar_head \
-     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
-     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
-     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
-     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
-     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
+   python examples/reward/vlm_trend/extract_potential_features.py
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=scalar_head
 
 使用现有 ``eval/eval_accuracy`` 选择 Success adapter，并使用
 ``scalar_head/metrics.jsonl`` 中的 ``model_potential`` 选择 scalar head。
@@ -509,17 +497,25 @@ Success + Potential 配方的本地推理使用专用
 该配方基于现有 VLM Trend 配方，使用 1,024 个环境，每 5 个 PPO step 评估一次，
 关闭环境奖励，默认训练 160 个 step：
 
+在
+``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_success_potential.yaml``
+的 ``vlm_trend_paths`` 中填写五个产物路径。运行字段会直接引用这段 YAML：
+
+.. code-block:: yaml
+
+   vlm_trend_paths:
+     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     model_path: /path/to/Qwen3-VL-4B-Instruct
+     success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+     potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+     scalar_head: /path/to/scalar_head/best.pt
+
+然后启动已配置的配方：
+
 .. code-block:: bash
 
-   export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
-   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
-   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
-   export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
-   python examples/embodiment/train_embodied_agent.py \
-     --config-path config \
-     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
+   bash examples/embodiment/run_embodiment.sh \
+     maniskill_ppo_mlp_vlm_trend_success_potential
 
 专用 ``VLMTrendSuccessPotentialRewardModel`` 计算
 ``scale * (gamma * potential_t - potential_{t-1})``，并在满足连续确认窗口后，
@@ -603,7 +599,7 @@ SGLang 路径额外说明：
 
 1. 在环境配置中开启 ``data_collection``，并将数据保存为 ``pickle`` 格式。
 2. 对于 ResNet reward，使用 ``preprocess_reward_dataset.py`` 构建 ``train.pt`` / ``val.pt``，再用 ``run_reward_training.sh`` 训练。
-3. 对于 VLM Trend reward，使用 ``preprocess_vlm_trend_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
+3. 对于 VLM Trend reward，使用 ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` 构建双视角历史窗口数据，再用 ``run_vlm_sft.sh`` 微调。
 4. 在 RL YAML 中开启 ``reward.use_reward_model=True``，并通过示例配置接入 reward worker 完成在线推理。
 
 

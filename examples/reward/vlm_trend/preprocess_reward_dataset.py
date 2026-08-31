@@ -15,7 +15,7 @@
 """Preprocess VLM Trend reward data into split train/eval pkl datasets.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
         --raw-data-path logs/xxx/collected_data \
         --output-dir logs/xxx/processed_vlm_trend_reward_data
 
@@ -24,9 +24,9 @@ loads the two 5-frame video arrays directly from those pkl files, avoiding the
 slow small-mp4 export path.
 
 Success, Potential, and feature extraction live in sibling scripts:
-``preprocess_vlm_trend_terminal_success.py``,
-``preprocess_vlm_trend_potential.py``, and
-``extract_vlm_trend_potential_features.py``.
+``preprocess_terminal_success.py``,
+``preprocess_potential.py``, and
+``extract_potential_features.py``.
 """
 
 import argparse
@@ -43,7 +43,7 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from examples.reward.vlm_trend_data import (
+from examples.reward.vlm_trend.data import (
     build_messages,
     extract_dual_view_frames,
     to_uint8_rgb,
@@ -720,36 +720,8 @@ def run_trend(argv: list[str] | None = None) -> None:
     print("=" * 80)
 
 
-_MOVED_MODES = {
-    "terminal_success": "examples/reward/preprocess_vlm_trend_terminal_success.py",
-    "potential": "examples/reward/preprocess_vlm_trend_potential.py",
-    "features": "examples/reward/extract_vlm_trend_potential_features.py",
-}
-
-
 def main(argv: list[str] | None = None) -> None:
-    args = list(argv) if argv is not None else None
-    if args is None:
-        import sys
-
-        args = sys.argv[1:]
-    if "--mode" in args:
-        mode_index = args.index("--mode")
-        mode = args[mode_index + 1] if mode_index + 1 < len(args) else None
-        if mode in _MOVED_MODES:
-            raise SystemExit(
-                f"--mode {mode} moved to {_MOVED_MODES[mode]}. "
-                "Run that script directly instead of passing --mode."
-            )
-        if mode == "trend":
-            raise SystemExit(
-                "Omit --mode; this script only builds the Trend reward dataset."
-            )
-        raise SystemExit(
-            f"Unknown --mode {mode!r}. Use this script for Trend windows, "
-            "or run the dedicated Success, Potential, or feature scripts."
-        )
-    run_trend(args)
+    run_trend(argv)
 
 
 if __name__ == "__main__":

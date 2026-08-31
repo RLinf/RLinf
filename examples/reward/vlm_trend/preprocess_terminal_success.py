@@ -15,7 +15,7 @@
 """Build unbalanced terminal-success windows for VLM Trend Success SFT.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_terminal_success.py \\
+    python examples/reward/vlm_trend/preprocess_terminal_success.py \\
         --raw-data-path logs/xxx/step0 \\
         --output-dir logs/xxx/success_data
 """
@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from examples.reward.vlm_trend_data import (
+from examples.reward.vlm_trend.data import (
     Candidate,
     first_success_transition,
     load_episode,

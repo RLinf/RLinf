@@ -99,7 +99,7 @@ Where:
 """"""""""""""""""""""""""""""""""""""""""""""""
 
 VLM Trend reward uses short dual-view history windows rather than single images. Use
-``examples/reward/preprocess_vlm_trend_reward_dataset.py`` to slice collected
+``examples/reward/vlm_trend/preprocess_reward_dataset.py`` to slice collected
 episodes into 5-frame windows, extract ``main_images`` and ``extra_view_images``,
 and assign each window one of ``positive``, ``negative``, or ``unclear``.
 
@@ -107,7 +107,7 @@ Example:
 
 .. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+   python examples/reward/vlm_trend/preprocess_reward_dataset.py \
        --raw-data-path logs/xxx/collected_data \
        --output-dir logs/xxx/processed_vlm_trend_reward_data \
        --window-size 5 \
@@ -213,7 +213,7 @@ Training logs are written to a newly created ``logs/<timestamp>-reward_training`
 2.3 Fine-Tune the VLM Trend Reward Model
 """"""""""""""""""""""""""""""""""""""""""""""""
 
-After converting collected episodes with ``preprocess_vlm_trend_reward_dataset.py``,
+After converting collected episodes with ``examples/reward/vlm_trend/preprocess_reward_dataset.py``,
 point ``VLM_TREND_REWARD_DATA_ROOT`` to the processed output root and launch VLM SFT:
 
 .. code-block:: bash
@@ -255,86 +255,75 @@ shaping from the same VLM. Keep the four stages in order:
 #. Freeze the Potential adapter, extract its prompt features, and train a scalar head.
 #. Combine one-shot Success bonus with potential-difference shaping online.
 
-Set the shared paths, then build the teacher and both SFT datasets:
+Configure the pipeline paths in YAML before running the stages:
+
+- In ``examples/reward/vlm_trend/config/pipeline.yaml``, set
+  ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, and,
+  after Potential SFT, ``paths.potential_checkpoint``. The teacher, feature,
+  and scalar-head paths reuse those values through YAML references.
+- In ``examples/sft/config/vlm_trend_success_sft.yaml`` and
+  ``vlm_trend_potential_sft.yaml``, set ``paths.pipeline_root`` and
+  ``paths.model_path``. Their data and output paths are derived in YAML.
+
+Train the teacher from the checkpoint directories listed under
+``auxiliary.teacher.raw_data_paths`` in ``pipeline.yaml``:
 
 .. code-block:: bash
 
-   export RAW_DATA_ROOT=/path/to/vlm_trend_uniform_collection
-   export PIPELINE_ROOT=/path/to/vlm_trend_success_potential
-   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   RAW_DATA_ARGS=()
-   TEACHER_DATA_PATHS="["
-   for step in 0 20 40 60 80 100 120 140 160 180 200; do
-     RAW_DATA_ARGS+=(--raw-data-path "$RAW_DATA_ROOT/step$step")
-     TEACHER_DATA_PATHS+="$RAW_DATA_ROOT/step$step,"
-   done
-   TEACHER_DATA_PATHS="${TEACHER_DATA_PATHS%,}]"
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=teacher
 
-   python examples/reward/train_vlm_trend_auxiliary.py \
-     auxiliary.stage=teacher \
-     "auxiliary.teacher.raw_data_paths=$TEACHER_DATA_PATHS" \
-     auxiliary.teacher.output_dir="$PIPELINE_ROOT/teacher"
+Build the two datasets. Repeat ``--raw-data-path`` for every collected
+checkpoint directory; the abbreviated example below shows the argument shape:
 
-   python examples/reward/preprocess_vlm_trend_terminal_success.py \
-     "${RAW_DATA_ARGS[@]}" \
-     --output-dir "$PIPELINE_ROOT/success_data"
+.. code-block:: bash
 
-   python examples/reward/preprocess_vlm_trend_potential.py \
-     "${RAW_DATA_ARGS[@]}" \
-     --value-checkpoint "$PIPELINE_ROOT/teacher/best.pt" \
-     --output-dir "$PIPELINE_ROOT/potential_data"
+   python examples/reward/vlm_trend/preprocess_terminal_success.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --output-dir /path/to/vlm_trend_success_potential/success_data
+
+   python examples/reward/vlm_trend/preprocess_potential.py \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step0 \
+     --raw-data-path /path/to/vlm_trend_uniform_collection/step20 \
+     --value-checkpoint /path/to/vlm_trend_success_potential/teacher/best.pt \
+     --output-dir /path/to/vlm_trend_success_potential/potential_data
 
 What this does: terminal-success keeps online-matched ``0``/``1`` windows without
 balanced sampling. Both branches stop at the first successful transition, matching
 the online environment termination boundary. Potential preprocessing uses the
-teacher to emit absolute
-potential digits and ``up``/``same``/``down`` progress pairs.
+teacher to emit absolute potential digits and ``up``/``same``/``down`` progress
+pairs.
 
-Train the two adapters with thin configs that inherit the existing Trend recipe:
+Train the two adapters with the thin configs that inherit the existing Trend
+recipe; no path environment variables are required:
 
 .. code-block:: bash
 
-   export VLM_TREND_SUCCESS_DATA_ROOT="$PIPELINE_ROOT/success_data"
-   export OUTPUT_ROOT="$PIPELINE_ROOT/success_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_success_sft
-
-   export VLM_TREND_POTENTIAL_DATA_ROOT="$PIPELINE_ROOT/potential_data"
-   export OUTPUT_ROOT="$PIPELINE_ROOT/potential_sft"
    bash examples/sft/run_vlm_sft.sh vlm_trend_potential_sft
 
-Set ``POTENTIAL_CHECKPOINT`` to the selected Potential VLM SFT weights file
-(typically ``.../global_step_*/actor/model_state_dict/full_weights.pt``).
-A PEFT adapter directory that contains ``adapter_config.json`` is also accepted
-if you exported one. Extract frozen features on four GPUs, then train the
-scalar head:
+Set ``paths.potential_checkpoint`` in ``pipeline.yaml`` to the selected Potential
+VLM SFT weights file (typically
+``.../global_step_*/actor/model_state_dict/full_weights.pt``). A PEFT adapter
+directory containing ``adapter_config.json`` is also accepted.
+
+Feature extraction is not restricted to four GPUs. Its RLinf placement defaults to all available accelerators; restrict it to one GPU
+when needed:
+
+.. code-block:: yaml
+
+   cluster:
+     component_placement:
+       feature_extractor: 0  # use all for every available accelerator
+
+RLinf derives each shard's rank and world size from this placement. The Python
+entrypoint processes both splits and both sample types, replacing the previous
+nested shell loop:
 
 .. code-block:: bash
 
-   export POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
-   mkdir -p "$PIPELINE_ROOT/features"
-
-   for split in train eval; do
-     for sample_type in potential progress; do
-       for rank in 0 1 2 3; do
-         CUDA_VISIBLE_DEVICES=$rank \
-         python examples/reward/extract_vlm_trend_potential_features.py \
-           --model-path "$VLM_MODEL_PATH" --checkpoint "$POTENTIAL_CHECKPOINT" \
-           --manifest "$PIPELINE_ROOT/potential_data/$split/segments.jsonl" \
-           --sample-type "$sample_type" --rank "$rank" --world-size 4 \
-           --device cuda:0 \
-           --output "$PIPELINE_ROOT/features/${split}_${sample_type}_${rank}.pt" &
-       done
-       wait
-     done
-   done
-
-   python examples/reward/train_vlm_trend_auxiliary.py \
-     auxiliary.stage=scalar_head \
-     "auxiliary.scalar_head.train_pattern=$PIPELINE_ROOT/features/train_potential_*.pt" \
-     "auxiliary.scalar_head.eval_pattern=$PIPELINE_ROOT/features/eval_potential_*.pt" \
-     "auxiliary.scalar_head.train_progress_pattern=$PIPELINE_ROOT/features/train_progress_*.pt" \
-     "auxiliary.scalar_head.progress_pattern=$PIPELINE_ROOT/features/eval_progress_*.pt" \
-     auxiliary.scalar_head.output_dir="$PIPELINE_ROOT/scalar_head"
+   python examples/reward/vlm_trend/extract_potential_features.py
+   python examples/reward/vlm_trend/train_auxiliary.py auxiliary.stage=scalar_head
 
 Use the existing ``eval/eval_accuracy`` to select the Success adapter and
 ``model_potential`` from ``scalar_head/metrics.jsonl`` to select the scalar head.
@@ -517,17 +506,25 @@ reward artifacts. This recipe is based on the existing VLM Trend recipe, uses
 1,024 environments, evaluates every 5 PPO steps, disables environment reward,
 and runs 160 steps by default:
 
+Set the five artifact fields under ``vlm_trend_paths`` in
+``examples/embodiment/config/maniskill_ppo_mlp_vlm_trend_success_potential.yaml``.
+The runtime fields reference this YAML section directly:
+
+.. code-block:: yaml
+
+   vlm_trend_paths:
+     policy_checkpoint: /path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
+     model_path: /path/to/Qwen3-VL-4B-Instruct
+     success_checkpoint: /path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
+     potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
+     scalar_head: /path/to/scalar_head/best.pt
+
+Then launch the configured recipe:
+
 .. code-block:: bash
 
-   export POLICY_CHECKPOINT=/path/to/evaluated_approximately_5pct/actor/model_state_dict/full_weights.pt
-   export VLM_MODEL_PATH=/path/to/Qwen3-VL-4B-Instruct
-   export VLM_TREND_SUCCESS_CHECKPOINT=/path/to/success/selected_global_step/actor/model_state_dict/full_weights.pt
-   export VLM_TREND_POTENTIAL_CHECKPOINT=/path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
-   export VLM_TREND_SCALAR_HEAD=/path/to/scalar_head/best.pt
-   export EMBODIED_PATH="$(pwd)/examples/embodiment"
-   python examples/embodiment/train_embodied_agent.py \
-     --config-path config \
-     --config-name maniskill_ppo_mlp_vlm_trend_success_potential
+   bash examples/embodiment/run_embodiment.sh \
+     maniskill_ppo_mlp_vlm_trend_success_potential
 
 The dedicated ``VLMTrendSuccessPotentialRewardModel`` computes
 ``scale * (gamma * potential_t - potential_{t-1})`` and adds
@@ -613,7 +610,7 @@ The full workflow is:
 
 1. Enable ``data_collection`` in the environment config and save raw data in ``pickle`` format.
 2. For ResNet rewards, use ``preprocess_reward_dataset.py`` to build ``train.pt`` / ``val.pt`` and train with ``run_reward_training.sh``.
-3. For VLM Trend rewards, use ``preprocess_vlm_trend_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
+3. For VLM Trend rewards, use ``examples/reward/vlm_trend/preprocess_reward_dataset.py`` to build dual-view history-window data and fine-tune with ``run_vlm_sft.sh``.
 4. Enable ``reward.use_reward_model=True`` in your RL YAML and plug the trained reward worker into online RL inference.
 
 
