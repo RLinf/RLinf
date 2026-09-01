@@ -131,6 +131,14 @@ jobs:
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh realworld_dummy_sac_cnn
 
+      - name: RealWorld Franka RGB-D depth dummy SAC test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh realworld_dummy_sac_cnn_depth
+
       - name: Clean up
         run: |
           rm -rf .venv
