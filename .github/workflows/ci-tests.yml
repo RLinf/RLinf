@@ -114,6 +114,7 @@ jobs:
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
+              - 'toolkits/cosmos3/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared

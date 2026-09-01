@@ -864,6 +864,11 @@ jobs:
           cd /workspace/dataset/ManiSkill-GS
           uv pip install -e .
           python scripts/test_rlinf_interface.py
+          # ManiSkill-GS pyproject.toml overrides protobuf==6.33.2 for OpenPI.
+          # uv pip from that directory applies the override, so re-pin from the
+          # RLinf root or Ray dashboard fails (gencode 6.33.5 vs runtime 6.33.2).
+          cd "$GITHUB_WORKSPACE"
+          uv pip install "protobuf>=6.33.5,<7"
 
       - name: ManiSkill-GS PPO Pi05 test
         timeout-minutes: 20
