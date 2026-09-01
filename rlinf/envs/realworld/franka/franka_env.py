@@ -596,6 +596,18 @@ class FrankaEnv(gym.Env):
         if self.config.camera_observation_size <= 0:
             raise ValueError("camera_observation_size must be positive")
 
+        depth_camera_infos = [
+            camera_info for camera_info in self._camera_infos if camera_info.enable_depth
+        ]
+        if self.config.enable_camera_depth and not depth_camera_infos:
+            camera_types = sorted(
+                {camera_info.camera_type for camera_info in self._camera_infos}
+            )
+            raise ValueError(
+                "enable_camera_depth=True, but none of the configured cameras "
+                f"support depth (camera_types={camera_types!r})."
+            )
+
         observation_spaces = {
             "state": gym.spaces.Dict(
                 {
@@ -631,7 +643,7 @@ class FrankaEnv(gym.Env):
                         shape=self._camera_observation_hw(camera_info),
                         dtype=np.float32,
                     )
-                    for camera_info in self._camera_infos
+                    for camera_info in depth_camera_infos
                 }
             )
         self.observation_space = gym.spaces.Dict(observation_spaces)
