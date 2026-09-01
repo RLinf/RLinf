@@ -51,7 +51,7 @@ def test_franka_depth_space_only_contains_depth_capable_cameras():
 
 
 def test_franka_depth_requires_a_depth_capable_camera():
-    with pytest.raises(ValueError, match="none of the configured cameras support depth"):
-        _build_franka_space(
-            [CameraInfo("lumos", "camera-1", camera_type="lumos")]
-        )
+    with pytest.raises(
+        ValueError, match="none of the configured cameras support depth"
+    ):
+        _build_franka_space([CameraInfo("lumos", "camera-1", camera_type="lumos")])

@@ -597,7 +597,9 @@ class FrankaEnv(gym.Env):
             raise ValueError("camera_observation_size must be positive")
 
         depth_camera_infos = [
-            camera_info for camera_info in self._camera_infos if camera_info.enable_depth
+            camera_info
+            for camera_info in self._camera_infos
+            if camera_info.enable_depth
         ]
         if self.config.enable_camera_depth and not depth_camera_infos:
             camera_types = sorted(
