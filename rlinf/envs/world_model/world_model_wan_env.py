@@ -725,16 +725,6 @@ class WanEnv(BaseWorldEnv):
         chunk_truncations = torch.zeros_like(raw_chunk_truncations)
         chunk_truncations[:, -1] = past_truncations
 
-        # Get actions and rewards for rendering
-        chunk_actions_for_render = policy_output_action
-        if isinstance(chunk_actions_for_render, torch.Tensor):
-            chunk_actions_for_render = chunk_actions_for_render.detach().cpu().numpy()
-        chunk_rewards_for_render = chunk_rewards_tensors.detach().cpu().numpy()
-
-        # Reshape for rendering: [num_envs, chunk, action_dim] -> [chunk, num_envs, action_dim]
-        chunk_actions_for_render = chunk_actions_for_render.transpose(1, 0, 2)
-        chunk_rewards_for_render = chunk_rewards_for_render.T  # [chunk, num_envs]
-
         return (
             [extracted_obs],
             chunk_rewards_tensors,
