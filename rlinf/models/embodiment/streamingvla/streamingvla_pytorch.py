@@ -40,7 +40,7 @@ from .sfp import (
 )
 
 
-class SVLAPytorch(nn.Module):
+class StreamingVLAPytorch(nn.Module):
     """Pi0.5 backbone with StreamingVLA's one-token SFP training objective."""
 
     def __init__(

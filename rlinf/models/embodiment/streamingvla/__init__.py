@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 from typing import TYPE_CHECKING, Any
 
@@ -131,22 +132,17 @@ def get_model(cfg: DictConfig, torch_dtype: Any = None) -> torch.nn.Module:
         model_path=str(cfg.model_path),
         data_kwargs=streaming_cfg.get("data", None),
     )
-    model_config = train_config.model
     precision = str(cfg.get("precision", "bf16")).lower()
     dtype = (
         "float32" if precision in {"fp32", "float32", "32", "32-true"} else "bfloat16"
     )
-    object.__setattr__(model_config, "dtype", dtype)
-    object.__setattr__(
-        model_config,
-        "action_horizon",
-        int(streaming_cfg.get("action_horizon", 10)),
+    model_config = dataclasses.replace(
+        train_config.model,
+        dtype=dtype,
+        action_horizon=int(streaming_cfg.get("action_horizon", 10)),
+        action_dim=int(streaming_cfg.get("model_action_dim", 32)),
     )
-    object.__setattr__(
-        model_config,
-        "action_dim",
-        int(streaming_cfg.get("model_action_dim", 32)),
-    )
+    # RLinf's pinned OpenPI Pi0Config predates this StreamingVLA field.
     object.__setattr__(model_config, "use_sfp", True)
 
     model = StreamingVLAForSFTActionPrediction(

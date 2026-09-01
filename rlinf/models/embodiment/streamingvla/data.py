@@ -116,14 +116,26 @@ def create_streamingvla_data_loader(
 
 
 def build_streamingvla_dataloader(
-    cfg: Any, world_size: int
+    cfg: Any,
+    world_size: int,
+    rank: int,
+    data_paths: Any,
+    eval_dataset: bool = False,
 ) -> tuple[StatefulDataLoader, Any]:
     """Build a StreamingVLA loader through RLinf's VLA worker hook."""
+    del rank
+    if eval_dataset:
+        raise NotImplementedError(
+            "StreamingVLA validation is not implemented in the SFT-only integration."
+        )
+
+    data_kwargs = dict(cfg.actor.model.streamingvla.get("data", {}) or {})
+    data_kwargs["repo_id"] = str(data_paths)
     config = get_streamingvla_config(
         cfg.actor.model.streamingvla.config_name,
         model_path=cfg.actor.model.model_path,
         batch_size=cfg.actor.micro_batch_size * world_size,
-        data_kwargs=cfg.actor.model.streamingvla.get("data", None),
+        data_kwargs=data_kwargs,
         seed=cfg.actor.seed,
     )
     return create_streamingvla_data_loader(

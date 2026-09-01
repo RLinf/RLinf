@@ -23,7 +23,7 @@ from torch import nn
 
 from rlinf.models.embodiment.base_policy import BasePolicy, ForwardType
 
-from .svla_pytorch import SVLAPytorch
+from .streamingvla_pytorch import StreamingVLAPytorch
 
 
 class StreamingVLAForSFTActionPrediction(nn.Module, BasePolicy):
@@ -54,7 +54,7 @@ class StreamingVLAForSFTActionPrediction(nn.Module, BasePolicy):
     ) -> None:
         super().__init__()
         self.config = config
-        self.svla_model = SVLAPytorch(
+        self.svla_model = StreamingVLAPytorch(
             config,
             sigma=sigma,
             noise_decay=noise_decay,

@@ -1957,19 +1957,15 @@ install_openpi_model() {
     # openpi/orbax require jax.experimental.layout.DeviceLocalLayout (removed in jax>=0.7.0).
     uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
 
-    # The legacy OpenPI model still needs its source-tree Transformers overlay.
-    # StreamingVLA uses RLinf's self-contained Gemma/SigLIP implementation and
-    # must not overwrite the installed Transformers package.
-    if [ "$MODEL" = "openpi" ]; then
-        local py_major_minor
-        py_major_minor=$(python - <<'EOF'
+    # The legacy OpenPI model needs its source-tree Transformers overlay.
+    local py_major_minor
+    py_major_minor=$(python - <<'EOF'
 import sys
 print(f"{sys.version_info.major}.{sys.version_info.minor}")
 EOF
-        )
-        cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
-            "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
-    fi
+    )
+    cp -r "$VENV_DIR/lib/python${py_major_minor}/site-packages/openpi/models_pytorch/transformers_replace/"* \
+        "$VENV_DIR/lib/python${py_major_minor}/site-packages/transformers/"
     
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
     # rlinf-openpi pulls rlinf-transformer-openpi (a transformers 4.53 fork) into
@@ -1984,13 +1980,22 @@ EOF
 install_streamingvla_model() {
     case "$ENV_NAME" in
         libero)
-            install_openpi_model
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_libero_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
             ;;
         *)
             echo "Environment '$ENV_NAME' is not supported for StreamingVLA model. Only libero is supported." >&2
             exit 1
             ;;
     esac
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+    bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
+    uv pip install "tokenizers>=0.21,<0.22"
+    uv pip uninstall pynvml || true
 }
 
 install_molmoact2_model() {
