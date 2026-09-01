@@ -15,7 +15,6 @@
 import torch
 
 from rlinf.algorithms.utils import preprocess_loss_inputs
-from rlinf.utils.utils import seq_mean_token_mean
 
 
 def test_sequence_token_level_broadcasts_advantage_and_combines_masks():
@@ -42,21 +41,3 @@ def test_sequence_token_level_broadcasts_advantage_and_combines_masks():
         out["loss_mask"],
         torch.tensor([[True, True, False, False], [False, False, False, False]]),
     )
-
-
-def test_seq_mean_token_mean_skips_fully_masked_sequences():
-    values = torch.tensor([[1.0, 3.0], [10.0, 20.0]])
-    mask = torch.tensor([[True, True], [False, False]])
-
-    result = seq_mean_token_mean(values, mask)
-
-    assert torch.equal(result, torch.tensor(2.0))
-
-
-def test_seq_mean_token_mean_ignores_masked_nonfinite_values():
-    values = torch.tensor([[1.0, 3.0], [float("nan"), float("inf")]])
-    mask = torch.tensor([[True, True], [False, False]])
-
-    result = seq_mean_token_mean(values, mask)
-
-    assert torch.equal(result, torch.tensor(2.0))

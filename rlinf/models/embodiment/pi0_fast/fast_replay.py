@@ -19,21 +19,13 @@ from typing import Any
 import torch
 
 
-def _lerobot_constant(name: str, fallback: str) -> str:
-    try:
-        constants = __import__("lerobot.utils.constants", fromlist=[name])
-    except ImportError:
-        return fallback
-    return getattr(constants, name, fallback)
-
-
 def _language_token_keys() -> tuple[str, str]:
-    return (
-        _lerobot_constant("OBS_LANGUAGE_TOKENS", "observation.language.tokens"),
-        _lerobot_constant(
-            "OBS_LANGUAGE_ATTENTION_MASK", "observation.language.attention_mask"
-        ),
+    from lerobot.utils.constants import (
+        OBS_LANGUAGE_ATTENTION_MASK,
+        OBS_LANGUAGE_TOKENS,
     )
+
+    return OBS_LANGUAGE_TOKENS, OBS_LANGUAGE_ATTENTION_MASK
 
 
 def compute_token_logprobs(

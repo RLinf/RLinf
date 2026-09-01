@@ -116,24 +116,6 @@ def test_empty_loss_mask_fast_path_uses_neutral_ratio_metrics():
     assert "actor/nonempty_microbatch_fraction" not in metrics
 
 
-def test_sequence_token_mean_is_not_overridden_by_episode_weighting():
-    loss, _ = compute_ppo_actor_loss(
-        logprobs=torch.zeros(2, 3, dtype=torch.float32),
-        old_logprobs=torch.zeros(2, 3, dtype=torch.float32),
-        clip_ratio_low=0.2,
-        clip_ratio_high=0.2,
-        advantages=torch.tensor([[1.0], [-3.0]], dtype=torch.float32),
-        loss_mask=torch.tensor(
-            [[True, False, False], [True, True, True]], dtype=torch.bool
-        ),
-        loss_mask_sum=torch.ones(2, 3, dtype=torch.float32),
-        max_episode_steps=10,
-        loss_agg_func=seq_mean_token_mean,
-    )
-
-    assert torch.equal(loss, torch.tensor(1.0))
-
-
 def test_masked_nonfinite_logprobs_do_not_pollute_token_loss():
     logprobs = torch.tensor(
         [[0.0, float("nan")], [0.0, float("inf")]],

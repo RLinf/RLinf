@@ -41,21 +41,21 @@ def test_install_script_is_valid_bash():
     subprocess.run(["bash", "-n", INSTALL_SCRIPT], check=True)
 
 
-def test_pi0_fast_uses_isolated_validated_runtime_by_default():
+def test_pi0_fast_uses_native_runtime_flags():
     output = _source_install_script(
-        "parse_args embodied --model pi0_fast --env libero; "
-        "configure_pi0_fast_runtime; "
-        'printf \'%s|%s|%s\' "$VENV_DIR" "$PYTHON_VERSION" "$TORCH_VERSION"'
+        "parse_args embodied --model pi0_fast --env libero "
+        "--python 3.12.12 --torch 2.11.0 --no-flash-attn; "
+        'printf \'%s|%s|%s|%s\' "$VENV_DIR" "$PYTHON_VERSION" '
+        '"$TORCH_VERSION" "$DISABLE_FLASH_ATTN"'
     )
 
-    assert output.endswith(".venv-pi0-fast|3.12.12|2.11.0")
+    assert output.endswith(".venv|3.12.12|2.11.0|1")
 
 
 def test_pi0_fast_respects_explicit_runtime_overrides():
     output = _source_install_script(
         "parse_args embodied --model pi0_fast --env libero "
         "--venv custom-venv --python 3.12.9 --torch 2.11.1; "
-        "configure_pi0_fast_runtime; "
         'printf \'%s|%s|%s\' "$VENV_DIR" "$PYTHON_VERSION" "$TORCH_VERSION"'
     )
 
@@ -69,8 +69,27 @@ def test_pi0_fast_requirement_pins_validated_lerobot_commit():
         "huggingface/lerobot.git@8a74e0ac6d01706d67fddfed682a09d694d9c8c0"
         in requirements
     )
+    assert "transformers==5.5.4" in requirements
+    assert "tokenizers>=0.22,<0.23" in requirements
+    assert "huggingface-hub>=1.0,<2.0" in requirements
+    assert "hf-libero==0.1.4" in requirements
+    assert "numpy==2.2.0" in requirements
     install_script = INSTALL_SCRIPT.read_text()
-    assert (
-        'PI0_FAST_TRANSFORMERS_VERSION="${PI0_FAST_TRANSFORMERS_VERSION:-5.5.4}"'
-        in install_script
+    assert "configure_pi0_fast_runtime" not in install_script
+    assert "apply_pi0_fast_dependency_overrides" not in install_script
+
+
+def test_pi0_fast_uses_lerobot_libero_package():
+    output = _source_install_script(
+        "ENV_NAME=libero; "
+        "create_and_sync_venv() { :; }; "
+        "install_common_embodied_deps() { :; }; "
+        "uv() { :; }; "
+        "install_hf_libero_env() { printf hf-libero; }; "
+        "install_libero_env() { printf rlinf-libero; }; "
+        "python() { :; }; "
+        "install_flash_attn() { :; }; "
+        "install_pi0_fast_model"
     )
+
+    assert output == "hf-libero"

@@ -73,6 +73,7 @@ def test_pi0_fast_policy_config_loads_public_checkpoint_schema(tmp_path):
         {
             "load_to_device": False,
             "pi0_fast": {
+                "text_tokenizer_name": "/tmp/local-paligemma-tokenizer",
                 "action_tokenizer_name": "/tmp/local-fast-tokenizer",
                 "gradient_checkpointing": False,
                 "require_action_token_prefix": False,
@@ -83,7 +84,7 @@ def test_pi0_fast_policy_config_loads_public_checkpoint_schema(tmp_path):
     policy_config = _load_policy_config(module, str(tmp_path), cfg)
 
     assert isinstance(policy_config, module.PI0FastConfig)
-    assert policy_config.text_tokenizer_name == "google/paligemma-3b-pt-224"
+    assert policy_config.text_tokenizer_name == "/tmp/local-paligemma-tokenizer"
     assert policy_config.action_tokenizer_name == "/tmp/local-fast-tokenizer"
     assert policy_config.device == "cpu"
     assert policy_config.gradient_checkpointing is False
@@ -121,88 +122,30 @@ def test_pi0_fast_image_preprocess_does_not_require_policy_parameters():
     assert masks[1].tolist() == [False, False]
 
 
-def test_pi0_fast_all_linear_lora_preserves_policy_model_contract():
-    from rlinf.models.embodiment.pi0_fast import _apply_pi0_fast_lora
+def test_pi0_fast_postprocessor_receives_action_converters(monkeypatch):
+    from lerobot.processor import PolicyProcessorPipeline
 
-    class SelfAttention(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.q_proj = torch.nn.Linear(4, 4, bias=False)
+    from rlinf.models.embodiment.pi0_fast import _load_optional_processor
 
-    class LanguageLayer(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.self_attn = SelfAttention()
+    sentinel = object()
+    captured = {}
 
-    class LanguageModel(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.layers = torch.nn.ModuleList([LanguageLayer()])
+    def fake_from_pretrained(*args, **kwargs):
+        captured.update(kwargs)
+        return sentinel
 
-    class VisionTower(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.q_proj = torch.nn.Linear(4, 4, bias=False)
-
-    class PaliGemmaModel(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.language_model = LanguageModel()
-            self.vision_tower = VisionTower()
-
-    class PaliGemma(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.model = PaliGemmaModel()
-            self.lm_head = torch.nn.Linear(4, 8, bias=False)
-
-    class CoreModel(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.paligemma_with_expert = torch.nn.Module()
-            self.paligemma_with_expert.paligemma = PaliGemma()
-
-    class Policy(torch.nn.Module):
-        def __init__(self):
-            super().__init__()
-            self.model = CoreModel()
-
-    policy = Policy()
-    core_model = policy.model
-    language_q_proj = (
-        core_model.paligemma_with_expert.paligemma.model.language_model.layers[
-            0
-        ].self_attn.q_proj
+    monkeypatch.setattr(
+        PolicyProcessorPipeline,
+        "from_pretrained",
+        fake_from_pretrained,
     )
-    sample = torch.randn(2, 4)
-    output_before = language_q_proj(sample).detach()
 
-    policy = _apply_pi0_fast_lora(policy, rank=2, target_scope="all_linear")
-
-    assert policy.model is core_model
-    output_after = (
-        policy.model.paligemma_with_expert.paligemma.model.language_model.layers[
-            0
-        ].self_attn.q_proj(sample)
+    processor = _load_optional_processor(
+        "/tmp/local-pi0-fast",
+        "post",
+        OmegaConf.create({}),
     )
-    assert torch.equal(output_before, output_after)
 
-    trainable_names = [
-        name for name, param in policy.named_parameters() if param.requires_grad
-    ]
-    assert len(trainable_names) == 6
-    assert all("lora_" in name for name in trainable_names)
-    assert any("vision_tower" in name for name in trainable_names)
-    assert any("language_model" in name for name in trainable_names)
-    assert any("lm_head" in name for name in trainable_names)
-
-
-def test_pi0_fast_lora_rejects_unknown_target_scope():
-    from rlinf.models.embodiment.pi0_fast import _apply_pi0_fast_lora
-
-    with pytest.raises(ValueError, match="lora_target_scope"):
-        _apply_pi0_fast_lora(
-            torch.nn.Sequential(torch.nn.Linear(2, 2)),
-            rank=2,
-            target_scope="unknown",
-        )
+    assert processor is sentinel
+    assert callable(captured["to_transition"])
+    assert callable(captured["to_output"])

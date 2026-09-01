@@ -28,17 +28,18 @@ actor update 阶段通过 teacher forcing 重放 rollout 时采样的 token。
 安装
 --------------------
 
-PI0-FAST 验证过的 LeRobot 和 PyTorch 版本与默认 embodied runtime 不同，因此使用
-独立虚拟环境。安装脚本固定完整运行时，默认创建 ``.venv-pi0-fast``：
+下面的命令使用本示例验证过的 PI0-FAST 运行时组合。这些版本表示已测试配置，安装脚本
+不会强制覆盖用户传入的版本：
 
 .. code:: bash
 
    UV_TORCH_BACKEND=cu128 bash requirements/install.sh embodied \
-      --model pi0_fast --env libero
-   source .venv-pi0-fast/bin/activate
+      --model pi0_fast --env libero \
+      --python 3.12.12 --torch 2.11.0 --no-flash-attn
+   source .venv/bin/activate
 
-需要 GitHub 和 PyPI 镜像时可增加 ``--use-mirror``。默认跳过 Flash Attention；
-如需安装，设置 ``PI0_FAST_INSTALL_FLASH_ATTN=1``。
+需要 GitHub 和 PyPI 镜像时可增加 ``--use-mirror``。上述已验证命令跳过 Flash
+Attention；如需安装，可去掉 ``--no-flash-attn``。
 首次运行前需要在 Hugging Face 接受 PaliGemma 的访问条款，并执行 ``hf auth login``；
 固定版本的文本 tokenizer 位于该 gated repository 中。
 
@@ -65,28 +66,28 @@ PI0-FAST 验证过的 LeRobot 和 PyTorch 版本与默认 embodied runtime 不�
      - ``jadechoghari/tokenizer-lib-mean``
      - ``79ae83e3cbd8786dcb84b628569f8d076ca8151e``
 
-Baseline 评测
-------------------------
-
-评测配置采用 greedy decoding、seed 0、LIBERO 有序固定 reset state，共运行 500 个
-episode：
+启动 RLinf 前先下载三个资产：
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh libero_10_eval_pi0_fast
+   hf download lerobot/pi0fast-libero \
+      --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+      --local-dir /path/to/pi0fast-libero
+   hf download google/paligemma-3b-pt-224 \
+      --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+      --local-dir /path/to/paligemma-3b-pt-224
+   hf download jadechoghari/tokenizer-lib-mean \
+      --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+      --local-dir /path/to/tokenizer-lib-mean
 
-固定运行时和依赖坐标后，开发阶段得到以下结果：
+然后修改 ``examples/embodiment/config/model/pi0_fast.yaml`` 中的三个字段：
 
-.. list-table::
-   :header-rows: 1
-   :widths: 25 25 25
+.. code:: yaml
 
-   * - Episode 数
-     - ``success_once``
-     - ``success_at_end``
-   * - 500
-     - 85.8%
-     - 75.8%
+   model_path: "/path/to/pi0fast-libero"
+   pi0_fast:
+     text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
+     action_tokenizer_name: "/path/to/tokenizer-lib-mean"
 
 GRPO 微调
 ------------------------
@@ -125,16 +126,39 @@ LoRA，并启用可选的 FP32-master AdamW。该优化器支持 FSDP1 的 ``NO_
    * - 均值
      - 96.56%
 
+Baseline 评测
+------------------------
+
+评测配置采用 greedy decoding、seed 0、LIBERO 有序固定 reset state，共运行 500 个
+episode：
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh libero_10_eval_pi0_fast
+
+固定运行时和依赖坐标后，开发阶段得到以下结果：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 25 25
+
+   * - Episode 数
+     - ``success_once``
+     - ``success_at_end``
+   * - 500
+     - 85.8%
+     - 75.8%
+
 策略语义
 --------------------
 
 PI0-FAST 原生生成完整动作字符串，RLinf 不预先注入 ``Action:`` 前缀。policy mask
 包含模型生成的前缀、动作正文和第一个完整的 ``|`` 结束标记，不包含 padding 和结束
-标记之后的 token。同一条轨迹的所有 token 共享轨迹级 GRPO advantage；loss 先对每条
-序列的有效 token 求平均，再对序列求平均。
+标记之后的 token。同一条轨迹的所有 token 共享轨迹级 GRPO advantage；PPO 对每个
+token 独立 clipping，之后再按 mask 聚合 token loss。
 
 非法序列不会重采样，而是执行安全零动作，由环境正常返回失败反馈，并继续参与策略
-目标。这样既保持 on-policy 采样。
+目标。这样可以保持 on-policy 采样。
 
 监控指标
 --------------------

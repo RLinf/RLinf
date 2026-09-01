@@ -89,21 +89,12 @@ def test_pi0_fast_grpo_uses_all_linear_lora():
     assert cfg.rollout.model.pi0_fast.gradient_checkpointing is False
 
 
-def test_pi0_fast_public_artifacts_are_revision_pinned():
+def test_pi0_fast_config_uses_explicit_local_artifact_paths():
     cfg = _load_config("examples", "embodiment", "config", "model", "pi0_fast.yaml")
 
-    assert cfg.model_path == "lerobot/pi0fast-libero"
-    assert cfg.pi0_fast.revision == "840f4b503f4c09110421c33c810a85b6684fd658"
-    assert cfg.pi0_fast.text_tokenizer_name == "google/paligemma-3b-pt-224"
-    assert (
-        cfg.pi0_fast.text_tokenizer_revision
-        == "35e4f46485b4d07967e7e9935bc3786aad50687c"
-    )
-    assert cfg.pi0_fast.action_tokenizer_name == "jadechoghari/tokenizer-lib-mean"
-    assert (
-        cfg.pi0_fast.action_tokenizer_revision
-        == "79ae83e3cbd8786dcb84b628569f8d076ca8151e"
-    )
+    assert cfg.model_path == "/path/to/pi0fast-libero"
+    assert cfg.pi0_fast.text_tokenizer_name == "/path/to/paligemma-3b-pt-224"
+    assert cfg.pi0_fast.action_tokenizer_name == "/path/to/tokenizer-lib-mean"
 
 
 def test_pi0_fast_published_experiment_sizes_match_validated_runs():
@@ -135,9 +126,7 @@ def test_pi0_fast_example_configs_compose_with_model_defaults():
     for cfg in (eval_cfg, train_cfg):
         model_cfg = cfg.rollout.model if cfg.runner.only_eval else cfg.actor.model
         assert model_cfg.model_type == "pi0_fast"
-        assert model_cfg.pi0_fast.revision == (
-            "840f4b503f4c09110421c33c810a85b6684fd658"
-        )
+        assert model_cfg.model_path == "/path/to/pi0fast-libero"
         assert model_cfg.get("add_value_head") is None
 
     assert train_cfg.algorithm.adv_type == "grpo"

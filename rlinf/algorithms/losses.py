@@ -63,8 +63,7 @@ def compute_decoupled_ppo_actor_loss(
         and loss_mask is not None
     ):
         loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
-        if loss_agg_func is masked_mean:
-            loss_agg_func = masked_mean_ratio
+        loss_agg_func = masked_mean_ratio
 
     if proximal_logprobs is None:
         if versions is None or current_version is None:
@@ -235,8 +234,7 @@ def compute_ppo_actor_loss(
         and loss_mask is not None
     ):
         loss_mask_ratio = (loss_mask_sum * 1.0) / max_episode_steps
-        if loss_agg_func is masked_mean:
-            loss_agg_func = masked_mean_ratio
+        loss_agg_func = masked_mean_ratio
 
     if loss_mask is None:
         loss_mask = torch.ones_like(logprobs).bool()

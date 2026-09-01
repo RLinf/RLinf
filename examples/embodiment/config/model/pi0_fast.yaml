@@ -1,7 +1,7 @@
 model_type: "pi0_fast"
 
-# Public LIBERO checkpoint. Pin the HF revision so baseline results are reproducible.
-model_path: "lerobot/pi0fast-libero"
+# Download these artifacts as documented, then set their local paths here.
+model_path: "/path/to/pi0fast-libero"
 
 precision: "bf16"
 load_to_device: True
@@ -16,11 +16,8 @@ lora_target_scope: "all_linear"
 policy_setup: "libero"
 
 pi0_fast:
-  revision: "840f4b503f4c09110421c33c810a85b6684fd658"
-  text_tokenizer_name: "google/paligemma-3b-pt-224"
-  text_tokenizer_revision: "35e4f46485b4d07967e7e9935bc3786aad50687c"
-  action_tokenizer_name: "jadechoghari/tokenizer-lib-mean"
-  action_tokenizer_revision: "79ae83e3cbd8786dcb84b628569f8d076ca8151e"
+  text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
+  action_tokenizer_name: "/path/to/tokenizer-lib-mean"
   max_action_tokens: 256
   image_size: 224
   use_kv_cache: True

@@ -23,13 +23,6 @@ RAY_COMPAT_PROTOBUF_SPEC="protobuf>=6.33.5,<7"
 # ManiSkill and RoboTwin both run on SAPIEN, and RoboTwin's dependencies do not
 # install it.
 SAPIEN_SPEC="sapien==3.0.1; platform_system == 'Linux' and platform_machine == 'x86_64' and python_version < '3.14'"
-USER_SPECIFIED_VENV=0
-USER_SPECIFIED_TORCH=0
-PI0_FAST_VENV_DIR="${PI0_FAST_VENV_DIR:-.venv-pi0-fast}"
-PI0_FAST_PYTHON_VERSION="${PI0_FAST_PYTHON_VERSION:-3.12.12}"
-PI0_FAST_TORCH_VERSION="${PI0_FAST_TORCH_VERSION:-2.11.0}"
-PI0_FAST_TRANSFORMERS_VERSION="${PI0_FAST_TRANSFORMERS_VERSION:-5.5.4}"
-PI0_FAST_INSTALL_FLASH_ATTN="${PI0_FAST_INSTALL_FLASH_ATTN:-0}"
 # PEP 440 local-version segment (including the leading '+') that
 # apply_torch_override appends to torch/torchvision/torchaudio overrides so uv
 # is forced to fetch the platform-specific wheel instead of the bare PyPI one.
@@ -131,14 +124,11 @@ Targets:
 
 Options (for target=embodied):
     --model <name>         Embodied model to install: ${SUPPORTED_MODELS[*]}.
-                           pi0_fast defaults to Python 3.12.12, torch 2.11.0,
-                           and an isolated .venv-pi0-fast runtime.
     --env <name>           Single environment to install: ${SUPPORTED_ENVS[*]}.
 
 Common options:
     -h, --help             Show this help message and exit.
-    --venv <dir>           Virtual environment directory name (default: .venv;
-                           pi0_fast: .venv-pi0-fast).
+    --venv <dir>           Virtual environment directory name (default: .venv).
     --torch <version>      Override torch version (e.g., 2.7.0). torchvision/torchaudio are derived
                            automatically (torchvision=0.<minor+15>.<patch>, torchaudio=<torch>).
                            torchcodec is left untouched. Patches pyproject.toml in place for the
@@ -205,7 +195,6 @@ parse_args() {
                     exit 1
                 fi
                 VENV_DIR="${2:-}"
-                USER_SPECIFIED_VENV=1
                 shift 2
                 ;;
             --python)
@@ -223,7 +212,6 @@ parse_args() {
                     exit 1
                 fi
                 TORCH_VERSION="${2:-}"
-                USER_SPECIFIED_TORCH=1
                 shift 2
                 ;;
             --sglang)
@@ -335,32 +323,6 @@ parse_args() {
     if [ -z "$TARGET" ]; then
         TARGET="embodied"
     fi
-}
-
-configure_pi0_fast_runtime() {
-    if [ "$TARGET" != "embodied" ] || [ "$MODEL" != "pi0_fast" ]; then
-        return 0
-    fi
-
-    if [ "$USER_SPECIFIED_VENV" -eq 0 ]; then
-        VENV_DIR="$PI0_FAST_VENV_DIR"
-    else
-        echo "[install.sh] WARNING: pi0_fast is validated in an isolated venv; using --venv=${VENV_DIR}." >&2
-    fi
-
-    if [ "$USER_SET_PYTHON" -eq 0 ]; then
-        PYTHON_VERSION="$PI0_FAST_PYTHON_VERSION"
-    elif [[ "$PYTHON_VERSION" != 3.12.* ]]; then
-        echo "[install.sh] WARNING: pi0_fast is validated with Python ${PI0_FAST_PYTHON_VERSION}; using --python=${PYTHON_VERSION}." >&2
-    fi
-
-    if [ "$USER_SPECIFIED_TORCH" -eq 0 ]; then
-        TORCH_VERSION="$PI0_FAST_TORCH_VERSION"
-    elif [ "$TORCH_VERSION" != "$PI0_FAST_TORCH_VERSION" ]; then
-        echo "[install.sh] WARNING: pi0_fast is validated with torch ${PI0_FAST_TORCH_VERSION}; using --torch=${TORCH_VERSION}." >&2
-    fi
-
-    echo "[install.sh] pi0_fast runtime: venv=${VENV_DIR}, python=${PYTHON_VERSION}, torch=${TORCH_VERSION}, transformers=${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}"
 }
 
 validate_python_version() {
@@ -1327,29 +1289,6 @@ restore_pyproject() {
 cleanup_install() {
     restore_pyproject
     unset_mirror
-}
-
-apply_pi0_fast_dependency_overrides() {
-    if [ "$TARGET" != "embodied" ] || [ "$MODEL" != "pi0_fast" ]; then
-        return 0
-    fi
-
-    if [ ! -f "$PYPROJECT_FILE" ]; then
-        echo "Cannot locate pyproject.toml at $PYPROJECT_FILE" >&2
-        exit 1
-    fi
-
-    if [ -z "$PYPROJECT_BACKUP" ] || [ ! -f "$PYPROJECT_BACKUP" ]; then
-        PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-pi0-fast-bak.$$"
-        cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
-    fi
-    trap 'cleanup_install' EXIT INT TERM HUP
-
-    local transformers_version="${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}"
-    sed -i \
-        -e "s/\"transformers<=[^\"]*\"/\"transformers==${transformers_version}\"/" \
-        "$PYPROJECT_FILE"
-    echo "[install.sh] Patched embodied transformers for pi0_fast: transformers==${transformers_version}"
 }
 
 AGENTIC_DEFAULT_ENGINE="sglang"
@@ -2436,13 +2375,11 @@ install_pi0_fast_model() {
         maniskill_libero|libero)
             create_and_sync_venv
             install_common_embodied_deps
-            install_${ENV_NAME}_env
-            uv pip install "cmake<4"
             uv pip install -r "$SCRIPT_DIR/embodied/models/pi0_fast.txt"
-            uv pip install \
-                "transformers==${TRANSFORMERS_VERSION:-$PI0_FAST_TRANSFORMERS_VERSION}" \
-                "tokenizers>=0.22,<0.23" \
-                "huggingface-hub>=1.0,<2.0"
+            install_hf_libero_env
+            if [ "$ENV_NAME" = "maniskill_libero" ]; then
+                install_maniskill_libero_extras
+            fi
             python - <<'EOF'
 import importlib
 import sys
@@ -2466,11 +2403,7 @@ print(
     f"transformers={transformers.__version__}"
 )
 EOF
-            if [ "$PI0_FAST_INSTALL_FLASH_ATTN" = "1" ]; then
-                install_flash_attn
-            else
-                echo "[install.sh] Skipping flash-attn for pi0_fast; set PI0_FAST_INSTALL_FLASH_ATTN=1 to opt in."
-            fi
+            install_flash_attn
             uv pip uninstall pynvml || true
             ;;
         *)
@@ -3078,8 +3011,48 @@ install_libero_env() {
     reset_libero_config
 }
 
-install_maniskill_libero_env() {
-    install_libero_env
+hf_libero_assets_present() {
+    python - <<'EOF'
+import importlib
+import sys
+from pathlib import Path
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+required_dirs = ("articulated_objects", "scenes", "stable_hope_objects")
+sys.exit(0 if all((assets_dir / name).is_dir() for name in required_dirs) else 1)
+EOF
+}
+
+download_hf_libero_assets() {
+    python - <<'EOF'
+import importlib
+import os
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+snapshot_download(
+    repo_id=os.environ.get("LIBERO_ASSETS_REPO", "RLinf/LIBERO-assets"),
+    repo_type="dataset",
+    local_dir=assets_dir,
+)
+EOF
+}
+
+install_hf_libero_env() {
+    materialize_package_files hf-libero
+    if hf_libero_assets_present; then
+        echo "LIBERO assets already present; skipping download."
+    else
+        retry_cmd download_hf_libero_assets
+    fi
+    reset_libero_config
+}
+
+install_maniskill_libero_extras() {
     local maniskill_overrides=()
     if is_aarch64_platform; then
         # PyPI has no aarch64 wheels for ManiSkill's mplib==0.1.1 or for sapien.
@@ -3121,6 +3094,11 @@ EOF
     fi
 
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
+}
+
+install_maniskill_libero_env() {
+    install_libero_env
+    install_maniskill_libero_extras
 }
 
 install_d4rl_env() {
@@ -3848,14 +3826,12 @@ install_docs() {
 
 main() {
     parse_args "$@"
-    configure_pi0_fast_runtime
     validate_python_version
     apply_env_default_torch
     apply_agentic_torch_default
     configure_platform
     setup_mirror
     apply_torch_override
-    apply_pi0_fast_dependency_overrides
 
     case "$TARGET" in
         embodied)
