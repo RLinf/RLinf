@@ -1,143 +1,137 @@
 StreamingVLA Supervised Fine-Tuning
 ===================================
 
-This page describes RLinf's **training-only** StreamingVLA integration for
-LIBERO demonstrations. The model is registered as ``model_type:
-streamingvla`` and implements the Streaming Flow Policy (SFP) objective on a
-Pi0.5 backbone. The integration supports full-parameter SFT through FSDP2. It
-does not implement action generation, rollout, simulator evaluation, or
-reinforcement learning.
-
-The StreamingVLA implementation is isolated under
-``rlinf/models/embodiment/streamingvla``. It does not patch RLinf's existing
-``openpi`` or ``openpi_rlinf`` models, the installed Transformers package, or
-the shared normalization and optimizer implementations.
+StreamingVLA uses Streaming Flow Policy (SFP) to learn an action-space velocity
+field from LIBERO demonstrations. This guide prepares a public LIBERO dataset,
+computes the required normalization statistics, configures a Pi0.5 checkpoint,
+and launches full-parameter FSDP2 training in RLinf.
 
 
 Install dependencies
 --------------------
 
-From the repository root, create an environment with the StreamingVLA and
-LIBERO dependencies:
+From the RLinf repository root, create the StreamingVLA LIBERO environment:
 
 .. code:: bash
 
    bash requirements/install.sh embodied --model streamingvla --env libero
    source .venv/bin/activate
 
-Unlike the ``--model openpi`` installation, this model does not copy a
-replacement package over the installed Transformers files. Its compatible
-Gemma, SigLIP, preprocessing, and SFP code is imported from the private
-StreamingVLA namespace.
 
+Download and convert LIBERO
+---------------------------
 
-Prepare data and weights
-------------------------
-
-Convert the public LIBERO RLDS suites into a LeRobot dataset with the required
-start-of-step cumulative ``action_states`` field:
+Download the public `OpenVLA modified LIBERO RLDS dataset
+<https://huggingface.co/datasets/openvla/modified_libero_rlds>`_:
 
 .. code:: bash
+
+   hf download openvla/modified_libero_rlds \
+       --repo-type dataset \
+       --local-dir /data/libero-rlds
+
+Choose where LeRobot datasets will be stored, then convert all four LIBERO
+suites:
+
+.. code:: bash
+
+   export HF_LEROBOT_HOME=/data/lerobot
 
    python toolkits/lerobot/convert_libero_data_to_lerobot.py \
-       --data-dir /path/to/modified_libero_rlds \
-       --repo-name your_hf_username/libero_streamingvla
+       --data-dir /data/libero-rlds \
+       --repo-name local/libero_streamingvla
 
-If that exact output dataset already exists, the converter fails safely. Pass
-``--overwrite`` only when you intend to replace it.
+The converted dataset is written to
+``$HF_LEROBOT_HOME/local/libero_streamingvla``. The converter adds the
+``action_states`` field required by SFP to every episode. Keep
+``HF_LEROBOT_HOME`` set to the same value when computing statistics and
+training.
 
-The recipe expects a map-style LeRobot LIBERO dataset. Every episode sample
-must contain the real ``action_states`` array in addition to the normal image,
-wrist image, robot state, action, and task fields. The loader checks the first
-actual record and fails before training if ``action_states`` is absent; metadata
-alone is not accepted as evidence that the field exists.
 
-The local transforms map 7-dimensional LIBERO states, action states, and action
-deltas into the model's 32-dimensional action space. They also apply the
-zero-centred linear quantile formula
+Compute normalization statistics
+--------------------------------
 
-.. math::
-
-   x / (\max(|q_{0.01}|, |q_{0.99}|) + 10^{-6}).
-
-Place ``norm_stats.json`` at
-``<assets_dir>/<asset_id>/norm_stats.json``. The statistics must include the
-``state``, ``actions``, and ``action_states`` entries used by the dataset.
-Generate it with the StreamingVLA-specific tool:
+Create an asset root and compute the statistics from the converted dataset:
 
 .. code:: bash
 
+   mkdir -p /data/streamingvla/assets
+
    python toolkits/lerobot/calculate_streamingvla_norm_stats.py \
-       --repo-id /path/to/libero_lerobot_dataset \
-       --assets-dir /path/to/dataset-parent \
-       --asset-id libero_lerobot_dataset
+       --repo-id local/libero_streamingvla \
+       --assets-dir /data/streamingvla/assets \
+       --asset-id libero_streamingvla
 
-The SFP training convention intentionally copies the complete ``actions``
-statistics to ``action_states``; the two entries in ``norm_stats.json`` are
-therefore identical.
+This example uses the following names:
 
-Set ``actor.model.model_path`` to a Pi0.5 PyTorch checkpoint directory that
-contains ``model.safetensors``. Legacy OpenPI base weights and RLinf
-StreamingVLA checkpoints are loaded through a strict private loader: missing,
-unexpected, or shape-mismatched tensors stop initialization.
+- ``repo_id`` is the LeRobot dataset identifier below ``HF_LEROBOT_HOME``.
+- ``assets_dir`` is the root directory for OpenPI-style data assets.
+- ``asset_id`` is the subdirectory that identifies this dataset's assets.
+
+The command writes
+``/data/streamingvla/assets/libero_streamingvla/norm_stats.json``. The file
+contains ``state``, ``actions``, and ``action_states`` statistics. SFP uses the
+same normalization for ``actions`` and ``action_states``, so the tool copies
+the complete ``actions`` entry to ``action_states``.
 
 
-Configure the recipe
---------------------
+Prepare the Pi0.5 checkpoint
+----------------------------
 
-The checked-in files contain only portable placeholders:
+StreamingVLA fine-tuning starts from the official ``pi05_libero`` checkpoint.
+The RLinf loader expects a PyTorch checkpoint directory containing
+``model.safetensors``. In an `OpenPI
+<https://github.com/Physical-Intelligence/openpi>`_ checkout, download the
+official checkpoint and convert it:
 
-- Experiment: ``examples/sft/config/libero_sft_streamingvla.yaml``
-- Model template: ``examples/sft/config/model/streamingvla.yaml``
+.. code:: bash
 
-At minimum, replace these values in the experiment config:
+   python -c "from openpi.shared import download; download.maybe_download('gs://openpi-assets/checkpoints/pi05_libero')"
+
+   uv run examples/convert_jax_model_to_pytorch.py \
+       --checkpoint_dir "$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero" \
+       --config_name pi05_libero \
+       --output_path /data/checkpoints/pi05_libero_pytorch
+
+After conversion, verify that
+``/data/checkpoints/pi05_libero_pytorch/model.safetensors`` exists.
+
+
+Configure and launch training
+-----------------------------
+
+Edit ``examples/sft/config/libero_sft_streamingvla.yaml`` to use the paths and
+identifiers created above:
 
 .. code:: yaml
 
    data:
-     train_data_paths: /path/to/libero_lerobot_dataset
+     train_data_paths: local/libero_streamingvla
 
    actor:
      model:
-       model_path: /path/to/pi05_libero_pytorch
+       model_path: /data/checkpoints/pi05_libero_pytorch
        streamingvla:
          data:
            repo_id: ${data.train_data_paths}
            assets:
-             assets_dir: /path/to/dataset-parent
-             asset_id: libero_lerobot_dataset
+             assets_dir: /data/streamingvla/assets
+             asset_id: libero_streamingvla
 
-The public StreamingVLA contract is fixed to ``use_sfp: true``,
-``use_action_states: true``, horizon 10, action dimension 32, ``sigma: 0.16``,
-and ``noise_decay: 4.0``. The default recipe uses seed 42, global/micro batches
-16/4, a 10,000-step warmup, 100,000 optimizer steps, and checkpoints every
-5,000 steps.
+The supplied recipe uses ``use_sfp: true``, ``use_action_states: true``, action
+horizon 10, model action dimension 32, ``sigma: 0.16``, and
+``noise_decay: 4.0``. It runs 100,000 optimizer steps and saves a checkpoint
+every 5,000 steps.
 
-
-Launch training
----------------
-
-Run the existing VLA SFT helper from the repository root:
+Launch training from the RLinf repository root:
 
 .. code:: bash
 
+   source .venv/bin/activate
+   export HF_LEROBOT_HOME=/data/lerobot
    bash examples/sft/run_vla_sft.sh libero_sft_streamingvla
 
-The default logger is TensorBoard. To explicitly enable Weights & Biases, log
-in through the normal W&B environment and override only the backend and run
-name:
-
-.. code:: bash
-
-   export EMBODIED_PATH="$(pwd)/examples/sft"
-   python examples/sft/train_vla_sft.py \
-       --config-path examples/sft/config \
-       --config-name libero_sft_streamingvla \
-       'runner.logger.logger_backends=[wandb]' \
-       runner.logger.experiment_name=streamingvla_libero_sft
-
-RLinf writes checkpoints below
-``<runner.logger.log_path>/checkpoints/global_step_<N>/``. Resume only from a
-complete RLinf checkpoint directory using ``runner.resume_dir``. The
-integration intentionally raises ``NotImplementedError`` if an inference,
-rollout, or non-SFT forward path is requested.
+Training metrics are written through the logger configured in the YAML file.
+Checkpoints are stored below
+``<runner.logger.log_path>/checkpoints/global_step_<N>/``. To resume, set
+``runner.resume_dir`` to a complete ``global_step_<N>`` checkpoint directory.

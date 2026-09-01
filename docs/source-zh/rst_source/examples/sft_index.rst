@@ -22,17 +22,6 @@ VLA / WAM 模型监督微调
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
-       <a href="embodied/sft_streamingvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
-            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
-       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
-         <a href="embodied/sft_streamingvla.html" style="text-decoration: underline; color: blue;">
-           <b>StreamingVLA 监督微调</b>
-         </a><br>
-         在 LIBERO 示教数据上运行隔离的 Streaming Flow Policy 训练
-       </p>
-     </div>
-
-     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/sft_openpi_rlinf.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -40,6 +29,17 @@ VLA / WAM 模型监督微调
            <b>OpenPI 混合精度监督微调</b>
          </a><br>
          使用 OpenPI_RLinf 进行混合精度监督微调
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/sft_streamingvla.html" style="display: block;"><img src="https://raw.githubusercontent.com/gen-robot/StreamingVLA/main/assets/final_tea_01.png"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/sft_streamingvla.html" style="text-decoration: underline; color: blue;">
+           <b>StreamingVLA 监督微调</b>
+         </a><br>
+         在 LIBERO 示教数据上微调 StreamingVLA SFP 模型
        </p>
      </div>
 
