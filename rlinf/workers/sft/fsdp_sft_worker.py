@@ -82,14 +82,14 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         self._data_iter_offset = 0
 
     def init_worker(self):
-        self._set_total_training_steps_if_missing()
+        self._infer_total_training_steps()
         self.setup_model_and_optimizer()
 
         if self.cfg.actor.get("enable_offload", False):
             self.offload_param_and_grad()
             self.offload_optimizer()
 
-    def _set_total_training_steps_if_missing(self) -> None:
+    def _infer_total_training_steps(self) -> None:
         """Derive the scheduler horizon from an explicit null config value."""
         optim_cfg = self.cfg.actor.optim
         if (

@@ -244,7 +244,7 @@ def test_fastwam_recipes_use_derived_training_and_explicit_eval_horizons() -> No
     assert "FASTWAM_TEXT_EMBEDDING_CACHE_DIR" not in sft_config
     assert "FASTWAM_CHECKPOINT_DIR" not in sft_model_config
     assert "FASTWAM_ACTION_DIT_BACKBONE_PATH" not in sft_model_config
-    assert "/your_path_to/LIBERO-fastwam" in sft_config
+    assert "path/to/LIBERO-fastwam" in sft_config
     for suite, (max_episode_steps, max_epoch_steps) in eval_recipes.items():
         eval_config = (
             repo_root / f"evaluations/libero/{suite}_fastwam_eval.yaml"

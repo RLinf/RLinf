@@ -3,9 +3,9 @@ precision: bf16
 is_lora: false
 
 # Fine-tuned FastWAM checkpoint.
-model_path: /your_path_to/fastwam/libero_uncond_2cam224.pt
+model_path: path/to/fastwam/libero_uncond_2cam224.pt
 # Action and state normalization statistics.
-dataset_stats_path: /your_path_to/fastwam/libero_uncond_2cam224_dataset_stats.json
+dataset_stats_path: path/to/fastwam/libero_uncond_2cam224_dataset_stats.json
 
 # Predicted horizon and executed steps before replanning.
 action_dim: 7
