@@ -472,7 +472,7 @@ def compute_rollout_metrics(data_buffer: dict) -> dict:
     if loss_mask is not None:
         # Every metric below is taken over the mask, and filter_rewards can mask
         # out whole groups, so they can read as clean simply because little
-        # survived. Report how much did.
+        # survived. Report the share of the batch that did.
         mean_coverage, _, _ = reduce_metrics(loss_mask.float().reshape(-1))
         rollout_metrics["loss_mask_fraction"] = mean_coverage
 
