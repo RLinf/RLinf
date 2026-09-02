@@ -36,7 +36,7 @@ import torch.utils.checkpoint
 
 from . import lora
 from .lora import FeedForward as LoRAFeedForward
-from .utils import ComputeDtypeLinear, _str_to_dtype, gelu_glu
+from .utils import _str_to_dtype, gelu_glu
 
 PALIGEMMA_VOCAB_SIZE = 257_152
 
@@ -131,14 +131,18 @@ def get_config(variant: Variant) -> Config:
 class RMSNorm(nn.Module):
     """RMSNorm with optional adaptive mode (adaRMS)."""
 
-    def __init__(self, dim: int, adaptive: bool = False):
+    def __init__(
+        self,
+        dim: int,
+        adaptive: bool = False,
+    ):
         super().__init__()
         self.dim = dim
         self.adaptive = adaptive
         if not self.adaptive:
             self.scale = nn.Parameter(torch.zeros(dim))
         else:
-            self.ada_modulation = ComputeDtypeLinear(dim, dim * 3)
+            self.ada_modulation = nn.Linear(dim, dim * 3)
             nn.init.zeros_(self.ada_modulation.weight)
             nn.init.zeros_(self.ada_modulation.bias)
 
@@ -188,12 +192,6 @@ class Embedder(nn.Module):
         nn.init.normal_(self.embedding.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Must go through ``nn.Module.__call__`` so FSDP can all-gather / unflatten.
-
-        ``encode()`` used to be the public entry. Nested FSDP ``full_shard``
-        then saw a 1-D ``FlatParameter`` and ``F.embedding`` raised
-        ``'weight' must be 2-D``.
-        """
         return self.encode(x)
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
@@ -209,7 +207,10 @@ class Embedder(nn.Module):
 class Attention(nn.Module):
     """Multi-expert Grouped Query Attention with RoPE and LoRA."""
 
-    def __init__(self, configs: Sequence[Config]):
+    def __init__(
+        self,
+        configs: Sequence[Config],
+    ):
         super().__init__()
         self.expert_configs = configs
         self.num_heads = configs[0].num_heads
@@ -231,7 +232,7 @@ class Attention(nn.Module):
             if config.num_kv_heads == config.num_heads:
                 # Combined QKV projection
                 self.q_proj.append(
-                    ComputeDtypeLinear(
+                    nn.Linear(
                         config.width, 3 * config.num_heads * config.head_dim, bias=False
                     )
                 )
@@ -239,23 +240,23 @@ class Attention(nn.Module):
                 self.v_proj.append(None)
             else:
                 self.q_proj.append(
-                    ComputeDtypeLinear(
+                    nn.Linear(
                         config.width, config.num_heads * config.head_dim, bias=False
                     )
                 )
                 self.k_proj.append(
-                    ComputeDtypeLinear(
+                    nn.Linear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
                 self.v_proj.append(
-                    ComputeDtypeLinear(
+                    nn.Linear(
                         config.width, config.num_kv_heads * config.head_dim, bias=False
                     )
                 )
 
             self.o_proj.append(
-                ComputeDtypeLinear(
+                nn.Linear(
                     config.num_heads * config.head_dim, config.width, bias=False
                 )
             )
@@ -440,10 +441,16 @@ class Block(nn.Module):
 
         self.attn = Attention(configs)
         self.pre_attention_norms = nn.ModuleList(
-            [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
+            [
+                RMSNorm(c.width, adaptive=adarms[i])
+                for i, c in enumerate(configs)
+            ]
         )
         self.pre_ffw_norms = nn.ModuleList(
-            [RMSNorm(c.width, adaptive=adarms[i]) for i, c in enumerate(configs)]
+            [
+                RMSNorm(c.width, adaptive=adarms[i])
+                for i, c in enumerate(configs)
+            ]
         )
 
         # FFN: use LoRA version if lora config is present, else standard
@@ -547,13 +554,20 @@ class Module(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                Block(configs, adarms=self.adarms, dropout=dropout)
+                Block(
+                    configs,
+                    adarms=self.adarms,
+                    dropout=dropout,
+                )
                 for _ in range(configs[0].depth)
             ]
         )
 
         self.final_norms = nn.ModuleList(
-            [RMSNorm(c.width, adaptive=self.adarms[i]) for i, c in enumerate(configs)]
+            [
+                RMSNorm(c.width, adaptive=self.adarms[i])
+                for i, c in enumerate(configs)
+            ]
         )
 
         self.gradient_checkpointing = use_gradient_checkpointing

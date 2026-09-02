@@ -151,7 +151,7 @@ actor:
 
   fsdp_config:
     strategy: "fsdp"
-    sharding_strategy: "shard_grad_op"
+    sharding_strategy: "no_shard"
     # train_expert_only freezes the VLM, so the flat param group mixes frozen +
     # trainable tensors — FSDP requires use_orig_params=True to wrap that (the
     # default False rejects non-uniform requires_grad).
