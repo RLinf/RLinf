@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -854,6 +856,34 @@ def test_rocprof_sys_modify_profiling_context_prepends_command():
     assert "true" in tokens
     assert "--" in tokens
     assert tokens[-1] == sys.executable
+
+
+def test_modify_profile_context_warns_on_the_cluster_logger():
+    """A missing output_dir falls back to a temp dir and says so on RLinf's logger."""
+    cfg = RocprofSysConfig(worker_groups=["actor"], output_dir=None)
+    records = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    # Attach directly: Cluster._setup_logger disables propagation, so caplog
+    # would miss the record once a Cluster has been constructed in this process.
+    logger = logging.getLogger(Cluster.SYS_NAME)
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        result = Cluster.modify_profile_context(
+            python_interpreter_path=sys.executable,
+            worker_name="actor:0",
+            profiling_cfg=cfg,
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    assert [r.levelno for r in records] == [logging.WARNING]
+    assert tempfile.gettempdir() in records[0].getMessage()
+    assert shlex.split(result)[0] == "rocprof-sys-python"
 
 
 def test_rocprof_sys_get_profiling_env_vars_derives_output_path():
