@@ -37,12 +37,12 @@ runner:
 data:
   # Four LIBERO training suites in LeRobot format.
   train_data_paths:
-    - path/to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
-    - path/to/LIBERO-fastwam/libero_object_no_noops_lerobot
-    - path/to/LIBERO-fastwam/libero_goal_no_noops_lerobot
-    - path/to/LIBERO-fastwam/libero_10_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_spatial_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_object_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_goal_no_noops_lerobot
+    - /path/to/LIBERO-fastwam/libero_10_no_noops_lerobot
   # Precomputed T5 embeddings shared by all suites.
-  text_embedding_cache_dir: path/to/text_embeds_cache/libero
+  text_embedding_cache_dir: /path/to/text_embeds_cache/libero
   num_workers: 8
 
 actor:
