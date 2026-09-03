@@ -39,9 +39,19 @@ def pinned_offload_context():
         dtype = None
 
         if args:
-            device = args[0]
-            if len(args) >= 2 and isinstance(args[1], (torch.dtype, type(None))):
-                dtype = args[1]
+            first = args[0]
+            # Only interpret the first positional arg as a device when it is
+            # actually a device-like value. ``Tensor.to`` also accepts a
+            # ``torch.dtype`` (form: ``to(dtype)``) or another ``Tensor``
+            # (form: ``to(other, ...)``) as the first argument; passing those
+            # to ``torch.device(...)`` would raise, so fall through to the
+            # original implementation in those cases.
+            if isinstance(first, (str, torch.device, int)):
+                device = first
+                if len(args) >= 2 and isinstance(args[1], (torch.dtype, type(None))):
+                    dtype = args[1]
+            elif isinstance(first, torch.dtype):
+                dtype = first
         if device is None:
             device = kwargs.get("device")
         if dtype is None:
