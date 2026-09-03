@@ -5,9 +5,9 @@ Real-World RL (Archived)
 
    **This page is archived.** It describes the legacy workflow that required a
    real-time kernel and split the control and training nodes across multiple
-   machines. Newer Franka firmware and libfranka versions no longer require a
-   real-time kernel, and the compute and control nodes can run on the same GPU
-   host. Please use :doc:`franka_single_machine` instead.
+   machines. For the current single-host workflow, including the explicit
+   configuration required to run without a real-time kernel, use
+   :doc:`franka_single_machine`.
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

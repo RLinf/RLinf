@@ -54,7 +54,7 @@ single-arm Franka setup.
       :link: franka_single_machine
       :link-type: doc
 
-      Run real-world RL on a single GPU host (no real-time kernel required).
+      Run real-world RL on one GPU host with explicit real-time configuration.
 
    .. grid-item-card:: Real-World RL (Archived)
       :link: franka

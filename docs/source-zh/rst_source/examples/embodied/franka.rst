@@ -4,8 +4,7 @@ Real-World RL (已归档)
 .. warning::
 
    **本页已归档。** 此页描述早期需要实时内核、并把控制节点与训练节点拆分到多台机器上的流程。
-   较新的 Franka 固件与 libfranka 版本不再依赖实时内核，可将计算与控制节点安装在同一台带 GPU 的主机上。
-   请改用 :doc:`franka_single_machine`。
+   当前的单主机流程以及非实时内核所需的显式配置，请参考 :doc:`franka_single_machine`。
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

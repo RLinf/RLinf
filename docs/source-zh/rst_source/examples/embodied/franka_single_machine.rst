@@ -1,5 +1,5 @@
-Single-Machine Franka
-=====================
+Franka 真机强化学习
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,14 +12,15 @@ Single-Machine Franka
 
    在一台带有 GPU 的主机上运行 Franka 真机强化学习流程。
 
-较新的 Franka 固件与 libfranka 版本不再依赖实时内核（Real-time Kernel），
-因此你可以将计算节点（训练 / rollout）与控制节点（Franka 控制） **安装在同一台有显卡的主机上**。
-本页指导你在单台主机上通过两个独立的 RLinf 环境完成真机 SAC / RLPD / PPO 训练。
+你可以在一台带 GPU 的主机上同时运行计算节点（训练 / rollout）和控制节点（Franka 控制），
+完成真机 SAC / RLPD / PPO 训练。该流程使用两个独立的 RLinf 环境，已在标准 Ubuntu 20.04、
+Franka System Image 5.9.2 和 libfranka 0.19.0 的组合上验证。如果没有实时内核，
+必须按照下文显式关闭 libfranka 的实时检查；仅安装较新的固件和 libfranka 并不会自动关闭该检查。
 
 .. note::
 
-   旧的部署流程要求实时内核，并把控制节点与训练节点拆分到两台机器上。
-   该流程现已被本页（单机方案）取代，旧文档已归档为 :doc:`franka`。
+   当前的单主机流程请使用本页。如果你使用较旧的 firmware/libfranka 组合，
+   或者希望使用独立的实时控制主机，请参考已归档的多机流程 :doc:`franka`。
 
 .. note::
 
@@ -176,7 +177,46 @@ B. 安装控制环境（RLinf-franka）
   bash requirements/install.sh embodied --env franka
   source .venv/bin/activate
 
-C. 安装计算环境（RLinf-compute）
+C. 配置实时行为
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+libfranka 默认强制检查实时调度能力。安装 System Image 5.9.0+ 和 libfranka 0.18.0+
+并不会让标准 Linux 内核自动通过该检查。如果主机没有使用 PREEMPT_RT 内核，
+必须显式配置控制后端忽略实时检查。
+
+对于本流程使用的 ``franka_ros`` 后端，请修改安装后的配置文件：
+
+.. code-block:: yaml
+
+   # .venv/franka_catkin_ws/src/franka_ros/franka_control/config/franka_control_node.yaml
+   realtime_config: ignore  # 默认值：enforce
+
+对于 ``franky`` 后端，请在创建机器人时传入 ``RealtimeConfig.Ignore``：
+
+.. code-block:: python
+
+   import franky
+
+   robot = franky.Robot(
+       "172.16.0.2",
+       relative_dynamics_factor=0.2,
+       realtime_config=franky.RealtimeConfig.Ignore,
+   )
+
+.. note::
+
+   RLinf 当前的 ``FrankyController`` 使用默认的 ``RealtimeConfig.Enforce``
+   创建 ``franky.Robot``。因此，该后端在非实时内核上运行时仍需相应修改构造调用，
+   目前还不能通过 RLinf YAML 选项启用。
+
+.. warning::
+
+   ``ignore`` 只会关闭 libfranka 启动时的实时检查，并不会让标准内核获得实时能力。
+   训练可能使主机处于高负载状态，操作系统调度延迟可能导致错过控制周期或发生通信错误。
+   为了获得可靠的控制，请尽可能安装并使用 PREEMPT_RT 内核，并参考 Franka 官方的
+   `实时内核指南 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_。
+
+D. 安装计算环境（RLinf-compute）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 `RLinf-compute` 目录下安装 RLinf 框架与训练所需依赖（对应训练所用的模型与仿真环境）：

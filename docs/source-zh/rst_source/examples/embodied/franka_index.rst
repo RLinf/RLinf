@@ -53,7 +53,7 @@ Single-Arm Franka
       :link: franka_single_machine
       :link-type: doc
 
-      在一台带 GPU 的主机上运行真机强化学习（无需实时内核）。
+      在一台带 GPU 的主机上通过显式实时配置运行真机强化学习。
 
    .. grid-item-card:: Real-World RL (Archived)
       :link: franka

@@ -1,5 +1,5 @@
-Single-Machine Franka
-=====================
+Real-World RL with Franka
+=========================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -12,17 +12,18 @@ Single-Machine Franka
 
    Run the Franka real-world RL workflow on a single machine with a GPU.
 
-Newer Franka firmware and libfranka versions no longer require a Real-Time
-kernel, so you can install the compute node (training / rollout) and the control
-node (Franka control) **on the same host with a GPU**.
-This page guides you through real-world SAC / RLPD / PPO training on a single
-host using two independent RLinf environments.
+Run real-world SAC / RLPD / PPO training with the compute node (training /
+rollout) and control node (Franka control) on one GPU host. This workflow uses
+two independent RLinf environments and has been validated on standard Ubuntu
+20.04 with Franka System Image 5.9.2 and libfranka 0.19.0. On a non-real-time
+kernel, you must explicitly disable libfranka's real-time check as described
+below; installing newer firmware and libfranka alone does not disable it.
 
 .. note::
 
-   The legacy setup required a real-time kernel and split the control and
-   training nodes across two machines. That workflow is superseded by this page
-   (single-machine), and its old document is archived at :doc:`franka`.
+   Use this page for the current single-host workflow. If you use an older
+   firmware/libfranka combination or want a dedicated real-time control host,
+   follow the archived multi-machine workflow at :doc:`franka`.
 
 .. note::
 
@@ -183,7 +184,52 @@ Set the libfranka and franka_ros versions according to your firmware version
    bash requirements/install.sh embodied --env franka
    source .venv/bin/activate
 
-C. Install the Compute Environment (RLinf-compute)
+C. Configure Real-Time Behavior
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+libfranka enforces real-time scheduling by default. Installing System Image
+5.9.0+ and libfranka 0.18.0+ does **not** automatically allow control from a
+standard Linux kernel. If the host does not use a PREEMPT_RT kernel, explicitly
+set the backend to ignore the real-time check.
+
+For the ``franka_ros`` backend used by this workflow, edit the installed
+configuration:
+
+.. code-block:: yaml
+
+   # .venv/franka_catkin_ws/src/franka_ros/franka_control/config/franka_control_node.yaml
+   realtime_config: ignore  # Default: enforce
+
+For the ``franky`` backend, pass ``RealtimeConfig.Ignore`` when constructing
+the robot:
+
+.. code-block:: python
+
+   import franky
+
+   robot = franky.Robot(
+       "172.16.0.2",
+       relative_dynamics_factor=0.2,
+       realtime_config=franky.RealtimeConfig.Ignore,
+   )
+
+.. note::
+
+   RLinf's current ``FrankyController`` constructs ``franky.Robot`` with its
+   default ``RealtimeConfig.Enforce`` setting. Using that backend without a
+   real-time kernel therefore requires the corresponding constructor change;
+   it cannot be enabled through an RLinf YAML option yet.
+
+.. warning::
+
+   ``ignore`` disables libfranka's real-time startup check; it does not make a
+   standard kernel real-time. Training can heavily load the host, and delayed
+   OS scheduling can cause missed control deadlines or communication errors.
+   Install and use a PREEMPT_RT kernel for reliable control whenever possible,
+   and follow the official `real-time kernel guide
+   <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_.
+
+D. Install the Compute Environment (RLinf-compute)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Install the RLinf framework and the training dependencies in the **`RLinf-compute`** directory
