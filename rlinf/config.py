@@ -517,8 +517,8 @@ def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
             "sharding_strategy", "full_shard"
         )
         # Ranks per shard group when sharding_strategy is "hybrid_shard"; <= 0
-        # means one shard group per node. The world size is only known once the
-        # actor group is placed, so the shape itself is validated in
+        # means unset. The world size is only known once the actor group is
+        # placed, so the shape itself is validated in
         # rlinf.hybrid_engines.fsdp.utils.resolve_fsdp_mesh.
         cfg.fsdp_config.hybrid_shard_size = cfg.fsdp_config.get("hybrid_shard_size", -1)
 

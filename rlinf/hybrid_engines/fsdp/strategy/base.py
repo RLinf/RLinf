@@ -34,6 +34,7 @@ from torch.optim.lr_scheduler import LRScheduler
 from rlinf.hybrid_engines.fsdp import FSDP, FSDPModule
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import Checkpoint
 from rlinf.hybrid_engines.fsdp.utils import (
+    HYBRID_SHARDING_STRATEGY,
     FSDPVersion,
 )
 from rlinf.scheduler import Worker
@@ -426,6 +427,7 @@ class FSDPStrategyBase(ABC):
         Args:
             - inference (FSDPInference): The FSDP inference worker.
         """
+        self._assert_single_shard_group()
         # param name -> (global_start, needed_size)
         local_meta: list[str, tuple[int, int]] = {}
         inference_model_state_dict = inference.get_model_state_dict(
@@ -468,6 +470,30 @@ class FSDPStrategyBase(ABC):
             if resp:
                 inference._actor_dst_map[actor_rank] = resp
 
+    def _assert_single_shard_group(self) -> None:
+        """
+        Reject sharding layouts the actor<->inference handshake cannot describe.
+
+        The metadata exchanged by ``setup_actor_sync_inference_ranks`` and
+        ``setup_inference_sync_actor_ranks`` describes a rank's shard as
+        ``rank * ceil(numel / world_size)``, which only holds when a parameter is
+        sharded once across the whole world. Under ``hybrid_shard`` a rank holds
+        shard ``rank % hybrid_shard_size`` and the shards repeat along the
+        replicate dim, so the advertised offsets would not match the data a rank
+        actually owns and weights would be synchronized from the wrong region.
+
+        Raises:
+            NotImplementedError: If the model is wrapped with ``hybrid_shard``.
+        """
+        sharding_strategy = self.cfg.fsdp_config.get("sharding_strategy", "full_shard")
+        if sharding_strategy == HYBRID_SHARDING_STRATEGY:
+            raise NotImplementedError(
+                "fsdp_config.sharding_strategy='hybrid_shard' is not supported for "
+                "actor-to-inference weight synchronization, whose sharding "
+                "metadata assumes one shard group spanning the whole world. Use "
+                "'full_shard' for runs that sync weights to an inference group."
+            )
+
     def setup_actor_sync_inference_ranks(self, actor: "FSDPActor") -> None:
         """
         Setup the mapping from actor ranks to inference ranks for synchronizing
@@ -481,6 +507,7 @@ class FSDPStrategyBase(ABC):
         Args:
             - actor (FSDPActor): The FSDP actor worker.
         """
+        self._assert_single_shard_group()
         inference_group = actor._inference_group_name
         jobs = [
             actor.recv(

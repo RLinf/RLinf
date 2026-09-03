@@ -28,7 +28,6 @@
 
 import functools
 import math
-import os
 import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
@@ -70,7 +69,6 @@ def resolve_fsdp_mesh(
     world_size: int,
     sharding_strategy: str = "full_shard",
     hybrid_shard_size: int = -1,
-    local_world_size: Optional[int] = None,
 ) -> tuple[tuple[int, ...], tuple[str, ...]]:
     """
     Resolve the shape and dim names of the FSDP device mesh.
@@ -83,30 +81,36 @@ def resolve_fsdp_mesh(
     reads a 2-D mesh as ``HSDPMeshInfo(shard_mesh_dim=1, replicate_mesh_dim=0)``.
     The dim order below therefore gives both backends the same HSDP layout.
 
+    ``hybrid_shard_size`` has to be configured rather than derived from the
+    node-local rank count: ``init_device_mesh`` is collective and hangs when the
+    shape disagrees between ranks, and a node-local count is not guaranteed to
+    agree (an uneven placement gives different counts per node, and FSDP worker
+    groups launch with ``isolate_gpu=True``, which pins ``LOCAL_WORLD_SIZE`` to
+    1). A configured value is identical on every rank by construction.
+
     Args:
         world_size (int): Total number of ranks in the FSDP group.
         sharding_strategy (str): The configured ``fsdp_config.sharding_strategy``.
         hybrid_shard_size (int): Ranks per shard group for ``hybrid_shard``.
-            Values <= 0 mean "shard within a node", i.e. use ``local_world_size``.
-        local_world_size (Optional[int]): Number of ranks on this node. Only read
-            when ``hybrid_shard_size`` is not set explicitly.
 
     Returns:
         tuple[tuple[int, ...], tuple[str, ...]]: The mesh shape and its dim names.
+
+    Raises:
+        ValueError: If ``hybrid_shard`` is requested with a shard group size that
+            is unset, does not divide ``world_size``, or leaves a shard or
+            replicate degree below 2.
     """
     if sharding_strategy != HYBRID_SHARDING_STRATEGY:
         return (world_size,), ("fsdp",)
 
     shard_size = hybrid_shard_size
     if shard_size is None or shard_size <= 0:
-        if not local_world_size or local_world_size <= 0:
-            raise ValueError(
-                "fsdp_config.sharding_strategy='hybrid_shard' needs a shard group "
-                "size, but LOCAL_WORLD_SIZE is not set, so it cannot default to "
-                "one shard group per node. Set fsdp_config.hybrid_shard_size to "
-                "the number of ranks that should shard together."
-            )
-        shard_size = local_world_size
+        raise ValueError(
+            "fsdp_config.sharding_strategy='hybrid_shard' requires "
+            "fsdp_config.hybrid_shard_size to be set to the number of ranks that "
+            "shard together, usually the number of accelerators on one node."
+        )
 
     if world_size % shard_size != 0:
         raise ValueError(
@@ -149,7 +153,6 @@ def create_device_mesh(
         world_size,
         sharding_strategy=sharding_strategy,
         hybrid_shard_size=hybrid_shard_size,
-        local_world_size=int(os.environ.get("LOCAL_WORLD_SIZE", 0) or 0),
     )
     return init_device_mesh(
         Worker.torch_device_type,

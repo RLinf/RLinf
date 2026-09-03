@@ -12,9 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
+from types import SimpleNamespace
 
+import pytest
+from omegaconf import OmegaConf
+
+from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import resolve_fsdp_mesh
+
+
+def _strategy_with(sharding_strategy):
+    return SimpleNamespace(
+        cfg=OmegaConf.create({"fsdp_config": {"sharding_strategy": sharding_strategy}})
+    )
 
 
 @pytest.mark.parametrize(
@@ -40,21 +50,22 @@ def test_hybrid_shard_replicates_on_dim0_and_shards_on_dim1():
     assert dict(zip(mesh_dim_names, mesh_shape)) == {"ddp": 2, "fsdp": 8}
 
 
-def test_hybrid_shard_defaults_to_one_shard_group_per_node():
+def test_hybrid_shard_size_sets_the_shard_degree():
     assert resolve_fsdp_mesh(
-        16, sharding_strategy="hybrid_shard", local_world_size=8
-    ) == ((2, 8), ("ddp", "fsdp"))
-
-
-def test_hybrid_shard_size_overrides_the_node_local_default():
-    assert resolve_fsdp_mesh(
-        16, sharding_strategy="hybrid_shard", hybrid_shard_size=4, local_world_size=8
+        16, sharding_strategy="hybrid_shard", hybrid_shard_size=4
     ) == ((4, 4), ("ddp", "fsdp"))
 
 
-def test_hybrid_shard_without_a_size_or_local_world_size_is_rejected():
-    with pytest.raises(ValueError, match="LOCAL_WORLD_SIZE"):
-        resolve_fsdp_mesh(16, sharding_strategy="hybrid_shard", local_world_size=0)
+@pytest.mark.parametrize("hybrid_shard_size", [-1, 0, None])
+def test_hybrid_shard_without_a_configured_size_is_rejected(hybrid_shard_size):
+    # Deriving the shard degree per rank (e.g. from LOCAL_WORLD_SIZE) would let
+    # ranks disagree on the mesh shape, and init_device_mesh is collective.
+    with pytest.raises(ValueError, match="requires"):
+        resolve_fsdp_mesh(
+            16,
+            sharding_strategy="hybrid_shard",
+            hybrid_shard_size=hybrid_shard_size,
+        )
 
 
 def test_hybrid_shard_size_that_does_not_divide_the_world_is_rejected():
@@ -80,3 +91,18 @@ def test_hybrid_shard_degenerating_to_a_single_group_is_rejected(
             sharding_strategy="hybrid_shard",
             hybrid_shard_size=hybrid_shard_size,
         )
+
+
+@pytest.mark.parametrize(
+    "sharding_strategy", ["full_shard", "shard_grad_op", "no_shard"]
+)
+def test_weight_sync_accepts_single_shard_group_strategies(sharding_strategy):
+    FSDPStrategyBase._assert_single_shard_group(_strategy_with(sharding_strategy))
+
+
+def test_weight_sync_rejects_hybrid_shard():
+    # The actor<->inference handshake advertises each rank's shard as
+    # rank * ceil(numel / world_size), which is wrong once shards repeat along
+    # the replicate dim, so it must fail loudly instead of syncing wrong bytes.
+    with pytest.raises(NotImplementedError, match="hybrid_shard"):
+        FSDPStrategyBase._assert_single_shard_group(_strategy_with("hybrid_shard"))
