@@ -116,8 +116,9 @@ ApxInf 接入仅用于评测。先在 RLinf 运行环境中安装官方
 
 该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维
 state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。
-resize、tokenize、checkpoint 归一化、模型推理及 action 反归一化均由 ApxInf
-负责。做成对数值对齐时，可设置
+resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI
+transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认
+负责初始高斯 noise 采样。做成对数值对齐时，可设置
 ``rollout.model.apxinf.noise_source=observation``，并传入显式的
 ``[B,10,32]`` noise tensor。
 默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测

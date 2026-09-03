@@ -83,6 +83,3 @@ rollout:
       # ApxInf owns initial Gaussian sampling. For paired parity tests set this
       # to "observation" and provide an explicit [B,10,32] noise tensor.
       noise_source: "apxinf"
-      discrete_state: false
-      norm_key: "actions"
-      num_views: 2

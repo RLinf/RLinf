@@ -70,7 +70,7 @@ class ApxInfRolloutWorker(Worker):
         )
         self.log_info(
             "ApxInf policy loaded: "
-            f"device={device}, metadata={dict(self.apxinf_adapter.policy.metadata)}"
+            f"device={device}, metadata={dict(self.apxinf_adapter.metadata)}"
         )
 
     @staticmethod

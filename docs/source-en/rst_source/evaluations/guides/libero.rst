@@ -117,10 +117,12 @@ checkpoint directory containing ``config.json``, ``model.safetensors``,
 
 This config keeps the native OpenPI contract: two already-oriented LIBERO
 images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
-prediction horizon, and execution of only the first 5 actions. ApxInf owns
-resize, tokenization, checkpoint normalization, inference, and action
-unnormalization. Set ``rollout.model.apxinf.noise_source=observation`` and pass
-an explicit ``[B,10,32]`` noise tensor when doing paired numerical parity tests.
+prediction horizon, and execution of only the first 5 actions. RLinf's OpenPI
+transforms own resize, tokenization, checkpoint normalization and action
+unnormalization. ApxInf's low-level ``Model.infer_rgb`` API owns only model
+inference and, by default, initial Gaussian noise sampling. Set
+``rollout.model.apxinf.noise_source=observation`` and pass an explicit
+``[B,10,32]`` noise tensor when doing paired numerical parity tests.
 The default 10 environments x 10 rollout epochs evaluate 10 reset states for
 each LIBERO-10 task (100 trajectories total).
 
