@@ -2217,6 +2217,7 @@ install_paddle_gpu() {
     # major version is >= 12, otherwise fall back to the CUDA-11 index, and
     # finally to the CPU package if no CUDA is detected.
     local paddle_ver="2.6.2"
+    local paddle_ver_cuda12="2.6.2.post120"
     local paddle_gpu_index_cuda12="https://www.paddlepaddle.org.cn/whl/linux/cuda12.0/paddlepaddle_gpu.html"
     local paddle_gpu_index_cuda11="https://www.paddlepaddle.org.cn/whl/linux/mkl/avx/mkl/avx_x86_64_gpu_cudnn_cudnn8_avx_mkl_paddlepaddle_gpu.html"
 
@@ -2234,8 +2235,8 @@ install_paddle_gpu() {
     uv pip uninstall paddlepaddle paddlepaddle-gpu 2>/dev/null || true
 
     if [ -n "$cuda_major" ] && [ "$cuda_major" -ge 12 ]; then
-        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver} for CUDA ${cuda_major}.x"
-        if pip install "paddlepaddle-gpu==${paddle_ver}" \
+        echo "[install.sh] Installing paddlepaddle-gpu==${paddle_ver_cuda12} for CUDA ${cuda_major}.x"
+        if pip install "paddlepaddle-gpu==${paddle_ver_cuda12}" \
                -f "${paddle_gpu_index_cuda12}" 2>&1; then
             return 0
         fi
