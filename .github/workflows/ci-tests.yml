@@ -122,6 +122,7 @@ jobs:
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/ma_fsdp_actor_worker.py'
               - 'rlinf/workers/critic/**'
               - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'
