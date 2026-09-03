@@ -269,11 +269,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
 
-        self.metric_logger.finish()
-
-        self.stop_logging = True
-        self.log_queue.join()
-        self.log_thread.join(timeout=1.0)
+        self._finish_run()
 
         self.env.stop().wait()
         self.rollout.stop().wait()

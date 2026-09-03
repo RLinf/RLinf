@@ -14,8 +14,6 @@
 
 import logging
 import os
-import queue
-import threading
 import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Union
@@ -29,7 +27,7 @@ from rlinf.utils.distributed import ScopedTimer
 from rlinf.utils.logging import get_logger
 from rlinf.utils.metric_logger import MetricLogger
 from rlinf.utils.metric_utils import compute_evaluate_metrics, print_metrics_table
-from rlinf.utils.runner_utils import check_progress
+from rlinf.utils.runner_utils import AsyncMetricTableLogger, check_progress
 from rlinf.utils.timers import Timer
 
 logger = logging.getLogger(__name__)
@@ -118,25 +116,7 @@ class EmbodiedRunner:
             self.cfg.runner.get("per_worker_log", False)
         )
 
-        # Async logging setup
-        self.stop_logging = False
-        self.log_queue = queue.Queue()
-        self.log_thread = threading.Thread(target=self._log_worker, daemon=True)
-        self.log_thread.start()
-
-    def _log_worker(self):
-        """Background thread for processing log messages."""
-        while not self.stop_logging:
-            try:
-                # Wait for log message with timeout
-                log_func, args = self.log_queue.get(timeout=0.1)
-                log_func(*args)
-                self.log_queue.task_done()
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"Logging error: {e}")
-                continue
+        self.metric_table_logger = AsyncMetricTableLogger(self.logger)
 
     def print_metrics_table_async(
         self,
@@ -147,18 +127,14 @@ class EmbodiedRunner:
         start_step: int = 0,
     ):
         """Async version that puts table printing in queue."""
-        self.log_queue.put(
-            (
-                print_metrics_table,
-                (
-                    step,
-                    total_steps,
-                    start_time,
-                    metrics,
-                    start_step,
-                    self.metric_logger.log_path,
-                ),
-            )
+        self.metric_table_logger.submit(
+            print_metrics_table,
+            step,
+            total_steps,
+            start_time,
+            metrics,
+            start_step,
+            self.metric_logger.log_path,
         )
 
     def init_workers(self):
@@ -450,12 +426,11 @@ class EmbodiedRunner:
         )
 
     def _finish_run(self) -> None:
-        self.metric_logger.finish()
-
-        # Stop logging thread
-        self.stop_logging = True
-        self.log_queue.join()  # Wait for all queued logs to be processed
-        self.log_thread.join(timeout=1.0)
+        """Flush the pending metric tables before closing the metric backends."""
+        try:
+            self.metric_table_logger.shutdown()
+        finally:
+            self.metric_logger.finish()
 
     def _should_profile_step(self, step_idx: int) -> bool:
         return self._profile_all_steps or (
