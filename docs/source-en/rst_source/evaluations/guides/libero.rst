@@ -63,6 +63,9 @@ Available under ``evaluations/libero/``:
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅
+   * - ``libero_10_apxinf_pi05_eval.yaml``
+     - Long (libero_10)
+     - π₀.₅ (ApxInf backend)
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
@@ -97,6 +100,29 @@ Copy or edit the target YAML and set at least ``rollout.model.model_path``. See 
 **Step 4: Check results**
 
 The terminal prints ``eval/success_once``; see :doc:`../reference/results` for logs.
+
+ApxInf Backend
+--------------
+
+The ApxInf path is evaluation-only. Install the official
+`ApxInf <https://github.com/infinigence/ApxInf>`_ Python frontend and CUDA
+binding in the RLinf runtime, then point ``APXINF_PI05_MODEL_DIR`` at a
+checkpoint directory containing ``config.json``, ``model.safetensors``,
+``tokenizer.model``, and ``norm_stats.json``:
+
+.. code-block:: bash
+
+   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+This config keeps the native OpenPI contract: two already-oriented LIBERO
+images, an 8-D state, a state-free PI0.5 prompt, 5 flow steps, a 10-action
+prediction horizon, and execution of only the first 5 actions. ApxInf owns
+resize, tokenization, checkpoint normalization, inference, and action
+unnormalization. Set ``rollout.model.apxinf.noise_source=observation`` and pass
+an explicit ``[B,10,32]`` noise tensor when doing paired numerical parity tests.
+The default 10 environments x 10 rollout epochs evaluate 10 reset states for
+each LIBERO-10 task (100 trajectories total).
 
 .. _libero-eval-config:
 
