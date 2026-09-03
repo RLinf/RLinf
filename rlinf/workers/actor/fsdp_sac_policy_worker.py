@@ -47,6 +47,14 @@ from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
+def _openpi_is_dsrl(cfg: DictConfig) -> bool:
+    """True when YAML selects DSRL via ``openpi.task=dsrl`` or the legacy flag."""
+    openpi_cfg = cfg.actor.model.get("openpi", {}) or {}
+    if bool(openpi_cfg.get("use_dsrl", False)):
+        return True
+    return str(openpi_cfg.get("task", "")).lower() == "dsrl"
+
+
 class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
     def __init__(self, cfg: DictConfig):
         super().__init__(cfg)
@@ -109,7 +117,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             self.target_model.requires_grad_(False)
             self.target_model_initialized = True
 
-        self.use_dsrl = self.cfg.actor.model.get("openpi", {}).get("use_dsrl", False)
+        self.use_dsrl = _openpi_is_dsrl(self.cfg)
         use_dsrl = self.use_dsrl
         if use_dsrl:
             # DSRL: separate actor/critic encoders into different optimizer groups
@@ -348,7 +356,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
         agg_q = self.cfg.algorithm.get("agg_q", "min")
-        use_dsrl = self.cfg.actor.model.get("openpi", {}).get("use_dsrl", False)
+        use_dsrl = _openpi_is_dsrl(self.cfg)
         if use_dsrl:
             num_action_chunks = self.cfg.actor.model.get("num_action_chunks", 1)
             discount = self.cfg.algorithm.gamma**num_action_chunks

@@ -451,8 +451,9 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def forward_actor(self, batch):
         """Run one supervised forward pass for DAgger."""
         data = self._prepare_sft_batch(batch)
-        use_action_chunk_loss = (
-            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI
+        use_action_chunk_loss = SupportedModel(self.cfg.actor.model.model_type) in (
+            SupportedModel.OPENPI,
+            SupportedModel.OPENPI_RLINF,
         )
         return self.model(
             forward_type=ForwardType.SFT,

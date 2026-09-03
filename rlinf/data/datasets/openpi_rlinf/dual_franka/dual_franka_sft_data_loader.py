@@ -41,8 +41,8 @@ from rlinf.data.datasets.openpi_rlinf.dual_franka.dual_franka_sft_dataset import
     DualFrankaSftDataset,
 )
 from rlinf.data.storage.lerobot import resolve_lerobot_repo_id
-from rlinf.models.embodiment.openpi_rlinf.pi0_model.model import Observation
-from rlinf.models.embodiment.openpi_rlinf.transforms_pipeline import (
+from rlinf.models.embodiment.openpi_rlinf.modules.model import Observation
+from rlinf.models.embodiment.openpi_rlinf.transforms.pipeline import (
     build_openpi_transforms,
 )
 from rlinf.utils.logging import get_logger

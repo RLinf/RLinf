@@ -904,11 +904,51 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_only_eval_rollout_model(model_cfg) -> None:
+    """Fail fast when ``runner.only_eval`` uses a stub ``rollout.model``.
+
+    Eval YAMLs must put a full policy spec under ``rollout.model``.
+    """
+    missing: list[str] = []
+    if OmegaConf.select(model_cfg, "model_type", default=None) in (None, ""):
+        missing.append("rollout.model.model_type")
+    if OmegaConf.select(model_cfg, "num_action_chunks", default=None) is None:
+        missing.append("rollout.model.num_action_chunks")
+
+    model_type = str(OmegaConf.select(model_cfg, "model_type", default="") or "")
+    if model_type in (
+        SupportedModel.OPENPI.value,
+        SupportedModel.OPENPI_RLINF.value,
+    ):
+        if not OmegaConf.select(model_cfg, "openpi.config_name", default=None):
+            missing.append("rollout.model.openpi.config_name")
+        # ``task`` selects Pi0Eval / Pi0RL / … only in openpi_rlinf.
+        # Official OpenPI get_model ignores it and must not require it.
+        if model_type == SupportedModel.OPENPI_RLINF.value and OmegaConf.select(
+            model_cfg, "openpi.task", default=None
+        ) in (None, ""):
+            missing.append("rollout.model.openpi.task")
+        has_num_steps = (
+            OmegaConf.select(model_cfg, "num_steps", default=None) is not None
+            or OmegaConf.select(model_cfg, "openpi.num_steps", default=None) is not None
+        )
+        if not has_num_steps:
+            missing.append("rollout.model.num_steps")
+
+    if missing:
+        raise ValueError(
+            "runner.only_eval=True requires a complete rollout.model "
+            "(path/precision alone is not enough). Missing: " + ", ".join(missing)
+        )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
         or cfg.runner.get("task_type") == "embodied_eval"
     )
+    if only_eval:
+        validate_only_eval_rollout_model(cfg.rollout.model)
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)

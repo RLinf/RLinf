@@ -176,7 +176,10 @@ Important Stage 1 fields:
          task: sft
          config_name: "pi05_franka_state"
          num_images_in_input: 1
-         action_horizon: ${actor.model.num_action_chunks}
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.num_action_chunks}
          action_env_dim: ${actor.model.action_dim}
          num_steps: ${actor.model.num_steps}
@@ -293,8 +296,11 @@ Important Stage 2 fields:
          task: eval
          config_name: "pi05_franka_state"
          num_images_in_input: 1
+         # Network prediction horizon (Pi0Config.action_horizon). Matches official
+         # TrainConfig for config_name pi05_franka_state. Distinct from action_chunk
+         # / num_action_chunks, which is the env-executed (RLT) window.
+         action_horizon: 20
          action_chunk: ${actor.model.ref_num_action_chunks}
-         action_horizon: ${rollout.rlt_feature_model.num_action_chunks}
          action_env_dim: ${rollout.rlt_feature_model.action_dim}
          num_steps: ${rollout.rlt_feature_model.num_steps}
          model_action_dim: 32

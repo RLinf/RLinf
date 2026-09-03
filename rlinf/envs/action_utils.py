@@ -19,6 +19,16 @@ from rlinf.config import SupportedModel
 from rlinf.envs import SupportedEnvType
 
 
+def _is_openpi_family(model_type) -> bool:
+    """True for both the legacy OpenPI wrapper and the JAX-aligned rlinf port."""
+    if model_type is None:
+        return False
+    return SupportedModel(model_type) in (
+        SupportedModel.OPENPI,
+        SupportedModel.OPENPI_RLINF,
+    )
+
+
 def prepare_actions_for_maniskill(
     raw_chunk_actions,
     num_action_chunks,
@@ -123,7 +133,7 @@ def prepare_actions_for_polaris(
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = torch.sign(chunk_actions[..., -1]) * -1.0
-    elif SupportedModel(model_type) == SupportedModel.OPENPI:
+    elif _is_openpi_family(model_type):
         chunk_actions[..., -1] = torch.where(
             chunk_actions[..., -1] > 0.5,
             torch.ones_like(chunk_actions[..., -1]),
@@ -137,7 +147,7 @@ def prepare_actions_for_calvin(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1])
     else:
         chunk_actions[..., -1] = np.where(chunk_actions[..., -1] > 0, 1, -1)
@@ -193,7 +203,7 @@ def prepare_actions_for_robocasa(
             "binarize_gripper_control", True
         )
 
-        if SupportedModel(model_type) == SupportedModel.OPENPI:
+        if _is_openpi_family(model_type):
             start_idx, end_idx = openpi_valid_action_slice
             actions_env = (
                 raw_chunk_actions[..., start_idx:end_idx].copy().astype(np.float32)
@@ -290,7 +300,7 @@ def prepare_actions_for_mujoco(raw_chunk_actions, model_type):
         )
     else:
         chunk_actions = raw_chunk_actions[..., :4]
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
     return chunk_actions
 
@@ -303,8 +313,8 @@ def prepare_actions_for_d4rl(
     # D4RL: take first action_dim dims from policy output
     raw = np.asarray(raw_chunk_actions, dtype=np.float32)
     chunk_actions = raw[..., :action_dim].copy()
-    # OPENPI: clip last dim to match continuous action space
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    # OPENPI / openpi_rlinf: clip last dim to match continuous action space
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.clip(chunk_actions[..., -1], -1.0, 1.0)
     return chunk_actions
 
@@ -314,7 +324,7 @@ def prepare_actions_for_roboverse(
     model_type,
 ) -> np.ndarray:
     chunk_actions = raw_chunk_actions
-    if SupportedModel(model_type) == SupportedModel.OPENPI:
+    if _is_openpi_family(model_type):
         chunk_actions[..., -1] = np.where(chunk_actions[..., -1] < 0.0, 1.0, 0.0)
     return chunk_actions
 

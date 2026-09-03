@@ -126,9 +126,8 @@ actor:
     openpi:
       # Selects the RL variant (chain-collecting SDE sampler + VLM value head).
       task: rl
-      # config_name + all shape fields are inherited from model/pi0_5_rlinf.
-      # VLM-pooled value head over the paligemma prefix — the only combination the
-      # pytorch RL port supports (value_after_vlm=False raises NotImplementedError).
+      config_name: "pi05_behavior"
+      num_images_in_input: 3
       value_after_vlm: True
       value_vlm_mode: "mean_token"
       detach_critic_input: True

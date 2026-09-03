@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RLT configuration and checkpoint helpers for OpenPI_RLinf."""
+"""Checkpoint helpers for OpenPI_RLinf."""
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 from typing import Any
 
@@ -50,44 +49,12 @@ _BARE_PI0_PREFIXES = (
 )
 
 _OLD_OPENPI_PREFIX = "paligemma_with_expert."
+_OLD_WRAPPER_MODEL_PREFIX = "model."
 
 
-@dataclasses.dataclass(frozen=True)
-class OpenPiPytorchRLTConfig:
-    """RLT-token knobs shared by the SFT and eval wrappers."""
-
-    use_rlt: bool = False
-    rlt_alpha: float = 1.0
-    rlt_input_dim: int = 2048
-    rlt_embed_dim: int = 2048
-    rlt_prefix_seq_len: int = 768
-    rlt_num_layers: int = 2
-    rlt_num_heads: int = 8
-    rlt_mlp_ratio: float = 4.0
-    rlt_image_only: bool = True
-    rlt_use_mask: bool = False
-
-
-def build_rlt_config(model_cfg: Any) -> OpenPiPytorchRLTConfig:
-    """Build optional RLT-token config from ``actor.model.openpi``."""
-    from omegaconf import OmegaConf
-
-    return OpenPiPytorchRLTConfig(
-        use_rlt=bool(OmegaConf.select(model_cfg, "use_rlt", default=False)),
-        rlt_alpha=float(OmegaConf.select(model_cfg, "rlt_alpha", default=1.0)),
-        rlt_input_dim=int(OmegaConf.select(model_cfg, "rlt_input_dim", default=2048)),
-        rlt_embed_dim=int(OmegaConf.select(model_cfg, "rlt_embed_dim", default=2048)),
-        rlt_prefix_seq_len=int(
-            OmegaConf.select(model_cfg, "rlt_prefix_seq_len", default=768)
-        ),
-        rlt_num_layers=int(OmegaConf.select(model_cfg, "rlt_num_layers", default=2)),
-        rlt_num_heads=int(OmegaConf.select(model_cfg, "rlt_num_heads", default=8)),
-        rlt_mlp_ratio=float(OmegaConf.select(model_cfg, "rlt_mlp_ratio", default=4.0)),
-        rlt_image_only=bool(
-            OmegaConf.select(model_cfg, "rlt_image_only", default=True)
-        ),
-        rlt_use_mask=bool(OmegaConf.select(model_cfg, "rlt_use_mask", default=False)),
-    )
+def _missing_pi0_keys(missing_keys) -> list[str]:
+    """Return missing keys that belong to the Pi0 backbone, not extra heads."""
+    return [key for key in missing_keys if key.startswith(_BARE_PI0_PREFIXES)]
 
 
 def resolve_model_safetensors(model_path: Any) -> pathlib.Path | None:
@@ -111,7 +78,7 @@ def resolve_full_weights(model_path: Any) -> pathlib.Path | None:
     return None
 
 
-def _normalize_wrapper_key(key: str) -> str:
+def _normalize_key(key: str) -> str:
     while True:
         for prefix in _FSDP_WRAPPER_PREFIXES:
             if key.startswith(prefix):
@@ -121,50 +88,87 @@ def _normalize_wrapper_key(key: str) -> str:
             return key
 
 
-def _normalize_wrapper_state_dict(state_dict):
+def _normalize_state_dict(state_dict):
+    """Map checkpoint keys onto the inherited-Pi0 layout.
+
+    New checkpoints store bare Pi0 keys (``llm.*``). Older wrapper checkpoints
+    stored the same tensors under ``model.llm.*``; strip that prefix. RLT and
+    extra heads (``rlt_module.*``, ``value_head.*``, …) stay as-is.
+    """
     normalized = {}
     for key, tensor in state_dict.items():
-        key = _normalize_wrapper_key(key)
+        key = _normalize_key(key)
+        if key.startswith(_OLD_WRAPPER_MODEL_PREFIX):
+            rest = key[len(_OLD_WRAPPER_MODEL_PREFIX) :]
+            # Only strip when the remainder is a Pi0 module (or nested FSDP
+            # leftover). Algorithm heads never lived under ``model.``.
+            if rest.startswith(_BARE_PI0_PREFIXES) or rest.startswith(
+                _FSDP_WRAPPER_PREFIXES
+            ):
+                key = rest
         if key in normalized:
             raise ValueError(
                 f"Duplicate checkpoint key after prefix normalization: {key!r}."
             )
         normalized[key] = tensor
-
-    has_wrapper_key = any(
-        key.startswith("model.") or key.startswith("rlt_module.") for key in normalized
-    )
-    if has_wrapper_key:
-        return normalized
-
-    if any(key.startswith(_BARE_PI0_PREFIXES) for key in normalized):
-        return {f"model.{key}": tensor for key, tensor in normalized.items()}
     return normalized
 
 
-def load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> None:
-    """Load an RLinf full-wrapper checkpoint into an OpenPI_RLinf wrapper."""
+def _convert_official_openpi_keys(state_dict, source) -> dict:
+    """Rewrite ``paligemma_with_expert.*`` keys onto the inherited-Pi0 layout.
+
+    Extra heads (``value_head.*``, ``rlt_module.*``, …) are kept as-is.
+    """
+    if not any(key.startswith(_OLD_OPENPI_PREFIX) for key in state_dict):
+        return state_dict
+
+    from rlinf.utils.ckpt_convertor.openpi.openpi_pytorch_to_openpi_rlinf import (
+        old_to_new_state_dict,
+    )
+
+    converted = old_to_new_state_dict(state_dict)
+    for key, tensor in state_dict.items():
+        if key.startswith(_OLD_OPENPI_PREFIX) or key in converted:
+            continue
+        converted[key] = tensor
+    logger.info(
+        "openpi_rlinf: converted OpenPI PyTorch checkpoint keys from %s in memory",
+        source,
+    )
+    return converted
+
+
+def load_full_weights(model, weights_path, *, expect_rlt: bool) -> None:
+    """Load an RLinf ``full_weights.pt`` checkpoint into a Pi0 (or subclass)."""
     import torch
 
     from rlinf.utils.ckpt_convertor.openpi._core import as_state_dict
 
     loaded = torch.load(str(weights_path), map_location="cpu", weights_only=False)
-    state_dict = _normalize_wrapper_state_dict(as_state_dict(loaded))
+    state_dict = _convert_official_openpi_keys(
+        _normalize_state_dict(as_state_dict(loaded)),
+        weights_path,
+    )
     if expect_rlt and not any(key.startswith("rlt_module.") for key in state_dict):
         raise ValueError(
             "openpi_rlinf RLT checkpoint has no rlt_module.* weights. "
             "Stage2 must consume a Stage1 checkpoint trained with openpi.use_rlt=True."
         )
 
-    incompatible = wrapper.load_state_dict(state_dict, strict=False)
+    incompatible = model.load_state_dict(state_dict, strict=False)
     unexpected = list(incompatible.unexpected_keys)
     missing = list(incompatible.missing_keys)
     matched = len(state_dict) - len(unexpected)
     if matched <= 0:
         raise RuntimeError(
-            f"No tensors from {weights_path} matched the openpi_rlinf wrapper. "
+            f"No tensors from {weights_path} matched the openpi_rlinf model. "
             "This usually means the checkpoint is still in the legacy official "
             "OpenPI PyTorch key layout."
+        )
+    missing_pi0 = _missing_pi0_keys(missing)
+    if missing_pi0:
+        raise RuntimeError(
+            f"Pi0 tensors missing from {weights_path}: {missing_pi0[:8]}"
         )
     if expect_rlt and any(key.startswith("rlt_module.") for key in missing):
         raise RuntimeError(
@@ -174,7 +178,7 @@ def load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> Non
 
     if missing or unexpected:
         logger.warning(
-            "openpi_rlinf: loaded wrapper checkpoint %s with strict=False "
+            "openpi_rlinf: loaded checkpoint %s with strict=False "
             "(matched=%d missing=%d unexpected=%d)",
             weights_path,
             matched,
@@ -182,24 +186,33 @@ def load_full_wrapper_weights(wrapper, weights_path, *, expect_rlt: bool) -> Non
             len(unexpected),
         )
     else:
-        logger.info(
-            "openpi_rlinf: loaded full wrapper checkpoint from %s", weights_path
-        )
+        logger.info("openpi_rlinf: loaded full checkpoint from %s", weights_path)
 
 
 def load_base_safetensors(model, safetensors_path) -> None:
     """Load a base checkpoint, accepting new and legacy OpenPI layouts."""
     import safetensors.torch
 
-    state_dict = safetensors.torch.load_file(str(safetensors_path), device="cpu")
-    if any(key.startswith(_OLD_OPENPI_PREFIX) for key in state_dict):
-        from rlinf.utils.ckpt_convertor.openpi.openpi_pytorch_to_openpi_rlinf import (
-            old_to_new_state_dict,
+    state_dict = _convert_official_openpi_keys(
+        safetensors.torch.load_file(str(safetensors_path), device="cpu"),
+        safetensors_path,
+    )
+    incompatible = model.load_state_dict(state_dict, strict=False)
+    unexpected = list(incompatible.unexpected_keys)
+    if unexpected:
+        raise RuntimeError(
+            f"Unexpected keys loading {safetensors_path}: {unexpected[:8]}"
         )
-
-        state_dict = old_to_new_state_dict(state_dict)
+    missing_pi0 = _missing_pi0_keys(incompatible.missing_keys)
+    if missing_pi0:
+        raise RuntimeError(
+            f"Pi0 tensors missing from {safetensors_path}: {missing_pi0[:8]}"
+        )
+    if incompatible.missing_keys:
         logger.info(
-            "openpi_rlinf: converted OpenPI PyTorch checkpoint keys from %s in memory",
+            "openpi_rlinf: loaded base safetensors %s; leaving %d extra module "
+            "tensors randomly initialized (%s...)",
             safetensors_path,
+            len(incompatible.missing_keys),
+            incompatible.missing_keys[:4],
         )
-    model.load_state_dict(state_dict, strict=True)

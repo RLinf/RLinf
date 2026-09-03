@@ -33,9 +33,10 @@ from typing import Any, Mapping
 import torch
 
 # Wrapper / FSDP prefixes that may sit in front of the bare ``Pi0`` keys in a
-# trained checkpoint. ``OpenPiPytorchActionModel`` adds ``model.`` (the vendored
-# Pi0 lives at ``wrapper.model``); FSDP/compile may add the others. No bare Pi0
-# key begins with any of these, so stripping them is safe.
+# trained checkpoint. Older ``OpenPiPytorchActionModel`` checkpoints stored Pi0
+# under ``model.`` (``wrapper.model.llm``); after the inherit-Pi0 reorg the keys
+# are already bare (``llm.*``). FSDP/compile may add the other prefixes. No bare
+# Pi0 key begins with any of these, so stripping them is safe.
 _WRAPPER_PREFIXES = (
     "_fsdp_wrapped_module.",
     "_orig_mod.",

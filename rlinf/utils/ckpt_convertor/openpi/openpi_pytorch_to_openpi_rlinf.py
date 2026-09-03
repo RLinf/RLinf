@@ -50,6 +50,8 @@ def old_to_new_state_dict(
       - SigLIP Q/K/V concat -> in_proj_weight/bias
       - LLM MLP gate/up transpose+stack -> w_gating (2, features, hidden_dim)
       - LLM MLP down transpose -> w_linear
+      - Action-expert RMSNorm: Pi0 ``*.weight`` -> ``*.1.scale``;
+        Pi0.5 AdaRMS ``*.dense.*`` -> ``*.1.ada_modulation.*``
     """
     openpi_pytorch_state_dict = old_sd
     openpi_rlinf_state_dict: dict[str, torch.Tensor] = {}
@@ -227,12 +229,19 @@ def old_to_new_state_dict(
             ("input_layernorm", "pre_attention_norms"),
             ("post_attention_layernorm", "pre_ffw_norms"),
         ]:
+            # Pi0.5: AdaRMS stored as ``*.dense.{weight,bias}``.
             for suffix in (".weight", ".bias"):
                 source_key = f"{source_prefix}{source_name}.dense{suffix}"
                 if source_key in openpi_pytorch_state_dict:
                     openpi_rlinf_state_dict[
                         f"{target_prefix}{target_name}.1.ada_modulation{suffix}"
                     ] = openpi_pytorch_state_dict[source_key]
+            # Pi0: regular RMSNorm stored as ``*.weight``.
+            source_key = f"{source_prefix}{source_name}.weight"
+            if source_key in openpi_pytorch_state_dict:
+                openpi_rlinf_state_dict[f"{target_prefix}{target_name}.1.scale"] = (
+                    openpi_pytorch_state_dict[source_key]
+                )
 
     for suffix in (".weight", ".bias"):
         source_key = _GEMMA_EXPERT + "norm.dense" + suffix
@@ -240,6 +249,11 @@ def old_to_new_state_dict(
             openpi_rlinf_state_dict["llm.final_norms.1.ada_modulation" + suffix] = (
                 openpi_pytorch_state_dict[source_key]
             )
+    source_key = _GEMMA_EXPERT + "norm.weight"
+    if source_key in openpi_pytorch_state_dict:
+        openpi_rlinf_state_dict["llm.final_norms.1.scale"] = openpi_pytorch_state_dict[
+            source_key
+        ]
 
     # The RLinf shared token embedder is PaliGemma's embedding (tied with
     # ``paligemma.lm_head``, width = PaliGemma width, e.g. 2048). The action

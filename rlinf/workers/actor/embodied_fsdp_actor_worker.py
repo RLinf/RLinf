@@ -406,7 +406,10 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         return self._opd_teacher_model
 
     def _build_sft_data_loader(self):
-        if SupportedModel(self.cfg.actor.model.model_type) in [SupportedModel.OPENPI]:
+        if SupportedModel(self.cfg.actor.model.model_type) in [
+            SupportedModel.OPENPI,
+            SupportedModel.OPENPI_RLINF,
+        ]:
             repo_id = resolve_lerobot_repo_id(self.cfg.actor.get("sft_data_path"))
             if repo_id is None:
                 raise ValueError(
@@ -418,11 +421,13 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
 
             from rlinf.models.embodiment.openpi.dataconfig import get_openpi_config
 
-            if "config_name" not in self.cfg.actor:
+            training_config_name = OmegaConf.select(
+                self.cfg.actor.model, "openpi.config_name", default=None
+            )
+            if not training_config_name:
                 raise ValueError(
-                    "config_name is required when enable_sft_co_train=True"
+                    "enable_sft_co_train=True requires actor.model.openpi.config_name."
                 )
-            training_config_name = self.cfg.actor.config_name
             data_loader_config = get_openpi_config(
                 training_config_name,
                 model_path=self.cfg.actor.model.model_path,

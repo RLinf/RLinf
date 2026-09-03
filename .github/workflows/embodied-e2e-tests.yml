@@ -765,13 +765,13 @@ jobs:
           cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
-      - name: Libero-Spatial PPO test
+      - name: Libero-Spatial PPO OpenPI_RLinf test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi_rlinf
 
       - name: Libero-Object NFT test
         timeout-minutes: 20
@@ -795,7 +795,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05 +rollout.enable_torch_compile=true +rollout.torch_compile_mode=max-autotune
+          bash tests/e2e_tests/embodied/run.sh libero_spatial_ppo_openpi05
 
       - name: ManiSkill Async PPO test
         timeout-minutes: 20
