@@ -402,16 +402,6 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
         Returns:
             Dict with ``actor/rollout_train_logprob_gap`` (mean absolute logprob difference).
         """
-        assert SupportedModel(self.cfg.actor.model.model_type) in [
-            SupportedModel.OPENVLA,
-            SupportedModel.OPENVLA_OFT,
-        ], (
-            "algorithm.recompute_logprobs only supports OpenVLA models; GR00T "
-            "already recomputes inside its training forward."
-        )
-        assert self.cfg.algorithm.adv_type != "opd", (
-            "algorithm.recompute_logprobs is not supported with adv_type=opd."
-        )
         assert "forward_inputs" in self.rollout_batch, (
             "Recomputing logprobs requires rollout forward_inputs."
         )
