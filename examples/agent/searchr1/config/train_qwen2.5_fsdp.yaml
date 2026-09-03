@@ -23,19 +23,19 @@ runner:
     logger_backends: ["tensorboard"] # wandb, swanlab
 
   max_epochs: 1
-  max_steps: 2
+  max_steps: 201
 
-  val_check_interval: 1
-  save_interval: -1
+  val_check_interval: 25
+  save_interval: 25
 
   seq_length: 7096
 
   enable_dynamic_batch_size: True
   max_tokens_per_mbs: 11008
 
-  resume_dir: auto
-  experiment_name: searchr1-qwen2.5-1.5b-fsdp
-  output_dir: ../results
+  resume_dir: null
+  experiment_name: searchr1-grpo-qwen2.5-3b-ins-${now:%Y%m%d%H%M%S}
+  output_dir: ./logs
 
 
 algorithm:
@@ -68,7 +68,7 @@ algorithm:
   clip_ratio_high: null # if null or not set, will use ratio_clip_eps
 
   adv_type: grpo_dynamic
-  loss_scales: ["group_level", "agent_level", "turn_level"]
+  loss_scales: ["group_level", "agent_level", "turn_level"] # used for implementing our GRPO alg. Details in `rlinf/algorithms/loss_scales.py`
   advantage_mode: trajectory
   normalize_advantages: False
   early_stop_imp_ratio: 5.0
@@ -90,7 +90,7 @@ data:
   type: math
   max_prompt_length: 4096
   filter_prompt_by_length: True
-  rollout_batch_size: 32
+  rollout_batch_size: 512
   val_rollout_batch_size: null
   num_workers: 2
   prompt_key: prompt
@@ -99,7 +99,7 @@ data:
   shuffle: True
   validation_shuffle: True
   seed: 1234
-  train_data_paths: ["/workspace/dataset/searchr1/train.jsonl"]
+  train_data_paths: ["/path/to/data/searchr1_train.jsonl"]
 
 
 agentloop:
@@ -117,14 +117,13 @@ tools:
   search:
     server_addr: 0.0.0.0:8000
     topk: 3
-    dummy_mode: True
 
 
 rollout:
   group_name: "RolloutGroup"
-  gpu_memory_utilization: 0.5
+  gpu_memory_utilization: 0.75
   model:
-    model_path: /workspace/dataset/Qwen2.5-1.5B-Instruct
+    model_path: /path/to/model/Qwen2.5-3B-Instruct  # https://huggingface.co/Qwen/Qwen2.5-3B-Instruct
     model_type: qwen2.5
     precision: fp16
   enforce_eager: False          # if False, rollout engine will capture cuda graph, which will take more time to initialize.
@@ -151,7 +150,7 @@ rollout:
 
   tensor_parallel_size: 1
   pipeline_parallel_size: 1
-  max_running_requests: 128     # the maximum number of running requests in rollout engine.
+  max_running_requests: 128     # the maximum number of running requests in the rollout engine.
   cuda_graph_max_bs: 128        # the maximum batch size for cuda graph. If the batch size is larger than this, cuda graph will not be used.
 
   validate_weight_first_sync: True # validate the weight norm between load model and first sync.
@@ -165,7 +164,6 @@ reward:
   use_reward_model: False
   reward_type: 'searchr1'
   reward_scale: 1.0
-  random_print_percent: 0
 
   tokenizer:
     tokenizer_model: ${actor.tokenizer.tokenizer_model}
@@ -180,28 +178,25 @@ actor:
   enable_dp_load_balance: True
   calculate_flops: False
   seed: 1234
-
   pack_traj: True
 
-  # fsdp config
   enable_offload: True
   sync_precision: ${rollout.model.precision}
 
   model:
-    precision: fp32
-
-    seq_length: ${runner.seq_length}
-    encoder_seq_length: ${runner.seq_length}
-
-    # fsdp config
     model_type: ${rollout.model.model_type}
     model_path: ${rollout.model.model_path}
+    precision: fp32
+    seq_length: ${runner.seq_length}
+    encoder_seq_length: ${runner.seq_length}
     is_lora: False
 
   optim:
     optimizer: adam
     lr: 1.0e-06
     lr_scheduler: constant
+    total_training_steps: 662
+    lr_warmup_steps_ratio: 0.285
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.0e-05
@@ -209,48 +204,34 @@ actor:
     weight_decay: 0.01
     clip_grad: 0.8
 
-    # fsdp optim config
-    total_training_steps: 662
-    lr_warmup_steps_ratio: 0.285
-
   tokenizer:
     tokenizer_model: ${rollout.model.model_path}
     use_fast: False
     trust_remote_code: True
-    padding_side: 'right'
+    padding_side: right
 
-  fsdp_config:                  # below are fsdp configs, for more details, see https://pytorch.org/docs/stable/fsdp.html and https://huggingface.co/docs/accelerate/package_reference/fsdp
-    strategy: "fsdp"            # FSDP strategy: ["fsdp", "fsdp2"]
-
-    # Sharding strategy: "full_shard" (shard parameters, gradients, optimizer states),
-    # "shard_grad_op" (shard gradients and optimizer states only), 
-    # "hybrid_shard" (combines data parallelism and model parallelism - sharding within FSDP groups, replicate across DDP groups),
-    # "no_shard" (no sharding)
-    sharding_strategy: "full_shard" 
-
-    gradient_checkpointing: True  # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.
-    cpu_offload: False            # whether to offload parameters and gradients to CPU when not in use，if True, actor's enable_offload should be True too.
-    offload_pin_memory: True      # whether FSDP2's CPU offload policy should pin memory when cpu_offload is True
-    reshard_after_forward: True   # if True, FSDP2 will reshard parameters after forward pass to save memory
-
-    enable_gradient_accumulation: True  # if True, gradient accumulation will be enabled for FSDP/FSDP2 training, which will enhance training performance but increase memory usage.
-    forward_prefetch: False             # if True, FSDP will explicitly prefetches the next upcoming all-gather while executing in the forward pass. only use with static graphs. Overlaps communication with computation to improve performance.
-    limit_all_gathers: False            # if True, FSDP will synchronizes CPU threads to limit the number of concurrent all-gathers. Only affects strategies that schedule all-gathers
-    backward_prefetch: null             # options are null, 'pre', 'post'. if 'pre', FSDP will prefetch the next upcoming all-gather while computing gradients. if 'post', FSDP will prefetch the next all-gather until current gradient is computed.
-    use_orig_params: False              # if True, FSDP will use module's original parameters, it means it will expose nn.Module.named_parameters rather than FlatParameter
-    use_liger_kernel: True               # if True, liger_kernel will be used for FSDP, note that currently supported models in RLinf are [qwen2.5, qwen2.5-vl], for more details, see liger_kernel's doc
-
-    mixed_precision:                    # mixed precision settings for fsdp/fsdp2
-      param_dtype: "fp16"
-      reduce_dtype: "fp16"
-      buffer_dtype: "fp32"
-
-    amp_autocast:                       # Do not enable `amp_autocast` with FSDP `mixed_precision` enabled, using both will result in conflict.         
-      enabled: False                    # if True, automatic mixed precision (AMP) will be used in FSDP/FSDP2 training.
-      precision: "fp16"                 # precision for AMP, options are ["fp16" , "bf16"]
-
+  fsdp_config:
+    strategy: fsdp2
+    sharding_strategy: full_shard
+    gradient_checkpointing: True
+    cpu_offload: False
+    offload_pin_memory: True
+    reshard_after_forward: True
+    enable_gradient_accumulation: True
+    forward_prefetch: False
+    limit_all_gathers: False
+    backward_prefetch: null
+    use_orig_params: False
+    use_liger_kernel: True
+    mixed_precision:
+      param_dtype: fp16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+    amp_autocast:
+      enabled: False
+      precision: fp16
     grad_scaler:
-      enabled: True               # if True, GradScaler will be used for AMP training to prevent underflow.
+      enabled: True
 
 
 inference:
