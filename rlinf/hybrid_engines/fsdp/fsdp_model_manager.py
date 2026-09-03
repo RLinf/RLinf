@@ -96,10 +96,22 @@ class FSDPModelManager:
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
-        self._device_mesh = create_device_mesh(world_size)
+        self._device_mesh = create_device_mesh(
+            world_size,
+            sharding_strategy=self._cfg.fsdp_config.get(
+                "sharding_strategy", "full_shard"
+            ),
+            hybrid_shard_size=self._cfg.fsdp_config.get("hybrid_shard_size", -1),
+        )
+        # Group the sharded gradient norms are reduced over. Under hybrid_shard a
+        # rank holds one shard of the gradient and the shards are replicated along
+        # the "ddp" dim, so the p-norm must be summed over the "fsdp" (shard) group
+        # only -- reducing over "ddp" or over WORLD would over-count it by the
+        # replicate degree. A 1-D mesh shards over the whole world, and `None`
+        # already means WORLD for `torch.distributed.all_reduce`.
         self._dp_group = (
-            self._device_mesh["ddp"].get_group()
-            if "ddp" in self._device_mesh.mesh_dim_names
+            self._device_mesh["fsdp"].get_group()
+            if self._device_mesh.ndim > 1
             else None
         )
 

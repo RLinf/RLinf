@@ -28,6 +28,7 @@
 
 import functools
 import math
+import os
 import warnings
 from enum import Enum
 from typing import ContextManager, Iterable, Optional, Union
@@ -62,9 +63,98 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
-def create_device_mesh(world_size):
+HYBRID_SHARDING_STRATEGY = "hybrid_shard"
+
+
+def resolve_fsdp_mesh(
+    world_size: int,
+    sharding_strategy: str = "full_shard",
+    hybrid_shard_size: int = -1,
+    local_world_size: Optional[int] = None,
+) -> tuple[tuple[int, ...], tuple[str, ...]]:
+    """
+    Resolve the shape and dim names of the FSDP device mesh.
+
+    Every strategy but ``hybrid_shard`` shards over a single group spanning the
+    whole world, which is a 1-D mesh. ``hybrid_shard`` shards inside a group of
+    ``hybrid_shard_size`` ranks and replicates across the remaining ranks, which
+    PyTorch expresses as a 2-D mesh: FSDP1 takes mesh dim 0 as the replicate
+    (inter-node) group and dim 1 as the shard group, and FSDP2's ``fully_shard``
+    reads a 2-D mesh as ``HSDPMeshInfo(shard_mesh_dim=1, replicate_mesh_dim=0)``.
+    The dim order below therefore gives both backends the same HSDP layout.
+
+    Args:
+        world_size (int): Total number of ranks in the FSDP group.
+        sharding_strategy (str): The configured ``fsdp_config.sharding_strategy``.
+        hybrid_shard_size (int): Ranks per shard group for ``hybrid_shard``.
+            Values <= 0 mean "shard within a node", i.e. use ``local_world_size``.
+        local_world_size (Optional[int]): Number of ranks on this node. Only read
+            when ``hybrid_shard_size`` is not set explicitly.
+
+    Returns:
+        tuple[tuple[int, ...], tuple[str, ...]]: The mesh shape and its dim names.
+    """
+    if sharding_strategy != HYBRID_SHARDING_STRATEGY:
+        return (world_size,), ("fsdp",)
+
+    shard_size = hybrid_shard_size
+    if shard_size is None or shard_size <= 0:
+        if not local_world_size or local_world_size <= 0:
+            raise ValueError(
+                "fsdp_config.sharding_strategy='hybrid_shard' needs a shard group "
+                "size, but LOCAL_WORLD_SIZE is not set, so it cannot default to "
+                "one shard group per node. Set fsdp_config.hybrid_shard_size to "
+                "the number of ranks that should shard together."
+            )
+        shard_size = local_world_size
+
+    if world_size % shard_size != 0:
+        raise ValueError(
+            f"fsdp_config.hybrid_shard_size={shard_size} must divide the FSDP "
+            f"world size {world_size}."
+        )
+
+    replicate_size = world_size // shard_size
+    if shard_size < 2 or replicate_size < 2:
+        raise ValueError(
+            f"fsdp_config.sharding_strategy='hybrid_shard' needs to both shard and "
+            f"replicate, but hybrid_shard_size={shard_size} over a world size of "
+            f"{world_size} gives a shard degree of {shard_size} and a replicate "
+            f"degree of {replicate_size}. Use 'full_shard' for a single shard "
+            f"group, or set fsdp_config.hybrid_shard_size so that both degrees "
+            f"are at least 2."
+        )
+
+    return (replicate_size, shard_size), ("ddp", "fsdp")
+
+
+def create_device_mesh(
+    world_size: int,
+    sharding_strategy: str = "full_shard",
+    hybrid_shard_size: int = -1,
+) -> DeviceMesh:
+    """
+    Create the device mesh the FSDP strategies are wrapped on.
+
+    Args:
+        world_size (int): Total number of ranks in the FSDP group.
+        sharding_strategy (str): The configured ``fsdp_config.sharding_strategy``.
+        hybrid_shard_size (int): Ranks per shard group for ``hybrid_shard``.
+
+    Returns:
+        DeviceMesh: A 1-D ``("fsdp",)`` mesh, or a 2-D ``("ddp", "fsdp")`` mesh
+        for ``hybrid_shard``.
+    """
+    mesh_shape, mesh_dim_names = resolve_fsdp_mesh(
+        world_size,
+        sharding_strategy=sharding_strategy,
+        hybrid_shard_size=hybrid_shard_size,
+        local_world_size=int(os.environ.get("LOCAL_WORLD_SIZE", 0) or 0),
+    )
     return init_device_mesh(
-        Worker.torch_device_type, mesh_shape=(world_size,), mesh_dim_names=["fsdp"]
+        Worker.torch_device_type,
+        mesh_shape=mesh_shape,
+        mesh_dim_names=mesh_dim_names,
     )
 
 
