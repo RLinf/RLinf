@@ -163,6 +163,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi.html">π₀ / π₀.₅ (OpenPI-PyTorch)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_rlinf.html">π₀ / π₀.₅ (OpenPI_RLinf)</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/pi0_fast.html">PI0-FAST (LeRobot)</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/maniskill.html">OpenVLA</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/libero.html">OpenVLA-OFT</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/gr00t.html">GR00T (N1.5, N1.6, N1.7)</a> ✅</li>

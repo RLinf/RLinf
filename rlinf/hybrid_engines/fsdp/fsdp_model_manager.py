@@ -39,6 +39,10 @@ from rlinf.hybrid_engines.fsdp import (
     FSDP,
     FSDPModule,
 )
+from rlinf.hybrid_engines.fsdp.optim import (
+    build_adamw,
+    validate_fp32_master_adamw_config,
+)
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import (
     create_device_mesh,
@@ -75,7 +79,12 @@ class FSDPModelManager:
         self._cfg = cfg
         self._logger = get_logger()
         self.torch_dtype = torch_dtype_from_precision(self._cfg.model.precision)
-        if self.torch_dtype != torch.float32:
+        if self._cfg.get("optim", {}).get("use_fp32_master_params", False):
+            self._logger.info(
+                "[FSDP] Using AdamW with FP32 optimizer state and master weights "
+                "while preserving model parameter dtypes."
+            )
+        elif self.torch_dtype != torch.float32:
             self._logger.warning(
                 "Provided there is sufficient GPU memory, "
                 "set the actor.model.precision parameter to fp32 "
@@ -593,30 +602,45 @@ class FSDPModelManager:
                 }
             )
 
-        # Fused AdamW avoids a large foreach temp buffer during warmup_optimizer_state
-        # for NO_SHARD models (e.g. STEAM ensemble SFT). It is unsafe with sharded
-        # FSDP params + grad_scaler.step() and can fail at runtime with:
-        # "output with shape [] doesn't match the broadcast shape [1]".
-        all_params = [p for group in param_groups for p in group["params"]]
-        use_fused_adamw = (
-            self._cfg.fsdp_config.get("sharding_strategy", "full_shard") == "no_shard"
-            and Worker.torch_device_type == "cuda"
-            and Worker.torch_platform.is_available()
-            and not any(p.dim() == 0 for p in all_params)
-        )
-        try:
-            optimizer = torch.optim.AdamW(
+        use_fp32_master_params = self._cfg.optim.get("use_fp32_master_params", False)
+        if use_fp32_master_params:
+            validate_fp32_master_adamw_config(
+                strategy=self._cfg.fsdp_config.get("strategy", "fsdp2"),
+                sharding_strategy=self._cfg.fsdp_config.get(
+                    "sharding_strategy", "full_shard"
+                ),
+                is_lora=self._cfg.model.get("is_lora", False),
+            )
+            optimizer = build_adamw(
                 param_groups,
                 eps=adam_eps,
                 weight_decay=weight_decay,
-                fused=use_fused_adamw,
+                use_fp32_master_params=True,
             )
-        except (RuntimeError, TypeError):
-            optimizer = torch.optim.AdamW(
-                param_groups,
-                eps=adam_eps,
-                weight_decay=weight_decay,
+        else:
+            # Fused AdamW avoids a large foreach temp buffer during optimizer warmup
+            # for NO_SHARD models. Sharded scalar parameters cannot use this path.
+            all_params = [p for group in param_groups for p in group["params"]]
+            use_fused_adamw = (
+                self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
+                == "no_shard"
+                and Worker.torch_device_type == "cuda"
+                and Worker.torch_platform.is_available()
+                and not any(p.dim() == 0 for p in all_params)
             )
+            try:
+                optimizer = torch.optim.AdamW(
+                    param_groups,
+                    eps=adam_eps,
+                    weight_decay=weight_decay,
+                    fused=use_fused_adamw,
+                )
+            except (RuntimeError, TypeError):
+                optimizer = torch.optim.AdamW(
+                    param_groups,
+                    eps=adam_eps,
+                    weight_decay=weight_decay,
+                )
 
         # run optimizer empty step to initialize optimizer.state
         # to avoid KeyError during get_state_dict/set_state_dict

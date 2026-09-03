@@ -182,6 +182,7 @@ def compute_ppo_actor_loss(
     clip_log_ratio_min: Optional[float] = None,
     clip_log_ratio_max: Optional[float] = None,
     fast_path_zero_loss_mask: Optional[bool] = False,
+    log_logprob_diagnostics: bool = False,
     **kwargs,
 ) -> tuple[torch.Tensor, dict]:
     """
@@ -209,8 +210,8 @@ def compute_ppo_actor_loss(
             "actor/policy_loss": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_mbs_mean": torch.tensor(0.0, device=logprobs.device),
             "actor/policy_loss_abs": torch.tensor(0.0, device=logprobs.device),
-            "actor/ratio": torch.tensor(0.0, device=logprobs.device),
-            "actor/clipped_ratio": torch.tensor(0.0, device=logprobs.device),
+            "actor/ratio": torch.tensor(1.0, device=logprobs.device),
+            "actor/clipped_ratio": torch.tensor(1.0, device=logprobs.device),
             "actor/dual_cliped_ratio": torch.tensor(0.0, device=logprobs.device),
             "actor/approx_kl": torch.tensor(0.0, device=logprobs.device),
             "actor/clip_fraction": torch.tensor(0.0, device=logprobs.device),
@@ -241,7 +242,8 @@ def compute_ppo_actor_loss(
 
     loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
-    log_ratio = logprobs - old_logprobs
+    raw_log_ratio = logprobs - old_logprobs
+    log_ratio = torch.where(loss_mask, raw_log_ratio, 0.0)
     if clip_log_ratio_min is not None:
         log_ratio = torch.clamp(log_ratio, min=clip_log_ratio_min)
     if clip_log_ratio_max is not None:
@@ -295,20 +297,86 @@ def compute_ppo_actor_loss(
         # Broadcast loss_mask to match ratio's shape for metrics computation
         loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
+    has_valid_metrics = loss_mask_for_metrics.any()
+
+    def _masked_mean_or(values: torch.Tensor, default: float) -> torch.Tensor:
+        mean = masked_mean(values, loss_mask_for_metrics)
+        return torch.where(
+            has_valid_metrics,
+            mean,
+            torch.as_tensor(default, device=values.device, dtype=values.dtype),
+        )
+
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
         "actor/policy_loss_abs": metric_policy_loss_abs.detach(),
-        "actor/ratio": masked_mean(ratio_for_metrics, loss_mask_for_metrics),
+        "actor/ratio": _masked_mean_or(ratio_for_metrics, 1.0),
         "actor/ratio_abs": masked_mean(ratio_abs_for_metrics, loss_mask_for_metrics),
-        "actor/clipped_ratio": masked_mean(
-            clipped_ratio_for_metrics, loss_mask_for_metrics
-        ),
+        "actor/clipped_ratio": _masked_mean_or(clipped_ratio_for_metrics, 1.0),
         "actor/dual_cliped_ratio": masked_mean(
             dual_cliped_ratio_for_metrics, loss_mask_for_metrics
         ),
         "actor/approx_kl": approx_kl.detach(),
         "actor/clip_fraction": clip_fraction.detach(),
     }
+    if log_logprob_diagnostics:
+        raw_log_ratio_for_metrics = raw_log_ratio.detach()
+        logprobs_for_metrics = logprobs.detach()
+        old_logprobs_for_metrics = old_logprobs.detach()
+        finite_logprob_mask = (
+            torch.isfinite(raw_log_ratio_for_metrics)
+            & torch.isfinite(logprobs_for_metrics)
+            & torch.isfinite(old_logprobs_for_metrics)
+        )
+        logprob_stat_mask = loss_mask_for_metrics & finite_logprob_mask
+
+        def _masked_stat(values: torch.Tensor, reducer: str):
+            selected = values[logprob_stat_mask]
+            if selected.numel() == 0:
+                return torch.zeros((), device=values.device, dtype=values.dtype)
+            if reducer == "mean":
+                return selected.mean()
+            if reducer == "std":
+                return selected.std(unbiased=False)
+            if reducer == "min":
+                return selected.min()
+            if reducer == "max":
+                return selected.max()
+            raise ValueError(f"Unsupported reducer: {reducer}")
+
+        finite_count = (loss_mask_for_metrics & finite_logprob_mask).sum()
+        valid_count = loss_mask_for_metrics.sum()
+        finite_fraction = torch.where(
+            valid_count > 0,
+            finite_count.float() / valid_count.clamp_min(1),
+            torch.ones((), device=logprobs.device),
+        )
+        metrics_data.update(
+            {
+                "actor/logprob_delta_mean": _masked_stat(
+                    raw_log_ratio_for_metrics, "mean"
+                ).detach(),
+                "actor/logprob_delta_std": _masked_stat(
+                    raw_log_ratio_for_metrics, "std"
+                ).detach(),
+                "actor/logprob_delta_min": _masked_stat(
+                    raw_log_ratio_for_metrics, "min"
+                ).detach(),
+                "actor/logprob_delta_max": _masked_stat(
+                    raw_log_ratio_for_metrics, "max"
+                ).detach(),
+                "actor/logprob_delta_abs": _masked_stat(
+                    raw_log_ratio_for_metrics.abs(), "mean"
+                ).detach(),
+                "actor/logprob_finite_fraction": finite_fraction.detach(),
+                "actor/logprob_new_mean": _masked_stat(
+                    logprobs_for_metrics, "mean"
+                ).detach(),
+                "actor/logprob_old_mean": _masked_stat(
+                    old_logprobs_for_metrics, "mean"
+                ).detach(),
+            }
+        )
     return policy_loss, metrics_data
 
 

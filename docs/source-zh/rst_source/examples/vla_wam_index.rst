@@ -21,6 +21,17 @@
      </div>
 
      <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
+       <a href="embodied/pi0_fast.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
+            style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
+       <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
+         <a href="embodied/pi0_fast.html" style="text-decoration: underline; color: blue;">
+           <b>PI0-FAST 强化学习训练</b>
+         </a><br>
+         LeRobot PI0-FAST + LIBERO-Long + token-level GRPO
+       </p>
+     </div>
+
+     <div style="flex: 1 1 30%; max-width: 300px; text-align: center;">
        <a href="embodied/pi0.html" style="display: block;"><img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/pi0_icon.jpg"
             style="width: 100%; height: 200px; object-fit: cover; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);" /></a>
        <p style="margin-top: 8px; font-size: 14px; line-height: 1.4;">
@@ -117,6 +128,7 @@
 
    MLP <embodied/mlp>
    π₀ / π₀.₅ <embodied/pi0>
+   PI0-FAST <embodied/pi0_fast>
    GR00T <embodied/gr00t>
    Dexbotic <embodied/dexbotic>
    StarVLA <embodied/starvla>

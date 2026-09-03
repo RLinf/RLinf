@@ -148,6 +148,28 @@ def _collect_ignored_params_for_fsdp2(
     return out
 
 
+def _module_has_single_floating_dtype(module: torch.nn.Module) -> bool:
+    dtype = None
+    for param in module.parameters():
+        if not param.is_floating_point():
+            continue
+        if dtype is None:
+            dtype = param.dtype
+        elif param.dtype != dtype:
+            return False
+    return dtype is not None
+
+
+def _pi0_fast_dtype_auto_wrap_policy(
+    module: torch.nn.Module, recurse: bool, nonwrapped_numel: int
+) -> bool:
+    if recurse:
+        return True
+    if nonwrapped_numel <= 0:
+        return False
+    return _module_has_single_floating_dtype(module)
+
+
 def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
     """
     FSDP wrap policy that handles both standard transformer models and VLA models.
@@ -209,6 +231,14 @@ def get_fsdp_wrap_policy(module, config=None, is_lora=False, model_type=None):
 
     # Build policies list
     policies = []
+
+    if (
+        SupportedModel(model_type) == SupportedModel.PI0_FAST
+        and not use_custom_wrap_policy
+    ):
+        # PI0-Fast mixes small FP32 embedding/norm parameters with a BF16 backbone.
+        # FSDP flat parameters must have one dtype, so split only on dtype-uniform modules.
+        policies.append(_pi0_fast_dtype_auto_wrap_policy)
 
     if SupportedModel(model_type) in [
         SupportedModel.CNN_POLICY,

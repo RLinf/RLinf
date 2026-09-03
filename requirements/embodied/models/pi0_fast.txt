@@ -1,0 +1,13 @@
+# PI0-FAST backend dependencies. The validated Python and PyTorch versions are
+# passed to requirements/install.sh through its native command-line flags.
+# This commit is LeRobot v0.6.0-1-g8a74e0ac, which bumps the package to 0.6.1
+# and carries the PI0FastPolicy/tokenizer path used by the public checkpoint.
+lerobot[pi,libero] @ git+https://github.com/huggingface/lerobot.git@8a74e0ac6d01706d67fddfed682a09d694d9c8c0
+transformers==5.5.4
+tokenizers>=0.22,<0.23
+huggingface-hub>=1.0,<2.0
+hf-libero==0.1.4
+numpy==2.2.0
+cmake<4
+scipy
+safetensors

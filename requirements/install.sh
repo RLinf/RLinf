@@ -101,7 +101,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "pi0_fast" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -988,6 +988,11 @@ restore_pyproject() {
     fi
 }
 
+cleanup_install() {
+    restore_pyproject
+    unset_mirror
+}
+
 AGENTIC_DEFAULT_ENGINE="sglang"
 
 agentic_latest_version() {
@@ -1140,7 +1145,7 @@ apply_torch_override() {
 
     PYPROJECT_BACKUP="${PYPROJECT_FILE}.rlinf-torch-bak.$$"
     cp "$PYPROJECT_FILE" "$PYPROJECT_BACKUP"
-    trap 'restore_pyproject' EXIT INT TERM HUP
+    trap 'cleanup_install' EXIT INT TERM HUP
 
     if [ "$PLATFORM_RELAX_TORCHCODEC" -eq 1 ] && [ -n "$_torchcodec_spec" ]; then
         sed -i -E "s/\"torchcodec[<>=!][^\"]*\"/\"${_torchcodec_spec}\"/" "$PYPROJECT_FILE"
@@ -1277,7 +1282,7 @@ setup_mirror() {
         export UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple
         export HF_ENDPOINT=https://hf-mirror.com
         git config --global url."${GITHUB_PREFIX}github.com/".insteadOf "https://github.com/"
-        trap 'unset_mirror' EXIT INT TERM HUP
+        trap 'cleanup_install' EXIT INT TERM HUP
     fi
 }
 
@@ -1977,6 +1982,49 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_pi0_fast_model() {
+    case "$ENV_NAME" in
+        maniskill_libero|libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            uv pip install -r "$SCRIPT_DIR/embodied/models/pi0_fast.txt"
+            install_hf_libero_env
+            if [ "$ENV_NAME" = "maniskill_libero" ]; then
+                install_maniskill_libero_extras
+            fi
+            python - <<'EOF'
+import importlib
+import sys
+
+import torch
+import transformers
+
+module = importlib.import_module("lerobot.policies.pi0_fast")
+missing = [
+    name for name in ("PI0FastPolicy", "PI0FastConfig") if not hasattr(module, name)
+]
+if missing:
+    raise RuntimeError(f"LeRobot pi0_fast API missing: {missing}")
+if sys.version_info < (3, 12):
+    raise RuntimeError(
+        f"pi0_fast requires Python >=3.12, got {sys.version.split()[0]}"
+    )
+print(
+    "[install.sh] pi0_fast smoke: "
+    f"python={sys.version.split()[0]}, torch={torch.__version__}, "
+    f"transformers={transformers.__version__}"
+)
+EOF
+            install_flash_attn
+            uv pip uninstall pynvml || true
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for pi0_fast model." >&2
+            exit 1
+            ;;
+    esac
+}
+
 install_molmoact2_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -2501,12 +2549,57 @@ install_libero_env() {
     reset_libero_config
 }
 
-install_maniskill_libero_env() {
-    install_libero_env
+hf_libero_assets_present() {
+    python - <<'EOF'
+import importlib
+import sys
+from pathlib import Path
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+required_dirs = ("articulated_objects", "scenes", "stable_hope_objects")
+sys.exit(0 if all((assets_dir / name).is_dir() for name in required_dirs) else 1)
+EOF
+}
+
+download_hf_libero_assets() {
+    python - <<'EOF'
+import importlib
+import os
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
+package = importlib.import_module("libero.libero")
+assets_dir = Path(package.__file__).resolve().parent / "assets"
+snapshot_download(
+    repo_id=os.environ.get("LIBERO_ASSETS_REPO", "RLinf/LIBERO-assets"),
+    repo_type="dataset",
+    local_dir=assets_dir,
+)
+EOF
+}
+
+install_hf_libero_env() {
+    materialize_package_files hf-libero
+    if hf_libero_assets_present; then
+        echo "LIBERO assets already present; skipping download."
+    else
+        retry_cmd download_hf_libero_assets
+    fi
+    reset_libero_config
+}
+
+install_maniskill_libero_extras() {
     # The largest git fetch in the install; truncates on slow links.
     retry_cmd uv pip install git+${GITHUB_PREFIX}https://github.com/haosulab/ManiSkill.git@v3.0.0b22
 
     bash $SCRIPT_DIR/embodied/download_assets.sh --assets maniskill
+}
+
+install_maniskill_libero_env() {
+    install_libero_env
+    install_maniskill_libero_extras
 }
 
 install_d4rl_env() {
@@ -3185,6 +3278,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                pi0_fast)
+                    install_pi0_fast_model
                     ;;
                 molmoact2)
                     install_molmoact2_model

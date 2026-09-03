@@ -290,6 +290,7 @@ def preprocess_loss_inputs(
     returns: Optional[torch.Tensor] = None,
     reward_type: Optional[str] = None,
     versions: Optional[torch.Tensor] = None,
+    logprob_mask: Optional[torch.Tensor] = None,
     **kwargs,
 ) -> dict:
     if reward_type == "chunk_level":
@@ -307,7 +308,28 @@ def preprocess_loss_inputs(
 
     bsz = logprobs.shape[0]
     proximal_logprobs = kwargs.get("proximal_logprobs", None)
-    if logprob_type == "token_level":
+    if logprob_type == "sequence_token_level":
+        if logprobs.ndim != 2 or old_logprobs.shape != logprobs.shape:
+            raise ValueError(
+                "sequence_token_level expects matching [batch, token] logprobs, got "
+                f"{tuple(logprobs.shape)} and {tuple(old_logprobs.shape)}"
+            )
+        if logprob_mask is None or logprob_mask.shape != logprobs.shape:
+            mask_shape = None if logprob_mask is None else tuple(logprob_mask.shape)
+            raise ValueError(
+                "sequence_token_level requires logprob_mask with shape "
+                f"{tuple(logprobs.shape)}, got {mask_shape}"
+            )
+        token_mask = logprob_mask.to(device=logprobs.device, dtype=torch.bool)
+        advantages = advantages.unsqueeze(-1)
+        if loss_mask is not None:
+            loss_mask = loss_mask.unsqueeze(-1).to(dtype=torch.bool) & token_mask
+        else:
+            loss_mask = token_mask
+        if loss_mask_sum is not None:
+            loss_mask_sum = loss_mask_sum.unsqueeze(-1)
+
+    elif logprob_type == "token_level":
         # logprobs, old_logprobs: [bsz, num_action_chunks, action_dim] -> [bsz, num_action_chunks, action_dim]
         logprobs = logprobs.reshape(bsz, -1, single_action_dim)
         old_logprobs = old_logprobs.reshape(bsz, -1, single_action_dim)

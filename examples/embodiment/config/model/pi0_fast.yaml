@@ -1,0 +1,25 @@
+model_type: "pi0_fast"
+
+# Download these artifacts as documented, then set their local paths here.
+model_path: "/path/to/pi0fast-libero"
+
+precision: "bf16"
+load_to_device: True
+
+num_action_chunks: 10
+action_dim: 7
+
+is_lora: False
+lora_rank: 32
+lora_target_scope: "all_linear"
+
+policy_setup: "libero"
+
+pi0_fast:
+  text_tokenizer_name: "/path/to/paligemma-3b-pt-224"
+  action_tokenizer_name: "/path/to/tokenizer-lib-mean"
+  max_action_tokens: 256
+  image_size: 224
+  use_kv_cache: True
+  gradient_checkpointing: False
+  require_action_token_prefix: True

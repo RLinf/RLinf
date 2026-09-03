@@ -1546,3 +1546,51 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  embodied-pi0-fast-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create PI0-Fast environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export UV_TORCH_BACKEND=cu128
+          bash requirements/install.sh embodied --model pi0_fast --env libero \
+            --python 3.12.12 --torch 2.11.0 --no-flash-attn
+
+      - name: Download PI0-Fast artifacts
+        timeout-minutes: 30
+        run: |
+          source .venv/bin/activate
+          hf download lerobot/pi0fast-libero \
+            --revision 840f4b503f4c09110421c33c810a85b6684fd658 \
+            --local-dir /workspace/dataset/pi0_fast/pi0fast-libero
+          hf download google/paligemma-3b-pt-224 \
+            --revision 35e4f46485b4d07967e7e9935bc3786aad50687c \
+            --local-dir /workspace/dataset/pi0_fast/paligemma-3b-pt-224
+          hf download jadechoghari/tokenizer-lib-mean \
+            --revision 79ae83e3cbd8786dcb84b628569f8d076ca8151e \
+            --local-dir /workspace/dataset/pi0_fast/tokenizer-lib-mean
+
+      - name: PI0-Fast LIBERO GRPO test
+        timeout-minutes: 30
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh libero_10_grpo_pi0_fast egl \
+            actor.model.model_path=/workspace/dataset/pi0_fast/pi0fast-libero \
+            actor.model.pi0_fast.text_tokenizer_name=/workspace/dataset/pi0_fast/paligemma-3b-pt-224 \
+            actor.model.pi0_fast.action_tokenizer_name=/workspace/dataset/pi0_fast/tokenizer-lib-mean
+
+      - name: Clean up
+        if: always()
+        run: |
+          rm -rf .venv
+          uv cache prune
