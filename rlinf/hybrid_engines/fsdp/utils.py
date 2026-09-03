@@ -67,8 +67,26 @@ def create_device_mesh(
     world_size: int, sharding_strategy: str = "full_shard"
 ) -> DeviceMesh:
     """Create the device mesh for an FSDP sharding strategy."""
-    if sharding_strategy.lower() == "hybrid_shard":
-        shard_size = int(os.environ["NODE_LOCAL_WORLD_SIZE"])
+    if sharding_strategy == "hybrid_shard":
+        node_local_world_size = os.getenv("NODE_LOCAL_WORLD_SIZE")
+        if node_local_world_size is not None:
+            shard_size = int(node_local_world_size)
+        elif Worker.torch_platform is not None and Worker.torch_platform.is_available():
+            shard_size = min(world_size, Worker.torch_platform.device_count())
+        else:
+            raise RuntimeError(
+                "NODE_LOCAL_WORLD_SIZE is not set and no accelerator is available "
+                "to infer the actor ranks per node."
+            )
+        if shard_size <= 0:
+            raise ValueError(
+                f"NODE_LOCAL_WORLD_SIZE must be positive, got {shard_size}."
+            )
+        if world_size % shard_size != 0:
+            raise ValueError(
+                f"hybrid_shard requires world_size ({world_size}) divisible by "
+                f"actor ranks per node ({shard_size})."
+            )
         return init_device_mesh(
             Worker.torch_device_type,
             mesh_shape=(world_size // shard_size, shard_size),
