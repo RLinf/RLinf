@@ -22,7 +22,7 @@ from rlinf.config import validate_cfg
 from rlinf.scheduler import Cluster
 from rlinf.utils.placement import HybridComponentPlacement
 from rlinf.workers.env.async_env_worker import AsyncEnvWorker
-from rlinf.workers.reward import EmbodiedAPIRewardWorker, EmbodiedRewardWorker
+from rlinf.workers.reward.reward_worker import EmbodiedRewardWorker
 from rlinf.workers.rollout.hf.async_huggingface_worker import (
     AsyncMultiStepRolloutWorker,
 )
@@ -94,42 +94,25 @@ def main(cfg) -> None:
     )
 
     reward_group = None
-    reward_cfg = cfg.get("reward", {})
-    try:
-        if reward_cfg.get("use_reward_model", False) and not reward_cfg.get(
-            "standalone_realworld", False
-        ):
-            reward_placement = component_placement.get_strategy("reward")
-            if str(reward_cfg.get("worker_type", "model")).lower() == "api":
-                # The async entrypoint does not manage an SGLang deployment;
-                # the reward API must already be serving at reward.api.api_base.
-                assert str(reward_cfg.get("api", {}).get("api_base") or "").strip(), (
-                    "reward.worker_type='api' requires reward.api.api_base to point "
-                    "at an already-running OpenAI-compatible server. Ray-managed "
-                    "SGLang serving is only available in train_embodied_agent.py."
-                )
-                reward_worker_cls = EmbodiedAPIRewardWorker
-            else:
-                reward_worker_cls = EmbodiedRewardWorker
-            reward_group = reward_worker_cls.create_group(cfg).launch(
-                cluster,
-                name=cfg.reward.group_name,
-                placement_strategy=reward_placement,
-            )
-
-        runner = runner_cls(
-            cfg=cfg,
-            actor=actor_group,
-            rollout=rollout_group,
-            env=env_group,
-            reward=reward_group,
+    if cfg.get("reward", {}).get("use_reward_model", False) and not cfg.get(
+        "reward", {}
+    ).get("standalone_realworld", False):
+        # Create reward worker group
+        reward_placement = component_placement.get_strategy("reward")
+        reward_group = EmbodiedRewardWorker.create_group(cfg).launch(
+            cluster, name=cfg.reward.group_name, placement_strategy=reward_placement
         )
 
-        runner.init_workers()
-        runner.run()
-    finally:
-        if reward_group is not None:
-            reward_group.stop().wait()
+    runner = runner_cls(
+        cfg=cfg,
+        actor=actor_group,
+        rollout=rollout_group,
+        env=env_group,
+        reward=reward_group,
+    )
+
+    runner.init_workers()
+    runner.run()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-在 Franka 上使用 Reward Model
+  在 Franka 上使用 Reward Model
 ================================================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
@@ -463,7 +463,7 @@ Qwen VLM Reward Model（动作趋势判断）
      use_reward_model: true            # 启用 reward model
      worker_type: model                # 本地 HuggingFace 推理
      group_name: "RewardGroup"
-     standalone_realworld: False
+     standalone_realworld: False  
      reward_mode: history_buffer       # 历史窗口趋势判断
      history_reward_assign: true       # 将 VLM 奖励反向分配给历史步
      reward_weight: 1.0                # VLM 奖励权重
@@ -473,7 +473,7 @@ Qwen VLM Reward Model（动作趋势判断）
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "buffered_vlm"
-       lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
+       lora_path: "/path/to/sft_output/checkpoints"
        gt_success_bonus: 20.0
        precision: "bf16"
 

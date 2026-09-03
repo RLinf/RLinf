@@ -490,7 +490,7 @@ as the RL training config. The core reward section:
      model:
        model_path: "/path/to/Qwen3-VL-4B-Instruct"
        model_type: "buffered_vlm"
-       lora_path: "/path/to/sft_output/checkpoints/global_step_3000"
+       lora_path: "/path/to/sft_output/checkpoints"
        gt_success_bonus: 20.0
        precision: "bf16"
 
