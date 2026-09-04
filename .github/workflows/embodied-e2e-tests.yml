@@ -293,6 +293,51 @@ jobs:
           rm -rf .venv
           uv cache prune
 
+  embodied-fastwam-libero-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create FastWAM LIBERO environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          export LIBERO_PATH=/workspace/dataset/LIBERO
+          bash requirements/install.sh embodied --model fastwam --env libero
+
+      - name: FastWAM LIBERO batch evaluation
+        timeout-minutes: 45
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          export LIBERO_TYPE=standard
+          export DIFFSYNTH_MODEL_BASE_PATH=/workspace/dataset/FastWAM/models
+          export FASTWAM_CHECKPOINT_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
+          export FASTWAM_DATASET_STATS_PATH=/workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
+          test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224.pt
+          test -f /workspace/dataset/FastWAM/checkpoints/libero_uncond_2cam224_dataset_stats.json
+          test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.2-TI2V-5B
+          test -d /workspace/dataset/FastWAM/models/Wan-AI/Wan2.1-T2V-1.3B
+          source .venv/bin/activate
+          bash evaluations/run_eval.sh libero libero_spatial_fastwam_eval \
+            'cluster.component_placement={env\,rollout:0}' \
+            env.eval.total_num_envs=2 \
+            env.eval.max_episode_steps=10 \
+            env.eval.max_steps_per_rollout_epoch=10 \
+            rollout.model.model_path=${FASTWAM_CHECKPOINT_PATH} \
+            rollout.model.dataset_stats_path=${FASTWAM_DATASET_STATS_PATH}
+
+      - name: Clean up
+        if: always()
+        run: |
+          ray stop || true
+          rm -rf .venv
+          uv cache prune
+
   embodied-openvlaoft-maniskill-libero-test:
     runs-on: embodied
     steps:

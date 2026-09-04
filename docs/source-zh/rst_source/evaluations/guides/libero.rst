@@ -3,7 +3,7 @@ LIBERO 评测
 
 LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Spatial、Object、Goal、Long 等任务套件。RLinf 支持在 LIBERO 上并行评测 VLA 策略并输出任务级成功率。
 
-相关训练文档：:doc:`../../examples/embodied/libero`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
+相关训练文档：:doc:`../../examples/embodied/libero`、:doc:`../../examples/embodied/sft_fastwam`、:ref:`LIBERO-Pro 与 LIBERO-Plus <zh-liberopro-plus-benchmark>`
 
 环境准备
 --------
@@ -13,7 +13,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    bash requirements/install.sh embodied --model openpi --env libero
    source .venv/bin/activate
 
-支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
+使用 ``--env libero`` 时，安装脚本会将 LIBERO clone 到 ``.venv/libero``（若已设置 ``LIBERO_PATH`` 则复用已有目录），并在 ``.venv/bin/activate`` 中将其加入 ``PYTHONPATH``。
+
+支持的模型包括 ``openpi``、``openvla-oft``、``starvla``、``dreamzero``、``fastwam`` 和 ``molmoact2``，安装时替换 ``--model`` 参数即可。
 
 示例配置
 --------
@@ -39,6 +41,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_spatial_dreamzero_eval_sglang.yaml``
      - Spatial
      - DreamZero（SGLang backend）
+   * - ``libero_spatial_fastwam_eval.yaml``
+     - Spatial
+     - FastWAM
    * - ``libero_spatial_molmoact2_eval.yaml``
      - Spatial
      - MolmoAct2
@@ -48,6 +53,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_object_openvlaoft_eval.yaml``
      - Object
      - OpenVLA-OFT
+   * - ``libero_object_fastwam_eval.yaml``
+     - Object
+     - FastWAM
    * - ``libero_object_molmoact2_eval.yaml``
      - Object
      - MolmoAct2
@@ -57,6 +65,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_goal_openvlaoft_eval.yaml``
      - Goal
      - OpenVLA-OFT
+   * - ``libero_goal_fastwam_eval.yaml``
+     - Goal
+     - FastWAM
    * - ``libero_goal_molmoact2_eval.yaml``
      - Goal
      - MolmoAct2
@@ -66,6 +77,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
+   * - ``libero_10_fastwam_eval.yaml``
+     - Long (libero_10)
+     - FastWAM
    * - ``libero_10_molmoact2_eval.yaml``
      - Long (libero_10)
      - MolmoAct2

@@ -44,6 +44,7 @@ RLinf is a flexible and scalable open-source RL infrastructure designed for Embo
 - [2026/07] 🔥 RLinf supports Evo-1 full-parameter SFT and GRPO fine-tuning on the LIBERO simulator. Doc: [Evo-1](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/evo1.html).
 - [2026/07] 🔥 RLinf reimplements π₀ and π₀.₅ in PyTorch with numerical behavior aligned with the JAX reference implementations. Doc: [OpenPI_RLinf](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_openpi_rlinf.html).
 - [2026/07] 🔥 RLinf supports OPD for online policy distillation of OpenVLA-OFT on LIBERO. Doc: [OPD](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/opd.html).
+- [2026/07] 🔥 RLinf supports batched LIBERO / LIBERO-Plus evaluation and FSDP supervised fine-tuning for [FastWAM](https://github.com/yuantianyuan01/FastWAM). Doc: [FastWAM Evaluation and SFT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html).
 - [2026/07] 🎉 RLinf v0.3 is released with major upgrades in the real-world RL full pipeline (data collection → SFT → RL → deployment), more simulators and SOTA models, and system-level optimizations. Release notes: [RLinf v0.3](https://rlinf.readthedocs.io/en/latest/rst_source/resources/release_v0.3.html).
 - [2026/07] 🔥 RLinf supports RLT for online RL fine-tuning of VLA policies. Doc: [RLT](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/rlt.html).
 - [2026/06] 🔥 RLinf supports STEAM for offline advantage estimation and policy optimization. Doc: [STEAM](https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/steam.html).
@@ -200,6 +201,7 @@ RLinf supports SFT, simulation RL, and real-world RL for World Action Models (WA
           <ul>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_cosmos3.html">Cosmos3</a> ✅</li>
             <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_dreamzero.html">DreamZero</a> ✅</li>
+            <li><a href="https://rlinf.readthedocs.io/en/latest/rst_source/examples/embodied/sft_fastwam.html">FastWAM</a> ✅</li>
           </ul>
         </ul>
       </td>

@@ -54,7 +54,7 @@ PLATFORM_FLASH_ATTN_PREBUILT=0
 DISABLE_FLASH_ATTN=0
 # User-level opt-out for apex, set by --no-apex. Wins over the platform default.
 DISABLE_APEX=0
-# User-level opt-out for natten, set by --no-natten. 
+# User-level opt-out for natten, set by --no-natten.
 DISABLE_NATTEN=0
 # Platform torchcodec pin; when set it wins over the version-derived one (the
 # derived pin has no wheels on e.g. Ascend/aarch64). Set by configure_<platform>.
@@ -101,7 +101,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "fastwam" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -803,6 +803,18 @@ apply_env_default_torch() {
         TORCH_VERSION="$env_torch"
         echo "[install.sh] Environment '${ENV_NAME}' pins torch ${TORCH_VERSION}; overriding the project default."
     fi
+}
+
+# Models that require a different Torch family declare it here. An explicit
+# --torch value, including one already selected for an environment, wins.
+apply_model_default_torch() {
+    [ -n "$TORCH_VERSION" ] && return 0
+    case "$MODEL" in
+        fastwam)
+            TORCH_VERSION="2.7.1"
+            echo "[install.sh] Model '${MODEL}' pins torch ${TORCH_VERSION}; overriding the project default."
+            ;;
+    esac
 }
 
 configure_platform() {
@@ -2281,6 +2293,62 @@ install_dreamzero_model() {
     esac
 }
 
+install_fastwam_deps() {
+    local fastwam_path
+    local fastwam_ref="${FASTWAM_GIT_REF:-45d8e1458921d83f8ad6cf9ce993d371208dabd0}"
+    local use_external_fastwam=0
+    if [ -n "${FASTWAM_PATH:-}" ]; then
+        use_external_fastwam=1
+    fi
+
+    # Fetch the upstream repository only when the checkout is missing and pin
+    # the adapter to a reproducible detached commit.
+    fastwam_path=$(clone_or_reuse_repo FASTWAM_PATH "$VENV_DIR/FastWAM" \
+        https://github.com/yuantianyuan01/FastWAM.git --filter=blob:none --no-checkout)
+    if [ "$use_external_fastwam" -eq 0 ] || [ ! -f "$fastwam_path/pyproject.toml" ]; then
+        if ! git -C "$fastwam_path" cat-file -e "$fastwam_ref^{commit}" 2>/dev/null; then
+            git -C "$fastwam_path" fetch --depth 1 origin "$fastwam_ref" >&2
+        fi
+        git -C "$fastwam_path" checkout --detach "$fastwam_ref" >&2
+    fi
+    if [ ! -f "$fastwam_path/pyproject.toml" ]; then
+        echo "FastWAM checkout is missing pyproject.toml: $fastwam_path" >&2
+        exit 1
+    fi
+
+    # RLinf selects the platform-specific Torch stack. Install the remaining
+    # pinned runtime dependencies without re-resolving upstream Torch pins.
+    uv pip install -r "$SCRIPT_DIR/embodied/models/fastwam.txt"
+    uv pip install -e "$fastwam_path" --no-deps
+}
+
+install_fastwam_model() {
+    create_and_sync_venv
+    install_common_embodied_deps
+
+    case "$ENV_NAME" in
+        libero)
+            install_libero_env
+            ;;
+        liberoplus)
+            install_liberoplus_env
+            ;;
+        "")
+            # Environment-free installation supports offline FastWAM SFT.
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for FastWAM model." >&2
+            exit 1
+            ;;
+    esac
+
+    install_fastwam_deps
+
+    # robosuite 1.4.1 uses the pre-3.10 mj_fullM calling convention. Scope the
+    # known-good version to FastWAM so ordinary LIBERO installs are unchanged.
+    uv pip install "mujoco==3.3.7"
+}
+
 install_cosmos3_deps() {
     local cosmos_path
     cosmos_path=$(clone_or_reuse_repo COSMOS_FRAMEWORK_PATH "$VENV_DIR/cosmos-framework" https://github.com/NVIDIA/cosmos-framework.git)
@@ -3151,6 +3219,7 @@ main() {
     parse_args "$@"
     validate_python_version
     apply_env_default_torch
+    apply_model_default_torch
     apply_agentic_torch_default
     configure_platform
     setup_mirror
@@ -3171,7 +3240,7 @@ main() {
                     echo "Unknown environment: $ENV_NAME. Supported environments: ${SUPPORTED_ENVS[*]}" >&2
                     exit 1
                 fi
-            elif [ "$MODEL" != "dreamzero" ] && [ "$MODEL" != "diffusion" ]; then
+            elif [[ "$MODEL" != "dreamzero" && "$MODEL" != "fastwam" && "$MODEL" != "diffusion" ]]; then
                 echo "--env must be specified when target=embodied." >&2
                 exit 1
             fi
@@ -3212,6 +3281,9 @@ main() {
                     ;;
                 dreamzero)
                     install_dreamzero_model
+                    ;;
+                fastwam)
+                    install_fastwam_model
                     ;;
                 cosmos3)
                     install_cosmos3_model

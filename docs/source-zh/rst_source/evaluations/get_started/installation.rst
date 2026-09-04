@@ -20,6 +20,9 @@
    * - LIBERO
      - ``openpi`` / ``openvla-oft`` / ``starvla`` / ``dreamzero`` / ``molmoact2``
      - ``maniskill_libero`` 或 ``libero``
+   * - LIBERO / LIBERO-Plus
+     - ``fastwam``
+     - ``libero`` 或 ``liberoplus``
    * - RoboTwin
      - ``openvla-oft`` / ``openpi`` / ``lingbotvla``
      - ``robotwin``

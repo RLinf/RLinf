@@ -98,6 +98,7 @@ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.FASTWAM = SupportedModel.register("fastwam", force=True)
 SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
@@ -139,6 +140,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
+        SupportedModel.FASTWAM,
         SupportedModel.COSMOS3,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
