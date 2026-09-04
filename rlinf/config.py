@@ -1394,6 +1394,32 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate SearchR1 multi-agent training requirements before launch."""
+    reward_cfg = cfg.get("reward", None)
+    if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
+        return cfg
+
+    if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
+        raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
+    if not cfg.actor.get("enable_dp_load_balance", False):
+        raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
+    if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
+        "importance_sampling_fix", False
+    ):
+        raise ValueError(
+            "SearchR1 with the FSDP multi-agent actor does not support "
+            "algorithm.importance_sampling_fix=True."
+        )
+
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if not component_placement.is_collocated:
+        raise ValueError(
+            "SearchR1 multi-agent actors support only collocated component placement."
+        )
+    return cfg
+
+
 def validate_reasoning_eval_cfg(cfg: DictConfig) -> DictConfig:
     with open_dict(cfg):
         assert cfg.runner.seq_length > cfg.data.max_prompt_length, (
@@ -1573,6 +1599,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
+
+    if cfg.runner.task_type == "reasoning":
+        cfg = validate_searchr1_cfg(cfg)
 
     return cfg
 

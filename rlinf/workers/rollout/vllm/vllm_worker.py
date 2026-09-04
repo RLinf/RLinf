@@ -164,8 +164,7 @@ class VLLMWorker(Worker):
                 input_ids=prompt_ids,
                 sampling_params=self._validate_sampling_params,
             )
-        for request_output in vllm_outputs:
-            print_vllm_outputs(request_output, self._tokenizer)
+        print_vllm_outputs(vllm_outputs)
 
     async def offload_engine(self) -> None:
         """
