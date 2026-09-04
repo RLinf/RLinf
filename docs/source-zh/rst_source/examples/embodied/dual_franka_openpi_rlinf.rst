@@ -1,19 +1,23 @@
-使用 OpenPI PyTorch 完成双 Franka 策略微调与部署
-================================================
+使用 OpenPI_RLinf π0 与 π0.5 完成双 Franka 训练与部署
+=======================================================
 
 .. figure:: https://raw.githubusercontent.com/RLinf/misc/main/pic/dual-franka-deploy-rlinf.jpg
    :align: center
    :width: 80%
-   :alt: RLinf PyTorch 双 Franka 部署
+   :alt: OpenPI_RLinf 双 Franka 部署
 
-   使用 RLinf PyTorch 完成双 Franka 策略微调与部署。
+   使用 OpenPI_RLinf 完成双 Franka π0 与 π0.5 策略训练与部署。
 
-运行受支持的双 Franka 流程：用 GELLO 采集关节空间示教，将数据转换为 tcp_rot6d，微调 OpenPI π₀.₅，并把 checkpoint 部署回机器人节点。
+本指南介绍 Dual Franka 上 OpenPI_RLinf π0 与 π0.5 的统一训练和部署流程。
+两种模型共用相同的数据格式、tcp_rot6d action representation、SFT 入口、
+checkpoint 保存结构、权重转换工具、真机环境和 evaluation 入口，因此也可
+使用这套管线开展 π0/π0.5 对比实验。
 
 概览
 ----------------------------------------
 
-构建双臂数据集，训练 π₀.₅，并部署到双节点 Franka rig。
+构建一套双臂数据集，训练 π0 或 π0.5，并通过 legacy real-world PT 后端或
+OpenPI_RLinf safetensors 后端部署到双节点 Franka rig。
 
 .. grid:: 2 4 4 4
    :gutter: 2
@@ -21,7 +25,7 @@
    .. grid-item-card:: 模型
       :text-align: center
 
-      OpenPI π₀.₅
+      OpenPI_RLinf π0 · π0.5
 
    .. grid-item-card:: 算法
       :text-align: center
@@ -55,11 +59,14 @@
      - ``realworld_collect_data_gello_joint_dual_franka``
      - 采集双臂关节轨迹。
    * - SFT
-     - ``realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d``
-     - 在 tcp_rot6d 动作上微调 π₀.₅。
-   * - Deployment
-     - ``realworld_eval_dual_franka``
-     - 在机器人节点上运行 eval-only 部署。
+     - ``realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d`` / ``realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d``
+     - 使用对应的 tcp_rot6d 配置微调 π0 或 π0.5。
+   * - Deployment（OpenPI PyTorch）
+     - ``realworld_eval_dual_franka_openpi_pi0`` / ``realworld_eval_dual_franka_openpi_pi05``
+     - 使用 legacy FP32 ``full_weights.pt`` 在机器人节点上部署。
+   * - Deployment（OpenPI_RLinf）
+     - ``realworld_eval_dual_franka_openpi_pi0_rlinf`` / ``realworld_eval_dual_franka_openpi_pi05_rlinf``
+     - 使用新版 FP32 ``model.safetensors`` 在机器人节点上部署。
 
 观测与动作
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -78,6 +85,30 @@
      - 评测成功信号或人工门控部署结果。
    * - Prompt
      - OpenPI 数据/配置 metadata 中的任务文本。
+
+π0 与 π0.5 共用三路相机、prompt、20D tcp_rot6d action 和 20 帧 action
+horizon。π0 还会通过 ``state_proj`` 将 normalization 后的当前 TCP
+pose/gripper state 注入模型 core；π0.5 不向模型 core 注入该连续 state。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 33 33
+
+   * - 项目
+     - π0
+     - π0.5
+   * - 连续 state 输入模型 core
+     - 是
+     - 否
+   * - SFT 入口与 checkpoint 结构
+     - 共用
+     - 共用
+   * - Legacy PT converter
+     - ``openpi_rlinf_to_openpi_pytorch``
+     - ``openpi_rlinf_to_openpi_pytorch``
+   * - OpenPI_RLinf converter
+     - ``sft_to_openpi_rlinf``
+     - ``sft_to_openpi_rlinf``
 
 安装
 ----------------------------------------
@@ -162,10 +193,18 @@ RLinf 安装脚本只安装运行依赖；PREEMPT_RT 内核与实时权限请按
      - 用途
    * - ``examples/embodiment/config/realworld_collect_data_gello_joint_dual_franka.yaml``
      - GELLO 关节空间采集
-   * - ``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
      - 在转换后的 tcp_rot6d 数据上执行 π₀.₅ SFT
-   * - ``examples/embodiment/config/realworld_eval_dual_franka.yaml``
-     - 真机策略部署
+   * - ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+     - 在转换后的 tcp_rot6d 数据上执行 π₀ SFT
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0.yaml``
+     - legacy OpenPI PyTorch π0 FP32 真机部署
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi0_rlinf.yaml``
+     - OpenPI_RLinf π0 FP32 真机部署
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05.yaml``
+     - legacy OpenPI PyTorch π0.5 FP32 真机部署
+   * - ``evaluations/realworld/realworld_eval_dual_franka_openpi_pi05_rlinf.yaml``
+     - OpenPI_RLinf π0.5 FP32 真机部署
    * - ``examples/embodiment/config/env/realworld_dual_franka_joint.yaml``
      - 关节空间硬件默认配置
    * - ``examples/embodiment/config/env/realworld_dual_franka_tcp_rot6d.yaml``
@@ -399,37 +438,118 @@ Ray 在 ``ray start`` 时捕获环境变量。启动集群前导出节点 rank �
    export HF_LEROBOT_HOME=/path/to/lerobot_root
    export SFT_REPO_ID=<repo_id>/tcp_rot6d_v1
 
+   # π0.5
    python toolkits/lerobot/calculate_norm_stats.py \
        --config-name pi05_dualfranka_tcp_rot6d \
        --repo-id $SFT_REPO_ID
 
-   bash examples/sft/run_vla_sft.sh realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d
+   # π0
+   python toolkits/lerobot/calculate_norm_stats.py \
+       --config-name pi0_dualfranka_tcp_rot6d \
+       --repo-id $SFT_REPO_ID
 
-并在 ``examples/sft/config/realworld_sft_openpi_pytorch_dual_franka_tcp_rot6d.yaml``
+π0 与 π0.5 使用相同的 SFT 启动入口，并分别传入对应的实验配置：
+
+.. code-block:: bash
+
+   bash examples/sft/run_vla_sft.sh SFT_CONFIG_NAME
+
+并在对应的 ``examples/sft/config/realworld_sft_openpi_rlinf_pi0_dual_franka_tcp_rot6d.yaml``
+或 ``examples/sft/config/realworld_sft_openpi_rlinf_pi05_dual_franka_tcp_rot6d.yaml``
 中更新 ``train_data_paths``、``model_path``、``assets_dir``、``asset_id``、``logger`` 设置和集群放置。
 Checkpoint 保存到
 ``<log_path>/checkpoints/global_step_<N>/actor/model_state_dict/full_weights.pt``。
 
-其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为 ``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型路径。本文使用的 ``model`` 为需要从 ``openpi-jax`` 版做转换，详情请参考 ``sft_openpi_rlinf.rst``。
+其中 ``assets_dir`` 为 ``norm_stats.json`` 所在目录，``asset_id`` 为
+``norm_stats.json`` 所在的 ``repo_id``，``model_path`` 为训练时指定的模型
+路径。本文使用的 base model 需要从 ``openpi-jax`` 格式转换，转换接口请参考
+``rlinf/utils/ckpt_convertor/openpi/README.md``。
 
 使用代码为：
 
 .. code-block:: bash
 
-   RLinf/rlinf/utils/ckpt_convertor/openpi/pt_to_safetensors.py
+   rlinf/utils/ckpt_convertor/openpi/jax_to_openpi_rlinf.py
 
-在训练前需要将 SFT 得到的 Checkpoint 进行转化，得到部署所需要的
-checkpoint，转化方法如下：
+转换 SFT Checkpoint 用于部署
+----------------------------------------
+
+π0 与 π0.5 的 SFT checkpoint 都支持两种部署格式。legacy real-world PT
+部署使用 ``openpi_rlinf_to_openpi_pytorch`` 的 PT 输出，其中 reference model
+必须与 SFT variant
+匹配，即对应的原始 OpenPI PyTorch π0 或 π0.5 base 权重。该转换器要求 SFT
+checkpoint 为 FP32，并在 PT 到 PT 的直接转换中始终保持 FP32。程序会根据
+匹配的 reference 自动选择 π0 的标准 RMSNorm 映射或 π0.5 的自适应 RMSNorm
+映射，不需要额外传入 variant 参数。
+部署精度可通过 YAML 中的 ``rollout.model.precision`` 控制，其行为取决于
+所使用的 backend：
+
+不同 Backend 的部署精度
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+
+   * - Backend
+     - ``fp32``
+     - ``bf16``
+     - ``null``
+   * - Legacy OpenPI
+     - 纯 FP32
+     - 纯 BF16
+     - OpenPI 原有的混合精度
+   * - OpenPI_RLinf
+     - 纯 FP32
+     - 纯 BF16
+     - 保持 ``Pi0Config`` 创建时的 BF16；不是独立的精度模式
+
+OpenPI PyTorch 部署使用 ``openpi_rlinf_to_openpi_pytorch``。将
+``INPUT_CHECKPOINT`` 设置为 RLinf SFT checkpoint，将
+``OPENPI_PYTORCH_REFERENCE`` 设置为与 SFT variant 匹配的原始 OpenPI
+PyTorch π0 或 π0.5 base model，并通过 ``OUTPUT_DIRECTORY`` 指定输出目录。
 
 .. code-block:: bash
 
    python -m rlinf.utils.ckpt_convertor.openpi.convert \
-     --mode sft2deploy \
-     --ckpt INPUT \
-     --output OUTPUT \
-     --reference-model OLD_MODEL \
-     --dtype-reference DEPLOY_FULL_WEIGHTS_PT
+     --mode            openpi_rlinf_to_openpi_pytorch \
+     --input-model     INPUT_CHECKPOINT \
+     --reference-model OPENPI_PYTORCH_REFERENCE \
+     --output-model    OUTPUT_DIRECTORY \
+     --output-format   pt \
+     --dtype           fp32
 
+OpenPI PyTorch 输出目录为：
+
+.. code-block:: text
+
+   OUTPUT_DIRECTORY/
+   ├── actor/model_state_dict/full_weights.pt
+   ├── actor/model_state_dict/full_weights.pt.report.json
+   └── DATASET_REPO_ID/norm_stats.json  # 需要单独复制
+
+OpenPI_RLinf 部署使用 ``sft_to_openpi_rlinf``。π0 的 ``CONFIG_NAME`` 为
+``pi0_dualfranka_tcp_rot6d``，π0.5 的 ``CONFIG_NAME`` 为
+``pi05_dualfranka_tcp_rot6d``。
+
+.. code-block:: bash
+
+   python -m rlinf.utils.ckpt_convertor.openpi.convert \
+     --mode sft_to_openpi_rlinf \
+     --ckpt INPUT_CHECKPOINT \
+     --input-norm-stats NORM_STATS_JSON \
+     --output-model OUTPUT_MODEL \
+     --output-norm-stats OUTPUT_MODEL/DATASET_REPO_ID/norm_stats.json \
+     --config-name CONFIG_NAME \
+     --dtype fp32
+
+OpenPI_RLinf 输出目录为：
+
+.. code-block:: text
+
+   OUTPUT_MODEL/
+   ├── model.safetensors
+   ├── config.json
+   └── DATASET_REPO_ID/norm_stats.json
 
 评估与部署
 ----------------------------------------
@@ -437,15 +557,12 @@ checkpoint，转化方法如下：
 准备 checkpoint 文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``node 0`` 上的部署 checkpoint 目录必须包含：
+``node 0`` 上的部署 checkpoint 目录必须符合上面两种结构之一。将
+``rollout.model.model_path`` 指向对应的 ``OUTPUT_DIRECTORY`` 或
+``OUTPUT_MODEL``。
 
-.. code-block:: text
-
-   <model_path>/
-   ├── actor/model_state_dict/full_weights.pt
-   └── <repo_id>/tcp_rot6d_v1/norm_stats.json
-
-将 SFT checkpoint 和匹配的 normalization stats 同步回 ``node 0``：
+将转换后的 checkpoint 和匹配的 normalization stats
+同步回 ``node 0``：
 
 .. code-block:: bash
 
@@ -462,7 +579,7 @@ checkpoint，转化方法如下：
    rsync -av $TRAINER_IP:<train_log>/checkpoints/global_step_<N>/$SFT_REPO_ID/norm_stats.json \
        $DEPLOY_CKPT/$SFT_REPO_ID/norm_stats.json
 
-在 ``examples/embodiment/config/realworld_eval_dual_franka.yaml`` 中将
+在 ``evaluations/realworld`` 下选用的配置中将
 ``rollout.model.model_path`` 设为 ``$DEPLOY_CKPT``，将
 ``actor.model.openpi_data.repo_id`` 设为 ``<repo_id>/tcp_rot6d_v1``。
 
@@ -470,8 +587,17 @@ checkpoint，转化方法如下：
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 可复用采集阶段的 Ray 集群，也可使用相同环境变量重新启动。策略启动由
-:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用
-``realworld_eval_dual_franka``。
+:doc:`真机评测指南 <../../evaluations/guides/realworld>` 统一维护，使用与
+模型 variant 和部署格式匹配的配置。
+请根据上表中对应 backend 的规则设置 ``rollout.model.precision``。
+OpenPI_RLinf 如需显式指定精度，请使用 ``fp32`` 或 ``bf16``。
+
+.. code-block:: bash
+
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi0_rlinf
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05
+   bash evaluations/run_eval.sh realworld_eval_dual_franka_openpi_pi05_rlinf
 
 部署阶段脚踏按键：
 

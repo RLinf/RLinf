@@ -13,7 +13,7 @@ Dual Franka PICO Collection and DAgger
 This guide explains how to use PICO to collect demonstrations in the dual-Franka
 TCP-rot6d environment, then run online Human-Gated DAgger with PICO human
 interventions. For dual-arm hardware, real-time kernel, and camera checks, start
-with :doc:`dual_franka`; for the PICO / XRoboToolkit data publishing pipeline,
+with :doc:`dual_franka_openpi_rlinf`; for the PICO / XRoboToolkit data publishing pipeline,
 see :doc:`franka_vr`; for the single-arm HG-DAgger workflow, see
 :doc:`hg-dagger`.
 
@@ -22,7 +22,7 @@ Overview
 
 Use the left and right PICO controllers to control the two Franka arms. First
 collect tcp_rot6d LeRobot data, then prepare the OpenPI π₀.₅ student checkpoint
-by following :doc:`dual_franka`, and finally launch online HG-DAgger on the real
+by following :doc:`dual_franka_openpi_rlinf`, and finally launch online HG-DAgger on the real
 robot.
 
 .. grid:: 2 4 4 4
@@ -49,7 +49,7 @@ robot.
       2× Franka · PICO · 3 cameras
 
 | **You'll do:** start the PICO publisher → collect dual-arm tcp_rot6d demos → reuse the dual-arm SFT checkpoint flow → run online HG-DAgger.
-| **Prerequisites:** :doc:`dual_franka` · :doc:`franka_vr` · OpenPI π₀.₅ checkpoint · Ray cluster.
+| **Prerequisites:** :doc:`dual_franka_openpi_rlinf` · :doc:`franka_vr` · OpenPI π₀.₅ checkpoint · Ray cluster.
 
 Tasks
 ~~~~~
@@ -430,7 +430,7 @@ Prepare the Checkpoint
 
 Online DAgger requires a deployable OpenPI checkpoint. For data organization,
 normalization stats, SFT, and checkpoint directory preparation, follow the SFT
-and deployment-checkpoint sections in :doc:`dual_franka`.
+and deployment-checkpoint sections in :doc:`dual_franka_openpi_rlinf`.
 
 When using data collected from this page, the data already comes from the
 ``realworld_dual_franka_tcp_rot6d`` environment, so do not run the GELLO

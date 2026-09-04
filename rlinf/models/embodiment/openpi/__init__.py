@@ -87,7 +87,12 @@ def get_model(cfg: DictConfig, torch_dtype=None):
             all_state_dict.update(state_dict)
         model.load_state_dict(all_state_dict, strict=False)
 
-    model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
+    if torch_dtype is not None:
+        model = model.to(dtype=torch_dtype)
+    else:
+        # Preserve the existing OpenPI mixed-precision behavior for
+        # precision=null configurations.
+        model.paligemma_with_expert.to_bfloat16_for_selected_params("bfloat16")
     # fsdp replace
     # model.paligemma_with_expert.replace_gemma_decoder_layers()
     # load data stats

@@ -346,7 +346,8 @@ Dual Franka SFT 部署复用统一评测启动器，并通过配置回退使用
        actor.model.openpi_data.repo_id=<repo_id>/tcp_rot6d_v1 \
        env.eval.override_cfg.task_description="handover the object"
 
-完整采集、SFT、checkpoint 同步与脚踏按键流程见 :doc:`../../examples/embodied/dual_franka`。
+完整采集、SFT、checkpoint 同步与脚踏按键流程见
+:doc:`../../examples/embodied/dual_franka_openpi_rlinf`。
 
 查看结果
 --------

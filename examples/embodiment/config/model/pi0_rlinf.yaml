@@ -1,0 +1,29 @@
+model_type: "openpi_rlinf"
+
+# OpenPI_RLinf Pi0 model shape for Dual-Franka tcp_rot6d evaluation. The
+# checkpoint path is supplied by the real-world evaluation config.
+model_path: "/path/to/model/openpi_rlinf"
+precision: bf16
+pi05: false
+
+is_lora: false
+lora_rank: 32
+
+num_action_chunks: 20
+action_dim: 20
+use_proprio: true
+num_steps: 5
+add_value_head: false
+
+openpi:
+  task: eval
+  config_name: "pi0_dualfranka_tcp_rot6d"
+  num_images_in_input: 3
+  action_chunk: ${..num_action_chunks}
+  num_steps: ${..num_steps}
+  action_env_dim: ${..action_dim}
+  model_action_dim: 32
+  paligemma_variant: "gemma_2b"
+  action_expert_variant: "gemma_300m"
+  max_token_len: 64
+  discrete_state_input: false

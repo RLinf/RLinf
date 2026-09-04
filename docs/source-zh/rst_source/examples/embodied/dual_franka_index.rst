@@ -11,20 +11,14 @@ Dual-Arm Franka
 本节汇总 RLinf 支持的双 Franka 数据采集、监督微调、部署与 DAgger
 训练流程。请根据使用场景选择对应教程。
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: Collect-SFT-Deploy
-      :link: dual_franka
+   .. grid-item-card:: Dual-Arm Collect-SFT-Deploy (OpenPI_RLinf)
+      :link: dual_franka_openpi_rlinf
       :link-type: doc
 
-      双 Franka GELLO 数据采集、数据转换、训练与部署基础流程。
-
-   .. grid-item-card:: Collect-SFT-Deploy (RLinf-pytorch)
-      :link: dual_franka_openpi_pytorch
-      :link-type: doc
-
-      使用 OpenPI PyTorch 完成双 Franka 策略微调与部署。
+      使用 OpenPI_RLinf 完成双 Franka π0 与 π0.5 训练和部署。
 
    .. grid-item-card:: HG-DAgger via VR
       :link: dual_franka_pico_dagger
@@ -36,6 +30,5 @@ Dual-Arm Franka
    :hidden:
    :maxdepth: 1
 
-   Collect-SFT-Deploy <dual_franka>
-   Collect-SFT-Deploy (RLinf-pytorch) <dual_franka_openpi_pytorch>
+   Dual-Arm Collect-SFT-Deploy (OpenPI_RLinf) <dual_franka_openpi_rlinf>
    HG-DAgger via VR <dual_franka_pico_dagger>

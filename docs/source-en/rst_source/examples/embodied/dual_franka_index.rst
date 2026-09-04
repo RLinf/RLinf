@@ -11,20 +11,14 @@ Dual-Arm Franka
 This section collects RLinf workflows for dual-Franka data collection,
 supervised fine-tuning, deployment, and DAgger training.
 
-.. grid:: 1 2 3 3
+.. grid:: 1 2 2 2
    :gutter: 3
 
-   .. grid-item-card:: Collect-SFT-Deploy
-      :link: dual_franka
+   .. grid-item-card:: Dual-Arm Collect-SFT-Deploy (OpenPI_RLinf)
+      :link: dual_franka_openpi_rlinf
       :link-type: doc
 
-      Collect GELLO demonstrations, convert data, fine-tune a policy, and deploy it.
-
-   .. grid-item-card:: Collect-SFT-Deploy (RLinf-pytorch)
-      :link: dual_franka_openpi_pytorch
-      :link-type: doc
-
-      Fine-tune and deploy a dual-Franka policy with OpenPI PyTorch.
+      Train and deploy Dual-Franka Pi0 and Pi0.5 policies with OpenPI_RLinf.
 
    .. grid-item-card:: HG-DAgger via VR
       :link: dual_franka_pico_dagger
@@ -36,6 +30,5 @@ supervised fine-tuning, deployment, and DAgger training.
    :hidden:
    :maxdepth: 1
 
-   Collect-SFT-Deploy <dual_franka>
-   Collect-SFT-Deploy (RLinf-pytorch) <dual_franka_openpi_pytorch>
+   Dual-Arm Collect-SFT-Deploy (OpenPI_RLinf) <dual_franka_openpi_rlinf>
    HG-DAgger via VR <dual_franka_pico_dagger>

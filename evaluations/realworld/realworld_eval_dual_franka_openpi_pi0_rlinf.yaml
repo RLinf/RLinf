@@ -1,0 +1,112 @@
+defaults:
+  - env/realworld_dual_franka_tcp_rot6d@env.eval
+  - model/pi0_rlinf@rollout.model
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    rollout:
+      node_group: franka
+      placement: 0
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0-1
+      env_configs:
+        - node_ranks: 0
+          python_interpreter_path: null
+      hardware:
+        type: DualFranka
+        configs:
+          - left_robot_ip: LEFT_ROBOT_IP
+            right_robot_ip: RIGHT_ROBOT_IP
+            base_camera_serials: [BASE_CAMERA_SERIAL]
+            base_camera_type: realsense
+            left_camera_serials: [LEFT_CAMERA_SERIAL]
+            left_camera_type: lumos
+            right_camera_serials: [RIGHT_CAMERA_SERIAL]
+            right_camera_type: lumos
+            left_gripper_type: robotiq
+            right_gripper_type: robotiq
+            left_gripper_connection: LEFT_GRIPPER_CONNECTION
+            right_gripper_connection: RIGHT_GRIPPER_CONNECTION
+            left_controller_node_rank: 0
+            right_controller_node_rank: 1
+            node_rank: 0
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  max_epochs: 1
+  max_steps: 1
+  val_check_interval: -1
+  logger:
+    log_path: "../results"
+    project_name: dual-franka-openpi
+    experiment_name: "realworld-eval-openpi-pi0-rlinf"
+    logger_backends: ["tensorboard"]
+
+env:
+  group_name: "EnvGroup"
+  enable_offload: false
+  eval:
+    state_keys: [gripper_position, tcp_pose_rot6d]
+    rollout_epoch: 1
+    use_gello_joint: false
+    use_gello: false
+    use_spacemouse: false
+    keyboard_reward_wrapper: eval_control
+    max_episode_steps: 10000
+    max_steps_per_rollout_epoch: 10000
+    override_cfg:
+      task_description: TASK_DESCRIPTION
+      joint_reset_qpos:
+        - [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        - [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+      target_ee_pose:
+        - [0.5, -0.2, 0.5, -3.14, 0.0, 0.0]
+        - [0.5, 0.2, 0.5, -3.14, 0.0, 0.0]
+      success_hold_steps: 1
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: huggingface
+  recompute_logprobs: false
+  enable_offload: false
+  pipeline_stage_num: 1
+  collect_transitions: false
+  collect_prev_infos: false
+  model:
+    model_path: MODEL_PATH
+    precision: fp32
+    pi05: false
+    num_action_chunks: 20
+    action_dim: 20
+    num_steps: 5
+    add_value_head: false
+    openpi:
+      task: eval
+      config_name: pi0_dualfranka_tcp_rot6d
+      num_images_in_input: 3
+      action_chunk: ${..num_action_chunks}
+      num_steps: ${..num_steps}
+      action_env_dim: ${..action_dim}
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 64
+      discrete_state_input: false
+    openpi_data:
+      repo_id: DATASET_REPO_ID
+      norm_stats_path: NORM_STATS_PATH

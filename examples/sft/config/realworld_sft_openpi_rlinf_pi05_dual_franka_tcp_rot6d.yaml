@@ -1,5 +1,5 @@
 defaults:
-  - model/pi0_5_pytorch_dual_franka@actor.model
+  - model/pi0_5_rlinf@actor.model
   - hybrid_engines/fsdp@actor.fsdp_config
   - override hydra/job_logging: stdout
   - _self_
@@ -11,7 +11,7 @@ hydra:
   searchpath:
     - file://${oc.env:EMBODIED_PATH}/config/
 
-# Dual-Franka tcp_rot6d SFT on the openpi_rlinf Pi0.5 path. The custom
+# Dual-Franka tcp_rot6d SFT on the OpenPI_RLinf Pi0.5 path. The custom
 # LeRobot loader handles sampling and collation; model-facing transforms come
 # from the canonical RLinf pi05_dualfranka_tcp_rot6d data config.
 #
@@ -60,7 +60,22 @@ actor:
 
   model:
     model_path: /path/to/pi05_base_pytorch_new
+    num_action_chunks: 20
+    action_dim: 20
+    use_proprio: true
+    num_steps: 5
+    add_value_head: false
     openpi:
+      task: sft
+      config_name: pi05_dualfranka_tcp_rot6d
+      num_images_in_input: 3
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+      model_action_dim: 32
+      paligemma_variant: gemma_2b
+      action_expert_variant: gemma_300m
+      max_token_len: 200
+      discrete_state_input: false
       assets_dir: /path/to/openpi_assets
       asset_id: "<repo_id>"
 
