@@ -20,27 +20,6 @@ import torch
 from torch.optim import Optimizer
 
 
-def validate_fp32_master_adamw_config(
-    *,
-    strategy: str,
-    sharding_strategy: str,
-    is_lora: bool,
-) -> None:
-    """Validate the FSDP configurations exercised by FP32MasterAdamW."""
-    strategy = str(strategy).lower()
-    sharding_strategy = str(sharding_strategy).lower()
-    if (
-        strategy != "fsdp"
-        or sharding_strategy not in {"no_shard", "full_shard"}
-        or not is_lora
-    ):
-        raise ValueError(
-            "use_fp32_master_params currently supports only FSDP1 LoRA training "
-            "with fsdp_config.strategy=fsdp and sharding_strategy set to "
-            "no_shard or full_shard."
-        )
-
-
 class FP32MasterAdamW(Optimizer):
     """AdamW with FP32 state and master weights for low-precision parameters.
 
@@ -206,7 +185,19 @@ def build_adamw(
     eps: float,
     weight_decay: float,
     use_fp32_master_params: bool = False,
+    fused: bool = False,
 ) -> Optimizer:
-    """Build the configured AdamW implementation."""
-    optimizer_cls = FP32MasterAdamW if use_fp32_master_params else torch.optim.AdamW
-    return optimizer_cls(params, eps=eps, weight_decay=weight_decay)
+    """Build the configured AdamW implementation.
+
+    ``fused`` is ignored for ``FP32MasterAdamW``. Native AdamW first tries
+    ``fused=`` and falls back if the build or parameter set does not support it.
+    """
+    if use_fp32_master_params:
+        return FP32MasterAdamW(params, eps=eps, weight_decay=weight_decay)
+
+    try:
+        return torch.optim.AdamW(
+            params, eps=eps, weight_decay=weight_decay, fused=fused
+        )
+    except (RuntimeError, TypeError):
+        return torch.optim.AdamW(params, eps=eps, weight_decay=weight_decay)

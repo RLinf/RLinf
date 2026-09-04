@@ -381,6 +381,44 @@ def masked_sum(values: torch.Tensor, mask: torch.Tensor, axis=None):
     return _reduce_sum(values * mask, axis)
 
 
+def masked_reduce(
+    values: torch.Tensor,
+    mask: Optional[torch.Tensor],
+    reducer: Literal["mean", "std", "min", "max"],
+    empty_value: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Reduce masked values to a scalar.
+
+    Empty masks return ``empty_value`` (zeros with ``values`` dtype/device if
+    omitted). Callers that need NaN for "mask is non-empty but all-invalid"
+    should substitute after the fact.
+    """
+    if empty_value is None:
+        empty_value = values.new_zeros(())
+    if mask is None:
+        mask = torch.ones_like(values, dtype=torch.bool)
+    else:
+        mask = torch.broadcast_to(mask.bool(), values.shape)
+
+    if reducer == "mean":
+        value = masked_mean(values, mask)
+    elif reducer == "std":
+        mean = masked_mean(values, mask)
+        value = masked_mean((values - mean) ** 2, mask).sqrt()
+    elif reducer == "min":
+        value = torch.where(
+            mask, values, values.new_full((), float("inf"))
+        ).amin()
+    elif reducer == "max":
+        value = torch.where(
+            mask, values, values.new_full((), float("-inf"))
+        ).amax()
+    else:
+        raise ValueError(f"Unsupported reducer: {reducer}")
+
+    return torch.where(mask.any(), value, empty_value)
+
+
 def seq_mean_token_sum(values: torch.Tensor, mask: torch.Tensor, dim: int = -1):
     seq_losses = torch.sum(values * mask, dim=-1)  # token-sum
     loss = torch.mean(seq_losses)  # seq-mean
