@@ -607,7 +607,15 @@ Used when ``actor.training_backend`` is ``fsdp``.
      - FSDP strategy: ``fsdp`` or ``fsdp2`` (case-insensitive).
    * - ``actor.fsdp_config.sharding_strategy``
      - Sharding strategy: ``full_shard``, ``shard_grad_op``, ``hybrid_shard``, or
-       ``no_shard``.
+       ``no_shard``. ``hybrid_shard`` is rejected for runs that configure an FSDP
+       inference group, whose weight-sync metadata assumes a single shard group.
+   * - ``actor.fsdp_config.hybrid_shard_size``
+     - Ranks per shard group when ``sharding_strategy`` is ``hybrid_shard``:
+       parameters are sharded inside a group of this many ranks and replicated
+       across the remaining ranks, so set it to the accelerators on one node to
+       shard intra-node and replicate inter-node. Required by ``hybrid_shard``;
+       must divide the world size of the component it applies to and leave a
+       shard degree and a replicate degree of at least 2. Ignored otherwise.
    * - ``actor.fsdp_config.cpu_offload``
      - FSDP2: keep parameters on CPU, moving them to GPU only when needed.
    * - ``actor.fsdp_config.offload_pin_memory``

@@ -107,13 +107,11 @@ class FSDPModelManager:
         # rank holds one shard of the gradient and the shards are replicated along
         # the "ddp" dim, so the p-norm must be summed over the "fsdp" (shard) group
         # only -- reducing over "ddp" or over WORLD would over-count it by the
-        # replicate degree. A 1-D mesh shards over the whole world, and `None`
-        # already means WORLD for `torch.distributed.all_reduce`.
-        self._dp_group = (
-            self._device_mesh["fsdp"].get_group()
-            if self._device_mesh.ndim > 1
-            else None
-        )
+        # replicate degree. For a 1-D mesh the "fsdp" group spans the whole world,
+        # so this is the shard group in both cases. It is passed rather than left
+        # as None because FSDP2's `get_grad_norm` skips the reduction entirely
+        # when it has no group, which would clip each rank on its own partial norm.
+        self._dp_group = self._device_mesh["fsdp"].get_group()
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger

@@ -478,6 +478,14 @@ def validate_fsdp_weight_sync_cfg(cfg: DictConfig) -> None:
     actor and an inference group configured differently would have one side raise
     while the other blocks. Failing here fails both components at startup instead.
 
+    Whether an FSDP inference group is actually launched depends on the entry
+    script (for reasoning it is the placement mode plus
+    ``algorithm.recompute_logprobs``), so this keys off the presence of an
+    ``inference.fsdp_config`` section. That is deliberately conservative: it can
+    reject a run whose inference group would not have been created, but the
+    alternative is restating a launch condition that lives in the entry scripts.
+    Runs without an inference section, such as SFT, are unaffected.
+
     Args:
         cfg (DictConfig): The full run config.
 
@@ -485,7 +493,7 @@ def validate_fsdp_weight_sync_cfg(cfg: DictConfig) -> None:
         ValueError: If a component that syncs weights uses ``hybrid_shard``.
     """
     inference_cfg = cfg.get("inference", None)
-    if inference_cfg is None or not inference_cfg.get("load_from_actor", False):
+    if inference_cfg is None or inference_cfg.get("fsdp_config", None) is None:
         return
 
     for component_name in ("actor", "inference"):
@@ -498,8 +506,8 @@ def validate_fsdp_weight_sync_cfg(cfg: DictConfig) -> None:
         if sharding_strategy == "hybrid_shard":
             raise ValueError(
                 f"{component_name}.fsdp_config.sharding_strategy='hybrid_shard' is "
-                "not supported when inference.load_from_actor is set: the "
-                "actor-to-inference sharding metadata assumes one shard group "
+                "not supported for a run that configures an FSDP inference group: "
+                "the actor-to-inference sharding metadata assumes one shard group "
                 "spanning the whole world. Use 'full_shard' for both components."
             )
 

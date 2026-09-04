@@ -597,6 +597,13 @@ actor
      - FSDP 策略：``fsdp`` 或 ``fsdp2``\ （不区分大小写）。
    * - ``actor.fsdp_config.sharding_strategy``
      - 分片策略：``full_shard``、``shard_grad_op``、``hybrid_shard`` 或 ``no_shard``。
+       配置了 FSDP inference 组的运行不支持 ``hybrid_shard``，因为其权重同步元数据
+       假设只有一个覆盖全部 rank 的分片组。
+   * - ``actor.fsdp_config.hybrid_shard_size``
+     - ``sharding_strategy`` 为 ``hybrid_shard`` 时每个分片组的 rank 数：参数在该数量的
+       rank 内分片，并在其余 rank 上复制。设为单节点的加速卡数即可实现节点内分片、
+       节点间复制。使用 ``hybrid_shard`` 时必须设置；它必须整除所属组件的 world size，
+       且分片度与复制度均不小于 2。其他分片策略会忽略该项。
    * - ``actor.fsdp_config.cpu_offload``
      - FSDP2：参数保留在 CPU，仅在需要时移到 GPU。
    * - ``actor.fsdp_config.offload_pin_memory``

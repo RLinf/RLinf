@@ -11,8 +11,9 @@ sharding_strategy: "full_shard"
 # ranks, so set it to the number of accelerators on one node to shard
 # intra-node and replicate inter-node. Required by "hybrid_shard" (it has to
 # be the same on every rank, so it is not derived from the node-local rank
-# count); must divide the actor world size and leave a shard degree and a
-# replicate degree of at least 2. Ignored by every other sharding strategy.
+# count); must divide the world size of the component this file is applied to and
+# leave a shard degree and a replicate degree of at least 2. Ignored by every
+# other sharding strategy.
 hybrid_shard_size: -1
 
 gradient_checkpointing: False # if True, gradient checkpointing will be used for FSDP/FSDP2 training, which will save memory but increase computation time.

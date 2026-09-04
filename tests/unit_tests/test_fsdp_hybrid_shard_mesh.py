@@ -117,16 +117,11 @@ def test_unknown_sharding_strategy_is_rejected(sharding_strategy):
         resolve_fsdp_mesh(16, sharding_strategy=sharding_strategy)
 
 
-def _run_cfg(actor_strategy, inference_strategy, load_from_actor=True):
-    return OmegaConf.create(
-        {
-            "actor": {"fsdp_config": {"sharding_strategy": actor_strategy}},
-            "inference": {
-                "load_from_actor": load_from_actor,
-                "fsdp_config": {"sharding_strategy": inference_strategy},
-            },
-        }
-    )
+def _run_cfg(actor_strategy, inference_strategy):
+    cfg = {"actor": {"fsdp_config": {"sharding_strategy": actor_strategy}}}
+    if inference_strategy is not None:
+        cfg["inference"] = {"fsdp_config": {"sharding_strategy": inference_strategy}}
+    return OmegaConf.create(cfg)
 
 
 def test_weight_sync_cfg_accepts_full_shard_on_both_sides():
@@ -150,7 +145,7 @@ def test_weight_sync_cfg_rejects_hybrid_shard_on_either_side(
         validate_fsdp_weight_sync_cfg(_run_cfg(actor_strategy, inference_strategy))
 
 
-def test_weight_sync_cfg_ignores_runs_that_do_not_load_from_the_actor():
-    validate_fsdp_weight_sync_cfg(
-        _run_cfg("hybrid_shard", "full_shard", load_from_actor=False)
-    )
+def test_weight_sync_cfg_ignores_runs_without_an_fsdp_inference_group():
+    # SFT and other single-component runs never do the offset handshake, and are
+    # the case issue #1502 asks hybrid_shard for.
+    validate_fsdp_weight_sync_cfg(_run_cfg("hybrid_shard", None))
