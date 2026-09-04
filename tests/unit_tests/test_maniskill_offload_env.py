@@ -121,24 +121,24 @@ class _FakeManiskillEnv:
 def _load_maniskill_offload_module(monkeypatch):
     repo_root = Path(__file__).resolve().parents[2]
     module_path = (
-        repo_root / "rlinf" / "envs" / "maniskill" / "maniskill_offload_env.py"
+        repo_root / "rlinf" / "envs" / "sim" / "maniskill" / "maniskill_offload_env.py"
     )
 
-    fake_package = types.ModuleType("rlinf.envs.maniskill")
+    fake_package = types.ModuleType("rlinf.envs.sim.maniskill")
     fake_package.__path__ = [str(module_path.parent)]
-    fake_env_module = types.ModuleType("rlinf.envs.maniskill.maniskill_env")
+    fake_env_module = types.ModuleType("rlinf.envs.sim.maniskill.maniskill_env")
     fake_env_module.ManiskillEnv = _FakeManiskillEnv
 
-    monkeypatch.setitem(sys.modules, "rlinf.envs.maniskill", fake_package)
+    monkeypatch.setitem(sys.modules, "rlinf.envs.sim.maniskill", fake_package)
     monkeypatch.setitem(
-        sys.modules, "rlinf.envs.maniskill.maniskill_env", fake_env_module
+        sys.modules, "rlinf.envs.sim.maniskill.maniskill_env", fake_env_module
     )
     monkeypatch.delitem(
-        sys.modules, "rlinf.envs.maniskill.maniskill_offload_env", raising=False
+        sys.modules, "rlinf.envs.sim.maniskill.maniskill_offload_env", raising=False
     )
 
     spec = importlib.util.spec_from_file_location(
-        "rlinf.envs.maniskill.maniskill_offload_env", module_path
+        "rlinf.envs.sim.maniskill.maniskill_offload_env", module_path
     )
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, spec.name, module)

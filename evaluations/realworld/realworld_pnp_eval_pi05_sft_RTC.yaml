@@ -108,7 +108,7 @@ env:
   train:
     ignore_terminations: True
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.4
     total_num_envs: 1
     main_image_key: wrist_1
@@ -131,7 +131,7 @@ env:
   eval:
     ignore_terminations: False
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     chunk_pause_seconds: 0.
     total_num_envs: 1
     main_image_key: wrist_2

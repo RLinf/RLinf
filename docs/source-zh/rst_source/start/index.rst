@@ -52,7 +52,7 @@
       :link: ../concepts/index
       :link-type: doc
 
-      理解 RLinf 的执行模型。
+      理解 RLinf 如何执行任务并调度资源。
 
    .. grid-item-card:: 指南
       :link: ../guides/index

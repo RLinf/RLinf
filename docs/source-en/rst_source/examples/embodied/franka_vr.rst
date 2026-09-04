@@ -33,7 +33,7 @@ end-effector delta actions for the Franka environment.
      - Actor, rollout, optional camera capture
      - NVIDIA GPU, RLinf
    * - **Franka controller node** (node 1 or single-node setup)
-     - FrankaController, env worker, VR data subscriber
+     - Franka arm part, env worker, VR data subscriber
      - Franka, ROS Noetic, serl_franka_controllers, pyzmq
    * - **VR / PICO PC**
      - Runs XRoboToolkit and the VR data publisher
@@ -162,14 +162,14 @@ running ``ray start``.
    Ray captures the Python interpreter and environment variables at
    ``ray start`` time. If ``pyzmq``, ROS environment variables, or
    ``PYTHONPATH`` are configured after ``ray start``, worker processes may
-   fail to import ``PicoIntervention`` or connect to ZeroMQ.
+   fail to reach the controller or connect to ZeroMQ.
 
 
 3. Verify the PICO data stream
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 After starting the VR data publisher, run the built-in RLinf check script on
-the node that will run ``PicoIntervention`` to confirm that PICO / ZeroMQ data
+the node that will read the controller to confirm that PICO / ZeroMQ data
 is being received:
 
 .. code-block:: bash
@@ -214,8 +214,7 @@ The key configuration is:
 
    env:
      eval:
-       use_spacemouse: False
-       use_pico: True
+       teleop: pico
 
        pico:
          zmq_addr: "tcp://<vr_publisher_ip>:<port>"
@@ -261,7 +260,7 @@ Cluster Setup Notes
 The cluster setup procedure is the same as described in :doc:`franka`. The
 main additional requirements are:
 
-- The node running ``PicoIntervention`` must be able to reach the VR publisher
+- The node reading the controller must be able to reach the VR publisher
   ZeroMQ address.
 - If the VR publisher uses TCP, make sure the firewall and network route allow
   access to the configured port.
@@ -300,7 +299,7 @@ Startup Order
 6. On the first run, or after changing the ZeroMQ address, run
    ``test_pico_data.py`` to confirm that PICO data is reachable.
 7. On the Ray head node, start data collection, and confirm that the data
-   collection script has integrated ``PicoIntervention``.
+   collection script sets ``teleop: pico``.
 
 .. code-block:: bash
 
@@ -362,8 +361,8 @@ Troubleshooting
 
 **The robot does not move when holding grip**
 
-- Confirm that ``use_spacemouse: False`` and ``use_pico: True``.
-- Confirm that the current code creates ``PicoIntervention`` in ``apply.py``.
+- Confirm that ``teleop: pico``.
+- Confirm that the env config sets ``teleop: pico``.
 - Confirm that the ``grip`` value exceeds ``control_threshold``.
 - Confirm that calibration has completed. If ``calibration.required=True`` and
   calibration has not completed, PICO will not take over.

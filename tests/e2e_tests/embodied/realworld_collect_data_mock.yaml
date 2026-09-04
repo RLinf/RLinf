@@ -1,0 +1,72 @@
+# Real-world data collection against faked vendor SDKs.
+#
+# Covers the entry point the Franka guide's "Data Collection" step runs,
+# examples/embodiment/collect_data.sh, which no other e2e config reaches: the
+# training configs all run train_embodied_agent.py, and that path imports
+# RealWorldEnv differently.
+#
+# The episode has to finish for the collector to stop, so target_ee_pose is
+# the pose the fake arm already holds. The first step scores 1.0, terminates,
+# and is saved.
+defaults:
+  - env/realworld_peg_insertion@env.eval
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env:
+      node_group: franka
+      placement: 0
+  node_groups:
+    - label: franka
+      node_ranks: 0
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 0.0.0.0
+            node_rank: 0
+            # libfranka rather than ROS, so no roscore is needed.
+            backend: franky
+            camera_serials: ["MOCK0001", "MOCK0002"]
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: /workspace/results/realworld_collect_data_mock
+    project_name: rlinf
+    experiment_name: "ci-test"
+    logger_backends: ["tensorboard"]
+  num_data_episodes: 1
+  record_task_description: False
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    ignore_terminations: False
+    auto_reset: False
+    # No operator in CI, so the policy action drives it.
+    teleop: none
+    no_gripper: False
+    max_episode_steps: 5
+    override_cfg:
+      # The pose the fake arm reports, so the first step succeeds.
+      target_ee_pose: [0.4, 0.0, 0.3, 3.141593, 0.0, 3.141593]
+      reward_threshold: [0.05, 0.05, 0.05, 0.1, 0.1, 0.1]
+      success_hold_steps: 1
+      max_num_steps: 5
+      enable_camera_player: False
+    data_collection:
+      enabled: True
+      save_dir: ${runner.logger.log_path}/collected_data
+      export_format: "pickle"
+      only_success: True
+      robot_type: "panda"
+      fps: 10

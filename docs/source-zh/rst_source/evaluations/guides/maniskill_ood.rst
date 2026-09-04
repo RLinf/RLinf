@@ -19,7 +19,7 @@ ManiSkill OOD 评测用于检验 VLA 策略在 ManiSkill 分布外（Out-of-Dist
 
 .. code-block:: bash
 
-   cd rlinf/envs/maniskill
+   cd rlinf/envs/sim/maniskill
    # 为提升国内下载速度，可以设置：
    # export HF_ENDPOINT=https://hf-mirror.com
    hf download --repo-type dataset RLinf/maniskill_assets --local-dir ./assets
@@ -282,7 +282,7 @@ ManiSkill 还支持 ``PickCube-v1``、``PutCarrotOnPlateInScene-v2`` 等训练�
 常见问题
 --------
 
-- **资源路径：** 确保 ManiSkill assets 已下载到 ``rlinf/envs/maniskill/assets``。
+- **资源路径：** 确保 ManiSkill assets 已下载到 ``rlinf/envs/sim/maniskill/assets``。
 - **GPU 仿真：** ``sim_backend: gpu`` 需要 NVIDIA GPU；headless 环境下 ``run_eval.sh`` 已设置 ``MUJOCO_GL=osmesa`` 等变量。
 - **LoRA 路径：** OpenVLA-OFT 评测必须设置 ``lora_path``，否则无法正确加载 ManiSkill 策略。
 - **checkpoint：** 批量模式通过 ``CKPT_PATH`` 传入 ``.pt`` 权重；单次评测使用 ``runner.ckpt_path``。

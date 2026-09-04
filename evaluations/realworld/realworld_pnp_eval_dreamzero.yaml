@@ -56,7 +56,7 @@ env:
     ignore_terminations: False
     keyboard_reward_wrapper: null
     no_gripper: False
-    use_spacemouse: False
+    teleop: none
     max_episode_steps: 240
     max_steps_per_rollout_epoch: 240
 

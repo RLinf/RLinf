@@ -140,7 +140,7 @@ If your PR has potential impact on training performance and stability (e.g., bre
 
 You can check a title and description against the rules above before opening the PR:
 ```bash
-python3 .claude/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>
+python3 .agents/skills/create-pr/lint_pr.py lint --title "<title>" --body-file <body.md>
 ```
 The same script checks a PR that is already open (`lint --pr <number>`), prints a ready-to-fill
 template (`template`), and repairs a body that was pasted with a leading indent (`fix --pr <number>`).

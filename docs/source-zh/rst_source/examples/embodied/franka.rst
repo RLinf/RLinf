@@ -408,8 +408,7 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
 
    env:
      eval:
-       use_spacemouse: False
-       use_gello: True
+       teleop: gello
        gello_port: "/dev/serial/by-id/usb-FTDI_..."  # 替换为你的 GELLO 串口路径
 
 **运行**

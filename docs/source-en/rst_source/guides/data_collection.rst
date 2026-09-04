@@ -322,18 +322,17 @@ Configuration Parameters
    * - ``cluster.node_groups.hardware.configs.robot_ip``
      - —
      - IP address of the Franka robot
-   * - ``env.eval.use_spacemouse``
-     - ``True``
-     - Enable SpaceMouse intervention
+   * - ``env.eval.teleop``
+     - ``spacemouse``
+     - Which device takes over from the policy: ``spacemouse``, ``gello``,
+       ``pico``, or ``none``
    * - ``env.eval.no_gripper``
      - ``False``
      - Whether the real-world env uses a 6-DoF action without a gripper dimension
-   * - ``env.eval.use_gello``
-     - ``False``
-     - Enable GELLO teleoperation (mutually exclusive with SpaceMouse)
    * - ``env.eval.gello_port``
      - —
-     - Serial port of the GELLO device (required when ``use_gello`` is ``True``)
+     - Serial port of the GELLO device (required when ``teleop`` is
+       ``gello``)
    * - ``env.eval.override_cfg.target_ee_pose``
      - —
      - Target end-effector pose ``[x, y, z, rx, ry, rz]``
@@ -430,7 +429,7 @@ Usage Steps
 
       env:
         eval:
-          use_spacemouse: True
+          teleop: spacemouse
           override_cfg:
             target_ee_pose: [0.5, 0.0, 0.3, 0.0, 3.14, 0.0]
             success_hold_steps: 3

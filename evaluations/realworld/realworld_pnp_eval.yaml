@@ -52,7 +52,7 @@ env:
     ignore_terminations: False
     no_gripper: False
     total_num_envs: 1
-    use_spacemouse: False
+    teleop: none
 
     max_steps_per_rollout_epoch: 200
     max_episode_steps: 200

@@ -24,6 +24,8 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf, open_dict
 from omegaconf.dictconfig import DictConfig
 
+# Register built-in physical robots before parsing cluster hardware configs.
+import rlinf.robotics.robots  # noqa: F401
 from rlinf.envs import SupportedEnvType
 from rlinf.scheduler.cluster import Cluster
 from rlinf.utils.placement import (

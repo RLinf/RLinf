@@ -135,11 +135,11 @@ Download the ManiSkill assets:
 
 .. important::
 
-   The assets **must** be placed under ``rlinf/envs/maniskill/assets`` — this is where the env loads them from. Copy them into the env package directory:
+   The assets **must** be placed under ``rlinf/envs/sim/maniskill/assets`` — this is where the env loads them from. Copy them into the env package directory:
 
 .. code:: bash
 
-   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/maniskill/assets
+   cp -r ./maniskill_assets <path_to_RLinf>/rlinf/envs/sim/maniskill/assets
 
 Download the Model
 ------------------

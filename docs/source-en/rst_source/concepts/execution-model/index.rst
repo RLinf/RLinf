@@ -1,5 +1,5 @@
-Execution Model
-===============
+Execution
+=========
 
 Use these concepts when you need to understand how an RLinf job runs and how
 workers exchange work.

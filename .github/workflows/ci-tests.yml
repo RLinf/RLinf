@@ -80,6 +80,7 @@ jobs:
               - 'toolkits/auto_placement/**'
             embodied_filter: &embodied
               - *shared
+              - 'rlinf/robotics/**'
               - 'rlinf/workers/actor/async_ppo_fsdp_worker.py'
               - 'rlinf/workers/actor/fsdp_iql_policy_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
@@ -107,6 +108,9 @@ jobs:
               - 'examples/reward/**'
               - 'tests/e2e_tests/embodied/**'
               - 'tests/e2e_tests/evaluations/**'
+              # The mock-robot e2e runs are these fakes; a change to one of
+              # them changes what those tests exercise.
+              - 'tests/robot_mocks/**'
               - 'evaluations/**'
               - '.github/workflows/embodied-e2e-tests.yml'
             toolkits_no_ci_filter: &toolkits_no_ci
@@ -168,6 +172,11 @@ jobs:
               - '.github/workflows/offline_rl-e2e-tests.yml'
             unit_test_filter: &unit
               - *shared
+              - 'rlinf/robotics/**'
+              # Unit tests import env modules directly (robot task envs, the
+              # real-world compatibility suite, maniskill offload, delay
+              # sampler), so env changes have to trigger this job.
+              - 'rlinf/envs/**'
               - 'rlinf/workers/actor/fsdp_actor_worker_pipeline.py'
               - 'tests/unit_tests/**'
               - '.github/workflows/unit-tests.yml'
@@ -193,9 +202,8 @@ jobs:
               - '.pre-commit-config.yaml'
               - docs/**/*.py
               - '.github/workflows/ci-tests.yml'
+              - '.agents/skills/**'
               - '.claude/skills/**'
-              - '.codex/skills/**'
-              - '.cursor/skills/**'
             all_changes_filter: &all_changes
               - *install
               - *docker

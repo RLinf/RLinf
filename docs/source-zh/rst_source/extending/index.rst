@@ -1,7 +1,7 @@
 扩展
 ====
 
-当你要向 RLinf 添加模型、环境或高级集成路径时，使用扩展页。
+请选择与改动范围相匹配的扩展点。如果 RLinf 已支持目标真机，只需修改奖励、复位流程或成功条件，请新增真机任务；如果需要接入传感器、执行器或整台机器人，请扩展 robotics。接入新硬件时，应先在本机验证单个零部件，再配置远程部署。
 
 .. grid:: 1 2 2 3
    :gutter: 2
@@ -10,13 +10,25 @@
       :link: overview
       :link-type: doc
 
-      各扩展点位于何处，以及各部分如何协同。
+      了解各类扩展涉及的模块及其组合关系。
 
    .. grid-item-card:: 新环境
       :link: new_env
       :link-type: doc
 
-      添加一个新的 RL 环境并接入环境注册表。
+      实现一个 RL 环境，并加入环境注册表。
+
+   .. grid-item-card:: 新增真机任务
+      :link: new_task
+      :link-type: doc
+
+      在 RLinf 已支持的真机上新增一个任务。
+
+   .. grid-item-card:: 新机器人
+      :link: new_robot
+      :link-type: doc
+
+      从本地零部件开始，完成机器人组合和远程部署。
 
    .. grid-item-card:: FSDP 新模型
       :link: new_model_fsdp
@@ -46,13 +58,15 @@
       :link: sglang_embodied_model
       :link-type: doc
 
-      把具身模型使用 sglang 后端适配到 RLinf 的 rollout worker 中，使用各式各样的仿真器来进行模型评测。
+      使用 SGLang 后端接入具身模型，并在模拟器中评测。
 
 .. toctree::
    :hidden:
 
    扩展概览 <overview>
    新环境 <new_env>
+   新增真机任务 <new_task>
+   新机器人 <new_robot>
    FSDP 新模型 <new_model_fsdp>
    Megatron 新模型 <new_model_megatron>
    新 SFT 模型 <new_model_sft>

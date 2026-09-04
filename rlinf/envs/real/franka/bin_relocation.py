@@ -1,0 +1,242 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import copy
+import queue
+import time
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+import cv2
+import gymnasium as gym
+import numpy as np
+
+from rlinf.robotics.discovery import RobotInfo
+from rlinf.robotics.robots import FrankaConfig
+from rlinf.scheduler import WorkerInfo
+
+from .base import (
+    _CAMERA_REOPEN_ATTEMPTS,
+    _CAMERA_REOPEN_WAIT_S,
+    FrankaEnv,
+    FrankaRobotConfig,
+    compliance,
+)
+
+
+@dataclass
+class BinEnvConfig(FrankaRobotConfig):
+    task_description: str = "Pick up the object and put it into another bin"
+    random_xy_range: float = 0.01  # Reset-position perturbation.
+    clip_x_range: float = 0.10  # Safety-box half-width along x.
+    clip_y_range: float = 0.15  # Safety-box half-width along y.
+    clip_z_range_high: float = 0.1
+    clip_z_range_low: float = 0.001
+    random_rz_range: float = np.pi / 9  # Reset-yaw perturbation.
+    clip_rz_range: float = np.pi / 6  # Maximum yaw deviation.
+    enable_random_reset: bool = True
+
+    target_ee_pose: np.ndarray = field(default_factory=lambda: np.zeros(6))
+    reward_threshold: np.ndarray = field(
+        default_factory=lambda: np.array([0.01, 0.01, 0.01, 0.2, 0.2, 0.2])
+    )
+
+    def __post_init__(self) -> None:
+        self.compliance_param = compliance(
+            rotational_clip_neg_x=0.04,
+            rotational_clip_neg_y=0.04,
+            rotational_clip_x=0.04,
+            rotational_clip_y=0.04,
+            translational_clip_neg_x=0.004,
+            translational_clip_neg_y=0.004,
+            translational_clip_neg_z=0.004,
+            translational_clip_x=0.004,
+            translational_clip_y=0.004,
+            translational_clip_z=0.004,
+            translational_stiffness=2800,
+        )
+        self.target_ee_pose = np.array(self.target_ee_pose)
+        self.reset_ee_pose = self.target_ee_pose + np.array(
+            [0.0, 0.0, self.clip_z_range_high, 0.0, 0.0, 0.0]
+        )
+        self.reward_threshold = np.array(self.reward_threshold)
+        self.action_scale = np.array([0.03, 0.1, 1])
+        self.ee_pose_limit_min = np.array(
+            [
+                self.target_ee_pose[0] - self.clip_x_range,
+                self.target_ee_pose[1] - self.clip_y_range,
+                self.target_ee_pose[2] - self.clip_z_range_low,
+                self.target_ee_pose[3] - 0.01,
+                self.target_ee_pose[4] - 0.01,
+                self.target_ee_pose[5] - self.clip_rz_range,
+            ]
+        )
+        self.ee_pose_limit_max = np.array(
+            [
+                self.target_ee_pose[0] + self.clip_x_range,
+                self.target_ee_pose[1] + self.clip_y_range,
+                self.target_ee_pose[2] + self.clip_z_range_high,
+                self.target_ee_pose[3] + 0.01,
+                self.target_ee_pose[4] + 0.01,
+                self.target_ee_pose[5] + self.clip_rz_range,
+            ]
+        )
+
+
+class FrankaBinRelocationEnv(FrankaEnv):
+    CONFIG_CLS = BinEnvConfig
+
+    def __init__(
+        self,
+        override_cfg: dict[str, Any],
+        worker_info: Optional[WorkerInfo] = None,
+        robot_info: "Optional[RobotInfo[FrankaConfig]]" = None,
+        env_idx: int = 0,
+    ) -> None:
+        super().__init__(override_cfg, worker_info, robot_info, env_idx)
+        self.task_id = 0  # 0 moves forward; 1 moves backward.
+        # The inner box clips trajectories that would cross the central bin walls.
+        self.inner_safety_box = gym.spaces.Box(
+            self.config.target_ee_pose[:3] - np.array([0.07, 0.03, 0.001]),
+            self.config.target_ee_pose[:3] + np.array([0.07, 0.03, 0.04]),
+            dtype=np.float64,
+        )
+
+    def intersect_line_bbox(
+        self,
+        p1: np.ndarray,
+        p2: np.ndarray,
+        bbox_min: np.ndarray,
+        bbox_max: np.ndarray,
+    ) -> Optional[np.ndarray]:
+        # Parameterize the segment as P(t) = p1 + t(p2 - p1).
+        tmin = 0
+        tmax = 1
+
+        for i in range(3):
+            if p1[i] < bbox_min[i] and p2[i] < bbox_min[i]:
+                return None
+            if p1[i] > bbox_max[i] and p2[i] > bbox_max[i]:
+                return None
+
+            # Compute the segment interval inside this axis-aligned slab.
+            if abs(p2[i] - p1[i]) > 1e-10:
+                t1 = (bbox_min[i] - p1[i]) / (p2[i] - p1[i])
+                t2 = (bbox_max[i] - p1[i]) / (p2[i] - p1[i])
+
+                # Order the entry and exit parameters.
+                if t1 > t2:
+                    t1, t2 = t2, t1
+
+                tmin = max(tmin, t1)
+                tmax = min(tmax, t2)
+
+                if tmin > tmax:
+                    return None
+
+            # Return the first point at which the segment enters the box.
+        intersection = p1 + tmin * (p2 - p1)
+
+        return intersection
+
+    def _clip_position_to_safety_box(self, pose: np.ndarray) -> np.ndarray:
+        pose = super()._clip_position_to_safety_box(pose)
+        # Stop motion at the inner safety-box boundary.
+        if self.inner_safety_box.contains(pose[:3]):
+            pose[:3] = self.intersect_line_bbox(
+                self._franka_state.tcp_pose[:3],
+                pose[:3],
+                self.inner_safety_box.low,
+                self.inner_safety_box.high,
+            )
+        return pose
+
+    def _crop_frame(self, name: str, image: np.ndarray) -> np.ndarray:
+        """Crop a RealSense frame to a square."""
+        return image[:, 80:560, :]
+
+    def _get_camera_frames(self) -> dict[str, np.ndarray]:
+        """Read task-specific camera crops and reopen stalled devices."""
+        images = {}
+        display_images = {}
+        for name, camera in self._cameras.items():
+            rgb = None
+            for attempt in range(_CAMERA_REOPEN_ATTEMPTS):
+                try:
+                    rgb = camera.get_frame()
+                    break
+                except queue.Empty:
+                    self._logger.warning(
+                        "Camera %s is not producing frames; reopening "
+                        "(attempt %d of %d).",
+                        name,
+                        attempt + 1,
+                        _CAMERA_REOPEN_ATTEMPTS,
+                    )
+                    time.sleep(_CAMERA_REOPEN_WAIT_S)
+                    camera.reopen()
+            if rgb is None:
+                raise RuntimeError(
+                    f"Camera {name} produced no frame after "
+                    f"{_CAMERA_REOPEN_ATTEMPTS} reopen attempts."
+                )
+
+            cropped_rgb = self._crop_frame(name, rgb)
+            resized = cv2.resize(
+                cropped_rgb,
+                self.observation_space["frames"][name].shape[:2][::-1],
+            )
+            images[name] = resized[..., ::-1]
+            display_images[name] = resized
+            if name == "front":
+                display_images[name + "_full"] = cv2.resize(cropped_rgb, (480, 480))
+            elif name == "wrist_1":
+                display_images[name + "_full"] = cropped_rgb
+
+        self.camera_player.put_frame(display_images)
+        return images
+
+    def task_graph(self, obs: Optional[dict[str, Any]] = None) -> Optional[int]:
+        if obs is None:
+            return (self.task_id + 1) % 2
+
+    def set_task_id(self, task_id: int) -> None:
+        self.task_id = task_id
+
+    def reset(
+        self, joint_reset: bool = False, **kwargs: Any
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if self.task_id == 0:
+            self._reset_pose[1] = self.config.target_ee_pose[1] + 0.1
+        elif self.task_id == 1:
+            self._reset_pose[1] = self.config.target_ee_pose[1] - 0.1
+        else:
+            raise ValueError(f"Task id {self.task_id} should be 0 or 1")
+
+        return super().reset(joint_reset)
+
+    def go_to_rest(self, joint_reset: bool = False) -> None:
+        """Lift clear of the slot before moving to the base rest pose."""
+        self._end_effector_action(np.array([1.0]))
+        self._franka_state = self._read_robot()
+        self._move_action(self._franka_state.tcp_pose)
+        time.sleep(0.5)
+        self._franka_state = self._read_robot()
+
+        # Lift before following the normal reset trajectory.
+        reset_pose = copy.deepcopy(self._franka_state.tcp_pose)
+        reset_pose[2] += 0.10
+        self._interpolate_move(reset_pose, timeout=1)
+
+        super().go_to_rest(joint_reset)

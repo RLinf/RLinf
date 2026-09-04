@@ -12,50 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Real cluster + worker tests for env-var-driven robot auto-config.
+"""Cluster-level tests for environment-driven robot auto-configuration.
 
-Every scenario boots a real single-node cluster from a cluster config and
-launches real workers (see ``_robot_autoconfig_cluster.py``), rather than
-calling ``RobotAutoConfig`` with a patched environment. Scenarios run in
-isolated subprocesses because ``Cluster`` is a process-wide singleton and the
-enumeration actor must inherit the env vars set before Ray starts.
+Each scenario runs in a fresh process because ``Cluster`` is process-wide and
+Ray must inherit the environment before startup.
 """
 
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 _SCENARIO = os.path.join(os.path.dirname(__file__), "_robot_autoconfig_cluster.py")
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
 
 
 def _run_scenario(mode: str) -> subprocess.CompletedProcess:
-    """Run one cluster scenario in a fresh process and capture its output."""
+    """Run a cluster scenario in a subprocess and capture its output."""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (_REPO_ROOT, env.get("PYTHONPATH")) if path
+    )
     return subprocess.run(
         [sys.executable, _SCENARIO, mode],
         capture_output=True,
         text=True,
         timeout=420,
+        env=env,
     )
 
 
 @pytest.mark.parametrize(
     "mode",
     [
-        # Two robots created from comma-separated env vars (one value each),
-        # read back through both one-worker-per-robot and one-worker-owns-both
-        # placements.
+        # Two robots from comma-separated environment values.
         "create_multi",
         # A single robot keeps the whole comma-separated camera list.
         "create_single",
-        # Explicit configs: a YAML robot_ip is kept, an omitted one is filled
-        # from the env value in its slot, YAML cameras preserved.
+        # Explicit YAML values take precedence; omitted values are resolved.
         "explicit_fill",
-        # A second robot type (GimArm) is created from its own identifier env.
+        # GimArm resolves through its own identifier variable.
         "gim_create",
-        # A shared field (camera serials) without the identifier (ROBOT_IP)
-        # must not create any robot.
+        # Shared fields alone do not create a robot.
         "gating",
         # The identifier env var has too few values for the configs.
         "mismatch_low",
@@ -63,9 +63,7 @@ def _run_scenario(mode: str) -> subprocess.CompletedProcess:
         "mismatch_high",
         # The identifier count is fine but a secondary field disagrees.
         "mismatch_secondary",
-        # Regression: the legacy path (full YAML config, no env vars) must keep
-        # working unchanged, for a single robot, several robots, and another
-        # robot type (DOSW1).
+        # Fully specified YAML remains supported for one or more robots.
         "yaml_single",
         "yaml_multi",
         "yaml_dosw1",

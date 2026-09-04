@@ -32,6 +32,7 @@ from rlinf.data.schema.embodied_types import (
     RTCActionResponse,
     RTCRequest,
 )
+from rlinf.envs import SupportedEnvType
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.scheduler import Channel
 from rlinf.workers.env.env_worker import EnvWorker
@@ -71,7 +72,7 @@ class RTCEnvWorker(EnvWorker):
         inject_delay_ms = float(rtc_cfg.get("inject_delay_ms", 0.0))
         fixed_delay_steps = int(rtc_cfg.get("fixed_delay_steps", 0))
 
-        if env_type == "realworld":
+        if SupportedEnvType(env_type) is SupportedEnvType.REAL:
             assert chunk_pause_seconds == 0.0, (
                 f"RTC real-world evaluation: chunk_pause_seconds must be 0.0 "
                 f"(real robot has real execution time), got {chunk_pause_seconds}."

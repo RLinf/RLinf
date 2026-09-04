@@ -102,7 +102,7 @@ NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
 SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
-SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
+SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "so101" "piper" "dummy" "polaris")
 
 #=======================Utility Functions=======================
 
@@ -1043,13 +1043,17 @@ agentic_requirements_file() {
     printf '%s\n' "$path"
 }
 
+platform_index_args() {
+    if [ -n "${PLATFORM_TORCH_INDEX:-}" ]; then
+        printf '%s\n' --extra-index-url "$PLATFORM_TORCH_INDEX" --index-strategy unsafe-best-match
+    fi
+}
+
 install_engine_requirements() {
     local req="$1" engine_specs engine_req
     engine_specs=$(sed -n 's/^# engine: //p' "$req")
     local index_args=()
-    if [ -n "${PLATFORM_TORCH_INDEX:-}" ]; then
-        index_args=(--extra-index-url "$PLATFORM_TORCH_INDEX" --index-strategy unsafe-best-match)
-    fi
+    mapfile -t index_args < <(platform_index_args)
     env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" -r "$req"
     if [ -n "$engine_specs" ]; then
         engine_req=$(mktemp)
@@ -2178,7 +2182,10 @@ install_lingbot_vla_model() {
     uv pip install -e $lingbotvla_dir/lingbotvla/models/vla/vision_models/MoGe --no-deps
 
     install_lerobot
-    env -u UV_TORCH_BACKEND uv pip install -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
+        -r $SCRIPT_DIR/embodied/models/lingbotvla.txt
 
     case "$ENV_NAME" in
         robotwin)
@@ -2367,7 +2374,9 @@ install_qwen3_vl_model() {
 }
 
 install_lerobot() {
-    env -u UV_TORCH_BACKEND uv pip install \
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
         "git+${GITHUB_PREFIX}https://github.com/huggingface/lerobot.git@${LEROBOT_COMMIT}"
 }
 
@@ -2427,6 +2436,12 @@ install_env_only() {
             ;;
         gim_arm)
             uv sync --extra gim_arm --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+            ;;
+        so101)
+            install_so101_env
+            ;;
+        piper)
+            install_piper_env
             ;;
         dosw1)
             install_dosw1_env
@@ -2794,6 +2809,22 @@ install_franka_franky_env() {
 
 install_franka_dexhand_deps() {
     uv pip install "RLinf-dexterous-hands[glove]"
+}
+
+install_piper_env() {
+    uv sync --extra piper --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
+        "pyAgxArm @ git+${GITHUB_PREFIX}https://github.com/agilexrobotics/pyAgxArm.git@4b0f06585db3324222616999afeda9037df2e8bd"
+}
+
+install_so101_env() {
+    uv sync --extra so101 --active "${PLATFORM_UV_SYNC_ARGS[@]}" $NO_INSTALL_RLINF_CMD
+    local index_args=()
+    mapfile -t index_args < <(platform_index_args)
+    env -u UV_TORCH_BACKEND uv pip install "${index_args[@]}" \
+        "lerobot[feetech]>=0.4.1,<0.7"
 }
 
 install_xsquare_turtle2_env() {

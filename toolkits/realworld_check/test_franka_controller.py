@@ -20,7 +20,8 @@ import time
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.franka.franka_controller import FrankaController
+from rlinf.robotics.parts.arms.franka_ros import FrankaROSArm
+from rlinf.robotics.parts.end_effectors import EndEffector
 
 
 def _parse_args():
@@ -72,14 +73,20 @@ def main():
             "motor_ids": tuple(args.hand_motor_ids),
         }
 
-    controller = FrankaController.launch_controller(
+    # The arm and the end effector open their own connections, so build and
+    # connect each one.
+    controller = FrankaROSArm(robot_ip=robot_ip, node_rank=0)
+    end_effector = EndEffector.of(
+        args.end_effector_type,
         robot_ip=robot_ip,
-        end_effector_type=args.end_effector_type,
-        end_effector_config=end_effector_config,
+        node_rank=0,
+        **end_effector_config,
     )
+    controller.connect()
+    end_effector.connect()
 
     start_time = time.time()
-    while not controller.is_robot_up().wait()[0]:
+    while not controller.is_robot_up():
         time.sleep(0.5)
         if time.time() - start_time > 30:
             print(
@@ -91,17 +98,17 @@ def main():
             if cmd_str == "q":
                 break
             elif cmd_str == "getpos":
-                print(controller.get_state().wait()[0].tcp_pose)
+                print(controller.get_state().tcp_pose)
             elif cmd_str == "getpos_euler":
-                tcp_pose = controller.get_state().wait()[0].tcp_pose
+                tcp_pose = controller.get_state().tcp_pose
                 r = R.from_quat(tcp_pose[3:].copy())
                 euler = r.as_euler("xyz")
                 print(np.concatenate([tcp_pose[:3], euler]))
             elif cmd_str == "getstate":
-                state = controller.get_state().wait()[0]
+                state = controller.get_state()
                 print(state.to_dict())
             elif cmd_str == "gethand":
-                print(controller.get_hand_detailed_state().wait()[0])
+                print(end_effector.get_detailed_state())
             else:
                 print(f"Unknown cmd: {cmd_str}")
         except KeyboardInterrupt:

@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from rlinf.envs.robotwin.seed_utils import partition_success_seeds
+from rlinf.envs.sim.robotwin.seed_utils import partition_success_seeds
 
 
 def _first_eval_seeds(

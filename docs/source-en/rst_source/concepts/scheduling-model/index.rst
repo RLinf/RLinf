@@ -1,5 +1,5 @@
-Scheduling Model
-================
+Scheduling
+==========
 
 Use these concepts when you need to reason about where work runs and how RLinf
 stores trajectory data.

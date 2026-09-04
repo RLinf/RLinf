@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Real cluster + worker scenarios for robot env-var auto-config.
+"""Cluster scenarios for environment-driven robot auto-configuration.
 
-Each scenario boots a real single-node cluster from a cluster config and
-launches real workers (like ``test.py`` at the repo root). It is invoked as a
-subprocess by ``test_robot_autoconfig.py`` with a mode argument so every
-scenario gets a fresh process: ``Cluster`` is a process-wide singleton and the
-enumeration actor must inherit the env vars set before Ray starts.
+``test_robot_autoconfig.py`` invokes one scenario per process so Ray inherits
+the intended environment before startup.
 
-Usage:  python _robot_autoconfig_cluster.py <mode>
-Prints ``<mode>:OK`` and exits 0 on success.
+Usage: ``python _robot_autoconfig_cluster.py <mode>``.
 """
 
 import os
@@ -73,8 +69,7 @@ _ENV = {
 if MODE not in _ENV:
     raise SystemExit(f"unknown mode: {MODE}")
 
-# Clear any ambient managed vars first so each mode's environment is hermetic
-# (the ``yaml_*`` modes in particular must see no robot env vars at all).
+# Clear managed variables so each scenario receives an isolated environment.
 _MANAGED = (
     "ROBOT_IP",
     "CAMERA_SERIALS",
@@ -97,6 +92,7 @@ import dataclasses  # noqa: E402
 
 from omegaconf import DictConfig  # noqa: E402
 
+import rlinf.robotics.robots  # noqa: E402, F401
 from rlinf.scheduler import (  # noqa: E402
     Cluster,
     FlexiblePlacementStrategy,
@@ -105,18 +101,18 @@ from rlinf.scheduler import (  # noqa: E402
 
 
 class RobotEnvWorker(Worker):
-    """A minimal env-worker stand-in that reports its robot hardware info."""
+    """Expose robot hardware configuration from a minimal worker."""
 
     def __init__(self):
         super().__init__()
 
     def configs(self) -> list[dict]:
-        """Return each assigned hardware info's config as a plain dict."""
+        """Return assigned hardware configurations as dictionaries."""
         return [dataclasses.asdict(info.config) for info in self.hardware_infos]
 
 
 def cluster_cfg(label: str, hw_type: str, configs: list) -> DictConfig:
-    """A single-node cluster with one hardware node group."""
+    """Build a single-node cluster configuration with one hardware group."""
     return DictConfig(
         {
             "num_nodes": 1,
@@ -133,7 +129,7 @@ def cluster_cfg(label: str, hw_type: str, configs: list) -> DictConfig:
 
 
 def enumerated_configs(cluster: Cluster, hw_type: str) -> list:
-    """The configs of all ``hw_type`` hardware infos enumerated on node 0."""
+    """Return ``hw_type`` configurations discovered on node 0."""
     return [
         info.config
         for resource in cluster.get_node_info(0).hardware_resources
@@ -143,7 +139,7 @@ def enumerated_configs(cluster: Cluster, hw_type: str) -> list:
 
 
 def worker_configs(cluster: Cluster, label: str, ranks_list: list) -> list:
-    """Launch a worker group over ``ranks_list`` and collect each worker's view."""
+    """Launch workers on hardware ranks and return their configurations."""
     group = RobotEnvWorker.create_group().launch(
         cluster=cluster,
         placement_strategy=FlexiblePlacementStrategy(
@@ -155,11 +151,9 @@ def worker_configs(cluster: Cluster, label: str, ranks_list: list) -> list:
     return group.configs().wait()
 
 
-# --------------------------------------------------------------------------- #
 # Scenarios
-# --------------------------------------------------------------------------- #
 def run_create_multi() -> None:
-    """No configs in YAML: two Franka robots created, one comma value each."""
+    """Create two Franka robots from comma-separated values."""
     cluster = Cluster(cluster_cfg=cluster_cfg("franka", "Franka", []))
 
     configs = enumerated_configs(cluster, "Franka")
@@ -171,19 +165,19 @@ def run_create_multi() -> None:
     ]
     assert all(c.disable_validate is True for c in configs)
 
-    # One worker per robot: each sees exactly its own robot, in rank order.
+    # One worker per robot preserves rank order.
     per_robot = worker_configs(cluster, "franka", [[0], [1]])
     assert [len(w) for w in per_robot] == [1, 1]
     assert [w[0]["robot_ip"] for w in per_robot] == ["10.20.30.40", "10.20.30.41"]
 
-    # One worker owning both robots: it sees both hardware infos.
+    # A worker assigned both ranks receives both configurations.
     both = worker_configs(cluster, "franka", [[0, 1]])
     assert len(both) == 1 and len(both[0]) == 2
     assert [c["robot_ip"] for c in both[0]] == ["10.20.30.40", "10.20.30.41"]
 
 
 def run_create_single() -> None:
-    """A single robot keeps the whole comma-separated camera list."""
+    """Preserve a comma-separated camera list for one robot."""
     cluster = Cluster(cluster_cfg=cluster_cfg("franka", "Franka", []))
 
     configs = enumerated_configs(cluster, "Franka")
@@ -197,16 +191,16 @@ def run_create_single() -> None:
 
 
 def run_explicit_fill() -> None:
-    """Env fills omitted robot_ip in order; YAML values win and are kept."""
+    """Resolve omitted addresses while preserving explicit YAML values."""
     configs = [
-        # robot_ip set in YAML -> must be kept; env value for slot 0 ignored.
+        # Explicit YAML address overrides the first environment value.
         {
             "node_rank": 0,
             "robot_ip": "192.168.0.5",
             "camera_serials": ["camL"],
             "disable_validate": True,
         },
-        # robot_ip omitted -> filled from the env value for slot 1.
+        # The omitted address resolves from the second environment value.
         {"node_rank": 0, "camera_serials": ["camR"], "disable_validate": True},
     ]
     cluster = Cluster(cluster_cfg=cluster_cfg("franka", "Franka", configs))
@@ -221,7 +215,7 @@ def run_explicit_fill() -> None:
 
 
 def run_gim_create() -> None:
-    """A different robot type is created from its own identifier env var."""
+    """Create a GimArm from its identifier environment variable."""
     cluster = Cluster(cluster_cfg=cluster_cfg("gimarm", "GimArm", []))
 
     configs = enumerated_configs(cluster, "GimArm")
@@ -235,13 +229,13 @@ def run_gim_create() -> None:
 
 
 def run_gating() -> None:
-    """Only a shared field is set, so no Franka robot is created."""
+    """Confirm that shared fields alone do not create a Franka robot."""
     cluster = Cluster(cluster_cfg=cluster_cfg("franka", "Franka", []))
     assert enumerated_configs(cluster, "Franka") == []
 
 
 def run_yaml_single() -> None:
-    """Legacy path: a fully specified YAML config passes through unchanged."""
+    """Preserve one fully specified YAML configuration."""
     configs = [
         {
             "node_rank": 0,
@@ -266,7 +260,7 @@ def run_yaml_single() -> None:
 
 
 def run_yaml_multi() -> None:
-    """Legacy path: several fully specified YAML configs are kept verbatim."""
+    """Preserve multiple fully specified YAML configurations."""
     configs = [
         {
             "node_rank": 0,
@@ -293,13 +287,14 @@ def run_yaml_multi() -> None:
 
 
 def run_yaml_dosw1() -> None:
-    """Legacy path for another robot type: DOSW1 YAML config passes through."""
+    """Preserve a fully specified DOSW1 YAML configuration."""
     configs = [
         {
             "node_rank": 0,
             "robot_url": "192.168.5.5",
             "left_arm_port": 50061,
             "camera_serials": ["dosCam"],
+            "disable_validate": True,
         }
     ]
     cluster = Cluster(cluster_cfg=cluster_cfg("dosw1", "DOSW1", configs))
@@ -317,7 +312,7 @@ def run_yaml_dosw1() -> None:
 
 
 def _expect_enumeration_error(configs: list) -> None:
-    """Boot a Franka group expecting the comma-count error during enumeration."""
+    """Assert that Franka enumeration rejects mismatched value counts."""
     try:
         Cluster(cluster_cfg=cluster_cfg("franka", "Franka", configs))
     except Exception as exc:
@@ -327,7 +322,7 @@ def _expect_enumeration_error(configs: list) -> None:
 
 
 def run_mismatch_ip() -> None:
-    """The identifier (ROBOT_IP) value count disagrees with the config count."""
+    """Reject a ROBOT_IP value count that differs from the config count."""
     _expect_enumeration_error(
         [
             {"node_rank": 0, "camera_serials": ["camL"], "disable_validate": True},
@@ -337,7 +332,7 @@ def run_mismatch_ip() -> None:
 
 
 def run_mismatch_secondary() -> None:
-    """ROBOT_IP count is fine, but a secondary field (cameras) disagrees."""
+    """Reject a camera count that differs from the resolved robot count."""
     # Cameras are omitted so the (mismatched) CAMERA_SERIALS env is read;
     # the configs are kept distinct via their gripper connection.
     _expect_enumeration_error(

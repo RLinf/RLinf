@@ -26,8 +26,8 @@ import time
 
 import numpy as np
 
-from rlinf.envs.realworld.common.camera.base_camera import CameraInfo
-from rlinf.envs.realworld.common.camera.lumos_camera import LumosCamera
+from rlinf.robotics.parts.cameras.base import CameraInfo
+from rlinf.robotics.parts.cameras.lumos import LumosCamera
 
 
 def main():
@@ -65,7 +65,7 @@ def main():
         fps=args.fps,
     )
     camera = LumosCamera(camera_info)
-    camera.open()
+    camera.connect()
     print("[INFO] Camera opened successfully.")
 
     for step in range(args.steps):
@@ -76,7 +76,7 @@ def main():
         )
         time.sleep(1.0 / args.fps)
 
-    camera.close()
+    camera.disconnect()
     print("[INFO] LUMOS camera check completed.")
 
 

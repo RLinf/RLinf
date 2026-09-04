@@ -126,7 +126,7 @@
 
 需要注意的是，在 Bin-relocation 任务中，目标末端位姿的实际含义被定义为表示运动空间的中间的最低点。
 特别的，为了避免franka末端撞击盘子边缘，会基于目标末端位姿将一定空间范围截去，用于限制机械臂的运动范围。
-详细参考 ``rlinf/envs/realworld/franka/tasks/franka_bin_relocation.py`` 中的定义。
+详细参考 ``rlinf/envs/real/franka/bin_relocation.py`` 中的定义。
 
 参考 :doc:`franka` 中的「获取任务的目标位姿」章节，
 使用脚本 ``toolkits.realworld_check.test_franka_controller`` 获取目标位姿。

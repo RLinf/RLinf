@@ -43,7 +43,7 @@ env:
     no_gripper: True
     ignore_terminations: False
     auto_reset: True
-    use_spacemouse: True
+    teleop: spacemouse
     max_episode_steps: 10000
     override_cfg:
       target_ee_pose: TARGET_EE_POSE

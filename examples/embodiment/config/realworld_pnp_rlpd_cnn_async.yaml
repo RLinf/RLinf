@@ -109,7 +109,7 @@ env:
     no_gripper: False
     total_num_envs: 1
     keyboard_reward_wrapper: single_stage
-    use_spacemouse: True
+    teleop: spacemouse
 
     max_steps_per_rollout_epoch: 150
     max_episode_steps: 150

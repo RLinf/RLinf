@@ -39,7 +39,7 @@ env:
   eval:
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: True
+    teleop: spacemouse
     max_episode_steps: 10000
     override_cfg:
       # Optional per-camera overrides keyed by RealSense serial number.

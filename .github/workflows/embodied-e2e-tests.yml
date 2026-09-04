@@ -123,7 +123,7 @@ jobs:
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           bash requirements/install.sh embodied --model openvla --env maniskill_libero
 
-      - name: ManiSkill SAC test
+      - name: Franka SAC dummy test
         timeout-minutes: 20
         run: |
           unset PYTHONPATH
@@ -186,6 +186,259 @@ jobs:
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
           bash tests/e2e_tests/embodied/run.sh dosw1_dummy_sac_mlp_pick
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-cnn-realworld-franka-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: Franka SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh realworld_mock_sac_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-cnn-realworld-dual-franka-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: Dual Franka SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh realworld_dual_franka_mock_sac_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-cnn-realworld-gim-arm-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: GimArm SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh gim_arm_mock_sac_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-cnn-realworld-xsquare-turtle2-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --model openvla --env maniskill_libero
+
+      - name: Xsquare-turtle2 SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh realworld_xsquare_turtle2_mock_sac_cnn
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-mlp-realworld-dosw1-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env dosw1
+
+      - name: DOSW1 Pick SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh dosw1_mock_sac_mlp_pick
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-mlp-realworld-so101-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env so101
+
+      - name: SO-101 Reach SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh so101_mock_sac_mlp_reach
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-realworld-collect-data-mock-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env franka
+
+      - name: Real-world data collection mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh realworld_collect_data_mock
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-realworld-collect-dataset-mock-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env franka
+
+      - name: Reward-dataset labelling mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export RLINF_FAKE_KEYS=c,a,a
+          bash tests/e2e_tests/embodied/run.sh realworld_collect_dataset_mock
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
+
+  embodied-mlp-realworld-piper-mock-sac-test:
+    runs-on: embodied
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create embodied environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh embodied --env piper
+
+      - name: Piper Reach SAC mock-robot test
+        timeout-minutes: 20
+        run: |
+          unset PYTHONPATH
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          bash tests/e2e_tests/embodied/run.sh piper_mock_sac_mlp_reach
 
       - name: Clean up
         run: |
@@ -314,7 +567,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_grpo_openvlaoft
 
       - name: Libero-Goal GRPO test
@@ -339,7 +592,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openvlaoft
 
       - name: Clean up
@@ -406,7 +659,7 @@ jobs:
           export REPO_PATH=$(pwd)
           export ROBOT_PLATFORM=BRIDGE
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_async_ppo_openpi_pi05_musa osmesa
           ray stop
 
@@ -762,7 +1015,7 @@ jobs:
         run: |
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_openpi05_pipeline
 
       - name: Libero-Spatial PPO test
@@ -803,7 +1056,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run_async.sh maniskill_async_ppo_openpi
 
       - name: Libero-Spatial DSRL PPO test
@@ -820,7 +1073,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/RLCo-maniskill-assets/custom_assets ${REPO_PATH}/rlinf/envs/maniskill/assets
+          cp -r /workspace/dataset/RLCo-maniskill-assets/custom_assets ${REPO_PATH}/rlinf/envs/sim/maniskill/assets
           bash tests/e2e_tests/embodied/run.sh maniskill_ppo_co_training_openpi_pi05
 
       - name: ManiSkill RLT Stage2 AC MLP test
@@ -829,7 +1082,7 @@ jobs:
           unset PYTHONPATH
           export REPO_PATH=$(pwd)
           source .venv/bin/activate
-          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/maniskill/
+          cp -r /workspace/dataset/maniskill_assets/assets ${REPO_PATH}/rlinf/envs/sim/maniskill/
           bash tests/e2e_tests/embodied/run.sh maniskill_rlt_stage2_ac_mlp
 
       - name: Clean up

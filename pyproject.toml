@@ -139,6 +139,22 @@ gim_arm = [
     "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "imageio[ffmpeg]",
 ]
+so101 = [
+    "numpy",
+    "gymnasium",
+    "opencv-python",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "imageio[ffmpeg]",
+]
+piper = [
+    "numpy",
+    "scipy",
+    "gymnasium",
+    "opencv-python",
+    "python-can>=3.3.4",
+    "pyrealsense2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "imageio[ffmpeg]",
+]
 
 [tool.uv]
 conflicts = [
@@ -184,7 +200,7 @@ target-version = "py311"
 
 [tool.ruff.lint]
 isort = {known-first-party = ["rlinf"]}
-select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002", "DOC102", "DOC202", "DOC403", "DOC502"]
+select = ["C", "E", "F", "I", "W", "CPY001", "RUF013", "UP006", "PERF102", "PLC1802", "PLC0208", "D", "RUF002", "DOC102", "DOC202", "DOC403", "DOC502", "ANN001", "ANN201", "ANN202", "ANN205", "ANN206"]
 ignore = [
     "C901", # "complex-structure"
     "E501", # "line-too-long"
@@ -200,6 +216,13 @@ unfixable = []
 [tool.ruff.lint.per-file-ignores]
 # Only enable docstring check for the scheduler module for now.
 "!rlinf/scheduler/**.py" = ["D", "RUF002"]
+# Argument and return annotations are enforced where they are complete, so the
+# gap cannot come back. Everything else is exempt until it is annotated too:
+# turning ANN on repo-wide today would bury real findings under known ones.
+"!{rlinf/robotics/**.py,rlinf/envs/real/**.py}" = ["ANN"]
+# A test's fixtures are read next to their assertions, where a missing type
+# costs nothing and the noise would be considerable.
+"tests/**.py" = ["ANN"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

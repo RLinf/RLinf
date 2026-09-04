@@ -63,9 +63,9 @@ env:
     no_gripper: False
     ignore_terminations: False
     auto_reset: False
-    use_spacemouse: False
-    use_gello: False
-    use_gello_joint: True
+    teleop:
+      - {gello_joint: {drives: left}}
+      - {gello_joint: {drives: right}}
     # Foot-pedal-driven keyboard wrapper for GELLO collection. The 3-key
     # pedal maps to:
     #   a (pre)  → start a new rec episode at the current pose
@@ -93,7 +93,7 @@ env:
       success_hold_steps: 1
       # Keep direct_stream ON so the 1 kHz daemon owns move_joints and
       # env.step only reads state / grippers.  Pair with
-      # use_gello_joint=True above.
+      # the gello_joint entries above.
       teleop_direct_stream: true
 
     data_collection:

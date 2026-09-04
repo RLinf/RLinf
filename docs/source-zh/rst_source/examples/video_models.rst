@@ -103,7 +103,7 @@ Diffusion 环境将媒体生成任务适配到 RLinf 的环境接口。它是一
 
 该环境并不与 OCR 强绑定。数据集和 reward 实现分别通过 ``dataset.type`` 与
 ``reward.model`` 从 ``rlinf.data.datasets.diffusion`` 和
-``rlinf.envs.diffusion`` 动态加载，因此其他媒体评分器也可以复用同一个单步接口。
+``rlinf.envs.sim.diffusion`` 动态加载，因此其他媒体评分器也可以复用同一个单步接口。
 
 Reward 打分
 -----------

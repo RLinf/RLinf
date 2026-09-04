@@ -8,7 +8,7 @@ Brief for AI coding agents working on RLinf. For full contribution flow, code st
 
 ## Code structure
 
-- **`.cursor/`** – Rules and skills: `rules/agents-md.mdc`, `skills/add-install-docker-ci-e2e`, `skills/add-example-doc-model-env`, `skills/review-pr`, `skills/create-pr`.
+- **`.agents/skills/`** – Canonical project skills shared by Codex, Cursor, and Claude. Claude discovers the same files through symlinks in `.claude/skills/`.
 - **`rlinf/`** – Main package:
   - `agents/` – Agent logic (reasoning, tools).
   - `algorithms/` – Advantages, losses, registry, rewards (math, code, searchr1, vqa).
@@ -113,18 +113,120 @@ For debugging (breakpoints, rendering/EGL, network, NCCL/CUDA, timeouts), see th
 - **Registration:** In `rlinf/config.py`, add a new value to the `SupportedModel` enum: `MY_MODEL = ("my_model", "embodied")`. Use `get_supported_model(model_type)` in validation so `model.model_type: my_model` is accepted.
 - **Implementation:** Create a package under `rlinf/models/embodiment/my_model/`. For policies that fit the embodied actor interface, inherit from `rlinf.models.embodiment.base_policy.BasePolicy` and implement `default_forward` and `predict_action_batch`; add other forward types (e.g. `sac_forward`, `crossq_forward`) if the algorithm needs them. For HuggingFace-based VLAs, follow the pattern in the docs: register config and processor in `rlinf/models/__init__.py` (`get_model_config_and_processor`), then implement an action model that wraps generation and optional value head.
 - **Config and workers:** Ensure `build_config` / default configs provide the right `model.model_type`, checkpoint paths, and any model-specific options. Actor and rollout workers already branch on `cfg.actor.model.model_type` / `cfg.rollout.model.model_type`; add branches or a factory so your model is instantiated and used. For FSDP+HuggingFace, see the [new model (FSDP) tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_model_fsdp.html); for Megatron there is a separate [new model (Megatron) tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_model_megatron.html).
-- **Install and CI:** If the model needs extra deps or a dedicated venv, add it to `requirements/install.sh` (e.g. `SUPPORTED_MODELS`, and an `install_my_model()` or branch in the model switch). For Docker and e2e: use the skill `.cursor/skills/add-install-docker-ci-e2e` (install script, Dockerfile stage, CI job, e2e config under `tests/e2e_tests/embodied/`).
+- **Install and CI:** If the model needs extra deps or a dedicated venv, add it to `requirements/install.sh` (e.g. `SUPPORTED_MODELS`, and an `install_my_model()` or branch in the model switch). For Docker and e2e: use the skill `.agents/skills/add-install-docker-ci-e2e` (install script, Dockerfile stage, CI job, e2e config under `tests/e2e_tests/embodied/`).
 
 ### New environment
 
 - **Registration:** In `rlinf/envs/__init__.py`, add a member to `SupportedEnvType`: e.g. `MY_ENV = "my_env"`. In `get_env_cls(env_type, env_cfg=None, ...)` add an `elif env_type == SupportedEnvType.MY_ENV:` branch that imports your env class and returns it (lazy import to avoid loading heavy deps at import time). If the env needs a task id (like IsaacLab), use `env_cfg` and document the expected shape.
 - **Implementation:** Create `rlinf/envs/my_env/` with at least one module defining a gym-style env (e.g. `gymnasium.Env`): `reset`, `step`, and the usual attributes (`observation_space`, `action_space`). Follow the [new environment tutorial](https://rlinf.readthedocs.io/en/latest/rst_source/extending/new_env.html) for the expected structure (e.g. vectorized `num_envs`, `group_size`, `ret_device`). If your env uses custom action formatting, add a branch in `rlinf/envs/action_utils.py` in `prepare_actions(env_type, ...)` so rollout/workers pass correctly shaped actions.
 - **Config:** Set `env.train.env_type` and `env.eval.env_type` to the string value of your enum (e.g. `my_env`). Add any env-specific defaults or validation in `rlinf/config.py` (e.g. `validate_cfg` already has env-specific checks for ManiSkill, Behavior, etc.; add similar ones if needed).
-- **Install and docs:** For install/Docker/CI, use `.cursor/skills/add-install-docker-ci-e2e` (add env to `SUPPORTED_ENVS`, install logic, e2e config). For example docs and RST, use `.cursor/skills/add-example-doc-model-env`.
+- **Install and docs:** For install/Docker/CI, use `.agents/skills/add-install-docker-ci-e2e` (add env to `SUPPORTED_ENVS`, install logic, e2e config). For example docs and RST, use `.agents/skills/add-example-doc-model-env`.
 
 ---
 
 ## Style and contributing
+
+### Engineering and review preferences
+
+Use these preferences when designing, refactoring, implementing, or reviewing
+RLinf:
+
+- Preserve behavior before simplifying an implementation. Trace the complete
+  call path and compare every affected backend, driver, environment, and task
+  with the baseline. Treat a difference as intentional only when it is named,
+  documented, and tested. Do not call a parameter or field vestigial until its
+  builders, defaulting paths, serialization, and runtime consumers have been
+  checked.
+- Prefer small, explicit, composable abstractions. Give each concept one clear
+  responsibility and one stable name; avoid parallel vocabularies, convenience
+  APIs that conceal ownership, and dynamic machinery that a direct constructor
+  or method can express. Use a registry when independently developed components
+  need extension without adding branches to a central factory.
+- Design invalid states out of the API when practical. Resource ownership,
+  lifecycle order, partial-failure rollback, cleanup, and reconnect behavior
+  should be explicit. Cleanup must be idempotent, and a resource must have one
+  clear owner.
+- Optimize public APIs for developers who do not know the scheduler or hardware
+  internals. Keep the common local path direct; introduce remote placement,
+  process boundaries, and resource sharing only when the task requires them.
+  Public names, accepted input types, return types, and constructor forms must be
+  discoverable from type hints and docstrings.
+- Evaluate an abstraction through composition and extension, not only through
+  its smallest example. A new component should combine with existing components
+  without special-case wiring and should work through the same user-facing API
+  in local and remote configurations.
+- Review the whole affected surface, not only the newest diff. For cross-cutting
+  refactors, inspect every implementation, handle, builder, task, environment,
+  test, and documentation path that participates in the contract.
+- Verify contracts at the appropriate layers: focused regression tests,
+  reusable conformance suites, mock SDK tests, local/remote parity checks, and
+  end-to-end tests where hardware or integration behavior matters.
+- Keep docstrings and comments concise and natural. Document the public
+  contract, invariants, ownership, and non-obvious reasons; do not narrate the
+  implementation, repeat the signature, advertise the design, or mention an
+  absent dependency unless that fact changes how a caller uses the code.
+
+### Writing and communication
+
+These rules apply to all language communication in the project, including
+documentation, issues and pull requests, review comments, design discussions,
+release notes, commit messages, and user-facing replies.
+
+- Treat narrative continuity as a basic requirement for every article and
+  substantive explanation, not a convention limited to code documentation. The
+  first prose sentence states directly what the page explains, enables, routes,
+  or lets the reader look up; do not postpone that purpose behind background.
+  The rest of the opening establishes the reader's situation, result, scope, and
+  reading order; each section connects to the state established before it;
+  paragraphs form a dependency chain; and examples are introduced and
+  interpreted. When teaching an interface, explain its operations in caller
+  order, including the relevant inputs, returns, and lifecycle effects. Indexes
+  and reference pages may do this compactly, but are not exempt from a clear
+  purpose and deliberate order.
+- Use natural, professional technical language. Write like an engineer explaining
+  a system clearly: neither casual developer chat nor formal bureaucracy. Avoid
+  colloquial phrases such as “看看长什么样”, “等需要时再看”, and “不用跟着改”, as
+  well as canned phrases such as “本文旨在”, “本节将”, and “进行相关操作”.
+- Explain before naming. Start from the concrete situation, state the relevant
+  distinction in ordinary language, introduce the exact class, method, field,
+  config, or API name, connect it to one example, and add edge cases only after
+  the normal path is clear. Headings must be understandable before their sections
+  are read; do not introduce an unexplained implementation term in a heading.
+- Guide readers from common use to implementation detail. Show the normal local
+  workflow first, then a common extension, composition with existing components,
+  remote or distributed use, and finally ownership or scheduler internals. Do
+  not make the table of contents mirror an internal class hierarchy.
+- Use examples that complete a real workflow. When explaining an extensible
+  abstraction, show how the new component composes with an existing one, how a
+  caller reads or controls it, and how it participates in the relevant task or
+  environment. An isolated class definition is not sufficient.
+- Treat technical accuracy as part of writing quality. Check signatures, types,
+  return values, lifecycle behavior, configuration names, and call sites against
+  the code. If an API accepts two related types, explain what each represents and
+  why both are accepted before using them interchangeably in examples.
+- Write English directly and precisely. Prefer concrete nouns and verbs, vary
+  sentence and paragraph shape, and avoid chatty transitions, promotional
+  summaries, and formulaic prose.
+- Write Chinese according to natural Chinese logic rather than mirroring English
+  clause order. Use clear, restrained written technical language, full-width
+  punctuation, and one space between Chinese and English terms or numbers.
+- Keep English and Chinese pages equivalent in meaning and structure without
+  translating sentence by sentence.
+- Keep familiar developer terms in English when translation sounds unusual or
+  makes the code harder to search, including `policy`, `key`, `value`, `mapping`,
+  `endpoint`, `worker`, `binding`, `wrapper`, `mock SDK`, `contract`, `shape`,
+  `schema`, and `API`. In RL prose, write `policy`, not “策略”.
+- Do not hard-wrap Chinese prose in RST. Keep each prose paragraph or prose list
+  item on one source line because reStructuredText renders internal newlines as
+  visible spaces. Preserve structural line breaks in headings, directives,
+  tables, and code blocks.
+- For documentation about adding tasks that run on physical hardware, use “New
+  Real-World Tasks” in English and “新增真机任务” in Chinese.
+
+Code identifiers, protocol fields, and literal log or error text still follow
+their source definitions. The voice rules in `docs/STYLE_GUIDE.md` apply to all
+project communication; its document structure and RST layout rules apply only to
+documentation.
 
 Google Python style; Ruff for lint/format; docstrings and type hints on public APIs. Logging: `rlinf.utils.logging.get_logger()` or Workers’ `self.log_*`. Config YAML: static values only; no computed fields; don’t overwrite user-facing fields in code. Commits: [Conventional Commits](https://www.conventionalcommits.org/), ~72-char subject, imperative; every commit `Signed-off-by:` (e.g. `git commit -s`). PRs: same title format, fill template, link issues; for perf-sensitive changes include test results. New behavior needs tests (unit or e2e); if e2e needs GPUs/hardware, document and skip appropriately in CI. Full details: [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -40,7 +40,7 @@ env:
     ignore_terminations: False
     auto_reset: False
     no_gripper: False
-    use_spacemouse: True
+    teleop: [spacemouse, glove]
     max_episode_steps: 10000
     glove_config:
       left_port: /path/to/glove_port # (e.g. /dev/ttyACM0)

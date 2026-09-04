@@ -1,0 +1,327 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import time
+import tracemalloc
+from dataclasses import asdict, dataclass, field
+from typing import Any, Sequence
+
+import numpy as np
+from numpy.typing import ArrayLike
+
+from rlinf.robotics.parts.base import Connection, RobotPart
+from rlinf.robotics.parts.views import MethodArm, MethodCamera, MethodEndEffector
+from rlinf.utils.logging import get_logger
+
+#: State-field prefix backing each arm, and the method suffix commanding it.
+_ARM_SIDES: dict[str, str] = {"left": "follow1", "right": "follow2"}
+
+#: Index of the gripper value inside an arm's pose vector.
+_GRIPPER_STATE_INDEX = 6
+
+
+@dataclass
+class Turtle2RobotState:
+    """Turtle2 robot state including followers, head, lift, and car pose.
+
+    Attributes:
+        follow1_pos: Follower 1 position (7-dim).
+        follow1_joints: Follower 1 joint angles (7-dim).
+        follow1_cur_data: Follower 1 current data (7-dim).
+        follow2_pos: Follower 2 position (7-dim).
+        follow2_joints: Follower 2 joint angles (7-dim).
+        follow2_cur_data: Follower 2 current data (7-dim).
+        head_pos: Head position (2-dim).
+        lift: Lift height.
+        car_pose: Car pose [x, y, theta] (3-dim).
+    """
+
+    follow1_pos: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    follow1_joints: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    follow1_cur_data: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    follow2_pos: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    follow2_joints: np.ndarray = field(default_factory=lambda: np.zeros(7))
+    follow2_cur_data: np.ndarray = field(default_factory=lambda: np.zeros(7))
+
+    head_pos: np.ndarray = field(default_factory=lambda: np.zeros(2))
+    lift: float = 0.0
+    car_pose: np.ndarray = field(default_factory=lambda: np.zeros(3))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert the dataclass to a serializable dictionary."""
+        return asdict(self)
+
+
+class Turtle2Connection(Connection):
+    """Shared ROS connection for the Turtle2 arms, grippers, and cameras."""
+
+    def __init__(
+        self,
+        freq: int = 50,
+        camera_ids: Sequence[int] = (),
+    ) -> None:
+        self._logger = get_logger()
+        self.freq = freq
+        self.camera_ids = tuple(camera_ids)
+        self._state = Turtle2RobotState()
+
+    @property
+    def parts(self) -> dict[str, RobotPart]:
+        """Decompose the shared connection into per-side arms and cameras."""
+        parts: dict[str, RobotPart] = {}
+        for side, prefix in _ARM_SIDES.items():
+            parts[side] = MethodArm(
+                self,
+                commands={"tcp_pose": f"move_{side}_arm"},
+                state_fields={
+                    "tcp_pose": f"{prefix}_pos",
+                    "joint_position": f"{prefix}_joints",
+                    "joint_current": f"{prefix}_cur_data",
+                },
+            )
+            parts[f"{side}_end_effector"] = MethodEndEffector(
+                self,
+                state_field=f"{prefix}_pos",
+                command=f"move_{side}_gripper",
+                state_index=_GRIPPER_STATE_INDEX,
+            )
+        for index, camera_id in enumerate(self.camera_ids):
+            parts[f"wrist_{index + 1}"] = MethodCamera(
+                self, "get_camera", camera_id, check_method="check_cams"
+            )
+        return parts
+
+    def _open(self) -> Any:
+        """Connect the ROS controller and start state/control timers."""
+        import rospy
+        from cv_bridge import CvBridge
+        from turtle2_basic.turtle2_controller.Turtle2Controller import (
+            Turtle2Controller,
+        )
+
+        rospy.init_node("Turtle2_Smooth_Controller_Node")
+        self.bridge = CvBridge()
+        self.controller = Turtle2Controller()
+
+        self.controller.chassis_set_current_pose_as_virtual_zero()
+
+        control_period = rospy.Duration(1 / self.freq)
+        state_period = rospy.Duration(1 / 200.0)
+
+        self.left_arm_target = [0, 0, 0, 0, 0, 0, 0]
+        self.right_arm_target = [0, 0, 0, 0, 0, 0, 0]
+
+        self.last_expected_xyz1 = None
+        self.last_expected_xyz2 = None
+        self.last_expected_rpy1 = None
+        self.last_expected_rpy2 = None
+
+        # Position, orientation, and gripper tolerances in m, rad, and cm.
+        self.tol = [0.002, 0.005, 5]
+        self.xyz_speed = 0.5  # m/s.
+        self.rpy_speed = 1.5  # rad/s.
+        rospy.Timer(control_period, self.smooth_action_callback)
+        rospy.Timer(state_period, self.state_callback)
+
+        tracemalloc.start(15)
+        self.snapshot_base = tracemalloc.take_snapshot()
+        return self.controller
+
+    def reset(self) -> None:
+        """Reset both arm targets to zero."""
+        self.reset_arms()
+
+    def _release(self, device: Any) -> None:
+        """Detach from the shared ROS process, which outlives this session."""
+
+    def state_callback(self, event: Any) -> None:
+        arms_data = self.controller.arms_data()
+        self._state.follow1_pos = np.array(arms_data[0], dtype=np.float32)
+        self._state.follow2_pos = np.array(arms_data[1], dtype=np.float32)
+        joint_data = self.controller.arms_joint_data()
+        self._state.follow1_joints = np.array(joint_data[0], dtype=np.float32)
+        self._state.follow2_joints = np.array(joint_data[1], dtype=np.float32)
+        cur_data = self.controller.arms_cur_data()
+        self._state.follow1_cur_data = np.array(cur_data[0], dtype=np.float32)
+        self._state.follow2_cur_data = np.array(cur_data[1], dtype=np.float32)
+        head_data = self.controller.head_data()
+        self._state.head_pos = np.array(head_data, dtype=np.float32)
+        self._state.lift = float(self.controller.lift_data())
+        chassis_pose = self.controller.chassis_pose_data()
+        self._state.car_pose = np.array(chassis_pose, dtype=np.float32)
+
+    def get_state(self) -> "Turtle2RobotState":
+        return self._state
+
+    def smooth_action_callback(self, event: Any) -> None:
+        xyz_step = self.xyz_speed / self.freq  # m
+        rpy_step = self.rpy_speed / self.freq  # rad
+
+        curxyz1 = self._state.follow1_pos[0:3]
+        curxyz2 = self._state.follow2_pos[0:3]
+        targetxyz1 = np.array(self.left_arm_target[0:3], dtype=float)
+        targetxyz2 = np.array(self.right_arm_target[0:3], dtype=float)
+        errxyz1 = np.linalg.norm(curxyz1 - targetxyz1)
+        errxyz2 = np.linalg.norm(curxyz2 - targetxyz2)
+
+        currpy1 = self._state.follow1_pos[3:6]
+        currpy2 = self._state.follow2_pos[3:6]
+        targetrpy1 = np.array(self.left_arm_target[3:6], dtype=float)
+        targetrpy2 = np.array(self.right_arm_target[3:6], dtype=float)
+        errrpy1 = np.linalg.norm(currpy1 - targetrpy1)
+        errrpy2 = np.linalg.norm(currpy2 - targetrpy2)
+
+        if (
+            errxyz1 < self.tol[0]
+            and errxyz2 < self.tol[0]
+            and errrpy1 < self.tol[1]
+            and errrpy2 < self.tol[1]
+        ):
+            self.last_expected_xyz1 = curxyz1.copy()
+            self.last_expected_xyz2 = curxyz2.copy()
+            self.last_expected_rpy1 = currpy1.copy()
+            self.last_expected_rpy2 = currpy2.copy()
+            return
+        else:
+            # Interpolate translation and rotation independently.
+            curxyz1 = (
+                0.5 * (curxyz1 + self.last_expected_xyz1)
+                if self.last_expected_xyz1 is not None
+                else curxyz1
+            )
+            curxyz2 = (
+                0.5 * (curxyz2 + self.last_expected_xyz2)
+                if self.last_expected_xyz2 is not None
+                else curxyz2
+            )
+            currpy1 = (
+                0.5 * (currpy1 + self.last_expected_rpy1)
+                if self.last_expected_rpy1 is not None
+                else currpy1
+            )
+            currpy2 = (
+                0.5 * (currpy2 + self.last_expected_rpy2)
+                if self.last_expected_rpy2 is not None
+                else currpy2
+            )
+
+            dirxyz1 = (targetxyz1 - curxyz1) / (errxyz1 + 0.001)
+            dirxyz2 = (targetxyz2 - curxyz2) / (errxyz2 + 0.001)
+            stepxyz1 = dirxyz1 * min(xyz_step, errxyz1)
+            stepxyz2 = dirxyz2 * min(xyz_step, errxyz2)
+            newxyz1 = curxyz1 + stepxyz1
+            self.last_expected_xyz1 = newxyz1.copy()
+
+            newxyz2 = curxyz2 + stepxyz2
+            self.last_expected_xyz2 = newxyz2.copy()
+
+            dirrpy1 = (targetrpy1 - currpy1) / (errrpy1 + 0.001)
+            dirrpy2 = (targetrpy2 - currpy2) / (errrpy2 + 0.001)
+            steprpy1 = dirrpy1 * min(rpy_step, errrpy1)
+            steprpy2 = dirrpy2 * min(rpy_step, errrpy2)
+            newrpy1 = currpy1 + steprpy1
+            self.last_expected_rpy1 = newrpy1.copy()
+
+            newrpy2 = currpy2 + steprpy2
+            self.last_expected_rpy2 = newrpy2.copy()
+
+            newpos1 = [
+                newxyz1[0],
+                newxyz1[1],
+                newxyz1[2],
+                newrpy1[0],
+                newrpy1[1],
+                newrpy1[2],
+                self.left_arm_target[6],
+            ]
+            newpos2 = [
+                newxyz2[0],
+                newxyz2[1],
+                newxyz2[2],
+                newrpy2[0],
+                newrpy2[1],
+                newrpy2[2],
+                self.right_arm_target[6],
+            ]
+            self.controller.arms_control(newpos1, newpos2)
+
+    def move_arm(
+        self,
+        left_arm_target: list[float],
+        right_arm_target: list[float],
+    ) -> None:
+        assert isinstance(left_arm_target, list) and len(left_arm_target) == 7, (
+            "left_arm_target should be a list of length 7"
+        )
+        assert isinstance(right_arm_target, list) and len(right_arm_target) == 7, (
+            "right_arm_target should be a list of length 7"
+        )
+        self.left_arm_target = left_arm_target
+        self.right_arm_target = right_arm_target
+
+    def move_left_arm(self, target: ArrayLike) -> None:
+        """Update the left arm target while preserving its gripper target."""
+        target = np.asarray(target).reshape(6)
+        self.left_arm_target = [*target.tolist(), self.left_arm_target[6]]
+
+    def move_right_arm(self, target: ArrayLike) -> None:
+        """Update the right arm target while preserving its gripper target."""
+        target = np.asarray(target).reshape(6)
+        self.right_arm_target = [*target.tolist(), self.right_arm_target[6]]
+
+    def move_left_gripper(self, target: ArrayLike) -> None:
+        """Update only the left gripper target."""
+        self.left_arm_target = [
+            *self.left_arm_target[:6],
+            float(np.asarray(target).reshape(1)[0]),
+        ]
+
+    def move_right_gripper(self, target: ArrayLike) -> None:
+        """Update only the right gripper target."""
+        self.right_arm_target = [
+            *self.right_arm_target[:6],
+            float(np.asarray(target).reshape(1)[0]),
+        ]
+
+    def reset_arms(self) -> None:
+        self.left_arm_target = [0, 0, 0, 0, 0, 0, 0]
+        self.right_arm_target = [0, 0, 0, 0, 0, 0, 0]
+        self._logger.info("Reset target to zero.")
+        time.sleep(2.0)
+
+    def check_cams(self, timeout: float = 0.5) -> tuple[bool, bool, bool]:
+        cam1_ok = self.controller.cam.check_cam1(timeout)
+        cam2_ok = self.controller.cam.check_cam2(timeout)
+        cam3_ok = self.controller.cam.check_cam3(timeout)
+        return cam1_ok, cam2_ok, cam3_ok
+
+    def get_cams(self, ids: Sequence[int]) -> list[np.ndarray]:
+        assert len(ids) > 0 and len(ids) <= 3
+        frames = []
+        for cam_id in ids:
+            if cam_id == 0:
+                frame1 = self.controller.cam.get_cam1_data()
+                frames.append(frame1)
+            elif cam_id == 1:
+                frame2 = self.controller.cam.get_cam2_data()
+                frames.append(frame2)
+            elif cam_id == 2:
+                frame3 = self.controller.cam.get_cam3_data()
+                frames.append(frame3)
+        assert len(frames) == len(ids), "get frames failed."
+        return frames
+
+    def get_camera(self, camera_id: int) -> np.ndarray:
+        """Return one camera frame by hardware camera ID."""
+        return self.get_cams([camera_id])[0]
