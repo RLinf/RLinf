@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 from omegaconf import OmegaConf
 
+from rlinf.config import validate_fsdp_weight_sync_cfg
 from rlinf.hybrid_engines.fsdp.strategy.base import FSDPStrategyBase
 from rlinf.hybrid_engines.fsdp.utils import resolve_fsdp_mesh
 
@@ -106,3 +107,50 @@ def test_weight_sync_rejects_hybrid_shard():
     # the replicate dim, so it must fail loudly instead of syncing wrong bytes.
     with pytest.raises(NotImplementedError, match="hybrid_shard"):
         FSDPStrategyBase._assert_single_shard_group(_strategy_with("hybrid_shard"))
+
+
+@pytest.mark.parametrize("sharding_strategy", ["hybrid-shard", "HYBRID_SHARD", ""])
+def test_unknown_sharding_strategy_is_rejected(sharding_strategy):
+    # Only FSDP1 routes the name through get_sharding_strategy(), so without this
+    # check a typo would take the 1-D branch and silently train under full_shard.
+    with pytest.raises(ValueError, match="Unknown fsdp_config.sharding_strategy"):
+        resolve_fsdp_mesh(16, sharding_strategy=sharding_strategy)
+
+
+def _run_cfg(actor_strategy, inference_strategy, load_from_actor=True):
+    return OmegaConf.create(
+        {
+            "actor": {"fsdp_config": {"sharding_strategy": actor_strategy}},
+            "inference": {
+                "load_from_actor": load_from_actor,
+                "fsdp_config": {"sharding_strategy": inference_strategy},
+            },
+        }
+    )
+
+
+def test_weight_sync_cfg_accepts_full_shard_on_both_sides():
+    validate_fsdp_weight_sync_cfg(_run_cfg("full_shard", "full_shard"))
+
+
+@pytest.mark.parametrize(
+    ("actor_strategy", "inference_strategy"),
+    [
+        ("hybrid_shard", "full_shard"),  # actor overridden inline
+        ("full_shard", "hybrid_shard"),  # shared fsdp group file edited
+        ("hybrid_shard", "hybrid_shard"),
+    ],
+)
+def test_weight_sync_cfg_rejects_hybrid_shard_on_either_side(
+    actor_strategy, inference_strategy
+):
+    # An asymmetric config is the dangerous one: the handshake guard would raise
+    # on one side while the other blocks in the paired send/recv.
+    with pytest.raises(ValueError, match="hybrid_shard"):
+        validate_fsdp_weight_sync_cfg(_run_cfg(actor_strategy, inference_strategy))
+
+
+def test_weight_sync_cfg_ignores_runs_that_do_not_load_from_the_actor():
+    validate_fsdp_weight_sync_cfg(
+        _run_cfg("hybrid_shard", "full_shard", load_from_actor=False)
+    )

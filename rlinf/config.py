@@ -466,6 +466,44 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
     return cfg
 
 
+def validate_fsdp_weight_sync_cfg(cfg: DictConfig) -> None:
+    """
+    Reject sharding strategies the actor-to-inference weight sync cannot express.
+
+    The handshake in ``FSDPStrategyBase.setup_actor_sync_inference_ranks`` and its
+    inference-side counterpart describes a rank's shard as
+    ``rank * ceil(numel / world_size)``, which only holds while a parameter is
+    sharded once across the whole world. Both sides also refuse ``hybrid_shard``
+    at handshake time, but that check runs inside a cross-group collective, so an
+    actor and an inference group configured differently would have one side raise
+    while the other blocks. Failing here fails both components at startup instead.
+
+    Args:
+        cfg (DictConfig): The full run config.
+
+    Raises:
+        ValueError: If a component that syncs weights uses ``hybrid_shard``.
+    """
+    inference_cfg = cfg.get("inference", None)
+    if inference_cfg is None or not inference_cfg.get("load_from_actor", False):
+        return
+
+    for component_name in ("actor", "inference"):
+        component_cfg = cfg.get(component_name, None)
+        if component_cfg is None:
+            continue
+        sharding_strategy = component_cfg.get("fsdp_config", {}).get(
+            "sharding_strategy", "full_shard"
+        )
+        if sharding_strategy == "hybrid_shard":
+            raise ValueError(
+                f"{component_name}.fsdp_config.sharding_strategy='hybrid_shard' is "
+                "not supported when inference.load_from_actor is set: the "
+                "actor-to-inference sharding metadata assumes one shard group "
+                "spanning the whole world. Use 'full_shard' for both components."
+            )
+
+
 def validate_fsdp_cfg(cfg: DictConfig) -> DictConfig:
     def validate_amp_cfg(config: DictConfig) -> DictConfig:
         """Validate AMP configuration and ensure mutual exclusivity with FSDP mixed_precision."""
@@ -1593,6 +1631,7 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             f"actor.global_batch_size ({cfg.actor.global_batch_size}) must be divisible by (actor.micro_batch_size ({cfg.actor.micro_batch_size}) * actor_world_size ({actor_world_size}))"
         )
         cfg.actor = validate_fsdp_cfg(cfg.actor)
+        validate_fsdp_weight_sync_cfg(cfg)
 
     if cfg.get("critic", None) is not None:
         if cfg.critic.use_critic_model and cfg.critic.training_backend == "megatron":

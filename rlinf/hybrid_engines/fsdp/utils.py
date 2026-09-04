@@ -64,6 +64,13 @@ class FSDPVersion(str, Enum):
 
 HYBRID_SHARDING_STRATEGY = "hybrid_shard"
 
+SHARDING_STRATEGIES = {
+    "full_shard": ShardingStrategy.FULL_SHARD,
+    "shard_grad_op": ShardingStrategy.SHARD_GRAD_OP,
+    HYBRID_SHARDING_STRATEGY: ShardingStrategy.HYBRID_SHARD,
+    "no_shard": ShardingStrategy.NO_SHARD,
+}
+
 
 def resolve_fsdp_mesh(
     world_size: int,
@@ -97,10 +104,20 @@ def resolve_fsdp_mesh(
         tuple[tuple[int, ...], tuple[str, ...]]: The mesh shape and its dim names.
 
     Raises:
-        ValueError: If ``hybrid_shard`` is requested with a shard group size that
-            is unset, does not divide ``world_size``, or leaves a shard or
-            replicate degree below 2.
+        ValueError: If ``sharding_strategy`` is not a known strategy name, or if
+            ``hybrid_shard`` is requested with a shard group size that is unset,
+            does not divide ``world_size``, or leaves a shard or replicate degree
+            below 2.
     """
+    # Every FSDP component resolves its mesh here, while get_sharding_strategy()
+    # is only reached on the FSDP1 path. Validating the name here keeps a typo
+    # from quietly selecting the 1-D branch and training under full_shard.
+    if sharding_strategy not in SHARDING_STRATEGIES:
+        raise ValueError(
+            f"Unknown fsdp_config.sharding_strategy {sharding_strategy!r}; expected "
+            f"one of {', '.join(SHARDING_STRATEGIES)}."
+        )
+
     if sharding_strategy != HYBRID_SHARDING_STRATEGY:
         return (world_size,), ("fsdp",)
 
@@ -892,12 +909,6 @@ def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:
     Returns:
         ShardingStrategy: The corresponding ShardingStrategy enum value.
     """
-    SHARDING_STRATEGIES = {
-        "full_shard": ShardingStrategy.FULL_SHARD,
-        "shard_grad_op": ShardingStrategy.SHARD_GRAD_OP,
-        "hybrid_shard": ShardingStrategy.HYBRID_SHARD,
-        "no_shard": ShardingStrategy.NO_SHARD,
-    }
     assert strategy_str in SHARDING_STRATEGIES, (
         f"Unknown sharding strategy: {strategy_str}"
     )
