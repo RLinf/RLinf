@@ -856,6 +856,10 @@ class PatchWeightSyncer(WeightSyncer):
             dtype_resolver=lambda key, _dtype: receiver_dtypes[key],
         ):
             await send(bucket)
+            # Only the source rank enters `send`, so without this the others would start the next
+            # bucket's all-gather while it is still sending.
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
 
     @torch.no_grad()
     def _apply_init_weight_bucket(

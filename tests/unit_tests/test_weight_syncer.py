@@ -795,6 +795,40 @@ def test_patch_weight_syncer_init_sync_bootstraps_selected_prefixes():
         )
 
 
+def test_patch_weight_syncer_init_sync_barriers_after_every_bucket(monkeypatch):
+    # Runs on CPU on purpose: the invariant is rank bookkeeping, and CI has no accelerator.
+    model = _make_value_head_model(torch.device("cpu"))
+    syncer = PatchWeightSyncer(
+        snapshot_device="cpu",
+        transport_device="cpu",
+        delta_encoding=True,
+        compression_algorithm="none",
+        init_sync_enabled=True,
+        init_sync_prefixes=["value_head"],
+        init_sync_bucket_size=32,
+    )
+
+    state_dict = model.state_dict()
+    receiver_dtypes = {key: value.dtype for key, value in state_dict.items()}
+    sends = []
+    barriers = []
+
+    async def _send(_bucket):
+        sends.append(len(sends))
+
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(
+        torch.distributed, "barrier", lambda: barriers.append(len(barriers))
+    )
+
+    asyncio.run(syncer._sync_init_weights(state_dict, receiver_dtypes, _send))
+
+    # Only the source rank enters the send, so every bucket needs a barrier to keep the other
+    # ranks from starting the next bucket's all-gather.
+    assert len(sends) > 1
+    assert len(barriers) == len(sends)
+
+
 def test_patch_weight_syncer_init_sync_bootstraps_full_state_dict():
     device = _get_cuda_device()
     sender_model = _make_bucket_dtype_model(device)
