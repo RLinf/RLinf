@@ -370,8 +370,18 @@ def compute_ppo_critic_loss(
     value_loss = torch.max(value_loss_original, value_loss_clipped)
     value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
 
-    value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
-    value_clip_ratio = value_clip_indicator.float().mean()
+    # Measure the update *before* clipping: ``value_pred_clipped - prev_values``
+    # is a clamp to +/- ``value_clip`` by construction, so comparing it against
+    # ``value_clip`` can never be true. Padded entries are excluded so the ratio
+    # stays comparable with ``critic/value_loss`` and ``critic/explained_variance``.
+    value_clip_indicator = ((values - prev_values).detach().abs() > value_clip).float()
+    if loss_mask is None:
+        value_clip_ratio = value_clip_indicator.mean()
+    else:
+        clip_mask = loss_mask.to(device=value_clip_indicator.device, dtype=torch.bool)
+        if clip_mask.shape != value_clip_indicator.shape:
+            clip_mask = torch.broadcast_to(clip_mask, value_clip_indicator.shape)
+        value_clip_ratio = masked_mean(value_clip_indicator, clip_mask)
 
     explained_variance_stats = compute_critic_explained_variance_stats(
         returns=returns,
