@@ -329,13 +329,19 @@ class RoboTwinEnv(gym.Env):
         obs_list = []
         infos_list = []
 
-        raw_obs, step_reward, terminations, truncations, info_list = self.venv.step(
-            chunk_actions
+        raw_obs_list, step_reward, terminations, truncations, info_list = (
+            self.venv.per_step(chunk_actions)
         )
-        extracted_obs = self._extract_obs_image(raw_obs)
+        if len(raw_obs_list) != chunk_step:
+            raise RuntimeError(
+                f"RoboTwin returned {len(raw_obs_list)} observations for "
+                f"an action chunk of length {chunk_step}."
+            )
+
+        obs_list = [self._extract_obs_image(raw_obs) for raw_obs in raw_obs_list]
         infos = list_of_dict_to_dict_of_list(info_list)
-        obs_list.append(extracted_obs)
-        infos_list.append(infos)
+        infos_list = [{} for _ in range(chunk_step)]
+        infos_list[-1] = infos
         if isinstance(terminations, list):
             terminations = torch.as_tensor(
                 np.array(terminations).reshape(-1), device=self.device

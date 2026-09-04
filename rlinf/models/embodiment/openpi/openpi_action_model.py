@@ -670,6 +670,8 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             in [
                 "image",
                 "wrist_image",
+                "wrist_image-0",
+                "wrist_image-1",
                 "extra_view_image",
                 "extra_view_image-0",
                 "extra_view_image-1",
@@ -680,9 +682,15 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         merge_extra = "extra_view_image" not in raw_obs_keys and all(
             k in raw_obs_keys for k in _merge_keys
         )
+        _wrist_merge_keys = ["wrist_image-0", "wrist_image-1"]
+        merge_wrist = "wrist_image" not in raw_obs_keys and all(
+            k in raw_obs_keys for k in _wrist_merge_keys
+        )
         for key in raw_obs_keys:
             # process other keys
-            if merge_extra and key in _merge_keys:
+            if (merge_extra and key in _merge_keys) or (
+                merge_wrist and key in _wrist_merge_keys
+            ):
                 continue
             else:
                 obs_dict[f"observation/{key}"] = batch[key]
@@ -693,6 +701,10 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             obs_dict["observation/extra_view_image"] = torch.stack(
                 obs_dict["observation/extra_view_image"], dim=1
             )
+        if merge_wrist:
+            obs_dict["observation/wrist_image"] = torch.stack(
+                [batch[key] for key in _wrist_merge_keys], dim=1
+            ).permute(0, 1, 3, 4, 2)
 
         bsz = batch["actions"].shape[0]
         obs_dict["actions"] = batch["actions"].reshape(

@@ -48,6 +48,17 @@ algorithm:
     beta_decay: 0.99
     # False enables classic DAgger: student-acted data is re-labeled by expert.
     only_save_expert: False
+    # Store one observation/action pair per environment step. The rolling
+    # LeRobot dataset reconstructs action chunks for OpenPI training.
+    online_lerobot:
+      enabled: True
+      only_success: False
+      robot_type: "aloha"
+      fps: 10
+      finalize_interval: 8
+      data_path: /mnt/public2/rhy/robotwin_lerobot
+      rolling_lerobot_window_size: 50000
+      lerobot_num_workers: 0
 
   gamma: 0.99
 
@@ -72,7 +83,7 @@ env:
     max_episode_steps: 200
     max_steps_per_rollout_epoch: 200
     group_size: 1
-    assets_path: "/path/to/robotwin_assets"
+    assets_path: "/workspace/update/RoboTwin"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/train_seeds.json
     center_crop: False
     task_config:
@@ -101,7 +112,7 @@ env:
     group_size: 1
     use_fixed_reset_state_ids: True
     is_eval: True
-    assets_path: "/path/to/robotwin_assets"
+    assets_path: "/workspace/update/RoboTwin"
     seeds_path: ${oc.env:REPO_PATH}/rlinf/envs/robotwin/seeds/eval_seeds.json
     video_cfg:
       save_video: False
@@ -132,11 +143,11 @@ rollout:
   collect_prev_infos: False
 
   model:
-    model_path: "/path/to/model"
+    model_path: "/workspace/update/model/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
     precision: ${actor.model.precision}
 
   expert_model:
-    model_path: "/path/to/model"
+    model_path: "/workspace/update/model/RLinf-Pi0-PPO"
     precision: ${actor.model.precision}
 
 actor:
@@ -149,7 +160,7 @@ actor:
 
   model:
     precision: null
-    model_path: "/path/to/model"
+    model_path: "/workspace/update/model/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
     num_action_chunks: 50
     add_value_head: False
     action_dim: 14

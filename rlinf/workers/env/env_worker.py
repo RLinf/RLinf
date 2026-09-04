@@ -1230,9 +1230,16 @@ class EnvWorker(Worker):
                     await self._maybe_wait_env_delay(stage_id)
                     stage_builder = self.trajectory_builders[stage_id]
                     if isinstance(stage_builder, EmbodiedLerobotTrajectoryBuilder):
+                        chunk_episode_payload = chunk_step_payload
+                        if self.cfg.env.train.env_type == "robotwin":
+                            obs_list = chunk_step_payload["obs_list"]
+                            chunk_episode_payload = {
+                                **chunk_step_payload,
+                                "obs_list": [curr_obs, *obs_list[:-1]],
+                            }
                         stage_builder.append_chunk_episode_data(
                             policy_output=policy_output,
-                            **chunk_step_payload,
+                            **chunk_episode_payload,
                         )
                     env_batch = env_output.to_dict()
                     skip_rollout_send = self.smooth_intervene.on_chunk_done(
