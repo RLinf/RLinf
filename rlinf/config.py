@@ -98,6 +98,7 @@ SupportedModel.GR00T = SupportedModel.register("gr00t", force=True)
 SupportedModel.DEXBOTIC_PI = SupportedModel.register("dexbotic_pi", force=True)
 SupportedModel.DEXBOTIC_DM0 = SupportedModel.register("dexbotic_dm0", force=True)
 SupportedModel.DREAMZERO = SupportedModel.register("dreamzero", force=True)
+SupportedModel.COSMOS3 = SupportedModel.register("cosmos3", force=True)
 SupportedModel.CNN_POLICY = SupportedModel.register("cnn_policy", force=True)
 SupportedModel.FLOW_POLICY = SupportedModel.register("flow_policy", force=True)
 SupportedModel.CMA_POLICY = SupportedModel.register("cma", force=True)
@@ -111,6 +112,8 @@ SupportedModel.RECAP_VALUE_MODEL = SupportedModel.register(
 SupportedModel.STEAM_VALUE_MODEL = SupportedModel.register(
     "steam_value_model", force=True
 )
+SupportedModel.SD3 = SupportedModel.register("sd3", force=True)
+SupportedModel.WAN22_TI2V_5B = SupportedModel.register("wan22_ti2v_5b", force=True)
 
 SupportedModel.QWEN2_5_VL_SFT = SupportedModel.register("qwen2.5_vl", force=True)
 SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
@@ -119,6 +122,8 @@ SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
+
+DIFFUSION_MODELS = {SupportedModel.SD3, SupportedModel.WAN22_TI2V_5B}
 
 EMBODIED_MODEL = set(
     {
@@ -134,6 +139,7 @@ EMBODIED_MODEL = set(
         SupportedModel.DEXBOTIC_PI,
         SupportedModel.DEXBOTIC_DM0,
         SupportedModel.DREAMZERO,
+        SupportedModel.COSMOS3,
         SupportedModel.CNN_POLICY,
         SupportedModel.FLOW_POLICY,
         SupportedModel.CMA_POLICY,
@@ -898,6 +904,21 @@ def validate_megatron_cfg(cfg: DictConfig) -> DictConfig:
     return cfg
 
 
+def validate_weight_sync_overlap_cfg(cfg):
+    """Reject overlapping weight sync with a syncer that applies in pieces.
+
+    Patch applies a synchronization in one step. Bucket yields between buckets,
+    so a rollout generating concurrently could sample a model with only part of
+    the new weights applied.
+    """
+    if not cfg.get("actor", {}).get("sync_weight_no_wait", False):
+        return
+    assert cfg.get("weight_syncer", {}).get("type", None) == "patch", (
+        "actor.sync_weight_no_wait=true requires weight_syncer.type=patch so a "
+        "rollout cannot observe a partially applied bucket sync."
+    )
+
+
 def validate_embodied_cfg(cfg):
     only_eval = (
         cfg.runner.get("only_eval", False)
@@ -906,9 +927,10 @@ def validate_embodied_cfg(cfg):
     model_cfg = cfg.rollout.model if only_eval else cfg.actor.model
     algorithm_cfg = cfg.get("algorithm", {}) or {}
     model_type = SupportedModel(model_cfg.model_type)
-    assert model_type in EMBODIED_MODEL, (
-        f"Model type: '{model_cfg.model_type}' is not an embodied model. "
-        f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}."
+    assert model_type in EMBODIED_MODEL or model_type in DIFFUSION_MODELS, (
+        f"Model type: '{model_cfg.model_type}' is not supported by the embodied runner. "
+        f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
+        f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
@@ -1173,6 +1195,8 @@ def validate_embodied_cfg(cfg):
                 assert cfg.env.train.base_config_name == "r1pro_behavior", (
                     f"Only r1pro_behavior is supported for omnigibson, got {cfg.env.train.base_config_name}"
                 )
+
+    validate_weight_sync_overlap_cfg(cfg)
     return cfg
 
 
@@ -1306,6 +1330,13 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
 
             cfg.actor.model = validate_dreamzero_sft_model_cfg(cfg.actor.model)
 
+        elif SupportedModel(model_type) == SupportedModel.COSMOS3:
+            from rlinf.models.embodiment.cosmos3.cosmos3_config import (
+                validate_cosmos3_sft_model_cfg,
+            )
+
+            cfg.actor.model = validate_cosmos3_sft_model_cfg(cfg.actor.model)
+
         _validate_steam_ensemble_cfg(cfg.actor)
 
     return cfg
@@ -1374,6 +1405,32 @@ def validate_reasoning_cfg(cfg: DictConfig) -> DictConfig:
 
         cfg.rollout = validate_rollout_cfg(
             cfg.rollout, cfg.algorithm, cfg.get("actor", None)
+        )
+    return cfg
+
+
+def validate_searchr1_cfg(cfg: DictConfig) -> DictConfig:
+    """Validate SearchR1 multi-agent training requirements before launch."""
+    reward_cfg = cfg.get("reward", None)
+    if reward_cfg is None or reward_cfg.get("reward_type", None) != "searchr1":
+        return cfg
+
+    if not cfg.agentloop.get("is_dynamic_rollout_batch", False):
+        raise ValueError("SearchR1 requires agentloop.is_dynamic_rollout_batch=True.")
+    if not cfg.actor.get("enable_dp_load_balance", False):
+        raise ValueError("SearchR1 requires actor.enable_dp_load_balance=True.")
+    if cfg.actor.training_backend == "fsdp" and cfg.algorithm.get(
+        "importance_sampling_fix", False
+    ):
+        raise ValueError(
+            "SearchR1 with the FSDP multi-agent actor does not support "
+            "algorithm.importance_sampling_fix=True."
+        )
+
+    component_placement = ModelParallelComponentPlacement(cfg, Cluster())
+    if not component_placement.is_collocated:
+        raise ValueError(
+            "SearchR1 multi-agent actors support only collocated component placement."
         )
     return cfg
 
@@ -1557,6 +1614,9 @@ def validate_cfg(cfg: DictConfig) -> DictConfig:
             )
         elif cfg.critic.use_critic_model and cfg.critic.training_backend == "fsdp":
             cfg.critic = validate_fsdp_cfg(cfg.critic)
+
+    if cfg.runner.task_type == "reasoning":
+        cfg = validate_searchr1_cfg(cfg)
 
     return cfg
 

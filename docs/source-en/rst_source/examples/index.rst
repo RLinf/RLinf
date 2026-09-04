@@ -56,8 +56,14 @@ entry points — pick the one that matches your starting question:
 
 Beyond embodiment:
 
-.. grid:: 1 2 2 2
+.. grid:: 1 2 3 3
    :gutter: 3
+
+   .. grid-item-card:: Video Generation Models
+      :link: video_models
+      :link-type: doc
+
+      Fine-tune SD3 and Wan2.2 image/video generation models with Diffusion-NFT.
 
    .. grid-item-card:: Agents
       :link: agentic/index
@@ -82,5 +88,6 @@ Beyond embodiment:
    Reward Models <embodied/reward_model_index>
    SFT <sft_index>
    RL <methods_index>
+   Video Generation Models <video_models>
    Agents <agentic/index>
    Systems <system/index>

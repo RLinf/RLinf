@@ -98,7 +98,7 @@ def main(cfg) -> None:
 
             actor_worker_cls = PipelineEmbodiedFSDPActor
         else:
-            from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+            from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
             actor_worker_cls = EmbodiedFSDPActor
 

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 import torch
 
 try:
@@ -49,6 +51,40 @@ def npu_apply_rotary_pos_emb(
     return q_embed, k_embed
 
 
+class _TorchcodecUnavailableFinder:
+    """Raise ``ImportError`` for ``torchcodec`` so GR00T treats it as optional.
+
+    Isaac-GR00T N1.5's ``gr00t.utils.video`` does ``import torchcodec`` at
+    module level and only catches ``ImportError`` / ``RuntimeError``. PyPI
+    torchcodec 0.16.0 is a CUDA wheel that ``dlopen``s ``libnvrtc.so.13``;
+    on Ascend that raises ``OSError``, which is not caught. Intercepting the
+    import converts that failure into the exception GR00T already handles.
+    """
+
+    def find_spec(self, fullname, _path, _target=None):
+        if fullname == "torchcodec" or fullname.startswith("torchcodec."):
+            raise ImportError(
+                "torchcodec is unavailable on this platform (CUDA wheel "
+                "cannot load without NVIDIA libraries)."
+            )
+        return None
+
+
+def _hide_unimportable_torchcodec() -> None:
+    """If torchcodec is installed but cannot load, make later imports ImportError."""
+    if "torchcodec" in sys.modules:
+        return
+    try:
+        import torchcodec  # noqa: F401
+    except OSError:
+        for name in list(sys.modules):
+            if name == "torchcodec" or name.startswith("torchcodec."):
+                sys.modules.pop(name, None)
+        sys.meta_path.insert(0, _TorchcodecUnavailableFinder())
+    except (ImportError, RuntimeError):
+        pass
+
+
 def get_radio_compatible_cuda_capability_on_npu(*_args, **_kwargs) -> tuple[int, int]:
     """RADIO's minimum accepted CUDA capability (Ampere 8.0), as a sentinel.
 
@@ -82,14 +118,19 @@ def apply_npu_patches(patcher) -> dict | None:
     * a ``get_device_capability`` sentinel so RADIO's import-time check passes;
     * a ``flash_attn`` stub so import sites succeed, cleared once the
       eagle_2_5_vl config loads so the absent package reads as unavailable;
-    * a ``AutoConfig.from_pretrained`` wrapper that triggers that clearing.
+    * a ``AutoConfig.from_pretrained`` wrapper that triggers that clearing;
+    * a meta-path finder that turns a CUDA-only torchcodec ``OSError`` into
+      ``ImportError``, matching GR00T's optional-import handlers.
 
-    The last two are patched directly, not through ``patcher``: it matches by
-    ``id`` and a classmethod resolves to an ephemeral bound method, so a Patcher
-    entry for ``from_pretrained`` would never take effect.
+    ``flash_attn`` / ``from_pretrained`` / torchcodec are patched directly, not
+    through ``patcher``: it matches by ``id`` and a classmethod resolves to an
+    ephemeral bound method, so a Patcher entry for ``from_pretrained`` would
+    never take effect.
     """
     if not _is_npu():
         return None
+
+    _hide_unimportable_torchcodec()
 
     patcher.add_patch(
         "transformers.models.qwen3.modeling_qwen3.apply_rotary_pos_emb",

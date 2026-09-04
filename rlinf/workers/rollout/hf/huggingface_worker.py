@@ -39,6 +39,7 @@ from rlinf.models.embodiment.prefix_ft.config import (
     resolve_prefix_feature_model_config,
 )
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
+from rlinf.utils.obs_compression import decompress_obs, infer_obs_batch_size
 from rlinf.utils.placement import HybridComponentPlacement
 
 
@@ -119,6 +120,7 @@ class MultiStepRolloutWorker(Worker):
                 // self.model_cfg.num_action_chunks
             )
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
+        self.collect_final_values = self.cfg.rollout.get("collect_final_values", True)
         self.version = 0
         self.finished_episodes = None
 
@@ -735,6 +737,24 @@ class MultiStepRolloutWorker(Worker):
                 merge_fn=self._merge_obs_batches,
                 infer_batch_size_fn=self._infer_env_batch_size,
             ).async_wait()
+            if not self.collect_final_values:
+                policy_output = PolicyOutput(
+                    versions=torch.zeros_like(
+                        result["prev_logprobs"], dtype=torch.float32
+                    ),
+                )
+                self.send_to(
+                    group_name=self.cfg.env.group_name,
+                    channel=output_channel,
+                    data=policy_output,
+                    tag="train_rollout_results",
+                    route_key=stage_id,
+                    async_op=True,
+                    batch_size=self.train_batch_size,
+                    split_fn=self._split_policy_output,
+                )
+                continue
+
             actions, result = self._predict_rollout_actions(
                 env_output["obs"],
                 final_obs=env_output.get("final_obs", None),
@@ -896,14 +916,9 @@ class MultiStepRolloutWorker(Worker):
 
     @staticmethod
     def _infer_env_batch_size(obs_batch: dict[str, Any]) -> int:
-        obs = obs_batch["obs"] if "obs" in obs_batch else obs_batch
-        for key in ("states", "main_images", "task_descriptions"):
-            value = obs.get(key)
-            if isinstance(value, torch.Tensor):
-                return value.shape[0]
-            if isinstance(value, list):
-                return len(value)
-        raise ValueError("Cannot infer batch size from env obs.")
+        # Delegates to the shared helper, which also understands compressed
+        # image markers (inference runs before decompression on the recv path).
+        return infer_obs_batch_size(obs_batch)
 
     def _merge_optional_flag_tensors(
         self,
@@ -926,6 +941,9 @@ class MultiStepRolloutWorker(Worker):
     def _merge_obs_batches(self, obs_batches: list[dict[str, Any]]) -> dict[str, Any]:
         if not obs_batches:
             return {}
+        # Reconstruct any image tensors compressed by the env workers. This is a
+        # no-op when `env.obs_compression` is disabled (no compression markers).
+        obs_batches = [decompress_obs(obs_batch) for obs_batch in obs_batches]
         obs_dicts = [
             obs_batch["obs"] if "obs" in obs_batch else obs_batch
             for obs_batch in obs_batches

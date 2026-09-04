@@ -180,6 +180,8 @@ Pi0 RoboTwin uses the official OpenPI/LeRobot map-style data loader:
 - Experiment config: ``examples/sft/config/robotwin_sft_openpi_rlinf.yaml``
 - Model template: ``examples/sft/config/model/pi0_rlinf.yaml``
 - OpenPI data config: ``pi0_aloha_robotwin``
+- ``adjust_bottle`` dataset: `RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_
+- HF-format SFT checkpoint for ``adjust_bottle``: `RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_
 
 Replace the dataset, base checkpoint, and task-specific normalization-statistics
 paths with your local paths:

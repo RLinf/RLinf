@@ -44,7 +44,7 @@ from rlinf.utils.nested_dict_process import (
     split_dict_to_chunk,
 )
 from rlinf.utils.utils import clear_memory, collect_param_names_need_sync
-from rlinf.workers.actor.fsdp_actor_worker import EmbodiedFSDPActor
+from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
 class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):

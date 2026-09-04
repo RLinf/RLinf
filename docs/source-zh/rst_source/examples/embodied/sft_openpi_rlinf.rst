@@ -162,6 +162,8 @@ RoboTwin Pi0 使用官方 OpenPI/LeRobot 的 map-style 数据加载器；训练�
 - 实验配置：``examples/sft/config/robotwin_sft_openpi_rlinf.yaml``
 - 模型模板：``examples/sft/config/model/pi0_rlinf.yaml``
 - OpenPI 数据配置：``pi0_aloha_robotwin``
+- ``adjust_bottle`` 数据集：`RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data <https://huggingface.co/datasets/RLinf/RoboTwin-adjust_bottle-official-demo_clean50-Pi0_processed-data>`_
+- ``adjust_bottle`` 的 HF 格式 SFT checkpoint：`RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle <https://huggingface.co/RLinf/RLinf-Pi0-NEW-RoboTwin-SFT-adjust_bottle>`_
 
 数据集、基础 checkpoint 与任务专属归一化统计都需替换为本地路径：
 

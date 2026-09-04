@@ -75,6 +75,7 @@ def prepare_actions_for_libero(
         SupportedModel.OPENVLA_OFT,
         SupportedModel.GR00T_N1D6,
         SupportedModel.GR00T_N1D7,
+        SupportedModel.COSMOS3,
     ]:
         chunk_actions[..., -1] = 2 * chunk_actions[..., -1] - 1
         chunk_actions[..., -1] = np.sign(chunk_actions[..., -1]) * -1.0
@@ -418,6 +419,8 @@ def prepare_actions(
             raw_chunk_actions=raw_chunk_actions,
             model_type=model_type,
         )
+    elif env_type == SupportedEnvType.DIFFUSION:
+        chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.POLARIS:
         chunk_actions = prepare_actions_for_polaris(
             raw_chunk_actions=raw_chunk_actions,

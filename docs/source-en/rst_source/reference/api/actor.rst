@@ -24,7 +24,7 @@ MegatronModelManager
 FSDPActor
 --------------
 
-.. autoclass:: rlinf.workers.actor.fsdp_actor_worker.EmbodiedFSDPActor
+.. autoclass:: rlinf.workers.actor.embodied_fsdp_actor_worker.EmbodiedFSDPActor
    :show-inheritance:
    :members: 
    :member-order: bysource

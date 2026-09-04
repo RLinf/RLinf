@@ -10,9 +10,9 @@
    :align: center
    :width: 90%
 
-   IsaacLab（图片来源：`IsaacLab <https://developer.nvidia.com/isaac/lab>`__）。
+   IsaacLab（图片来源：`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__）。
 
-`IsaacLab <https://developer.nvidia.com/isaac/lab>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
+`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__ 是 NVIDIA 的 GPU 加速机器人学习仿真器。
 你将使用 RLinf 在自定义 Franka 方块堆叠任务上，通过 PPO 微调 GR00T N1.5 或 OpenPI π₀.₅。
 
 概览
