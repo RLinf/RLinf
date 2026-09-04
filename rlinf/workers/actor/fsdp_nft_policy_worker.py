@@ -348,8 +348,8 @@ class EmbodiedNFTFSDPPolicy(EmbodiedFSDPActor):
             else:
                 ref_model = self._cached_ref_model
 
-            ref_model.to(self.device)
             ref_model.load_state_dict(self.get_rollout_state_dict(), strict=False)
+            ref_model.to(self.device)
             cleanup_rollout_model = True
 
         with torch.no_grad():
