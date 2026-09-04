@@ -88,7 +88,7 @@ official checkpoint and convert it:
 
    python -c "from openpi.shared import download; download.maybe_download('gs://openpi-assets/checkpoints/pi05_libero')"
 
-   uv run examples/convert_jax_model_to_pytorch.py \
+   python examples/convert_jax_model_to_pytorch.py \
        --checkpoint_dir "$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero" \
        --config_name pi05_libero \
        --output_path /data/checkpoints/pi05_libero_pytorch

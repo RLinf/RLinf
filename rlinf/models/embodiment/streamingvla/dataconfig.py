@@ -178,9 +178,8 @@ def get_streamingvla_config(
     if config_name not in _CONFIGS_DICT:
         raise ValueError(f"StreamingVLA config {config_name!r} not found.")
     config = _CONFIGS_DICT[config_name]
-    # Factory code mutates dtype/horizon on the returned frozen model config.
-    # Return a distinct model object so one worker/test cannot contaminate the
-    # next configuration request.
+    # Return a distinct model object so immutable overrides in one worker do not
+    # contaminate the next configuration request.
     model_config = dataclasses.replace(config.model)
     object.__setattr__(
         model_config, "use_sfp", bool(getattr(config.model, "use_sfp", False))

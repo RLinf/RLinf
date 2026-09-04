@@ -82,7 +82,7 @@ StreamingVLA 从官方 ``pi05_libero`` 权重开始微调。RLinf 需要一个�
 
    python -c "from openpi.shared import download; download.maybe_download('gs://openpi-assets/checkpoints/pi05_libero')"
 
-   uv run examples/convert_jax_model_to_pytorch.py \
+   python examples/convert_jax_model_to_pytorch.py \
        --checkpoint_dir "$HOME/.cache/openpi/openpi-assets/checkpoints/pi05_libero" \
        --config_name pi05_libero \
        --output_path /data/checkpoints/pi05_libero_pytorch
