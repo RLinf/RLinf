@@ -31,7 +31,7 @@
       :link: performance/index
       :link-type: doc
 
-      调整 placement、调度、并行、profiling 与 adapter 训练。
+      优化具身任务的延迟、显存、placement、profiling 与 FSDP。
 
    .. grid-item-card:: 硬件后端
       :link: hardware/index

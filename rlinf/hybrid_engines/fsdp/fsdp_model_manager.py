@@ -96,20 +96,17 @@ class FSDPModelManager:
         if cfg.get("tokenizer", {}).get("tokenizer_model", None) is not None:
             self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
-        self._device_mesh = create_device_mesh(world_size)
-        self._dp_group = (
-            self._device_mesh["ddp"].get_group()
-            if "ddp" in self._device_mesh.mesh_dim_names
-            else None
-        )
+        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
+        self.device = Worker.torch_platform.current_device()
+
+        sharding_strategy = str(self._cfg.fsdp_config.sharding_strategy)
+        self._device_mesh = create_device_mesh(world_size, sharding_strategy)
+        self._dp_group = self._device_mesh["fsdp"].get_group()
 
         self._strategy = FSDPStrategyBase.create(
             self._cfg, world_size, self._dp_group, self._logger
         )
         self.amp_context = self._create_amp_context()
-
-        Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
-        self.device = Worker.torch_platform.current_device()
 
         self.is_weight_offloaded = False
         self.is_optimizer_offloaded = False
