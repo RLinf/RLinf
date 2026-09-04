@@ -406,13 +406,9 @@ def masked_reduce(
         mean = masked_mean(values, mask)
         value = masked_mean((values - mean) ** 2, mask).sqrt()
     elif reducer == "min":
-        value = torch.where(
-            mask, values, values.new_full((), float("inf"))
-        ).amin()
+        value = torch.where(mask, values, values.new_full((), float("inf"))).amin()
     elif reducer == "max":
-        value = torch.where(
-            mask, values, values.new_full((), float("-inf"))
-        ).amax()
+        value = torch.where(mask, values, values.new_full((), float("-inf"))).amax()
     else:
         raise ValueError(f"Unsupported reducer: {reducer}")
 
