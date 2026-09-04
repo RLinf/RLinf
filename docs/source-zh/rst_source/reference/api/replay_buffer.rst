@@ -57,23 +57,24 @@ Replay Buffer
 数据流程说明
 ------------------
 
-模型和环境交互的多轮数据会通过 Rollout Worker 收集，并转换为 `Trajectory`，然后通过 Channel 发送给 Actor Worker。
-Actor Worker 将 `Trajectory` 存入 `TrajectoryReplayBuffer`，并进行采样训练。
+模型和环境交互的多轮数据由 Rollout Worker 作为 trajectory part 发布。Actor Channel
+collector 将其转换为 `Trajectory`，Actor Worker 再将 `Trajectory` 存入
+`TrajectoryReplayBuffer` 并采样训练。
 
 
-Rollout Worker 收集轨迹数据流程
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Actor Channel 收集轨迹数据流程
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-rollout worker按时间累积 step 结果，收集轨迹的过程。其中
-`[obs₀, obs₁]` 为一个transition, `[act₀, r₀, dones, ... ]` 为一个 **ChunkStepResult**：
+Collector 按时间累积已配对的 chunk。其中 `[obs₀, obs₁]` 表示一个 transition，
+`[act₀, r₀, dones, ... ]` 表示一个 chunk：
 
 .. code-block:: text
 
    time →
    [ obs₀, obs₁, act₀, r₀, dones₀, ... ] ──┐
-   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── EmbodiedTrajectoryBuilder── Trajectory 
-   [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                                │
-   [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                           Channel(put)   
+   [ obs₁, obs₂, act₁, r₁, dones₁, ... ] ──┼── TrajectoryCollector ── Trajectory
+   [ obs₂, obs₃, act₂, r₂, dones₂, ... ] ──┤                         │
+   [ obs₃, obs₄, act₃, r₃, dones₃, ... ] ──┘                    Channel(put)
 
 Actor Worker 保存轨迹数据流程
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

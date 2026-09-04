@@ -34,8 +34,8 @@ After that, we introduce the upper-layer APIs used to implement different stages
      - Rollout wrappers built on Hugging Face and SGLang.
    * - :doc:`Env <env>`
      - Environment wrappers for embodied intelligence scenarios.
-   * - :doc:`Data <data>`
-     - Data structures transferred between different workers.
+   * - :doc:`Agentic Data <data>`
+     - Agentic rollout requests and result structures.
    * - :doc:`Embodied Data <embodied_data>`
      - Embodied Env/Rollout data structures.
    * - :doc:`Replay Buffer <replay_buffer>`

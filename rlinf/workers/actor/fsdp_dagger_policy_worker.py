@@ -311,7 +311,7 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
 
         Each rank pulls at most ``split_num`` messages per call so multi-actor
         recv stays balanced like the buffer trajectory path. ``get_nowait`` is
-        used because env ranks with no completed episodes send nothing.
+        used because a rank with nothing completed contributes an empty shard.
         """
         send_num = self._component_placement.get_world_size("env") * self.stage_num
         recv_num = self._component_placement.get_world_size("actor")
@@ -331,9 +331,10 @@ class EmbodiedDAGGERFSDPPolicy(EmbodiedFSDPActor):
     def recv_lerobot_rollout_trajectories(self, input_channel: Channel) -> None:
         """Receive episodes from EnvWorker and append them to the memory dataset.
 
-        EnvWorkers collect completed episodes via ``EmbodiedLerobotTrajectoryBuilder``
-        and send them here each interact round. Empty batches are not sent by env;
-        if the dataset is still below ``min_frames``, training is skipped later.
+        The trajectory collector sends one episode shard per expected Actor
+        receive each interact round. A shard may be empty when no episode
+        completes; if the dataset is still below ``min_frames``, training is
+        skipped later.
         """
         self._recv_lerobot_episodes_from_channel(input_channel)
         if self.dataset.is_ready():

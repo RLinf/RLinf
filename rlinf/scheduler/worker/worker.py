@@ -809,7 +809,7 @@ class Worker(metaclass=WorkerMeta):
         channel_name: str,
         maxsize: int = 0,
         distributed: bool = False,
-        node_rank: int = 0,
+        node_rank: Optional[int] = None,
         local: bool = False,
     ):
         """Create a new channel with the specified placement rank and maximum size.
@@ -818,7 +818,7 @@ class Worker(metaclass=WorkerMeta):
             channel_name (str): The name of the channel.
             maxsize (int): The maximum size of the channel queue. Defaults to 0 (unbounded).
             distributed (bool): Whether the channel should be distributed. A distributed channel creates a distributed worker on each node, and routes communications to the channel worker on the same node as the current worker, benefitting from the locality of the data. The routing is based on the key of the put/get APIs. So if you expect the key to be randomly distributed, you should set this to False to avoid unnecessary routing overhead.
-            node_rank (int): The node rank of the current worker. Only valid when distributed is False.
+            node_rank (int): The node to place the channel on. Only valid when distributed is False. Defaults to None, which places the channel on the creating worker's node.
             local (bool): Create the channel for intra-process communication. A local channel cannot be connected by other workers, and its data cannot be shared among different processes.
 
         Returns:

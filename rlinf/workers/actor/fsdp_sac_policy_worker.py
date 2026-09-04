@@ -32,7 +32,7 @@ from rlinf.data.storage.replay import (
 )
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.modules.entropy_tunning import EntropyTemperature
-from rlinf.scheduler import Channel, Worker
+from rlinf.scheduler import Worker
 from rlinf.utils import drq
 from rlinf.utils.distributed import all_reduce_dict
 from rlinf.utils.metric_utils import (
@@ -311,7 +311,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                         target_param.data.copy_(shadow.to(target_param.data.dtype))
 
     @Worker.timer("actor/recv_traj")
-    async def recv_rollout_trajectories(self, input_channel: Channel) -> None:
+    async def recv_rollout_trajectories(self, input_channel) -> None:
         """
         Receive rollout trajectories from rollout workers.
 

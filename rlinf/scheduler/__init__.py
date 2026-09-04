@@ -12,7 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .channel import Channel, ChannelWorker, WeightedItem
+from .channel import (
+    Channel,
+    ChannelContext,
+    ChannelWorker,
+    Collector,
+    Dispatcher,
+    WeightedItem,
+    register_collector,
+    register_dispatcher,
+)
 from .cluster import Cluster, ClusterConfig
 from .collective import CollectiveGroupOptions
 from .hardware import (
@@ -83,6 +92,11 @@ __all__ = [
     "merge_batches",
     "WorkerInfo",
     "Channel",
+    "ChannelContext",
+    "Collector",
+    "Dispatcher",
+    "register_collector",
+    "register_dispatcher",
     "ChannelWorker",
     "WeightedItem",
     "Tracer",

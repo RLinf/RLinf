@@ -17,8 +17,13 @@ from .config import ClusterConfig, NodeGroupConfig
 from .node import NodeGroupInfo, NodeInfo
 from .utils import (
     dataclass_arg_check,
+    get_group_world_size,
     load_user_extension_module,
     parse_rank_config,
+    resolve_colocation_node_rank,
+    resolve_group_names,
+    resolve_group_sizes,
+    resolve_worker_names,
     without_http_proxies,
 )
 
@@ -31,6 +36,11 @@ __all__ = [
     "ClusterConfig",
     "NodeGroupConfig",
     "dataclass_arg_check",
+    "get_group_world_size",
+    "resolve_colocation_node_rank",
+    "resolve_group_names",
+    "resolve_group_sizes",
+    "resolve_worker_names",
     "parse_rank_config",
     "without_http_proxies",
 ]

@@ -20,9 +20,9 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from rlinf.data.schema.embodied_trajectory_builder import EmbodiedTrajectoryBuilder
+from rlinf.data.schema.embodied_trajectory import TrajectoryAccumulator
 from rlinf.data.schema.embodied_types import (
-    ChunkStepResult,
+    TrajectoryStep,
 )
 from rlinf.data.storage.replay import TrajectoryReplayBuffer
 from rlinf.envs.realworld.realworld_env import RealWorldEnv
@@ -92,7 +92,7 @@ class DataCollector(Worker):
         self._target_step_period = 1.0 / float(fps) if fps else None
 
     def _process_obs(self, obs):
-        """Reshape env obs into the dict EmbodiedTrajectoryBuilder expects."""
+        """Reshape env observations for the internal trajectory accumulator."""
         if not self.cfg.runner.record_task_description:
             obs.pop("task_descriptions", None)
 
@@ -106,6 +106,11 @@ class DataCollector(Worker):
             else:
                 ret_obs[key] = val.clone()
         return ret_obs
+
+    @staticmethod
+    def _drop_task_descriptions(obs: dict) -> dict:
+        """Remove task metadata before stacking trajectory observations."""
+        return {key: value for key, value in obs.items() if key != "task_descriptions"}
 
     def run(self):
         obs, _ = self.env.reset()
@@ -121,7 +126,7 @@ class DataCollector(Worker):
             desc="Collecting Data Episodes:",
         )
 
-        current_rollout = EmbodiedTrajectoryBuilder(
+        current_rollout = TrajectoryAccumulator(
             max_episode_length=self.cfg.env.eval.max_episode_steps,
         )
 
@@ -152,25 +157,24 @@ class DataCollector(Worker):
             action_tensor = torch.as_tensor(action, dtype=torch.float32)
             reward_tensor = reward.float().unsqueeze(1)
 
-            step_result = ChunkStepResult(
+            step_result = TrajectoryStep(
                 actions=action_tensor,
                 rewards=reward_tensor,
                 dones=done_tensor,
                 terminations=terminated_tensor,
                 truncations=truncated_tensor,
                 forward_inputs={"action": action_tensor},
+                curr_obs=self._drop_task_descriptions(current_obs_processed),
+                next_obs=self._drop_task_descriptions(next_obs_processed),
             )
 
             # Rebuild rollout on rec-start or abort; ``restart`` kept for older wrappers.
             if kb_event in ("start", "restart", "abort"):
-                current_rollout = EmbodiedTrajectoryBuilder(
+                current_rollout = TrajectoryAccumulator(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
             if kb_phase in (None, "rec"):
-                current_rollout.append_step_result(step_result)
-                current_rollout.append_transitions(
-                    curr_obs=current_obs_processed, next_obs=next_obs_processed
-                )
+                current_rollout.append(step_result)
 
             obs = next_obs
             current_obs_processed = next_obs_processed
@@ -224,7 +228,7 @@ class DataCollector(Worker):
                     reset_options = {"skip_wait_for_start": True}
                 obs, _ = self.env.reset(options=reset_options)
                 current_obs_processed = self._process_obs(obs)
-                current_rollout = EmbodiedTrajectoryBuilder(
+                current_rollout = TrajectoryAccumulator(
                     max_episode_length=self.cfg.env.eval.max_episode_steps,
                 )
 
