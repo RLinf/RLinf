@@ -92,7 +92,6 @@ def compute_decoupled_ppo_actor_loss(
         "proximal_logprobs must be float32 to keep numerical stability"
     )
 
-    loss_mask_count = loss_mask.count_nonzero() or 1
     proximal_ratio = torch.where(
         loss_mask, torch.exp(logprobs - proximal_logprobs), 0.0
     )
@@ -118,34 +117,44 @@ def compute_decoupled_ppo_actor_loss(
         if behave_weight_threshold is not None
         else loss_mask
     )
-    behav_mask_count = behav_mask.count_nonzero() or 1
 
     pg_loss = loss_agg_func(pg_loss * behav_weight, behav_mask, loss_mask_ratio)
     if critic_warmup:
         pg_loss = torch.tensor(0.0, device=pg_loss.device)
 
+    # Broadcast the masks to the metric tensors' width before reducing. In
+    # token_level mode `proximal_ratio` and friends carry an extra action_dim
+    # axis while loss_mask is [bsz, num_chunks, 1]; normalizing a full-width sum
+    # by the un-broadcast mask count would inflate every per-element metric by
+    # action_dim (issue #1471). Expanding the mask makes `masked_mean` divide by
+    # the same elements it sums over. behav_mask is expanded the same way so
+    # `behav_clip_fraction` (a ratio of two counts) stays on a consistent basis.
+    metric_mask = loss_mask
+    metric_behav_mask = behav_mask
+    if (
+        len(proximal_ratio.shape) > 2
+        and loss_mask.shape[-1] == 1
+        and proximal_ratio.shape[-1] > 1
+    ):
+        metric_mask = loss_mask.expand_as(proximal_ratio)
+        metric_behav_mask = behav_mask.expand_as(proximal_ratio)
+    metric_mask_count = metric_mask.count_nonzero() or 1
+    metric_behav_mask_count = metric_behav_mask.count_nonzero() or 1
+
     with torch.no_grad():
-        clip_fraction = (pg_loss1 < pg_loss2).logical_and(
-            loss_mask
-        ).count_nonzero() / loss_mask_count
-        dual_clip_fraction = (
-            dual_clip_mask.logical_and(loss_mask).count_nonzero() / loss_mask_count
+        clip_fraction = masked_mean((pg_loss1 < pg_loss2).float(), metric_mask)
+        dual_clip_fraction = masked_mean(dual_clip_mask.float(), metric_mask)
+        proximal_approx_kl = -masked_mean(logprobs - proximal_logprobs, metric_mask)
+        behav_approx_kl = -masked_mean(
+            proximal_logprobs - old_logprobs, metric_behav_mask
         )
-        proximal_approx_kl = (
-            -torch.where(loss_mask, logprobs - proximal_logprobs, 0.0).sum()
-            / loss_mask_count
-        )
-        behav_approx_kl = (
-            -torch.where(behav_mask, proximal_logprobs - old_logprobs, 0.0).sum()
-            / behav_mask_count
-        )
-        behav_clip_fraction = 1.0 - (behav_mask_count / loss_mask_count)
+        behav_clip_fraction = 1.0 - (metric_behav_mask_count / metric_mask_count)
 
     metrics_data = {
         "actor/policy_loss": pg_loss.detach(),
-        "actor/proximal_ratio": masked_mean(proximal_ratio.detach(), loss_mask),
+        "actor/proximal_ratio": masked_mean(proximal_ratio.detach(), metric_mask),
         "actor/clipped_proximal_ratio": masked_mean(
-            clipped_proximal_ratio.detach(), loss_mask
+            clipped_proximal_ratio.detach(), metric_mask
         ),
         "actor/clip_fraction": clip_fraction,
         "actor/dual_clip_fraction": dual_clip_fraction,
@@ -239,7 +248,6 @@ def compute_ppo_actor_loss(
         "advantages must be float32 to keep numerical stability"
     )
 
-    loss_mask_count = loss_mask.count_nonzero() or 1
     # For numerical stability.
     log_ratio = logprobs - old_logprobs
     if clip_log_ratio_min is not None:
@@ -247,7 +255,6 @@ def compute_ppo_actor_loss(
     if clip_log_ratio_max is not None:
         log_ratio = torch.clamp(log_ratio, max=clip_log_ratio_max)
     ratio = torch.where(loss_mask, torch.exp(log_ratio), 0)
-    approx_kl = torch.where(loss_mask, log_ratio.detach(), 0.0)
 
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_ratio_low, 1.0 + clip_ratio_high)
     policy_loss1 = -advantages * ratio
@@ -274,26 +281,29 @@ def compute_ppo_actor_loss(
     clip_mask = policy_loss1.detach() < policy_loss2.detach()
     dual_clip_mask = (dual_clip_mask * loss_mask).bool()
 
-    clip_fraction = (clip_mask * loss_mask).sum() / float(loss_mask_count)
-    approx_kl = -torch.sum(approx_kl) / float(loss_mask_count)
-
     dual_cliped_ratio = torch.where(dual_clip_mask, ratio, 0)
 
     if critic_warmup:
         policy_loss = torch.tensor(0.0, device=policy_loss.device)
 
-    # Compile metrics for logging
+    # Broadcast loss_mask to the metric tensors' width before reducing. In
+    # token_level mode `ratio`/`clip_mask`/`log_ratio` carry an extra action_dim
+    # axis while loss_mask is [bsz, num_chunks, 1]; normalizing a full-width sum
+    # by the un-broadcast mask count would inflate the per-element metrics by
+    # action_dim (issue #1471). `masked_mean` divides by the mask's own sum, so
+    # expanding the mask makes numerator and denominator span the same elements.
     loss_mask_for_metrics = loss_mask
+    if len(ratio.shape) > 2 and loss_mask.shape[-1] == 1 and ratio.shape[-1] > 1:
+        loss_mask_for_metrics = loss_mask.expand_as(ratio)
+
+    clip_fraction = masked_mean(clip_mask.float(), loss_mask_for_metrics)
+    approx_kl = -masked_mean(log_ratio.detach(), loss_mask_for_metrics)
+
+    # Compile metrics for logging
     ratio_for_metrics = ratio.detach()
     ratio_abs_for_metrics = (ratio - 1).abs().detach()
     clipped_ratio_for_metrics = clipped_ratio.detach()
     dual_cliped_ratio_for_metrics = dual_cliped_ratio.detach()
-
-    # Only broadcast when ratio has action_dim dimension and loss_mask's last dim is 1
-    # This handles token_level mode: ratio [bsz, num_chunks, action_dim], loss_mask [bsz, num_chunks, 1]
-    if len(ratio.shape) > 2 and loss_mask.shape[-1] == 1 and ratio.shape[-1] > 1:
-        # Broadcast loss_mask to match ratio's shape for metrics computation
-        loss_mask_for_metrics = loss_mask.expand_as(ratio)
 
     metrics_data = {
         "actor/policy_loss": policy_loss.detach(),
@@ -360,8 +370,18 @@ def compute_ppo_critic_loss(
     value_loss = torch.max(value_loss_original, value_loss_clipped)
     value_loss = loss_agg_func(value_loss, loss_mask, loss_mask_ratio)
 
-    value_clip_indicator = (value_pred_clipped - prev_values).abs() > value_clip
-    value_clip_ratio = value_clip_indicator.float().mean()
+    # Measure the update *before* clipping: ``value_pred_clipped - prev_values``
+    # is a clamp to +/- ``value_clip`` by construction, so comparing it against
+    # ``value_clip`` can never be true. Padded entries are excluded so the ratio
+    # stays comparable with ``critic/value_loss`` and ``critic/explained_variance``.
+    value_clip_indicator = ((values - prev_values).detach().abs() > value_clip).float()
+    if loss_mask is None:
+        value_clip_ratio = value_clip_indicator.mean()
+    else:
+        clip_mask = loss_mask.to(device=value_clip_indicator.device, dtype=torch.bool)
+        if clip_mask.shape != value_clip_indicator.shape:
+            clip_mask = torch.broadcast_to(clip_mask, value_clip_indicator.shape)
+        value_clip_ratio = masked_mean(value_clip_indicator, clip_mask)
 
     explained_variance_stats = compute_critic_explained_variance_stats(
         returns=returns,
