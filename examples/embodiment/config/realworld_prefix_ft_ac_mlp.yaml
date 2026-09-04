@@ -1,0 +1,325 @@
+defaults:
+  - env/realworld_block_peg_insertion@env.train
+  - env/realworld_block_peg_insertion@env.eval
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: "4090"
+      placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+    env:
+      node_group: franka
+      placement: 0 # Local robot rank in the franka node group (n for the n+1 th robot)
+    rollout:
+      node_group: "4090"
+      placement: 0 # Local GPU rank in the 4090 node group (n for the n+1 th GPU)
+  node_groups:
+    - label: "4090" # GPU node group
+      node_ranks: 0 # The ranks of the nodes to be included in this group， change this if your training node is not rank 0
+    - label: franka
+      node_ranks: 1 # Change this if your robot node is not rank 1
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: 172.16.0.2
+            node_rank: 1
+            controller_node_rank: 1
+            disable_validate: false
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf-prefix-ft
+    experiment_name: "realworld_prefix_ft_ac_mlp"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 10000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 5000
+  # Console / metrics.log Metric Table interval (TensorBoard is still every step).
+  log_interval: 10
+
+  # Resume a saved Stage2 training run from a full RLinf checkpoint directory.
+  # Do not point this to the Stage1 OpenPI checkpoint.
+  # Leave null to start Stage2 heads from scratch. Do not point this at a
+  # previous Stage2 run if you only want the old replay buffer.
+  resume_dir: null
+  # Optional single Stage2 weight file, e.g. actor/model_state_dict/full_weights.pt.
+  # For normal Stage2 training from scratch, keep this null.
+  ckpt_path: null
+
+algorithm:
+  # Paper UTD G≈5. Each critical phase adds ~20–30 transitions, so one ingest
+  # schedules ~100–150 updates (25×5), not 8000 on the loaded buffer.
+  update_epoch: 5
+  group_size: 1
+  agg_q: min
+  actor_agg_q: q1
+  enable_drq: False
+  q_head_type: ${actor.model.q_head_type}
+
+  adv_type: embodied_sac
+  loss_type: prefix_ac
+  loss_agg_func: "token-mean"
+
+  # Realworld critical phase ≈ 20–30 transitions / press-'b' segment.
+  # Do NOT catch-up thousands of updates on load_path (335). Last two runs
+  # overfit that tiny set, |π−ref|→0.02, arm froze, gripper still moved.
+  rlt_transition_replay: True
+  rlt_schedule:
+    enable: True
+    # load_path has 335. Wait for ~3 extra critical phases (~75–90 new rows)
+    # of VLA+human before any gradient. skip_reason=1 until then.
+    warmup_min_size: 150
+    # After buffer is ready: 150 BC-only updates, then MLP may take over.
+    # max_updates=2 → ~75 Global Steps, not 8000 burned in 5 minutes.
+    warmup_post_collect_updates: 150
+    train_every_transitions: 1
+    train_every_episodes: 0
+    # Cap burst: 25 new rows → pending=125, drained 2/step while the next
+    # episode runs. Effective UTD ≈ 5.
+    max_updates_per_train_step: 5
+
+  # RLT Stage2 actor loss: -q_weight * Q + bc_weight * BC (paper Eq.5, β=bc).
+  q_weight: 0.1
+  bc_weight: 5
+
+  actor_weight_schedule:
+    enable: True
+    # Keep Q at 0 until takeover. Even q_weight=0.1 overpowered BC once
+    # critic_loss collapsed to 1e-3 on 350 rows (weighted_q > weighted_bc by GS50).
+    warmup_updates: 150
+    ramp_updates: 1000
+    warmup_bc_weight: 5.0
+    warmup_q_weight: 0.02
+    online_bc_weight: 1.5
+    online_q_weight: 0.05
+
+  # Reference-action dropout on the actor input, as in RLT Stage2.
+  reference_dropout_prob: 0.5
+
+  bootstrap_type: standard
+  gamma: 0.96
+  tau: 0.005
+
+  # Entropy/alpha is kept at zero; this is not standard maximum-entropy SAC.
+  entropy_tuning:
+    alpha_type: fixed_alpha
+    initial_alpha: 0.0
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+
+  # Optional decision-step proprio history concatenated onto z_rl.
+  # Default off: same single-frame prefix path already validated on the robot.
+  state_history:
+    enable: false
+    steps: 4
+    pad: zero
+    source: proprio
+
+  replay_buffer:
+    enable_cache: True
+    cache_size: 2000
+    min_buffer_size: 2
+    sample_window_size: 2000
+    auto_save: False
+    # Preload previous online transitions without loading old MLP weights.
+    # Point at rank_0/ or its parent replay_buffer/ directory.
+    # Must keep runner.resume_dir null.
+    #load_path: /home/infini/liyanghao/RLinf-rlt/logs/20260818-15:12:28-realworld_rlt_stage2_ac_mlp/realworld_rlt_stage2_ac_mlp/checkpoints/global_step_8000/actor/sac_components/replay_buffer
+
+  target_update_freq: 1
+  target_update_type: all
+  train_actor_steps: 2
+  critic_actor_ratio: 4
+  critic_subsample_size: 0
+  backup_entropy: False
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    keyboard_reward_wrapper: rlt_policy_switch
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    use_spacemouse: True
+    use_gello: False
+    use_pico: False
+    no_gripper: True
+    override_cfg:
+      is_dummy: False
+      use_dense_reward: False
+      reward_scale: 1.0
+      max_num_steps: 240
+      #target_ee_pose: [ 5.19359231e-01 , 3.85411759e-03 , 8.38951361e-02 , 3.11919320e+00 ,-2.59836447e-03 ,-4.14700334e-02]
+      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
+      success_hold_steps: 1
+      enable_camera_player: False
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    auto_reset: True
+    ignore_terminations: False
+    keyboard_reward_wrapper: rlt_policy_switch
+    max_episode_steps: 240
+    max_steps_per_rollout_epoch: 240
+    use_fixed_reset_state_ids: False
+    group_size: 1
+    use_spacemouse: True
+    use_gello: False
+    use_pico: False
+    no_gripper: True
+    override_cfg:
+      is_dummy: False
+      use_dense_reward: False
+      reward_scale: 1.0
+      max_num_steps: 240
+      target_ee_pose: [ 0.39958665 , 0.06832568,  0.08039099 , 3.12546587,  0.00481487 ,-0.0216962 ]
+      success_hold_steps: 1
+      enable_camera_player: False
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
+
+  # Synced Stage2 MLP policy used by rollout inference.
+  # During training (runner.only_eval=False), rollout builds this from actor.model
+  # and then receives fresh weights from the actor via RLinf weight_syncer.
+  # Keep model_path null for scratch Stage2 training; do not set it to Stage1.
+  # To resume/load Stage2 weights, use runner.resume_dir or runner.ckpt_path.
+  model:
+    model_path: null
+    precision: ${actor.model.precision}
+    action_dim: ${actor.model.action_dim}
+    num_action_chunks: ${actor.model.num_action_chunks}
+    ref_num_action_chunks: ${actor.model.ref_num_action_chunks}
+
+  # Frozen VLA. Rollout converts raw env obs into PrefixObs keys
+  # z_rl (masked-mean VLM prefix), proprio, ref_chunk.
+  # Stage1 RL-token checkpoint is not required; point at ordinary SFT / base weights.
+  prefix_feature_model:
+    model_type: "openpi_rlinf"
+    precision: bf16
+    is_lora: False
+    num_action_chunks: 10
+    action_dim: 7
+    num_steps: 4
+    add_value_head: False
+    # Ordinary SFT or π0.5 base checkpoint. Do not require rlt_module weights.
+    model_path: "/home/infini/liyanghao/model/openpi_rlinf_pni.pt"
+    prefix:
+      pool: masked_mean
+      image_only: false
+    openpi_data:
+      # Must match the repo_id/config_name used to compute OpenPI norm stats.
+      repo_id: "realworld_franka_pni"
+      norm_stats_path: "/home/infini/liyanghao/model/pi05_base/pi05_base/realworld_franka_pni"
+    openpi:
+      task: eval
+      config_name: "pi05_realworld"
+      num_images_in_input: 2
+      action_chunk: ${actor.model.ref_num_action_chunks}
+      action_horizon: ${rollout.prefix_feature_model.num_action_chunks}
+      action_env_dim: ${rollout.prefix_feature_model.action_dim}
+      num_steps: 4
+      model_action_dim: 32
+      paligemma_variant: "gemma_2b"
+      action_expert_variant: "gemma_300m"
+      max_token_len: 200
+      discrete_state_input: True
+      # Keep the collected 19D raw state as Stage2 proprio.
+      state_indices: []
+      noise_method: "flow_noise"
+      noise_params: [0.16, 0.12, 200]
+      joint_logprob: True
+      use_rlt: false
+      rlt_use_mask: true
+
+  enable_torch_compile: True
+  enable_cuda_graph: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+
+  # Buffer grows ~25/episode; 256 would resample most of the set every step.
+  micro_batch_size: 64
+  global_batch_size: 64
+  seed: 1234
+  enable_offload: False
+
+  # Do not add actor.model.model_path for Stage1; this block only defines the
+  # Stage2 head. Stage2 resume/load is controlled by runner.resume_dir/ckpt_path.
+  model:
+    model_type: "rlt_mlp_policy"
+
+    # RLT AC defaults to fp32 for Q-learning and target-update stability.
+    precision: fp32
+    add_value_head: False
+    add_q_head: True
+    q_head_type: "default"
+    fixed_std: 0.002
+    is_lora: False
+
+    # z_rl slot = masked-mean pi0.5 VLM prefix (paligemma width 2048).
+    # YAML always stores prefix width. state_history.enable expands the MLP
+    # input automatically; do not add K * proprio_dim here.
+    z_dim: 2048
+    proprio_dim: 19
+    action_dim: 7
+    num_action_chunks: 10
+    ref_num_action_chunks: 10
+
+  optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False

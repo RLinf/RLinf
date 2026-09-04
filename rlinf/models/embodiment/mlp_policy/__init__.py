@@ -24,8 +24,13 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
 
     iql_config = cfg.get("iql_config", None)
     if cfg.model_type == "rlt_mlp_policy":
+        from rlinf.models.embodiment.prefix_ft.config import extra_z_dim_from_cfg
+
+        z_dim = int(cfg.z_dim)
+        if not cfg.get("_prefix_z_dim_expanded", False):
+            z_dim += extra_z_dim_from_cfg(cfg)
         model = RLTMLPPolicy(
-            z_dim=cfg.z_dim,
+            z_dim=z_dim,
             proprio_dim=cfg.proprio_dim,
             action_dim=cfg.action_dim,
             num_action_chunks=cfg.num_action_chunks,
@@ -37,8 +42,13 @@ def get_model(cfg: DictConfig, torch_dtype=torch.bfloat16):
             fixed_std=cfg.get("fixed_std", 0.002),
         )
     elif cfg.model_type == "rlt_td3_mlp_policy":
+        from rlinf.models.embodiment.prefix_ft.config import extra_z_dim_from_cfg
+
+        z_dim = int(cfg.z_dim)
+        if not cfg.get("_prefix_z_dim_expanded", False):
+            z_dim += extra_z_dim_from_cfg(cfg)
         model = RLTTD3MLPPolicy(
-            z_dim=cfg.z_dim,
+            z_dim=z_dim,
             proprio_dim=cfg.proprio_dim,
             action_dim=cfg.action_dim,
             num_action_chunks=cfg.num_action_chunks,

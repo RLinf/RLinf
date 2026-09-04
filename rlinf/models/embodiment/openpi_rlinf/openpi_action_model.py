@@ -102,6 +102,26 @@ class OpenPiPytorchActionModel(nn.Module):
     def gradient_checkpointing_disable(self, **kwargs) -> None:
         self.model.gradient_checkpointing_disable()
 
+    @property
+    def z_dim(self) -> int:
+        pool = self._resolved_prefix_pool()
+        if pool == "rlt_token":
+            return int(self.rlt_cfg.rlt_embed_dim)
+        return int(self.rlt_cfg.rlt_input_dim)
+
+    def _resolved_prefix_pool(self) -> str:
+        from rlinf.models.embodiment.prefix_ft.config import resolve_prefix_pool
+
+        return resolve_prefix_pool(
+            use_rlt=self.rlt_cfg.use_rlt,
+            prefix_pool=self.rlt_cfg.prefix_pool,
+            stage2_z_source=self.rlt_cfg.stage2_z_source,
+            rlt_use_mask=self.rlt_cfg.rlt_use_mask,
+        )
+
+    def _stage2_requires_rlt(self) -> bool:
+        return self._resolved_prefix_pool() == "rlt_token"
+
     def _require_rlt(self) -> None:
         if not self.rlt_cfg.use_rlt or not hasattr(self, "rlt_module"):
             raise ValueError("RLT operation requires actor.model.openpi.use_rlt=True.")
@@ -145,15 +165,14 @@ class OpenPiPytorchActionModel(nn.Module):
         prefix_output: torch.Tensor,
         prefix_mask: torch.Tensor,
     ) -> torch.Tensor:
-        """Mean-pool pi0.5 VLM prefix hidden states for the Stage2 MLP z slot."""
-        prefix_output = prefix_output.to(dtype=torch.float32)
-        if self.rlt_cfg.rlt_use_mask:
-            mask = prefix_mask.to(device=prefix_output.device, dtype=prefix_output.dtype)[
-                ..., None
-            ]
-            denom = mask.sum(dim=1).clamp(min=1.0)
-            return (prefix_output * mask).sum(dim=1) / denom
-        return prefix_output.mean(dim=1)
+        """Pool pi0.5 VLM prefix hidden states for the Stage2 MLP z slot."""
+        from rlinf.models.embodiment.prefix_ft.pool import pool_prefix
+
+        pool = self._resolved_prefix_pool()
+        if pool not in ("masked_mean", "mean", "last"):
+            pool = "masked_mean" if self.rlt_cfg.rlt_use_mask else "mean"
+        mask = prefix_mask if pool in ("masked_mean", "last") else None
+        return pool_prefix(prefix_output, mask, mode=pool)
 
     def _encode_stage2_z(
         self,
@@ -164,11 +183,6 @@ class OpenPiPytorchActionModel(nn.Module):
         selected_prefix, selected_mask = self._select_rlt_prefix_embeddings(
             prefix_output, prefix_mask, lang_tokens
         )
-        if self.rlt_cfg.stage2_z_source == "vlm_prefix":
-            return self._encode_vlm_prefix_flat(selected_prefix, selected_mask)
-        if self.rlt_cfg.stage2_z_source != "rlt_token":
-            raise ValueError(
-                "openpi.stage2_z_source must be 'rlt_token' or 'vlm_prefix', "
-                f"got {self.rlt_cfg.stage2_z_source!r}."
-            )
-        return self._encode_rlt_flat(selected_prefix, selected_mask)
+        if self._stage2_requires_rlt():
+            return self._encode_rlt_flat(selected_prefix, selected_mask)
+        return self._encode_vlm_prefix_flat(selected_prefix, selected_mask)

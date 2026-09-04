@@ -355,9 +355,9 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
         return actions, result
 
     @torch.no_grad()
-    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
-        """Extract the frozen Stage1 features consumed by the Stage2 RLT head."""
-        if self.rlt_cfg.stage2_z_source == "rlt_token":
+    def extract_prefix_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+        """Extract frozen VLA prefix features consumed by the Prefix-FT / RLT head."""
+        if self._stage2_requires_rlt():
             self._require_rlt()
         repacked = self._repack_env_obs(env_obs)
         processed = self.input_transform(repacked, transpose=False)
@@ -402,6 +402,9 @@ class OpenPiPytorchEvalActionModel(OpenPiPytorchActionModel):
             "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
             "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
         }
+
+    def extract_rlt_obs(self, env_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+        return self.extract_prefix_obs(env_obs)
 
     def _sample_actions_from_prefix_cache(
         self,

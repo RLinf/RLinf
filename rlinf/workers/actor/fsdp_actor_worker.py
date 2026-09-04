@@ -1127,6 +1127,9 @@ class EmbodiedFSDPActor(FSDPModelManager, Worker):
             self.offload_optimizer()
 
     def model_provider_func(self) -> nn.Module:
+        from rlinf.models.embodiment.prefix_ft.config import apply_prefix_head_z_dim
+
+        apply_prefix_head_z_dim(self.cfg.actor.model, self.cfg)
         model = get_model(self.cfg.actor.model)
         if model is None:
             model = super().model_provider_func()

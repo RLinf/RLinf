@@ -33,6 +33,11 @@ from rlinf.data.schema.embodied_types import PolicyOutput
 from rlinf.hybrid_engines.weight_syncer import WeightSyncer
 from rlinf.models import get_model
 from rlinf.models.embodiment.base_policy import BasePolicy
+from rlinf.models.embodiment.prefix_ft.config import (
+    apply_prefix_head_z_dim,
+    build_state_history_buffer,
+    resolve_prefix_feature_model_config,
+)
 from rlinf.scheduler import Channel, Cluster, Worker, split_channel_message
 from rlinf.utils.placement import HybridComponentPlacement
 
@@ -78,6 +83,7 @@ class MultiStepRolloutWorker(Worker):
         self.enable_opd = self.algorithm_cfg.get("adv_type") == "opd"
         self.expert_model = None
         self.rlt_feature_model = None
+        self.prefix_history = None
         self.rlt_route = None
 
         self.total_num_train_envs = (
@@ -141,6 +147,7 @@ class MultiStepRolloutWorker(Worker):
         with open_dict(rollout_model_config):
             rollout_model_config.precision = self.cfg.rollout.model.precision
             rollout_model_config.model_path = self.cfg.rollout.model.model_path
+        apply_prefix_head_z_dim(rollout_model_config, self.cfg)
 
         self.hf_model: BasePolicy = get_model(rollout_model_config)
 
@@ -148,14 +155,13 @@ class MultiStepRolloutWorker(Worker):
             model_dict = torch.load(self.cfg.runner.ckpt_path)
             self.hf_model.load_state_dict(model_dict)
 
-        rlt_feature_model_config = OmegaConf.select(
-            self.cfg, "rollout.rlt_feature_model", default=None
-        )
+        rlt_feature_model_config = resolve_prefix_feature_model_config(self.cfg)
         if rlt_feature_model_config is not None:
             self.rlt_feature_model = get_model(copy.deepcopy(rlt_feature_model_config))
             self.rlt_feature_model.eval()
             self.rlt_feature_model.requires_grad_(False)
             self.rlt_route = build_rlt_route(self.cfg)
+        self.prefix_history = build_state_history_buffer(self.cfg)
 
         if self.cfg.rollout.get("expert_model", None) and not self.enable_opd:
             expert_model_config = build_expert_model_config(
@@ -559,6 +565,8 @@ class MultiStepRolloutWorker(Worker):
         final_obs: dict[str, Any] | None = None,
         rlt_switch_flags: torch.Tensor | None = None,
         intervene_requested: torch.Tensor | None = None,
+        dones: torch.Tensor | None = None,
+        update_history: bool = True,
     ) -> tuple[torch.Tensor, dict[str, Any]]:
         if self.rlt_feature_model is not None:
             return predict_rlt_actions(
@@ -572,6 +580,9 @@ class MultiStepRolloutWorker(Worker):
                 rlt_switch_flags=rlt_switch_flags,
                 intervene_requested=intervene_requested,
                 expert_model=self.expert_model,
+                history=self.prefix_history,
+                dones=dones,
+                update_history=update_history,
             )
         return self.predict(env_obs, mode=mode)
 
@@ -618,7 +629,9 @@ class MultiStepRolloutWorker(Worker):
         ):
             return None
         with torch.no_grad():
-            actions, result = self._predict_rollout_actions(final_obs)
+            actions, result = self._predict_rollout_actions(
+                final_obs, update_history=False
+            )
             if "prev_values" in result and result["prev_values"] is not None:
                 final_values = result["prev_values"]
             else:
@@ -693,6 +706,7 @@ class MultiStepRolloutWorker(Worker):
                     final_obs=env_output.get("final_obs", None),
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                     intervene_requested=env_output.get("intervene_flags", None),
+                    dones=env_output.get("dones", None),
                 )
 
                 policy_output = self._build_policy_output(
@@ -726,6 +740,7 @@ class MultiStepRolloutWorker(Worker):
                 final_obs=env_output.get("final_obs", None),
                 rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                 intervene_requested=env_output.get("intervene_flags", None),
+                dones=env_output.get("dones", None),
             )
 
             if self.enable_opd:
@@ -805,6 +820,7 @@ class MultiStepRolloutWorker(Worker):
                     final_obs=env_output.get("final_obs", None),
                     rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                     intervene_requested=env_output.get("intervene_flags", None),
+                    dones=env_output.get("dones", None),
                 )
                 if isinstance(actions, torch.Tensor):
                     actions = actions.detach().cpu().contiguous()
@@ -839,6 +855,7 @@ class MultiStepRolloutWorker(Worker):
                             final_obs=env_output.get("final_obs", None),
                             rlt_switch_flags=env_output.get("rlt_switch_flags", None),
                             intervene_requested=env_output.get("intervene_flags", None),
+                            dones=env_output.get("dones", None),
                         )
                         if isinstance(actions, torch.Tensor):
                             actions = actions.detach().cpu().contiguous()
@@ -920,6 +937,7 @@ class MultiStepRolloutWorker(Worker):
         intervene_flags_list = [
             obs_batch.get("intervene_flags", None) for obs_batch in obs_batches
         ]
+        dones_list = [obs_batch.get("dones", None) for obs_batch in obs_batches]
 
         def _merge_obs_dicts(dicts: list[dict[str, Any]]) -> dict[str, Any]:
             merged: dict[str, Any] = {}
@@ -956,6 +974,7 @@ class MultiStepRolloutWorker(Worker):
             "intervene_flags": self._merge_optional_flag_tensors(
                 obs_dicts, intervene_flags_list
             ),
+            "dones": self._merge_optional_flag_tensors(obs_dicts, dones_list),
         }
 
     def _split_policy_output(

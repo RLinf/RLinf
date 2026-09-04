@@ -49,3 +49,15 @@ def test_encode_vlm_prefix_flat_mean_pool_without_mask():
     prefix = torch.ones(2, 4, 3)
     pooled = model._encode_vlm_prefix_flat(prefix, torch.ones(2, 4, dtype=torch.bool))
     torch.testing.assert_close(pooled, torch.ones(2, 3))
+
+
+def test_encode_vlm_prefix_flat_uses_shared_pool_prefix():
+    from rlinf.models.embodiment.prefix_ft.pool import pool_prefix
+
+    model = _PrefixPoolStub(
+        OpenPiPytorchRLTConfig(prefix_pool="last", stage2_z_source="vlm_prefix")
+    )
+    prefix = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+    mask = torch.tensor([[True, False], [True, True]])
+    pooled = model._encode_vlm_prefix_flat(prefix, mask)
+    torch.testing.assert_close(pooled, pool_prefix(prefix, mask, mode="last"))

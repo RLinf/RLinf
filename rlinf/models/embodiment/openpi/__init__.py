@@ -48,6 +48,15 @@ def get_model(cfg: DictConfig, torch_dtype=None):
         for key, val in override_model_config_kwargs.items():
             actor_model_config.__dict__[key] = val
 
+    prefix_cfg = getattr(cfg, "prefix", None)
+    if prefix_cfg is not None:
+        pool = getattr(prefix_cfg, "pool", None)
+        if pool is not None:
+            actor_model_config.__dict__["prefix_pool"] = str(pool)
+        image_only = getattr(prefix_cfg, "image_only", None)
+        if image_only is not None:
+            actor_model_config.__dict__["rlt_image_only"] = bool(image_only)
+
     # load model
     checkpoint_dir = download.maybe_download(str(cfg.model_path))
 

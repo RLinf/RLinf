@@ -1,35 +1,41 @@
-RL Token：借助视觉-语言-动作模型启动在线强化学习
-================================================
+Prefix 在线微调与 RL Token
+=========================
 
-**RL Token: Bootstrapping Online RL with Vision-Language-Action Models** 在冻结的 VLA 特征模型之上训练一个轻量级强化学习策略。在 RLinf 的配置和代码中，这套流程简称为 **RLT**。整个流程分为两个阶段：
+真机默认路径是 **Prefix Fine-Tune（Prefix-FT）**：冻结 VLA（普通 SFT 或基座
+checkpoint），池化 prefix hidden，再在 ``{z_rl, proprio, ref_chunk}`` 上训练
+轻量 actor-critic。Stage 1 RL token 训练是可选项，仅在 ``prefix.pool: rlt_token``
+时需要。
 
-1. 在示范数据上联合训练 VLA 检查点和 RLT token transformer。
-2. 冻结第一阶段得到的特征模型，用提取出的 RLT 状态训练一个轻量级 off-policy actor-critic。
+**RL Token: Bootstrapping Online RL with Vision-Language-Action Models** 是论文中的
+token 配方：先训压缩 token transformer，再跑同一套 actor-critic。RLinf 中这套流程
+简称 **RLT**。``loss_type: prefix_ac`` 是 ``rlt_ac`` 的别名；critic/actor 损失、
+键盘 ``b`` 切换和 replay 路径不变。
 
 当前仓库中的示例配置面向 Franka peg insertion 和 ManiSkill
 ``PegInsertionSideWideClearance-v1`` joint-control 仿真。pipeline 本身不绑定
 具体任务；只要示范数据、环境配置、动作维度、状态语义和 OpenPI dataconfig 对齐，
-就可以复用相同的两阶段结构。
+就可以复用「冻 VLA + 小头」结构。
 
 官方项目页：`Precise Manipulation with Efficient Online RL <https://www.pi.website/research/rlt>`_。
 
 概览
 ----
 
-RLT 将表示学习和在线 RL 控制拆开。
+Prefix-FT 和 RLT 都把表示学习和在线 RL 控制拆开。Prefix-FT 不再训 token
+transformer，而是用池化后的 VLM prefix 作为 ``z_rl``。
 
 .. grid:: 2 4 4 4
    :gutter: 2
 
-   .. grid-item-card:: Stage 1
+   .. grid-item-card:: 冻结 VLA
       :text-align: center
 
-      VLA SFT + RLT token transformer
+      Prefix 池化（默认）或可选 RLT token
 
-   .. grid-item-card:: Stage 2
+   .. grid-item-card:: 轻量头
       :text-align: center
 
-      轻量级 off-policy actor-critic
+      off-policy actor-critic MLP
 
    .. grid-item-card:: 状态
       :text-align: center
@@ -41,7 +47,7 @@ RLT 将表示学习和在线 RL 控制拆开。
 
       Franka 真机 / ManiSkill 仿真
 
-| **你将完成：** 准备示范数据 -> 训练 Stage 1 -> 在 Stage 2 中加载 Stage 1 检查点 -> 启动 actor-critic 训练 -> 观察 replay buffer 与任务成功率指标。
+| **你将完成：** 准备示范数据 ->（可选 Stage 1 token）-> 在 Prefix-FT 中加载 SFT/基座 VLA -> 启动 actor-critic 训练 -> 观察 replay buffer 与任务成功率指标。
 | **前置条件：** 准备好 `OpenPI π₀.₅ <https://huggingface.co/lerobot/pi05_base>`__ 基座模型，并按所选示例配置 :doc:`Franka 真机环境 <../embodied/franka>` 或 :doc:`ManiSkill 仿真环境 <../embodied/maniskill>` （二选一）。
 
 提供的配置文件
@@ -54,12 +60,15 @@ RLT 将表示学习和在线 RL 控制拆开。
    * - 阶段
      - 配置
      - 作用
-   * - Franka Stage 1
+   * - Franka Prefix-FT
+     - ``examples/embodiment/config/realworld_prefix_ft_ac_mlp.yaml``
+     - 真机默认路径：冻结 π₀.₅，对 VLM prefix 做 masked-mean 池化，训练 AC MLP。不需要 Stage 1 token 检查点。
+   * - Franka Stage 1（可选）
      - ``examples/sft/config/realworld_rlt_stage1_sft_openpi_pi05.yaml``
      - 在 Franka 示范数据上联合 SFT π₀.₅ 和 RLT token transformer。
-   * - Franka Stage 2
+   * - Franka Stage 2（RL token）
      - ``examples/embodiment/config/realworld_rlt_stage2_ac_mlp.yaml``
-     - 使用冻结的 Stage 1 特征模型，在真机上训练 RLT actor-critic。
+     - 使用冻结的 Stage 1 token 特征，在真机上训练 RLT actor-critic。
    * - ManiSkill Stage 1
      - ``examples/sft/config/maniskill_rlt_stage1_sft_openpi_pi05.yaml``
      - 联合训练 ManiSkill OpenPI 基座和 RLT token transformer。
@@ -191,7 +200,10 @@ Stage 1 中比较关键的字段：
 Stage 2：训练 Actor-Critic 策略
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Stage 2 冻结 Stage 1 特征模型，只训练轻量级 RLT MLP actor 和 critic。
+Prefix-FT 和 RL token 共用同一套小头：冻结 VLA 特征模型，只训练 MLP actor 和
+critic。Prefix-FT 使用 ``rollout.prefix_feature_model``（或别名
+``rlt_feature_model``）并对 VLM prefix 做池化；token 路径仍需要 Stage 1
+``rlt_module`` 检查点。
 
 .. note::
 
@@ -200,9 +212,9 @@ Stage 2 冻结 Stage 1 特征模型，只训练轻量级 RLT MLP actor 和 criti
 rollout 时：
 
 1. 环境返回原始观测和任务元信息。
-2. ``rollout.rlt_feature_model`` 运行冻结的 Stage 1 模型，将原始观测转换为：
+2. 冻结的特征模型将原始观测转换为：
 
-   - ``z_rl``：紧凑的 RLT 表示。
+   - ``z_rl``：池化后的 VLM prefix（Prefix-FT）或紧凑 RLT token。
    - ``proprio``：选中的机器人或仿真状态。
    - ``ref_chunk``：VLA reference action chunk。
 
@@ -765,7 +777,9 @@ rollout worker 会返回 RLT 特征，learner 侧把这些特征组装成 transi
 --------
 
 - Stage 1 和 Stage 2 的数据配置必须保持一致：``repo_id``、``config_name``、``action_dim``、``proprio_dim``、``ref_num_action_chunks`` 和 ``z_dim`` 都要对齐；如果保留完整 raw state，可使用 ``state_indices: []``。
-- ``rollout.rlt_feature_model`` 指向 Stage 1 检查点；``actor.model`` 是 actor-critic worker 会更新的 Stage 2 MLP 策略。
+- ``rollout.prefix_feature_model``（别名 ``rollout.rlt_feature_model``）是冻结 VLA。Prefix-FT 指向普通 SFT 或 π₀.₅ 基座，并设置 ``openpi.use_rlt: false``、``prefix.pool: masked_mean``。RL token 路径则指向 Stage 1 FSDP ``actor`` 目录并保持 ``use_rlt: True``。
+- ``actor.model`` 是 actor-critic worker 会更新的轻量 MLP。``z_dim`` 写 VLA prefix 宽度（paligemma 为 2048）。只有打开 ``algorithm.state_history.enable`` 时才会把 K 步 proprio 拼到 ``z_rl`` 后，MLP 输入宽度会自动扩展。
+- ``loss_type: prefix_ac`` 是 ``rlt_ac`` 的别名。
 - ``rollout.model`` 是 Stage 2 MLP 在 rollout worker 上的同步副本。Stage 2 从头训练时保持 ``rollout.model.model_path: null``；恢复 Stage 2 训练使用 ``runner.resume_dir``，加载单个 Stage 2 权重文件使用 ``runner.ckpt_path``。
 - 不要配置 ``actor.model.model_path`` 来加载 Stage 1；``actor.model`` 只描述 Stage 2 MLP 的输入输出维度和 Q-head 设置。
 - Stage 2 MLP 配置直接内联在各个 Stage 2 YAML 的 ``actor.model`` 下，不再使用单独的 model defaults 文件。

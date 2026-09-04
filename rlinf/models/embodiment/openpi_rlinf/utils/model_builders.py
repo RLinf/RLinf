@@ -89,7 +89,7 @@ def _build_eval_model(
         action_chunk=action_chunk,
         config_name=config_name,
         state_indices=OmegaConf.select(model_cfg, "state_indices", default=None),
-        rlt_cfg=build_rlt_config(model_cfg),
+        rlt_cfg=build_rlt_config(model_cfg, parent_cfg=cfg),
     )
     eval_model.setup_wrappers(input_transforms, output_transforms)
     return eval_model

@@ -111,6 +111,9 @@ class OpenPi0Config(Pi0Config):
     rlt_image_only: bool = True
     rlt_use_mask: bool = False
     state_indices: list[int] | None = None
+    # Prefix-FT: None means resolve from use_rlt / stage2_z_source.
+    prefix_pool: str | None = None
+    stage2_z_source: str = "rlt_token"
 
 
 class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
@@ -141,6 +144,26 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         if self.config.use_rlt:
             no_split_modules.append("RLTSelfAttentionLayer")
         return no_split_modules
+
+    @property
+    def z_dim(self) -> int:
+        pool = self._resolved_prefix_pool()
+        if pool == "rlt_token":
+            return int(self.config.rlt_embed_dim)
+        return int(self.config.rlt_input_dim)
+
+    def _resolved_prefix_pool(self) -> str:
+        from rlinf.models.embodiment.prefix_ft.config import resolve_prefix_pool
+
+        return resolve_prefix_pool(
+            use_rlt=self.config.use_rlt,
+            prefix_pool=getattr(self.config, "prefix_pool", None),
+            stage2_z_source=getattr(self.config, "stage2_z_source", None),
+            rlt_use_mask=self.config.rlt_use_mask,
+        )
+
+    def _stage2_requires_rlt(self) -> bool:
+        return self._resolved_prefix_pool() == "rlt_token"
 
     @property
     def _no_split_names(self) -> list[str]:
@@ -552,12 +575,16 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         return np.asarray(states)[..., indices]
 
     @torch.no_grad()
-    def extract_rlt_obs(
+    def extract_prefix_obs(
         self,
         env_obs: dict[str, Any],
     ) -> dict[str, torch.Tensor]:
-        if not self.config.use_rlt or not hasattr(self, "rlt_module"):
-            raise ValueError("extract_rlt_obs requires openpi.use_rlt=True.")
+        from rlinf.models.embodiment.prefix_ft.pool import pool_prefix
+
+        pool = self._resolved_prefix_pool()
+        if pool == "rlt_token":
+            if not self.config.use_rlt or not hasattr(self, "rlt_module"):
+                raise ValueError("extract_prefix_obs requires openpi.use_rlt=True.")
 
         to_process_obs = self.obs_processor(env_obs)
         processed_obs = self.input_transform(to_process_obs, transpose=False)
@@ -567,17 +594,21 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
         prefix_output, prefix_pad_masks, past_key_values, lang_tokens, state = (
             self._build_rlt_prefix_cache(observation, train=False)
         )
-        rlt_prefix_output, rlt_prefix_mask = self._select_rlt_prefix_embeddings(
+        selected_prefix, selected_mask = self._select_rlt_prefix_embeddings(
             prefix_output, prefix_pad_masks, lang_tokens
         )
-        rlt_param = next(self.rlt_module.parameters())
-        rlt_prefix_output = rlt_prefix_output.to(
-            device=rlt_param.device, dtype=rlt_param.dtype
-        )
-        rlt_mask = rlt_prefix_mask if self.config.rlt_use_mask else None
-        z_rl = self.rlt_module.encode_flat(rlt_prefix_output, rlt_mask).to(
-            dtype=torch.float32
-        )
+        if pool == "rlt_token":
+            rlt_param = next(self.rlt_module.parameters())
+            rlt_prefix_output = selected_prefix.to(
+                device=rlt_param.device, dtype=rlt_param.dtype
+            )
+            rlt_mask = selected_mask if self.config.rlt_use_mask else None
+            z_rl = self.rlt_module.encode_flat(rlt_prefix_output, rlt_mask).to(
+                dtype=torch.float32
+            )
+        else:
+            mask = selected_mask if pool in ("masked_mean", "last") else None
+            z_rl = pool_prefix(selected_prefix, mask, mode=pool)
 
         outputs = self._sample_actions_with_prefix_cache(
             state,
@@ -611,6 +642,12 @@ class OpenPi0ForRLActionPrediction(PI0Pytorch, BasePolicy):
             "proprio": proprio.to(device=z_rl.device, dtype=torch.float32),
             "ref_chunk": ref_chunk.to(device=z_rl.device, dtype=torch.float32),
         }
+
+    def extract_rlt_obs(
+        self,
+        env_obs: dict[str, Any],
+    ) -> dict[str, torch.Tensor]:
+        return self.extract_prefix_obs(env_obs)
 
     def prepare_dagger_sft_batch(self, batch):
         """Prepare replay-buffer samples for DAgger SFT updates."""

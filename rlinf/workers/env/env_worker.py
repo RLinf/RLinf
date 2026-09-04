@@ -38,6 +38,7 @@ from rlinf.envs import get_env_cls
 from rlinf.envs.action_utils import prepare_actions
 from rlinf.envs.utils import get_env_attr
 from rlinf.envs.wrappers import InsertDelay, RecordVideo
+from rlinf.models.embodiment.prefix_ft.config import is_rlt_env_loss
 from rlinf.scheduler import Channel, Cluster, CommMapper, Worker
 from rlinf.utils.data_iter_utils import split_list
 from rlinf.utils.distributed import masked_stats, normalize_from_stats
@@ -78,9 +79,9 @@ class EnvWorker(Worker):
         self.collect_transitions = self.cfg.rollout.get("collect_transitions", False)
         self.collect_prev_infos = self.cfg.rollout.get("collect_prev_infos", True)
         self.stage_num = self.cfg.rollout.pipeline_stage_num
-        self.enable_rlt = OmegaConf.select(
-            self.cfg, "algorithm.loss_type", default=""
-        ) in {"rlt_ac", "rlt_td3"}
+        self.enable_rlt = is_rlt_env_loss(
+            OmegaConf.select(self.cfg, "algorithm.loss_type", default="")
+        )
 
         self.reward_mode = self.cfg.get("reward", {}).get("reward_mode", "per_step")
         self.history_reward_assign = self.cfg.get("reward", {}).get(
@@ -956,6 +957,7 @@ class EnvWorker(Worker):
         data = {
             "obs": env_batch["obs"],
             "final_obs": env_batch["final_obs"],
+            "dones": env_batch.get("dones", None),
         }
         if self.enable_rlt:
             data["rlt_switch_flags"] = env_batch.get("rlt_switch_flags", None)
