@@ -1,0 +1,117 @@
+# Usage: bash examples/offline_rl/advantage_labeling/steam/run_steam_sft.sh rlt_steam_value_model_sft
+
+defaults:
+  - model/steam_value_model@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/offline_rl/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "rlt_steam_value_model_sft"
+    logger_backends: ["tensorboard"]
+  max_epochs: -1
+  max_steps: 16000
+  val_check_interval: -1
+  save_interval: 1000
+
+data:
+  train_data_paths:
+    - dataset_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/maniskill_peginsertionside_joint"
+      type: sft
+      weight: 1.0
+  eval_data_paths: []
+
+  dataset_type: sft
+  only_success: true
+  balance_weights: true
+  seed: 42
+
+  # Read the existing ManiSkill RLT dataset directly. Pair distances and
+  # trajectory-length normalization are measured in 10-step action chunks.
+  camera_keys: [image, wrist_image]
+  temporal_stride: 10
+  anchor_stride: 10
+  boundary_mode: drop
+  k: 4
+  default_prompt: "insert the peg in the hole"
+  length_scale_enabled: true
+  length_scale_percentile: 100.0
+
+  train_num_workers: 8
+  eval_num_workers: 4
+  prefetch_factor: 4
+  persistent_workers: false
+  pin_memory: false
+  do_augment: false
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 4
+  global_batch_size: 64
+  seed: 0
+
+  model:
+    precision: fp32
+    vision_repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/siglip-so400m-patch14-384"
+    language_repo_id: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/gemma-3-270m"
+    tokenizer_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/gemma-3-270m"
+    fusion_hidden_dim: 512
+    dropout: 0.1
+    label_smoothing: 0.05
+    num_frames_per_pair: 2
+    num_bins: 8
+    ensemble_size: 3
+    ensemble_head_seed_base: 0
+    freeze_vision_encoder: false
+    freeze_language_model: false
+    use_gradient_checkpointing: false
+    max_token_len: 200
+
+  optim:
+    lr: 5.0e-5
+    value_lr: 5.0e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-5
+    clip_grad: 10.0
+    lr_scheduler: "constant"
+    lr_warmup_steps: 500
+    total_training_steps: 16000
+    min_lr: 1.0e-6
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: bf16
+      reduce_dtype: fp32
+      buffer_dtype: fp32
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
