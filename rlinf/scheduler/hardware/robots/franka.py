@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import glob
 import importlib
 import ipaddress
+import os
 import warnings
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, cast
 
 from ..hardware import (
     Hardware,
@@ -26,6 +28,7 @@ from ..hardware import (
     NodeHardwareConfig,
 )
 from .auto_config import RobotAutoConfig
+from .embodied_runtime import EmbodiedRuntimeCLI
 
 
 @dataclass
@@ -45,7 +48,7 @@ class FrankaRobot(Hardware):
 
     @classmethod
     def enumerate(
-        cls, node_rank: int, configs: Optional[list["FrankaConfig"]] = None
+        cls, node_rank: int, configs: Optional[list[HardwareConfig]] = None
     ) -> Optional[HardwareResource]:
         """Enumerate the robot resources on a node.
 
@@ -56,9 +59,7 @@ class FrankaRobot(Hardware):
         Returns:
             Optional[HardwareResource]: An object representing the hardware resources. None if no hardware is found.
         """
-        assert configs is not None, (
-            "Robot hardware requires explicit configurations for robot IP and camera serials for its controller nodes."
-        )
+        configs = configs or []
         robot_configs: list["FrankaConfig"] = []
         for config in configs:
             if isinstance(config, FrankaConfig) and config.node_rank == node_rank:
@@ -69,92 +70,148 @@ class FrankaRobot(Hardware):
         # create one per comma-separated ``ROBOT_IP``. A remote arm's
         # ``robot_ip`` may stay unset here; the controller resolves it from its
         # own node at launch.
-        robot_configs = RobotAutoConfig.resolve(
-            robot_configs,
-            config_cls=FrankaConfig,
-            node_rank=node_rank,
-            count_fields=("robot_ip",),
+        robot_configs = cast(
+            list["FrankaConfig"],
+            RobotAutoConfig.resolve(
+                cast(list[HardwareConfig], robot_configs),
+                config_cls=FrankaConfig,
+                node_rank=node_rank,
+                count_fields=("robot_ip",),
+            ),
         )
-
-        if robot_configs:
-            franka_infos = []
-
-            for config in robot_configs:
-                camera_type = getattr(config, "camera_type", "realsense")
-                cameras = cls.enumerate_cameras(camera_type)
-
-                # Use auto-detected cameras when not explicitly specified
-                if config.camera_serials is None:
-                    config.camera_serials = list(cameras)
-
-                franka_infos.append(
-                    FrankaHWInfo(
-                        type=cls.HW_TYPE,
-                        model=cls.HW_TYPE,
-                        config=config,
+        runtime = None
+        runtime_robots = []
+        has_runtime_camera = EmbodiedRuntimeCLI.is_enabled("camctr")
+        if EmbodiedRuntimeCLI.is_enabled("rosctr"):
+            runtime = EmbodiedRuntimeCLI("rosctr")
+            runtime_robots = runtime.list_robots()
+            if not robot_configs:
+                robot_configs = [
+                    FrankaConfig(
+                        node_rank=node_rank,
+                        robot_ip=robot.get("params", {}).get("robot_ip"),
+                        embodied_runtime_robot_id=robot["robotId"],
                     )
-                )
+                    for robot in runtime_robots
+                ]
 
-                if config.disable_validate:
-                    continue
+        if runtime is not None and not runtime_robots and not robot_configs:
+            raise ValueError("No Franka robots are registered with embodied-runtime.")
+        if not robot_configs:
+            return None
 
-                # Ping only when the IP is known here; a remote arm's IP is
-                # resolved later on the controller's node.
-                if config.robot_ip is not None:
-                    try:
-                        from icmplib import ping
-                    except ImportError:
-                        raise ImportError(
-                            f"icmplib is required for Franka robot IP connectivity check, but it is not installed on the node with rank {node_rank}."
-                        )
-                    try:
-                        response = ping(
-                            config.robot_ip,
-                            count=cls.ROBOT_PING_COUNT,
-                            timeout=cls.ROBOT_PING_TIMEOUT,
-                        )
-                        if not response.is_alive:
-                            raise ConnectionError
-                    except ConnectionError as e:
-                        raise ConnectionError(
-                            f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
-                        )
-                    except PermissionError as e:
-                        warnings.warn(
-                            f"Permission denied when trying to ping Franka robot at IP {config.robot_ip} from node rank {node_rank}. "
-                            f"This may be due to insufficient permissions to send ICMP packets. Ignoring the ping test. Error: {e}"
-                        )
-                    except Exception as e:
-                        warnings.warn(
-                            f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
-                        )
+        franka_infos = []
 
-                # Validate camera SDK and serials
-                cls._validate_camera_sdk(camera_type, node_rank)
-                if not cameras:
+        for config in robot_configs:
+            if runtime is not None:
+                robot_ids = {robot["robotId"] for robot in runtime_robots}
+                if config.embodied_runtime_robot_id is None:
+                    config.embodied_runtime_robot_id = runtime.resolve_robot_id(
+                        config.robot_ip
+                    )
+                elif config.embodied_runtime_robot_id not in robot_ids:
                     raise ValueError(
-                        f"No {camera_type} cameras are connected to node rank {node_rank} "
-                        f"while Franka robot requires at least one camera."
+                        "Robot ID "
+                        f"{config.embodied_runtime_robot_id!r} is not managed by "
+                        f"embodied-runtime. Available robot IDs: {sorted(robot_ids)}."
                     )
-                for serial in config.camera_serials:
-                    if serial not in cameras:
-                        raise ValueError(
-                            f"Camera with serial {serial} is not connected to node rank {node_rank}. "
-                            f"Available {camera_type} cameras: {cameras}."
-                        )
+                if config.robot_ip is None:
+                    robot = next(
+                        robot
+                        for robot in runtime_robots
+                        if robot["robotId"] == config.embodied_runtime_robot_id
+                    )
+                    config.robot_ip = robot.get("params", {}).get("robot_ip")
+            camera_type = getattr(config, "camera_type", "realsense")
+            cameras = cls.enumerate_cameras(camera_type)
 
-            return HardwareResource(type=cls.HW_TYPE, infos=franka_infos)
-        return None
+            # Use auto-detected cameras when not explicitly specified
+            if config.camera_serials is None:
+                config.camera_serials = list(cameras)
+
+            franka_infos.append(
+                FrankaHWInfo(
+                    type=cls.HW_TYPE,
+                    model=cls.HW_TYPE,
+                    config=config,
+                )
+            )
+
+            if runtime is not None and config.robot_ip is None:
+                raise ValueError(
+                    f"embodied-runtime robot {config.embodied_runtime_robot_id!r} "
+                    "does not expose params.robot_ip."
+                )
+            if config.disable_validate:
+                continue
+
+            # Ping only when the IP is known here; a remote arm's IP is
+            # resolved later on the controller's node.
+            if config.robot_ip is not None and runtime is None:
+                try:
+                    from icmplib import ping
+                except ImportError:
+                    raise ImportError(
+                        f"icmplib is required for Franka robot IP connectivity check, but it is not installed on the node with rank {node_rank}."
+                    )
+                try:
+                    response = ping(
+                        config.robot_ip,
+                        count=cls.ROBOT_PING_COUNT,
+                        timeout=cls.ROBOT_PING_TIMEOUT,
+                    )
+                    if not response.is_alive:
+                        raise ConnectionError
+                except ConnectionError as e:
+                    raise ConnectionError(
+                        f"Cannot reach Franka robot at IP {config.robot_ip} from node rank {node_rank}. Error: {e}"
+                    )
+                except PermissionError as e:
+                    warnings.warn(
+                        f"Permission denied when trying to ping Franka robot at IP {config.robot_ip} from node rank {node_rank}. "
+                        f"This may be due to insufficient permissions to send ICMP packets. Ignoring the ping test. Error: {e}"
+                    )
+                except Exception as e:
+                    warnings.warn(
+                        f"An unexpected error occurred while pinging Franka robot at IP {config.robot_ip} from node rank {node_rank}. Ignoring the ping test. Error: {e}"
+                    )
+
+            # Validate camera SDK and serials
+            cls._validate_camera_sdk(camera_type, node_rank)
+            if not cameras:
+                raise ValueError(
+                    f"No {camera_type} cameras are connected to node rank "
+                    f"{node_rank} while Franka robot requires at least one camera."
+                )
+            for serial in config.camera_serials:
+                if has_runtime_camera:
+                    EmbodiedRuntimeCLI("camctr").resolve_camera_id(serial)
+                elif serial not in cameras:
+                    raise ValueError(
+                        f"Camera with serial {serial} is not connected to "
+                        f"node rank {node_rank}. Available {camera_type} "
+                        f"cameras: {cameras}."
+                    )
+
+        return HardwareResource(type=cls.HW_TYPE, infos=franka_infos)
 
     @classmethod
     def enumerate_cameras(cls, camera_type: str = "realsense") -> set[str]:
         """Enumerate connected camera serial numbers.
 
         Args:
-            camera_type: ``"realsense"``, ``"zed"``, or ``"lumos"``.
+            camera_type: ``"realsense"``, ``"zed"``, ``"lumos"``, or
+                ``"embodied_runtime"``.
         """
         cameras: set[str] = set()
+        if EmbodiedRuntimeCLI.is_enabled("camctr"):
+            return {
+                camera.get("serialNumber") or camera["cameraId"]
+                for camera in EmbodiedRuntimeCLI("camctr").list_cameras()
+            }
         ct = camera_type.lower()
+        if ct in ("embodied_runtime", "runtime"):
+            return cameras
         if ct == "zed":
             try:
                 import pyzed.sl as sl
@@ -163,9 +220,10 @@ class FrankaRobot(Hardware):
             for dev in sl.Camera.get_device_list():
                 cameras.add(str(dev.serial_number))
         elif ct == "lumos":
-            from rlinf.envs.realworld.common.camera.lumos_camera import LumosCamera
-
-            cameras.update(LumosCamera.get_device_serial_numbers())
+            devices = glob.glob("/dev/v4l/by-id/*")
+            if not devices:
+                devices = glob.glob("/dev/video*")
+            cameras.update(os.path.basename(device) for device in devices)
         else:
             try:
                 import pyrealsense2 as rs
@@ -177,7 +235,14 @@ class FrankaRobot(Hardware):
 
     @staticmethod
     def _validate_camera_sdk(camera_type: str, node_rank: int) -> None:
+        if EmbodiedRuntimeCLI.is_enabled("camctr"):
+            return
         ct = camera_type.lower()
+        if ct in ("embodied_runtime", "runtime"):
+            raise RuntimeError(
+                "camera_type='embodied_runtime' requires an enabled camctr CLI "
+                f"on node rank {node_rank}."
+            )
         if ct == "zed":
             try:
                 importlib.import_module("pyzed.sl")
@@ -220,7 +285,8 @@ class FrankaConfig(HardwareConfig):
     """List of camera serial numbers associated with the robot."""
 
     camera_type: str = "realsense"
-    """Camera backend: ``"realsense"``, ``"zed"``, or ``"lumos"``."""
+    """Camera backend: ``"realsense"``, ``"zed"``, ``"lumos"``, or
+    ``"embodied_runtime"``."""
 
     gripper_type: str = "franka"
     """Gripper backend: ``"franka"`` (ROS-based) or ``"robotiq"`` (Modbus RTU)."""
@@ -234,6 +300,9 @@ class FrankaConfig(HardwareConfig):
     When ``None`` (default), the controller is co-located with the env
     worker.  Set this when the arm/gripper and cameras are on different
     machines (e.g. cameras on a GPU server, arm on a NUC)."""
+
+    embodied_runtime_robot_id: Optional[str] = None
+    """Robot ID managed by embodied-runtime, auto-detected when possible."""
 
     disable_validate: bool = False
     """Whether to disable validation of robot IP connectivity and camera serials."""
