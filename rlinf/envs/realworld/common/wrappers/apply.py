@@ -196,7 +196,7 @@ def apply_dual_franka_joint_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gy
         if getattr(env.unwrapped, "PER_ARM_ACTION_DIM", None) != 10:
             raise ValueError(
                 "use_pico=True for dual-arm Franka is implemented for "
-                "DualFrankaTcpEnv-v1 only. Use env/realworld_dual_franka_tcp_rot6d."
+                "DualFrankaTCPEnv-v1 only. Use env/realworld_dual_franka_tcp_rot6d."
             )
         pico_cfg = dict(cfg.get("pico", {}))
         env = DualFrankaTcpPicoIntervention(

@@ -27,7 +27,12 @@ import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from rlinf.envs.realworld.common.camera import BaseCamera, CameraInfo, create_camera
+from rlinf.envs.realworld.common.camera import (
+    BaseCamera,
+    CameraInfo,
+    create_camera,
+    supports_depth,
+)
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import DualFrankaHWInfo, WorkerInfo
 from rlinf.utils.logging import get_logger
@@ -56,6 +61,7 @@ class DualFrankaRobotConfig:
     base_camera_type: Optional[str] = None
     left_camera_type: Optional[str] = None
     right_camera_type: Optional[str] = None
+    enable_camera_depth: bool = False
 
     left_gripper_type: Optional[str] = None
     right_gripper_type: Optional[str] = None
@@ -141,6 +147,9 @@ class DualFrankaEnv(gym.Env):
 
         self._left_state = FrankaRobotState()
         self._right_state = FrankaRobotState()
+        self._raw_camera_meta: dict[str, dict[str, object]] = {}
+        self._raw_camera_frames: dict[str, np.ndarray] = {}
+        self._raw_camera_depths: dict[str, np.ndarray] = {}
 
         self._num_steps = 0
         self._joint_reset_cycle = cycle(range(self.config.joint_reset_cycle))
@@ -219,13 +228,23 @@ class DualFrankaEnv(gym.Env):
     def _all_camera_serials(self) -> list[str]:
         return [serial for _, serial, _ in self._all_camera_specs()]
 
+    def _camera_infos(self) -> list[CameraInfo]:
+        return [
+            CameraInfo(
+                name=name,
+                serial_number=serial,
+                camera_type=camera_type,
+                enable_depth=(
+                    bool(self.config.enable_camera_depth)
+                    and supports_depth(camera_type)
+                ),
+            )
+            for name, serial, camera_type in self._all_camera_specs()
+        ]
+
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
-        camera_infos = [
-            CameraInfo(name=name, serial_number=serial, camera_type=ct)
-            for name, serial, ct in self._all_camera_specs()
-        ]
-        for info in camera_infos:
+        for info in self._camera_infos():
             camera = create_camera(info)
             camera.open()
             self._cameras.append(camera)
@@ -247,39 +266,118 @@ class DualFrankaEnv(gym.Env):
         return cropped, resized
 
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Read one frame per camera. On stall, fall back to the last-good
-        frame and replace just that camera in-place; other cameras keep
-        producing fresh frames. Raises only when a camera stalls before
-        producing any frame (no cache to fall back to).
-        """
+        """Return policy frames while caching synchronized raw RGB-D data."""
+        return self._read_camera_bundle()["frames"]
+
+    @staticmethod
+    def _split_rgb_depth(
+        camera: BaseCamera,
+        frame: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Split a backend frame into BGR uint8 and metric depth, if present."""
+        if frame.ndim != 3 or frame.shape[-1] < 3:
+            raise ValueError(
+                f"Camera {camera._camera_info.name} returned invalid frame "
+                f"shape {frame.shape}; expected HxWxC with C>=3."
+            )
+        color = np.asarray(frame[..., :3])
+        if color.dtype != np.uint8:
+            color = np.clip(color, 0, 255).astype(np.uint8)
+        depth = None
+        if frame.shape[-1] >= 4:
+            depth = np.asarray(frame[..., 3], dtype=np.float32) * float(
+                getattr(camera, "depth_scale", 1.0)
+            )
+        return color, depth
+
+    def _camera_intrinsics(self, camera: BaseCamera) -> dict[str, object] | None:
+        getter = getattr(camera, "get_color_intrinsics", None)
+        if not callable(getter):
+            return None
+        try:
+            return dict(getter())
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to read intrinsics from camera %s: %s",
+                camera._camera_info.name,
+                exc,
+            )
+            return None
+
+    def _read_camera_bundle(self) -> dict[str, dict[str, np.ndarray]]:
+        """Read policy frames plus uncropped RGB-D snapshots and metadata."""
         frames: dict[str, np.ndarray] = {}
+        raw_frames: dict[str, np.ndarray] = {}
+        raw_depths: dict[str, np.ndarray] = {}
+        self._raw_camera_meta = {}
         display_frames: dict[str, np.ndarray] = {}
 
-        for i, camera in enumerate(self._cameras):
+        for index, camera in enumerate(self._cameras):
             name = camera._camera_info.name
             try:
                 frame = camera.get_frame(timeout=_CAMERA_FRAME_TIMEOUT_S)
             except queue.Empty:
                 cached = self._last_camera_frame.get(name)
-                if cached is None:
-                    raise RuntimeError(
-                        f"Camera {name} stalled with no cached frame to fall back to."
-                    )
                 self._logger.error("Camera %s stalled; replacing.", name)
                 camera.close()
-                self._cameras[i] = create_camera(camera._camera_info)
-                self._cameras[i].open()
-                frame = cached
+                self._cameras[index] = create_camera(camera._camera_info)
+                self._cameras[index].open()
+                camera = self._cameras[index]
+                if cached is None:
+                    # No cached frame to fall back to; give the fresh camera
+                    # one blocking read before letting queue.Empty propagate.
+                    frame = camera.get_frame(timeout=5.0)
+                else:
+                    frame = cached
+
+            color_frame, raw_depth = self._split_rgb_depth(camera, frame)
+            raw_frames[name] = color_frame[..., ::-1].copy()
+            if raw_depth is not None:
+                raw_depths[name] = raw_depth
+            intrinsics = self._camera_intrinsics(camera)
+            info = camera._camera_info
+            self._raw_camera_meta[name] = {
+                "name": name,
+                "serial_number": info.serial_number,
+                "camera_type": info.camera_type,
+                "rgb_shape": list(raw_frames[name].shape),
+                "depth_shape": list(raw_depth.shape) if raw_depth is not None else None,
+                "depth_enabled": bool(info.enable_depth),
+                "depth_available": raw_depth is not None,
+                "depth_unit": "m" if raw_depth is not None else None,
+                "color_intrinsics": intrinsics,
+                "depth_scale": float(getattr(camera, "depth_scale", 1.0)),
+            }
 
             reshape_size = self.observation_space["frames"][name].shape[:2][::-1]
-            cropped, resized = self._crop_frame(frame, reshape_size)
+            cropped, resized = self._crop_frame(color_frame, reshape_size)
             frames[name] = resized[..., ::-1]
             display_frames[name] = resized
             display_frames[f"{name}_full"] = cropped
             self._last_camera_frame[name] = frame
 
         self.camera_player.put_frame(display_frames)
-        return frames
+        self._raw_camera_frames = raw_frames
+        self._raw_camera_depths = raw_depths
+        return {
+            "frames": frames,
+            "raw_frames": raw_frames,
+            "raw_depths": raw_depths,
+        }
+
+    def get_raw_camera_metadata(self) -> dict[str, dict[str, object]]:
+        """Return metadata for the latest uncropped camera frames."""
+        return getattr(self, "_raw_camera_meta", {}).copy()
+
+    def get_raw_camera_snapshot(self) -> dict[str, Any]:
+        """Return uncropped RGB and metric depth for the latest camera frames."""
+        if not self._raw_camera_frames:
+            self._read_camera_bundle()
+        return {
+            "raw_frames": self._raw_camera_frames.copy(),
+            "raw_depths": self._raw_camera_depths.copy(),
+            "camera_meta": self.get_raw_camera_metadata(),
+        }
 
     # ---------------------------------------------------------------- hardware
 
