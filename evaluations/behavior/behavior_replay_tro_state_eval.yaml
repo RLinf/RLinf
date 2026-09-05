@@ -1,0 +1,110 @@
+# Full-task tro_state replay evaluation for the BEHAVIOR turning_on_radio task.
+#
+# Semantics frozen from the old baseline eval
+# (behavior_ppo_openpi05_eval.yaml + parent behavior_ppo_openpi_pi05.yaml):
+#   - instance_resample_mode: offline, 10 fixed activity_instance_id
+#   - reward_config.reward_mode: task (task_specific_reward_name: turning_on_radio)
+#   - total_num_envs: 8 / max_episode_steps: 4096 / action+rendering frequency 30
+#
+# The openpi block below contains only fields present in clean's OpenPi0Config
+# (action_level_value / noise_action_indices / noise_horizon_mode from the old
+# baseline no longer exist and are omitted).
+#
+# Override model_path on the CLI for your checkpoint, e.g.:
+#   rollout.model.model_path=/path/to/pi05-turning_on_radio-sft-torch
+defaults:
+  - env/behavior_r1pro@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,env: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "behavior_replay_tro_state_eval"
+    logger_backends: ["tensorboard"]
+
+  only_eval: True
+
+  max_epochs: 1000
+  max_steps: 1
+
+  val_check_interval: -1
+  save_interval: -1
+
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+
+  eval:
+    rollout_epoch: 2
+    total_num_envs: 8
+    auto_reset: False
+    ignore_terminations: False
+    use_fixed_reset_state_ids: False
+    is_eval: True
+    group_size: 1
+    seed: 0
+    max_episode_steps: 4096
+    max_steps_per_rollout_epoch: 4096
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+    omni_config:
+      env:
+        action_frequency: 30
+        physics_frequency: 120
+        rendering_frequency: 30
+      task:
+        activity_instance_dir: ${oc.env:OMNIGIBSON_DATA_PATH}/2025-challenge-task-instances/scenes/house_double_floor_lower/json/house_double_floor_lower_task_turning_on_radio_instances
+        activity_instance_id: [242, 295, 211, 203, 109, 181, 197, 187, 214, 139]
+        instance_file_format: tro_state
+        instance_resample_mode: offline
+        online_object_sampling: False
+        use_presampled_robot_pose: True
+        reward_config:
+          reward_mode: task
+          task_specific_reward_name: turning_on_radio
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  model:
+    # TODO: set to your checkpoint path, or override on the CLI.
+    model_path: "/path/to/model/pi05-turning_on_radio-sft-torch"
+    precision: null
+    model_type: "openpi"
+    add_value_head: True
+    num_images_in_input: 3
+    proprio_dim: 32
+    action_dim: 23
+    num_action_chunks: 32
+    openpi:
+      config_name: "pi05_behavior"
+      detach_critic_input: True
+      joint_logprob: False
+      action_env_dim: ${rollout.model.action_dim}
+      noise_method: "flow_sde"
+      noise_level: 0.0
+      value_after_vlm: True
+      ignore_last: False
+      num_steps: 5

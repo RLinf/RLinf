@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import omnigibson as og
 from omnigibson.envs import Environment, EnvironmentWrapper
 from omnigibson.learning.utils.eval_utils import (
     HEAD_RESOLUTION,
@@ -28,6 +29,8 @@ class RGBWrapper(EnvironmentWrapper):
     def __init__(self, env: Environment):
         super().__init__(env=env)
         robot = env.robots[0]
+        with og.sim.stopped():
+            robot.base_footprint_link.mass = 250.0
         for camera_id, camera_name in ROBOT_CAMERA_NAMES["R1Pro"].items():
             sensor_name = camera_name.split("::")[1]
             if camera_id == "head":
