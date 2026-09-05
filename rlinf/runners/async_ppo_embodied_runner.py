@@ -46,7 +46,14 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
         critic=None,
         reward=None,
     ):
-        super().__init__(cfg, actor, rollout, env, critic, reward)
+        super().__init__(
+            cfg=cfg,
+            actor=actor,
+            rollout=rollout,
+            env=env,
+            reward=reward,
+            critic=critic,
+        )
         self.env_metric_channel = Channel.create("EnvMetric")
         self.rollout_metric_channel = Channel.create("RolloutMetric")
         self.recompute_logprobs = bool(
@@ -136,18 +143,20 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 if self._should_profile_step(self.global_step)
                 else None
             )
-            if profiled_step is not None:
+            if profiled_step is not None and self._starts_profiling_window(
+                profiled_step
+            ):
                 self._open_profiling_window(profiled_step)
             with self.timer("step"):
                 with self.timer("construct_rollout_batch"):
-                    rollout_data_metrics = self.actor.construct_rollout_batch().wait()
+                    construct_rollout_handle = self.actor.construct_rollout_batch()
+                    rollout_data_metrics = construct_rollout_handle.wait()
                 if self.recompute_logprobs:
                     raise NotImplementedError
 
                 with self.timer("cal_adv_and_returns"):
-                    rollout_metrics_list = (
-                        self.actor.compute_advantages_and_returns().wait()
-                    )
+                    advantages_handle = self.actor.compute_advantages_and_returns()
+                    rollout_metrics_list = advantages_handle.wait()
 
                 with self.timer("actor_training"):
                     actor_training_handle = self.actor.run_training()
@@ -164,6 +173,20 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
+            construct_time_metrics, construct_time_metrics_per_rank = (
+                construct_rollout_handle.consume_durations(return_per_rank=True)
+            )
+            construct_time_metrics = {
+                f"time/actor/{k}": v for k, v in construct_time_metrics.items()
+            }
+            time_metrics.update(construct_time_metrics)
+            advantages_time_metrics, advantages_time_metrics_per_rank = (
+                advantages_handle.consume_durations(return_per_rank=True)
+            )
+            advantages_time_metrics = {
+                f"time/actor/{k}": v for k, v in advantages_time_metrics.items()
+            }
+            time_metrics.update(advantages_time_metrics)
             actor_time_metrics, actor_time_metrics_per_rank = (
                 actor_training_handle.consume_durations(return_per_rank=True)
             )
@@ -207,6 +230,18 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
                 metrics_list=training_metrics,
                 step=self.global_step,
                 prefix="train",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=construct_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/actor",
+                worker_group_name=self.actor.worker_group_name,
+            )
+            self._log_ranked_metrics(
+                metrics_list=advantages_time_metrics_per_rank,
+                step=self.global_step,
+                prefix="time/actor",
                 worker_group_name=self.actor.worker_group_name,
             )
             self._log_ranked_metrics(
@@ -266,7 +301,9 @@ class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
             if save_model:
                 self._save_checkpoint()
 
-            if profiled_step is not None:
+            if profiled_step is not None and self._ends_profiling_window(
+                profiled_step
+            ):
                 self._close_profiling_window(profiled_step)
 
         # Let any in-flight non-blocking sync land before the workers go away.

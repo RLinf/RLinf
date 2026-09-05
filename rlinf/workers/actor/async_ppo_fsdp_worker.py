@@ -16,6 +16,7 @@ import asyncio
 import os
 import queue
 import threading
+from contextlib import contextmanager
 from typing import Any, Optional
 
 import numpy as np
@@ -25,7 +26,7 @@ from rlinf.algorithms.registry import calculate_adv_and_returns, policy_loss
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory, convert_trajectories_to_batch
 from rlinf.data.storage.replay import PriorityStore
-from rlinf.scheduler import Worker
+from rlinf.scheduler import AcceleratorUtil, Worker
 from rlinf.utils.distributed import all_reduce_dict, masked_normalization
 from rlinf.utils.metric_utils import (
     CRITIC_EXPLAINED_VARIANCE_KEY,
@@ -39,16 +40,37 @@ from rlinf.utils.utils import clear_memory, masked_mean, reshape_entropy
 from rlinf.workers.actor.embodied_fsdp_actor_worker import EmbodiedFSDPActor
 
 
+def _get_rollout_training_shape(nested_dict: dict) -> tuple[int, int]:
+    """Return the transition time and batch dimensions used for PPO updates."""
+    for reference_key in ("advantages", "returns", "rewards", "prev_logprobs"):
+        reference = nested_dict.get(reference_key)
+        if isinstance(reference, torch.Tensor):
+            if reference.ndim < 2:
+                raise ValueError(
+                    f"Rollout field {reference_key!r} must have [T, B, ...] shape, "
+                    f"got {tuple(reference.shape)}."
+                )
+            return int(reference.shape[0]), int(reference.shape[1])
+    raise ValueError(
+        "Cannot infer PPO training shape: expected one of advantages, returns, "
+        "rewards, or prev_logprobs."
+    )
+
+
 def flatten_rollout_batch_for_train(
-    nested_dict: dict, shuffle_id: Optional[torch.Tensor]
+    nested_dict: dict,
+    shuffle_id: Optional[torch.Tensor],
+    target_time_steps: int | None = None,
 ) -> dict:
     """Flatten [T, B, ...] rollout tensors to [T*B, ...] for actor training."""
+    if target_time_steps is None:
+        # GAE outputs and rewards describe the transitions that are actually
+        # trained.  Bootstrap/final-policy fields may carry one extra time
+        # entry, so deriving T from prev_logprobs can over-count samples.
+        target_time_steps, _ = _get_rollout_training_shape(nested_dict)
+
     ret_dict = {}
     for key, value in nested_dict.items():
-        if key in ["dones", "terminations", "truncations", "prev_values"]:
-            if isinstance(value, torch.Tensor):
-                value = value[:-1]
-
         if "env_info" in key:
             raise NotImplementedError("env_info nested dict is not supported here")
 
@@ -57,10 +79,24 @@ def flatten_rollout_batch_for_train(
             continue
 
         if isinstance(value, torch.Tensor):
+            if target_time_steps is not None:
+                if value.shape[0] == target_time_steps + 1:
+                    value = value[:target_time_steps]
+                elif value.shape[0] != target_time_steps:
+                    raise ValueError(
+                        f"Rollout field {key!r} has {value.shape[0]} time steps; "
+                        f"expected {target_time_steps} or {target_time_steps + 1}."
+                    )
+            elif key in ["dones", "terminations", "truncations", "prev_values"]:
+                value = value[:-1]
             flat = value.reshape(-1, *value.shape[2:])
             ret_dict[key] = flat[shuffle_id] if shuffle_id is not None else flat
         elif isinstance(value, dict):
-            ret_dict[key] = flatten_rollout_batch_for_train(value, shuffle_id)
+            ret_dict[key] = flatten_rollout_batch_for_train(
+                value,
+                shuffle_id,
+                target_time_steps=target_time_steps,
+            )
         else:
             raise NotImplementedError(
                 f"Unsupported value type in rollout batch: key={key}, type={type(value)}"
@@ -80,6 +116,13 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             "rollout_store_size_per_rank", 1
         )
         self.rollout_store = PriorityStore(maxsize=self.rollout_store_size)
+
+    @contextmanager
+    def _profiled_timer(self, tag: str):
+        """Record a worker metric and matching accelerator profiling range."""
+        with self.worker_timer(tag):
+            with AcceleratorUtil.profiling_range(self._accelerator_type, tag):
+                yield
 
     async def recv_rollout_trajectories(self, input_channel):
         # drain channel
@@ -181,6 +224,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         self.log_info(f"staleness metrics={staleness_metrics}")
         return staleness_metrics
 
+    @Worker.timer("compute_advantages_and_returns")
     @torch.inference_mode()
     def compute_advantages_and_returns(self) -> dict[str, torch.Tensor]:
         proximal_values = self.rollout_batch.get("proximal_values", None)
@@ -217,8 +261,7 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
             "Weight offloading is not supported when recomputing proximal logprobs."
         )
 
-        t_dim = self.rollout_batch["prev_logprobs"].shape[0]
-        b_dim = self.rollout_batch["prev_logprobs"].shape[1]
+        t_dim, b_dim = _get_rollout_training_shape(self.rollout_batch)
 
         flat = flatten_rollout_batch_for_train(self.rollout_batch, shuffle_id=None)
         total = flat["prev_logprobs"].shape[0]
@@ -271,14 +314,14 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
         )
         self.rollout_batch["proximal_logprobs"] = proximal_logprobs
 
+    @Worker.timer("run_training")
     def run_training(self) -> dict[str, Any]:
         if self.is_weight_offloaded:
             self.load_param_and_grad(self.device)
         if self.is_optimizer_offloaded:
             self.load_optimizer(self.device)
 
-        t_dim = int(self.rollout_batch["prev_logprobs"].shape[0])
-        b_dim = int(self.rollout_batch["prev_logprobs"].shape[1])
+        t_dim, b_dim = _get_rollout_training_shape(self.rollout_batch)
         total_samples = t_dim * b_dim
 
         generator = torch.Generator(device="cpu")
@@ -390,15 +433,16 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                     compute_values = self.cfg.algorithm.adv_type == "gae"
 
-                    with self.amp_context:
-                        out = self.model(
-                            forward_inputs=forward_inputs,
-                            compute_logprobs=True,
-                            compute_entropy=(self.cfg.algorithm.entropy_bonus > 0),
-                            compute_values=compute_values,
-                            use_cache=False,
-                            **model_kwargs,
-                        )
+                    with self._profiled_timer("actor/forward"):
+                        with self.amp_context:
+                            out = self.model(
+                                forward_inputs=forward_inputs,
+                                compute_logprobs=True,
+                                compute_entropy=(self.cfg.algorithm.entropy_bonus > 0),
+                                compute_values=compute_values,
+                                use_cache=False,
+                                **model_kwargs,
+                            )
 
                     if SupportedModel(self.cfg.actor.model.model_type) in [
                         SupportedModel.GR00T,
@@ -456,8 +500,9 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
                         loss = loss - self.cfg.algorithm.entropy_bonus * entropy_loss
 
                     loss = loss / self.gradient_accumulation
-                    with backward_ctx:
-                        self.grad_scaler.scale(loss).backward()
+                    with self._profiled_timer("actor/backward"):
+                        with backward_ctx:
+                            self.grad_scaler.scale(loss).backward()
 
                     metrics_data["actor/entropy_loss"] = float(
                         entropy_loss.detach().item()
@@ -467,7 +512,8 @@ class AsyncPPOEmbodiedFSDPActor(EmbodiedFSDPActor):
 
                 torch.cuda.empty_cache()
 
-                grad_norm, lr_list = self.optimizer_step()
+                with self._profiled_timer("actor/optimizer_step"):
+                    grad_norm, lr_list = self.optimizer_step()
                 extra_metrics = {
                     "actor/grad_norm": grad_norm,
                     "actor/lr": lr_list[0],

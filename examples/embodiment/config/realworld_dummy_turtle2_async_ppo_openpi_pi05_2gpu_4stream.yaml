@@ -1,0 +1,199 @@
+# Single-node system bringup/profile for 1 rollout : 4 dummy Turtle2 streams.
+# GPU 0 is actor/train only; GPU 1 is rollout only; four CPU env ranks share node 0.
+# RLinf-Pi05-LIBERO-SFT and its stats are reused only to validate the system path.
+# Guide: examples/embodiment/turtle2_async_ppo_4stream_guide.md
+defaults:
+  - env/realworld_button@env.train
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/bucket_syncer@weight_syncer
+  - _self_
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor:
+      node_group: gpu
+      placement: 0
+    rollout:
+      node_group: gpu
+      placement: 1
+    env:
+      node_group: cpu_env
+      placement: "0:0-3"
+  node_groups:
+    - label: gpu
+      node_ranks: 0
+      env_configs:
+        - node_ranks: 0
+          # Required on the reference dual RTX PRO 5000 host: direct NCCL P2P
+          # hangs during actor-to-rollout weight synchronization.
+          env_vars:
+            - NCCL_P2P_DISABLE: "1"
+    - label: cpu_env
+      node_ranks: 0
+      ignore_hardware: true
+  profiling:
+    backend: nsight
+    enabled: false
+    worker_groups: [ActorGroup, RolloutGroup]
+    steps: [3]
+    output_dir: null
+    options:
+      t: cuda,cudnn,cublas,nvtx,osrt
+      sample: none
+      cpuctxsw: none
+      cuda-memory-usage: true
+    flags: []
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "turtle2_async_ppo_pi05_2gpu_4stream"
+    logger_backends: ["tensorboard"]
+  per_worker_log: true
+  max_epochs: 5
+  max_steps: 5
+  only_eval: false
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+  weight_sync_interval: 1
+  enable_decoupled_mode: true
+  overlap_env_bootstrap: false
+
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: 1
+  reward_coef: 1.0
+  staleness_threshold: 1
+  rollout_store_size_per_rank: 4
+  behave_weight_threshold: 2
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: token_level
+  update_epoch: 1
+  adv_type: gae
+  loss_type: decoupled_actor_critic
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0.0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  filter_rewards: false
+  rewards_lower_bound: 0.0
+  rewards_upper_bound: 1.0
+
+env:
+  group_name: EnvGroup
+  enable_offload: false
+  train:
+    rollout_epoch: 1
+    total_num_envs: 4
+    max_steps_per_rollout_epoch: 50
+    max_episode_steps: 50
+    auto_reset: true
+    ignore_terminations: true
+    use_spacemouse: false
+    video_cfg:
+      save_video: false
+    override_cfg:
+      is_dummy: true
+      use_arm_ids: [1]
+      use_camera_ids: [0, 1, 2]
+      target_ee_pose:
+        - [0, 0, 0, 0, 0, 0]
+        - [0.0, 0.0, 0.15, 0.0, 1.0, 0.0]
+      step_frequency: 30.0
+      max_num_steps: 50
+
+rollout:
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  recompute_logprobs: false
+  unnorm_key: libero_10
+  enable_offload: false
+  pipeline_stage_num: 1
+  rollout_queue_size: 1
+  enable_group_route_binding: true
+  collect_transitions: false
+  collect_prev_infos: true
+  collect_final_values: true
+  model:
+    model_path: "/workspace/rlinf_pub/models/RLinf-Pi05-LIBERO-SFT"
+    precision: ${actor.model.precision}
+  enable_torch_compile: false
+  enable_cuda_graph: false
+
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: 1
+  global_batch_size: 4
+  seed: 42
+  enable_offload: false
+  sync_weight_no_wait: false
+  model:
+    model_path: "/workspace/rlinf_pub/models/RLinf-Pi05-LIBERO-SFT"
+    model_type: openpi
+    state_dim: 6
+    action_dim: 6
+    num_action_chunks: 50
+    num_steps: 3
+    add_value_head: true
+    openpi:
+      config_name: pi05_turtle
+      num_images_in_input: 3
+      action_horizon: 50
+      action_chunk: ${actor.model.num_action_chunks}
+      action_env_dim: ${actor.model.action_dim}
+      num_steps: ${actor.model.num_steps}
+      train_expert_only: true
+      noise_method: flow_noise
+      noise_logvar_range: [0.08, 0.16]
+      joint_logprob: true
+      add_value_head: ${actor.model.add_value_head}
+      value_after_vlm: true
+      value_vlm_mode: mean_token
+      detach_critic_input: false
+      use_dsrl: false
+  optim:
+    lr: 5.0e-6
+    value_lr: 1.0e-4
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 0.01
+    clip_grad: 1.0
+    critic_warmup_steps: 0
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: no_shard
+    gradient_checkpointing: false
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false
