@@ -26,6 +26,7 @@ from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
 from rlinf.envs.maniskill.utils import allow_pci_render_backend
+from rlinf.envs.rewards import get_env_reward_fn
 
 __all__ = ["ManiskillEnv"]
 
@@ -209,17 +210,19 @@ class ManiskillEnv(gym.Env):
         return state_obs
 
     def _calc_step_reward(self, reward, info):
-        if getattr(self.cfg, "reward_mode", "default") == "raw":
-            pass
-        elif getattr(self.cfg, "reward_mode", "default") == "only_success":
-            reward = info["success"] * 1.0
-        else:
+        reward_mode = getattr(self.cfg, "reward_mode", "default")
+        if reward_mode == "default":
             reward = torch.zeros(self.num_envs, dtype=torch.float32).to(
                 self.env.unwrapped.device
             )  # [B, ]
             reward += info["is_src_obj_grasped"] * 0.1
             reward += info["consecutive_grasp"] * 0.1
             reward += (info["success"] & info["is_src_obj_grasped"]) * 1.0
+        else:
+            reward_fn = get_env_reward_fn(
+                reward_mode, module=getattr(self.cfg, "reward_fn_module", None)
+            )
+            reward = reward_fn(raw_reward=reward, info=info, cfg=self.cfg)
         # diff
         reward_diff = reward - self.prev_step_reward
         self.prev_step_reward = reward

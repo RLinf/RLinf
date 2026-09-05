@@ -18,6 +18,12 @@
 
       添加一个新的 RL 环境并接入环境注册表。
 
+   .. grid-item-card:: 自定义环境奖励
+      :link: custom_env_reward
+      :link-type: doc
+
+      配置稠密、分层或完全自定义的步进奖励。
+
    .. grid-item-card:: FSDP 新模型
       :link: new_model_fsdp
       :link-type: doc
@@ -53,6 +59,7 @@
 
    扩展概览 <overview>
    新环境 <new_env>
+   自定义环境奖励 <custom_env_reward>
    FSDP 新模型 <new_model_fsdp>
    Megatron 新模型 <new_model_megatron>
    新 SFT 模型 <new_model_sft>
