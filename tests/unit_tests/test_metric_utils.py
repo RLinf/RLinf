@@ -14,11 +14,12 @@
 
 
 import math
+from types import SimpleNamespace
 
 import pytest
 import torch
 
-from rlinf.utils.metric_utils import compute_evaluate_metrics
+from rlinf.utils.metric_utils import compute_evaluate_metrics, compute_rollout_metrics
 
 
 def test_compute_evaluate_metrics_reports_interact_delay_wait_time_stats():
@@ -66,3 +67,34 @@ def test_compute_evaluate_metrics_reports_prefixed_interact_delay_stats():
     assert float(metrics["env/median_delay"]) == pytest.approx(0.18)
     assert float(metrics["env/max_delay"]) == pytest.approx(0.24)
     assert float(metrics["env/min_delay"]) == pytest.approx(0.12)
+
+
+@pytest.fixture
+def single_rank_reduction(monkeypatch):
+    from rlinf.scheduler.worker.worker import Worker
+
+    monkeypatch.setattr(
+        Worker, "torch_platform", SimpleNamespace(current_device=lambda: "cpu")
+    )
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *args, **kwargs: None)
+
+
+def test_compute_rollout_metrics_reports_loss_mask_fraction(single_rank_reduction):
+    metrics = compute_rollout_metrics(
+        {
+            "loss_mask": torch.tensor([[[True], [False]], [[True], [True]]]),
+            "rewards": torch.tensor([[[1.0], [8.0]], [[2.0], [3.0]]]),
+        }
+    )
+
+    assert metrics["loss_mask_fraction"] == pytest.approx(0.75)
+    assert metrics["rewards"] == pytest.approx(2.0)
+
+
+def test_compute_rollout_metrics_omits_loss_mask_fraction_without_mask(
+    single_rank_reduction,
+):
+    metrics = compute_rollout_metrics({"rewards": torch.tensor([[[1.0], [3.0]]])})
+
+    assert "loss_mask_fraction" not in metrics
+    assert metrics["rewards"] == pytest.approx(2.0)
