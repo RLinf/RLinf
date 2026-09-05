@@ -1,0 +1,251 @@
+# Copyright 2026 The RLinf Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+defaults:
+  - env/realworld_peg_insertion@env.train
+  - env/realworld_peg_insertion@env.eval
+  - model/cnn_policy@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 2
+  component_placement:
+    actor:
+      node_group: "4090"
+      placement: 0
+    env:
+      node_group: franka
+      placement: 0
+    rollout:
+      node_group: "4090"
+      placement: 0
+    reward:
+      node_group: "4090"
+      placement: 0
+  node_groups:
+    - label: "4090"
+      node_ranks: 0
+    - label: franka
+      node_ranks: 1
+      hardware:
+        type: Franka
+        configs:
+          - robot_ip: ROBOT_IP # Replace with your robot's IP address
+            node_rank: 1
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "rlpd_cnn_vlm_trend_reward"
+    logger_backends: ["tensorboard"]
+
+  max_epochs: 8000
+  max_steps: -1
+
+  only_eval: False
+  val_check_interval: -1
+  save_interval: 100
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  update_epoch: 8
+  group_size: 1
+  agg_q: min
+  actor_agg_q: mean
+  enable_drq: False
+
+  backup_entropy: False
+  critic_subsample_size: 2
+
+  adv_type: embodied_sac
+  loss_type: embodied_sac
+  loss_agg_func: "token-mean"
+
+  bootstrap_type: standard
+  gamma: 0.96
+  tau: 0.005
+  entropy_tuning:
+    alpha_type: softplus
+    initial_alpha: 0.01
+    target_entropy: -3
+    optim:
+      lr: 3.0e-4
+      lr_scheduler: torch_constant
+      clip_grad: 10.0
+
+  critic_actor_ratio: 4
+  replay_buffer:
+    enable_cache: True
+    cache_size: 200
+    min_buffer_size: 2
+    sample_window_size: 200
+    auto_save: False
+
+  demo_buffer:
+    enable_cache: True
+    cache_size: 200
+    min_buffer_size: 1
+    sample_window_size: 200
+    load_path: "/path/to/your/demo/data"
+    auto_save: False
+
+  target_update_freq: 1
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    ignore_terminations: False
+    total_num_envs: 1
+    override_cfg:
+      is_dummy: False
+      use_dense_reward: False
+      reward_scale: 1.0
+      max_num_steps: 50
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      camera_names:
+        "SERIAL1": global
+        "SERIAL2": wrist_1
+
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    override_cfg:
+      is_dummy: False
+      target_ee_pose: TARGET_EE_POSE # Replace with your target end-effector pose
+      camera_names:
+        "SERIAL1": global
+        "SERIAL2": wrist_1
+
+rollout:
+  group_name: "RolloutGroup"
+  backend: "huggingface"
+  enable_offload: False
+  pipeline_stage_num: 1
+
+  collect_transitions: True
+  collect_prev_infos: False
+
+  model:
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    precision: ${actor.model.precision}
+    num_q_heads: 10
+
+  enable_torch_compile: True
+  enable_cuda_graph: False
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+
+  micro_batch_size: 256
+  global_batch_size: 256
+  seed: 1234
+  enable_offload: False
+
+  model:
+    model_path: "/path/to/RLinf-ResNet10-pretrained" # https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
+    state_dim: 19
+    action_dim: 6
+    num_q_heads: 10
+
+  optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  critic_optim:
+    clip_grad: 10.0
+    lr: 3e-4
+    lr_scheduler: torch_constant
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: true
+  worker_type: model
+  group_name: "RewardGroup"
+
+  standalone_realworld: False
+  reward_mode: history_buffer
+  history_reward_assign: true
+
+  reward_weight: 1.0
+  env_reward_weight: 0.0
+  reward_threshold: 0.5
+
+  model:
+    model_path: "/path/to/Qwen3-VL-4B-Instruct" # https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct
+    model_type: "buffered_vlm"
+    lora_path: "/path/to/qwen3-vl-lora-checkpoint"
+    gt_success_bonus: 20.0
+    precision: "bf16"
+
+    input_builder_name: vlm_trend_reward_input_builder
+    input_builder_params:
+      default_task_description: "Pick up the peg and insert it into the hole."
+
+    reward_parser_name: vlm_trend_reward_parser
+    reward_parser_params:
+      positive_reward: 1.0
+      negative_reward: -0.2
+      unclear_reward: 0.0
+      invalid_reward: 0.0
+
+    inference_mode: generate
+    history_buffers:
+      history_window:
+        history_size: 5
+        min_history_size: 5
+        input_interval: 1
+        history_keys:
+          - main_images
+          - extra_view_images
+        input_on_done: false
+
+    interval_reward: 0.0
+    enable_history_offload: true
+    infer_micro_batch_size: 64
+    subprocessor_kwargs:
+      video_processor:
+        do_sample_frames: true
+    max_new_tokens: 16
+    do_sample: false
+    temperature: 0.0
+    use_chat_template: true
+
+critic:
+  use_critic_model: False
+
+weight_syncer:
+  nccl_max_ctas: 32
