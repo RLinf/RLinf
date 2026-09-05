@@ -18,6 +18,7 @@ is_eval: False
 
 seed: 0
 group_size: 1
+enable_kir: False # this init dataset has no KIR trajectories
 use_fixed_reset_state_ids: True
 use_ordered_reset_state_ids: False
 
