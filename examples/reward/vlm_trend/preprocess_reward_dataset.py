@@ -15,13 +15,18 @@
 """Preprocess VLM Trend reward data into split train/eval pkl datasets.
 
 Example:
-    python examples/reward/preprocess_vlm_trend_reward_dataset.py \
+    python examples/reward/vlm_trend/preprocess_reward_dataset.py \
         --raw-data-path logs/xxx/collected_data \
         --output-dir logs/xxx/processed_vlm_trend_reward_data
 
 The exported JSONL points to per-sample pkl files. VLMTrendRewardSFTDataset
 loads the two 5-frame video arrays directly from those pkl files, avoiding the
 slow small-mp4 export path.
+
+Success, Potential, and feature extraction live in sibling scripts:
+``preprocess_terminal_success.py``,
+``preprocess_potential.py``, and
+``extract_potential_features.py``.
 """
 
 import argparse
@@ -38,6 +43,11 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
+from examples.reward.vlm_trend.data import (
+    build_messages,
+    extract_dual_view_frames,
+    to_uint8_rgb,
+)
 from rlinf.utils.logging import get_logger
 
 logger = get_logger()
@@ -79,55 +89,6 @@ def _to_scalar(value: Any) -> float:
     return float(value)
 
 
-def _to_uint8_rgb(image: Any) -> np.ndarray:
-    if torch.is_tensor(image):
-        image = image.detach().cpu().numpy()
-    image = np.asarray(image)
-    if image.dtype != np.uint8:
-        image = np.clip(image, 0, 255).astype(np.uint8)
-    if image.ndim == 2:
-        image = np.stack([image, image, image], axis=-1)
-    if image.ndim != 3:
-        raise ValueError(f"Invalid image shape: {image.shape}")
-    return image[..., :3]
-
-
-def _extract_extra_view_image(extra_view_images: Any) -> Any | None:
-    if extra_view_images is None:
-        return None
-    if torch.is_tensor(extra_view_images):
-        if extra_view_images.ndim == 3:
-            return extra_view_images
-        if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-            return extra_view_images[0]
-        return None
-
-    extra_view_images = np.asarray(extra_view_images)
-    if extra_view_images.ndim == 3:
-        return extra_view_images
-    if extra_view_images.ndim == 4 and extra_view_images.shape[0] > 0:
-        return extra_view_images[0]
-    return None
-
-
-def _extract_dual_view_frames(
-    observations: list[dict[str, Any]], start_idx: int, end_idx: int
-) -> tuple[list[Any], list[Any]] | None:
-    main_frames = []
-    extra_view_frames = []
-    for idx in range(start_idx, end_idx + 1):
-        obs = observations[idx]
-        main_image = obs.get("main_images")
-        extra_view_image = obs.get("third_view_images")
-        if extra_view_image is None:
-            extra_view_image = _extract_extra_view_image(obs.get("extra_view_images"))
-        if main_image is None or extra_view_image is None:
-            return None
-        main_frames.append(main_image)
-        extra_view_frames.append(extra_view_image)
-    return main_frames, extra_view_frames
-
-
 def _build_prompt(task: str, window_size: int) -> str:
     return (
         f"You are currently performing the task: {task}. "
@@ -136,19 +97,6 @@ def _build_prompt(task: str, window_size: int) -> str:
         "window. Judge whether the action trend is positive, negative, or unclear. "
         "Answer with exactly one word: positive, negative, or unclear."
     )
-
-
-def _build_messages(prompt: str, label: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "role": "user",
-            "content": [{"type": "text", "text": prompt}],
-        },
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": label}],
-        },
-    ]
 
 
 def _build_reversed_negative_sample(sample: dict[str, Any]) -> dict[str, Any]:
@@ -211,7 +159,7 @@ def load_episodes_with_labels(
             all_samples = []
             for sample_idx, start_idx in enumerate(start_indices):
                 end_idx = start_idx + window_size - 1
-                frames = _extract_dual_view_frames(observations, start_idx, end_idx)
+                frames = extract_dual_view_frames(observations, start_idx, end_idx)
                 if frames is None:
                     continue
 
@@ -473,10 +421,10 @@ def preprocess_and_save_reward_datasets(
                     pickle.dump(
                         {
                             "main_frames": [
-                                _to_uint8_rgb(frame) for frame in sample["main_frames"]
+                                to_uint8_rgb(frame) for frame in sample["main_frames"]
                             ],
                             "extra_view_frames": [
-                                _to_uint8_rgb(frame)
+                                to_uint8_rgb(frame)
                                 for frame in sample["extra_view_frames"]
                             ],
                             "label": sample["label"],
@@ -496,7 +444,7 @@ def preprocess_and_save_reward_datasets(
                 "question": sample["prompt"],
                 "answer": sample["label"],
                 "pkl_path": pkl_path,
-                "messages": _build_messages(sample["prompt"], sample["label"]),
+                "messages": build_messages(sample["prompt"], sample["label"]),
                 "source_episode_path": sample["source_episode_path"],
                 "segment_metadata": {
                     "start_step": sample["start_idx"],
@@ -593,7 +541,7 @@ def preprocess_and_save_reward_datasets(
     return metadata
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Preprocess VLM Trend reward dataset from raw episode .pkl files."
     )
@@ -729,11 +677,11 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed for deterministic split and sampling.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def run_trend(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     os.makedirs(args.output_dir, exist_ok=True)
 
     metadata = preprocess_and_save_reward_datasets(
@@ -770,6 +718,10 @@ def main() -> None:
     print("Metadata:")
     print(json.dumps(metadata, indent=2))
     print("=" * 80)
+
+
+def main(argv: list[str] | None = None) -> None:
+    run_trend(argv)
 
 
 if __name__ == "__main__":
