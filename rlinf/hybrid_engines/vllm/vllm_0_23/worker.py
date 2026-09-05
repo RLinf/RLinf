@@ -70,6 +70,7 @@ class VLLMWorker(_VllmInnerWorker):
             self._rlinf_worker.get_parent_rank(), self.rank
         ]
         self.is_weight_offloaded = False
+        self.offloaded_tags = {"weights": False, "kv_cache": False}
 
     def initialize_from_config(self, kv_cache_config: KVCacheConfig) -> None:
         """Allocate GPU KV cache with the specified kv_cache_config."""
@@ -84,6 +85,7 @@ class VLLMWorker(_VllmInnerWorker):
 
     def offload_model_weights(self) -> None:
         super().sleep(level=2)
+        self.offloaded_tags = {"weights": True, "kv_cache": True}
         self.is_weight_offloaded = True
 
     def batch_load_hf_weight(self, state_dict: dict[str, Any]) -> Any:
@@ -127,9 +129,14 @@ class VLLMWorker(_VllmInnerWorker):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
+            if isinstance(bucket_length, torch.Tensor):
+                # The actor sends bucket_length as a GPU tensor
+                bucket_length = bucket_length.item()
 
         if self.is_weight_offloaded:
-            super().wake_up()
+            # Only wake weights here; KV cache + cudagraph stay offloaded until onload_kv_cudagraph
+            super().wake_up(tags=["weights"])
+            self.offloaded_tags["weights"] = False
             self.is_weight_offloaded = False
 
         assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
@@ -155,6 +162,18 @@ class VLLMWorker(_VllmInnerWorker):
             state_dict = recv_handle.wait()
             self.batch_load_hf_weight(state_dict)
 
+    def onload_kv_cudagraph(self) -> None:
+        """Onload KV cache + cuda graph deferred from sync_hf_weight.
+        sync_hf_weight only woke weights for load_weights;
+        KV cache + cudagraph are restored here, vLLM has no cuda_graph tag, so the
+        cuda graph is re-captured via compile_or_warm_up_model.
+        """
+        assert self.offloaded_tags["kv_cache"], (
+            "Cannot onload kv_cache: not offloaded (already onloaded). "
+            f"offload_state={self.offloaded_tags}"
+        )
+        super().wake_up(tags=["kv_cache"])
+        self.offloaded_tags["kv_cache"] = False
         super().compile_or_warm_up_model()
 
     def use_sharded_weights(self) -> None:

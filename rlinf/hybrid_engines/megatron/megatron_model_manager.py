@@ -303,7 +303,7 @@ class MegatronModelManager:
         # Only override user-controllable runtime fields
         # e.g. multi_latent_attention=True -> False
         _model_type = getattr(self._cfg.model, "model_type", None)
-        if _model_type in ("deepseek_v3",):
+        if _model_type in ("deepseek_v3", "glm4_moe_lite"):
             _mbridge_user_override_fields = {
                 "fp16",
                 "bf16",
@@ -817,20 +817,23 @@ class MegatronModelManager:
 
         for model_idx, model_chunk in enumerate(self.model):
             if isinstance(model_chunk, DDP):
-                for buffer_idx, buffer in enumerate(model_chunk.buffers):
+                # All model bf16 weights live in two flat _ParamAndGradBuffer groups:
+                #   model_chunk.buffers                (dense/embed/attn, param_data)
+                #   model_chunk.expert_parallel_buffers (experts, param_data)
+                param_grad_buffers = list(model_chunk.buffers) + list(
+                    model_chunk.expert_parallel_buffers
+                )
+                for buffer in param_grad_buffers:
                     if (
                         offload_weight
                         and not self.is_weight_offloaded
                         and buffer.param_data.untyped_storage().size() > 0
                     ):
                         param_size = buffer.param_data.untyped_storage().size()
-
                         cpu_data = self._get_pinned_buffer(buffer.param_data)
                         cpu_data.copy_(buffer.param_data, non_blocking=True)
                         buffer.param_data_size = param_size
-
                         buffer.param_data.untyped_storage().resize_(0)
-
                         assert (
                             buffer.param_data_size == cpu_data.untyped_storage().size()
                         )
@@ -840,8 +843,11 @@ class MegatronModelManager:
                         and not self.is_grad_offloaded
                         and buffer.grad_data.untyped_storage().size() > 0
                     ):
-                        grad_size = buffer.grad_data.untyped_storage().size()
-                        buffer.grad_data_size = grad_size
+                        # Gradients are discarded (recomputed after onload); only the
+                        # storage is freed. Onload resizes back and zero-fills.
+                        buffer.grad_data_size = (
+                            buffer.grad_data.untyped_storage().size()
+                        )
                         buffer.grad_data.untyped_storage().resize_(0)
 
             else:
@@ -879,7 +885,12 @@ class MegatronModelManager:
         Worker.torch_platform.empty_cache()
         for model_chunk in self.model:
             if isinstance(model_chunk, DDP):
-                for buffer in model_chunk.buffers:
+                # Restore the two flat param_data groups (dense + expert) freed in
+                # offload. Symmetric to offload_model_weights_and_grad.
+                param_grad_buffers = list(model_chunk.buffers) + list(
+                    model_chunk.expert_parallel_buffers
+                )
+                for buffer in param_grad_buffers:
                     # sometimes, we don't want to load grad for pure inference
                     if load_grad and self.is_grad_offloaded:
                         if hasattr(buffer, "grad_data_size"):

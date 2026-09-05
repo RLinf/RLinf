@@ -120,6 +120,8 @@ SupportedModel.QWEN3_VL_SFT = SupportedModel.register("qwen3_vl", force=True)
 SupportedModel.QWEN3_VL_MOE_SFT = SupportedModel.register("qwen3_vl_moe", force=True)
 SupportedModel.GR00T_N1D6 = SupportedModel.register("gr00t_n1d6", force=True)
 SupportedModel.DEEPSEEK_V3 = SupportedModel.register("deepseek_v3", force=True)
+SupportedModel.KIMI_K2 = SupportedModel.register("kimi_k2", force=True)
+SupportedModel.GLM4_MOE_LITE = SupportedModel.register("glm4_moe_lite", force=True)
 SupportedModel.GR00T_N1D7 = SupportedModel.register("gr00t_n1d7", force=True)
 SupportedModel.EVO1 = SupportedModel.register("evo1", force=True)
 
@@ -434,8 +436,8 @@ def validate_model_cfg_by_hf_config(cfg, hf_model_path):
         )
         cfg.model.moe_router_topk = getattr(hf_config, "num_experts_per_tok", 2)
 
-        # DeepSeek-V3 text backbone: MLA + MoE with shared expert.
-        if model_type in ("deepseek_v3",):
+        # DeepSeek-V3 and glm4_moe_lite text backbone: MLA + MoE with shared expert.
+        if model_type in ("deepseek_v3", "glm4_moe_lite"):
             cfg.model.num_moe_experts = getattr(
                 hf_config, "n_routed_experts", cfg.model.num_moe_experts
             )

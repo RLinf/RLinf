@@ -122,8 +122,45 @@ def extract_selected_fields(cfg: DictConfig) -> DictConfig:
     return OmegaConf.create(result)
 
 
+def _get_megatron_arg_defaults():
+    """Return mcore's registered argument defaults as a dict.
+
+    Uses mcore's own argument parser so the defaults match the installed
+    mcore version. OptimizerConfig fields are excluded because
+    get_megatron_optimizer_config copies them via hasattr — omitting them
+    lets the dataclass defaults (torch.dtype) apply. The raw parser produces
+    string dtype values (e.g. "fp32") which cannot be stored in OmegaConf
+    as torch.dtype (UnsupportedValueType) and fail OptimizerConfig assertions.
+    """
+    import argparse
+    import dataclasses
+
+    from megatron.core.optimizer.optimizer_config import OptimizerConfig
+    from megatron.training.arguments import add_megatron_arguments
+
+    optimizer_field_names = {
+        field.name for field in dataclasses.fields(OptimizerConfig)
+    }
+
+    parser = argparse.ArgumentParser()
+    add_megatron_arguments(parser)
+    defaults = vars(parser.parse_args([]))
+    return {
+        key: value
+        for key, value in defaults.items()
+        if key not in optimizer_field_names
+    }
+
+
 def set_megatron_args(cfg):
     args = extract_selected_fields(cfg)
+
+    # Fill mcore arg defaults for keys not set by the YAML config. mcore's
+    # get_model / get_megatron_ddp_config / load_checkpoint directly access
+    # args.X for args RLinf's YAML doesn't set (e.g. create_all_gather_group).
+    for key, default_value in _get_megatron_arg_defaults().items():
+        if key not in args:
+            args[key] = default_value
 
     args.consumed_train_samples = 0
     args.skipped_train_samples = 0
@@ -144,6 +181,7 @@ def set_megatron_args(cfg):
     args.vocab_file = None
 
     args.iteration = 0
+    args.perform_rl_step = True
 
     set_args(args)
 

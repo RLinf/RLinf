@@ -15,6 +15,7 @@
 import asyncio
 import copy
 import dataclasses
+import inspect
 from typing import Any, Literal, Optional
 
 from omegaconf import DictConfig
@@ -167,12 +168,18 @@ class SGLangWorker(Worker):
                 self._cfg_rollout.max_running_requests,
             ),
             tp_size=self._cfg_rollout.tensor_parallel_size,
-            # sglang >=0.5.11 drops the `enable_ep_moe` flag and enables EP via ep_size > 1.
-            ep_size=(
+            ep_size=self._cfg_rollout.sglang.get(
+                "ep_size",
                 self._cfg_rollout.tensor_parallel_size
                 if self._cfg_rollout.sglang.get("enable_ep_moe", False)
-                else 1
+                else 1,
             ),
+            moe_dp_size=self._cfg_rollout.sglang.get("moe_dp_size", 1),
+            dp_size=self._cfg_rollout.sglang.get("dp_size", 1),
+            enable_dp_attention=self._cfg_rollout.sglang.get(
+                "enable_dp_attention", False
+            ),
+            moe_dense_tp_size=self._cfg_rollout.sglang.get("moe_dense_tp_size", None),
             mem_fraction_static=self._cfg_rollout.gpu_memory_utilization,
             enable_memory_saver=use_cudagraph,
             enable_torch_compile=self._cfg_rollout.sglang.use_torch_compile,
@@ -197,9 +204,15 @@ class SGLangWorker(Worker):
         )
 
         self.log_on_first_rank(f"{server_args=}")
-        self._engine = Engine(
-            **dataclasses.asdict(server_args),
-        )
+        engine_kwargs = dataclasses.asdict(server_args)
+        # A100 (sm80) can't use deepep (needs sm90+NVSHMEM) -> "none" = FusedMoE.
+        _a2a = self._cfg_rollout.sglang.get("moe_a2a_backend", None)
+        if (
+            _a2a is not None
+            and "moe_a2a_backend" in inspect.signature(ServerArgs.__init__).parameters
+        ):
+            engine_kwargs["moe_a2a_backend"] = _a2a
+        self._engine = Engine(**engine_kwargs)
 
     def shutdown(self):
         """
@@ -321,6 +334,15 @@ class SGLangWorker(Worker):
         assert self.weight_reload == "cpu"
         await self._engine.tokenizer_manager.resume_memory_occupation(
             obj=ResumeMemoryOccupationReqInput()
+        )
+
+    async def onload_kv_cudagraph(self):
+        """
+        Onload only the KV cache and CUDA graph back to GPU, leaving model
+        weights on GPU (already resumed in sync_hf_weight).
+        """
+        await self._engine.tokenizer_manager.resume_memory_occupation(
+            obj=ResumeMemoryOccupationReqInput(tags=["kv_cache", "cuda_graph"])
         )
 
     async def abort_generation(self):

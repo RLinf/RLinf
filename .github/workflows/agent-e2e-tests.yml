@@ -785,3 +785,34 @@ jobs:
         run: |
           rm -rf .venv
           uv cache prune
+
+  glm47-flash-mbridge-grpo-test:
+    runs-on: reason
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Create reason environment
+        run: |
+          unset UV_DEFAULT_INDEX
+          export UV_PATH=/workspace/dataset/.uv
+          export UV_LINK_MODE=symlink
+          export UV_CACHE_DIR=/workspace/dataset/.uv_cache
+          export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
+          bash requirements/install.sh agentic --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 --no-apex --platform nvidia --use-mirror --mbridge /workspace/dataset/Megatron-Bridge-v0.5.0
+
+      - name: Train GLM-4.7-Flash with SGLang Megatron-Bridge Collocated mode
+        timeout-minutes: 20
+        run: |
+          export REPO_PATH=$(pwd)
+          source .venv/bin/activate
+          export PYTHONPATH=/workspace/dataset/Megatron-Bridge-v0.5.0/src:$PYTHONPATH
+          export PYTHONPATH=/workspace/dataset/Megatron-LM-core0.18:$PYTHONPATH
+          export CUDA_DEVICE_MAX_CONNECTIONS=1
+          bash tests/e2e_tests/reasoning/run.sh glm47-flash-grpo-mbridge-sgl
+          rm -rf /workspace/results/glm47-flash-megatron-mbridge/
+
+      - name: Clean up
+        run: |
+          rm -rf .venv
+          uv cache prune
