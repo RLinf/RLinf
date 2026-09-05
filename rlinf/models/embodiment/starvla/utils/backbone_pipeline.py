@@ -22,6 +22,8 @@ from typing import Any, Callable, Optional
 import torch
 import torch.nn as nn
 
+from rlinf.scheduler import Worker
+
 from . import vlm_preprocess as vlm_input_utils
 from .profile import resolve_vlm_interface
 
@@ -74,9 +76,10 @@ def run_backbone_pipeline(
             f"{sorted(_SUPPORTED_ACTION_HEADS)}, got {action_head_name!r}."
         )
 
-    autocast_ctx = (
-        torch.autocast("cuda", dtype=torch.bfloat16)
-        if torch.cuda.is_available()
+    device_type = Worker.torch_device_type
+    autocast_context = (
+        torch.autocast(device_type, dtype=torch.bfloat16)
+        if device_type is not None
         else nullcontext()
     )
 
@@ -123,7 +126,7 @@ def run_backbone_pipeline(
         hook_handle = embedding_layer.register_forward_hook(input_embedding_hook)
 
     try:
-        with autocast_ctx:
+        with autocast_context:
             vlm_outputs = vlm_interface(
                 **vlm_inputs,
                 use_cache=use_cache,

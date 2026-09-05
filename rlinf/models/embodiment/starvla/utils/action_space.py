@@ -22,6 +22,10 @@ from typing import Any, Optional
 
 import numpy as np
 
+# starVLA's model-agnostic action helpers (``unnormalize_actions``,
+# ``get_action_stats``) live on ``starVLA.model.tools.FrameworkTools`` as static
+# functions. It is imported lazily because starVLA only exists in its own venv.
+
 
 def resolve_action_norm_stats(
     starvla_model: Any,
@@ -38,20 +42,21 @@ def resolve_action_norm_stats(
     if unnorm_key is None:
         return None
 
-    raw_stats: Any = None
     norm_stats = getattr(starvla_model, "norm_stats", None)
-    if isinstance(norm_stats, Mapping) and unnorm_key in norm_stats:
+    if not isinstance(norm_stats, Mapping):
+        raise RuntimeError(
+            "starVLA action unnormalization requires action norm stats, but the "
+            f"loaded model exposes no usable 'norm_stats' mapping. "
+            f"unnorm_key={unnorm_key!r}."
+        )
+
+    if unnorm_key in norm_stats:
         raw_stats = norm_stats.get(unnorm_key)
     else:
-        getter = getattr(starvla_model, "get_action_stats", None)
-        if not callable(getter):
-            raise RuntimeError(
-                "starVLA action unnormalization requires action norm stats, but the "
-                "loaded model provides neither 'norm_stats' nor 'get_action_stats()'. "
-                f"unnorm_key={unnorm_key!r}."
-            )
+        from starVLA.model.tools import FrameworkTools
+
         try:
-            raw_stats = getter(unnorm_key)
+            raw_stats = FrameworkTools.get_action_stats(norm_stats, unnorm_key)
         except Exception as exc:
             raise RuntimeError(
                 "starVLA get_action_stats failed; cannot unnormalize actions for env. "
@@ -139,9 +144,8 @@ def _gripper_mapping(
 ) -> np.ndarray:
     """Apply LIBERO gripper mapping aligned with starVLA eval pipeline.
 
-    Converts gripper dim (index 6) from 0/1 (as output by
-    ``baseframework.unnormalize_actions``) to +1/-1 as expected by the
-    LIBERO env.
+    Converts gripper dim (index 6) from 0/1 (as output by starVLA's
+    ``unnormalize_actions``) to +1/-1 as expected by the LIBERO env.
 
     The mapping is activated when *policy_setup* resolves to a LIBERO
     platform.  When *policy_setup* is ``None`` we fall back to the
@@ -186,12 +190,7 @@ def unnormalize_actions_for_env(
             "Set cfg.unnorm_key=None to use normalized actions directly."
         )
 
-    try:
-        from starVLA.model.framework.base_framework import baseframework
-    except Exception as exc:
-        raise ModuleNotFoundError(
-            "starVLA is required for action unnormalization but is not importable."
-        ) from exc
+    from starVLA.model.tools import FrameworkTools
 
     actions = np.asarray(normalized_actions, dtype=np.float32)
     flat = actions.reshape(-1, actions.shape[-1]).astype(np.float32, copy=False)
@@ -200,6 +199,6 @@ def unnormalize_actions_for_env(
         "q01": np.asarray(action_norm_stats["q01"], dtype=np.float32),
         "mask": np.asarray(action_norm_stats["mask"], dtype=bool),
     }
-    env_flat = baseframework.unnormalize_actions(flat, starvla_stats)
+    env_flat = FrameworkTools.unnormalize_actions(flat, starvla_stats)
     env_actions = np.asarray(env_flat, dtype=np.float32).reshape(actions.shape)
     return _gripper_mapping(env_actions, policy_setup=policy_setup)
