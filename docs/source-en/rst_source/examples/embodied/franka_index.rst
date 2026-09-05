@@ -51,10 +51,16 @@ single-arm Franka setup.
       Deploy a π₀ SFT policy on Franka.
 
    .. grid-item-card:: Real-World RL
+      :link: franka_single_machine
+      :link-type: doc
+
+      Run real-world RL on one GPU host with explicit real-time configuration.
+
+   .. grid-item-card:: Real-World RL (Archived)
       :link: franka
       :link-type: doc
 
-      Configure a Franka setup, collect demonstrations, and run online RL training.
+      Configure a Franka setup, collect demonstrations, and run online RL training (archived).
 
    .. grid-item-card:: Reward Model
       :link: franka_reward_model
@@ -72,5 +78,6 @@ single-arm Franka setup.
    Collect-VR <franka_vr>
    HG-DAgger <hg-dagger>
    Collect-SFT-Deploy <franka_pi0_sft_deploy>
-   Real-World RL <franka>
+   Real-World RL <franka_single_machine>
+   Real-World RL (Archived) <franka>
    Reward Model <franka_reward_model>

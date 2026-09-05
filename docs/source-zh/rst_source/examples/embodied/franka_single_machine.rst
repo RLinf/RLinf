@@ -1,10 +1,5 @@
-Real-World RL (已归档)
-======================
-
-.. warning::
-
-   **本页已归档。** 此页描述早期需要实时内核、并把控制节点与训练节点拆分到多台机器上的流程。
-   当前的单主机流程以及非实时内核所需的显式配置，请参考 :doc:`franka_single_machine`。
+Franka 真机强化学习
+===================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -15,9 +10,23 @@ Real-World RL (已归档)
    :align: center
    :width: 80%
 
-   基础 RLinf 真机 RL 流程使用的 Franka Emika Panda 机械臂。
+   在一台带有 GPU 的主机上运行 Franka 真机强化学习流程。
 
-使用 RLinf 在 Franka Emika Panda 机械臂上训练和评测真机策略。你将配置控制节点与训练节点，采集示教数据，运行 SAC / RLPD 或 PPO 类训练，并在真实硬件上监控安全的在线更新。
+你可以在一台带 GPU 的主机上同时运行计算节点（训练 / rollout）和控制节点（Franka 控制），
+完成真机 SAC / RLPD / PPO 训练。该流程使用两个独立的 RLinf 环境，已在标准 Ubuntu 20.04、
+Franka System Image 5.9.2 和 libfranka 0.19.0 的组合上验证。如果没有实时内核，
+必须按照下文显式关闭 libfranka 的实时检查；仅安装较新的固件和 libfranka 并不会自动关闭该检查。
+
+.. note::
+
+   当前的单主机流程请使用本页。如果你使用较旧的 firmware/libfranka 组合，
+   或者希望使用独立的实时控制主机，请参考已归档的多机流程 :doc:`franka`。
+
+.. note::
+
+   单机部署把计算节点（actor / rollout / reward）作为 Ray head（rank 0），
+   控制节点（Franka env）作为 rank 1 **加入同一台机器的集群**。
+   因为两个角色使用不同的 Python 环境，需要在两个终端分别激活脚本、分别加入集群。
 
 概览
 ----------------------------------------
@@ -91,21 +100,19 @@ Real-World RL (已归档)
 硬件环境搭建
 ----------------------------------------
 
-真实世界实验需要如下硬件组件：
+单机部署需要如下硬件组件：
 
 - **机械臂**：Franka Emika Panda 机械臂。
 - **相机**：Intel RealSense 相机（默认）或 Stereolabs ZED 相机。
 - **夹爪**：Franka 夹爪（默认）或 Robotiq 2F-85/2F-140。
-- **计算节点**：一台带有 GPU 的计算机，用于训练 CNN 策略。
-- **机器人控制节点**：一台与机械臂处于同一局域网的小型计算机（不需要 GPU），用于控制 Franka 机械臂。
+- **主机**：一台带有 GPU 的计算机，同时承担计算节点（训练 CNN 策略）与机器人控制节点（控制 Franka 机械臂）。
 - **空间鼠标（可选）**：用于远程操控数据采集或在训练过程中进行人工干预。
 - **GELLO（可选）**：一种关节级遥操作设备，可替代空间鼠标，操控更直观，并原生支持夹爪控制。
 - **VR / PICO（可选）**：通过 PICO 头显和手柄进行 6D 末端遥操作，可替代空间鼠标进行数据采集。
 
 .. warning::
 
-  请确保所有计算机均处于同一局域网络中。
-  机械臂本体只需要与机器人控制节点处于同一局域网即可。
+  主机需要与机械臂处于同一局域网内。
 
 .. note::
 
@@ -116,167 +123,121 @@ Real-World RL (已归档)
    **使用 VR / PICO 遥操作？** 请参考 :doc:`franka_vr`，了解
    XRoboToolkit、ZeroMQ、PICO wrapper 配置以及操作步骤。
 
-安装
+检查 Franka 固件版本
 ----------------------------------------
 
-控制节点与训练 / rollout 节点需要安装不同的软件依赖。
-
-机器人控制节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-1. 检查 Franka 固件版本
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 在机器人管理网页（一般为 ``http://<robot_ip>/desk``）中，点击 ``SETTINGS`` 选项卡，在 ``DashBoard`` 中查看 ``Control`` 后面的版本号，如下所示。
-请记录该固件版本号，后续步骤会用到。
+请记录该固件版本号，后续设置 ``LIBFRANKA_VERSION`` 时会用到。
 
 .. raw:: html
 
   <div style="flex: 1; text-align: center;">
-      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware.png" style="width: 60%;"/>
+      <img src="https://raw.githubusercontent.com/RLinf/misc/main/pic/franka_firmware_single_machine.png" style="width: 60%;"/>
   </div>
-.. warning::
-
-  请确保 Franka 固件版本 ``<5.9.0`` 以保证与 serl_franka_controllers 的兼容性。
-  推荐使用固件版本 5.7.2 以获得最佳兼容性。
-
-2. 实时内核安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-推荐在实时内核（Real-time Kernel）上运行 Franka 控制程序，以获得更好的实时性。
-请参考 `Franka 官方文档 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_ 安装实时内核。
-
-3. 依赖安装
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code:: bash
-
-  # 为了提高国内下载速度，也可以使用：
-  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-  git clone https://github.com/RLinf/RLinf.git
-  cd RLinf
-
-B. 安装依赖
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**方式 1：Docker 镜像**
-
-使用 Docker 镜像进行实验。
-
-为了从 Docker 容器内访问机器人、相机和空间鼠标设备，建议使用以下附加参数运行容器：
-
-.. code:: bash
-
-  docker run -it --rm \
-    --privileged \
-    --network host \
-    --name rlinf \
-    -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.4-franka
-    # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-franka
-
-目前该 Docker 镜像包含 libfranka 版本 ``0.10.0``、``0.13.3``、``0.14.1``、``0.15.0`` 和 ``0.18.0``，以及 franka_ros 版本 ``0.10.0``。
-
-这些版本均基于 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_ 进行选择。
-请检查你的 Franka 固件版本，并找到与之兼容的 libfranka 版本。
-
-确定兼容的 libfranka 版本后，可以通过运行以下命令在 docker 容器中切换到对应的虚拟环境：
-
-.. code:: bash
-
-   source switch_env franka-<libfranka_version>
-    # 例如，对于 libfranka 版本 0.15.0
-    # source switch_env franka-0.15.0
-
-**方式 2：自定义环境**
-
-安装脚本主要包含两部分内容：
-
-- RLinf 框架及真实世界强化学习训练所需的 Python 依赖；
-- 用于 Franka 控制的 ROS Noetic、libfranka、franka_ros 以及 serl_franka_controllers 等依赖。
-
-.. warning::
-
-  由于 ROS Noetic 的要求，安装脚本目前 **仅支持 Ubuntu 20.04**。
-
-.. warning::
-
-  如果你已经手动安装了 ROS Noetic、libfranka、franka_ros 和 serl_franka_controllers，
-  可以在运行安装脚本前设置环境变量 ``export SKIP_ROS=1`` 来跳过这些组件的安装。
-
-  如果你跳过了这些安装，请务必保证已经在 `~/.bashrc` 中 source 了 ROS 的 setup 脚本（通常位于 ``/opt/ros/noetic/setup.bash``），
-  以及 franka_ros 和 serl_franka_controllers 的 setup 脚本（通常位于 ``<your_catkin_ws>/devel/setup.bash``），
-  同时确保 libfranka 的动态库已经加入 ``LD_LIBRARY_PATH``，或者安装在系统库目录 ``/usr/lib`` 中。
-
-  **在每次启动控制节点上的 ray 之前，都需要确保这些环境变量和依赖已经正确加载**，
-  否则可能会导致 Franka 控制相关包无法被正确找到。
-
-.. warning::
-
-  目前，ROS Noetic、libfranka 和 franka_ros 的自动安装仅在固件版本 ``>=5.7.2`` 且 ``<5.9.0`` 的 Franka 上进行过测试，
-  该范围内推荐使用 libfranka 版本 ``0.15`` 和 franka_ros 版本 ``0.10``。
-
-  对于其他固件版本，请先参考 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_，
-  然后通过设置环境变量 `export LIBFRANKA_VERSION=<version>` 与 `export FRANKA_ROS_VERSION=<version>` 自行指定 libfranka 和 franka_ros 的版本，再运行安装脚本。
 
 .. note::
 
-  如果安装脚本对你不适用，可参考官方文档 `ROS Noectic 安装说明 <https://wiki.ros.org/noetic/Installation/Ubuntu>`_ ， `Franka 安装说明 <https://frankarobotics.github.io/docs/libfranka/docs/installation.html>`_ ，和 `serl_franka_controllers 安装说明 <https://github.com/rail-berkeley/serl_franka_controllers>`_ 进行手动安装。
+   请依据你的固件版本，参考 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_
+   选择匹配的 libfranka 版本，并通过环境变量 ``LIBFRANKA_VERSION`` 与 ``FRANKA_ROS_VERSION`` 指定。
 
-执行以下命令安装控制节点依赖：
+环境安装
+----------------------------------------
 
-.. code:: bash
+单机方案需要同一台主机上克隆两份 RLinf 仓库，对应两个角色：
 
-  # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+- `RLinf-franka`：控制 / 数据采集环境（Franka 控制依赖：ROS Noetic、libfranka、franka_ros、serl_franka_controllers）。
+- `RLinf-compute`：计算 / rollout 环境（RLinf 框架及真机 RL 训练所需 Python 依赖）。
 
-  bash requirements/install.sh embodied --env franka
-  source .venv/bin/activate
+这样可以把两套松耦合的依赖隔离在各自独立的虚拟环境中，避免相互污染。
 
-训练 / Rollout 节点
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-A. 克隆 RLinf 仓库
+A. 克隆仓库
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code:: bash
 
   # 为了提高国内下载速度，也可以使用：
-  # git clone https://gh-proxy.com/github.com/RLinf/RLinf.git
-  git clone https://github.com/RLinf/RLinf.git
-  cd RLinf
+  # git clone https://ghfast.top/github.com/RLinf/RLinf.git
+  git clone https://github.com/RLinf/RLinf.git RLinf-franka
+  git clone https://github.com/RLinf/RLinf.git RLinf-compute
 
-B. 安装依赖
+B. 安装控制环境（RLinf-franka）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**方式 1：Docker 镜像**
-
-使用 Docker 镜像进行实验。
-
-.. code:: bash
-
-  docker run -it --rm --gpus all \
-    --shm-size 20g \
-    --network host \
-    --name rlinf \
-    -v .:/workspace/RLinf \
-    rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-    # 为了提高国内下载速度，也可以使用：
-    # docker.1ms.run/rlinf/rlinf:agentic-rlinf0.4-maniskill_libero
-
-**方式 2：自定义环境（Custom Environment）**
-
-在本地环境中直接安装依赖：
+在 `RLinf-franka` 目录下安装 Franka 控制依赖。
+依据你的固件版本设置 libfranka 与 franka_ros 版本（例如固件 5.9.2 对应 ``LIBFRANKA_VERSION=0.19.0``）：
 
 .. code:: bash
+
+  cd RLinf-franka
+  # 依据固件版本指定 libfranka / franka_ros 版本
+  export LIBFRANKA_VERSION=0.19.0
+  export FRANKA_ROS_VERSION=0.10.0
 
   # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
-
-  bash requirements/install.sh embodied --model openvla --env maniskill_libero
+  bash requirements/install.sh embodied --env franka
   source .venv/bin/activate
+
+C. 配置实时行为
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+libfranka 默认强制检查实时调度能力。安装 System Image 5.9.0+ 和 libfranka 0.18.0+
+并不会让标准 Linux 内核自动通过该检查。如果主机没有使用 PREEMPT_RT 内核，
+必须显式配置控制后端忽略实时检查。
+
+对于本流程使用的 ``franka_ros`` 后端，请修改安装后的配置文件：
+
+.. code-block:: yaml
+
+   # .venv/franka_catkin_ws/src/franka_ros/franka_control/config/franka_control_node.yaml
+   realtime_config: ignore  # 默认值：enforce
+
+对于 ``franky`` 后端，请在创建机器人时传入 ``RealtimeConfig.Ignore``：
+
+.. code-block:: python
+
+   import franky
+
+   robot = franky.Robot(
+       "172.16.0.2",
+       relative_dynamics_factor=0.2,
+       realtime_config=franky.RealtimeConfig.Ignore,
+   )
+
+.. note::
+
+   RLinf 当前的 ``FrankyController`` 使用默认的 ``RealtimeConfig.Enforce``
+   创建 ``franky.Robot``。因此，该后端在非实时内核上运行时仍需相应修改构造调用，
+   目前还不能通过 RLinf YAML 选项启用。
+
+.. warning::
+
+   ``ignore`` 只会关闭 libfranka 启动时的实时检查，并不会让标准内核获得实时能力。
+   训练可能使主机处于高负载状态，操作系统调度延迟可能导致错过控制周期或发生通信错误。
+   为了获得可靠的控制，请尽可能安装并使用 PREEMPT_RT 内核，并参考 Franka 官方的
+   `实时内核指南 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_。
+
+D. 安装计算环境（RLinf-compute）
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+在 `RLinf-compute` 目录下安装 RLinf 框架与训练所需依赖（对应训练所用的模型与仿真环境）：
+
+.. code:: bash
+
+  cd RLinf-compute
+  # 为提高国内依赖安装速度，可以添加`--use-mirror`到下面的install.sh命令
+  bash requirements/install.sh --model openpi --env libero
+  source .venv/bin/activate
+
+.. note::
+
+   计算环境的模型 / 仿真 env 参数请与你的配置对应（例如 CNN 策略使用 openpi，实际以你的训练模型为准）。
+
+.. note::
+
+   两个克隆仓库都包含 ``ray_utils/realworld/`` 下的启动脚本
+   （``setup_compute_node.sh``、``setup_franka_node.sh``、``setup_franka_collect.sh``、``cleanup.sh``）。
+   每个脚本会自动定位到它所在的仓库根并使用该仓库的虚拟环境，
+   因此请在各自仓库目录下（``cd RLinf-compute`` / ``cd RLinf-franka``）执行对应的脚本。
 
 下载模型
 ----------------------------------------
@@ -289,13 +250,11 @@ B. 安装依赖
    # 方式 1：使用 git clone
    git lfs install
    git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
-   git clone https://huggingface.co/RLinf/RLinf-ResNet10-pretrained
 
    # 方式 2：使用 huggingface-hub
    # 为了提高国内下载速度，可以添加以下环境变量：
    # export HF_ENDPOINT=https://hf-mirror.com
    pip install huggingface-hub
-   hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
    hf download RLinf/RLinf-ResNet10-pretrained --local-dir RLinf-ResNet10-pretrained
 
 下载完成后，请在对应的配置 YAML 文件中正确填写模型路径。
@@ -312,11 +271,13 @@ B. 安装依赖
 
 首先，需要将 Franka 机器人切换到可编程模式，然后手动将机械臂移动到希望的目标位姿。
 
-随后，在运行脚本之前，先设置环境变量 ``FRANKA_ROBOT_IP`` 为机器人 IP 地址：
+随后，在运行脚本之前，在 **控制环境（RLinf-franka）** 中激活环境，并设置环境变量 ``FRANKA_ROBOT_IP`` 为机器人 IP 地址：
 
 .. code-block:: bash
 
+   cd RLinf-franka
    export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   source ray_utils/realworld/setup_franka_node.sh   # 仅激活控制环境，不启动 Ray
 
 然后运行脚本：
 
@@ -329,15 +290,23 @@ B. 安装依赖
 数据采集
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-对于 RLPD 实验，需要先在控制节点上收集一部分初始数据，
-该过程只需在控制节点上运行，不需要其他节点参与。
+对于 RLPD 实验，需要先收集一部分初始数据，
+该过程只需在 **控制环境（RLinf-franka）** 中单机运行，采集节点作为唯一的 Ray head。
 
-1. 依次激活虚拟环境并 source franka_ros 与 serl_franka_controllers 的 setup 脚本：
+1. 在控制仓库中使用数据采集启动脚本，它会激活环境并启动一个单节点 Ray head（rank 0）：
 
 .. code-block:: bash
 
-   source <path_to_your_venv>/bin/activate
-   source <your_catkin_ws>/devel/setup.bash
+   cd RLinf-franka
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   export RLINF_HEAD_IP=<this_host_ip_address>
+   # 可选：export RLINF_COMM_NET_DEVICES=<network_device>  # 默认为 eth0
+   source ray_utils/realworld/setup_franka_collect.sh start
+
+.. note::
+
+   该脚本会依次 source ROS 与 catkin 的 setup 脚本，再激活虚拟环境。
+   使用 ``install.sh`` 安装的环境，激活时通常已自动完成这些 source（见脚本注释）。
 
 2. 修改配置文件 ``examples/embodiment/config/realworld_collect_data.yaml``，
    将其中 ``robot_ip`` 字段填为你的机器人 IP 地址。
@@ -366,7 +335,7 @@ B. 安装依赖
   env:
     eval:
       override_cfg:
-      target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
+        target_ee_pose: [0.5, 0.0, 0.1, -3.14, 0.0, 0.0]
 
 4. 运行数据采集脚本：
 
@@ -379,7 +348,7 @@ B. 安装依赖
 脚本默认在收集 20 个 episode 后结束（可以通过配置中的 `num_data_episodes` 字段修改），
 采集到的数据会保存在 ``logs/[running-timestamp]/data.pkl`` 路径下。
 
-5. 数据采集完成后，可以将收集到的数据上传到训练 / rollout 节点。
+5. 数据采集完成后，将收集到的数据路径用于后续训练（计算环境下读取）。
 
 .. note::
 
@@ -396,7 +365,7 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
 **前置条件**
 
 - 安装 ``gello`` 和 ``gello-teleop`` 软件包。详细安装说明请参考 :doc:`franka_gello`。
-- GELLO 设备通过 USB 串口连接到控制节点。
+- GELLO 设备通过 USB 串口连接到主机。
 - 确认 GELLO 串口路径（例如 ``/dev/serial/by-id/usb-FTDI_USB__-__Serial_Converter_FTA0OUKN-if00-port0``）。
   可通过以下命令列出可用串口：
 
@@ -434,45 +403,62 @@ GELLO 是一种关节级遥操作设备，其运动学结构与 Franka 机械臂
   这一步非常关键，请谨慎操作！任何细微的配置错误，都可能导致依赖缺失或无法正确控制机器人。
 
 RLinf 使用 ray 来管理分布式环境，这意味着：
-当你在某个节点上执行 `ray start` 时，ray 会记录当时的 Python 解释器路径和相关环境变量；
+当你在某个终端执行 `ray start` 时，ray 会记录当时的 Python 解释器路径和相关环境变量；
 之后在该节点上由 ray 启动的所有进程都会继承同一套 Python 环境与环境变量。
 
-我们提供了脚本 ``ray_utils/realworld/setup_before_ray.sh``，
-用于在每个节点启动 ray 之前帮助你统一设置环境。你可以根据自己的环境修改该脚本，并在每个节点上 source 它。
+单机部署中，**计算节点（RLinf-compute）** 作为 Ray head（rank 0），
+**控制节点（RLinf-franka）** 作为 rank 1 加入该 head。由于两个角色使用不同的 Python 环境，
+需要**在两个终端**分别激活对应环境后再加入集群。
 
-该脚本主要负责以下内容：
+仓库提供了以下启动脚本（位于 ``ray_utils/realworld/``）：
 
-1. 在使用自定义环境安装方式时，source 正确的虚拟环境，请参考依赖安装部分的说明；
+- ``setup_compute_node.sh``：计算节点（rank 0，head），``source`` 该脚本后传入 ``start`` 启动 Ray。
+- ``setup_franka_node.sh``：控制节点（rank 1，worker），``start`` 时加入计算 head。
+- ``setup_franka_collect.sh``：数据采集专用（单节点，rank 0），见数据采集一节。
+- ``cleanup.sh``：清理残留的 Ray / ROS / FrankaController 进程（直接执行 ``bash cleanup.sh``）。
 
-2. 在控制节点上，source franka_ros 与 serl_franka_controllers 的 setup 脚本（通常位于 ``<your_catkin_ws>/devel/setup.bash``），**如果你使用的是 docker 镜像或安装脚本，则在 source 虚拟 Python 环境时已经完成此操作**；
+前三个脚本均支持 ``source <script>`` / ``source <script> start`` / ``source <script> stop`` 三种用法，
+并在启动前校验关键依赖是否可导入。
 
-3. 在所有节点上设置 RLinf 相关环境变量：
+请在 source 相应脚本 **之前** 设置必需的环境变量：
+
+- ``setup_compute_node.sh start`` 需要 ``RLINF_NODE_IP``\ （计算 head 可被访问的 IP）。
+- ``setup_franka_node.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``\ （计算 head 的 IP）。
+- ``setup_franka_collect.sh start`` 需要 ``FRANKA_ROBOT_IP`` 和 ``RLINF_HEAD_IP``\ （数据采集 Ray head 所在主机的 IP）。
+- ``cleanup.sh`` 不需要环境变量，但 ``ray`` 必须位于 ``PATH`` 中（请先激活任一 RLinf 环境）。
+
+可选变量 ``RLINF_VENV``、``RLINF_COMM_NET_DEVICES`` 和 ``RAY_TEMP_DIR``
+保留脚本头部说明的默认值。
+
+**终端 1：计算环境（rank 0，head）**
 
 .. code-block:: bash
 
-   export PYTHONPATH=<path_to_your_RLinf_repo>:$PYTHONPATH
-   export RLINF_NODE_RANK=<node_rank_of_this_node>
-   export RLINF_COMM_NET_DEVICES=<network_device_for_communication> # 如果只有一个网卡可以省略
+   cd RLinf-compute
+   export RLINF_NODE_IP=<this_node_reachable_ip>
+   # 可选：export RLINF_COMM_NET_DEVICES=<network_device>  # 默认为 eth0
+   source ray_utils/realworld/setup_compute_node.sh start
 
-其中 ``RLINF_NODE_RANK`` 应在集群的 ``N`` 个节点之间设置为 ``0 ~ N-1``，
-用来在配置文件中唯一标识每个节点。
-
-``RLINF_COMM_NET_DEVICES`` 为可选项，仅在机器拥有多个网络设备（例如 ``eth0``、``enp3s0`` 等）时需要设置，
-应当指定提供其他节点可访问 IP 的那块网卡。可以通过 ``ifconfig`` 或 ``ip addr`` 查看。
-
-在完成上述环境设置后，可以按如下方式在各节点上启动 ray：
-
-其中 `<head_node_ip_address>` 为 head 节点的 IP 地址，**必须** 能被集群中其他节点访问。
+**终端 2：控制环境（rank 1，worker）**
 
 .. code-block:: bash
 
-   # 在 head 节点（节点 rank 0）上
-   ray start --head --port=6379 --node-ip-address=<head_node_ip_address>
+   cd RLinf-franka
+   export RLINF_HEAD_IP=<compute_head_ip_address>
+   export FRANKA_ROBOT_IP=<your_robot_ip_address>
+   source ray_utils/realworld/setup_franka_node.sh start
 
-   # 在 worker 节点（节点 rank 1 ~ N-1）上
-   ray start --address='<head_node_ip_address>:6379'
+.. note::
 
-可以通过执行 `ray status` 来检查集群是否已正确启动。
+   各脚本会先激活各自的虚拟环境。对于控制节点，脚本会依次 ``source`` ROS 与 catkin 的
+   setup 脚本，再激活虚拟环境
+
+.. warning::
+
+   两个脚本默认使用不同的 ``--temp-dir`` （``/tmp/rlinf_compute`` 与 ``/tmp/rlinf_control``），
+   Ray 才会把它们识别为两个独立的节点；切勿在同终端复用同一份环境变量。
+
+可以通过执行 `ray status` 来检查集群是否已正确启动（应有 2 个节点）。
 
 配置文件
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -525,25 +511,23 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 
    export RLINF_KEYBOARD_DEVICE=/dev/input/event20
 
-如果你使用的是 ``ray_utils/realworld/setup_before_ray.sh``，建议在控制节点的该脚本中加入这条 ``export``，确保 ray 启动的 env 进程能够继承这个环境变量。
-
 检查环境（可选）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在启动正式实验前，我们推荐先通过若干测试脚本验证整体环境配置是否正确。
 
-首先，在控制节点上测试相机连接：
+首先，测试相机连接：
 
 .. code-block:: bash
 
    python -m toolkits.realworld_check.test_franka_camera
 
-然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml``文件添加`env.eval.override_cfg`。
+然后，通过运行一个 dummy 版本配置来测试基础集群配置。请参照 ``examples/embodiment/config/realworld_dummy_franka_sac_cnn.yaml`` 文件添加 `env.eval.override_cfg`。
 可以在配置文件中同时将 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `is_dummy` 字段设置为 `True`，
 以启用 dummy 模式。请注意如果启用dummy模式，需要将上面运行 ``toolkits.realworld_check.test_franka_camera.py`` 得到的camera序列号
 填补在 `env.train.override_cfg` 与 `env.eval.override_cfg` 部分的 `camera_serials` 字段。
 
-在 head 节点上运行测试脚本：
+在 **计算环境（head）** 终端中运行测试脚本：
 
 .. code-block:: bash
 
@@ -552,7 +536,7 @@ RLinf 使用 ray 来管理分布式环境，这意味着：
 运行
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-在完成上述检查之后，即可在 head 节点上启动真实世界训练实验：
+在完成上述检查之后，即可在 **计算环境（head）** 终端中启动真实世界训练实验：
 
 .. code-block:: bash
 
@@ -570,36 +554,35 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 .. code-block:: yaml
 
   cluster:
-  num_nodes: 3 # 1 个训练 / rollout 节点 + 2 个机器人控制节点
-  component_placement:
-    actor:
-      node_group: "4090"
-      placement: 0 # 运行在训练 / rollout 节点的第一个 GPU 上
-    env:
-      node_group: franka
-      placement: 0-1 # 两个 env 分别绑定两个机器人，rank 0 和 rank 1
-    rollout:
-      node_group: "4090"
-      placement: 0:0-1 # 在训练 / rollout 节点第一个 GPU 上运行两个 rollout 进程
-  node_groups:
-    - label: "4090"
-      node_ranks: 0 # 节点 rank 0 为训练 / rollout 节点
-    - label: franka
-      node_ranks: 1-2 # 节点 rank 1 和 2 为两个机器人控制节点
-      hardware:
-        type: Franka
-        configs:
-          - robot_ip: ROBOT_IP_FOR_RANK1
-            node_rank: 1 # 第一个机器人控制节点的 rank
-          - robot_ip: ROBOT_IP_FOR_RANK2
-            node_rank: 2 # 第二个机器人控制节点的 rank
+    num_nodes: 3 # 1 个训练 / rollout 节点 + 2 个机器人控制节点
+    component_placement:
+      actor:
+        node_group: "4090"
+        placement: 0 # 运行在训练 / rollout 节点的第一个 GPU 上
+      env:
+        node_group: franka
+        placement: 0-1 # 两个 env 分别绑定两个机器人，rank 0 和 rank 1
+      rollout:
+        node_group: "4090"
+        placement: 0:0-1 # 在训练 / rollout 节点第一个 GPU 上运行两个 rollout 进程
+    node_groups:
+      - label: "4090"
+        node_ranks: 0 # 节点 rank 0 为训练 / rollout 节点
+      - label: franka
+        node_ranks: 1-2 # 节点 rank 1 和 2 为两个机器人控制节点
+        hardware:
+          type: Franka
+          configs:
+            - robot_ip: ROBOT_IP_FOR_RANK1
+              node_rank: 1 # 第一个机器人控制节点的 rank
+            - robot_ip: ROBOT_IP_FOR_RANK2
+              node_rank: 2 # 第二个机器人控制节点的 rank
 
-自然地，你可以按照同样的方式扩展到更多的机器人。
+在单机方案中，每个机器人控制角色同样作为独立的 Ray 节点（独立 ``--temp-dir``）加入同一集群，
+对应配置中不同的 ``node_ranks``。
+
+自然的，你可以按照同样的方式扩展到更多的机器人。
 关于此类异构硬件配置语法的更多细节，请参考 :doc:`../../guides/hetero`。
-
-如需在真机上通过与动作块执行重叠来隐藏策略推理延迟，请参考 :doc:`RTC <../../guides/rtc>`。
-
-
 
 可视化与结果
 ----------------------------------------
@@ -642,7 +625,7 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
 
 真实世界结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-以下提供了插块插入任务和充电器任务的演示视频和训练曲线。在 1 小时的训练时间内，机器人能够学习到一套能够持续成功完成任务的策略。
+以下提供插块插入任务和充电器任务的演示视频和训练曲线。在 1 小时的训练时间内，机器人能够学习到一套能够持续成功完成任务的策略。
 
 .. raw:: html
 
@@ -670,3 +653,26 @@ RLinf 支持对多台 Franka 机器人进行统一管理，实现并行数据采
     </video>
     <p><em>充电器插电（Charger）</em></p>
   </div>
+
+排障
+----------------------------------------
+
+**相机中途断联**
+
+如果在训练 / 采集运行到一半时出现相机断联问题，可以在 **控制环境（RLinf-franka）** 下重装 opencv：
+
+.. code-block:: bash
+
+   cd RLinf-franka
+   source ray_utils/realworld/setup_franka_node.sh   # 激活控制环境
+   pip uninstall -y opencv-python-headless
+   pip install --force-reinstall --no-deps opencv-python
+
+**运行异常导致的夹爪 / ROS 进程残留**
+
+如果运行过程中抛出异常，或通过 ``Ctrl-C`` 手动中断，可能出现 Franka 夹爪（gripper）断联、
+以及 Ray / ROS / FrankaController 等进程残留的情况。可以运行清理脚本停掉残留进程后再重新启动：
+
+.. code-block:: bash
+
+   bash ray_utils/realworld/cleanup.sh
