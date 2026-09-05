@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import copy
-import os
 
 # Ensure MW envs only register once
 import warnings
@@ -94,7 +93,6 @@ class MetaWorldEnv(gym.Env):
         for env_fn_param in env_fn_params:
 
             def env_fn(param=env_fn_param):
-                os.environ["MUJOCO_EGL_DEVICE_ID"] = str(self.seed_offset)
                 env_name = param["env_name"]
                 env = gym.make(
                     "Meta-World/MT1",
