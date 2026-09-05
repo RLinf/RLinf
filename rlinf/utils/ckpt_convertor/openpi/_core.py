@@ -48,17 +48,45 @@ NORM_STATS_SUBDIR = pathlib.Path("physical-intelligence") / "behavior"
 
 
 def resolve_model_safetensors(input_model: str | pathlib.Path) -> pathlib.Path:
-    """Accept either a checkpoint directory or a ``model.safetensors`` file."""
+    """Resolve a ``model.safetensors`` file or a sharded checkpoint directory.
+
+    Accepts either a checkpoint directory or a ``model.safetensors`` file. For
+    a directory, prefers a single ``model.safetensors``; when that is absent
+    but sharded ``model-0000X-of-0000N.safetensors`` files exist, the
+    directory itself is returned and :func:`load_safetensors` globs+merges
+    the shards. When neither is present, raises ``FileNotFoundError``.
+    """
     input_model = pathlib.Path(input_model)
     if input_model.is_dir():
-        return input_model / "model.safetensors"
+        single = input_model / "model.safetensors"
+        if single.exists():
+            return single
+        if list(input_model.glob("*.safetensors")):
+            return input_model
+        raise FileNotFoundError(
+            f"no safetensors checkpoint found under {input_model}: expected "
+            f"either {single} or sharded model-0000X-of-0000N.safetensors files"
+        )
     return input_model
 
 
 def load_safetensors(path: str | pathlib.Path) -> dict[str, torch.Tensor]:
-    """Load a safetensors state dict onto CPU."""
+    """Load a safetensors state dict onto CPU.
+
+    Accepts a single ``model.safetensors`` file or a directory of sharded
+    ``*.safetensors`` files (globbed and merged into one state dict).
+    """
     import safetensors.torch
 
+    path = pathlib.Path(path)
+    if path.is_dir():
+        shards = sorted(path.glob("*.safetensors"))
+        if not shards:
+            raise FileNotFoundError(f"no *.safetensors found under {path}")
+        state_dict: dict[str, torch.Tensor] = {}
+        for shard in shards:
+            state_dict.update(safetensors.torch.load_file(str(shard), device="cpu"))
+        return state_dict
     return safetensors.torch.load_file(str(path), device="cpu")
 
 

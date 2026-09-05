@@ -76,7 +76,7 @@ def get_model(cfg: Any, torch_dtype: Any = None) -> Any:
         "action_dim": int(model_cfg.model_action_dim),
         "paligemma_variant": str(model_cfg.paligemma_variant),
         "action_expert_variant": str(model_cfg.action_expert_variant),
-        "dtype": "bfloat16",
+        "dtype": cfg.get("precision", "bfloat16"),
         "pcd": False,
     }
     discrete_state_input = OmegaConf.select(
