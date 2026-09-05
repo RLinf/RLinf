@@ -226,7 +226,9 @@ class FrankaBinRelocationEnv(FrankaEnv):
         Move to the rest position defined in base class.
         Add a small z offset before going to rest to avoid collision with object.
         """
-        self._end_effector_action(np.array([1.0]))
+        # Skip gripper motion when no_gripper: keep jaw state unchanged on reset.
+        if not self.config.no_gripper:
+            self._end_effector_action(np.array([1.0]))
         self._franka_state = self._controller.get_state().wait()[0]
         self._move_action(self._franka_state.tcp_pose)
         time.sleep(0.5)

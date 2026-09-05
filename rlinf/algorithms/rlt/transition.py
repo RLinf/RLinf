@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from typing import Any, Optional
 
 import torch
 
@@ -23,18 +23,32 @@ RLT_OBS_KEYS = ("z_rl", "proprio", "ref_chunk")
 RLT_TRANSITION_PREFIX = "rlt_transition_"
 
 
-def use_simulator_transition_replay(cfg: Any) -> bool:
-    """Return True for envs that store one replay row per env step."""
+def _train_env_type(cfg: Any) -> Optional[SupportedEnvType]:
     train_env_cfg = cfg.env.get("train", None)
     if train_env_cfg is None:
-        return False
+        return None
     try:
-        return (
-            SupportedEnvType(train_env_cfg.get("env_type", ""))
-            == SupportedEnvType.MANISKILL_RLT
-        )
+        return SupportedEnvType(train_env_cfg.get("env_type", ""))
     except ValueError:
-        return False
+        return None
+
+
+def use_simulator_transition_replay(cfg: Any) -> bool:
+    """Return True when RLT stores one replay row per env step.
+
+    Default: enabled for ``maniskill_rlt``. Override with
+    ``algorithm.rlt_transition_replay`` (used by realworld Stage2 to match
+    simulator critical-phase filtering).
+    """
+    algo_cfg = cfg.get("algorithm", None)
+    if algo_cfg is not None and "rlt_transition_replay" in algo_cfg:
+        return bool(algo_cfg.get("rlt_transition_replay"))
+    return _train_env_type(cfg) == SupportedEnvType.MANISKILL_RLT
+
+
+def use_maniskill_rlt_env(cfg: Any) -> bool:
+    """Return True when the train env is ManiSkill RLT (expert route path)."""
+    return _train_env_type(cfg) == SupportedEnvType.MANISKILL_RLT
 
 
 def extract_rlt_obs_from_forward_inputs(

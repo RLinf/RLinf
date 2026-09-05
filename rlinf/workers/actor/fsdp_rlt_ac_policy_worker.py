@@ -521,11 +521,11 @@ class RLTACReplayMixin:
 
                 curr_obs = self._rlt_obs_from_flat_dict(flat, "curr_obs", idx)
                 if curr_obs is None:
-                    raise ValueError(
-                        "RLT transition replay requires curr_obs. Ensure "
-                        "update_rlt_transitions() populated transition obs "
-                        f"before replay ingestion, got row index {idx}."
-                    )
+                    # EnvWorker.interact() recvs one extra policy output after
+                    # the chunk loop so the last real step can get next_obs.
+                    # That trailing row has actions/forward_inputs (including
+                    # record_transition after press 'b') but no curr_obs.
+                    continue
                 transition.curr_obs = curr_obs
 
                 # Dones have one extra initial slot, so transition t reads
@@ -667,12 +667,7 @@ class RLTACReplayMixin:
         self.total_transitions_added += added
         self.total_episodes_added += completed
 
-
-class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
-    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
-
-    def __init__(self, cfg):
-        super().__init__(cfg)
+    def _init_rlt_schedule_state(self, cfg) -> None:
         self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
         self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
         self.transitions_since_train = 0
@@ -683,27 +678,9 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         self._warmup_ready_total_episodes: int | None = None
         self.pending_update_budget = 0
 
-    def setup_sac_components(self):
-        """Initialize replay components and let RLT schedule own readiness."""
-        super().setup_sac_components()
+    def _apply_rlt_schedule_buffer_ready(self) -> None:
         if self.use_rlt_schedule:
             self.buffer_dataset.min_replay_buffer_size = 1
-
-    @Worker.timer("actor/recv_traj")
-    async def recv_rollout_trajectories(self, input_channel):
-        clear_memory(sync=False)
-
-        send_num = self._component_placement.get_world_size("env") * self.stage_num
-        recv_num = self._component_placement.get_world_size("actor")
-        split_num = compute_split_num(send_num, recv_num)
-
-        recv_list = []
-        for _ in range(split_num):
-            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
-            recv_list.append(trajectory)
-
-        added, completed = self._ingest_rollout_trajectories(recv_list)
-        self._update_rollout_ingest_counters(added, completed)
 
     def _global_rlt_counters(self) -> dict[str, float]:
         summed = all_reduce_dict(
@@ -825,6 +802,35 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
         metrics.update(getattr(self, "_last_replay_metrics", {}))
         return updates_to_run, metrics
 
+
+class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
+    """Synchronous RLT AC worker with transition replay and warmup scheduling."""
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self._init_rlt_schedule_state(cfg)
+
+    def setup_sac_components(self):
+        """Initialize replay components and let RLT schedule own readiness."""
+        super().setup_sac_components()
+        self._apply_rlt_schedule_buffer_ready()
+
+    @Worker.timer("actor/recv_traj")
+    async def recv_rollout_trajectories(self, input_channel):
+        clear_memory(sync=False)
+
+        send_num = self._component_placement.get_world_size("env") * self.stage_num
+        recv_num = self._component_placement.get_world_size("actor")
+        split_num = compute_split_num(send_num, recv_num)
+
+        recv_list = []
+        for _ in range(split_num):
+            trajectory: Trajectory = await input_channel.get(async_op=True).async_wait()
+            recv_list.append(trajectory)
+
+        added, completed = self._ingest_rollout_trajectories(recv_list)
+        self._update_rollout_ingest_counters(added, completed)
+
     def run_training(self):
         if not self.use_rlt_schedule:
             mean_metric_dict = super().run_training()
@@ -893,8 +899,11 @@ class AsyncRLTACFSDPPolicy(
 ):
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
-        self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
+        self._init_rlt_schedule_state(cfg)
+
+    def setup_sac_components(self):
+        super().setup_sac_components()
+        self._apply_rlt_schedule_buffer_ready()
 
     def _drain_received_trajectories(self, max_trajectories: int | None = None):
         if getattr(self, "_recv_queue", None) is None:
@@ -916,8 +925,72 @@ class AsyncRLTACFSDPPolicy(
         self._update_rollout_ingest_counters(added, completed)
 
     async def run_training(self):
-        mean_metric_dict = await super().run_training()
-        replay_metrics = getattr(self, "_last_replay_metrics", {})
-        if replay_metrics:
-            mean_metric_dict = {**mean_metric_dict, **replay_metrics}
+        import asyncio
+
+        if not self.use_rlt_schedule:
+            mean_metric_dict = await super().run_training()
+            replay_metrics = getattr(self, "_last_replay_metrics", {})
+            if replay_metrics:
+                mean_metric_dict = {**mean_metric_dict, **replay_metrics}
+            return mean_metric_dict
+
+        if self.cfg.actor.get("enable_offload", False):
+            self.load_param_and_grad(self.device)
+            self.load_optimizer(self.device)
+
+        self._drain_received_trajectories(
+            max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
+        )
+        updates_to_run, schedule_metrics = self._rlt_updates_to_run()
+        if updates_to_run <= 0:
+            mean_metric_dict = self.process_train_metrics(schedule_metrics)
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            torch.cuda.empty_cache()
+            return mean_metric_dict
+
+        assert (
+            self.cfg.actor.global_batch_size
+            % (self.cfg.actor.micro_batch_size * self._world_size)
+            == 0
+        )
+        self.gradient_accumulation = (
+            self.cfg.actor.global_batch_size
+            // self.cfg.actor.micro_batch_size
+            // self._world_size
+        )
+
+        self.model.train()
+        metrics = {}
+        critic_updates_run = 0
+        actor_updates_run = 0
+        for _ in range(updates_to_run):
+            await asyncio.sleep(0)
+            self._drain_received_trajectories(
+                max_trajectories=self.cfg.actor.get("recv_drain_max_trajectories", 1024)
+            )
+            update_actor = int(self.update_step) % int(self.critic_actor_ratio) == 0
+            metrics_data = self.update_one_epoch(train_actor=True)
+            append_to_dict(metrics, metrics_data)
+            self.update_step += 1
+            critic_updates_run += 1
+            actor_updates_run += int(update_actor)
+
+        schedule_metrics["rlt/critic_updates_run"] = float(critic_updates_run)
+        schedule_metrics["rlt/actor_updates_run"] = float(actor_updates_run)
+        self.pending_update_budget = max(
+            int(self.pending_update_budget) - critic_updates_run,
+            0,
+        )
+        schedule_metrics["rlt/pending_update_budget"] = float(
+            self.pending_update_budget
+        )
+        append_to_dict(metrics, schedule_metrics)
+        mean_metric_dict = self.process_train_metrics(metrics)
+        self.transitions_since_train = 0
+        self.episodes_since_train = 0
+
+        torch.cuda.synchronize()
+        torch.distributed.barrier()
+        torch.cuda.empty_cache()
         return mean_metric_dict
