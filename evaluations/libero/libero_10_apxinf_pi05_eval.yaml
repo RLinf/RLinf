@@ -1,0 +1,85 @@
+defaults:
+  - env/libero_10@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    env,rollout: all
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "libero_10_apxinf_pi05_eval"
+    logger_backends: ["tensorboard"]
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: true
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: "EnvGroup"
+  eval:
+    # ApxInf currently exposes a single-sample PI0.5 policy. Keep the simulator
+    # fan-out bounded and evaluate 10 reset states per LIBERO-10 task (100 total).
+    rollout_epoch: 10
+    total_num_envs: 10
+    auto_reset: true
+    ignore_terminations: true
+    max_episode_steps: 520
+    max_steps_per_rollout_epoch: 520
+    group_size: 1
+    is_eval: true
+    video_cfg:
+      save_video: false
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  rollout_backend: "apxinf"
+  generation_backend: "apxinf"
+  recompute_logprobs: false
+  unnorm_key: libero_10
+  enable_offload: false
+  pipeline_stage_num: 1
+
+  model:
+    # Official lerobot/pi05_libero_base assets converted for ApxInf. The folder
+    # must contain config.json, tokenizer.model, norm_stats.json and weights.
+    model_path: ${oc.env:APXINF_PI05_MODEL_DIR}
+    model_type: "openpi"
+    precision: null
+    num_action_chunks: 5
+    action_dim: 7
+    openpi:
+      config_name: "pi05_libero"
+      num_images_in_input: 2
+      num_steps: 5
+      noise_method: "flow_sde"
+      noise_level: 0.3
+      action_chunk: ${..num_action_chunks}
+      action_env_dim: ${..action_dim}
+    apxinf:
+      model_type: "pi05"
+      precision: "bf16"
+      action_horizon: 10
+      num_flow_steps: ${..openpi.num_steps}
+      flow_start_time: 1.0
+      seed: 0
+      # ApxInf owns initial Gaussian sampling. For paired parity tests set this
+      # to "observation" and provide an explicit [B,10,32] noise tensor.
+      noise_source: "apxinf"

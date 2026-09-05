@@ -63,6 +63,9 @@ LIBERO 是基于 robosuite（MuJoCo）的机器人操作仿真基准，涵盖 Sp
    * - ``libero_10_openpi_pi05_eval.yaml``
      - Long (libero_10)
      - π₀.₅
+   * - ``libero_10_apxinf_pi05_eval.yaml``
+     - Long (libero_10)
+     - π₀.₅（ApxInf backend）
    * - ``libero_10_openvlaoft_eval.yaml``
      - Long (libero_10)
      - OpenVLA-OFT
@@ -97,6 +100,29 @@ DreamZero SGLang backend 见 :doc:`dreamzero_sglang`。Cosmos3 SGLang backend �
 **Step 4：查看结果**
 
 终端输出 ``eval/success_once``；日志见 :doc:`../reference/results`。
+
+ApxInf 推理后端
+---------------
+
+ApxInf 接入仅用于评测。先在 RLinf 运行环境中安装官方
+`ApxInf <https://github.com/infinigence/ApxInf>`_ Python 前端与 CUDA binding，
+再将 ``APXINF_PI05_MODEL_DIR`` 指向包含 ``config.json``、
+``model.safetensors``、``tokenizer.model`` 与 ``norm_stats.json`` 的 checkpoint：
+
+.. code-block:: bash
+
+   export APXINF_PI05_MODEL_DIR=/path/to/pi05_libero_base
+   bash evaluations/run_eval.sh libero libero_10_apxinf_pi05_eval
+
+该配置保持原生 OpenPI 语义：两路已经完成方向处理的 LIBERO 图像、8 维
+state、PI0.5 的无 state prompt、5 个 flow step、预测 10 步并只执行前 5 步。
+resize、tokenize、checkpoint 归一化与 action 反归一化由 RLinf 原生 OpenPI
+transforms 负责；ApxInf 的底层 ``Model.infer_rgb`` 只负责模型推理，并默认
+负责初始高斯 noise 采样。做成对数值对齐时，可设置
+``rollout.model.apxinf.noise_source=observation``，并传入显式的
+``[B,10,32]`` noise tensor。
+默认使用 10 个环境执行 10 个 rollout epoch，对 LIBERO-10 的每个任务评测
+10 个 reset state，共 100 条轨迹。
 
 .. _libero-eval-config:
 
