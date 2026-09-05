@@ -932,6 +932,18 @@ def validate_embodied_cfg(cfg):
         f"Supported embodied models: {sorted([x.value for x in EMBODIED_MODEL])}; "
         f"supported diffusion models: {sorted([x.value for x in DIFFUSION_MODELS])}."
     )
+    if not only_eval and algorithm_cfg.get("recompute_logprobs", False):
+        # The actor-side recompute reshapes logprobs by ``action_dim`` to report the
+        # gap per action, which assumes the OpenVLA family's tokenized action layout.
+        # GR00T needs no recompute: it already rescores inside its training forward.
+        assert model_type in [SupportedModel.OPENVLA, SupportedModel.OPENVLA_OFT], (
+            f"algorithm.recompute_logprobs supports "
+            f"{[SupportedModel.OPENVLA.value, SupportedModel.OPENVLA_OFT.value]}, "
+            f"got '{model_cfg.model_type}'."
+        )
+        assert algorithm_cfg.get("adv_type", None) != "opd", (
+            "algorithm.recompute_logprobs is not supported with adv_type=opd."
+        )
     with open_dict(cfg):
         cfg.runner.val_check_interval = cfg.runner.get("val_check_interval", -1)
     enable_eval = cfg.runner.val_check_interval > 0 or only_eval
