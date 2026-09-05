@@ -101,7 +101,7 @@ NO_ROOT=0
 NO_INSTALL_RLINF_CMD="--no-install-project"
 SUPPORTED_TARGETS=("embodied" "agentic" "docs")
 SUPPORTED_ENGINES=("sglang" "vllm")
-SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
+SUPPORTED_MODELS=("openvla" "openvla-oft" "openpi" "streamingvla" "gr00t" "gr00t_n1d6" "gr00t_n1d7" "dexbotic" "starvla" "lingbotvla" "dreamzero" "cosmos3" "qwen3_vl" "abot_m0" "molmoact2" "evo1" "diffusion")
 SUPPORTED_ENVS=("behavior" "maniskill_libero" "libero" "metaworld" "calvin" "isaaclab" "robocasa" "robocasa365" "franka" "franka-dexhand" "franka-franky" "frankasim" "robotwin" "habitat" "opensora" "wan" "genesis" "xsquare_turtle2" "liberopro" "liberoplus" "roboverse" "embodichain" "d4rl" "dosw1" "gim_arm" "dummy" "polaris")
 
 #=======================Utility Functions=======================
@@ -1977,6 +1977,27 @@ EOF
     uv pip uninstall pynvml || true
 }
 
+install_streamingvla_model() {
+    case "$ENV_NAME" in
+        libero)
+            create_and_sync_venv
+            install_common_embodied_deps
+            install_libero_env
+            uv pip install "rlinf-openpi==0.1.1"
+            install_flash_attn
+            ;;
+        *)
+            echo "Environment '$ENV_NAME' is not supported for StreamingVLA model. Only libero is supported." >&2
+            exit 1
+            ;;
+    esac
+
+    uv pip install -r "$SCRIPT_DIR/embodied/models/openpi.txt"
+    bash $SCRIPT_DIR/embodied/download_assets.sh --assets openpi
+    uv pip install "tokenizers>=0.21,<0.22"
+    uv pip uninstall pynvml || true
+}
+
 install_molmoact2_model() {
     case "$ENV_NAME" in
         maniskill_libero|libero)
@@ -3185,6 +3206,9 @@ main() {
                     ;;
                 openpi)
                     install_openpi_model
+                    ;;
+                streamingvla)
+                    install_streamingvla_model
                     ;;
                 molmoact2)
                     install_molmoact2_model
