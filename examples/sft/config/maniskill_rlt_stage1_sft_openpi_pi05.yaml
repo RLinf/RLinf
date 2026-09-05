@@ -41,7 +41,7 @@ actor:
   seed: 0
 
   model:
-    precision: fp32
+    precision: bf16
     model_path: "/path/to/pi05_base"
     model_type: "openpi_rlinf"
     num_action_chunks: 10
