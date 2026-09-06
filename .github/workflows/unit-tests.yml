@@ -80,7 +80,9 @@ jobs:
           uv pip install "transformers<=5.9.0"
 
       - name: Run unit tests
-        timeout-minutes: 20
+        # The ROCm runner is roughly 3x slower than the CUDA one, so the same
+        # suite needs more than the 20 minutes the other x86 jobs get.
+        timeout-minutes: 30
         run: |
           export PYTHONPATH=$(pwd):$(pwd)/tests/unit_tests:$PYTHONPATH
           source .venv/bin/activate

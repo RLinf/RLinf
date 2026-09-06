@@ -10,9 +10,9 @@ RL with IsaacLab
    :align: center
    :width: 90%
 
-   IsaacLab (image: `IsaacLab <https://developer.nvidia.com/isaac/lab>`__).
+   IsaacLab (image: `IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__).
 
-`IsaacLab <https://developer.nvidia.com/isaac/lab>`__ is NVIDIA's GPU-accelerated robot
+`IsaacLab <https://isaac-sim.github.io/IsaacLab/develop/source/overview/reinforcement-learning/rl_existing_scripts.html#rlinf>`__ is NVIDIA's GPU-accelerated robot
 learning simulator. You'll use RLinf to PPO-fine-tune GR00T N1.5 or OpenPI π₀.₅ on a
 custom Franka cube-stacking task.
 

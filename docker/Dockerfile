@@ -109,7 +109,7 @@ RUN if [ "$NO_MIRROR" != "1" ]; then \
         fi; \
     fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git vim libibverbs-dev openssh-server sudo runit runit-systemd tmux \
+    git vim libibverbs-dev liblz4-dev libzstd-dev openssh-server sudo runit runit-systemd tmux \
     build-essential python3-dev cmake pkg-config iproute2 pciutils python3 python3-pip \
     wget unzip curl
 
