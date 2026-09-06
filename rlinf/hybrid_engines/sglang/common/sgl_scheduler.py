@@ -230,7 +230,8 @@ class Scheduler(_Scheduler):
             # recv from the Megatron backend
             # Megatron use weight bucket to sync weight, the bucket length in dict of bucket 0, bucket_length
             state_dict.pop("bucket_length")
-            bucket_length = bucket_length.item()
+            if isinstance(bucket_length, torch.Tensor):
+                bucket_length = bucket_length.item()
             assert bucket_length > 0, f"bucket_length {bucket_length} is invalid"
 
         if self.is_weight_offloaded:

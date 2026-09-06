@@ -799,7 +799,7 @@ jobs:
           export UV_LINK_MODE=symlink
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
-          bash requirements/install.sh agentic --sglang 0.5.12 --torch 2.11.0 --transformers 5.6.0 --no-apex --platform nvidia --use-mirror --mbridge /workspace/dataset/Megatron-Bridge-v0.5.0
+          bash requirements/install.sh agentic
 
       - name: Train GLM-4.7-Flash with SGLang Megatron-Bridge Collocated mode
         timeout-minutes: 20
