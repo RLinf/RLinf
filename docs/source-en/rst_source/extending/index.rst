@@ -19,6 +19,12 @@ to RLinf.
 
       Add a new RL environment and wire it into the env registry.
 
+   .. grid-item-card:: Custom Environment Rewards
+      :link: custom_env_reward
+      :link-type: doc
+
+      Configure dense, hierarchical, or fully custom step rewards.
+
    .. grid-item-card:: New Model with FSDP
       :link: new_model_fsdp
       :link-type: doc
@@ -54,6 +60,7 @@ to RLinf.
 
    Extending Overview <overview>
    New Environment <new_env>
+   Custom Environment Rewards <custom_env_reward>
    New Model with FSDP <new_model_fsdp>
    New Model with Megatron <new_model_megatron>
    New SFT Model <new_model_sft>
