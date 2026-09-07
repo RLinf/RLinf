@@ -303,17 +303,16 @@ class DualFrankaEnv(gym.Env):
                 frame = camera.get_frame(timeout=_CAMERA_FRAME_TIMEOUT_S)
             except queue.Empty:
                 cached = self._last_camera_frame.get(name)
+                if cached is None:
+                    raise RuntimeError(
+                        f"Camera {name} stalled with no cached frame to fall back to."
+                    )
                 self._logger.error("Camera %s stalled; replacing.", name)
                 camera.close()
                 self._cameras[index] = create_camera(camera._camera_info)
                 self._cameras[index].open()
                 camera = self._cameras[index]
-                if cached is None:
-                    # No cached frame to fall back to; give the fresh camera
-                    # one blocking read before letting queue.Empty propagate.
-                    frame = camera.get_frame(timeout=5.0)
-                else:
-                    frame = cached
+                frame = cached
 
             color_frame, raw_depth = split_rgb_depth(camera, frame)
             raw_frames[name] = color_frame[..., ::-1].copy()
