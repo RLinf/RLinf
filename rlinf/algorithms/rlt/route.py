@@ -108,6 +108,22 @@ def _base_ref_actions(
 
 
 class RLTRoute(ABC):
+    def actor_routing_enabled(self, version: int) -> bool:
+        """Return whether a learned actor switch can take effect now."""
+        del version
+        return True
+
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        """Return whether a learned expert request can take effect now."""
+        del version, mode, expert_model
+        return False
+
     @abstractmethod
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         """Route student actions among actor, reference, and optional expert."""
@@ -153,6 +169,22 @@ class SimulatorRLTRoute(RLTRoute):
 
     def _ready_for_online(self, version: int) -> bool:
         return not self.use_schedule or int(version) >= self.warmup_updates
+
+    def actor_routing_enabled(self, version: int) -> bool:
+        return self._ready_for_online(version)
+
+    def expert_routing_enabled(
+        self,
+        version: int,
+        *,
+        mode: Literal["train", "eval"],
+        expert_model: Any | None,
+    ) -> bool:
+        return (
+            self._ready_for_online(version)
+            and mode == "train"
+            and expert_model is not None
+        )
 
     def route(self, ctx: RLTRouteContext) -> RLTRouteOutput:
         actions = ctx.student_actions

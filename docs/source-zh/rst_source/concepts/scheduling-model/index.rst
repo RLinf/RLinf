@@ -15,6 +15,8 @@
      - 共享式、分离式与混合式 placement 的权衡。
    * - :doc:`Replay Buffer <../replay_buffer>`
      - 轨迹回放缓冲区的设计与采样。
+   * - :doc:`STEAM 自动进度估计 <../steam_progress_estimation>`
+     - 自动估计任务进度，并驱动 RLT actor/expert 路由。
 
 .. toctree::
    :hidden:
@@ -22,3 +24,4 @@
    Placement <../placement>
    执行模式 <../execution_modes>
    Replay Buffer <../replay_buffer>
+   STEAM 自动进度估计 <../steam_progress_estimation>

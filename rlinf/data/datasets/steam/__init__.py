@@ -18,6 +18,7 @@ from .mixture import PairMixtureDataset
 from .pair_dataset import (
     BinaryPairDataCollator,
     PairDataset,
+    RLTChunkPairDataset,
     TrajectorySource,
 )
 
@@ -25,5 +26,6 @@ __all__ = [
     "BinaryPairDataCollator",
     "PairMixtureDataset",
     "PairDataset",
+    "RLTChunkPairDataset",
     "TrajectorySource",
 ]

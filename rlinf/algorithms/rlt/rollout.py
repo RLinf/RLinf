@@ -17,6 +17,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
+from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.algorithms.rlt.route import RLTRoute, RLTRouteContext
 from rlinf.algorithms.rlt.transition import RLT_OBS_KEYS, RLT_TRANSITION_PREFIX
 
@@ -47,6 +48,10 @@ def predict_rlt_actions(
     rlt_switch_flags: torch.Tensor | None = None,
     intervene_requested: torch.Tensor | None = None,
     expert_model: Any | None = None,
+    critical_phase_gate: Any | None = None,
+    stage_id: int = 0,
+    reset_mask: torch.Tensor | None = None,
+    update_gate: bool = True,
 ) -> tuple[torch.Tensor, dict[str, Any]]:
     with torch.no_grad():
         rlt_obs = feature_model.extract_rlt_obs(env_obs)
@@ -58,6 +63,44 @@ def predict_rlt_actions(
         if isinstance(actions, np.ndarray):
             actions = torch.from_numpy(actions)
 
+        route_switch_flags = rlt_switch_flags
+        route_intervene_requested = intervene_requested
+        if critical_phase_gate is not None and update_gate:
+            gate_decision = critical_phase_gate.step(
+                env_obs,
+                mode=mode,
+                stage_id=stage_id,
+                reset_mask=reset_mask,
+                external_actor_switch=rlt_switch_flags,
+                actor_routing_enabled=rlt_route.actor_routing_enabled(version),
+                expert_routing_enabled=rlt_route.expert_routing_enabled(
+                    version,
+                    mode=mode,
+                    expert_model=expert_model,
+                ),
+            )
+            if bool(getattr(critical_phase_gate, "controls_actor_routing", True)):
+                route_switch_flags = gate_decision.actor_switch
+            route_intervene_requested = gate_decision.expert_requested
+            result["forward_inputs"].update(
+                {
+                    key: value.detach()
+                    for key, value in gate_decision.diagnostics.items()
+                }
+            )
+            if gate_decision.phase_features is not None:
+                result["forward_inputs"][RLT_PHASE_FEATURE_KEY] = (
+                    gate_decision.phase_features
+                )
+        elif critical_phase_gate is not None:
+            result["forward_inputs"].update(
+                critical_phase_gate.empty_diagnostics(actions.shape[0])
+            )
+            if bool(getattr(critical_phase_gate, "emit_phase_features", False)):
+                result["forward_inputs"][RLT_PHASE_FEATURE_KEY] = (
+                    critical_phase_gate.empty_phase_features(actions.shape[0])
+                )
+
         route_output = rlt_route.route(
             RLTRouteContext(
                 env_obs=env_obs,
@@ -65,8 +108,8 @@ def predict_rlt_actions(
                 student_actions=actions,
                 result=result,
                 mode=mode,
-                rlt_switch_flags=rlt_switch_flags,
-                intervene_requested=intervene_requested,
+                rlt_switch_flags=route_switch_flags,
+                intervene_requested=route_intervene_requested,
                 expert_model=expert_model,
                 version=version,
             )

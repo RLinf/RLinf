@@ -17,6 +17,8 @@ import queue
 import torch
 import torch.nn.functional as F
 
+from rlinf.algorithms.rlt.rlt_steam_gate_trace import RLTGateTraceWriter
+from rlinf.algorithms.rlt.rlt_steam_phase_head import RLT_PHASE_FEATURE_KEY
 from rlinf.algorithms.rlt.transition import use_simulator_transition_replay
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -515,8 +517,13 @@ class RLTACReplayMixin:
                 for field_name in dict_fields:
                     value = flat.get(field_name)
                     if isinstance(value, dict):
+                        row_value = self._row_tensor_dict(value, idx)
+                        if field_name == "forward_inputs":
+                            row_value.pop(RLT_PHASE_FEATURE_KEY, None)
                         setattr(
-                            transition, field_name, self._row_tensor_dict(value, idx)
+                            transition,
+                            field_name,
+                            row_value,
                         )
 
                 curr_obs = self._rlt_obs_from_flat_dict(flat, "curr_obs", idx)
@@ -609,6 +616,9 @@ class RLTACReplayMixin:
         recv_list: list[Trajectory],
     ) -> tuple[int, int]:
         self._last_replay_metrics = {}
+        trace_writer = getattr(self, "rlt_gate_trace_writer", None)
+        if trace_writer is not None:
+            trace_writer.write(recv_list)
 
         if use_simulator_transition_replay(self.cfg):
             replay_list = []
@@ -673,6 +683,12 @@ class RLTACFSDPPolicy(RLTACLossMixin, RLTACReplayMixin, EmbodiedSACFSDPPolicy):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        trace_cfg = cfg.algorithm.get("rlt_gate_calibration", {}) or {}
+        self.rlt_gate_trace_writer = (
+            RLTGateTraceWriter(trace_cfg, rank=self._rank)
+            if bool(trace_cfg.get("enable", False))
+            else None
+        )
         self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
         self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
         self.transitions_since_train = 0
@@ -893,6 +909,12 @@ class AsyncRLTACFSDPPolicy(
 ):
     def __init__(self, cfg):
         super().__init__(cfg)
+        trace_cfg = cfg.algorithm.get("rlt_gate_calibration", {}) or {}
+        self.rlt_gate_trace_writer = (
+            RLTGateTraceWriter(trace_cfg, rank=self._rank)
+            if bool(trace_cfg.get("enable", False))
+            else None
+        )
         self.rlt_schedule_cfg = cfg.algorithm.get("rlt_schedule", {}) or {}
         self.use_rlt_schedule = bool(self.rlt_schedule_cfg.get("enable", False))
 
