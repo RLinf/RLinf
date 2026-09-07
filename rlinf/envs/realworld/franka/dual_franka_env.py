@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from itertools import cycle
 from typing import Any, Optional
 
-import cv2
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -31,7 +30,13 @@ from rlinf.envs.realworld.common.camera import (
     BaseCamera,
     CameraInfo,
     create_camera,
-    supports_depth,
+)
+from rlinf.envs.realworld.common.camera.camera_utils import (
+    crop_depth_frame,
+    crop_frame,
+    derive_enable_depth,
+    split_rgb_depth,
+    validate_depth_cameras,
 )
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import DualFrankaHWInfo, WorkerInfo
@@ -163,6 +168,7 @@ class DualFrankaEnv(gym.Env):
         assert len(all_serials) > 0, (
             "At least one camera serial must be provided for DualFrankaEnv."
         )
+        self._camera_infos = self._build_camera_infos()
         self._init_action_obs_spaces()
 
         if self.config.is_dummy:
@@ -185,7 +191,7 @@ class DualFrankaEnv(gym.Env):
         self._right_state = self._right_ctrl.get_state().wait()[0]
 
         # Cache of last successful frame per camera, for graceful degradation
-        # when a single camera stalls (used by _get_camera_frames).
+        # when a single camera stalls (used by _read_camera_bundle).
         self._last_camera_frame: dict[str, np.ndarray] = {}
 
         self._open_cameras()
@@ -228,15 +234,14 @@ class DualFrankaEnv(gym.Env):
     def _all_camera_serials(self) -> list[str]:
         return [serial for _, serial, _ in self._all_camera_specs()]
 
-    def _camera_infos(self) -> list[CameraInfo]:
+    def _build_camera_infos(self) -> list[CameraInfo]:
         return [
             CameraInfo(
                 name=name,
                 serial_number=serial,
                 camera_type=camera_type,
-                enable_depth=(
-                    bool(self.config.enable_camera_depth)
-                    and supports_depth(camera_type)
+                enable_depth=derive_enable_depth(
+                    camera_type, self.config.enable_camera_depth
                 ),
             )
             for name, serial, camera_type in self._all_camera_specs()
@@ -244,23 +249,15 @@ class DualFrankaEnv(gym.Env):
 
     def _depth_camera_infos(self) -> list[CameraInfo]:
         """Return depth-capable camera infos, validating the config flag."""
-        depth_camera_infos = [
-            info for info in self._camera_infos() if info.enable_depth
-        ]
-        if self.config.enable_camera_depth and not depth_camera_infos:
-            camera_types = sorted({info.camera_type for info in self._camera_infos()})
-            raise ValueError(
-                "enable_camera_depth=True, but none of the configured cameras "
-                f"support depth (camera_types={camera_types!r})."
-            )
-        return depth_camera_infos
+        validate_depth_cameras(self._camera_infos, self.config.enable_camera_depth)
+        return [info for info in self._camera_infos if info.enable_depth]
 
     def _depth_camera_names(self) -> list[str]:
         return [info.name for info in self._depth_camera_infos()]
 
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
-        for info in self._camera_infos():
+        for info in self._camera_infos:
             camera = create_camera(info)
             camera.open()
             self._cameras.append(camera)
@@ -270,59 +267,12 @@ class DualFrankaEnv(gym.Env):
             camera.close()
         self._cameras = []
 
-    def _crop_frame(
-        self, frame: np.ndarray, reshape_size: tuple[int, int]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        h, w, _ = frame.shape
-        crop_size = min(h, w)
-        start_x = (w - crop_size) // 2
-        start_y = (h - crop_size) // 2
-        cropped = frame[start_y : start_y + crop_size, start_x : start_x + crop_size]
-        resized = cv2.resize(cropped, reshape_size)
-        return cropped, resized
-
-    def _crop_depth_frame(
-        self, depth: np.ndarray, reshape_size: tuple[int, int]
-    ) -> np.ndarray:
-        """Center-crop and resize a metric depth map to the observation size."""
-        h, w = depth.shape
-        crop_size = min(h, w)
-        start_x = (w - crop_size) // 2
-        start_y = (h - crop_size) // 2
-        cropped = depth[start_y : start_y + crop_size, start_x : start_x + crop_size]
-        return cv2.resize(cropped, reshape_size, interpolation=cv2.INTER_NEAREST)
-
-    def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Return policy frames while caching synchronized raw RGB-D data."""
-        return self._read_camera_bundle()["frames"]
-
     def _get_camera_observation(
         self,
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         """Return policy frames and aligned depth maps from all cameras."""
         bundle = self._read_camera_bundle()
         return bundle["frames"], bundle["depths"]
-
-    @staticmethod
-    def _split_rgb_depth(
-        camera: BaseCamera,
-        frame: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
-        """Split a backend frame into BGR uint8 and metric depth, if present."""
-        if frame.ndim != 3 or frame.shape[-1] < 3:
-            raise ValueError(
-                f"Camera {camera._camera_info.name} returned invalid frame "
-                f"shape {frame.shape}; expected HxWxC with C>=3."
-            )
-        color = np.asarray(frame[..., :3])
-        if color.dtype != np.uint8:
-            color = np.clip(color, 0, 255).astype(np.uint8)
-        depth = None
-        if frame.shape[-1] >= 4:
-            depth = np.asarray(frame[..., 3], dtype=np.float32) * float(
-                camera.depth_scale
-            )
-        return color, depth
 
     def _camera_intrinsics(self, camera: BaseCamera) -> dict[str, object] | None:
         getter = getattr(camera, "get_color_intrinsics", None)
@@ -365,7 +315,7 @@ class DualFrankaEnv(gym.Env):
                 else:
                     frame = cached
 
-            color_frame, raw_depth = self._split_rgb_depth(camera, frame)
+            color_frame, raw_depth = split_rgb_depth(camera, frame)
             raw_frames[name] = color_frame[..., ::-1].copy()
             if raw_depth is not None:
                 raw_depths[name] = raw_depth
@@ -385,12 +335,10 @@ class DualFrankaEnv(gym.Env):
             }
 
             reshape_size = self.observation_space["frames"][name].shape[:2][::-1]
-            cropped, resized = self._crop_frame(color_frame, reshape_size)
+            cropped, resized = crop_frame(color_frame, reshape_size)
             frames[name] = resized[..., ::-1]
             if raw_depth is not None:
-                depths[name] = self._crop_depth_frame(raw_depth, reshape_size).astype(
-                    np.float32
-                )
+                depths[name] = crop_depth_frame(raw_depth, reshape_size)
             display_frames[name] = resized
             display_frames[f"{name}_full"] = cropped
             self._last_camera_frame[name] = frame

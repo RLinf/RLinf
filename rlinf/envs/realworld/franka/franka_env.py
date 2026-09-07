@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from itertools import cycle
 from typing import Any, Optional
 
-import cv2
 import gymnasium as gym
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -28,7 +27,14 @@ from rlinf.envs.realworld.common.camera import (
     BaseCamera,
     CameraInfo,
     create_camera,
-    supports_depth,
+)
+from rlinf.envs.realworld.common.camera.camera_utils import (
+    crop_bounds,
+    crop_depth_frame,
+    crop_frame,
+    derive_enable_depth,
+    split_rgb_depth,
+    validate_depth_cameras,
 )
 from rlinf.envs.realworld.common.video_player import VideoPlayer
 from rlinf.scheduler import (
@@ -596,19 +602,12 @@ class FrankaEnv(gym.Env):
         if self.config.camera_observation_size <= 0:
             raise ValueError("camera_observation_size must be positive")
 
+        validate_depth_cameras(self._camera_infos, self.config.enable_camera_depth)
         depth_camera_infos = [
             camera_info
             for camera_info in self._camera_infos
             if camera_info.enable_depth
         ]
-        if self.config.enable_camera_depth and not depth_camera_infos:
-            camera_types = sorted(
-                {camera_info.camera_type for camera_info in self._camera_infos}
-            )
-            raise ValueError(
-                "enable_camera_depth=True, but none of the configured cameras "
-                f"support depth (camera_types={camera_types!r})."
-            )
 
         observation_spaces = {
             "state": gym.spaces.Dict(
@@ -732,9 +731,8 @@ class FrankaEnv(gym.Env):
                     name=name,
                     serial_number=serial,
                     camera_type=default_camera_type,
-                    enable_depth=(
-                        bool(self.config.enable_camera_depth)
-                        and supports_depth(default_camera_type)
+                    enable_depth=derive_enable_depth(
+                        default_camera_type, self.config.enable_camera_depth
                     ),
                     crop_region=crop_region,
                 )
@@ -765,53 +763,6 @@ class FrankaEnv(gym.Env):
             camera.close()
         self._cameras = []
 
-    def _crop_frame(
-        self,
-        frame: np.ndarray,
-        reshape_size: tuple[int, int],
-        crop_region: tuple[float, float, float, float] | None = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Crop the frame and resize.
-
-        Args:
-            frame: Raw camera frame ``(H, W, C)``.
-            reshape_size: Target ``(width, height)`` after resize.
-            crop_region: Optional relative crop ``(top, left, bottom, right)``.
-                Without an explicit crop, raw resolution is preserved when
-                ``camera_resize`` is disabled.
-
-        Returns:
-            A tuple of ``(cropped_frame, resized_frame)``.
-        """
-        h, w, _ = frame.shape
-        if crop_region is not None:
-            top_pct, left_pct, bottom_pct, right_pct = crop_region
-            y1 = int(h * top_pct)
-            x1 = int(w * left_pct)
-            y2 = int(h * bottom_pct)
-            x2 = int(w * right_pct)
-            cropped_frame = frame[y1:y2, x1:x2]
-        elif self.config.camera_resize:
-            crop_size = min(h, w)
-            start_x = (w - crop_size) // 2
-            start_y = (h - crop_size) // 2
-            cropped_frame = frame[
-                start_y : start_y + crop_size, start_x : start_x + crop_size
-            ]
-        else:
-            cropped_frame = frame
-        resized_frame = (
-            cv2.resize(cropped_frame, reshape_size)
-            if self.config.camera_resize
-            else cropped_frame
-        )
-        return cropped_frame, resized_frame
-
-    def _get_camera_frames(self) -> dict[str, np.ndarray]:
-        """Get frames from all cameras."""
-        frames, _ = self._get_camera_observation()
-        return frames
-
     def _get_camera_observation(
         self,
     ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
@@ -825,13 +776,12 @@ class FrankaEnv(gym.Env):
                 reshape_size = self.observation_space["frames"][
                     camera._camera_info.name
                 ].shape[:2][::-1]
-                color_frame = np.asarray(frame[..., :3])
-                if color_frame.dtype != np.uint8:
-                    color_frame = np.clip(color_frame, 0, 255).astype(np.uint8)
-                cropped_frame, resized_frame = self._crop_frame(
+                color_frame, depth = split_rgb_depth(camera, frame)
+                cropped_frame, resized_frame = crop_frame(
                     color_frame,
                     reshape_size,
                     crop_region=camera._camera_info.crop_region,
+                    resize=self.config.camera_resize,
                 )
                 frames[camera._camera_info.name] = resized_frame[
                     ..., ::-1
@@ -843,27 +793,16 @@ class FrankaEnv(gym.Env):
                     cropped_frame  # Non-resized version
                 )
                 if camera._camera_info.enable_depth:
-                    if frame.shape[-1] <= 3:
+                    if depth is None:
                         raise RuntimeError(
                             f"Camera {camera._camera_info.name!r} did not return depth"
                         )
-                    cropped_depth = self._crop_depth_frame(
-                        frame[..., 3],
+                    depths[camera._camera_info.name] = crop_depth_frame(
+                        depth,
+                        reshape_size,
                         crop_region=camera._camera_info.crop_region,
-                        default_square_crop=self.config.camera_resize,
+                        resize=self.config.camera_resize,
                     )
-                    resized_depth = (
-                        cv2.resize(
-                            cropped_depth,
-                            reshape_size,
-                            interpolation=cv2.INTER_NEAREST,
-                        )
-                        if self.config.camera_resize
-                        else cropped_depth
-                    )
-                    depths[camera._camera_info.name] = resized_depth.astype(
-                        np.float32
-                    ) * float(camera.depth_scale)
             except queue.Empty:
                 self._logger.warning(
                     f"Camera {camera._camera_info.name} is not producing frames. Wait 5 seconds and try again."
@@ -879,7 +818,7 @@ class FrankaEnv(gym.Env):
     def get_camera_metadata(self) -> dict[str, Any]:
         """Return projection metadata matching emitted RGB-D observations."""
         cameras = {}
-        for camera in getattr(self, "_cameras", []):
+        for camera in self._cameras:
             info = camera._camera_info
             output_h, output_w = self.observation_space["frames"][info.name].shape[:2]
             intrinsics = (
@@ -913,7 +852,7 @@ class FrankaEnv(gym.Env):
         if raw_intrinsics is not None:
             raw_w = int(raw_intrinsics["width"])
             raw_h = int(raw_intrinsics["height"])
-        x1, y1, x2, y2 = self._crop_bounds(
+        x1, y1, x2, y2 = crop_bounds(
             width=raw_w,
             height=raw_h,
             crop_region=camera_info.crop_region,
@@ -955,44 +894,6 @@ class FrankaEnv(gym.Env):
             [0.0, 0.0, 1.0],
         ]
         return metadata
-
-    @staticmethod
-    def _crop_bounds(
-        *,
-        width: int,
-        height: int,
-        crop_region: tuple[float, float, float, float] | None = None,
-        default_square_crop: bool = True,
-    ) -> tuple[int, int, int, int]:
-        if crop_region is not None:
-            top, left, bottom, right = crop_region
-            return (
-                int(width * left),
-                int(height * top),
-                int(width * right),
-                int(height * bottom),
-            )
-        if not default_square_crop:
-            return 0, 0, int(width), int(height)
-        crop_size = min(height, width)
-        x1 = (width - crop_size) // 2
-        y1 = (height - crop_size) // 2
-        return x1, y1, x1 + crop_size, y1 + crop_size
-
-    @classmethod
-    def _crop_depth_frame(
-        cls,
-        depth: np.ndarray,
-        crop_region: tuple[float, float, float, float] | None = None,
-        default_square_crop: bool = True,
-    ) -> np.ndarray:
-        x1, y1, x2, y2 = cls._crop_bounds(
-            width=depth.shape[1],
-            height=depth.shape[0],
-            crop_region=crop_region,
-            default_square_crop=default_square_crop,
-        )
-        return depth[y1:y2, x1:x2]
 
     # Robot actions
 
