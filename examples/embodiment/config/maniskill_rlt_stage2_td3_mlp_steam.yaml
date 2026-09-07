@@ -250,7 +250,7 @@ rollout:
 
   rlt_feature_model:
     model_type: "openpi_rlinf"
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_1000/actor"
+    model_path: "/path/to/rlt_feature_model/checkpoints/global_step_<step>/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: ${actor.model.action_dim}
@@ -297,7 +297,7 @@ rollout:
     actor_switch:
       enable: True
       mode: active
-      phase_head_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/data/steam_phase_head.pt"
+      phase_head_path: "/path/to/steam_phase_head.pt"
       # Keep frozen STEAM features in calibration traces so the phase head can
       # be recalibrated without changing the active routing path.
       collect_phase_features: True
@@ -318,13 +318,13 @@ rollout:
       latch_until_done: True
     model:
       model_type: "steam_value_model"
-      model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/steam_sft/rlt_steam_value_model_sft-20260813-10:01:45/rlt_steam_value_model_sft/checkpoints/global_step_2000/actor"
+      model_path: "/path/to/steam_value_model/checkpoints/global_step_<step>/actor"
       precision: bf16
 
   # The simulation expert is invoked by the learned actor-to-expert gate.
   expert_model:
     model_type: "openpi_rlinf"
-    model_path: "/mnt/public2/xiekaizhi/rlt-openpi-sim/tests/RLinf-dev/logs/20260804-16:28:10-maniskill_rlt_stage1_sft_openpi_pi05/maniskill_rlt_stage1_sft_openpi_pi05/checkpoints/global_step_3000/actor"
+    model_path: "/path/to/expert_model/checkpoints/global_step_<step>/actor"
     precision: bf16
     num_action_chunks: 10
     action_dim: 8
