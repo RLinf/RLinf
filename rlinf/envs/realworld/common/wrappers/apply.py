@@ -101,7 +101,11 @@ def apply_single_arm_wrappers(env: gym.Env, cfg: Mapping[str, Any]) -> gym.Env:
     )
     is_dex_hand = end_effector_type.endswith("hand")
 
-    no_gripper = cfg.get("no_gripper", True)
+    no_gripper = bool(cfg.get("no_gripper", True))
+    # Propagate so task go_to_rest / binary gripper honor the same flag.
+    unwrapped = getattr(env, "unwrapped", env)
+    if hasattr(unwrapped, "config"):
+        unwrapped.config.no_gripper = no_gripper
     if no_gripper and not is_dex_hand:
         env = GripperCloseEnv(env)
 

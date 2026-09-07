@@ -71,6 +71,10 @@ class RealWorldEnv(gym.Env):
         if worker_info is not None and env_idx < len(worker_info.hardware_infos):
             hardware_info = worker_info.hardware_infos[env_idx]
         override_cfg = copy.deepcopy(self.override_cfg)
+        # Propagate top-level teleop flag into the task config so go_to_rest
+        # can skip gripper open/close when no_gripper=True.
+        if "no_gripper" not in override_cfg:
+            override_cfg["no_gripper"] = bool(self.cfg.get("no_gripper", False))
         env = gym.make(
             id=self.cfg.init_params.id,
             override_cfg=override_cfg,

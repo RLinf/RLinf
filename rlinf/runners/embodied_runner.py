@@ -138,6 +138,19 @@ class EmbodiedRunner:
                 print(f"Logging error: {e}")
                 continue
 
+    def _should_print_metrics_table(self, displayed_step: int, start_step: int = 0) -> bool:
+        """Whether to render the Metric Table for this Global Step.
+
+        ``runner.log_interval`` defaults to 1 (every step). The first step after
+        start is always printed so a resumed run still shows an immediate snapshot.
+        """
+        log_interval = int(self.cfg.runner.get("log_interval", 1) or 1)
+        if log_interval < 1:
+            log_interval = 1
+        if displayed_step == start_step + 1:
+            return True
+        return displayed_step % log_interval == 0
+
     def print_metrics_table_async(
         self,
         step: int,
@@ -147,6 +160,9 @@ class EmbodiedRunner:
         start_step: int = 0,
     ):
         """Async version that puts table printing in queue."""
+        # ``print_metrics_table`` displays ``step + 1`` as Global Step.
+        if not self._should_print_metrics_table(step + 1, start_step):
+            return
         self.log_queue.put(
             (
                 print_metrics_table,
