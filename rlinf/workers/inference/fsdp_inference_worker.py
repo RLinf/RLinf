@@ -68,7 +68,10 @@ class FSDPInference(FSDPActor):
         if (
             self.kl_beta > 0 or self.reinpp_kl_beta > 0
         ) and self.combine_reference_model:
-            ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model[0])
+            ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+                self,
+                is_fsdp=True,
+            )
         self.ref_policy_state_dict = ref_policy_state_dict
 
     @torch.no_grad()
