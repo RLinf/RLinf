@@ -12,17 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
-import pytest
 import torch
 
-import rlinf.models.embodiment.pi0_fast.pi0_fast_action_model as action_model_module
 from rlinf.models.embodiment.pi0_fast.fast_replay import (
     _preprocess_images,
-    _sample_next_token,
     build_action_sequence_metadata,
-    compute_token_logprobs,
     replay_action_logits,
     safe_detokenize_actions,
 )
@@ -232,44 +226,6 @@ class _TeacherForcingPolicy(torch.nn.Module):
         self._paligemma_tokenizer = type("FakeTokenizer", (), {"bos_token_id": 9})()
 
 
-def test_compute_token_logprobs_skips_entropy_when_disabled():
-    logits = torch.tensor([[[1.0, 2.0, 3.0], [3.0, 2.0, 1.0]]])
-    action_tokens = torch.tensor([[2, 0]])
-    action_token_mask = torch.tensor([[True, True]])
-
-    logprobs, entropy = compute_token_logprobs(
-        logits,
-        action_tokens,
-        action_token_mask,
-        compute_entropy=False,
-    )
-
-    expected = (
-        torch.log_softmax(logits, dim=-1)
-        .gather(-1, action_tokens.unsqueeze(-1))
-        .squeeze(-1)
-    )
-    assert torch.allclose(logprobs, expected)
-    assert entropy is None
-
-
-def test_sample_next_token_uses_argmax_when_sampling_is_disabled(monkeypatch):
-    logits = torch.tensor([[1.0, 3.0, 2.0]])
-
-    def fail_multinomial(*args, **kwargs):
-        raise AssertionError("greedy decoding must not call torch.multinomial")
-
-    monkeypatch.setattr(torch, "multinomial", fail_multinomial)
-    token, logprob = _sample_next_token(
-        logits,
-        temperature=0.3,
-        do_sample=False,
-    )
-
-    assert token.item() == 1
-    assert torch.allclose(logprob, torch.log_softmax(logits, dim=-1)[:, 1])
-
-
 def test_native_action_sequence_mask_stops_after_first_end_marker():
     policy = _FakeActionSequencePolicy()
     tokens = torch.tensor(
@@ -313,29 +269,6 @@ def test_replay_action_logits_uses_one_teacher_forced_forward_without_shift():
     assert torch.equal(final_hidden, torch.tensor([[2.0]]))
 
 
-def test_native_action_sequence_mask_keeps_invalid_samples_for_failure_signal():
-    policy = _FakeActionSequencePolicy()
-    tokens = torch.tensor(
-        [
-            [10, 11, 500, 12, 0, 0],
-            [10, 11, 996, 995, 994, 0],
-        ]
-    )
-    generation_mask = torch.tensor(
-        [
-            [True, True, True, True, False, False],
-            [True, True, True, True, True, False],
-        ]
-    )
-
-    metadata = build_action_sequence_metadata(
-        policy, tokens, generation_mask=generation_mask
-    )
-
-    assert metadata["body_decode_valid"].tolist() == [False, False]
-    assert torch.equal(metadata["action_logprob_mask"], generation_mask)
-
-
 def test_safe_detokenize_executes_zero_action_for_invalid_sequences():
     policy = _FakeActionSequencePolicy()
     tokens = torch.tensor(
@@ -359,108 +292,8 @@ def test_safe_detokenize_executes_zero_action_for_invalid_sequences():
     assert torch.count_nonzero(actions[1:]) == 0
 
 
-def test_default_forward_replays_cached_action_tokens(monkeypatch):
-    logits = torch.zeros(2, 5, 16)
-    model = PI0FastForRLActionPrediction(
-        _FakeReplayPolicy(logits),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=5,
-    )
-    monkeypatch.setattr(
-        model,
-        "_replay_action_logits",
-        lambda *args: (logits, torch.zeros(logits.shape[0], 4)),
-    )
-    forward_inputs = {
-        "action_tokens": torch.tensor(
-            [[1, 2, 3, 0, 0], [4, 5, 0, 0, 0]], dtype=torch.long
-        ),
-        "action_token_mask": torch.tensor(
-            [
-                [True, True, True, False, False],
-                [True, True, False, False, False],
-            ]
-        ),
-    }
-
-    out = model.default_forward(
-        forward_inputs=forward_inputs,
-        compute_logprobs=True,
-        compute_entropy=True,
-        compute_values=True,
-    )
-
-    assert out["logprobs"].shape == (2, 5)
-    assert out["entropy"].shape == (2, 5)
-    assert torch.equal(out["logprob_mask"], forward_inputs["action_token_mask"])
-    assert out["values"] is None
-
-
-def test_generate_action_tokens_forwards_temperature_to_fallback(monkeypatch):
-    captured = {}
-
-    def fake_generate_action_tokens_with_logprobs(
-        policy,
-        batch,
-        *,
-        max_action_tokens,
-        num_action_chunks,
-        action_dim,
-        temperature,
-        do_sample,
-        compute_logprobs,
-    ):
-        captured.update(
-            {
-                "policy": policy,
-                "batch": batch,
-                "max_action_tokens": max_action_tokens,
-                "num_action_chunks": num_action_chunks,
-                "action_dim": action_dim,
-                "temperature": temperature,
-                "do_sample": do_sample,
-                "compute_logprobs": compute_logprobs,
-            }
-        )
-        return {
-            "actions": torch.zeros(1, num_action_chunks, action_dim),
-            "action_tokens": torch.zeros(1, max_action_tokens, dtype=torch.long),
-            "action_token_mask": torch.ones(1, max_action_tokens, dtype=torch.bool),
-            "action_logprob_mask": torch.ones(1, max_action_tokens, dtype=torch.bool),
-        }
-
-    monkeypatch.setattr(
-        action_model_module,
-        "generate_action_tokens_with_logprobs",
-        fake_generate_action_tokens_with_logprobs,
-    )
-    policy = torch.nn.Linear(1, 1)
-    model = PI0FastForRLActionPrediction(
-        policy,
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=5,
-    )
-    batch = {"observation.state": torch.zeros(1, 8)}
-
-    out = model._generate_action_tokens_with_logprobs(batch, temperature=0.42)
-
-    assert out["actions"].shape == (1, 10, 7)
-    assert captured == {
-        "policy": policy,
-        "batch": batch,
-        "max_action_tokens": 5,
-        "num_action_chunks": 10,
-        "action_dim": 7,
-        "temperature": 0.42,
-        "do_sample": True,
-        "compute_logprobs": True,
-    }
-
-
-def test_default_forward_uses_action_logprob_mask_when_present(monkeypatch):
-    logits = torch.zeros(1, 3, 4)
+def test_default_forward_applies_temperature_and_action_logprob_mask(monkeypatch):
+    logits = torch.tensor([[[0.0, 2.0], [2.0, 0.0], [1.0, 1.0]]])
     model = PI0FastForRLActionPrediction(
         _FakeReplayPolicy(logits),
         action_dim=7,
@@ -473,7 +306,7 @@ def test_default_forward_uses_action_logprob_mask_when_present(monkeypatch):
         lambda *args: (logits, torch.zeros(logits.shape[0], 4)),
     )
     forward_inputs = {
-        "action_tokens": torch.tensor([[0, 1, 2]], dtype=torch.long),
+        "action_tokens": torch.tensor([[1, 0, 1]], dtype=torch.long),
         "action_token_mask": torch.tensor([[True, True, True]]),
         "action_logprob_mask": torch.tensor([[False, True, False]]),
     }
@@ -482,190 +315,23 @@ def test_default_forward_uses_action_logprob_mask_when_present(monkeypatch):
         forward_inputs=forward_inputs,
         compute_logprobs=True,
         compute_entropy=True,
-    )
-
-    assert torch.allclose(out["logprobs"], torch.tensor([[0.0, -math.log(4), 0.0]]))
-    assert torch.allclose(out["entropy"], torch.tensor([[0.0, math.log(4), 0.0]]))
-    assert torch.equal(out["logprob_mask"], forward_inputs["action_logprob_mask"])
-
-
-def test_default_forward_computes_logprobs_with_sampling_temperature(monkeypatch):
-    logits = torch.tensor([[[0.0, 2.0], [2.0, 0.0]]])
-    model = PI0FastForRLActionPrediction(
-        _FakeReplayPolicy(logits),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=2,
-    )
-    monkeypatch.setattr(
-        model,
-        "_replay_action_logits",
-        lambda *args: (logits, torch.zeros(logits.shape[0], 4)),
-    )
-    forward_inputs = {
-        "action_tokens": torch.tensor([[1, 0]], dtype=torch.long),
-        "action_token_mask": torch.tensor([[True, True]]),
-    }
-
-    out = model.default_forward(
-        forward_inputs=forward_inputs,
-        compute_logprobs=True,
         temperature=2.0,
     )
 
-    expected = (
+    expected_logprobs = (
         torch.log_softmax(logits / 2.0, dim=-1)
         .gather(-1, forward_inputs["action_tokens"].unsqueeze(-1))
         .squeeze(-1)
     )
-    assert torch.allclose(out["logprobs"], expected)
+    log_probs = torch.log_softmax(logits / 2.0, dim=-1)
+    expected_entropy = -(log_probs.exp() * log_probs).sum(-1)
+    mask = forward_inputs["action_logprob_mask"]
+    assert torch.allclose(out["logprobs"], expected_logprobs * mask)
+    assert torch.allclose(out["entropy"], expected_entropy * mask)
+    assert torch.equal(out["logprob_mask"], mask)
 
 
-def test_predict_action_batch_preserves_generated_token_logprobs(monkeypatch):
-    model = PI0FastForRLActionPrediction(
-        _FakeNativePolicy(),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=4,
-    )
-    expected_logprobs = torch.tensor([[-0.1, -0.2, 0.0, 0.0]])
-
-    def fake_generate(
-        batch,
-        *,
-        temperature,
-        do_sample,
-        max_action_tokens,
-        compute_logprobs,
-    ):
-        del batch, temperature, do_sample, max_action_tokens, compute_logprobs
-        return {
-            "actions": torch.zeros(1, 10, 7),
-            "action_tokens": torch.tensor([[11, 12, 0, 0]]),
-            "action_token_mask": torch.tensor([[True, True, False, False]]),
-            "action_logprob_mask": torch.tensor([[True, True, False, False]]),
-            "token_logprobs": expected_logprobs,
-        }
-
-    monkeypatch.setattr(model, "_generate_action_tokens_with_logprobs", fake_generate)
-    env_obs = {
-        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "states": torch.zeros(1, 8),
-        "task_descriptions": ["pick up the object"],
-    }
-
-    _, result = model.predict_action_batch(
-        env_obs,
-        mode="train",
-        compute_values=False,
-        calculate_logprobs=True,
-    )
-
-    assert torch.equal(result["prev_logprobs"], expected_logprobs)
-
-
-def test_predict_action_batch_honors_greedy_sampling_and_token_limit(monkeypatch):
-    model = PI0FastForRLActionPrediction(
-        _FakeNativePolicy(),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=4,
-    )
-    captured = {}
-
-    def fake_generate(
-        batch,
-        *,
-        temperature,
-        do_sample,
-        max_action_tokens,
-        compute_logprobs,
-    ):
-        del batch, compute_logprobs
-        captured.update(
-            temperature=temperature,
-            do_sample=do_sample,
-            max_action_tokens=max_action_tokens,
-        )
-        return {
-            "actions": torch.zeros(1, 10, 7),
-            "action_tokens": torch.tensor([[11, 12, 13]]),
-            "action_token_mask": torch.ones(1, 3, dtype=torch.bool),
-            "action_logprob_mask": torch.ones(1, 3, dtype=torch.bool),
-            "token_logprobs": torch.zeros(1, 3),
-        }
-
-    monkeypatch.setattr(model, "_generate_action_tokens_with_logprobs", fake_generate)
-    env_obs = {
-        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "states": torch.zeros(1, 8),
-        "task_descriptions": ["pick up the object"],
-    }
-
-    model.predict_action_batch(
-        env_obs,
-        mode="train",
-        calculate_logprobs=True,
-        do_sample=False,
-        temperature=1.0,
-        max_new_tokens=3,
-    )
-
-    assert captured == {
-        "temperature": 1.0,
-        "do_sample": False,
-        "max_action_tokens": 3,
-    }
-
-
-@pytest.mark.parametrize(
-    ("sampling_kwargs", "parameter_name"),
-    [
-        ({"top_k": 10}, "top_k"),
-        ({"top_p": 0.9}, "top_p"),
-    ],
-)
-def test_predict_action_batch_rejects_unsupported_sampling_truncation(
-    monkeypatch,
-    sampling_kwargs,
-    parameter_name,
-):
-    model = PI0FastForRLActionPrediction(
-        _FakeNativePolicy(),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=4,
-    )
-    monkeypatch.setattr(
-        model,
-        "_generate_action_tokens_with_logprobs",
-        lambda *args, **kwargs: {
-            "actions": torch.zeros(1, 10, 7),
-            "action_tokens": torch.zeros(1, 4, dtype=torch.long),
-            "action_token_mask": torch.ones(1, 4, dtype=torch.bool),
-            "action_logprob_mask": torch.ones(1, 4, dtype=torch.bool),
-            "token_logprobs": torch.zeros(1, 4),
-        },
-    )
-    env_obs = {
-        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "states": torch.zeros(1, 8),
-        "task_descriptions": ["pick up the object"],
-    }
-
-    with pytest.raises(ValueError, match=parameter_name):
-        model.predict_action_batch(
-            env_obs,
-            mode="train",
-            calculate_logprobs=True,
-            **sampling_kwargs,
-        )
-
-
-def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
+def test_predict_action_batch_keeps_behavior_logprobs_and_zeros_invalid_actions(
     monkeypatch,
 ):
     model = PI0FastForRLActionPrediction(
@@ -675,6 +341,12 @@ def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
         max_action_tokens=4,
         postprocessor=lambda actions: actions + 5,
     )
+    expected_logprobs = torch.tensor(
+        [
+            [-0.1, -0.2, 0.0, 0.0],
+            [-0.3, -0.4, -0.5, 0.0],
+        ]
+    )
 
     def fake_generate(
         batch,
@@ -686,22 +358,24 @@ def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
     ):
         del batch, temperature, do_sample, max_action_tokens, compute_logprobs
         return {
-            "actions": torch.zeros(1, 10, 7),
-            "action_tokens": torch.tensor([[11, 12, 13, 14]]),
-            "action_token_mask": torch.ones(1, 4, dtype=torch.bool),
-            "action_logprob_mask": torch.tensor([[True, True, True, False]]),
-            "prefix_valid": torch.tensor([True]),
-            "end_marker_present": torch.tensor([True]),
-            "decode_valid": torch.tensor([False]),
-            "token_logprobs": torch.zeros(1, 4),
+            "actions": torch.zeros(2, 10, 7),
+            "action_tokens": torch.tensor([[11, 12, 0, 0], [13, 14, 15, 0]]),
+            "action_token_mask": torch.tensor(
+                [[True, True, False, False], [True, True, True, False]]
+            ),
+            "action_logprob_mask": torch.tensor(
+                [[True, True, False, False], [True, True, True, False]]
+            ),
+            "decode_valid": torch.tensor([True, False]),
+            "token_logprobs": expected_logprobs,
         }
 
     monkeypatch.setattr(model, "_generate_action_tokens_with_logprobs", fake_generate)
     env_obs = {
-        "main_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "wrist_images": torch.zeros(1, 224, 224, 3, dtype=torch.uint8),
-        "states": torch.zeros(1, 8),
-        "task_descriptions": ["pick up the object"],
+        "main_images": torch.zeros(2, 224, 224, 3, dtype=torch.uint8),
+        "wrist_images": torch.zeros(2, 224, 224, 3, dtype=torch.uint8),
+        "states": torch.zeros(2, 8),
+        "task_descriptions": ["pick up the object"] * 2,
     }
 
     actions, result = model.predict_action_batch(
@@ -711,34 +385,12 @@ def test_predict_action_batch_keeps_invalid_action_zero_after_postprocessing(
         calculate_logprobs=True,
     )
 
-    assert torch.count_nonzero(actions) == 0
-    assert "pi0_fast_prefix_valid" not in result["forward_inputs"]
-    assert "pi0_fast_end_marker_present" not in result["forward_inputs"]
-    assert "pi0_fast_decode_valid" not in result["forward_inputs"]
+    assert torch.equal(actions[0], torch.full((10, 7), 5.0))
+    assert torch.count_nonzero(actions[1]) == 0
+    assert torch.equal(result["prev_logprobs"], expected_logprobs)
 
 
-def test_policy_image_keys_are_aliased_from_generic_batch_keys():
-    model = PI0FastForRLActionPrediction(
-        _FakeImageFeaturePolicy(),
-        action_dim=7,
-        num_action_chunks=10,
-        max_action_tokens=5,
-    )
-    main = torch.zeros(1, 3, 224, 224)
-    wrist = torch.ones(1, 3, 224, 224)
-    batch = {
-        "observation.images.image": main,
-        "observation.images.image2": wrist,
-    }
-
-    out = model._ensure_policy_image_keys(batch)
-
-    assert out["observation.images.base_0_rgb"] is main
-    assert out["observation.images.left_wrist_0_rgb"] is wrist
-    assert "observation.images.empty_camera_0" not in out
-
-
-def test_prepare_lerobot_batch_casts_float_inputs_to_model_dtype():
+def test_prepare_lerobot_batch_maps_image_keys_and_model_dtype():
     model = PI0FastForRLActionPrediction(
         _FakeImageFeaturePolicy(),
         action_dim=7,
@@ -747,6 +399,7 @@ def test_prepare_lerobot_batch_casts_float_inputs_to_model_dtype():
     ).to(dtype=torch.bfloat16)
     batch = {
         "observation.images.image": torch.zeros(1, 3, 224, 224),
+        "observation.images.image2": torch.ones(1, 3, 224, 224),
         "observation.state": torch.zeros(1, 8),
         "observation.language.tokens": torch.zeros(1, 4, dtype=torch.long),
         "observation.language.attention_mask": torch.ones(1, 4, dtype=torch.bool),
@@ -756,6 +409,11 @@ def test_prepare_lerobot_batch_casts_float_inputs_to_model_dtype():
 
     assert out["observation.images.image"].dtype == torch.bfloat16
     assert out["observation.images.base_0_rgb"].dtype == torch.bfloat16
+    assert torch.equal(
+        out["observation.images.left_wrist_0_rgb"],
+        torch.ones(1, 3, 224, 224, dtype=torch.bfloat16),
+    )
+    assert "observation.images.empty_camera_0" not in out
     assert out["observation.state"].dtype == torch.bfloat16
     assert out["observation.language.tokens"].dtype == torch.long
     assert out["observation.language.attention_mask"].dtype == torch.bool

@@ -15,10 +15,10 @@
 import pytest
 import torch
 
+from rlinf.config import validate_fp32_master_adamw_config
 from rlinf.hybrid_engines.fsdp.optim import (
     FP32MasterAdamW,
     build_adamw,
-    validate_fp32_master_adamw_config,
 )
 
 
@@ -170,11 +170,10 @@ def test_fp32_master_adamw_matches_torch_adamw_for_fp32_parameters():
     assert "fp32_master_param" not in actual_optimizer.state[actual]
 
 
-@pytest.mark.parametrize("sharding_strategy", ["no_shard", "full_shard"])
-def test_fp32_master_config_accepts_fsdp1_lora(sharding_strategy):
+def test_fp32_master_config_accepts_fsdp1_lora_no_shard():
     validate_fp32_master_adamw_config(
         strategy="fsdp",
-        sharding_strategy=sharding_strategy,
+        sharding_strategy="no_shard",
         is_lora=True,
     )
 
@@ -184,6 +183,7 @@ def test_fp32_master_config_accepts_fsdp1_lora(sharding_strategy):
     [
         ("fsdp2", "no_shard", True),
         ("fsdp2", "full_shard", True),
+        ("fsdp", "full_shard", True),
         ("fsdp", "shard_grad_op", True),
         ("fsdp", "no_shard", False),
         ("fsdp", "full_shard", False),
