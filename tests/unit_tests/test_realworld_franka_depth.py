@@ -17,13 +17,18 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-pytest.importorskip("cv2")
 
-from rlinf.envs.realworld.common.camera import CameraInfo
-from rlinf.envs.realworld.franka.franka_env import FrankaEnv
+def _load_realworld():
+    """Import the cv2-dependent realworld symbols, skipping without OpenCV."""
+    pytest.importorskip("cv2")
+    from rlinf.envs.realworld.common.camera import CameraInfo
+    from rlinf.envs.realworld.franka.franka_env import FrankaEnv
+
+    return CameraInfo, FrankaEnv
 
 
 def _build_franka_space(camera_infos):
+    _, FrankaEnv = _load_realworld()
     env = object.__new__(FrankaEnv)
     env.config = SimpleNamespace(
         camera_observation_size=8,
@@ -39,6 +44,7 @@ def _build_franka_space(camera_infos):
 
 
 def test_franka_depth_space_only_contains_depth_capable_cameras():
+    CameraInfo, _ = _load_realworld()
     env = _build_franka_space(
         [
             CameraInfo(
@@ -53,6 +59,7 @@ def test_franka_depth_space_only_contains_depth_capable_cameras():
 
 
 def test_franka_depth_requires_a_depth_capable_camera():
+    CameraInfo, _ = _load_realworld()
     with pytest.raises(
         ValueError, match="none of the configured cameras support depth"
     ):
