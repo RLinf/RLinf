@@ -320,7 +320,7 @@ class DualFrankaEnv(gym.Env):
         depth = None
         if frame.shape[-1] >= 4:
             depth = np.asarray(frame[..., 3], dtype=np.float32) * float(
-                getattr(camera, "depth_scale", 1.0)
+                camera.depth_scale
             )
         return color, depth
 
@@ -381,7 +381,7 @@ class DualFrankaEnv(gym.Env):
                 "depth_available": raw_depth is not None,
                 "depth_unit": "m" if raw_depth is not None else None,
                 "color_intrinsics": intrinsics,
-                "depth_scale": float(getattr(camera, "depth_scale", 1.0)),
+                "depth_scale": float(camera.depth_scale),
             }
 
             reshape_size = self.observation_space["frames"][name].shape[:2][::-1]

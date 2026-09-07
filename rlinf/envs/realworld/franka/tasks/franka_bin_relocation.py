@@ -172,17 +172,18 @@ class FrankaBinRelocationEnv(FrankaEnv):
             )
         return pose
 
-    def _crop_frame(self, name, image):
-        """Crop realsense images to be a square."""
+    def _crop_task_frame(self, image):
+        """Crop realsense images to a square for this task."""
         return image[:, 80:560, :]
 
-    def _get_camera_frames(self):
+    def _get_camera_observation(self):
+        """Override the single-read extension point; this task has no depth."""
         images = {}
         display_images = {}
         for camera in self._cameras:
             try:
                 rgb = camera.get_frame()
-                cropped_rgb = self._crop_frame(camera.name, rgb)
+                cropped_rgb = self._crop_task_frame(rgb)
                 resized = cv2.resize(
                     cropped_rgb,
                     self.observation_space["frames"][camera.name].shape[:2][::-1],
@@ -199,10 +200,10 @@ class FrankaBinRelocationEnv(FrankaEnv):
                 time.sleep(5)
                 camera.close()
                 self._open_cameras()
-                return self._get_camera_frames()
+                return self._get_camera_observation()
 
         self.camera_player.put_frame(display_images)
-        return images
+        return images, {}
 
     def task_graph(self, obs=None):
         if obs is None:

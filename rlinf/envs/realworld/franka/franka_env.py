@@ -863,7 +863,7 @@ class FrankaEnv(gym.Env):
                     )
                     depths[camera._camera_info.name] = resized_depth.astype(
                         np.float32
-                    ) * float(getattr(camera, "depth_scale", 1.0))
+                    ) * float(camera.depth_scale)
             except queue.Empty:
                 self._logger.warning(
                     f"Camera {camera._camera_info.name} is not producing frames. Wait 5 seconds and try again."
@@ -891,7 +891,7 @@ class FrankaEnv(gym.Env):
                 camera_info=info,
                 raw_intrinsics=intrinsics,
                 output_size=(int(output_w), int(output_h)),
-                depth_scale=float(getattr(camera, "depth_scale", 1.0)),
+                depth_scale=float(camera.depth_scale),
             )
         return {
             "source": "rlinf_franka_env",

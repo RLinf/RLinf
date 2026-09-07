@@ -60,6 +60,7 @@ class BaseCamera(ABC):
             target=self._capture_frames, daemon=True
         )
         self._frame_capturing_start = False
+        self.depth_scale = 1.0
 
     @property
     def name(self) -> str:

@@ -78,6 +78,7 @@ class ZEDCamera(BaseCamera):
         self._image = sl.Mat()
         self._depth = sl.Mat() if camera_info.enable_depth else None
         self._runtime_params = sl.RuntimeParameters()
+        self.depth_scale = 0.001
 
     def _read_frame(self) -> tuple[bool, Optional[np.ndarray]]:
         if self._camera.grab(self._runtime_params) != self._sl.ERROR_CODE.SUCCESS:
