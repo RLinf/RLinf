@@ -408,13 +408,9 @@ TCP-to-target distance instead of rewards as the trend signal:
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ"
 
-Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose. To obtain it:
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_franka_controller
-
-Move the robot arm to the target position using SpaceMouse; the current TCP pose is printed to the terminal. If you only need position values, pass ``X,Y,Z`` (3 values) — orientation is ignored.
+Replace ``X,Y,Z,RX,RY,RZ`` with your task target pose. To obtain it, follow
+:doc:`Prerequisites on the Franka Real-World RL page <franka>`. If you only need
+position values, pass ``X,Y,Z`` (3 values); orientation is ignored.
 
 Output directory structure:
 

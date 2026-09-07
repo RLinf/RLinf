@@ -391,13 +391,9 @@ Qwen VLM Reward Model（动作趋势判断）
        --window-size 5 \
        --target-ee-pose "X,Y,Z,RX,RY,RZ"
 
-``X,Y,Z,RX,RY,RZ`` 替换为你的任务目标位姿。获取方式：
-
-.. code-block:: bash
-
-   python -m toolkits.realworld_check.test_franka_controller
-
-将机械臂移动到目标位置后，终端会打印当前 TCP 位姿。只需位置时可填入 ``X,Y,Z`` （3 个值），方向被忽略。
+将 ``X,Y,Z,RX,RY,RZ`` 替换为你的任务目标位姿。获取目标位姿的方法请参见
+:doc:`Franka Real-World RL 页面的“前置准备” <franka>`。只需位置时可填入
+``X,Y,Z``\ （3 个值），方向将被忽略。
 
 输出目录结构：
 
