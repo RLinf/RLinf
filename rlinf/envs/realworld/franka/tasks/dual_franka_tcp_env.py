@@ -91,7 +91,6 @@ class DualFrankaTCPEnv(DualFrankaEnv):
         act_high = np.concatenate([left_high, right_high]).astype(np.float32)
         self.action_space = gym.spaces.Box(act_low, act_high)
 
-        camera_specs = self._all_camera_specs()
         spaces: dict[str, gym.spaces.Space] = {
             "state": gym.spaces.Dict(
                 {
@@ -103,22 +102,8 @@ class DualFrankaTCPEnv(DualFrankaEnv):
                     ),
                 }
             ),
-            "frames": gym.spaces.Dict(
-                {
-                    name: gym.spaces.Box(0, 255, shape=(224, 224, 3), dtype=np.uint8)
-                    for name, _, _ in camera_specs
-                }
-            ),
+            **self._build_camera_spaces(),
         }
-        if self.config.enable_camera_depth:
-            spaces["depths"] = gym.spaces.Dict(
-                {
-                    name: gym.spaces.Box(
-                        0.0, np.inf, shape=(224, 224), dtype=np.float32
-                    )
-                    for name in self._depth_camera_names()
-                }
-            )
         self.observation_space = gym.spaces.Dict(spaces)
 
     # --------------------------------------------------------- step dispatch

@@ -29,10 +29,11 @@ from rlinf.envs.realworld.common.camera import (
     create_camera,
 )
 from rlinf.envs.realworld.common.camera.camera_utils import (
-    crop_bounds,
+    camera_projection_metadata,
     crop_depth_frame,
     crop_frame,
     derive_enable_depth,
+    observation_hw,
     split_rgb_depth,
     validate_depth_cameras,
 )
@@ -204,6 +205,9 @@ class FrankaEnv(gym.Env):
             self._setup_reward_worker()
 
         self._camera_infos = self._build_camera_infos()
+        # Cache of last successful frame per camera, for graceful recovery
+        # when a single camera stalls (used by _get_camera_observation).
+        self._last_camera_frame: dict[str, np.ndarray] = {}
 
         # Init action and observation spaces
         assert self._camera_infos, (
@@ -651,15 +655,11 @@ class FrankaEnv(gym.Env):
         self._base_observation_space = copy.deepcopy(self.observation_space)
 
     def _camera_observation_hw(self, camera_info: CameraInfo) -> tuple[int, int]:
-        if self.config.camera_resize:
-            size = int(self.config.camera_observation_size)
-            return size, size
-        width, height = camera_info.resolution
-        if camera_info.crop_region is not None:
-            top, left, bottom, right = camera_info.crop_region
-            height = int(height * bottom) - int(height * top)
-            width = int(width * right) - int(width * left)
-        return int(height), int(width)
+        return observation_hw(
+            camera_info,
+            resize=self.config.camera_resize,
+            size=int(self.config.camera_observation_size),
+        )
 
     @staticmethod
     def _normalize_crop_region(
@@ -770,47 +770,45 @@ class FrankaEnv(gym.Env):
         frames = {}
         depths = {}
         display_frames = {}
-        for camera in self._cameras:
+        for index, camera in enumerate(self._cameras):
+            name = camera._camera_info.name
             try:
                 frame = camera.get_frame()
-                reshape_size = self.observation_space["frames"][
-                    camera._camera_info.name
-                ].shape[:2][::-1]
-                color_frame, depth = split_rgb_depth(camera, frame)
-                cropped_frame, resized_frame = crop_frame(
-                    color_frame,
+            except queue.Empty:
+                cached = self._last_camera_frame.get(name)
+                self._logger.warning(
+                    f"Camera {name} is not producing frames; reconnecting."
+                )
+                camera.close()
+                self._cameras[index] = create_camera(camera._camera_info)
+                self._cameras[index].open()
+                camera = self._cameras[index]
+                if cached is None:
+                    frame = camera.get_frame(timeout=5.0)
+                else:
+                    frame = cached
+
+            reshape_size = self.observation_space["frames"][name].shape[:2][::-1]
+            color_frame, depth = split_rgb_depth(camera, frame)
+            cropped_frame, resized_frame = crop_frame(
+                color_frame,
+                reshape_size,
+                crop_region=camera._camera_info.crop_region,
+                resize=self.config.camera_resize,
+            )
+            frames[name] = resized_frame[..., ::-1]  # BGR -> RGB
+            display_frames[name] = resized_frame  # Original RGB for display
+            display_frames[f"{name}_full"] = cropped_frame  # Non-resized version
+            if camera._camera_info.enable_depth:
+                if depth is None:
+                    raise RuntimeError(f"Camera {name!r} did not return depth")
+                depths[name] = crop_depth_frame(
+                    depth,
                     reshape_size,
                     crop_region=camera._camera_info.crop_region,
                     resize=self.config.camera_resize,
                 )
-                frames[camera._camera_info.name] = resized_frame[
-                    ..., ::-1
-                ]  # Convert RGB to BGR
-                display_frames[camera._camera_info.name] = (
-                    resized_frame  # Original RGB for display
-                )
-                display_frames[f"{camera._camera_info.name}_full"] = (
-                    cropped_frame  # Non-resized version
-                )
-                if camera._camera_info.enable_depth:
-                    if depth is None:
-                        raise RuntimeError(
-                            f"Camera {camera._camera_info.name!r} did not return depth"
-                        )
-                    depths[camera._camera_info.name] = crop_depth_frame(
-                        depth,
-                        reshape_size,
-                        crop_region=camera._camera_info.crop_region,
-                        resize=self.config.camera_resize,
-                    )
-            except queue.Empty:
-                self._logger.warning(
-                    f"Camera {camera._camera_info.name} is not producing frames. Wait 5 seconds and try again."
-                )
-                time.sleep(5)
-                camera.close()
-                self._open_cameras()
-                return self._get_camera_observation()
+            self._last_camera_frame[name] = frame
 
         self.camera_player.put_frame(display_frames)
         return frames, depths
@@ -822,11 +820,13 @@ class FrankaEnv(gym.Env):
             info = camera._camera_info
             output_h, output_w = self.observation_space["frames"][info.name].shape[:2]
             intrinsics = camera.get_color_intrinsics()
-            cameras[info.name] = self._camera_projection_metadata(
+            cameras[info.name] = camera_projection_metadata(
                 camera_info=info,
                 raw_intrinsics=intrinsics,
                 output_size=(int(output_w), int(output_h)),
                 depth_scale=float(camera.depth_scale),
+                square_crop=self.config.camera_resize,
+                depth_aligned_to_color=bool(self.config.enable_camera_depth),
             )
         return {
             "source": "rlinf_franka_env",
@@ -835,61 +835,6 @@ class FrankaEnv(gym.Env):
             "depth_aligned_to_color": bool(self.config.enable_camera_depth),
             "cameras": cameras,
         }
-
-    def _camera_projection_metadata(
-        self,
-        *,
-        camera_info: CameraInfo,
-        raw_intrinsics: dict[str, Any] | None,
-        output_size: tuple[int, int],
-        depth_scale: float,
-    ) -> dict[str, Any]:
-        raw_w, raw_h = camera_info.resolution
-        if raw_intrinsics is not None:
-            raw_w = int(raw_intrinsics["width"])
-            raw_h = int(raw_intrinsics["height"])
-        x1, y1, x2, y2 = crop_bounds(
-            width=raw_w,
-            height=raw_h,
-            crop_region=camera_info.crop_region,
-            square_crop=self.config.camera_resize,
-        )
-        out_w, out_h = output_size
-        metadata = {
-            "name": camera_info.name,
-            "serial_number": camera_info.serial_number,
-            "camera_type": camera_info.camera_type,
-            "raw_resolution": [raw_w, raw_h],
-            "output_resolution": [out_w, out_h],
-            "crop_bounds_xyxy": [x1, y1, x2, y2],
-            "crop_region": (
-                list(camera_info.crop_region)
-                if camera_info.crop_region is not None
-                else None
-            ),
-            "depth_scale": depth_scale,
-            "depth_aligned_to_color": bool(self.config.enable_camera_depth),
-            "extrinsic_cam2base": None,
-            "extrinsic_cam2ee": None,
-        }
-        if raw_intrinsics is None:
-            metadata["raw_color_intrinsics"] = None
-            metadata["intrinsic_K"] = None
-            return metadata
-
-        scale_x = out_w / float(x2 - x1)
-        scale_y = out_h / float(y2 - y1)
-        fx = float(raw_intrinsics["fx"]) * scale_x
-        fy = float(raw_intrinsics["fy"]) * scale_y
-        cx = (float(raw_intrinsics["ppx"]) - x1) * scale_x
-        cy = (float(raw_intrinsics["ppy"]) - y1) * scale_y
-        metadata["raw_color_intrinsics"] = raw_intrinsics
-        metadata["intrinsic_K"] = [
-            [fx, 0.0, cx],
-            [0.0, fy, cy],
-            [0.0, 0.0, 1.0],
-        ]
-        return metadata
 
     # Robot actions
 

@@ -19,7 +19,7 @@ plain NumPy arrays, so they are reusable by any realworld environment (Franka,
 DoSW1, GIM Arm, …) rather than being specific to one robot.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 import cv2
 import numpy as np
@@ -146,3 +146,91 @@ def crop_depth_frame(
         interpolation=cv2.INTER_NEAREST,
     )
     return resized
+
+
+def observation_hw(
+    camera_info: CameraInfo,
+    *,
+    resize: bool,
+    size: int,
+) -> tuple[int, int]:
+    """Return the ``(height, width)`` of a camera's observation.
+
+    When *resize* is true the observation is a ``size`` × ``size`` square;
+    otherwise the native resolution is preserved, reduced by
+    ``camera_info.crop_region`` when set.
+    """
+    if resize:
+        return size, size
+    width, height = camera_info.resolution
+    x1, y1, x2, y2 = crop_bounds(
+        width=width,
+        height=height,
+        crop_region=camera_info.crop_region,
+        square_crop=False,
+    )
+    return y2 - y1, x2 - x1
+
+
+def camera_projection_metadata(
+    *,
+    camera_info: CameraInfo,
+    raw_intrinsics: Optional[dict],
+    output_size: tuple[int, int],
+    depth_scale: float,
+    square_crop: bool,
+    depth_aligned_to_color: bool,
+) -> dict[str, Any]:
+    """Build per-camera projection metadata for emitted RGB-D observations.
+
+    ``raw_intrinsics`` are the camera's raw color intrinsics (or ``None`` when
+    unavailable). ``intrinsic_K`` is the 3×3 projection matrix derived from
+    them after applying the crop (and resize) described by ``crop_region`` and
+    ``square_crop``.
+    """
+    raw_w, raw_h = camera_info.resolution
+    if raw_intrinsics is not None:
+        raw_w = int(raw_intrinsics["width"])
+        raw_h = int(raw_intrinsics["height"])
+    x1, y1, x2, y2 = crop_bounds(
+        width=raw_w,
+        height=raw_h,
+        crop_region=camera_info.crop_region,
+        square_crop=square_crop,
+    )
+    out_w, out_h = output_size
+    metadata: dict[str, Any] = {
+        "name": camera_info.name,
+        "serial_number": camera_info.serial_number,
+        "camera_type": camera_info.camera_type,
+        "raw_resolution": [raw_w, raw_h],
+        "output_resolution": [out_w, out_h],
+        "crop_bounds_xyxy": [x1, y1, x2, y2],
+        "crop_region": (
+            list(camera_info.crop_region)
+            if camera_info.crop_region is not None
+            else None
+        ),
+        "depth_scale": depth_scale,
+        "depth_aligned_to_color": depth_aligned_to_color,
+        "extrinsic_cam2base": None,
+        "extrinsic_cam2ee": None,
+        "color_intrinsics": None,
+        "intrinsic_K": None,
+    }
+    if raw_intrinsics is None:
+        return metadata
+
+    scale_x = out_w / float(x2 - x1)
+    scale_y = out_h / float(y2 - y1)
+    fx = float(raw_intrinsics["fx"]) * scale_x
+    fy = float(raw_intrinsics["fy"]) * scale_y
+    cx = (float(raw_intrinsics["ppx"]) - x1) * scale_x
+    cy = (float(raw_intrinsics["ppy"]) - y1) * scale_y
+    metadata["color_intrinsics"] = raw_intrinsics
+    metadata["intrinsic_K"] = [
+        [fx, 0.0, cx],
+        [0.0, fy, cy],
+        [0.0, 0.0, 1.0],
+    ]
+    return metadata
