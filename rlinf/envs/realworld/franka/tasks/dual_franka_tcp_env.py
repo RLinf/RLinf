@@ -92,28 +92,34 @@ class DualFrankaTCPEnv(DualFrankaEnv):
         self.action_space = gym.spaces.Box(act_low, act_high)
 
         camera_specs = self._all_camera_specs()
-        self.observation_space = gym.spaces.Dict(
-            {
-                "state": gym.spaces.Dict(
-                    {
-                        "gripper_position": gym.spaces.Box(-1, 1, shape=(2,)),
-                        "tcp_pose_rot6d": gym.spaces.Box(
-                            -np.inf,
-                            np.inf,
-                            shape=(2 * PROPRIO_DIM_PER_ARM,),
-                        ),
-                    }
-                ),
-                "frames": gym.spaces.Dict(
-                    {
-                        name: gym.spaces.Box(
-                            0, 255, shape=(224, 224, 3), dtype=np.uint8
-                        )
-                        for name, _, _ in camera_specs
-                    }
-                ),
-            }
-        )
+        spaces: dict[str, gym.spaces.Space] = {
+            "state": gym.spaces.Dict(
+                {
+                    "gripper_position": gym.spaces.Box(-1, 1, shape=(2,)),
+                    "tcp_pose_rot6d": gym.spaces.Box(
+                        -np.inf,
+                        np.inf,
+                        shape=(2 * PROPRIO_DIM_PER_ARM,),
+                    ),
+                }
+            ),
+            "frames": gym.spaces.Dict(
+                {
+                    name: gym.spaces.Box(0, 255, shape=(224, 224, 3), dtype=np.uint8)
+                    for name, _, _ in camera_specs
+                }
+            ),
+        }
+        if self.config.enable_camera_depth:
+            spaces["depths"] = gym.spaces.Dict(
+                {
+                    name: gym.spaces.Box(
+                        0.0, np.inf, shape=(224, 224), dtype=np.float32
+                    )
+                    for name in self._depth_camera_names()
+                }
+            )
+        self.observation_space = gym.spaces.Dict(spaces)
 
     # --------------------------------------------------------- step dispatch
 
@@ -145,7 +151,7 @@ class DualFrankaTCPEnv(DualFrankaEnv):
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
             return self.observation_space.sample()
-        frames = self._get_camera_frames()
+        frames, depths = self._get_camera_observation()
 
         state = {
             "gripper_position": np.array(
@@ -157,7 +163,10 @@ class DualFrankaTCPEnv(DualFrankaEnv):
             ),
             "tcp_pose_rot6d": self._tcp_rot6d_18d(),
         }
-        return copy.deepcopy({"state": state, "frames": frames})
+        observation = {"state": state, "frames": frames}
+        if self.config.enable_camera_depth:
+            observation["depths"] = depths
+        return copy.deepcopy(observation)
 
     def _tcp_rot6d_18d(self) -> np.ndarray:
         """[L_xyz, L_rot6d, R_xyz, R_rot6d] (no euler → no wrap artifacts)."""

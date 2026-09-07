@@ -242,6 +242,22 @@ class DualFrankaEnv(gym.Env):
             for name, serial, camera_type in self._all_camera_specs()
         ]
 
+    def _depth_camera_infos(self) -> list[CameraInfo]:
+        """Return depth-capable camera infos, validating the config flag."""
+        depth_camera_infos = [
+            info for info in self._camera_infos() if info.enable_depth
+        ]
+        if self.config.enable_camera_depth and not depth_camera_infos:
+            camera_types = sorted({info.camera_type for info in self._camera_infos()})
+            raise ValueError(
+                "enable_camera_depth=True, but none of the configured cameras "
+                f"support depth (camera_types={camera_types!r})."
+            )
+        return depth_camera_infos
+
+    def _depth_camera_names(self) -> list[str]:
+        return [info.name for info in self._depth_camera_infos()]
+
     def _open_cameras(self):
         self._cameras: list[BaseCamera] = []
         for info in self._camera_infos():
@@ -265,9 +281,27 @@ class DualFrankaEnv(gym.Env):
         resized = cv2.resize(cropped, reshape_size)
         return cropped, resized
 
+    def _crop_depth_frame(
+        self, depth: np.ndarray, reshape_size: tuple[int, int]
+    ) -> np.ndarray:
+        """Center-crop and resize a metric depth map to the observation size."""
+        h, w = depth.shape
+        crop_size = min(h, w)
+        start_x = (w - crop_size) // 2
+        start_y = (h - crop_size) // 2
+        cropped = depth[start_y : start_y + crop_size, start_x : start_x + crop_size]
+        return cv2.resize(cropped, reshape_size, interpolation=cv2.INTER_NEAREST)
+
     def _get_camera_frames(self) -> dict[str, np.ndarray]:
         """Return policy frames while caching synchronized raw RGB-D data."""
         return self._read_camera_bundle()["frames"]
+
+    def _get_camera_observation(
+        self,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Return policy frames and aligned depth maps from all cameras."""
+        bundle = self._read_camera_bundle()
+        return bundle["frames"], bundle["depths"]
 
     @staticmethod
     def _split_rgb_depth(
@@ -307,6 +341,7 @@ class DualFrankaEnv(gym.Env):
     def _read_camera_bundle(self) -> dict[str, dict[str, np.ndarray]]:
         """Read policy frames plus uncropped RGB-D snapshots and metadata."""
         frames: dict[str, np.ndarray] = {}
+        depths: dict[str, np.ndarray] = {}
         raw_frames: dict[str, np.ndarray] = {}
         raw_depths: dict[str, np.ndarray] = {}
         self._raw_camera_meta = {}
@@ -352,6 +387,10 @@ class DualFrankaEnv(gym.Env):
             reshape_size = self.observation_space["frames"][name].shape[:2][::-1]
             cropped, resized = self._crop_frame(color_frame, reshape_size)
             frames[name] = resized[..., ::-1]
+            if raw_depth is not None:
+                depths[name] = self._crop_depth_frame(raw_depth, reshape_size).astype(
+                    np.float32
+                )
             display_frames[name] = resized
             display_frames[f"{name}_full"] = cropped
             self._last_camera_frame[name] = frame
@@ -361,6 +400,7 @@ class DualFrankaEnv(gym.Env):
         self._raw_camera_depths = raw_depths
         return {
             "frames": frames,
+            "depths": depths,
             "raw_frames": raw_frames,
             "raw_depths": raw_depths,
         }
@@ -622,33 +662,37 @@ class DualFrankaEnv(gym.Env):
 
     def _build_observation_space(self, joint_position_dim: int) -> gym.spaces.Dict:
         camera_specs = self._all_camera_specs()
-        return gym.spaces.Dict(
-            {
-                "state": gym.spaces.Dict(
-                    {
-                        "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 7,)),
-                        "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 6,)),
-                        "joint_position": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(joint_position_dim,)
-                        ),
-                        "joint_velocity": gym.spaces.Box(
-                            -np.inf, np.inf, shape=(2 * 7,)
-                        ),
-                        "gripper_position": gym.spaces.Box(-1, 1, shape=(2,)),
-                        "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 3,)),
-                        "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 3,)),
-                    }
-                ),
-                "frames": gym.spaces.Dict(
-                    {
-                        name: gym.spaces.Box(
-                            0, 255, shape=(224, 224, 3), dtype=np.uint8
-                        )
-                        for name, _, _ in camera_specs
-                    }
-                ),
-            }
-        )
+        spaces: dict[str, gym.spaces.Space] = {
+            "state": gym.spaces.Dict(
+                {
+                    "tcp_pose": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 7,)),
+                    "tcp_vel": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 6,)),
+                    "joint_position": gym.spaces.Box(
+                        -np.inf, np.inf, shape=(joint_position_dim,)
+                    ),
+                    "joint_velocity": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 7,)),
+                    "gripper_position": gym.spaces.Box(-1, 1, shape=(2,)),
+                    "tcp_force": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 3,)),
+                    "tcp_torque": gym.spaces.Box(-np.inf, np.inf, shape=(2 * 3,)),
+                }
+            ),
+            "frames": gym.spaces.Dict(
+                {
+                    name: gym.spaces.Box(0, 255, shape=(224, 224, 3), dtype=np.uint8)
+                    for name, _, _ in camera_specs
+                }
+            ),
+        }
+        if self.config.enable_camera_depth:
+            spaces["depths"] = gym.spaces.Dict(
+                {
+                    name: gym.spaces.Box(
+                        0.0, np.inf, shape=(224, 224), dtype=np.float32
+                    )
+                    for name in self._depth_camera_names()
+                }
+            )
+        return gym.spaces.Dict(spaces)
 
     # ---------------------------------------------------------------- reward
 

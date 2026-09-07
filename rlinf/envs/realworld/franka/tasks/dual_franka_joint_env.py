@@ -128,7 +128,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
     def _get_observation(self) -> dict:
         if self.config.is_dummy:
             return self.observation_space.sample()
-        frames = self._get_camera_frames()
+        frames, depths = self._get_camera_observation()
 
         state = {
             "tcp_pose": np.concatenate(
@@ -163,4 +163,7 @@ class DualFrankaJointEnv(DualFrankaEnv):
                 [self._left_state.tcp_torque, self._right_state.tcp_torque]
             ),
         }
-        return copy.deepcopy({"state": state, "frames": frames})
+        observation = {"state": state, "frames": frames}
+        if self.config.enable_camera_depth:
+            observation["depths"] = depths
+        return copy.deepcopy(observation)
