@@ -46,6 +46,7 @@ class FrankaController(Worker):
         end_effector_config: Optional[dict] = None,
         gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
+        embodied_runtime_robot_id: Optional[str] = None,
     ):
         """Launch a FrankaController on the specified worker's node."""
         cluster = Cluster()
@@ -57,6 +58,7 @@ class FrankaController(Worker):
             end_effector_config or {},
             gripper_type,
             gripper_connection,
+            embodied_runtime_robot_id,
         ).launch(
             cluster=cluster,
             placement_strategy=placement,
@@ -71,6 +73,7 @@ class FrankaController(Worker):
         end_effector_config: Optional[dict] = None,
         gripper_type: Optional[str] = None,
         gripper_connection: Optional[str] = None,
+        embodied_runtime_robot_id: Optional[str] = None,
     ):
         super().__init__()
         self._logger = get_logger()
@@ -112,7 +115,10 @@ class FrankaController(Worker):
 
         from rlinf.envs.realworld.common.ros import ROSController
 
-        self._ros = ROSController()
+        self._ros = ROSController(
+            robot_ip=self._robot_ip,
+            embodied_runtime_robot_id=embodied_runtime_robot_id,
+        )
         self._init_ros_channels()
         self._init_end_effector(end_effector_config or {}, gripper_connection)
 
@@ -259,6 +265,13 @@ class FrankaController(Worker):
             if self._end_effector_type == EndEffectorType.FRANKA_GRIPPER
             else "false"
         )
+        if self._ros.uses_embodied_runtime:
+            self._ros.start_runtime_mode(
+                "impedance",
+                {"robot_ip": self._robot_ip, "load_gripper": load_gripper},
+            )
+            self._wait_robot()
+            return
         self._impedance = psutil.Popen(
             [
                 "roslaunch",
@@ -275,7 +288,10 @@ class FrankaController(Worker):
         self.log_debug(f"Start Impedance controller: {self._impedance.status()}")
 
     def stop_impedance(self):
-        if self._impedance:
+        if self._ros.uses_embodied_runtime:
+            self._ros.stop_runtime_mode()
+            self._wait_robot()
+        elif self._impedance:
             self._impedance.terminate()
             self._impedance = None
             self._wait_robot()
@@ -301,23 +317,33 @@ class FrankaController(Worker):
             else "false"
         )
         self._rospy.set_param("/target_joint_positions", reset_pos)
-        self._joint = psutil.Popen(
-            [
-                "roslaunch",
-                self._ros_pkg,
-                "joint.launch",
-                "robot_ip:=" + self._robot_ip,
-                f"load_gripper:={load_gripper}",
-            ],
-            stdout=sys.stdout,
-        )
+        if self._ros.uses_embodied_runtime:
+            self._ros.start_runtime_mode(
+                "joint",
+                {"robot_ip": self._robot_ip, "load_gripper": load_gripper},
+            )
+        else:
+            self._joint = psutil.Popen(
+                [
+                    "roslaunch",
+                    self._ros_pkg,
+                    "joint.launch",
+                    "robot_ip:=" + self._robot_ip,
+                    f"load_gripper:={load_gripper}",
+                ],
+                stdout=sys.stdout,
+            )
         self._wait_robot()
         self._logger.debug("Joint reset begins")
         self.clear_errors()
 
         self._wait_for_joint(reset_pos)
 
-        self._joint.terminate()
+        if self._ros.uses_embodied_runtime:
+            self._ros.stop_runtime_mode()
+        else:
+            assert self._joint is not None
+            self._joint.terminate()
         self._wait_robot()
         self.clear_errors()
         self.start_impedance()

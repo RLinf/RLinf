@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from rlinf.scheduler import EmbodiedRuntimeCLI
+
 from .base_camera import BaseCamera, CameraInfo
+from .embodied_runtime_camera import EmbodiedRuntimeCamera
 from .realsense_camera import RealSenseCamera
 
 __all__ = [
     "BaseCamera",
     "CameraInfo",
+    "EmbodiedRuntimeCamera",
     "RealSenseCamera",
     "create_camera",
 ]
@@ -31,8 +35,13 @@ def create_camera(camera_info: CameraInfo) -> BaseCamera:
     * ``"realsense"`` / ``"rs"`` — Intel RealSense (requires ``pyrealsense2``)
     * ``"zed"`` — Stereolabs ZED (requires the ZED SDK / ``pyzed``)
     * ``"lumos"`` — LUMOS V4L2 USB camera (requires ``opencv-python``)
+    * ``"embodied_runtime"`` — embodied-runtime camera controller
     """
     camera_type = camera_info.camera_type.lower()
+    if camera_type in ("embodied_runtime", "runtime"):
+        return EmbodiedRuntimeCamera(camera_info)
+    if EmbodiedRuntimeCLI.is_enabled("camctr"):
+        return EmbodiedRuntimeCamera(camera_info)
     if camera_type == "zed":
         from .zed_camera import ZEDCamera
 
@@ -44,5 +53,6 @@ def create_camera(camera_info: CameraInfo) -> BaseCamera:
 
         return LumosCamera(camera_info)
     raise ValueError(
-        f"Unsupported camera_type={camera_type!r}. Supported types: 'realsense', 'zed', 'lumos'."
+        f"Unsupported camera_type={camera_type!r}. Supported types: "
+        "'realsense', 'zed', 'lumos', 'embodied_runtime'."
     )
