@@ -99,12 +99,15 @@ class FSDPModelManager:
         Worker.torch_platform.set_device(int(os.environ["LOCAL_RANK"]))
         self.device = Worker.torch_platform.current_device()
 
-        sharding_strategy = str(self._cfg.fsdp_config.sharding_strategy)
+        sharding_strategy = self._cfg.fsdp_config.get("sharding_strategy", "full_shard")
         self._device_mesh = create_device_mesh(world_size, sharding_strategy)
-        self._dp_group = self._device_mesh["fsdp"].get_group()
+        # Parameters are sharded over the "fsdp" dimension only; under
+        # hybrid_shard the "ddp" dimension holds replicas, so reductions over
+        # partial values must stay inside this group.
+        self._shard_group = self._device_mesh["fsdp"].get_group()
 
         self._strategy = FSDPStrategyBase.create(
-            self._cfg, world_size, self._dp_group, self._logger
+            self._cfg, world_size, self._shard_group, self._logger
         )
         self.amp_context = self._create_amp_context()
 

@@ -56,6 +56,7 @@ from rlinf.hybrid_engines.fsdp import (
     fully_shard,
 )
 from rlinf.scheduler import Worker
+from rlinf.utils.logging import get_logger
 
 
 class FSDPVersion(str, Enum):
@@ -63,30 +64,116 @@ class FSDPVersion(str, Enum):
     FSDP2 = "fsdp2"
 
 
+HYBRID_SHARD = "hybrid_shard"
+
+
+def normalize_sharding_strategy(sharding_strategy: str) -> str:
+    """Canonical form of ``fsdp_config.sharding_strategy``.
+
+    Both the device mesh and :func:`get_sharding_strategy` compare against the
+    canonical spelling, so a config that writes ``HYBRID_SHARD`` cannot end up
+    with a hybrid FSDP strategy on a mesh that shards over every rank.
+    """
+    return str(sharding_strategy).strip().lower()
+
+
+def _assert_shard_size_agrees_across_ranks(shard_size: int, world_size: int) -> None:
+    """Reject a cluster whose nodes host different numbers of ranks.
+
+    Every rank reads its own node's ``NODE_LOCAL_WORLD_SIZE``, so an uneven
+    placement makes ranks build differently shaped meshes and deadlock inside the
+    collectives backing them. Comparing the value first turns that hang into an
+    error naming what each rank reported.
+    """
+    if not torch.distributed.is_initialized():
+        # Every rank builds this same one-dimensional mesh, so it cannot
+        # deadlock, and it brings up the default process group used below.
+        init_device_mesh(
+            Worker.torch_device_type,
+            mesh_shape=(world_size,),
+            mesh_dim_names=["fsdp"],
+        )
+
+    shard_sizes = [None] * torch.distributed.get_world_size()
+    torch.distributed.all_gather_object(shard_sizes, shard_size)
+    if len(set(shard_sizes)) > 1:
+        raise RuntimeError(
+            "hybrid_shard requires every node to host the same number of ranks, "
+            f"but the ranks reported {shard_sizes}. Give each node an equal share "
+            "of the component placement, or use full_shard."
+        )
+
+
+def _resolve_hybrid_shard_size(world_size: int) -> int:
+    """Number of ranks sharing a node, which is the intra-node shard group size.
+
+    Args:
+        world_size: Number of ranks in the FSDP component.
+
+    Returns:
+        The size of the intra-node shard group.
+
+    Raises:
+        RuntimeError: ``NODE_LOCAL_WORLD_SIZE`` is unset, or the nodes disagree on
+            how many ranks they host.
+        ValueError: ``NODE_LOCAL_WORLD_SIZE`` is not a positive integer dividing
+            ``world_size``.
+    """
+    node_local_world_size = os.getenv("NODE_LOCAL_WORLD_SIZE")
+    if node_local_world_size is None:
+        raise RuntimeError(
+            "hybrid_shard needs NODE_LOCAL_WORLD_SIZE to size the intra-node shard "
+            "group. Workers launched through the RLinf scheduler receive it from "
+            "their placement; set it to the number of ranks this component has on "
+            "the node when launching FSDP outside the scheduler."
+        )
+    try:
+        shard_size = int(node_local_world_size)
+    except ValueError as e:
+        raise ValueError(
+            f"NODE_LOCAL_WORLD_SIZE must be an integer, got {node_local_world_size!r}."
+        ) from e
+
+    # Run before the local checks below: once every rank agrees on shard_size,
+    # those checks either pass everywhere or fail everywhere.
+    _assert_shard_size_agrees_across_ranks(shard_size, world_size)
+
+    if shard_size <= 0:
+        raise ValueError(f"NODE_LOCAL_WORLD_SIZE must be positive, got {shard_size}.")
+    if world_size % shard_size != 0:
+        raise ValueError(
+            f"hybrid_shard requires world_size ({world_size}) divisible by "
+            f"ranks per node ({shard_size})."
+        )
+    if shard_size == 1:
+        get_logger().warning(
+            "hybrid_shard was requested but this component has a single rank per "
+            "node, so the intra-node shard group holds one rank and nothing is "
+            "sharded. Use full_shard for this topology, or place at least two "
+            "ranks on each node."
+        )
+    return shard_size
+
+
 def create_device_mesh(
     world_size: int, sharding_strategy: str = "full_shard"
 ) -> DeviceMesh:
-    """Create the device mesh for an FSDP sharding strategy."""
-    if sharding_strategy == "hybrid_shard":
-        node_local_world_size = os.getenv("NODE_LOCAL_WORLD_SIZE")
-        if node_local_world_size is not None:
-            shard_size = int(node_local_world_size)
-        elif Worker.torch_platform is not None and Worker.torch_platform.is_available():
-            shard_size = min(world_size, Worker.torch_platform.device_count())
-        else:
-            raise RuntimeError(
-                "NODE_LOCAL_WORLD_SIZE is not set and no accelerator is available "
-                "to infer the actor ranks per node."
-            )
-        if shard_size <= 0:
-            raise ValueError(
-                f"NODE_LOCAL_WORLD_SIZE must be positive, got {shard_size}."
-            )
-        if world_size % shard_size != 0:
-            raise ValueError(
-                f"hybrid_shard requires world_size ({world_size}) divisible by "
-                f"actor ranks per node ({shard_size})."
-            )
+    """Build the device mesh that FSDP shards a model over.
+
+    Args:
+        world_size: Number of ranks in the FSDP component.
+        sharding_strategy: Value of ``fsdp_config.sharding_strategy``.
+            ``hybrid_shard`` shards within a node and replicates across nodes;
+            every other strategy shards over all ranks.
+
+    Returns:
+        A one-dimensional ``(fsdp,)`` mesh, or, for ``hybrid_shard``, a
+        two-dimensional ``(ddp, fsdp)`` mesh whose ``fsdp`` dimension spans the
+        ranks of one node. See :func:`_resolve_hybrid_shard_size` for the
+        topologies ``hybrid_shard`` rejects.
+    """
+    if normalize_sharding_strategy(sharding_strategy) == HYBRID_SHARD:
+        shard_size = _resolve_hybrid_shard_size(world_size)
         return init_device_mesh(
             Worker.torch_device_type,
             mesh_shape=(world_size // shard_size, shard_size),
@@ -709,7 +796,7 @@ def clip_grad_by_total_norm_(
 @torch.no_grad()
 def get_grad_norm(
     parameters: Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]],
-    dp_group: torch.distributed.ProcessGroup,
+    shard_group: torch.distributed.ProcessGroup,
     norm_type: Union[int, float] = 2,
     dtype: torch.dtype = torch.float32,
 ) -> float:
@@ -721,7 +808,10 @@ def get_grad_norm(
         parameters (Union[list[Union[torch.Tensor, DTensor]], Union[torch.Tensor, DTensor]]):
             An iterable of Tensors or DTensors, or a single Tensor or DTensor
             that will have gradient norm calculated.
-        dp_group (torch.distributed.ProcessGroup): Process group for data parallel communication.
+        shard_group (torch.distributed.ProcessGroup): Process group the parameters are
+            sharded over. Each rank holds one shard of the gradients, so the partial
+            norms are reduced over this group and not over the whole world; under
+            ``hybrid_shard`` the remaining ranks hold replicas.
         norm_type (Union[int, float]): Type of the used p-norm. Can be ``'inf'`` for
             infinity norm.
 
@@ -754,10 +844,10 @@ def get_grad_norm(
         total_norm_cuda = torch.tensor(
             [float(total_norm)], dtype=torch.float, device=device
         )
-        # Take max across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
-        if dp_group is not None:
+        # Take the max across the ranks the parameters are sharded over.
+        if shard_group is not None:
             torch.distributed.all_reduce(
-                total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=dp_group
+                total_norm_cuda, op=torch.distributed.ReduceOp.MAX, group=shard_group
             )
         total_norm = total_norm_cuda[0].item()
 
@@ -777,10 +867,10 @@ def get_grad_norm(
         else:
             total_norm = total_norm.to(device=device)
 
-        # Sum across all data-parallel GPUs if using FSDP and then all model-parallel GPUs.
-        if dp_group is not None:
+        # Sum the partial norms across the ranks the parameters are sharded over.
+        if shard_group is not None:
             torch.distributed.all_reduce(
-                total_norm, op=torch.distributed.ReduceOp.SUM, group=dp_group
+                total_norm, op=torch.distributed.ReduceOp.SUM, group=shard_group
             )
         total_norm = total_norm.item() ** (1.0 / norm_type)  # type: ignore
 
@@ -824,7 +914,7 @@ def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:
     Get FSDP sharding strategy from string.
 
     Args:
-        strategy_str (str): The sharding strategy as a string. Can be "full_shard", "shard_grad_op", "hybrid_shard", or "no_shard".
+        strategy_str (str): The sharding strategy as a string. Can be "full_shard", "shard_grad_op", "hybrid_shard", or "no_shard", in any casing.
 
     Returns:
         ShardingStrategy: The corresponding ShardingStrategy enum value.
@@ -832,13 +922,15 @@ def get_sharding_strategy(strategy_str: str) -> ShardingStrategy:
     SHARDING_STRATEGIES = {
         "full_shard": ShardingStrategy.FULL_SHARD,
         "shard_grad_op": ShardingStrategy.SHARD_GRAD_OP,
-        "hybrid_shard": ShardingStrategy.HYBRID_SHARD,
+        HYBRID_SHARD: ShardingStrategy.HYBRID_SHARD,
         "no_shard": ShardingStrategy.NO_SHARD,
     }
-    assert strategy_str in SHARDING_STRATEGIES, (
-        f"Unknown sharding strategy: {strategy_str}"
+    strategy = normalize_sharding_strategy(strategy_str)
+    assert strategy in SHARDING_STRATEGIES, (
+        f"Unknown sharding strategy: {strategy_str}. "
+        f"Expected one of: {', '.join(SHARDING_STRATEGIES)}"
     )
-    return SHARDING_STRATEGIES[strategy_str]
+    return SHARDING_STRATEGIES[strategy]
 
 
 def get_backward_prefetch_strategy(
