@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from omegaconf.omegaconf import DictConfig
 
+from rlinf.runners.async_weight_sync_mixin import AsyncWeightSyncMixin
 from rlinf.runners.embodied_runner import EmbodiedRunner
 from rlinf.scheduler import Channel
 from rlinf.scheduler import WorkerGroupFuncResult as Handle
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
     )
 
 
-class AsyncPPOEmbodiedRunner(EmbodiedRunner):
+class AsyncPPOEmbodiedRunner(AsyncWeightSyncMixin, EmbodiedRunner):
     """Runner for async PPO with long-running env and rollout workers."""
 
     def __init__(
@@ -51,6 +52,7 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
         self.recompute_logprobs = bool(
             self.cfg.rollout.get("recompute_logprobs", False)
         )
+        self.init_weight_sync_state()
 
         if self.cfg.runner.val_check_interval > 0:
             self.logger.warning(
@@ -100,11 +102,6 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
             ranked_time_metrics_list,
             ranked_env_metrics_list,
         )
-
-    def update_rollout_weights(self) -> None:
-        rollout_handle = self.rollout.sync_model_from_actor()
-        self.actor.sync_model_to_rollout().wait()
-        rollout_handle.wait()
 
     def run(self) -> None:
         start_step = self.global_step
@@ -159,8 +156,11 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
                 self.global_step += 1
                 self.actor.set_global_step(self.global_step).wait()
                 with self.timer("update_rollout_weights"):
-                    self.update_rollout_weights()
-                self.rollout.set_global_step(self.global_step).wait()
+                    self.update_rollout_weights(no_wait=self.sync_weight_no_wait)
+                # No rollout.set_global_step here: applying the weights already
+                # sets it from the version they carry, which is this same step.
+                # Setting it from the runner would claim the new step before a
+                # non-blocking sync has landed.
 
             time_metrics = self.timer.consume_durations()
             time_metrics = {f"time/{k}": v for k, v in time_metrics.items()}
@@ -268,6 +268,9 @@ class AsyncPPOEmbodiedRunner(EmbodiedRunner):
 
             if profiled_step is not None:
                 self._close_profiling_window(profiled_step)
+
+        # Let any in-flight non-blocking sync land before the workers go away.
+        self.drain_pending_rollout_weight_sync()
 
         self.metric_logger.finish()
 
