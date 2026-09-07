@@ -76,6 +76,8 @@ env:
       # Dummy placeholders for robot and camera
       robot_ip: 0.0.0.0
       camera_serials: ["0123456789", ]
+      # Enable RGB-D depth stream to exercise depth-aware observation spaces.
+      enable_camera_depth: True
     auto_reset: True
     ignore_terminations: True
     use_fixed_reset_state_ids: False
@@ -89,6 +91,8 @@ env:
       # Dummy placeholders for robot and camera
       robot_ip: 0.0.0.0
       camera_serials: ["0123456789", ]
+      # Enable RGB-D depth stream to exercise depth-aware observation spaces.
+      enable_camera_depth: True
 
 rollout:
   group_name: "RolloutGroup"
