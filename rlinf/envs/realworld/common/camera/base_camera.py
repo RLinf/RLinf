@@ -66,6 +66,14 @@ class BaseCamera(ABC):
     def name(self) -> str:
         return self._camera_info.name
 
+    def get_color_intrinsics(self) -> Optional[dict]:
+        """Return color-stream intrinsics for the active profile, if available.
+
+        Subclasses with intrinsic support override this; the default returns
+        ``None``.
+        """
+        return None
+
     def open(self):
         """Start the background frame-capturing thread."""
         self._frame_capturing_start = True

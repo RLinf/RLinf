@@ -821,11 +821,7 @@ class FrankaEnv(gym.Env):
         for camera in self._cameras:
             info = camera._camera_info
             output_h, output_w = self.observation_space["frames"][info.name].shape[:2]
-            intrinsics = (
-                camera.get_color_intrinsics()
-                if hasattr(camera, "get_color_intrinsics")
-                else None
-            )
+            intrinsics = camera.get_color_intrinsics()
             cameras[info.name] = self._camera_projection_metadata(
                 camera_info=info,
                 raw_intrinsics=intrinsics,
@@ -856,7 +852,7 @@ class FrankaEnv(gym.Env):
             width=raw_w,
             height=raw_h,
             crop_region=camera_info.crop_region,
-            default_square_crop=self.config.camera_resize,
+            square_crop=self.config.camera_resize,
         )
         out_w, out_h = output_size
         metadata = {

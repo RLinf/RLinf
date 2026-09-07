@@ -274,20 +274,6 @@ class DualFrankaEnv(gym.Env):
         bundle = self._read_camera_bundle()
         return bundle["frames"], bundle["depths"]
 
-    def _camera_intrinsics(self, camera: BaseCamera) -> dict[str, object] | None:
-        getter = getattr(camera, "get_color_intrinsics", None)
-        if not callable(getter):
-            return None
-        try:
-            return dict(getter())
-        except Exception as exc:
-            self._logger.warning(
-                "Failed to read intrinsics from camera %s: %s",
-                camera._camera_info.name,
-                exc,
-            )
-            return None
-
     def _read_camera_bundle(self) -> dict[str, dict[str, np.ndarray]]:
         """Read policy frames plus uncropped RGB-D snapshots and metadata."""
         frames: dict[str, np.ndarray] = {}
@@ -318,7 +304,7 @@ class DualFrankaEnv(gym.Env):
             raw_frames[name] = color_frame[..., ::-1].copy()
             if raw_depth is not None:
                 raw_depths[name] = raw_depth
-            intrinsics = self._camera_intrinsics(camera)
+            intrinsics = camera.get_color_intrinsics()
             info = camera._camera_info
             self._raw_camera_meta[name] = {
                 "name": name,

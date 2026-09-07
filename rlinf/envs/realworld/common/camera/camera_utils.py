@@ -76,12 +76,14 @@ def crop_bounds(
     width: int,
     height: int,
     crop_region: Optional[tuple[float, float, float, float]] = None,
-    default_square_crop: bool = True,
+    square_crop: bool = True,
 ) -> tuple[int, int, int, int]:
     """Return ``(x1, y1, x2, y2)`` pixel crop bounds.
 
-    When *crop_region* is ``None`` and *default_square_crop* is true, a
-    center-square crop is used; otherwise the full resolution is preserved.
+    *crop_region* is ``(top, left, bottom, right)`` in relative ``[0, 1]``
+    coordinates and takes precedence over *square_crop*. When *crop_region*
+    is ``None`` and *square_crop* is true, a centered square crop is used;
+    otherwise the full resolution is preserved.
     """
     if crop_region is not None:
         top, left, bottom, right = crop_region
@@ -91,7 +93,7 @@ def crop_bounds(
             int(width * right),
             int(height * bottom),
         )
-    if not default_square_crop:
+    if not square_crop:
         return 0, 0, int(width), int(height)
     crop_size = min(height, width)
     x1 = (width - crop_size) // 2
@@ -104,17 +106,28 @@ def crop_frame(
     reshape_size: tuple[int, int],
     crop_region: Optional[tuple[float, float, float, float]] = None,
     resize: bool = True,
+    interpolation: int = cv2.INTER_LINEAR,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Crop *frame* and (optionally) resize, returning ``(cropped, resized)``."""
+    """Crop *frame* and (optionally) resize, returning ``(cropped, resized)``.
+
+    When *resize* is true, a centered square crop is applied (unless
+    *crop_region* is set) and the result is resized to *reshape_size*. When
+    *resize* is false, only *crop_region* (if any) is applied and the frame
+    keeps its native resolution.
+    """
     h, w = frame.shape[:2]
     x1, y1, x2, y2 = crop_bounds(
         width=w,
         height=h,
         crop_region=crop_region,
-        default_square_crop=resize,
+        square_crop=resize,
     )
     cropped = frame[y1:y2, x1:x2]
-    resized = cv2.resize(cropped, reshape_size) if resize else cropped
+    resized = (
+        cv2.resize(cropped, reshape_size, interpolation=interpolation)
+        if resize
+        else cropped
+    )
     return cropped, resized
 
 
@@ -125,14 +138,11 @@ def crop_depth_frame(
     resize: bool = True,
 ) -> np.ndarray:
     """Crop and (optionally) resize a depth map using nearest-neighbor."""
-    h, w = depth.shape
-    x1, y1, x2, y2 = crop_bounds(
-        width=w,
-        height=h,
+    _, resized = crop_frame(
+        depth,
+        reshape_size,
         crop_region=crop_region,
-        default_square_crop=resize,
+        resize=resize,
+        interpolation=cv2.INTER_NEAREST,
     )
-    cropped = depth[y1:y2, x1:x2]
-    if resize:
-        return cv2.resize(cropped, reshape_size, interpolation=cv2.INTER_NEAREST)
-    return cropped
+    return resized
