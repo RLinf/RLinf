@@ -17,6 +17,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+pytest.importorskip("cv2")
+
 from rlinf.envs.realworld.common.camera import CameraInfo
 from rlinf.envs.realworld.franka.franka_env import FrankaEnv
 
