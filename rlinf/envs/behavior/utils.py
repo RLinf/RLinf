@@ -22,6 +22,11 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from rlinf.utils.logging import get_logger
 
 SUPPORTED_ENV_WRAPPERS = ("rgb", "default", "rgb_lowres", "rich_obs")
+RLINF_STAGE_REWARD_MODES = {
+    "stage_sparse",
+    "stage_weighted",
+    "stage_cumulative",
+}
 
 R1PRO_PROPRIO_KEYS = [
     "joint_qpos",
@@ -185,6 +190,106 @@ def apply_env_wrapper(vec_env, wrapper_name: str | None):
     return vec_env
 
 
+def reset_robot_joint_state_to_reset_pose(
+    robot, preserve_base_pose: bool = True, base_joint_dim: int = 6
+) -> None:
+    """Reset robot articulation to the configured reset pose.
+
+    For BEHAVIOR cached ``tro_state`` instances we preserve the sampled base
+    pose while restoring the manipulation joints (arms / trunk / grippers) to
+    the robot reset posture.
+    """
+    if robot is None:
+        return
+
+    get_joint_positions = getattr(robot, "get_joint_positions", None)
+    set_joint_positions = getattr(robot, "set_joint_positions", None)
+    set_joint_velocities = getattr(robot, "set_joint_velocities", None)
+    reset_joint_pos = getattr(robot, "reset_joint_pos", None)
+    if (
+        not callable(get_joint_positions)
+        or not callable(set_joint_positions)
+        or reset_joint_pos is None
+    ):
+        return
+
+    current_joint_positions = get_joint_positions()
+    if current_joint_positions is None:
+        return
+
+    current_joint_positions = torch.as_tensor(current_joint_positions)
+    target_joint_positions = torch.as_tensor(
+        reset_joint_pos,
+        dtype=current_joint_positions.dtype,
+        device=current_joint_positions.device,
+    ).clone()
+    if target_joint_positions.shape != current_joint_positions.shape:
+        return
+
+    if preserve_base_pose and target_joint_positions.numel() > base_joint_dim:
+        target_joint_positions[:base_joint_dim] = current_joint_positions[
+            :base_joint_dim
+        ]
+
+    keep_still = getattr(robot, "keep_still", None)
+    if callable(keep_still):
+        keep_still()
+
+    set_joint_positions(positions=target_joint_positions, drive=False)
+    if callable(set_joint_velocities):
+        set_joint_velocities(
+            velocities=torch.zeros_like(target_joint_positions),
+            drive=False,
+        )
+
+    if callable(keep_still):
+        keep_still()
+
+
+def clear_robot_grasp_state(robot) -> None:
+    """Best-effort cleanup for stale robot grasp bookkeeping."""
+    if robot is None or not getattr(robot, "is_manipulation", False):
+        return
+
+    arm_names = list(getattr(robot, "arm_names", []) or [])
+    default_arm = getattr(robot, "default_arm", None)
+    if not arm_names and default_arm is not None:
+        arm_names = [default_arm]
+    if not arm_names:
+        return
+
+    release_grasp_immediately = getattr(robot, "release_grasp_immediately", None)
+    if callable(release_grasp_immediately):
+        for arm in arm_names:
+            try:
+                release_grasp_immediately(arm=arm)
+            except Exception:
+                pass
+
+    for attr_name, default_value in (
+        ("_ag_obj_in_hand", None),
+        ("_ag_obj_constraints", None),
+        ("_ag_obj_constraint_params", {}),
+        ("_ag_freeze_gripper", False),
+        ("_ag_release_counter", 0),
+        ("_ag_grasp_counter", 0),
+    ):
+        attr_value = getattr(robot, attr_name, None)
+        if not isinstance(attr_value, dict):
+            continue
+        for arm in arm_names:
+            if arm in attr_value:
+                attr_value[arm] = (
+                    default_value.copy()
+                    if isinstance(default_value, dict)
+                    else default_value
+                )
+
+    keep_still = getattr(robot, "keep_still", None)
+    if callable(keep_still):
+        keep_still()
+
+
 def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: str):
     omni_sub_cfg = OmegaConf.select(omni_cfg, sub_attr)
     override_sub_cfg = OmegaConf.select(override_cfg, sub_attr)
@@ -196,6 +301,30 @@ def override_sub_cfg(omni_cfg: DictConfig, override_cfg: DictConfig, sub_attr: s
             if omni_sub_cfg is None
             else OmegaConf.merge(omni_sub_cfg, override_sub_cfg),
         )
+
+
+def normalize_omnigibson_reward_config(omni_cfg: DictConfig) -> DictConfig:
+    """Remove RLinf-only reward config before constructing OmniGibson envs."""
+    reward_mode = OmegaConf.select(
+        omni_cfg, "task.reward_config.reward_mode", default=None
+    )
+    reward_cfg = OmegaConf.select(omni_cfg, "task.reward_config", default=None)
+    if reward_cfg is None:
+        return omni_cfg
+
+    if str(reward_mode).lower() in RLINF_STAGE_REWARD_MODES:
+        OmegaConf.update(
+            omni_cfg,
+            "task.reward_config.reward_mode",
+            "stage",
+            merge=False,
+        )
+
+    if "stage_reward_weights" in reward_cfg:
+        with open_dict(reward_cfg):
+            reward_cfg.pop("stage_reward_weights", None)
+
+    return omni_cfg
 
 
 def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
@@ -226,6 +355,7 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
     override_sub_cfg(omni_cfg, override_cfg, "macro")
     override_sub_cfg(omni_cfg, override_cfg, "task")
     override_sub_cfg(omni_cfg, override_cfg, "scene")
+    normalize_omnigibson_reward_config(omni_cfg)
     # here actually we only needs one robot config (and Behavior actually does do that)
     # we must use update rather than merge to keep default robot config fields.
     robot_override = OmegaConf.select(override_cfg, "robots[0]", default=None)
@@ -301,4 +431,28 @@ def setup_omni_cfg(cfg: DictConfig) -> DictConfig:
         max_episode_steps,
     )
 
+    apply_slim_template_cfg(omni_cfg, cfg)
+
     return omni_cfg
+
+
+def apply_slim_template_cfg(omni_cfg: DictConfig, cfg: DictConfig) -> None:
+    slim_cfg = OmegaConf.select(cfg, "slim_template")
+    if slim_cfg is None or not bool(
+        OmegaConf.select(slim_cfg, "enabled", default=False)
+    ):
+        return
+
+    scene_file = OmegaConf.select(slim_cfg, "path")
+    if not scene_file:
+        raise ValueError(
+            "env.slim_template.path must be set when slim_template.enabled=True."
+        )
+
+    scene_file = os.path.abspath(
+        os.path.expandvars(os.path.expanduser(str(scene_file)))
+    )
+    if not os.path.isfile(scene_file):
+        raise FileNotFoundError(f"env.slim_template.path does not exist: {scene_file}")
+
+    OmegaConf.update(omni_cfg, "scene.scene_file", scene_file, merge=False)

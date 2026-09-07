@@ -18,14 +18,203 @@ import random
 from dataclasses import dataclass
 from pathlib import Path
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from rlinf.envs.behavior.utils import sync_robot_after_pose_override
+from rlinf.envs.behavior.utils import (
+    clear_robot_grasp_state,
+    reset_robot_joint_state_to_reset_pose,
+    sync_robot_after_pose_override,
+)
 
 TASK_INSTANCE_FILE_SUFFIX = "_template-tro_state.json"
 TASK_INSTANCE_TEMPLATE_FILE_SUFFIX = "_template.json"
 SUPPORTED_INSTANCE_RESAMPLE_MODES = ("disabled", "offline", "online")
 SUPPORTED_INSTANCE_FILE_FORMATS = ("template", "tro_state")
+RLINF_REPLAY_METADATA_KEY = "rlinf_replay"
+DEFAULT_MIDROLLOUT_RESTORE_SETTLE_STEPS = 120  # about 1 second at 120 Hz
+
+
+def parse_activity_instance_ids(value) -> list[int] | None:
+    """Parse a BEHAVIOR activity instance id spec.
+
+    Supported forms are an integer, a list/tuple of integers or range strings,
+    or a comma-separated string such as ``"1000-1255,1300"``. Ranges are
+    inclusive on both ends.
+    """
+    if isinstance(value, ListConfig):
+        value = OmegaConf.to_container(value, resolve=True)
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return [int(value)]
+
+    values = value if isinstance(value, (list, tuple)) else [value]
+    instance_ids: list[int] = []
+    for item in values:
+        if isinstance(item, int):
+            instance_ids.append(int(item))
+            continue
+        if not isinstance(item, str):
+            raise ValueError(
+                "task.activity_instance_id entries must be integers or range "
+                f"strings, got {item!r}."
+            )
+        for part in item.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "-" in part:
+                left, right = part.split("-", 1)
+                start, end = int(left), int(right)
+                if start > end:
+                    raise ValueError(
+                        f"Invalid task.activity_instance_id range {part!r}: "
+                        "start > end."
+                    )
+                instance_ids.extend(range(start, end + 1))
+            else:
+                instance_ids.append(int(part))
+
+    if not instance_ids:
+        raise ValueError("task.activity_instance_id must not be empty.")
+    return instance_ids
+
+
+def _is_agent_tro_key(tro_key: str, entity=None) -> bool:
+    return tro_key.startswith("agent.") or getattr(entity, "synset", None) in (
+        "agent",
+        "agent.n.01",
+    )
+
+
+def _object_for_saved_prim_path(env, saved_prim_path: str):
+    basename = saved_prim_path.rstrip("/").split("/")[-1]
+    for entity in env.task.object_scope.values():
+        if not getattr(entity, "exists", False):
+            continue
+        prim_path = getattr(entity, "prim_path", "")
+        if prim_path.rstrip("/").split("/")[-1] == basename:
+            return entity
+    return env.scene.object_registry("prim_path", saved_prim_path, None)
+
+
+def _as_pose_tensor(value):
+    if hasattr(value, "to"):
+        return value
+
+    import torch
+
+    return torch.as_tensor(value, dtype=torch.float32)
+
+
+def _restore_robot_joint_positions(robot, saved_positions, preserve_base: bool = True):
+    """Restore articulation joints while keeping the restored base pose stable."""
+    import torch
+
+    saved_positions = torch.as_tensor(saved_positions)
+    if preserve_base:
+        current_positions = robot.get_joint_positions()
+        if current_positions is not None:
+            current_positions = torch.as_tensor(
+                current_positions,
+                dtype=saved_positions.dtype,
+                device=saved_positions.device,
+            )
+            if current_positions.shape == saved_positions.shape:
+                saved_positions = saved_positions.clone()
+                saved_positions[:6] = current_positions[:6]
+
+    robot.set_joint_positions(positions=saved_positions, drive=False)
+    robot.set_joint_velocities(
+        velocities=torch.zeros_like(saved_positions), drive=False
+    )
+    robot.keep_still()
+
+
+def _sync_robot_controller_no_op_goals(robot) -> None:
+    """Set controller goals to the restored state so the next action starts cleanly."""
+    controllers = getattr(robot, "controllers", None)
+    get_control_dict = getattr(robot, "get_control_dict", None)
+    if not controllers or not callable(get_control_dict):
+        return
+
+    control_dict = get_control_dict()
+    for controller in controllers.values():
+        compute_no_op_goal = getattr(controller, "compute_no_op_goal", None)
+        if callable(compute_no_op_goal):
+            controller._goal = compute_no_op_goal(control_dict=control_dict)
+
+
+def _midrollout_restore_settle_steps() -> int:
+    value = os.environ.get("RLINF_BEHAVIOR_TRO_RESTORE_SETTLE_STEPS")
+    if value is None:
+        return DEFAULT_MIDROLLOUT_RESTORE_SETTLE_STEPS
+    steps = int(value)
+    if steps < 0:
+        raise ValueError(
+            "RLINF_BEHAVIOR_TRO_RESTORE_SETTLE_STEPS must be non-negative, "
+            f"got {steps}."
+        )
+    return steps
+
+
+def _settle_restored_midrollout_state(env, robot, saved_positions) -> None:
+    """Hold the restored robot state for a few physics ticks before rollout."""
+    import omnigibson as og
+
+    for _ in range(_midrollout_restore_settle_steps()):
+        _restore_robot_joint_positions(robot, saved_positions)
+        _sync_robot_controller_no_op_goals(robot)
+        og.sim.step_physics()
+        _restore_robot_joint_positions(robot, saved_positions)
+        _sync_robot_controller_no_op_goals(robot)
+        for entity in env.task.object_scope.values():
+            if entity.exists and not entity.is_system:
+                entity.keep_still()
+
+
+def _rebase_agent_grasp_paths(env, agent_state: dict, robot_pose: dict | None) -> dict:
+    agent_state = dict(agent_state)
+    if robot_pose is not None and isinstance(agent_state.get("root_link"), dict):
+        root_link = dict(agent_state["root_link"])
+        root_pos = _as_pose_tensor(robot_pose["position"])
+        root_ori = _as_pose_tensor(robot_pose["orientation"])
+        if getattr(env.scene, "idx", 0) != 0:
+            root_pos, root_ori = env.scene.convert_scene_relative_pose_to_world(
+                root_pos, root_ori
+            )
+        root_link["pos"] = root_pos
+        root_link["ori"] = root_ori
+        agent_state["root_link"] = root_link
+
+    grasp_params = agent_state.get("ag_obj_constraint_params")
+    if not isinstance(grasp_params, dict):
+        return agent_state
+
+    rebased_params = {}
+    for arm, arm_params in grasp_params.items():
+        if not arm_params:
+            rebased_params[arm] = arm_params
+            continue
+
+        arm_params = dict(arm_params)
+        obj = _object_for_saved_prim_path(env, arm_params["ag_obj_prim_path"])
+        if obj is None:
+            rebased_params[arm] = {}
+            continue
+
+        link_name = arm_params["ag_link_prim_path"].rstrip("/").split("/")[-1]
+        link = getattr(obj, "links", {}).get(link_name)
+        if link is None:
+            rebased_params[arm] = {}
+            continue
+
+        arm_params["ag_obj_prim_path"] = obj.prim_path
+        arm_params["ag_link_prim_path"] = link.prim_path
+        rebased_params[arm] = arm_params
+
+    agent_state["ag_obj_constraint_params"] = rebased_params
+    return agent_state
 
 
 @dataclass(frozen=True)
@@ -153,6 +342,27 @@ def discover_activity_instance_files(
     return [instance_files[k] for k in sorted(instance_files)]
 
 
+def _restore_ag_state(robot, scene, ag_state: dict) -> None:
+    """Restore assisted-grasping constraints from saved state."""
+    for arm in robot.arm_names:
+        if robot._ag_obj_constraints.get(arm) is not None:
+            robot.release_grasp_immediately(arm=arm)
+
+    for arm, ag_info in ag_state.items():
+        ag_obj = scene.object_registry("prim_path", ag_info["ag_obj_prim_path"])
+        if ag_obj is None:
+            continue
+        link_name = ag_info["ag_link_prim_path"].split("/")[-1]
+        ag_link = ag_obj.links.get(link_name)
+        if ag_link is None:
+            continue
+        robot._establish_grasp_rigid(
+            arm=arm,
+            ag_data=(ag_obj, ag_link),
+            contact_pos=ag_info.get("contact_pos"),
+        )
+
+
 def load_activity_instance_tro_state(
     env,
     instance_id: int,
@@ -173,7 +383,9 @@ def load_activity_instance_tro_state(
 
     env.task.activity_instance_id = instance_id
     with open(tro_file_path, "r", encoding="utf-8") as f:
-        tro_state = recursively_convert_to_torch(json.load(f))
+        raw_tro_state = json.load(f)
+    replay_metadata = raw_tro_state.pop(RLINF_REPLAY_METADATA_KEY, None)
+    tro_state = recursively_convert_to_torch(raw_tro_state)
 
     robot = env.task.get_agent(env)
     robot_name = getattr(robot, "model_name", getattr(robot, "model", None))
@@ -181,6 +393,25 @@ def load_activity_instance_tro_state(
         "Robot model name is required to load task instances."
     )
     robot_poses = tro_state.pop("robot_poses", None)
+    robot_pose = None
+    if robot_poses is not None:
+        assert robot_name in robot_poses, (
+            f"{robot_name} presampled pose is not found in {tro_file_path}"
+        )
+        robot_pose = robot_poses[robot_name][0]
+    robot_joints = tro_state.pop("robot_joints", None)
+    ag_state = tro_state.pop("ag_state", None)
+    is_midrollout = robot_joints is not None
+    load_agent_state = os.environ.get("RLINF_BEHAVIOR_TRO_LOAD_AGENT_STATE", "1") != "0"
+    agent_states = {
+        tro_key: tro_state.pop(tro_key)
+        for tro_key in list(tro_state)
+        if _is_agent_tro_key(tro_key)
+    }
+    if not load_agent_state:
+        agent_states = {}
+
+    clear_robot_grasp_state(robot)
 
     for tro_key, state in tro_state.items():
         entity = env.task.object_scope.get(tro_key)
@@ -188,7 +419,7 @@ def load_activity_instance_tro_state(
             f"Cached task-relevant object {tro_key!r} is not present in the current "
             f"object_scope while loading {tro_file_path}."
         )
-        if getattr(entity, "synset", None) == "agent":
+        if _is_agent_tro_key(tro_key, entity):
             continue
         if (
             getattr(env.scene, "idx", 0) != 0
@@ -209,26 +440,50 @@ def load_activity_instance_tro_state(
             state = rebased_state
         entity.load_state(state, serialized=False)
 
-    if robot_poses is not None:
-        assert robot_name in robot_poses, (
-            f"{robot_name} presampled pose is not found in {tro_file_path}"
+    loaded_agent_state = False
+    if agent_states:
+        agent_state = _rebase_agent_grasp_paths(
+            env, next(iter(agent_states.values())), robot_pose
         )
-        robot_pose = robot_poses[robot_name][0]
+        robot.load_state(agent_state, serialized=False)
+        loaded_agent_state = True
+
+    if robot_pose is not None:
         robot.set_position_orientation(
             robot_pose["position"],
             robot_pose["orientation"],
             frame="scene",
         )
-        sync_robot_after_pose_override(robot)
+        if is_midrollout and robot_name in robot_joints:
+            saved_positions = robot_joints[robot_name]["joint_positions"]
+            _restore_robot_joint_positions(robot, saved_positions)
+            _sync_robot_controller_no_op_goals(robot)
         env.scene.write_task_metadata(key="robot_poses", data=robot_poses)
     else:
         env.scene.write_task_metadata(key="robot_poses", data=None)
+    env.scene.write_task_metadata(key=RLINF_REPLAY_METADATA_KEY, data=replay_metadata)
 
-    for _ in range(25):
-        og.sim.step_physics()
-        for entity in env.task.object_scope.values():
-            if entity.exists and not entity.is_system:
-                entity.keep_still()
+    if not loaded_agent_state and not is_midrollout:
+        reset_robot_joint_state_to_reset_pose(robot, preserve_base_pose=True)
+    sync_robot_after_pose_override(robot)
+
+    if not is_midrollout:
+        for _ in range(25):
+            og.sim.step_physics()
+            for entity in env.task.object_scope.values():
+                if entity.exists and not entity.is_system:
+                    entity.keep_still()
+
+    if is_midrollout and ag_state is not None:
+        _restore_ag_state(robot, env.scene, ag_state)
+        _sync_robot_controller_no_op_goals(robot)
+    if is_midrollout and robot_name in robot_joints:
+        _settle_restored_midrollout_state(
+            env,
+            robot,
+            robot_joints[robot_name]["joint_positions"],
+        )
+        _sync_robot_controller_no_op_goals(robot)
 
     env.scene.update_initial_file()
     if reset_scene:
@@ -245,19 +500,26 @@ class ActivityInstanceLoader:
         activity_instance_id: int,
         instance_resample_mode: str,
         activity_instances: tuple[ActivityInstanceFile, ...],
+        seed: int | None = None,
     ):
         self.omni_cfg = omni_cfg
         self.activity_name = activity_name
         self.activity_instance_id = activity_instance_id
         self.instance_resample_mode = instance_resample_mode
         self.activity_instances = activity_instances
+        self._rng = random.Random(seed)
 
     @classmethod
-    def from_omni_cfg(cls, omni_cfg: DictConfig) -> "ActivityInstanceLoader":
+    def from_omni_cfg(
+        cls, omni_cfg: DictConfig, seed_offset: int = 0
+    ) -> "ActivityInstanceLoader":
         """Build an instance loader from OmniGibson task config.
 
         Args:
             omni_cfg: Full OmniGibson config used to construct the BEHAVIOR env.
+            seed_offset: Added to the config seed to derive the sampling RNG seed,
+                so each env shard can sample activity instances deterministically
+                and independently.
 
         Returns:
             A configured activity instance loader.
@@ -265,11 +527,23 @@ class ActivityInstanceLoader:
         Raises:
             ValueError: If the instance-resample configuration is invalid.
         """
+        seed = int(OmegaConf.select(omni_cfg, "seed", default=0) or 0) + int(
+            seed_offset
+        )
         activity_name = OmegaConf.select(omni_cfg, "task.activity_name")
         activity_definition_id = OmegaConf.select(
             omni_cfg, "task.activity_definition_id"
         )
         activity_instance_id = OmegaConf.select(omni_cfg, "task.activity_instance_id")
+        parsed_instance_ids = parse_activity_instance_ids(activity_instance_id)
+        if parsed_instance_ids is None:
+            requested_instance_ids = None
+        elif len(parsed_instance_ids) == 1:
+            requested_instance_ids = None
+            activity_instance_id = parsed_instance_ids[0]
+        else:
+            requested_instance_ids = parsed_instance_ids
+            activity_instance_id = requested_instance_ids[0]
         activity_instance_dir = OmegaConf.select(omni_cfg, "task.activity_instance_dir")
         instance_resample_mode = OmegaConf.select(
             omni_cfg, "task.instance_resample_mode"
@@ -321,12 +595,19 @@ class ActivityInstanceLoader:
                     "task.instance_resample_mode='online' requires "
                     "task.use_presampled_robot_pose to be False."
                 )
+            OmegaConf.update(
+                omni_cfg,
+                "task.activity_instance_id",
+                activity_instance_id,
+                merge=False,
+            )
             return cls(
                 omni_cfg=omni_cfg,
                 activity_name=activity_name,
                 activity_instance_id=activity_instance_id,
                 instance_resample_mode=instance_resample_mode,
                 activity_instances=(),
+                seed=seed,
             )
 
         if activity_instance_dir is None:
@@ -335,12 +616,19 @@ class ActivityInstanceLoader:
                     "task.activity_instance_dir must be set when "
                     "task.instance_resample_mode is 'offline'."
                 )
+            OmegaConf.update(
+                omni_cfg,
+                "task.activity_instance_id",
+                activity_instance_id,
+                merge=False,
+            )
             return cls(
                 omni_cfg=omni_cfg,
                 activity_name=activity_name,
                 activity_instance_id=activity_instance_id,
                 instance_resample_mode=instance_resample_mode,
                 activity_instances=(),
+                seed=seed,
             )
 
         if online_object_sampling:
@@ -363,12 +651,36 @@ class ActivityInstanceLoader:
             )
         )
         if instance_resample_mode == "disabled":
+            if requested_instance_ids is not None:
+                raise ValueError(
+                    "task.instance_resample_mode='disabled' requires exactly one "
+                    "task.activity_instance_id."
+                )
             instance_ids = {entry.instance_id for entry in activity_instances}
             if activity_instance_id not in instance_ids:
                 raise ValueError(
                     f"task.activity_instance_id={activity_instance_id} is not present in "
                     f"task.activity_instance_dir={activity_instance_dir}."
                 )
+        elif requested_instance_ids is not None:
+            by_id = {
+                entry.instance_id: entry for entry in activity_instances
+            }
+            activity_instances = tuple(by_id[i] for i in requested_instance_ids)
+
+        # Challenge tro_state instances are applied after construction; bootstrap
+        # OmniGibson from the complete seed template (instance 0) first. Otherwise
+        # OmniGibson derives `scene_instance` from `activity_instance_id` and looks
+        # for `..._0_<id>_template.json`, which only exists for instance 0.
+        bootstrap_activity_instance_id = (
+            0 if instance_file_format == "tro_state" else activity_instance_id
+        )
+        OmegaConf.update(
+            omni_cfg,
+            "task.activity_instance_id",
+            bootstrap_activity_instance_id,
+            merge=False,
+        )
 
         return cls(
             omni_cfg=omni_cfg,
@@ -376,33 +688,83 @@ class ActivityInstanceLoader:
             activity_instance_id=activity_instance_id,
             instance_resample_mode=instance_resample_mode,
             activity_instances=activity_instances,
+            seed=seed,
         )
 
-    def prepare_reset(self, vec_env) -> None:
+    def prepare_reset(
+        self,
+        vec_env,
+        instance_ids: list[int] | None = None,
+        group_size: int = 1,
+    ) -> None:
         """Apply any reset-time task-instance mutation required by the config.
 
         Args:
             vec_env: Vectorized OmniGibson environment whose child envs should be
                 updated before ``vec_env.reset()``.
+            instance_ids: Optional per-env cached instance ids to load for this
+                reset. Used by demonstration replay initialization so the
+                simulator reset matches the replayed episode.
+            group_size: Number of trajectories sharing one sampled reset instance.
+                GRPO uses this to keep each group on the same initial condition.
         """
+        group_size = int(group_size)
+        if group_size <= 0:
+            raise ValueError(f"group_size must be positive, got {group_size}.")
+        if instance_ids is not None and len(instance_ids) != len(vec_env.envs):
+            raise ValueError(
+                "Number of requested instance ids must match the number of "
+                f"vectorized environments, got {len(instance_ids)} and {len(vec_env.envs)}."
+            )
+        if instance_ids is None and len(vec_env.envs) % group_size != 0:
+            raise ValueError(
+                "Number of vectorized environments must be divisible by group_size "
+                f"for grouped BEHAVIOR reset, got {len(vec_env.envs)} and {group_size}."
+            )
+
         if self.instance_resample_mode == "online":
+            if instance_ids is not None:
+                raise ValueError(
+                    "Per-episode replay instance ids are not supported with "
+                    "task.instance_resample_mode='online'."
+                )
             task_cfg = OmegaConf.select(self.omni_cfg, "task")
             for env in vec_env.envs:
                 env.update_task(task_config=task_cfg)
             return
 
         if not self.activity_instances:
+            if instance_ids is not None:
+                raise ValueError(
+                    "Per-episode replay instance ids require cached activity instances; "
+                    "set task.activity_instance_dir and use offline cached instances."
+                )
             return
 
-        if self.instance_resample_mode == "offline":
+        if instance_ids is not None:
+            instance_files = [self._get_activity_instance(i) for i in instance_ids]
+        elif self.instance_resample_mode == "offline":
+            group_count = len(vec_env.envs) // group_size
+            group_files = self._sample_activity_instances(group_count)
             instance_files = [
-                random.choice(self.activity_instances) for _ in range(len(vec_env.envs))
+                instance_file
+                for instance_file in group_files
+                for _ in range(group_size)
             ]
         else:
             instance_file = self._get_activity_instance(self.activity_instance_id)
             instance_files = [instance_file] * len(vec_env.envs)
 
         self._apply_instance_files(vec_env, instance_files)
+
+    def _sample_activity_instances(self, count: int) -> list:
+        """Sample ``count`` activity instances with replacement."""
+        if count <= 0:
+            return []
+        instances = list(self.activity_instances)
+        if count <= len(instances):
+            return self._rng.sample(instances, k=count)
+        return [self._rng.choice(instances) for _ in range(count)]
 
     def _get_activity_instance(self, instance_id: int) -> ActivityInstanceFile:
         for instance_file in self.activity_instances:
