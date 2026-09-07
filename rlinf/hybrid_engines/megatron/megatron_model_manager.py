@@ -59,15 +59,16 @@ try:
 
     HAVE_MEGATRON_CORE = True
 
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError) as e:
     HAVE_MEGATRON_CORE = False
-    raise "import error"
+    raise ImportError("Could not import megatron.core") from e
 try:
     from megatron.legacy.model import Float16Module
 except ImportError:
-    from megatron.core.transformer.module import Float16Module
-except ImportError:
-    raise "Could not import Float16Module from megatron"
+    try:
+        from megatron.core.transformer.module import Float16Module
+    except ImportError as e:
+        raise ImportError("Could not import Float16Module from megatron") from e
 from megatron.core.optimizer import get_megatron_optimizer
 from megatron.training.checkpointing import load_checkpoint, save_checkpoint
 from megatron.training.training import (
@@ -184,7 +185,9 @@ class MegatronModelManager:
 
     def __init__(self, cfg: DictConfig):
         if not HAVE_MEGATRON_CORE:
-            raise "Megatron-core was not found. Please see the RLinf README for installation instructions."
+            raise ImportError(
+                "Megatron-core was not found. Please see the RLinf README for installation instructions."
+            )
 
         self.tokenizer = hf_tokenizer(cfg.tokenizer.tokenizer_model)
 
