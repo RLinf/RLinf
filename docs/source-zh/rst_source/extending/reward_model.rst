@@ -255,7 +255,8 @@ RLinf 支持两条 reward 训练路径。``examples/reward/run_reward_training.s
 - 在 ``examples/reward/vlm_trend/config/pipeline.yaml`` 中设置
   ``paths.raw_data_root``、``paths.pipeline_root``、``paths.model_path``，并在
   Potential SFT 完成后设置 ``paths.potential_checkpoint``。teacher、feature
-  和 scalar-head 路径都通过 YAML 引用复用这些值。
+  和 scalar-head 路径都通过 YAML 引用复用这些值。同时将
+  ``auxiliary.teacher.raw_data_paths`` 替换为本次采集得到的真实 checkpoint 目录。
 - 在 ``examples/sft/config/vlm_trend_success_sft.yaml`` 和
   ``vlm_trend_potential_sft.yaml`` 中设置 ``paths.pipeline_root`` 与
   ``paths.model_path``；数据和输出路径由 YAML 自动派生。
@@ -288,7 +289,7 @@ balanced sampling。两条分支都在首次成功 transition 截断，与在线
 Potential 预处理使用 teacher 生成绝对 potential 数字，以及
 ``up``/``same``/``down`` progress pair。
 
-两个薄配置继承现有 Trend 配方，路径已经在 YAML 中配置，无需再导出路径环境变量：
+使用 Success 和 Potential SFT 配置训练两个 adapter：
 
 .. code-block:: bash
 
@@ -300,8 +301,7 @@ Potential VLM SFT 权重文件（通常是
 ``.../global_step_*/actor/model_state_dict/full_weights.pt``）。如果自行导出过
 PEFT adapter，也可以填写包含 ``adapter_config.json`` 的目录。
 
-Feature 提取不要求必须使用四张 GPU。默认 RLinf placement 使用所有可用 accelerator；如果只使用一张 GPU，
-在 YAML 中改为：
+Feature 提取使用 RLinf placement。如果只使用一张 GPU，在 YAML 中设置：
 
 .. code-block:: yaml
 
@@ -310,7 +310,7 @@ Feature 提取不要求必须使用四张 GPU。默认 RLinf placement 使用所
        feature_extractor: 0  # 使用全部可用 accelerator 时设为 all
 
 RLinf 会从 placement 自动得到每个 shard 的 rank 和 world size。Python 入口会
-处理两个 split 和两种 sample type，替代原来的嵌套 shell 循环：
+处理两个 split 和两种 sample type：
 
 .. code-block:: bash
 
@@ -412,7 +412,7 @@ RLinf 提供了多个 reward model 接入 RL 的示例配置：
 
 标准 VLM Trend reward 使用 ``model_type: buffered_vlm``，并通过
 ``vlm_trend_reward_input_builder`` 和 ``vlm_trend_reward_parser`` 构造输入、解析 reward。
-Success + Potential 配方的本地推理使用专用
+Success + Potential 配置的本地推理使用专用
 ``model_type: vlm_trend_success_potential``。API 推理仍只支持 ``buffered_vlm``。
 
 两条本地 VLM Trend 路径都使用历史窗口输入。标准路径使用：
@@ -494,7 +494,7 @@ Success + Potential 配方的本地推理使用专用
      env.eval.total_num_envs=1024
 
 然后使用选中的低成功率 checkpoint 和上述三个 reward 产物启动双输出分支。
-该配方基于现有 VLM Trend 配方，使用 1,024 个环境，每 5 个 PPO step 评估一次，
+该配置基于现有 VLM Trend 配置，使用 1,024 个环境，每 5 个 PPO step 评估一次，
 关闭环境奖励，默认训练 160 个 step：
 
 在
@@ -510,7 +510,7 @@ Success + Potential 配方的本地推理使用专用
      potential_checkpoint: /path/to/potential/selected_global_step/actor/model_state_dict/full_weights.pt
      scalar_head: /path/to/scalar_head/best.pt
 
-然后启动已配置的配方：
+然后启动此配置：
 
 .. code-block:: bash
 
@@ -703,7 +703,7 @@ SGLang 路径额外说明：
 - ``runner.num_success_frames`` / ``runner.num_fail_frames`` — 目标采集帧数。两个阈值均达到时停止采集。
 - ``runner.val_split`` — 所有标注帧中用于验证集的比例。
 - ``runner.fail_success_ratio`` — 训练集后处理阶段，失败帧会被下采样，使 ``num_fail = num_success * fail_success_ratio``。设为 ``0`` 可禁用下采样。
-- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``（或任务对应的 ``stage``）以启用键盘标注界面。
+- ``env.eval.keyboard_reward_wrapper`` — 设为 ``single_stage``\ （或任务对应的 ``stage``）以启用键盘标注界面。
 - ``env.eval.use_spacemouse`` — 是否使用 SpaceMouse 进行遥操作（step info 中的 ``intervene_action`` 会覆盖默认零动作）。
 - ``env.eval.override_cfg.target_ee_pose`` — 任务的目标末端执行器位姿。
 

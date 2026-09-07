@@ -261,6 +261,8 @@ Configure the pipeline paths in YAML before running the stages:
   ``paths.raw_data_root``, ``paths.pipeline_root``, ``paths.model_path``, and,
   after Potential SFT, ``paths.potential_checkpoint``. The teacher, feature,
   and scalar-head paths reuse those values through YAML references.
+  Also replace ``auxiliary.teacher.raw_data_paths`` with the actual collected
+  checkpoint directories for your run.
 - In ``examples/sft/config/vlm_trend_success_sft.yaml`` and
   ``vlm_trend_potential_sft.yaml``, set ``paths.pipeline_root`` and
   ``paths.model_path``. Their data and output paths are derived in YAML.
@@ -294,8 +296,7 @@ the online environment termination boundary. Potential preprocessing uses the
 teacher to emit absolute potential digits and ``up``/``same``/``down`` progress
 pairs.
 
-Train the two adapters with the thin configs that inherit the existing Trend
-recipe; no path environment variables are required:
+Train the two adapters with the Success and Potential SFT configs:
 
 .. code-block:: bash
 
@@ -307,8 +308,7 @@ VLM SFT weights file (typically
 ``.../global_step_*/actor/model_state_dict/full_weights.pt``). A PEFT adapter
 directory containing ``adapter_config.json`` is also accepted.
 
-Feature extraction is not restricted to four GPUs. Its RLinf placement defaults to all available accelerators; restrict it to one GPU
-when needed:
+Feature extraction uses RLinf placement. To restrict it to one GPU, set:
 
 .. code-block:: yaml
 
@@ -317,8 +317,7 @@ when needed:
        feature_extractor: 0  # use all for every available accelerator
 
 RLinf derives each shard's rank and world size from this placement. The Python
-entrypoint processes both splits and both sample types, replacing the previous
-nested shell loop:
+entrypoint processes both splits and both sample types:
 
 .. code-block:: bash
 

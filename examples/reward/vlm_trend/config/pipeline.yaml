@@ -51,6 +51,7 @@ auxiliary:
   stage: teacher  # teacher or scalar_head
 
   teacher:
+    # Replace these example checkpoint directories with the paths collected in your run.
     raw_data_paths:
       - ${paths.raw_data_root}/step0
       - ${paths.raw_data_root}/step20
