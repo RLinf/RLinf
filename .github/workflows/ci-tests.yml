@@ -99,6 +99,7 @@ jobs:
               - 'rlinf/models/diffusion/**'
               - 'rlinf/models/worldmodel/**'
               - 'rlinf/runners/*embodied*.py'
+              - 'rlinf/runners/async_weight_sync_mixin.py'
               - 'rlinf/runners/*reward*.py'
               - 'examples/embodiment/*'
               - 'examples/embodiment/config/*/**'
@@ -114,6 +115,7 @@ jobs:
               - 'toolkits/replay_buffer/**'
               - 'toolkits/lerobot/**'
               - 'toolkits/dual_franka/**'
+              - 'toolkits/cosmos3/**'
               - 'toolkits/__init__.py'
             agent_reason_filter: &agent
               - *shared
@@ -121,6 +123,7 @@ jobs:
               - 'rlinf/workers/actor/ma_megatron_actor_worker.py'
               - 'rlinf/workers/actor/megatron_actor_worker.py'
               - 'rlinf/workers/actor/fsdp_actor_worker.py'
+              - 'rlinf/workers/actor/ma_fsdp_actor_worker.py'
               - 'rlinf/workers/critic/**'
               - 'rlinf/workers/megatron_worker.py'
               - 'rlinf/workers/agent/**'

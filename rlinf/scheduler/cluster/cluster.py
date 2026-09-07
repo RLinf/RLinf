@@ -34,7 +34,7 @@ from ray.actor import ActorHandle
 from ray.util.state import list_actors
 
 from ..hardware.accelerators.accelerator import ProfileConfig
-from .config import ClusterConfig
+from .config import ClusterConfig, CollectiveConfig
 from .node import NodeGroupInfo, NodeInfo, NodeProbe
 from .utils import DistributedRayLogCollector, without_http_proxies
 
@@ -559,6 +559,16 @@ class Cluster:
         return self._num_nodes
 
     @property
+    def collective_config(self) -> Optional["CollectiveConfig"]:
+        """Get the job-wide collective configuration, if one was provided.
+
+        The configuration is validated once on the driver and reaches every
+        Worker with the rest of the :class:`ClusterConfig`, so both ends of a
+        collective agree on it by construction.
+        """
+        return self._cluster_cfg.collective if self._cluster_cfg is not None else None
+
+    @property
     def num_accelerators(self):
         """Get the number of accelerators in the cluster."""
         return sum(node.num_accelerators for node in self._nodes)
@@ -664,10 +674,7 @@ class Cluster:
 
         if profiling_cfg.output_dir is None:
             output_dir = tempfile.gettempdir()
-
-            from rlinf.utils.logging import get_logger
-
-            get_logger().warning(
+            logging.getLogger(cls.SYS_NAME).warning(
                 f"Profiling is enabled for worker group '{worker_group_name}' but no "
                 f"output directory is configured. Reports will be saved to: {output_dir}."
             )
@@ -825,13 +832,18 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        runtime_env_vars = {
+            key: value
+            for key, value in merged_env_vars.items()
+            if node.default_env_vars.get(key) != value
+        }
         runtime_env_worker = Cluster._combine_ray_runtime_env(
             Cluster._job_code_sync_fragment_for_child_runtime_env(
                 self._ray_code_sync_fragment
             ),
             {
                 "py_executable": python_interpreter_path,
-                "env_vars": merged_env_vars,
+                "env_vars": runtime_env_vars,
             },
         )
 

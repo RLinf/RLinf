@@ -98,7 +98,8 @@ def split_dict_to_chunk(data: dict, split_size, dim=0):
     for key, value in data.items():
         if isinstance(value, torch.Tensor):
             split_vs = [
-                chunk.contiguous() for chunk in torch.chunk(value, split_size, dim=dim)
+                chunk.contiguous()
+                for chunk in torch.tensor_split(value, split_size, dim=dim)
             ]
         elif isinstance(value, list):
             assert dim == 0, f"List field only supports dim=0, got {dim}."
