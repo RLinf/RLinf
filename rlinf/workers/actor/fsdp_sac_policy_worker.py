@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
+from rlinf.algorithms.sac_policy_utils import resolve_sac_q_head_type
 from rlinf.config import SupportedModel
 from rlinf.data.schema.embodied_types import Trajectory
 from rlinf.data.storage.replay import (
@@ -58,6 +59,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         self.demo_buffer = None
         self.alpha_optimizer = None
         self.update_step = 0
+        self.use_crossq = False
         self.enable_drq = bool(getattr(self.cfg.actor, "enable_drq", False))
 
     def init_worker(self):
@@ -78,6 +80,14 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
     def setup_model_and_optimizer(self, initialize_target=False) -> None:
         """Setup model, lr_scheduler, optimizer and grad_scaler."""
         """Add initializing target model logic."""
+        # RLT workers inherit this setup method but own a separate Q-head
+        # contract. Keep this resolver scoped to the embodied SAC worker path.
+        if self.cfg.algorithm.get("loss_type") == "embodied_sac":
+            self.use_crossq = (
+                resolve_sac_q_head_type(self.cfg.algorithm, self.cfg.actor.model)
+                == "crossq"
+            )
+
         module = self.model_provider_func()
         if initialize_target:
             target_module = self.model_provider_func()
@@ -345,7 +355,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("forward_critic")
     def forward_critic(self, batch):
-        use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         bootstrap_type = self.cfg.algorithm.get("bootstrap_type", "standard")
         agg_q = self.cfg.algorithm.get("agg_q", "min")
         use_dsrl = self.cfg.actor.model.get("openpi", {}).get("use_dsrl", False)
@@ -381,7 +390,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
             if next_state_log_pi.ndim == 1:
                 next_state_log_pi = next_state_log_pi.unsqueeze(-1)
             next_state_log_pi = next_state_log_pi.sum(dim=-1, keepdim=True)
-            if not use_crossq:
+            if not self.use_crossq:
                 dsrl_kwargs = {"train": True} if use_dsrl else {}
                 all_qf_next_target = self.target_model(
                     forward_type=ForwardType.SAC_Q,
@@ -428,7 +437,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
                 else:
                     raise NotImplementedError(f"{bootstrap_type=} is not supported!")
 
-        if not use_crossq:
+        if not self.use_crossq:
             dsrl_kwargs = {"train": True} if use_dsrl else {}
             all_data_q_values = self.model(
                 forward_type=ForwardType.SAC_Q,
@@ -474,7 +483,6 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
 
     @Worker.timer("forward_actor")
     def forward_actor(self, batch):
-        use_crossq = self.cfg.algorithm.get("q_head_type", "default") == "crossq"
         if "actor_agg_q" in self.cfg.algorithm:
             agg_q = self.cfg.algorithm["actor_agg_q"]
         else:
@@ -492,7 +500,7 @@ class EmbodiedSACFSDPPolicy(EmbodiedFSDPActor):
         if log_pi.ndim == 1:
             log_pi = log_pi.unsqueeze(-1)
         log_pi = log_pi.sum(dim=-1, keepdim=True)  # sum over the chunk dimension
-        if not use_crossq:
+        if not self.use_crossq:
             dsrl_kwargs = {"train": True} if self.use_dsrl else {}
             all_qf_pi = self.model(
                 forward_type=ForwardType.SAC_Q,
