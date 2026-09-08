@@ -105,7 +105,8 @@ jobs:
           test -d /workspace/dataset/FastWAM/text_embeds_cache/libero
           test -d /workspace/dataset/data/sft-ci-data/fastwam-libero
           source .venv/bin/activate
-          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_fastwam
+          bash tests/e2e_tests/sft/run_vla_sft.sh libero_sft_fastwam egl \
+            "actor.model.fastwam.overrides.1='model.action_dit_pretrained_path=${DIFFSYNTH_MODEL_BASE_PATH}/ActionDiT_linear_interp_Wan22_alphascale_1024hdim.pt'"
 
       - name: Clean up
         if: always()
