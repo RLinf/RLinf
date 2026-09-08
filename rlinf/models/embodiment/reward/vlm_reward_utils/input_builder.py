@@ -17,12 +17,6 @@ from typing import Any, Optional, Union
 
 import torch
 from PIL import Image
-from transformers import AutoProcessor
-
-from rlinf.data.datasets.vlm import (
-    VLMBaseDataset,
-    VLMTrendRewardSFTDataset,
-)
 
 
 def _to_pil_images(
@@ -100,7 +94,7 @@ class BaseInputBuilder:
     system_prompt: Optional[str] = None
     use_chat_template: bool = True
     image_keys: list[str] = field(default_factory=lambda: ["main_images"])
-    _processor: Optional[AutoProcessor] = field(default=None)
+    _processor: Optional[Any] = field(default=None)
 
     def get_valid_input_ids(self, observations: dict[str, Any]) -> list[int]:
         return list(range(len(observations[self.image_keys[0]])))
@@ -151,6 +145,8 @@ class BaseVLMInputBuilder(BaseInputBuilder):
         }
 
     def process_inputs(self, prepared_inputs: dict[str, Any]):
+        from rlinf.data.datasets.vlm.base import VLMBaseDataset
+
         prompt_texts_list = prepared_inputs.get("prompt_texts_list")
         images_list = prepared_inputs.get("images_list")
 
@@ -303,6 +299,8 @@ class VLMTrendRewardInputBuilder(VideoVLMInputBuilder):
         }
 
     def process_inputs(self, prepared_inputs: dict[str, Any]):
+        from rlinf.data.datasets.vlm.vlm_trend_reward import VLMTrendRewardSFTDataset
+
         prompt_texts_list = prepared_inputs.get("prompt_texts_list")
         videos_list = prepared_inputs.get("videos_list")
 

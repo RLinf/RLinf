@@ -17,7 +17,7 @@ import asyncio
 import gymnasium as gym
 import torch
 
-from rlinf.utils.delay_sampler import DelaySampler
+from rlinf.utils.env_helpers.delay_sampler import DelaySampler
 
 
 class InsertDelay(gym.Wrapper):

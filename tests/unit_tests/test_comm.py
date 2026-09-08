@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 import torch.distributed as dist
+from omegaconf import OmegaConf
 from torch.distributed import distributed_c10d
 
 from rlinf.scheduler import (
@@ -200,6 +201,23 @@ class SenderWorker(Worker):
         device = "cpu" if on_cpu else get_device()
         tensor_list = [torch.ones(2, 2, device=device) * i for i in range(4)]
         return self._send_data(tensor_list, async_op)
+
+    def test_send_compressed_data(self, container, async_op=False):
+        """Send a compressible CPU tensor in a supported container."""
+        tensor = torch.zeros(256 * 1024, dtype=torch.uint8)
+        if container == "tensor":
+            data = tensor
+        elif container == "list":
+            data = [tensor, torch.arange(64, dtype=torch.int64)]
+        elif container == "tuple":
+            data = (tensor, torch.arange(64, dtype=torch.int64))
+        elif container == "dict":
+            data = {"compressed": tensor, "raw": torch.arange(64)}
+        elif container == "dataclass":
+            data = TensorMessage(id=self._rank, payload=tensor, note="compressed")
+        else:
+            raise ValueError(f"Unsupported compressed container: {container}")
+        return self._send_data(data, async_op)
 
     def test_send_tensor_dict(self, on_cpu, async_op=False):
         device = "cpu" if on_cpu else get_device()
@@ -603,6 +621,10 @@ class ReceiverWorker(Worker):
     def test_recv_tensor_list(self, async_op=False):
         return self._recv_data(async_op)
 
+    def test_recv_compressed_data(self, async_op=False):
+        """Receive data using the collective compression config."""
+        return self._recv_data(async_op)
+
     def test_recv_tensor_dict(self, async_op=False):
         return self._recv_data(async_op)
 
@@ -962,7 +984,22 @@ class CommCollectiveWorker(Worker):
 @pytest.fixture(scope="module")
 def cluster():
     """Provides a ClusterResource instance for the tests."""
-    return Cluster(num_nodes=1)
+    return Cluster(
+        cluster_cfg=OmegaConf.create(
+            {
+                "num_nodes": 1,
+                "component_placement": [],
+                "collective": {
+                    "tensor_compression": {
+                        "enabled": True,
+                        "codec": "lz4",
+                        "min_bytes": 1024,
+                        "acceleration": 1,
+                    }
+                },
+            }
+        )
+    )
 
 
 @pytest.fixture(scope="class")
@@ -1152,6 +1189,39 @@ class TestCommunication:
             for i, tensor in enumerate(res_list):
                 expected = torch.ones(2, 2) * i
                 assert torch.equal(tensor.cpu(), expected)
+
+    @pytest.mark.parametrize(
+        "container", ["tensor", "list", "tuple", "dict", "dataclass"]
+    )
+    @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
+    def test_compressed_cpu_tensor_communication(
+        self, worker_groups, container, async_op
+    ):
+        """Compressed CPU tensors preserve values on supported container paths."""
+        results = self._run_test(
+            worker_groups,
+            "test_send_compressed_data",
+            "test_recv_compressed_data",
+            (container, async_op),
+            (async_op,),
+        )
+        expected = torch.zeros(256 * 1024, dtype=torch.uint8)
+        for result in results:
+            if container == "tensor":
+                tensor = result
+            elif container in {"list", "tuple"}:
+                # Tuple inputs use the established tensor-list wire path.
+                assert isinstance(result, list)
+                tensor = result[0]
+                assert torch.equal(result[1], torch.arange(64, dtype=torch.int64))
+            elif container == "dict":
+                tensor = result["compressed"]
+                assert torch.equal(result["raw"], torch.arange(64))
+            else:
+                assert isinstance(result, TensorMessage)
+                assert result.note == "compressed"
+                tensor = result.payload
+            assert torch.equal(tensor, expected)
 
     @pytest.mark.parametrize("async_op", [False, True], ids=["sync", "async_wait"])
     def test_mixed_tensor_list_communication(self, worker_groups, async_op):

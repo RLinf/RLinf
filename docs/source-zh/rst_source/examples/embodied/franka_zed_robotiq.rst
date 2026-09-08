@@ -219,7 +219,7 @@ Robotiq 夹爪通过 USB 转 RS485 适配器使用 **Modbus RTU** 协议通信�
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu

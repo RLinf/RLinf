@@ -23,7 +23,7 @@ from unittest.mock import MagicMock
 import pytest
 from omegaconf import OmegaConf
 
-from rlinf.utils.delay_sampler import (
+from rlinf.utils.env_helpers.delay_sampler import (
     ConstantDelaySampler,
     DelaySampler,
     ExponentialDelaySampler,

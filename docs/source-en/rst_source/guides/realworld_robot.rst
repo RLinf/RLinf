@@ -175,8 +175,10 @@ When the **camera is on the GPU server** and the **arm and gripper are on a NUC*
 set camera/gripper types and ``controller_node_rank`` in ``hardware.configs``.
 Field details and collection examples are in :doc:`../examples/embodied/franka_zed_robotiq`.
 
-For training, place ``env`` on the GPU node group (camera capture) and pin
-``FrankaController`` to the NUC:
+For training, place ``env`` on the Franka node group so that it receives the
+Franka hardware configuration.  The hardware config's ``node_rank: 0`` keeps
+the env worker on the GPU node for camera capture, while
+``controller_node_rank: 1`` pins ``FrankaController`` to the NUC:
 
 .. code-block:: yaml
 
@@ -187,7 +189,7 @@ For training, place ``env`` on the GPU node group (camera capture) and pin
          node_group: gpu
          placement: 0
        env:
-         node_group: gpu
+         node_group: franka
          placement: 0
        rollout:
          node_group: gpu

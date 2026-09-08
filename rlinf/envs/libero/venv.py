@@ -75,6 +75,21 @@ gym_new_venv_step_type = tuple[
 ]
 warnings.simplefilter("once", DeprecationWarning)
 
+LIBERO_CAMERA_OBS_NAMES = ("agentview_image", "robot0_eye_in_hand_image")
+
+
+def _set_camera_rendering(env, enabled: bool) -> None:
+    """Enable or disable LIBERO camera observables without resetting the env."""
+    rob = getattr(env, "env", env)
+    while hasattr(rob, "env"):
+        rob = rob.env
+    observables = getattr(rob, "_observables", None)
+    if observables is None:
+        return
+    for name in LIBERO_CAMERA_OBS_NAMES:
+        if name in observables:
+            observables[name]._enabled = enabled
+
 
 def _worker(
     parent: connection.Connection,
@@ -206,6 +221,9 @@ def _worker(
                         depth=depth,
                     )
                 )
+            elif cmd == "set_camera_rendering":
+                _set_camera_rendering(env, data)
+                p.send(None)
             else:
                 p.close()
                 raise NotImplementedError
@@ -256,3 +274,13 @@ class ReconfigureSubprocEnv(SubprocVectorEnv):
 
         for j, i in enumerate(id):
             self.workers[i].reconfigure_env_fn(env_fns[j])
+
+    def set_camera_rendering(self, enabled: bool, id=None):
+        self._assert_is_not_closed()
+        id = self._wrap_id(id)
+        if self.is_async:
+            self._assert_id(id)
+        for i in id:
+            self.workers[i].parent_remote.send(["set_camera_rendering", enabled])
+        for i in id:
+            self.workers[i].parent_remote.recv()
