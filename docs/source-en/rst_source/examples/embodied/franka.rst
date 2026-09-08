@@ -1,13 +1,5 @@
-Real-World RL (Archived)
-========================
-
-.. warning::
-
-   **This page is archived.** It describes the legacy workflow that required a
-   real-time kernel and split the control and training nodes across multiple
-   machines. For the current single-host workflow, including the explicit
-   configuration required to run without a real-time kernel, use
-   :doc:`franka_single_machine`.
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px

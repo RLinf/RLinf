@@ -1,5 +1,5 @@
-Franka 真机强化学习
-===================
+Franka 单机真机强化学习
+=======================
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
@@ -13,14 +13,14 @@ Franka 真机强化学习
    在一台带有 GPU 的主机上运行 Franka 真机强化学习流程。
 
 你可以在一台带 GPU 的主机上同时运行计算节点（训练 / rollout）和控制节点（Franka 控制），
-完成真机 SAC / RLPD / PPO 训练。该流程使用两个独立的 RLinf 环境，已在标准 Ubuntu 20.04、
-Franka System Image 5.9.2 和 libfranka 0.19.0 的组合上验证。如果没有实时内核，
-必须按照下文显式关闭 libfranka 的实时检查；仅安装较新的固件和 libfranka 并不会自动关闭该检查。
+完成真机 SAC / RLPD / PPO 训练。该流程使用两个独立的 RLinf 环境，
+已在 Ubuntu 20.04、Franka System Image 5.9.2 和 libfranka 0.19.0 组合上验证。
+机器人控制进程必须使用实时内核；仅安装较新的固件和 libfranka 不能替代这一要求。
 
 .. note::
 
    当前的单主机流程请使用本页。如果你使用较旧的 firmware/libfranka 组合，
-   或者希望使用独立的实时控制主机，请参考已归档的多机流程 :doc:`franka`。
+   或者希望使用独立的实时控制主机，请参考多机流程 :doc:`franka`。
 
 .. note::
 
@@ -140,6 +140,26 @@ Franka System Image 5.9.2 和 libfranka 0.19.0 的组合上验证。如果没有
    请依据你的固件版本，参考 `Franka 兼容性矩阵 <https://frankarobotics.github.io/docs/compatibility.html>`_
    选择匹配的 libfranka 版本，并通过环境变量 ``LIBFRANKA_VERSION`` 与 ``FRANKA_ROS_VERSION`` 指定。
 
+安装并配置实时内核
+----------------------------------------
+
+安装控制环境之前，请在主机上安装 PREEMPT_RT 内核。
+请按照 Franka 官方的 `实时内核指南
+<https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_
+手动编译并安装兼容的实时内核。
+
+对于 Ubuntu 22.04 和 24.04，Franka 建议使用 Ubuntu Pro 实时内核，而不是手动编译。
+请按照 `Ubuntu Pro 实时内核指南
+<https://ubuntu.com/pro-client/docs/en/latest/howtoguides/enable_realtime_kernel/>`_ 完成安装。
+
+安装完成后，请继续按照 Franka 指南启动并验证实时内核，并为机器人控制用户配置实时权限。
+
+.. warning::
+
+   单机训练可能使主机处于高负载状态。如果没有实时调度，操作系统调度延迟可能导致
+   错过控制周期或发生通信错误。Franka 还说明 NVIDIA 专有驱动未获得 PREEMPT_RT
+   的官方支持，因此启动实时内核后需要确认 GPU 驱动可以正常工作。
+
 环境安装
 ----------------------------------------
 
@@ -177,46 +197,7 @@ B. 安装控制环境（RLinf-franka）
   bash requirements/install.sh embodied --env franka
   source .venv/bin/activate
 
-C. 配置实时行为
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-libfranka 默认强制检查实时调度能力。安装 System Image 5.9.0+ 和 libfranka 0.18.0+
-并不会让标准 Linux 内核自动通过该检查。如果主机没有使用 PREEMPT_RT 内核，
-必须显式配置控制后端忽略实时检查。
-
-对于本流程使用的 ``franka_ros`` 后端，请修改安装后的配置文件：
-
-.. code-block:: yaml
-
-   # .venv/franka_catkin_ws/src/franka_ros/franka_control/config/franka_control_node.yaml
-   realtime_config: ignore  # 默认值：enforce
-
-对于 ``franky`` 后端，请在创建机器人时传入 ``RealtimeConfig.Ignore``：
-
-.. code-block:: python
-
-   import franky
-
-   robot = franky.Robot(
-       "172.16.0.2",
-       relative_dynamics_factor=0.2,
-       realtime_config=franky.RealtimeConfig.Ignore,
-   )
-
-.. note::
-
-   RLinf 当前的 ``FrankyController`` 使用默认的 ``RealtimeConfig.Enforce``
-   创建 ``franky.Robot``。因此，该后端在非实时内核上运行时仍需相应修改构造调用，
-   目前还不能通过 RLinf YAML 选项启用。
-
-.. warning::
-
-   ``ignore`` 只会关闭 libfranka 启动时的实时检查，并不会让标准内核获得实时能力。
-   训练可能使主机处于高负载状态，操作系统调度延迟可能导致错过控制周期或发生通信错误。
-   为了获得可靠的控制，请尽可能安装并使用 PREEMPT_RT 内核，并参考 Franka 官方的
-   `实时内核指南 <https://frankarobotics.github.io/docs/doc/libfranka/docs/real_time_kernel.html>`_。
-
-D. 安装计算环境（RLinf-compute）
+C. 安装计算环境（RLinf-compute）
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 在 `RLinf-compute` 目录下安装 RLinf 框架与训练所需依赖（对应训练所用的模型与仿真环境）：

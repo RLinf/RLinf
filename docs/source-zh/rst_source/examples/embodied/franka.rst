@@ -1,10 +1,5 @@
-Real-World RL (已归档)
-======================
-
-.. warning::
-
-   **本页已归档。** 此页描述早期需要实时内核、并把控制节点与训练节点拆分到多台机器上的流程。
-   当前的单主机流程以及非实时内核所需的显式配置，请参考 :doc:`franka_single_machine`。
+Real-World RL
+=============
 
 .. |huggingface| image:: /_static/svg/hf-logo.svg
    :width: 16px
