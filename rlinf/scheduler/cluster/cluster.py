@@ -832,13 +832,18 @@ class Cluster:
                 merged_env_vars,
                 self._runtime_code_sync_strip_roots,
             )
+        runtime_env_vars = {
+            key: value
+            for key, value in merged_env_vars.items()
+            if node.default_env_vars.get(key) != value
+        }
         runtime_env_worker = Cluster._combine_ray_runtime_env(
             Cluster._job_code_sync_fragment_for_child_runtime_env(
                 self._ray_code_sync_fragment
             ),
             {
                 "py_executable": python_interpreter_path,
-                "env_vars": merged_env_vars,
+                "env_vars": runtime_env_vars,
             },
         )
 
