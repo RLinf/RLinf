@@ -1040,6 +1040,35 @@ def test_cluster_env_configs_applied_in_worker_launch():
     assert pythonpath_values[0].split(os.pathsep)[0] == str(tests_root)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-specific argv limit")
+def test_worker_launch_with_large_inherited_environment(monkeypatch):
+    inherited_env = {
+        f"RLINF_TEST_INHERITED_{index:04d}": "x" * 64 for index in range(3000)
+    }
+    for key, value in inherited_env.items():
+        monkeypatch.setenv(key, value)
+
+    _reset_cluster_singleton()
+    cluster = Cluster(num_nodes=1)
+    placement = NodePlacementStrategy([0])
+    worker_group = EnvConfigCheckWorker.create_group().launch(
+        cluster=cluster,
+        placement_strategy=placement,
+        name="large_inherited_env_launch",
+    )
+
+    try:
+        first_key = next(iter(inherited_env))
+        last_key = next(reversed(inherited_env))
+        assert worker_group.get_env_marker(first_key).wait() == [
+            inherited_env[first_key]
+        ]
+        assert worker_group.get_env_marker(last_key).wait() == [inherited_env[last_key]]
+    finally:
+        worker_group._close()
+        _reset_cluster_singleton()
+
+
 def test_cluster_env_configs_path_append_mode_in_worker_launch():
     path_env_key = path_merge_test_env_var()
     custom_path = "/tmp/rlinf-custom-path-append"
