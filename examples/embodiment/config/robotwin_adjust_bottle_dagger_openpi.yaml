@@ -162,7 +162,7 @@ actor:
 
   model:
     precision: null
-    model_path: "/workspace/update/model/RLinf-Pi0-RoboTwin-SFT-adjust_bottle"
+    model_path: "/path/to/model"
     num_action_chunks: 50
     add_value_head: False
     action_dim: 14
