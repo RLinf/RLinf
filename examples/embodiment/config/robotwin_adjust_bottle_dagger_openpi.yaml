@@ -48,6 +48,19 @@ algorithm:
     beta_decay: 0.99
     # False enables classic DAgger: student-acted data is re-labeled by expert.
     only_save_expert: False
+    # Store one observation/action pair per environment step. The rolling
+    # LeRobot dataset reconstructs action chunks for OpenPI training.
+    online_lerobot:
+      enabled: True
+      only_success: False
+      robot_type: "aloha"
+      fps: 10
+      finalize_interval: 8
+      data_path: /path/to/robotwin_lerobot
+      rolling_lerobot_window_size: 50000
+      lerobot_num_workers: 0
+      # Start training once the rolling dataset contains this many frames.
+      min_frames: 1024
 
   gamma: 0.99
 
